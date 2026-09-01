@@ -95,6 +95,26 @@ the exporter with the `observability` extra:
 uv add "forze[observability]"
 ```
 
+Both argument lists are also a settings model, so a deployment configures them from the
+environment instead of retyping the defaults:
+
+```python
+from forze.base.settings import RuntimeSettings
+
+rt = RuntimeSettings(version=APP_VERSION, build_id=BUILD_ID, telemetry="otlp")
+
+bootstrap_logging(level=rt.log_level, render_mode=rt.log_render)
+bootstrap_telemetry(
+    service_name="orders-api",
+    service_version=rt.full_version,
+    exporter=rt.telemetry,
+)
+```
+
+`RuntimeSettings` is a plain `BaseModel` — mount it on your own `BaseSettings` root, which
+owns the environment prefix and delimiter. It defaults `log_render` to `json`, unlike
+`bootstrap_logging` itself: a settings object exists because something is being deployed.
+
 Then flush on the way out, after the drain gate flips:
 
 ```python

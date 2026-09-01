@@ -25,6 +25,7 @@ from ...services import (
     ResetTokenService,
     SignerPort,
 )
+from ...services.constants import MIN_SECRET_BYTES
 
 # ----------------------- #
 
@@ -42,9 +43,9 @@ class AuthnKernelConfig:
     access_token_secret: bytes | None = attrs.field(
         default=None,
         repr=False,
-        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+        validator=attrs.validators.optional(attrs.validators.min_len(MIN_SECRET_BYTES)),
     )
-    """Minimum 32 bytes when set; builds the default HS256 signer for token auth and
+    """Minimum :data:`MIN_SECRET_BYTES` when set; builds the default HS256 signer for token auth and
     token lifecycle. Ignored when :attr:`access_token_signer` is set."""
 
     access_token_signer: SignerPort | None = attrs.field(default=None, repr=False)
@@ -65,9 +66,9 @@ class AuthnKernelConfig:
     refresh_token_pepper: bytes | None = attrs.field(
         default=None,
         repr=False,
-        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+        validator=attrs.validators.optional(attrs.validators.min_len(MIN_SECRET_BYTES)),
     )
-    """Minimum 32 bytes when set; required for token lifecycle."""
+    """Minimum :data:`MIN_SECRET_BYTES` when set; required for token lifecycle."""
 
     refresh_token: RefreshTokenConfig = attrs.field(factory=RefreshTokenConfig)
     """Refresh token service configuration."""
@@ -78,9 +79,9 @@ class AuthnKernelConfig:
     invite_token_pepper: bytes | None = attrs.field(
         default=None,
         repr=False,
-        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+        validator=attrs.validators.optional(attrs.validators.min_len(MIN_SECRET_BYTES)),
     )
-    """Minimum 32 bytes when set; required to issue/accept password provisioning invites."""
+    """Minimum :data:`MIN_SECRET_BYTES` when set; required to issue/accept password provisioning invites."""
 
     invite_token: InviteTokenConfig = attrs.field(factory=InviteTokenConfig)
     """Password invite token service configuration."""
@@ -88,9 +89,9 @@ class AuthnKernelConfig:
     reset_token_pepper: bytes | None = attrs.field(
         default=None,
         repr=False,
-        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+        validator=attrs.validators.optional(attrs.validators.min_len(MIN_SECRET_BYTES)),
     )
-    """Minimum 32 bytes when set; required for self-service password reset routes.
+    """Minimum :data:`MIN_SECRET_BYTES` when set; required for self-service password reset routes.
 
     Deliberately a separate pepper from ``invite_token_pepper`` so the two
     single-use token populations stay cryptographically disjoint (a leaked reset
@@ -102,9 +103,9 @@ class AuthnKernelConfig:
     api_key_pepper: bytes | None = attrs.field(
         default=None,
         repr=False,
-        validator=attrs.validators.optional(attrs.validators.min_len(32)),
+        validator=attrs.validators.optional(attrs.validators.min_len(MIN_SECRET_BYTES)),
     )
-    """Minimum 32 bytes when set; required for API key authentication and API key lifecycle."""
+    """Minimum :data:`MIN_SECRET_BYTES` when set; required for API key authentication and API key lifecycle."""
 
     api_key: ApiKeyConfig = attrs.field(factory=ApiKeyConfig)
     """API key service configuration."""

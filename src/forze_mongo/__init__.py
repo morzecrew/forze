@@ -33,6 +33,7 @@ from .kernel.relation import (
     resolve_mongo_collection,
     resolve_mongo_named_resource,
 )
+from .settings import MongoSettings
 
 # ----------------------- #
 
@@ -42,6 +43,7 @@ __all__ = [
     "MongoClient",
     "MongoClientPort",
     "MongoConfig",
+    "MongoSettings",
     "RoutedMongoClient",
     "MongoClientDepKey",
     "mongo_lifecycle_step",

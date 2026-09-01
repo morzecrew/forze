@@ -10,6 +10,7 @@ import asyncio
 import base64
 import contextlib
 from typing import Any, cast, final
+from urllib.parse import urlsplit
 
 import attrs
 import hvac
@@ -23,6 +24,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import GuardedLifecycle, JsonDict
 from forze_vault.kernel._logger import logger
 
+from ..._net import is_loopback
 from .port import VaultClientPort
 from .value_objects import VaultConfig
 
@@ -35,6 +37,33 @@ MIN_RENEW_DELAY_SECONDS = 1.0
 """Lower bound for the derived renewal cadence."""
 
 # ----------------------- #
+
+
+# ....................... #
+
+
+def build_session(url: str, *, retry: Retry) -> requests.Session:
+    """The HTTP session a Vault client talks through.
+
+    :param url: The configured Vault address, read only to decide whether it is loopback.
+    :param retry: Retry policy mounted on both schemes.
+    :returns: A session that retries, and that ignores the proxy environment on loopback.
+    """
+
+    session = requests.Session()
+    session.mount("http://", HTTPAdapter(max_retries=retry))
+    session.mount("https://", HTTPAdapter(max_retries=retry))
+
+    # `requests` has no built-in localhost bypass, so a `HTTP_PROXY` with no matching
+    # `NO_PROXY` sends even a loopback request — and the `X-Vault-Token` on it — to the
+    # proxy. That is off this machine, which is exactly what the plaintext-on-loopback
+    # exception in `VaultSettings` assumes never happens; `trust_env` is what makes the
+    # assumption true. A remote Vault keeps normal proxy behaviour, which a deployment
+    # behind a corporate proxy needs.
+    if is_loopback(urlsplit(url).hostname):
+        session.trust_env = False
+
+    return session
 
 
 @final
@@ -160,9 +189,7 @@ class VaultClient(VaultClientPort):
             status_forcelist=(412, 500, 502, 503, 504),
             raise_on_status=False,
         )
-        session = requests.Session()
-        session.mount("http://", HTTPAdapter(max_retries=retry))
-        session.mount("https://", HTTPAdapter(max_retries=retry))
+        session = build_session(self.config.url, retry=retry)
 
         client = hvac.Client(
             url=self.config.url,

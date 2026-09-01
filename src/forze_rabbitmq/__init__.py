@@ -24,6 +24,7 @@ from .kernel.relation import (
     coerce_named_resource_spec,
     resolve_rabbitmq_namespace,
 )
+from .settings import RabbitMQSettings
 
 # ----------------------- #
 
@@ -31,6 +32,7 @@ __all__ = [
     "RabbitMQClient",
     "RabbitMQClientPort",
     "RabbitMQConfig",
+    "RabbitMQSettings",
     "RabbitMQQueueMessage",
     "RoutedRabbitMQClient",
     "RabbitMQClientDepKey",

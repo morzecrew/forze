@@ -26,6 +26,11 @@ gcs = GCSClient()
 `RoutedGCSClient` (with `GCSRoutingCredentials`) resolves per-tenant
 projects/credentials.
 
+### Settings
+
+`GCSSettings` holds the project, the optional service-account file and the signing
+identity — see [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Each storage route names a **bucket**, keyed by `StorageSpec.name`:

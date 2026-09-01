@@ -1,0 +1,128 @@
+"""Connection settings and the URL they build.
+
+The twin of :mod:`forze_postgres.settings`, and here for the same reason: URL grammar —
+which scheme TLS selects, where an empty password has to vanish rather than emit a bare
+``:@`` — is this package's knowledge, and drifts the moment it is written anywhere else.
+
+A plain :class:`pydantic.BaseModel`, not a ``BaseSettings``: the environment prefix,
+delimiter and extra-key policy belong to the deploying application.
+"""
+
+from datetime import timedelta
+from typing import Self
+from urllib.parse import quote
+
+from pydantic import Field, SecretStr, model_validator
+
+from forze.base.settings import EndpointSettings, configured_fields
+
+from .kernel.client import RedisConfig
+
+# ----------------------- #
+
+CLIENT_FIELDS = (
+    "max_size",
+    "socket_timeout",
+    "connect_timeout",
+    "client_name",
+)
+"""Pool knobs :class:`RedisSettings` forwards, by their :class:`RedisConfig` name.
+
+Every entry is ``None`` by default and dropped from the constructor call when unset, so
+the defaults live in :class:`RedisConfig` and cannot drift out of a second copy here.
+"""
+
+# ....................... #
+
+
+class RedisSettings(EndpointSettings):
+    """Endpoint, credentials and pool tuning for one Redis client."""
+
+    username: str | None = None
+    """ACL user. Unset is the default user, which is the classic ``:password@`` form —
+    and the only one a Redis without ACLs accepts. A managed Redis with ACLs enabled
+    needs this, and could not be reached without it."""
+
+    password: SecretStr = SecretStr("")
+
+    db: int | None = Field(default=None, ge=0)
+    """Logical database index, appended as ``/{db}``. Unset means the URL names none, so
+    the client uses 0 — which is what a deployment separating a cache from a queue on one
+    Redis has to be able to change."""
+
+    ssl: bool = False
+    """Select the ``rediss://`` scheme."""
+
+    # ....................... #
+    # Pool tuning. ``None`` means "whatever RedisConfig defaults to" — see CLIENT_FIELDS.
+    #
+    # `socket_timeout` and `connect_timeout` are deliberately *not* distinguishable from
+    # "explicitly disabled" here: RedisConfig accepts `None` for both to mean no timeout,
+    # and an unset environment variable must never be the thing that turns a timeout off.
+
+    max_size: int | None = None
+    socket_timeout: timedelta | None = None
+    connect_timeout: timedelta | None = None
+    client_name: str | None = None
+
+    # ....................... #
+
+    @model_validator(mode="after")
+    def _a_username_needs_a_password(self) -> Self:
+        """An ACL user authenticates with a password or not at all.
+
+        ``redis://app:@host`` carries an empty password component, so the client cannot
+        authenticate as the user that was asked for — and depending on the server it
+        either refuses the connection or grants the default user's permissions, which is
+        the worse of the two.
+        """
+
+        if self.username and not self.password.get_secret_value():
+            raise ValueError("Redis username needs a password; set both or neither")
+
+        return self
+
+    # ....................... #
+
+    @property
+    def dsn(self) -> SecretStr:
+        """``redis[s]://[[username]:password@]host[:port][/db]``.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
+
+        :raises CoreException: ``configuration`` when :attr:`host` is unset.
+        """
+
+        endpoint = self.authority(service="Redis")
+
+        # No credentials at all rather than a bare `:@`, which is noise in every log the
+        # URL reaches and an empty credential to any client that does read it.
+        password = quote(self.password.get_secret_value(), safe="")
+        username = quote(self.username, safe="") if self.username else ""
+        auth = f"{username}:{password}@" if (password or username) else ""
+
+        scheme = "rediss" if self.ssl else "redis"
+        path = f"/{self.db}" if self.db is not None else ""
+
+        return SecretStr(f"{scheme}://{auth}{endpoint}{path}")
+
+    # ....................... #
+
+    @property
+    def config(self) -> RedisConfig:
+        """The pool configuration these settings describe.
+
+        A property rather than a ``computed_field``: :class:`RedisConfig` is an attrs
+        class, and putting it in the serialized shape would make ``model_dump`` fail on a
+        settings object that is otherwise fine.
+        """
+
+        return RedisConfig(**configured_fields(self, CLIENT_FIELDS))
+
+
+# ....................... #
+
+__all__ = ["CLIENT_FIELDS", "RedisSettings"]

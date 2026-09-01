@@ -28,6 +28,25 @@ mongo = MongoClient()
 `RoutedMongoClient` resolves a per-tenant connection — see
 [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
 
+### Settings
+
+`MongoSettings` builds the URI from parts, so the pieces that are easy to get wrong —
+the `mongodb+srv://` scheme, percent-encoded credentials, and `authSource` (very often
+`admin` rather than the database you read, which is what turns a correct password into
+"auth failed") — stay in this package:
+
+```python
+from forze_mongo import MongoSettings
+
+mongo_settings = MongoSettings(host="m.internal", port=27017, auth_source="admin")
+
+mongo_settings.uri     # SecretStr("mongodb://...@m.internal:27017/?authSource=admin")
+mongo_settings.config  # MongoConfig, from the client fields that are set
+```
+
+See [connection settings](index.md#connection-settings) for the rules every one of these
+models follows.
+
 ## Wire it
 
 Relations are `(database, collection)` tuples, keyed by spec name:

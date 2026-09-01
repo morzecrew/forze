@@ -38,6 +38,7 @@ from .kernel.relation import (
     coerce_named_resource_spec,
     resolve_redis_namespace,
 )
+from .settings import RedisSettings
 
 # ----------------------- #
 
@@ -45,6 +46,7 @@ __all__ = [
     "RedisClient",
     "RedisClientPort",
     "RedisConfig",
+    "RedisSettings",
     "RoutedRedisClient",
     "RedisClientDepKey",
     "RedisBlockingClientDepKey",

@@ -28,6 +28,25 @@ Neo4j spans the full isolation ladder (see Notes): a tenant **property partition
 (`tagged`), a per-tenant **database** (`namespace`), or a **routed client**
 (`dedicated`) — `RoutedNeo4jClient` resolves per-tenant Bolt URI/credentials from secrets.
 
+### Settings
+
+`Neo4jSettings` picks the scheme, which is a two-by-two choice spelled as four strings —
+routing or direct, encrypted or not — and does not fail cleanly when wrong: `bolt://`
+against a cluster connects to whichever member answers, then fails on the first write it
+cannot route.
+
+```python
+from forze_neo4j import Neo4jSettings
+
+graph = Neo4jSettings(host="g.internal", port=7687, ssl=True, user="neo4j", password="…")
+
+graph.uri     # SecretStr("neo4j+s://g.internal:7687")
+graph.auth    # ("neo4j", "…") — or None when neither is set; half-set is refused
+graph.config  # Neo4jConfig, from the driver fields that are set
+```
+
+See [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Graphs are keyed by their module spec name:

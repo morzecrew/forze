@@ -15,6 +15,7 @@ from .adapters import (
 )
 from .execution import VaultClientDepKey, VaultDepsModule, vault_lifecycle_step
 from .kernel.client import VaultClient, VaultClientPort, VaultConfig
+from .settings import VaultSettings
 
 # ----------------------- #
 
@@ -22,6 +23,7 @@ __all__ = [
     "VaultClient",
     "VaultClientPort",
     "VaultConfig",
+    "VaultSettings",
     "VaultClientDepKey",
     "VaultDepsModule",
     "VaultDynamicSecrets",

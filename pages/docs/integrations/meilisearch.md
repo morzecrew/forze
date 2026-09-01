@@ -26,6 +26,11 @@ meili = MeilisearchClient()
 
 `RoutedMeilisearchClient` resolves a per-tenant instance/key.
 
+### Settings
+
+`MeilisearchSettings` holds the endpoint, the API key and the client timeout, and builds
+the base URL — see [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Each search route names an index, keyed by `SearchSpec.name`:

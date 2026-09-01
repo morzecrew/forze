@@ -223,6 +223,13 @@ Operational hardening around the loop:
   before serving (the gateway reads but doesn't create it) and reclaims stranded pending
   entries so a durable signal whose consumer died is recovered, not lost.
 
+## Settings
+
+`SocketIOSettings` carries the Redis backplane: the URL (as a `SecretStr` — it holds the
+password), the channel, and whether this process publishes without subscribing. Build the
+URL from a `RedisSettings.dsn`; this package cannot import `forze_redis` itself. See
+[connection settings](index.md#connection-settings).
+
 ## What it provides
 
 | Surface | What it does |

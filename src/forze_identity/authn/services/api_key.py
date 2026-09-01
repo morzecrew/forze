@@ -8,6 +8,8 @@ import attrs
 from forze.base.exceptions import exc
 from forze.base.primitives import secure_random_bytes
 
+from .constants import MIN_SECRET_BYTES
+
 # ----------------------- #
 
 
@@ -58,7 +60,7 @@ class ApiKeyConfig:
 class ApiKeyService:
     """API key generation and verification service."""
 
-    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
+    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(MIN_SECRET_BYTES))
     config: ApiKeyConfig = attrs.field(factory=ApiKeyConfig)
 
     # ....................... #

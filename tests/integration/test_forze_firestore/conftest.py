@@ -17,7 +17,12 @@ from testcontainers.core.waiting_utils import wait_for_logs
 
 from forze_firestore.kernel.client import FirestoreClient
 
-_EMULATOR_IMAGE = "gcr.io/google.com/cloudsdktool/google-cloud-cli:522.0.0-emulators"
+_EMULATOR_IMAGE = "gcr.io/google.com/cloudsdktool/google-cloud-cli:583.0.0-emulators"
+"""Pinned, and expect to bump it: the registry keeps roughly the last fifty
+``-emulators`` tags, so a pin eventually stops resolving and every test here fails with
+``manifest unknown`` rather than with anything about Firestore. List the survivors with
+``curl -s https://gcr.io/v2/google.com/cloudsdktool/google-cloud-cli/tags/list`` and take
+the newest, which buys the longest runway until the next time."""
 _TEST_PROJECT = "forze-firestore-test"
 
 # The SDK dials FIRESTORE_EMULATOR_HOST directly (insecure gRPC). If

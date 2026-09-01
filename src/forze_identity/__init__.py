@@ -15,6 +15,7 @@ from forze.base.lazy import lazy_exports
 
 # Curated name -> canonical module (single source of truth for the front door).
 _EXPORTS: dict[str, str] = {
+    "MIN_SECRET_BYTES": "forze_identity.authn.services.constants",  # nosec B105
     "spec_contributions": "forze_identity.inventory",
     "AUTHN_SPECS": "forze_identity.inventory",
     "AUTHZ_SPECS": "forze_identity.inventory",
@@ -22,6 +23,7 @@ _EXPORTS: dict[str, str] = {
 }
 
 __all__ = [
+    "MIN_SECRET_BYTES",
     "AUTHN_SPECS",
     "AUTHZ_SPECS",
     "TENANCY_SPECS",
@@ -31,6 +33,7 @@ __all__ = [
 __getattr__, __dir__ = lazy_exports(__name__, _EXPORTS)
 
 if TYPE_CHECKING:
+    from forze_identity.authn.services.constants import MIN_SECRET_BYTES
     from forze_identity.inventory import (
         AUTHN_SPECS,
         AUTHZ_SPECS,

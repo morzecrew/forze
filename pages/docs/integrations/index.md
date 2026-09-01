@@ -37,3 +37,75 @@ command-line tool), and `zstd` adds the zstd codec for
 [portable archives](../running-in-prod/portability.md).
 
 Install one or several at once — `uv add 'forze[fastapi,postgres,redis]'`.
+
+## Connection settings
+
+Every integration ships a `<Backend>Settings` model holding the endpoint, the credentials
+and the client knobs a deployment sets — the thing an application would otherwise declare
+for itself, once per backend, and get subtly wrong. They are plain pydantic `BaseModel`s,
+so you mount them on your own settings root and the environment fills them in:
+
+```python
+from forze_postgres import PostgresSettings
+from forze_rabbitmq import RabbitMQSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_nested_delimiter="__")
+
+    postgres: PostgresSettings = PostgresSettings()
+    rabbitmq: RabbitMQSettings = RabbitMQSettings()
+```
+
+`POSTGRES__HOST`, `RABBITMQ__VHOST` and the rest then populate them. The prefix, the
+delimiter and the extra-key policy stay yours — Forze ships no `BaseSettings` root,
+because those are deployment decisions.
+
+Each model exposes what its wiring takes:
+
+| It gives you | Where it goes |
+|---|---|
+| `.dsn` / `.uri` / `.url` / `.address` / `.servers` | the lifecycle step's connection argument |
+| `.config` | the same step's `config=`, as the backend's own config object |
+| `.require_host()` / `.require_endpoint()` / `.require_project_id()` | wherever the wiring wants a plain `str` |
+
+```python
+lifecycle = LifecyclePlan.from_modules(
+    postgres_lifecycle_step(dsn=settings.postgres.dsn, config=settings.postgres.config),
+)
+```
+
+Three rules hold across all of them:
+
+- **A missing endpoint is refused by name**, when it is read rather than when the model is
+  built — so `Settings()` still constructs with an empty environment, and a boot without
+  `POSTGRES__HOST` fails saying so instead of dialling localhost.
+- **Unset knobs are dropped, not forwarded as `None`.** The defaults live in the backend's
+  own config object, never in a second copy on the settings model.
+- **Secrets are `SecretStr`** and the assembled URL is one too wherever it carries a
+  credential, so neither reaches a log by accident. The assembled value is a plain
+  property rather than a serialized field: `model_dump()` on a settings root works even
+  where a mounted backend was never configured, and no DSN lands in a dump.
+- **`ssl=True` verifies the server certificate** — `sslmode=verify-full`, `neo4j+s://`,
+  `rediss://`, `https://`. A deployment that wants weaker TLS leaves the flag off and
+  configures the backend's own environment variables.
+
+The URL-building models share `forze.base.settings.EndpointSettings` for the parts that are
+URL grammar rather than backend knowledge — bracketing a bare IPv6 host, joining the port.
+The scheme and the query parameters stay in each package, because that is the part that
+actually differs.
+
+`forze.base.settings.RuntimeSettings` is the same idea for the process itself: the argument
+lists of `bootstrap_logging` and `bootstrap_telemetry`. See
+[Grafana stack](../running-in-prod/grafana-stack.md).
+
+Two packages ship no settings model, for the same reason both times: they are *inbound*,
+so there is no connection to configure. `fastapi` and `mcp` serve requests; where they bind
+is the deployment's uvicorn or transport concern, not the integration's.
+
+Everything else has one, including the ones that are barely a connection at all: `duckdb`
+is in-process, so `DuckDbSettings` carries the database path and the two resource limits
+that decide whether a query is slow or the container is killed; `SocketIOSettings` carries
+only the Redis backplane URL (build it from a `RedisSettings.dsn`, since integration
+packages do not import each other); `GcpKmsSettings` is one emulator endpoint and one
+timeout, because Google's credentials come from the ambient environment.

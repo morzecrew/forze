@@ -21,6 +21,16 @@ uv add 'forze[vault]'
 
 Needs a Vault server with a KV v2 mount.
 
+### Settings
+
+`VaultSettings` is the mountable form of `VaultConfig`: address, token, mount points and
+namespace as a pydantic model. The address must be `https://` unless it is a loopback one
+— the token rides on every request and every response carries a secret, so `http://` to
+anything but this machine puts both on the wire. On a loopback address the client stops
+honouring `HTTP_PROXY`, since `requests` would otherwise route even a localhost request
+(and its token) through the proxy. See
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Build a client with its config, register the deps module (which publishes a

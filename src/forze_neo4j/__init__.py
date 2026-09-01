@@ -35,6 +35,7 @@ from .kernel.relation import (
     is_static_named_resource,
     resolve_neo4j_database,
 )
+from .settings import Neo4jSettings
 
 # ----------------------- #
 
@@ -42,6 +43,7 @@ __all__ = [
     "Neo4jClient",
     "Neo4jClientPort",
     "Neo4jConfig",
+    "Neo4jSettings",
     "Neo4jGraphAdapter",
     "Neo4jTxManagerAdapter",
     "Neo4jTxScopeKey",

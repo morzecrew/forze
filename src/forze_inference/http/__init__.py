@@ -31,10 +31,12 @@ from .kernel import (
     RoutedInferenceHttpClient,
 )
 from .protocols import KserveV2Protocol, MlflowProtocol, WireProtocol
+from .settings import InferenceHttpSettings
 
 # ----------------------- #
 
 __all__ = [
+    "InferenceHttpSettings",
     "DEFAULT_REQUEST_TIMEOUT_S",
     "ConfigurableHttpInference",
     "HttpInferenceAdapter",

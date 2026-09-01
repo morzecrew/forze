@@ -33,6 +33,13 @@ The client owns one shared producer and admin client, and pools data-plane
 consumers per `(group, member, topics)`. `RoutedKafkaClient` resolves a
 per-tenant cluster instead (with `routed_client_lifecycle_step`).
 
+### Settings
+
+`KafkaSettings` holds the seed brokers as a list and joins them into aiokafka's
+`bootstrap_servers` string, alongside the SASL credentials. The delivery guarantees
+(`acks`, idempotence) are deliberately not settings — see
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Register produce routes (`streams`) and consumer-group routes (`commit_groups`),

@@ -9,6 +9,7 @@ require_kms_aws()
 from .adapters import AwsKmsKeyManagement, AwsKmsTenantProvisioner
 from .execution import AwsKmsClientDepKey, AwsKmsDepsModule, awskms_lifecycle_step
 from .kernel.client import AwsKmsClient, AwsKmsClientPort, AwsKmsConfig
+from .settings import AwsKmsSettings
 
 # ----------------------- #
 
@@ -17,6 +18,7 @@ __all__ = [
     "AwsKmsClientDepKey",
     "AwsKmsClientPort",
     "AwsKmsConfig",
+    "AwsKmsSettings",
     "AwsKmsDepsModule",
     "AwsKmsKeyManagement",
     "AwsKmsTenantProvisioner",

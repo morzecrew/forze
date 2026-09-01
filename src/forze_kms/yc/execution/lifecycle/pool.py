@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any, cast, final
 
 import attrs
+from pydantic import SecretStr
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
@@ -60,19 +61,29 @@ class YcKmsShutdownHook(ClientShutdownHook):
 # ....................... #
 
 
+def _plain(value: str | SecretStr | None) -> str | None:
+    """Unwrap a secret at the wiring boundary; the SDK takes a plain string."""
+
+    return value.get_secret_value() if isinstance(value, SecretStr) else value
+
+
+# ....................... #
+
+
 def yckms_lifecycle_step(
     name: str = "yckms_lifecycle",
     *,
-    iam_token: str | None = None,
-    oauth_token: str | None = None,
+    iam_token: str | SecretStr | None = None,
+    oauth_token: str | SecretStr | None = None,
     service_account_key: Mapping[str, str] | None = None,
     config: YcKmsConfig | None = None,
 ) -> LifecycleStep:
     """Build a lifecycle step for Yandex Cloud KMS client init and shutdown.
 
     :param name: Step name for collision detection.
-    :param iam_token: Short-lived IAM token.
-    :param oauth_token: Long-lived OAuth token.
+    :param iam_token: Short-lived IAM token. A ``SecretStr`` is unwrapped here, so
+        :class:`~forze_kms.yc.YcKmsSettings` feeds it directly.
+    :param oauth_token: Long-lived OAuth token, ``SecretStr`` accepted as above.
     :param service_account_key: Authorized-key JSON for a service account.
     :param config: Optional client config. With no credential the SDK falls back to
         the instance metadata service.
@@ -82,8 +93,8 @@ def yckms_lifecycle_step(
     return LifecycleStep(
         id=name,
         startup=YcKmsStartupHook(
-            iam_token=iam_token,
-            oauth_token=oauth_token,
+            iam_token=_plain(iam_token),
+            oauth_token=_plain(oauth_token),
             service_account_key=service_account_key,
             config=config,
         ),

@@ -83,6 +83,13 @@ Requests send `{"instances": [...]}` and expect `{"predictions": [...]}` — the
 TF-Serving / sklearn container convention. Credentials default to the botocore
 chain; `endpoint_name` is per-tenant capable like `model_name` above.
 
+## Settings
+
+`InferenceHttpSettings` holds the model endpoint, default headers and a bearer token
+(merged into `Authorization` unless the headers already carry one); `SageMakerSettings`
+holds the AWS region and optional static credentials, refusing a half-set pair. See
+[connection settings](index.md#connection-settings).
+
 ## What both adapters guarantee
 
 - **Explicit data egress.** Features leave the encryption boundary in plaintext

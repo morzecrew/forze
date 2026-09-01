@@ -13,11 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`attach_readiness_route` can probe the dependencies, not just the drain gate.** `probes={"postgres": PostgresClientDepKey, ...}` resolves each client and asks the `health()` every forze client port already declares, adding a per-dependency `checks` breakdown and a `degraded` 503 when one is unreachable — an un-drained process whose database is gone used to answer `ready`. `probe_timeout` (default 2s) budgets **each** probe, so a hanging dependency is one named failed check rather than an empty breakdown. No `probes` keeps today's behaviour.
 
+- **Settings models for the three things every deploying application re-declares.** `forze_postgres.PostgresSettings` and `forze_redis.RedisSettings` hold the endpoint parts and build the DSN from them — percent-encoding credentials, bracketing an IPv6 host, selecting `rediss://`, appending `sslmode=require` — plus a `config` property carrying the pool knobs that were call-site arguments. `forze.base.settings.RuntimeSettings` holds the argument lists of `bootstrap_logging` and `bootstrap_telemetry` (`log_level`, `log_render`, `access_log`, `telemetry`, `version`/`build_id`/`git_sha`, computed `full_version`), and defaults `log_render` to `json` — unlike `bootstrap_logging` itself, since a settings object exists because something is being deployed. All three are plain `BaseModel`s: the environment prefix, delimiter and extra-key policy stay with the application's own `BaseSettings` root.
+
+- **Every integration now ships a `<Backend>Settings` model** — Mongo, RabbitMQ, Neo4j, Kafka, ClickHouse, Temporal, Vault, Meilisearch, S3, SQS, HTTP, GCS, BigQuery, Firestore, Inngest, DuckDB, Socket.IO, the three cloud KMS packages and both inference adapters join Postgres and Redis. Each holds the endpoint, credentials and client knobs a deployment sets, exposes the connection string its lifecycle step takes (`.dsn` / `.uri` / `.url` / `.address` / `.servers`) and the backend's own config object (`.config`), refuses a missing endpoint by name when it is read, and types every secret as `SecretStr`. The Redis model carries an ACL `username` and a logical `db`; Yandex KMS carries a `service_account_key`; `VaultSettings` refuses a non-loopback `http://` address. `ssl=True` means a *verified* connection everywhere — `sslmode=verify-full`, `neo4j+s://`, `rediss://` — and the assembled value is a plain property, so `model_dump()` works on a root that mounts a backend it has not configured and no DSN lands in a dump. Plain pydantic `BaseModel`s: mount them on your own `BaseSettings` root, which keeps the prefix, delimiter and extra-key policy. Only `fastapi` and `mcp` ship none: they are inbound, and where they bind is the deployment's concern. See [Integrations → Connection settings](https://morzecrew.github.io/forze/integrations/).
+
+- **`forze.base.settings.EndpointSettings`** — the `host`/`port` pair and the URL-authority grammar that applies to every scheme built from it: IPv6 bracketing, port joining, blank-host refusal. Subclassed by the URL-building integration settings; the scheme and query parameters stay per-package. `configured_fields` and `require` are the two helpers beside it.
+
+- **`MIN_SECRET_BYTES` is exported from `forze_identity`** — the 32-byte floor `AuthnKernelConfig`, `Hs256Signer` and the peppered-HMAC services already enforced, now readable by an application that validates its own settings so a short secret fails at boot naming the environment variable. `RenderMode` is exported from `forze.base.logging`, which had `LogLevel` but not the type beside it in every signature.
+
 - Four helpers each integration package used to carry its own copy of are now core and exported: `log_server_error`, `drain_domain_events`, `resolve_result_snapshot`, `domains_from_create_payloads`.
 
 - **Every backend the published skill described now has code you can run.** Mongo, Firestore, Meilisearch, Neo4j, Socket.IO, Kafka, MCP, SageMaker, DuckDB, GCP and Yandex KMS, authz and the mock server were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.
 
 ### Changed
+
+- **`yckms_lifecycle_step` and `build_socketio_server` accept a `SecretStr`** for their token and Redis DSN, matching every sibling lifecycle step, and unwrap it at the boundary — so `YcKmsSettings` and `SocketIOSettings` feed them without an unwrap at the call site. Plain `str` is unchanged.
 
 - **`forze[fastapi]` now needs `fastapi>=0.138.0`** (was `>=0.137.0`). The startup checks walk the app's real routes through `fastapi.routing.iter_route_contexts`, which 0.137.0 does not export — importing `forze_fastapi.middlewares` raised `ImportError` there before the app ever started.
 
@@ -34,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **The Firestore integration suite runs again.** Its pinned emulator image had aged out of the registry, so all 104 tests errored on `manifest unknown` and took the coverage and conformance gates with them. Bumped to the newest tag the registry serves.
 
 ## [0.6.0] - 2026-08-15
 

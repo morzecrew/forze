@@ -26,6 +26,11 @@ fs = FirestoreClient()
 
 `RoutedFirestoreClient` resolves a per-tenant project/database.
 
+### Settings
+
+`FirestoreSettings` holds the project and the database name — see
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Relations are `(database, collection)` tuples, keyed by spec name:

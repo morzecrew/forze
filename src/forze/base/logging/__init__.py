@@ -9,7 +9,7 @@ from .configure import (
     bootstrap_logging,
     configure_logging,
 )
-from .constants import LogLevel
+from .constants import LogLevel, RenderMode
 from .errors import log_server_error
 from .excepthook import install_excepthook, uninstall_excepthook
 from .logger import Logger, get_logger, resolve_logger
@@ -30,6 +30,7 @@ __all__ = [
     "uninstall_excepthook",
     "ForzeConsoleRenderer",
     "LogLevel",
+    "RenderMode",
     "AccessLogSampler",
     "AccessLogMode",
     "DEFAULT_HEALTH_PATHS",

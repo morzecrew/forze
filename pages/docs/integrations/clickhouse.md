@@ -26,6 +26,13 @@ ch = ClickHouseClient()
 
 `RoutedClickHouseClient` resolves per-tenant host/database/credentials.
 
+### Settings
+
+`ClickHouseSettings` is the mountable form of `ClickHouseConfig`: the same host, port,
+credentials and database, as a pydantic model your settings root can carry. With `secure`
+set and no port given it resolves 8443 rather than `ClickHouseConfig`'s 8123, which is the
+plaintext listener. See [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Each analytics route maps `query_key`s to SQL, keyed by `AnalyticsSpec.name`:

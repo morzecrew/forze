@@ -30,6 +30,7 @@ from .kernel.relation import (
     is_static_named_resource,
     resolve_s3_bucket,
 )
+from .settings import S3Settings
 
 # ----------------------- #
 
@@ -38,6 +39,7 @@ __all__ = [
     "S3Client",
     "S3ClientPort",
     "S3Config",
+    "S3Settings",
     "RoutedS3Client",
     "S3RoutingCredentials",
     "S3ClientDepKey",

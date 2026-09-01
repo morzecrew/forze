@@ -23,11 +23,13 @@ from .kernel.client import (
     InngestRoutingCredentials,
     RoutedInngestClient,
 )
+from .settings import InngestSettings
 
 __all__ = [
     "InngestClient",
     "InngestClientPort",
     "InngestConfig",
+    "InngestSettings",
     "RoutedInngestClient",
     "InngestRoutingCredentials",
     "InngestClientDepKey",

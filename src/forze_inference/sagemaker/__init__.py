@@ -29,10 +29,12 @@ from .kernel import (
     SageMakerRuntimeClient,
     SageMakerRuntimeClientPort,
 )
+from .settings import SageMakerSettings
 
 # ----------------------- #
 
 __all__ = [
+    "SageMakerSettings",
     "SAGEMAKER_BACKEND",
     "ConfigurableSageMakerInference",
     "RoutedSageMakerRuntimeClient",

@@ -45,7 +45,7 @@ from .resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from .services import SigningStats
+from .services import MIN_SECRET_BYTES, SigningStats
 from .verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -55,6 +55,7 @@ from .verifiers import (
 # ----------------------- #
 
 __all__ = [
+    "MIN_SECRET_BYTES",
     "Argon2PasswordVerifier",
     "AuthnDepsModule",
     "AuthnKernelConfig",

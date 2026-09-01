@@ -32,6 +32,7 @@ from .kernel.relation import (
     is_static_named_resource,
     resolve_meilisearch_index_uid,
 )
+from .settings import MeilisearchSettings
 
 # ----------------------- #
 
@@ -42,6 +43,7 @@ __all__ = [
     "RoutedMeilisearchClient",
     "MeilisearchRoutingCredentials",
     "MeilisearchConfig",
+    "MeilisearchSettings",
     "MeilisearchClientDepKey",
     "meilisearch_lifecycle_step",
     "MeilisearchSearchConfig",
