@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Self
 from urllib.parse import quote
 
-from pydantic import SecretStr, computed_field, model_validator
+from pydantic import SecretStr, model_validator
 
 from forze.base.settings import EndpointSettings, configured_fields
 
@@ -76,25 +76,36 @@ class MongoSettings(EndpointSettings):
     # ....................... #
 
     @model_validator(mode="after")
-    def _srv_takes_no_port(self) -> Self:
-        """An SRV record supplies the port, and pymongo refuses a URI that also names one.
+    def _check_shape(self) -> Self:
+        """The two mistakes that are already made by the time the model is built.
 
         Eager rather than deferred to :attr:`uri`, unlike the missing-host refusal: an
-        unset host is the normal state of a settings object nobody configured yet, but a
-        port beside ``srv`` is a mistake already made.
+        unset host is the normal state of a settings object nobody configured yet, while
+        both of these are a configuration that cannot be meant.
+
+        A password with no user is the dangerous half: the URI drops it silently and
+        connects unauthenticated wherever the server allows it, so the failure is a
+        successful connection with the wrong identity rather than an error.
         """
 
         if self.srv and self.port is not None:
             raise ValueError("srv resolves the port from DNS; leave port unset")
 
+        if self.password.get_secret_value() and not self.user:
+            raise ValueError("Mongo password needs a user; set both or neither")
+
         return self
 
     # ....................... #
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def uri(self) -> SecretStr:
         """``mongodb[+srv]://[user:password@]host[:port]/[?options]``.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
 
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """

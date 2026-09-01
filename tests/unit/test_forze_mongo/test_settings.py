@@ -32,12 +32,17 @@ class TestUri:
 
     # ....................... #
 
-    def test_omits_credentials_when_no_user_is_set(self) -> None:
-        """A password with no user is not a credential — it is a half-configured one."""
+    def test_omits_credentials_when_neither_is_set(self) -> None:
+        assert MongoSettings(host="m.internal").uri.get_secret_value() == "mongodb://m.internal"
 
-        settings = MongoSettings(host="m.internal", password=SecretStr("orphan"))
+    # ....................... #
 
-        assert settings.uri.get_secret_value() == "mongodb://m.internal"
+    def test_a_password_without_a_user_is_refused(self) -> None:
+        """The dangerous half: the URI would drop it and connect unauthenticated, so the
+        failure is a successful connection with the wrong identity rather than an error."""
+
+        with pytest.raises(ValidationError, match="password needs a user"):
+            MongoSettings(host="m.internal", password=SecretStr("orphan"))
 
     # ....................... #
 
