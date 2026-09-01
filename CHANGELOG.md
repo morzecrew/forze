@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **The Firestore integration suite runs again.** Its pinned emulator image had aged out of the registry, so all 104 tests errored on `manifest unknown` and took the coverage and conformance gates with them. Bumped to the newest tag the registry serves.
 
 ## [0.6.0] - 2026-08-15
 
