@@ -27,6 +27,11 @@ sqs = SQSClient()
 `RoutedSQSClient` (with `SQSRoutingCredentials`) resolves per-tenant
 region/credentials.
 
+### Settings
+
+`SQSSettings` holds the endpoint, region, static credentials and poison queue, refusing a
+half-set credential pair — see [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Register the queues you read from and write to, keyed by `QueueSpec.name`:

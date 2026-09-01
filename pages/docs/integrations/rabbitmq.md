@@ -26,6 +26,26 @@ rabbit = RabbitMQClient()
 
 `RoutedRabbitMQClient` resolves a per-tenant connection.
 
+### Settings
+
+`RabbitMQSettings` builds the AMQP URL from parts. The virtual host is the reason:
+RabbitMQ's default vhost is *named* `/`, so the URL has to end in `%2F` — a literal `/`
+addresses the empty-named vhost instead, and the broker refuses it.
+
+```python
+from forze_rabbitmq import RabbitMQSettings
+
+mq = RabbitMQSettings(host="mq.internal", port=5672)
+
+mq.dsn     # SecretStr("amqp://guest:guest@mq.internal:5672/%2F")
+mq.config  # RabbitMQConfig, from the connection fields that are set
+```
+
+The delivery-semantics knobs — publisher confirms, persistent messages, durable queues —
+are deliberately *not* settings: they are correctness choices, and an environment variable
+that can switch one off is a durability bug waiting for a deploy. See
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Register the queues you read from and write to, keyed by `QueueSpec.name`:

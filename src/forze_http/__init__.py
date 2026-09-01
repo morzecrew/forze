@@ -12,6 +12,8 @@ from forze_http.kernel.client import (
     RoutedHttpClient,
 )
 
+from .settings import HttpSettings
+
 # ----------------------- #
 
 __all__ = [
@@ -19,6 +21,7 @@ __all__ = [
     "HttpClientDepKey",
     "HttpClientPort",
     "HttpConfig",
+    "HttpSettings",
     "HttpDepsModule",
     "HttpServiceConfig",
     "HttpAuthConfig",

@@ -24,6 +24,11 @@ http = HttpClient()
 
 `RoutedHttpClient` resolves per-tenant base URLs and credentials from secrets.
 
+### Settings
+
+`HttpSettings` holds the base URL, bearer token, default headers and the response cap —
+see [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Register a service config per `HttpServiceSpec.name`:

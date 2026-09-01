@@ -25,6 +25,7 @@ from .kernel.relation import (
     is_static_named_resource,
     resolve_gcs_bucket,
 )
+from .settings import GCSSettings
 
 # ----------------------- #
 
@@ -35,6 +36,7 @@ __all__ = [
     "RoutedGCSClient",
     "GCSRoutingCredentials",
     "GCSConfig",
+    "GCSSettings",
     "GCSClientDepKey",
     "gcs_lifecycle_step",
     "GCSStorageConfig",

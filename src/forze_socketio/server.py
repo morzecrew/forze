@@ -6,6 +6,7 @@ require_socketio()
 
 from typing import Any
 
+from pydantic import SecretStr
 from socketio.asgi import ASGIApp
 from socketio.async_manager import AsyncManager
 from socketio.async_redis_manager import AsyncRedisManager
@@ -18,7 +19,7 @@ from forze.base.exceptions import exc
 
 def build_socketio_server(
     *,
-    redis_url: str | None = None,
+    redis_url: str | SecretStr | None = None,
     redis_channel: str = "socketio",
     redis_write_only: bool = False,
     client_manager: AsyncManager | None = None,
@@ -28,7 +29,9 @@ def build_socketio_server(
 
     Uses the official Socket.IO Redis manager when ``redis_url`` is provided.
 
-    :param redis_url: Optional Redis DSN for distributed Socket.IO delivery.
+    :param redis_url: Optional Redis DSN for distributed Socket.IO delivery. A
+        ``SecretStr`` is unwrapped here — the DSN carries the password — so
+        :class:`~forze_socketio.SocketIOSettings` feeds it directly.
     :param redis_channel: Redis pub/sub channel used by the backplane.
     :param redis_write_only: Use write-only manager mode for emit-only workers.
     :param client_manager: Optional prebuilt client manager.
@@ -42,7 +45,7 @@ def build_socketio_server(
 
     if redis_url is not None:
         client_manager = AsyncRedisManager(
-            redis_url,
+            redis_url.get_secret_value() if isinstance(redis_url, SecretStr) else redis_url,
             channel=redis_channel,
             write_only=redis_write_only,
         )

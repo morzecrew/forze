@@ -42,6 +42,12 @@ temporal = TemporalClient()
 
 `RoutedTemporalClient` resolves a per-tenant cluster/namespace.
 
+### Settings
+
+`TemporalSettings` holds the address, namespace, TLS switch and API key, and joins host
+and port into the `host=` this step takes — see
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Each workflow route names the **task queue** its workers poll, keyed by

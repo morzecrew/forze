@@ -137,10 +137,12 @@ from .routing import (
     SocketIORequest,
 )
 from .server import build_socketio_asgi_app, build_socketio_server
+from .settings import SocketIOSettings
 
 # ----------------------- #
 
 __all__ = [
+    "SocketIOSettings",
     "ACK_EVENT",
     "asyncapi_document",
     "GENERIC_INTERNAL_DETAIL",

@@ -25,6 +25,7 @@ from .kernel.relation import (
     coerce_relation_spec,
     resolve_clickhouse_ingest_target,
 )
+from .settings import ClickHouseSettings
 
 # ----------------------- #
 
@@ -35,6 +36,7 @@ __all__ = [
     "RoutedClickHouseClient",
     "ClickHouseRoutingCredentials",
     "ClickHouseConfig",
+    "ClickHouseSettings",
     "ClickHouseClientDepKey",
     "clickhouse_lifecycle_step",
     "ClickHouseAnalyticsConfig",

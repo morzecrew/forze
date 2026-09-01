@@ -32,6 +32,13 @@ over operator-provided master keys, with no extra to install — see
     uv add 'forze[kms-yc]'
     ```
 
+## Settings
+
+Each cloud KMS ships its own: `AwsKmsSettings` (region, optional endpoint override,
+optional static credentials, refusing a half-set pair), `GcpKmsSettings` (emulator endpoint
+and timeout — credentials are ambient) and `YcKmsSettings` (an IAM *or* OAuth token, never
+both). See [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Build the client and register its deps module — that publishes the client so the

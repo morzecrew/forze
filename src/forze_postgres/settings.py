@@ -11,25 +11,24 @@ a field on its own root settings class.
 """
 
 from datetime import timedelta
-from typing import Any
 from urllib.parse import quote
 
-from pydantic import BaseModel, Field, SecretStr, computed_field
+from pydantic import SecretStr, computed_field
 
-from forze.base.exceptions import exc
+from forze.base.settings import EndpointSettings, configured_fields
 
 from .kernel.client import PostgresConfig
 
 # ----------------------- #
 
-POOL_FIELDS = (
+CLIENT_FIELDS = (
     "min_size",
     "max_size",
     "statement_timeout",
     "lock_timeout",
     "application_name",
 )
-"""Pool knobs :class:`PostgresSettings` exposes, by their :class:`PostgresConfig` name.
+"""Pool knobs :class:`PostgresSettings` forwards, by their :class:`PostgresConfig` name.
 
 Every entry is ``None`` by default and dropped from the constructor call when unset, so
 the defaults live in :class:`PostgresConfig` and cannot drift out of a second copy here.
@@ -40,18 +39,12 @@ An application wanting a knob that is not on this list builds its own
 # ....................... #
 
 
-class PostgresSettings(BaseModel):
+class PostgresSettings(EndpointSettings):
     """Endpoint, credentials and pool tuning for one PostgreSQL client."""
 
     user: str = "postgres"
     password: SecretStr = SecretStr("")
     database: str = "postgres"
-
-    host: str | None = None
-    """No default on purpose: an unset host is a boot failure naming the setting, never a
-    silent connection to a ``localhost`` that happens to be listening."""
-
-    port: int | None = Field(default=None, ge=1, le=65535)
 
     ssl: bool = False
     """Append ``sslmode=require`` to the DSN.
@@ -64,10 +57,10 @@ class PostgresSettings(BaseModel):
     """
 
     # ....................... #
-    # Pool tuning. ``None`` means "whatever PostgresConfig defaults to" — see POOL_FIELDS.
+    # Pool tuning. ``None`` means "whatever PostgresConfig defaults to" — see CLIENT_FIELDS.
 
-    min_size: int | None = Field(default=None, ge=0)
-    max_size: int | None = Field(default=None, ge=1)
+    min_size: int | None = None
+    max_size: int | None = None
     statement_timeout: timedelta | None = None
     lock_timeout: timedelta | None = None
     application_name: str | None = None
@@ -82,20 +75,7 @@ class PostgresSettings(BaseModel):
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """
 
-        # Stripped first: a `POSTGRES__HOST=" "` out of a hand-edited env file is an
-        # unset host, and building a DSN around it turns a boot failure that names the
-        # setting into a DNS error that names nothing.
-        host = (self.host or "").strip()
-
-        if not host:
-            raise exc.configuration("Postgres host is required.")
-
-        # A bare IPv6 literal has to be bracketed or the first colon reads as the
-        # port separator.
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-
-        endpoint = f"{host}:{self.port}" if self.port else host
+        endpoint = self.authority(service="Postgres")
 
         # Percent-encoded: a password containing `@`, `/` or `:` — which a generated one
         # routinely does — otherwise re-parses as a different endpoint entirely.
@@ -117,13 +97,9 @@ class PostgresSettings(BaseModel):
         settings object that is otherwise fine.
         """
 
-        overrides: dict[str, Any] = {
-            name: value for name in POOL_FIELDS if (value := getattr(self, name)) is not None
-        }
-
-        return PostgresConfig(**overrides)
+        return PostgresConfig(**configured_fields(self, CLIENT_FIELDS))
 
 
 # ....................... #
 
-__all__ = ["POOL_FIELDS", "PostgresSettings"]
+__all__ = ["CLIENT_FIELDS", "PostgresSettings"]

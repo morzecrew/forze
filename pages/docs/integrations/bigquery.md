@@ -27,6 +27,12 @@ bq = BigQueryClient()
 
 `RoutedBigQueryClient` resolves a per-tenant project/credentials.
 
+### Settings
+
+`BigQuerySettings` holds the project, the optional service-account file and
+`maximum_bytes_billed`, the ceiling that stops a runaway query costing money — see
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Each analytics route maps `query_key`s to SQL, keyed by `AnalyticsSpec.name`:

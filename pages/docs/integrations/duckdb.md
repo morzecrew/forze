@@ -57,6 +57,14 @@ from forze_duckdb import S3Credentials
 creds = S3Credentials(name="lake", secret_ref=SecretRef(path="lake/s3"))
 ```
 
+## Settings
+
+`DuckDbSettings` carries the database path and the resource limits — `memory_limit` in
+particular, since DuckDB otherwise sizes itself from the host's memory rather than the
+cgroup's, which is how a query gets the container OOM-killed. Extensions, object stores and
+named sources stay wiring arguments. See
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Each analytics route maps `query_key`s to DuckDB SQL (referencing a registered

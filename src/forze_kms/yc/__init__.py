@@ -9,6 +9,7 @@ require_kms_yc()
 from .adapters import YcKmsKeyDirectory, YcKmsKeyManagement, YcKmsTenantProvisioner
 from .execution import YcKmsClientDepKey, YcKmsDepsModule, yckms_lifecycle_step
 from .kernel.client import YcKmsClient, YcKmsClientPort, YcKmsConfig
+from .settings import YcKmsSettings
 
 # ----------------------- #
 
@@ -17,6 +18,7 @@ __all__ = [
     "YcKmsClientDepKey",
     "YcKmsClientPort",
     "YcKmsConfig",
+    "YcKmsSettings",
     "YcKmsDepsModule",
     "YcKmsKeyDirectory",
     "YcKmsKeyManagement",

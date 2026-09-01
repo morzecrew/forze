@@ -21,6 +21,11 @@ uv add 'forze[vault]'
 
 Needs a Vault server with a KV v2 mount.
 
+### Settings
+
+`VaultSettings` is the mountable form of `VaultConfig`: address, token, mount points and
+namespace as a pydantic model — see [connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Build a client with its config, register the deps module (which publishes a

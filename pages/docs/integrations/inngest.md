@@ -39,6 +39,12 @@ inngest = InngestClient(app_id="orders", config=InngestConfig())
 
 `RoutedInngestClient` resolves per-tenant credentials.
 
+### Settings
+
+`InngestSettings` holds the two keys — one to send events, one to verify that an inbound
+invocation really came from Inngest — as separate secrets. See
+[connection settings](index.md#connection-settings).
+
 ## Wire it
 
 Register the events you emit and bind your functions to operations:

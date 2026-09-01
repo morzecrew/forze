@@ -30,11 +30,13 @@ from .sandbox import (
     default_sandbox_restrictions,
     sandboxed_workflow_runner,
 )
+from .settings import TemporalSettings
 
 # ----------------------- #
 
 __all__ = [
     "TemporalConfig",
+    "TemporalSettings",
     "EncryptingPayloadCodec",
     "encrypting_data_converter",
     "TemporalClient",

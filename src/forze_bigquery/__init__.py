@@ -25,6 +25,7 @@ from .kernel.relation import (
     coerce_relation_spec,
     resolve_bigquery_ingest_target,
 )
+from .settings import BigQuerySettings
 
 # ----------------------- #
 
@@ -35,6 +36,7 @@ __all__ = [
     "RoutedBigQueryClient",
     "BigQueryRoutingCredentials",
     "BigQueryConfig",
+    "BigQuerySettings",
     "BigQueryClientDepKey",
     "bigquery_lifecycle_step",
     "BigQueryAnalyticsConfig",

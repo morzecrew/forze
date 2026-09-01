@@ -11,7 +11,7 @@ from forze.base.exceptions import CoreException
 pytest.importorskip("redis")
 
 from forze_redis.kernel.client import RedisConfig
-from forze_redis.settings import POOL_FIELDS, RedisSettings
+from forze_redis.settings import CLIENT_FIELDS, RedisSettings
 
 # ----------------------- #
 
@@ -101,8 +101,8 @@ class TestConfig:
 
         known = {field.name for field in attrs.fields(RedisConfig)}
 
-        assert set(POOL_FIELDS) <= known
-        assert set(POOL_FIELDS) <= set(RedisSettings.model_fields)
+        assert set(CLIENT_FIELDS) <= known
+        assert set(CLIENT_FIELDS) <= set(RedisSettings.model_fields)
 
     # ....................... #
 
@@ -114,6 +114,8 @@ class TestConfig:
 
     # ....................... #
 
-    def test_an_out_of_range_pool_size_is_refused_at_the_settings_layer(self) -> None:
-        with pytest.raises(ValidationError):
-            RedisSettings(host="cache.internal", max_size=0)
+    def test_an_out_of_range_pool_size_is_refused_by_the_config(self) -> None:
+        """One guard, not two: the settings layer forwards, `RedisConfig` decides."""
+
+        with pytest.raises(CoreException, match="Max size must be at least 1"):
+            _ = RedisSettings(host="cache.internal", max_size=0).config

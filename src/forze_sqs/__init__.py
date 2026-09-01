@@ -29,6 +29,7 @@ from .kernel.relation import (
     coerce_named_resource_spec,
     resolve_sqs_namespace,
 )
+from .settings import SQSSettings
 
 # ----------------------- #
 
@@ -36,6 +37,7 @@ __all__ = [
     "SQSClient",
     "SQSClientPort",
     "SQSConfig",
+    "SQSSettings",
     "RoutedSQSClient",
     "SQSRoutingCredentials",
     "SQSQueueMessage",

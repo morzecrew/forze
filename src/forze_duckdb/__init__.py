@@ -40,6 +40,7 @@ from .kernel.sources import (
     JsonSource,
     ParquetSource,
 )
+from .settings import DuckDbSettings
 
 # ----------------------- #
 
@@ -48,6 +49,7 @@ __all__ = [
     "DuckDbClient",
     "DuckDbClientPort",
     "DuckDbConfig",
+    "DuckDbSettings",
     "DuckDbQueryResult",
     "DuckDbClientDepKey",
     "duckdb_lifecycle_step",

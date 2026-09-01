@@ -11,7 +11,7 @@ from forze.base.exceptions import CoreException
 pytest.importorskip("psycopg")
 
 from forze_postgres.kernel.client import PostgresConfig
-from forze_postgres.settings import POOL_FIELDS, PostgresSettings
+from forze_postgres.settings import CLIENT_FIELDS, PostgresSettings
 
 # ----------------------- #
 
@@ -127,8 +127,8 @@ class TestConfig:
 
         known = {field.name for field in attrs.fields(PostgresConfig)}
 
-        assert set(POOL_FIELDS) <= known
-        assert set(POOL_FIELDS) <= set(PostgresSettings.model_fields)
+        assert set(CLIENT_FIELDS) <= known
+        assert set(CLIENT_FIELDS) <= set(PostgresSettings.model_fields)
 
     # ....................... #
 

@@ -1,4 +1,4 @@
-"""Connection settings and the DSN they build.
+"""Connection settings and the URL they build.
 
 The twin of :mod:`forze_postgres.settings`, and here for the same reason: URL grammar —
 which scheme TLS selects, where an empty password has to vanish rather than emit a bare
@@ -9,24 +9,23 @@ delimiter and extra-key policy belong to the deploying application.
 """
 
 from datetime import timedelta
-from typing import Any
 from urllib.parse import quote
 
-from pydantic import BaseModel, Field, SecretStr, computed_field
+from pydantic import SecretStr, computed_field
 
-from forze.base.exceptions import exc
+from forze.base.settings import EndpointSettings, configured_fields
 
 from .kernel.client import RedisConfig
 
 # ----------------------- #
 
-POOL_FIELDS = (
+CLIENT_FIELDS = (
     "max_size",
     "socket_timeout",
     "connect_timeout",
     "client_name",
 )
-"""Pool knobs :class:`RedisSettings` exposes, by their :class:`RedisConfig` name.
+"""Pool knobs :class:`RedisSettings` forwards, by their :class:`RedisConfig` name.
 
 Every entry is ``None`` by default and dropped from the constructor call when unset, so
 the defaults live in :class:`RedisConfig` and cannot drift out of a second copy here.
@@ -35,28 +34,22 @@ the defaults live in :class:`RedisConfig` and cannot drift out of a second copy 
 # ....................... #
 
 
-class RedisSettings(BaseModel):
+class RedisSettings(EndpointSettings):
     """Endpoint, credentials and pool tuning for one Redis client."""
 
     password: SecretStr = SecretStr("")
-
-    host: str | None = None
-    """No default on purpose: an unset host is a boot failure naming the setting, never a
-    silent connection to a ``localhost`` that happens to be listening."""
-
-    port: int | None = Field(default=None, ge=1, le=65535)
 
     ssl: bool = False
     """Select the ``rediss://`` scheme."""
 
     # ....................... #
-    # Pool tuning. ``None`` means "whatever RedisConfig defaults to" — see POOL_FIELDS.
+    # Pool tuning. ``None`` means "whatever RedisConfig defaults to" — see CLIENT_FIELDS.
     #
     # `socket_timeout` and `connect_timeout` are deliberately *not* distinguishable from
     # "explicitly disabled" here: RedisConfig accepts `None` for both to mean no timeout,
     # and an unset environment variable must never be the thing that turns a timeout off.
 
-    max_size: int | None = Field(default=None, ge=1)
+    max_size: int | None = None
     socket_timeout: timedelta | None = None
     connect_timeout: timedelta | None = None
     client_name: str | None = None
@@ -71,20 +64,7 @@ class RedisSettings(BaseModel):
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """
 
-        # Stripped first: a `REDIS__HOST=" "` out of a hand-edited env file is an unset
-        # host, and building a URL around it turns a boot failure that names the setting
-        # into a DNS error that names nothing.
-        host = (self.host or "").strip()
-
-        if not host:
-            raise exc.configuration("Redis host is required.")
-
-        # A bare IPv6 literal has to be bracketed or the first colon reads as the
-        # port separator.
-        if ":" in host and not host.startswith("["):
-            host = f"[{host}]"
-
-        endpoint = f"{host}:{self.port}" if self.port else host
+        endpoint = self.authority(service="Redis")
 
         # No credentials at all rather than a bare `:@`, which is noise in every log the
         # URL reaches and an empty credential to any client that does read it.
@@ -105,13 +85,9 @@ class RedisSettings(BaseModel):
         settings object that is otherwise fine.
         """
 
-        overrides: dict[str, Any] = {
-            name: value for name in POOL_FIELDS if (value := getattr(self, name)) is not None
-        }
-
-        return RedisConfig(**overrides)
+        return RedisConfig(**configured_fields(self, CLIENT_FIELDS))
 
 
 # ....................... #
 
-__all__ = ["POOL_FIELDS", "RedisSettings"]
+__all__ = ["CLIENT_FIELDS", "RedisSettings"]

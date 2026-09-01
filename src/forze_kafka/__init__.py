@@ -24,6 +24,7 @@ from .kernel.relation import (
     coerce_named_resource_spec,
     resolve_kafka_topic,
 )
+from .settings import KafkaSettings
 
 # ----------------------- #
 
@@ -31,6 +32,7 @@ __all__ = [
     "KafkaClient",
     "KafkaClientPort",
     "KafkaConfig",
+    "KafkaSettings",
     "RoutedKafkaClient",
     "KafkaClientDepKey",
     "KafkaDepsModule",

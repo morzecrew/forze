@@ -26,10 +26,12 @@ from .kernel.relation import (
     relations_match,
     resolve_firestore_collection,
 )
+from .settings import FirestoreSettings
 
 # ----------------------- #
 
 __all__ = [
+    "FirestoreSettings",
     "FirestoreDepsModule",
     "FirestoreClient",
     "FirestoreClientPort",
