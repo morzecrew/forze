@@ -49,6 +49,15 @@ class TestDsn:
 
     # ....................... #
 
+    def test_a_username_without_a_password_is_refused(self) -> None:
+        """`redis://app:@host` carries an empty password, so the client cannot
+        authenticate as the user that was asked for."""
+
+        with pytest.raises(ValidationError, match="username needs a password"):
+            RedisSettings(host="c", username="app")
+
+    # ....................... #
+
     def test_a_logical_database_becomes_the_path(self) -> None:
         assert RedisSettings(host="c", db=3).dsn.get_secret_value() == "redis://c/3"
 

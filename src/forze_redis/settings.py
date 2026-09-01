@@ -9,9 +9,10 @@ delimiter and extra-key policy belong to the deploying application.
 """
 
 from datetime import timedelta
+from typing import Self
 from urllib.parse import quote
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 
 from forze.base.settings import EndpointSettings, configured_fields
 
@@ -63,6 +64,23 @@ class RedisSettings(EndpointSettings):
     socket_timeout: timedelta | None = None
     connect_timeout: timedelta | None = None
     client_name: str | None = None
+
+    # ....................... #
+
+    @model_validator(mode="after")
+    def _a_username_needs_a_password(self) -> Self:
+        """An ACL user authenticates with a password or not at all.
+
+        ``redis://app:@host`` carries an empty password component, so the client cannot
+        authenticate as the user that was asked for — and depending on the server it
+        either refuses the connection or grants the default user's permissions, which is
+        the worse of the two.
+        """
+
+        if self.username and not self.password.get_secret_value():
+            raise ValueError("Redis username needs a password; set both or neither")
+
+        return self
 
     # ....................... #
 
