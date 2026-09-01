@@ -46,12 +46,14 @@ class InferenceHttpSettings(BaseModel):
         """:attr:`default_headers`, with the bearer token merged in when it adds one.
 
         Explicit headers win: a deployment that spells its own ``Authorization`` means it,
-        and silently replacing it with the token would be the harder failure to see.
+        and silently replacing it with the token would be the harder failure to see. The
+        match is case-insensitive because HTTP header names are — a ``default_headers``
+        carrying ``authorization`` would otherwise get a second, conflicting one.
         """
 
         headers = dict(self.default_headers or {})
 
-        if self.auth_token is not None and "Authorization" not in headers:
+        if self.auth_token is not None and not any(k.lower() == "authorization" for k in headers):
             headers["Authorization"] = f"Bearer {self.auth_token.get_secret_value()}"
 
         return headers

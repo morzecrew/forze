@@ -47,6 +47,24 @@ class TestInferenceHttpSettings:
 
     # ....................... #
 
+    @pytest.mark.parametrize("name", ["Authorization", "authorization", "AUTHORIZATION"])
+    def test_an_explicit_header_wins_whatever_its_casing(self, name: str) -> None:
+        """HTTP header names are case-insensitive; a second one is a conflicting one."""
+
+        pytest.importorskip("httpx")
+
+        from forze_inference.http.settings import InferenceHttpSettings
+
+        settings = InferenceHttpSettings(
+            base_url="https://m",
+            auth_token=SecretStr("tkn"),
+            default_headers={name: "Basic abc"},
+        )
+
+        assert settings.headers == {name: "Basic abc"}
+
+    # ....................... #
+
     def test_credentials_stay_out_of_the_repr(self) -> None:
         pytest.importorskip("httpx")
 
