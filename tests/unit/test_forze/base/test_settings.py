@@ -109,6 +109,29 @@ class TestEndpointSettings:
         with pytest.raises(ValidationError):
             EndpointSettings(host="db", port=port)
 
+    # ....................... #
+
+    @pytest.mark.parametrize(
+        "host",
+        ["evil.com/x?a=b", "evil.com@real", "db#frag", "db\\x", "two words"],
+    )
+    def test_refuses_a_host_carrying_a_uri_delimiter(self, host: str) -> None:
+        """The host is interpolated unescaped, so `HOST=db.internal/x@elsewhere` would
+        repoint the whole URL rather than name a host."""
+
+        with pytest.raises(CoreException, match="must not contain"):
+            EndpointSettings(host=host, port=5432).authority(service="X")
+
+    # ....................... #
+
+    @pytest.mark.parametrize("host", ["db.example:5433", "[::1]:5432"])
+    def test_refuses_a_host_carrying_its_own_port(self, host: str) -> None:
+        """Otherwise `db.example:5433` is bracketed as though it were an IPv6 literal and
+        `port` is appended after it — `[db.example:5433]:5432`."""
+
+        with pytest.raises(CoreException, match="must not carry a port"):
+            EndpointSettings(host=host, port=5432).authority(service="X")
+
 
 class TestRuntimeSettings:
     def test_defaults_are_the_deployed_shape(self) -> None:

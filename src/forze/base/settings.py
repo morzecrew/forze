@@ -30,6 +30,13 @@ from forze.base.telemetry import ExporterChoice
 
 _NORMALIZED_FIELDS = ("log_level", "log_render", "access_log", "telemetry")
 
+_NOT_IN_A_HOST = "/?#@\\ \t"
+"""Characters that end (or redirect) a URL's authority component, and so cannot be in a
+host. Refused rather than escaped: percent-encoding them would corrupt an IPv6 literal's
+brackets, and none of them is ever part of a hostname anyway."""
+
+_NOT_IN_A_HOST_TEXT = "'/', '?', '#', '@', '\\' or whitespace"
+
 # ....................... #
 
 
@@ -99,16 +106,46 @@ class EndpointSettings(BaseModel):
     # ....................... #
 
     def require_host(self, *, service: str) -> str:
-        """The host, stripped and known non-empty.
+        """The host, stripped, non-empty, and free of anything that is not a host.
 
         For a backend whose client takes host and port separately, so there is no
         authority to build. :meth:`authority` is the one to use when there is.
 
         :param service: Backend name for the error message, e.g. ``"ClickHouse"``.
-        :raises CoreException: ``configuration`` when the host is unset or blank.
+        :raises CoreException: ``configuration`` when the host is unset, blank, carries a
+            URI delimiter, or carries its own port.
         """
 
-        return require(self.host, service=service, setting="host")
+        host = require(self.host, service=service, setting="host")
+
+        # A host is interpolated into a URL unescaped — escaping it would corrupt the
+        # IPv6 brackets — so anything that ends the authority component has to be refused
+        # instead. `HOST=db.internal/x?a=b` would otherwise repoint the whole URL, and a
+        # host arriving from a compromised config source is exactly the case where that
+        # matters.
+        if any(character in host for character in _NOT_IN_A_HOST):
+            raise exc.configuration(f"{service} host must not contain {_NOT_IN_A_HOST_TEXT}.")
+
+        # One colon is a port somebody put in the wrong setting; two or more is an IPv6
+        # literal. Refusing the first is what stops it being bracketed as though it were
+        # an address and then having :attr:`port` appended after it.
+        if self._embeds_a_port(host):
+            raise exc.configuration(
+                f"{service} host must not carry a port; set the port setting instead."
+            )
+
+        return host
+
+    # ....................... #
+
+    @staticmethod
+    def _embeds_a_port(host: str) -> bool:
+        """Whether *host* carries its own ``:port``, bracketed IPv6 included."""
+
+        if host.startswith("["):
+            return ":" in host.partition("]")[2]
+
+        return host.count(":") == 1
 
     # ....................... #
 
@@ -116,12 +153,12 @@ class EndpointSettings(BaseModel):
         """``host``, or ``host:port`` when a port is set — the URL's authority component.
 
         :param service: Backend name for the error message, e.g. ``"Postgres"``.
-        :raises CoreException: ``configuration`` when the host is unset or blank.
+        :raises CoreException: ``configuration`` when :meth:`require_host` refuses the host.
         """
 
         host = self.require_host(service=service)
 
-        # A bare IPv6 literal has to be bracketed or the first colon reads as the port
+        # A bare IPv6 literal has to be bracketed or its first colon reads as the port
         # separator.
         if ":" in host and not host.startswith("["):
             host = f"[{host}]"
