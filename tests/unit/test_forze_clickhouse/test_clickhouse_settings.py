@@ -9,7 +9,7 @@ from forze.base.exceptions import CoreException
 pytest.importorskip("clickhouse_connect")
 
 from forze_clickhouse.kernel.client import ClickHouseConfig
-from forze_clickhouse.settings import CLIENT_FIELDS, ClickHouseSettings
+from forze_clickhouse.settings import CLIENT_FIELDS, SECURE_PORT, ClickHouseSettings
 
 # ----------------------- #
 
@@ -33,6 +33,23 @@ class TestConfig:
 
     def test_unset_knobs_keep_the_client_defaults(self) -> None:
         assert ClickHouseSettings(host="localhost").config == ClickHouseConfig()
+
+    # ....................... #
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            ({}, 8123),
+            ({"secure": True}, SECURE_PORT),
+            ({"secure": True, "port": 9440}, 9440),
+            ({"port": 9000}, 9000),
+        ],
+    )
+    def test_tls_moves_the_default_port(self, kwargs: dict[str, object], expected: int) -> None:
+        """`ClickHouseConfig` defaults to 8123 whether or not TLS is on, so a settings
+        object that turned TLS on and named no port would reach the plaintext listener."""
+
+        assert ClickHouseSettings(host="ch", **kwargs).config.port == expected  # type: ignore[arg-type]
 
     # ....................... #
 

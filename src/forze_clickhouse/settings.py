@@ -16,6 +16,16 @@ from .kernel.client import ClickHouseConfig
 
 # ----------------------- #
 
+SECURE_PORT = 8443
+"""Default port when :attr:`ClickHouseSettings.secure` is set and no port is given.
+
+:class:`ClickHouseConfig` defaults to 8123 for both, which is the plaintext port — so a
+settings object that turned TLS on and named no port would reach the plaintext listener.
+Resolved here rather than in the config, whose default is the client's own contract.
+"""
+
+# ....................... #
+
 CLIENT_FIELDS = (
     "port",
     "timeout",
@@ -55,10 +65,12 @@ class ClickHouseSettings(EndpointSettings):
     def config(self) -> ClickHouseConfig:
         """The connection configuration these settings describe.
 
-        :class:`ClickHouseConfig` defaults its host to ``localhost``; this refuses an
-        unset one instead, the same as every other settings model here. A connection that
-        silently falls back to whatever is listening locally is the failure mode the
-        refusal exists for, and a local stack sets the host anyway.
+        Two departures from :class:`ClickHouseConfig`'s own defaults, both toward failing
+        loudly. It defaults the host to ``localhost``; this refuses an unset one, because
+        a connection that silently falls back to whatever is listening locally is the
+        failure mode the refusal exists for. And it defaults the port to 8123 whether or
+        not TLS is on; this resolves an unset port to :data:`SECURE_PORT` when
+        :attr:`secure` is set.
 
         A property rather than a ``computed_field``: :class:`ClickHouseConfig` is an attrs
         class, and putting it in the serialized shape would make ``model_dump`` fail on a
@@ -67,16 +79,21 @@ class ClickHouseSettings(EndpointSettings):
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """
 
+        overrides = configured_fields(self, CLIENT_FIELDS)
+
+        if self.port is None and self.secure:
+            overrides["port"] = SECURE_PORT
+
         return ClickHouseConfig(
             host=self.require_host(service="ClickHouse"),
             username=self.username,
             password=self.password,
             database=self.database,
             secure=self.secure,
-            **configured_fields(self, CLIENT_FIELDS),
+            **overrides,
         )
 
 
 # ....................... #
 
-__all__ = ["CLIENT_FIELDS", "ClickHouseSettings"]
+__all__ = ["CLIENT_FIELDS", "SECURE_PORT", "ClickHouseSettings"]
