@@ -61,6 +61,33 @@ class TestConfig:
 
     # ....................... #
 
+    def test_refuses_a_url_with_no_host(self) -> None:
+        with pytest.raises(ValidationError, match="must name a host"):
+            VaultSettings(url="https://", token=SecretStr("hvs.x"))
+
+    # ....................... #
+
+    def test_refuses_an_out_of_range_port(self) -> None:
+        """`urlsplit().port` parses lazily, so it would otherwise sit in the settings
+        object until the client read it and reported it as its own problem."""
+
+        with pytest.raises(ValidationError, match="invalid port"):
+            VaultSettings(url="https://v:99999", token=SecretStr("hvs.x"))
+
+    # ....................... #
+
+    def test_the_rule_survives_an_assignment(self) -> None:
+        """pydantic does not re-run a validator on assignment, so `config` checks it too —
+        otherwise the invariant would hold for one instant rather than for the object."""
+
+        settings = VaultSettings(url="https://vault.internal", token=SecretStr("hvs.x"))
+        settings.url = "http://vault.internal"
+
+        with pytest.raises(ValueError, match="must be https"):
+            _ = settings.config
+
+    # ....................... #
+
     @pytest.mark.parametrize("url", ["vault.internal", "ftp://v", "ftp://127.0.0.1:8200"])
     def test_refuses_a_url_that_is_not_http_at_all(self, url: str) -> None:
         """Checked before the loopback carve-out, which is why `ftp://127.0.0.1` is

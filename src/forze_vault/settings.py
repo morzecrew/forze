@@ -56,6 +56,44 @@ def _is_loopback(hostname: str | None) -> bool:
 # ....................... #
 
 
+def _checked_url(url: str) -> str:
+    """*url*, or a message saying why it cannot address a Vault.
+
+    Shared by the validator and by :attr:`VaultSettings.config` on purpose. The validator
+    is what gives an operator the error at load; the call from ``config`` is what makes the
+    rule hold for the object's whole life, since pydantic does not re-run a validator when
+    a field is assigned.
+
+    :raises ValueError: when the URL cannot address a Vault.
+    """
+
+    parts = urlsplit(url)
+
+    if parts.scheme not in ("http", "https"):
+        raise ValueError("Vault url must start with https:// (or http:// on loopback)")
+
+    if not parts.hostname:
+        raise ValueError("Vault url must name a host")
+
+    # `parts.port` parses lazily, so an out-of-range port sits in the settings object until
+    # something reads it — which is the client, reporting it as its own problem.
+    try:
+        _ = parts.port
+    except ValueError as error:
+        raise ValueError("Vault url has an invalid port") from error
+
+    if parts.scheme == "http" and not _is_loopback(parts.hostname):
+        raise ValueError(
+            f"Vault url must be https:// for {parts.hostname} — http:// would put the "
+            f"token and every secret Vault returns on the wire"
+        )
+
+    return url
+
+
+# ....................... #
+
+
 class VaultSettings(BaseModel):
     """Address, token and mount points for one Vault client."""
 
@@ -105,6 +143,10 @@ class VaultSettings(BaseModel):
         Loopback is the carve-out, and only that: ``vault server -dev`` listens on
         ``http://127.0.0.1:8200``, and a packet that never leaves the machine is not a
         cleartext transmission. Anything else must be ``https``.
+
+        :attr:`config` re-checks the same rule, because pydantic does not re-run a
+        validator when a field is assigned — so this alone would hold for one instant
+        rather than for the object's life.
         """
 
         # Blank counts as unset, not as a bad scheme: `config` refuses it with the message
@@ -114,19 +156,7 @@ class VaultSettings(BaseModel):
         if not url:
             return self
 
-        parts = urlsplit(url)
-
-        if parts.scheme not in ("http", "https"):
-            raise ValueError("Vault url must start with https:// (or http:// on loopback)")
-
-        if parts.scheme == "https":
-            return self
-
-        if not _is_loopback(parts.hostname):
-            raise ValueError(
-                f"Vault url must be https:// for {parts.hostname} — http:// would put the "
-                f"token and every secret Vault returns on the wire"
-            )
+        _checked_url(url)
 
         return self
 
@@ -144,7 +174,7 @@ class VaultSettings(BaseModel):
         """
 
         return VaultConfig(
-            url=require(self.url, service="Vault", setting="url"),
+            url=_checked_url(require(self.url, service="Vault", setting="url")),
             token=self.token,
             **configured_fields(self, CLIENT_FIELDS),
         )
