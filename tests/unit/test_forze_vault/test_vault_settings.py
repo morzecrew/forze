@@ -10,6 +10,7 @@ pytest.importorskip("hvac")
 
 from urllib3.util.retry import Retry
 
+from forze_vault._net import is_loopback
 from forze_vault.kernel.client import VaultConfig
 from forze_vault.kernel.client.client import build_session
 from forze_vault.settings import CLIENT_FIELDS, VaultSettings
@@ -151,3 +152,27 @@ class TestSession:
         session = build_session("https://vault.internal", retry=Retry(total=1))
 
         assert set(session.adapters) >= {"http://", "https://"}
+
+
+# ....................... #
+
+
+class TestIsLoopback:
+    """Shared by the settings validator and the client's session, and reachable from the
+    client with no host — `build_session` has no `_checked_url` in front of it."""
+
+    @pytest.mark.parametrize(
+        "hostname",
+        ["localhost", "127.0.0.1", "127.1.2.3", "::1", "[::1]"],
+    )
+    def test_recognises_this_machine(self, hostname: str) -> None:
+        assert is_loopback(hostname) is True
+
+    # ....................... #
+
+    @pytest.mark.parametrize(
+        "hostname",
+        [None, "", "vault.internal", "10.0.0.5", "2001:db8::1", "localhost.evil.com"],
+    )
+    def test_recognises_everything_else(self, hostname: str | None) -> None:
+        assert is_loopback(hostname) is False
