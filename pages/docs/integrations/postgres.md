@@ -29,6 +29,25 @@ pg = PostgresClient()
 Use `RoutedPostgresClient` when the tenant or route decides the DSN — see
 [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
 
+### Settings
+
+`PostgresSettings` builds the DSN from parts, so URI grammar — percent-encoding a
+password that contains `@`, bracketing an IPv6 host, appending `sslmode` — stays in this
+package rather than in every application's settings module:
+
+```python
+from forze_postgres import PostgresSettings
+
+pg_settings = PostgresSettings(host="db.internal", port=5432, database="orders", ssl=True)
+
+pg_settings.dsn      # SecretStr("postgresql://postgres:@db.internal:5432/orders?sslmode=require")
+pg_settings.config   # PostgresConfig, from the pool fields that are set
+```
+
+A plain `BaseModel`, not a `BaseSettings`: mount it on your own root settings class, which
+owns the environment prefix and delimiter. `host` has no default — an unset one raises a
+configuration error naming the setting rather than connecting to whatever is on localhost.
+
 ### Bulk loading
 
 `copy_rows` runs `COPY … FROM STDIN`, the engine's own bulk path — no bind-parameter

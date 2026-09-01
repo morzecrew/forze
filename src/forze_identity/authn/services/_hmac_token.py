@@ -9,6 +9,8 @@ import attrs
 
 from forze.base.primitives import secure_random_bytes
 
+from .constants import MIN_SECRET_BYTES
+
 # ----------------------- #
 
 
@@ -31,7 +33,7 @@ class HmacTokenService:
     given ``(pepper, token)`` pair.
     """
 
-    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
+    pepper: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(MIN_SECRET_BYTES))
     config: TokenConfigLike
 
     # ....................... #

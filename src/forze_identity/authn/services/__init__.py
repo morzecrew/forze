@@ -5,6 +5,7 @@ from .access_token import (
     SigningStats,
 )
 from .api_key import ApiKeyConfig, ApiKeyService
+from .constants import MIN_SECRET_BYTES
 from .invite_token import InviteTokenConfig, InviteTokenService
 from .password import PasswordConfig, PasswordService
 from .refresh_token import RefreshTokenConfig, RefreshTokenService
@@ -19,6 +20,7 @@ from .signing import (
 # ----------------------- #
 
 __all__ = [
+    "MIN_SECRET_BYTES",
     "ApiKeyService",
     "ApiKeyConfig",
     "AccessTokenClaims",

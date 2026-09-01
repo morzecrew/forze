@@ -1,0 +1,119 @@
+"""Unit tests for :class:`forze_redis.settings.RedisSettings` (no Redis I/O)."""
+
+from datetime import timedelta
+
+import attrs
+import pytest
+from pydantic import SecretStr, ValidationError
+
+from forze.base.exceptions import CoreException
+
+pytest.importorskip("redis")
+
+from forze_redis.kernel.client import RedisConfig
+from forze_redis.settings import POOL_FIELDS, RedisSettings
+
+# ----------------------- #
+
+
+class TestDsn:
+    def test_builds_the_full_endpoint(self) -> None:
+        settings = RedisSettings(password=SecretStr("hunter2"), host="cache.internal", port=6379)
+
+        assert settings.dsn.get_secret_value() == "redis://:hunter2@cache.internal:6379"
+
+    # ....................... #
+
+    def test_omits_credentials_when_there_is_no_password(self) -> None:
+        """Not a bare `:@` — an ACL-enabled server refuses that as an empty login."""
+
+        assert (
+            RedisSettings(host="cache.internal").dsn.get_secret_value() == "redis://cache.internal"
+        )
+
+    # ....................... #
+
+    def test_ssl_selects_the_secure_scheme(self) -> None:
+        settings = RedisSettings(host="cache.internal", ssl=True)
+
+        assert settings.dsn.get_secret_value().startswith("rediss://")
+
+    # ....................... #
+
+    def test_percent_encodes_the_password(self) -> None:
+        settings = RedisSettings(password=SecretStr("p@ss/word"), host="cache.internal")
+
+        assert settings.dsn.get_secret_value() == "redis://:p%40ss%2Fword@cache.internal"
+
+    # ....................... #
+
+    def test_brackets_a_bare_ipv6_host(self) -> None:
+        assert RedisSettings(host="::1", port=6379).dsn.get_secret_value() == "redis://[::1]:6379"
+
+    # ....................... #
+
+    @pytest.mark.parametrize("host", [None, "", "   "])
+    def test_requires_a_host(self, host: str | None) -> None:
+        """Whitespace counts as unset — otherwise the URL reaches DNS and fails there."""
+
+        with pytest.raises(CoreException, match="Redis host is required"):
+            _ = RedisSettings(host=host).dsn
+
+    # ....................... #
+
+    def test_rejects_an_out_of_range_port(self) -> None:
+        with pytest.raises(ValidationError):
+            RedisSettings(host="cache.internal", port=0)
+
+
+# ....................... #
+
+
+class TestConfig:
+    def test_unset_knobs_keep_the_client_defaults(self) -> None:
+        """Including the timeouts: an unset variable must never disable one."""
+
+        config = RedisSettings(host="cache.internal").config
+
+        assert config == RedisConfig()
+        assert config.socket_timeout == timedelta(seconds=5)
+
+    # ....................... #
+
+    def test_set_knobs_reach_the_pool_config(self) -> None:
+        config = RedisSettings(
+            host="cache.internal",
+            max_size=5,
+            socket_timeout=timedelta(seconds=2),
+            connect_timeout=timedelta(seconds=1),
+            client_name="orders-api",
+        ).config
+
+        assert config.max_size == 5
+        assert config.socket_timeout == timedelta(seconds=2)
+        assert config.connect_timeout == timedelta(seconds=1)
+        assert config.client_name == "orders-api"
+
+    # ....................... #
+
+    def test_pool_field_names_match_the_pool_config(self) -> None:
+        """Fails the day a `RedisConfig` field is renamed out from under the settings."""
+
+        known = {field.name for field in attrs.fields(RedisConfig)}
+
+        assert set(POOL_FIELDS) <= known
+        assert set(POOL_FIELDS) <= set(RedisSettings.model_fields)
+
+    # ....................... #
+
+    def test_pool_validation_still_belongs_to_the_config(self) -> None:
+        """A knob pydantic does not range-check, so the refusal is `RedisConfig`'s own."""
+
+        with pytest.raises(CoreException, match="Socket timeout must be positive"):
+            _ = RedisSettings(host="cache.internal", socket_timeout=timedelta(0)).config
+
+    # ....................... #
+
+    def test_an_out_of_range_pool_size_is_refused_at_the_settings_layer(self) -> None:
+        with pytest.raises(ValidationError):
+            RedisSettings(host="cache.internal", max_size=0)

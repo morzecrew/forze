@@ -28,6 +28,25 @@ redis = RedisClient()
 
 Use `RoutedRedisClient` when the tenant or route selects the endpoint.
 
+### Settings
+
+`RedisSettings` builds the URL from parts, so its grammar — which scheme TLS selects,
+percent-encoding the password, omitting the credentials entirely when there is no
+password rather than emitting a bare `:@` — stays here:
+
+```python
+from forze_redis import RedisSettings
+
+cache = RedisSettings(host="cache.internal", port=6379, ssl=True)
+
+cache.dsn      # SecretStr("rediss://cache.internal:6379")
+cache.config   # RedisConfig, from the pool fields that are set
+```
+
+A plain `BaseModel`, not a `BaseSettings`: mount it on your own root settings class, which
+owns the environment prefix and delimiter. `host` has no default — an unset one raises a
+configuration error naming the setting rather than connecting to whatever is on localhost.
+
 ## Wire it
 
 Each resource takes a **namespace** (a logical key prefix); set

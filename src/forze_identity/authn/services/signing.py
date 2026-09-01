@@ -21,6 +21,8 @@ from jwt.algorithms import ECAlgorithm, HMACAlgorithm, RSAAlgorithm
 
 from forze.base.exceptions import exc
 
+from .constants import MIN_SECRET_BYTES
+
 # ----------------------- #
 
 
@@ -81,7 +83,7 @@ def _asymmetric_algorithm(algorithm: str) -> RSAAlgorithm | ECAlgorithm:
 class Hs256Signer:
     """HMAC-SHA256 signer backed by an in-process secret (the default)."""
 
-    secret: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(32))
+    secret: bytes = attrs.field(repr=False, validator=attrs.validators.min_len(MIN_SECRET_BYTES))
 
     @property
     def algorithm(self) -> str:
