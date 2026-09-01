@@ -83,16 +83,18 @@ class MongoSettings(EndpointSettings):
         unset host is the normal state of a settings object nobody configured yet, while
         both of these are a configuration that cannot be meant.
 
-        A password with no user is the dangerous half: the URI drops it silently and
-        connects unauthenticated wherever the server allows it, so the failure is a
-        successful connection with the wrong identity rather than an error.
+        Both directions of the credential pair. A password with no user is the dangerous
+        half — the URI drops it silently and connects unauthenticated wherever the server
+        allows it, so the failure is a successful connection under the wrong identity
+        rather than an error. A user with no password is the merely broken half: the URI
+        carries ``user:@``, and the client authenticates with an empty password.
         """
 
         if self.srv and self.port is not None:
             raise ValueError("srv resolves the port from DNS; leave port unset")
 
-        if self.password.get_secret_value() and not self.user:
-            raise ValueError("Mongo password needs a user; set both or neither")
+        if bool(self.user) != bool(self.password.get_secret_value()):
+            raise ValueError("Mongo user and password go together; set both or neither")
 
         return self
 

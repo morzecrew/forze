@@ -37,12 +37,18 @@ class TestUri:
 
     # ....................... #
 
-    def test_a_password_without_a_user_is_refused(self) -> None:
-        """The dangerous half: the URI would drop it and connect unauthenticated, so the
-        failure is a successful connection with the wrong identity rather than an error."""
+    @pytest.mark.parametrize(
+        "kwargs",
+        [{"password": SecretStr("orphan")}, {"user": "app"}],
+    )
+    def test_half_a_credential_pair_is_refused(self, kwargs: dict[str, object]) -> None:
+        """A password with no user is the dangerous half — the URI would drop it and
+        connect unauthenticated, so the failure is a successful connection under the wrong
+        identity. A user with no password is the merely broken half: `user:@` authenticates
+        with an empty password."""
 
-        with pytest.raises(ValidationError, match="password needs a user"):
-            MongoSettings(host="m.internal", password=SecretStr("orphan"))
+        with pytest.raises(ValidationError, match="go together"):
+            MongoSettings(host="m.internal", **kwargs)  # type: ignore[arg-type]
 
     # ....................... #
 

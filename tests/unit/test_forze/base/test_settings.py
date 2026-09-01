@@ -144,7 +144,7 @@ class TestEndpointSettings:
 
     # ....................... #
 
-    @pytest.mark.parametrize("host", ["[::1", "::1]", "[::1]x", "[[::1]]"])
+    @pytest.mark.parametrize("host", ["[::1", "::1]", "[::1]x", "[[::1]]", "[db.internal]"])
     def test_refuses_malformed_ipv6_brackets(self, host: str) -> None:
         """An unclosed bracket slips past the port check — there is nothing after a `]`
         that is not there — and `authority` then leaves it alone because it already starts
@@ -152,6 +152,22 @@ class TestEndpointSettings:
 
         with pytest.raises(CoreException, match="malformed IPv6 brackets"):
             EndpointSettings(host=host, port=5432).authority(service="X")
+
+    # ....................... #
+
+    def test_refuses_a_multi_colon_host_that_is_not_an_address(self) -> None:
+        """Two colons meant "IPv6" and got brackets, so `a:b:c` became `[a:b:c]` — an
+        authority no client can parse."""
+
+        with pytest.raises(CoreException, match="not a hostname or an IPv6 address"):
+            EndpointSettings(host="a:b:c").authority(service="X")
+
+    # ....................... #
+
+    def test_accepts_a_zone_scoped_ipv6_literal(self) -> None:
+        assert EndpointSettings(host="fe80::1%25eth0").authority(service="X") == (
+            "[fe80::1%25eth0]"
+        )
 
     # ....................... #
 

@@ -18,6 +18,7 @@ so the root settings class stays in the application and mounts this as a field.
 """
 
 from collections.abc import Sequence
+from ipaddress import IPv6Address
 from typing import Any
 
 from pydantic import BaseModel, Field, computed_field, field_validator
@@ -154,9 +155,26 @@ class EndpointSettings(BaseModel):
     # ....................... #
 
     @staticmethod
-    def _brackets_are_sound(host: str) -> bool:
-        """Whether *host* is either unbracketed, or a well-formed ``[...]`` with at most a
-        ``:port`` after it."""
+    def _is_ipv6(text: str) -> bool:
+        """Whether *text* is an IPv6 literal, zone id included."""
+
+        try:
+            IPv6Address(text)
+        except ValueError:
+            return False
+
+        return True
+
+    # ....................... #
+
+    @classmethod
+    def _brackets_are_sound(cls, host: str) -> bool:
+        """Whether *host* is either unbracketed, or ``[<ipv6>]`` with at most a ``:port``.
+
+        The contents are checked, not just the shape: brackets mean "this is an address,
+        read its colons as an address" — so ``[db.internal]`` is not a stricter spelling
+        of a hostname, it is an authority no client can parse.
+        """
 
         if host.count("[") != host.count("]"):
             return False
@@ -164,7 +182,10 @@ class EndpointSettings(BaseModel):
         if not host.startswith("["):
             return "]" not in host
 
-        tail = host.partition("]")[2]
+        inside, _, tail = host[1:].partition("]")
+
+        if not cls._is_ipv6(inside):
+            return False
 
         return tail == "" or tail.startswith(":")
 
@@ -191,8 +212,12 @@ class EndpointSettings(BaseModel):
         host = self.require_host(service=service)
 
         # A bare IPv6 literal has to be bracketed or its first colon reads as the port
-        # separator.
+        # separator. Anything else with two or more colons is not an address and would be
+        # bracketed into an authority no client can parse.
         if ":" in host and not host.startswith("["):
+            if not self._is_ipv6(host):
+                raise exc.configuration(f"{service} host is not a hostname or an IPv6 address.")
+
             host = f"[{host}]"
 
         return f"{host}:{self.port}" if self.port else host
