@@ -83,7 +83,12 @@ Three rules hold across all of them:
 - **Unset knobs are dropped, not forwarded as `None`.** The defaults live in the backend's
   own config object, never in a second copy on the settings model.
 - **Secrets are `SecretStr`** and the assembled URL is one too wherever it carries a
-  credential, so neither reaches a log by accident.
+  credential, so neither reaches a log by accident. The assembled value is a plain
+  property rather than a serialized field: `model_dump()` on a settings root works even
+  where a mounted backend was never configured, and no DSN lands in a dump.
+- **`ssl=True` verifies the server certificate** — `sslmode=verify-full`, `neo4j+s://`,
+  `rediss://`, `https://`. A deployment that wants weaker TLS leaves the flag off and
+  configures the backend's own environment variables.
 
 The URL-building models share `forze.base.settings.EndpointSettings` for the parts that are
 URL grammar rather than backend knowledge — bracketing a bare IPv6 host, joining the port.

@@ -32,15 +32,16 @@ Use `RoutedPostgresClient` when the tenant or route decides the DSN — see
 ### Settings
 
 `PostgresSettings` builds the DSN from parts, so URI grammar — percent-encoding a
-password that contains `@`, bracketing an IPv6 host, appending `sslmode` — stays in this
-package rather than in every application's settings module:
+password that contains `@`, bracketing an IPv6 host, choosing an `sslmode` that actually
+authenticates the server — stays in this package rather than in every application's
+settings module:
 
 ```python
 from forze_postgres import PostgresSettings
 
 pg_settings = PostgresSettings(host="db.internal", port=5432, database="orders", ssl=True)
 
-pg_settings.dsn      # SecretStr("postgresql://postgres:@db.internal:5432/orders?sslmode=require")
+pg_settings.dsn      # SecretStr("postgresql://postgres:@db.internal:5432/orders?sslmode=verify-full")
 pg_settings.config   # PostgresConfig, from the pool fields that are set
 ```
 

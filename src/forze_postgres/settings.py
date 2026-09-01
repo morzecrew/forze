@@ -13,7 +13,7 @@ a field on its own root settings class.
 from datetime import timedelta
 from urllib.parse import quote
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 
 from forze.base.settings import EndpointSettings, configured_fields
 
@@ -47,13 +47,17 @@ class PostgresSettings(EndpointSettings):
     database: str = "postgres"
 
     ssl: bool = False
-    """Append ``sslmode=require`` to the DSN.
+    """Append ``sslmode=verify-full`` to the DSN.
 
-    ``require`` encrypts the connection and does **not** verify the server certificate,
-    which would need a CA bundle this model has nowhere to put. A URI parameter beats the
-    environment, so a deployment wanting ``verify-ca`` or ``verify-full`` leaves this off
-    and sets ``PGSSLMODE`` / ``PGSSLROOTCERT`` instead — off appends nothing, leaving
-    libpq's own resolution intact.
+    Verify-full, not ``require``: ``require`` encrypts and authenticates nothing, so it
+    stops an eavesdropper and not the impersonator the encryption was for. Every sibling
+    model here means the same thing by ``ssl`` — Neo4j's ``+s``, Redis's ``rediss://`` —
+    and Postgres was the one place where it did not.
+
+    Verification reads the system trust store unless ``PGSSLROOTCERT`` names a CA bundle.
+    A deployment that genuinely wants weaker TLS — a self-signed development server —
+    leaves this off and sets ``PGSSLMODE`` itself: off appends nothing, so libpq's own
+    resolution stands, and a URI parameter would have overridden it.
     """
 
     # ....................... #
@@ -67,10 +71,14 @@ class PostgresSettings(EndpointSettings):
 
     # ....................... #
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def dsn(self) -> SecretStr:
-        """``postgresql://user:password@host[:port]/database[?sslmode=require]``.
+        """``postgresql://user:password@host[:port]/database[?sslmode=verify-full]``.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
 
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """
@@ -82,7 +90,7 @@ class PostgresSettings(EndpointSettings):
         user = quote(self.user, safe="")
         password = quote(self.password.get_secret_value(), safe="")
         database = quote(self.database, safe="")
-        query = "?sslmode=require" if self.ssl else ""
+        query = "?sslmode=verify-full" if self.ssl else ""
 
         return SecretStr(f"postgresql://{user}:{password}@{endpoint}/{database}{query}")
 

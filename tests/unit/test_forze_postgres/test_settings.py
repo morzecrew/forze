@@ -38,13 +38,17 @@ class TestDsn:
     # ....................... #
 
     def test_ssl_is_actually_read(self) -> None:
-        """The regression this module exists for: `ssl` was declared and never used."""
+        """The regression this module exists for: `ssl` was declared and never used.
+
+        `verify-full`, not `require`: `require` encrypts and authenticates nothing, and
+        every sibling model's `ssl=True` verifies the certificate.
+        """
 
         plain = PostgresSettings(host="db.internal").dsn.get_secret_value()
         secure = PostgresSettings(host="db.internal", ssl=True).dsn.get_secret_value()
 
         assert "sslmode" not in plain
-        assert secure.endswith("?sslmode=require")
+        assert secure.endswith("?sslmode=verify-full")
 
     # ....................... #
 
