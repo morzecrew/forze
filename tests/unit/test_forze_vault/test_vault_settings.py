@@ -8,7 +8,10 @@ from forze.base.exceptions import CoreException
 
 pytest.importorskip("hvac")
 
+from urllib3.util.retry import Retry
+
 from forze_vault.kernel.client import VaultConfig
+from forze_vault.kernel.client.client import build_session
 from forze_vault.settings import CLIENT_FIELDS, VaultSettings
 
 # ----------------------- #
@@ -115,3 +118,36 @@ class TestConfig:
 
         assert set(CLIENT_FIELDS) <= {field.name for field in attrs.fields(VaultConfig)}
         assert set(CLIENT_FIELDS) <= set(VaultSettings.model_fields)
+
+
+# ....................... #
+
+
+class TestSession:
+    """`requests` has no built-in localhost bypass, so the plaintext-on-loopback exception
+    in `VaultSettings` is only sound if the client stops honouring the proxy environment
+    there. This is what makes it sound."""
+
+    @pytest.mark.parametrize("url", ["http://127.0.0.1:8200", "http://localhost:8200"])
+    def test_a_loopback_client_ignores_the_proxy_environment(
+        self, url: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HTTP_PROXY", "http://proxy.corp:8080")
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+
+        assert build_session(url, retry=Retry(total=1)).trust_env is False
+
+    # ....................... #
+
+    def test_a_remote_client_keeps_normal_proxy_behaviour(self) -> None:
+        """A deployment behind a corporate proxy needs it for a remote Vault."""
+
+        assert build_session("https://vault.internal:8200", retry=Retry(total=1)).trust_env
+
+    # ....................... #
+
+    def test_retries_are_mounted_on_both_schemes(self) -> None:
+        session = build_session("https://vault.internal", retry=Retry(total=1))
+
+        assert set(session.adapters) >= {"http://", "https://"}

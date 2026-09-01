@@ -6,7 +6,6 @@ requires the address — so this adds one thing: it can mount on an application'
 """
 
 from datetime import timedelta
-from ipaddress import ip_address
 from typing import Self
 from urllib.parse import urlsplit
 
@@ -14,6 +13,7 @@ from pydantic import BaseModel, SecretStr, model_validator
 
 from forze.base.settings import configured_fields, require
 
+from ._net import is_loopback
 from .kernel.client import VaultConfig
 
 # ----------------------- #
@@ -34,24 +34,6 @@ CLIENT_FIELDS = (
 is ``None`` by default and dropped when unset, so the defaults live in
 :class:`VaultConfig` and cannot drift out of a second copy here.
 """
-
-# ....................... #
-
-
-def _is_loopback(hostname: str | None) -> bool:
-    """Whether *hostname* names this machine, by name or by address."""
-
-    if not hostname:
-        return False
-
-    if hostname == "localhost":
-        return True
-
-    try:
-        return ip_address(hostname.strip("[]")).is_loopback
-    except ValueError:
-        return False
-
 
 # ....................... #
 
@@ -82,7 +64,7 @@ def _checked_url(url: str) -> str:
     except ValueError as error:
         raise ValueError("Vault url has an invalid port") from error
 
-    if parts.scheme == "http" and not _is_loopback(parts.hostname):
+    if parts.scheme == "http" and not is_loopback(parts.hostname):
         raise ValueError(
             f"Vault url must be https:// for {parts.hostname} — http:// would put the "
             f"token and every secret Vault returns on the wire"
@@ -106,6 +88,11 @@ class VaultSettings(BaseModel):
     a secret, and :attr:`token` rides on every request, so plaintext to anything but this
     machine puts both on the wire — and :attr:`verify` cannot protect a connection that
     was never encrypted.
+
+    The loopback exception holds because :class:`~forze_vault.VaultClient` stops honouring
+    the proxy environment when the address is a loopback one. ``requests`` has no built-in
+    localhost bypass, so without that a ``HTTP_PROXY`` would send the token to the proxy —
+    off this machine, which is the one thing the exception assumes never happens.
     """
 
     token: SecretStr = SecretStr("")
