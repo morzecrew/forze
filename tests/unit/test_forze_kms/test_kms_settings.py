@@ -64,15 +64,38 @@ class TestYcKmsSettings:
 
     # ....................... #
 
-    def test_two_tokens_are_refused(self) -> None:
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"iam_token": SecretStr("i"), "oauth_token": SecretStr("o")},
+            {"iam_token": SecretStr("i"), "service_account_key": {"k": "v"}},
+            {"oauth_token": SecretStr("o"), "service_account_key": {"k": "v"}},
+        ],
+    )
+    def test_two_credentials_are_refused(self, kwargs: dict[str, object]) -> None:
         """Not twice the authentication — a question about which one wins."""
 
         pytest.importorskip("yandexcloud")
 
         from forze_kms.yc.settings import YcKmsSettings
 
-        with pytest.raises(ValidationError, match="not both"):
-            YcKmsSettings(iam_token=SecretStr("i"), oauth_token=SecretStr("o"))
+        with pytest.raises(ValidationError, match="not several"):
+            YcKmsSettings(**kwargs)  # type: ignore[arg-type]
+
+    # ....................... #
+
+    def test_the_service_account_key_never_reaches_a_dump(self) -> None:
+        """It holds a private key, and no `SecretStr` wraps a mapping."""
+
+        pytest.importorskip("yandexcloud")
+
+        from forze_kms.yc.settings import YcKmsSettings
+
+        settings = YcKmsSettings(service_account_key={"private_key": "-----BEGIN"})
+
+        assert "service_account_key" not in settings.model_dump()
+        assert "BEGIN" not in repr(settings)
+        assert settings.service_account_key == {"private_key": "-----BEGIN"}
 
     # ....................... #
 

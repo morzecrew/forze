@@ -42,6 +42,9 @@ class TestSettings:
         assert "bearer-value" not in repr(settings)
         assert "header-value" not in repr(settings)
 
+        # `repr=False` alone would still have let `model_dump()` emit the header.
+        assert "default_headers" not in settings.model_dump()
+
     # ....................... #
 
     def test_field_names_match_the_client_config(self) -> None:

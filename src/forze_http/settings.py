@@ -36,7 +36,7 @@ class HttpSettings(BaseModel):
     auth_token: SecretStr | None = None
     """Bearer token, merged into ``Authorization`` when :attr:`default_headers` omits it."""
 
-    default_headers: dict[str, str] | None = Field(default=None, repr=False)
+    default_headers: dict[str, str] | None = Field(default=None, repr=False, exclude=True)
     """Headers sent with every request. A header value can itself be a credential, which
     is why this is excluded from ``repr``."""
 

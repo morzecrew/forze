@@ -18,7 +18,7 @@ class InferenceHttpSettings(BaseModel):
     base_url: str | None = None
     """Model-serving endpoint. Required when read — see :meth:`require_base_url`."""
 
-    default_headers: dict[str, str] | None = Field(default=None, repr=False)
+    default_headers: dict[str, str] | None = Field(default=None, repr=False, exclude=True)
     """Headers sent with every inference call — an ``Authorization`` among them, which is
     why this is excluded from ``repr``."""
 
