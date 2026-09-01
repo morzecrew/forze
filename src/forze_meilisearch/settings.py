@@ -2,7 +2,7 @@
 
 from datetime import timedelta
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 
 from forze.base.settings import EndpointSettings, configured_fields
 
@@ -34,7 +34,6 @@ class MeilisearchSettings(EndpointSettings):
 
     # ....................... #
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def url(self) -> str:
         """``http[s]://host[:port]``.
@@ -42,6 +41,11 @@ class MeilisearchSettings(EndpointSettings):
         A plain ``str``, not a ``SecretStr``: no credentials are in it — the key travels
         in a header — and wrapping it would only hide the endpoint from every log line
         that wants to say where a search went.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
 
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """

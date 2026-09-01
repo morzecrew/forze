@@ -8,7 +8,7 @@ on the first write it routes nowhere.
 
 from datetime import timedelta
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 
 from forze.base.exceptions import exc
 from forze.base.settings import EndpointSettings, configured_fields
@@ -68,10 +68,14 @@ class Neo4jSettings(EndpointSettings):
 
     # ....................... #
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def uri(self) -> SecretStr:
         """``{neo4j|bolt}[+s]://host[:port]``.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
 
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """

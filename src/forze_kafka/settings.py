@@ -7,7 +7,7 @@ it back exactly once, is what this adds over passing the string around.
 
 from datetime import timedelta
 
-from pydantic import BaseModel, SecretStr, computed_field
+from pydantic import BaseModel, SecretStr
 
 from forze.base.exceptions import exc
 from forze.base.settings import configured_fields
@@ -56,12 +56,16 @@ class KafkaSettings(BaseModel):
 
     # ....................... #
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def servers(self) -> str:
         """The seed list as aiokafka's comma-joined ``bootstrap_servers`` string.
 
         A plain ``str``: no credentials are in it, the SASL pair travels in the config.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
 
         :raises CoreException: ``configuration`` when the list is empty or all blank.
         """

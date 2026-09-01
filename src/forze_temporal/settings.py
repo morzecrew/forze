@@ -5,7 +5,7 @@ address, which is the one thing here that has to be assembled rather than read â
 one an application splits into two environment variables and joins back by hand.
 """
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 
 from forze.base.settings import EndpointSettings, configured_fields
 
@@ -43,12 +43,16 @@ class TemporalSettings(EndpointSettings):
 
     # ....................... #
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def address(self) -> str:
         """``host[:port]`` â€” what :func:`temporal_lifecycle_step` takes as its ``host``.
 
         A plain ``str``: no credentials are in it, the API key travels separately.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
 
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """

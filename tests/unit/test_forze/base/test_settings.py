@@ -1,5 +1,7 @@
 """Unit tests for :class:`forze.base.settings.RuntimeSettings`."""
 
+import importlib
+
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -163,3 +165,41 @@ class TestRuntimeSettings:
         sampler = AccessLogSampler(mode=settings.access_log)
 
         assert sampler.should_log(subject="/orders", is_error=False) is False
+
+
+# ....................... #
+
+
+class TestAssembledValuesAreNotSerialized:
+    """Every integration settings model can be dumped before it is configured.
+
+    The assembled connection string refuses an unset endpoint, so exposing it as a
+    ``computed_field`` would make ``model_dump()`` raise on a settings root that merely
+    *mounts* a backend it does not use. Keeping the credential out of every dump is the
+    right default for one anyway.
+    """
+
+    @pytest.mark.parametrize(
+        ("module", "dep", "cls_name", "attr"),
+        [
+            ("forze_postgres.settings", "psycopg", "PostgresSettings", "dsn"),
+            ("forze_redis.settings", "redis", "RedisSettings", "dsn"),
+            ("forze_mongo.settings", "pymongo", "MongoSettings", "uri"),
+            ("forze_rabbitmq.settings", "aio_pika", "RabbitMQSettings", "dsn"),
+            ("forze_neo4j.settings", "neo4j", "Neo4jSettings", "uri"),
+            ("forze_meilisearch.settings", "meilisearch_python_sdk", "MeilisearchSettings", "url"),
+            ("forze_temporal.settings", "temporalio", "TemporalSettings", "address"),
+            ("forze_kafka.settings", "aiokafka", "KafkaSettings", "servers"),
+        ],
+    )
+    def test_an_unconfigured_model_still_dumps(
+        self, module: str, dep: str, cls_name: str, attr: str
+    ) -> None:
+        pytest.importorskip(dep)
+
+        settings = getattr(importlib.import_module(module), cls_name)()
+
+        assert attr not in settings.model_dump()
+
+        with pytest.raises(CoreException):
+            getattr(settings, attr)

@@ -10,7 +10,7 @@ application that connects.
 from datetime import timedelta
 from urllib.parse import quote
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 
 from forze.base.settings import EndpointSettings, configured_fields
 
@@ -61,10 +61,14 @@ class RabbitMQSettings(EndpointSettings):
 
     # ....................... #
 
-    @computed_field  # type: ignore[prop-decorator]
     @property
     def dsn(self) -> SecretStr:
         """``amqp[s]://user:password@host[:port]/vhost``.
+
+        A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
+        and a serialized field that raises would make ``model_dump()`` fail on a settings
+        root that merely *mounts* a backend it does not use. It keeps the credential out
+        of every dump as a side effect, which is the right default for one.
 
         :raises CoreException: ``configuration`` when :attr:`host` is unset.
         """
