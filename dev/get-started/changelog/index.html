@@ -8368,6 +8368,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>bypass_paths</code> on <code>InvocationMetadataMiddleware</code> and <code>SecurityContextMiddleware</code></strong> — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of a probe path they answered 500 while the runtime scope was not yet open, which is the window a liveness probe exists to observe. Pass <code>bypass_paths=DEFAULT_HEALTH_PATHS</code> (already exported from <code>forze.base.logging</code>). Exact full mounted paths, never prefixes; the default (empty) changes nothing. <code>check_bypass_paths</code> (run by <code>runtime_lifespan</code>) fails the boot on a bypassed path that serves a generated operation route, on the two middlewares carrying different sets, and on a set matching no route at all.</p>
+</li>
+<li>
 <p><strong><code>attach_readiness_route</code> can probe the dependencies, not just the drain gate.</strong> <code>probes={"postgres": PostgresClientDepKey, ...}</code> resolves each client and asks the <code>health()</code> every forze client port already declares, adding a per-dependency <code>checks</code> breakdown and a <code>degraded</code> 503 when one is unreachable — an un-drained process whose database is gone used to answer <code>ready</code>. <code>probe_timeout</code> (default 2s) budgets <strong>each</strong> probe, so a hanging dependency is one named failed check rather than an empty breakdown. No <code>probes</code> keeps today's behaviour.</p>
 </li>
 <li>
@@ -8379,7 +8382,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>BREAKING — <code>forze[mcp]</code> moves to FastMCP 4 and <abbr title="Model Context Protocol">MCP</abbr> SDK v2</strong> (<code>fastmcp&gt;=4.0.0b3</code>, <code>mcp&gt;=2.0.0</code>). <code>build_mcp_server</code>, <code>register_tools</code> and the auth/identity classes are unchanged; the SDK's protocol fields are snake_case now, so client code reading <code>tool.inputSchema</code> / <code>template.uriTemplate</code> wants <code>input_schema</code> / <code>uri_template</code> — <code>fastmcp.settings.mcp_camelcase_compat = False</code> finds the reads that still rely on the old spellings. <strong>Migration:</strong> FastMCP 4 is a pre-release; pin <code>fastmcp&lt;4</code> to stay on the 3.x line.</li>
+<li>
+<p><strong><code>forze[fastapi]</code> now needs <code>fastapi&gt;=0.138.0</code></strong> (was <code>&gt;=0.137.0</code>). The startup checks walk the app's real routes through <code>fastapi.routing.iter_route_contexts</code>, which 0.137.0 does not export — importing <code>forze_fastapi.middlewares</code> raised <code>ImportError</code> there before the app ever started.</p>
+</li>
+<li>
+<p><strong>BREAKING — <code>forze[mcp]</code> moves to FastMCP 4 and <abbr title="Model Context Protocol">MCP</abbr> SDK v2</strong> (<code>fastmcp&gt;=4.0.0b3</code>, <code>mcp&gt;=2.0.0</code>). <code>build_mcp_server</code>, <code>register_tools</code> and the auth/identity classes are unchanged; the SDK's protocol fields are snake_case now, so client code reading <code>tool.inputSchema</code> / <code>template.uriTemplate</code> wants <code>input_schema</code> / <code>uri_template</code> — <code>fastmcp.settings.mcp_camelcase_compat = False</code> finds the reads that still rely on the old spellings. <strong>Migration:</strong> FastMCP 4 is a pre-release; pin <code>fastmcp&lt;4</code> to stay on the 3.x line.</p>
+</li>
 <li><strong>BREAKING — the 21 published Agent Skills are merged into one, <code>forze-skills</code>.</strong> <code>npx skills add morzecrew/forze</code> now installs a routing index over 43 lazily-read reference files instead of 21 top-level skills. Per-skill install (<code>@forze-wiring</code>) is removed: it left every cross-link dangling. Adds a reference pair for <code>forze_dst</code>, which had no skill. <strong>Migration:</strong> re-run <code>npx skills add morzecrew/forze</code>, then delete the stale directories by hand — <code>rm -rf .claude/skills/forze-*</code> — since the installer cannot prune a directory it is not overwriting.</li>
 </ul>
 <h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>

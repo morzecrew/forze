@@ -6475,6 +6475,35 @@ server fault, not a missing credential. This matters most in
 <a href="../../reference/fastapi-routes/#cookie-mode">cookie mode</a>, where a stale access
 cookie rides every request including the one that would replace it. Paths are
 exact, never prefixes.</p>
+<p>Probe paths want the opposite treatment. Both middlewares resolve the execution
+context on every HTTP request, so in front of <code>/livez</code> they answer 500 while the
+runtime scope is not yet open — precisely the window a liveness probe exists to
+observe. Name the paths neither middleware should run for at all:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">DEFAULT_HEALTH_PATHS</span>
+
+<span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
+    <span class="n">InvocationMetadataMiddleware</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
+    <span class="n">bypass_paths</span><span class="o">=</span><span class="n">DEFAULT_HEALTH_PATHS</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A bypassed path serves with no identity, no tenant and no invocation envelope
+bound, and no error shaping — list probe and scrape paths, never anything that
+reads or writes tenant data. <code>anonymous_paths</code> is the softer tool: it still runs
+the middleware, and still binds a valid credential. Paths are exact here too, so
+a route <em>under</em> a bypassed path stays governed — and they are the full mounted
+path, since middleware runs before routing: list <code>/api/livez</code>, not <code>/livez</code>, for a
+router mounted under <code>/api</code>.</p>
+<p><code>check_bypass_paths</code> (run automatically by <code>runtime_lifespan</code>) fails the boot on
+the three ways that goes wrong: a bypassed path serving a <strong>generated operation
+route</strong> (it would read and write tenant data with nothing bound), the two
+middlewares carrying <strong>different sets</strong> (the one still resolving the context fails
+the request anyway, so the bypass reads as configured and does nothing), and a
+non-empty set matching <strong>no route at all</strong> — the prefix mistake above. A superset
+is fine and expected: <code>DEFAULT_HEALTH_PATHS</code> names ten paths and most apps serve
+three. An app that supplies its own lifespan instead of <code>runtime_lifespan</code> has to
+call <code>check_bypass_paths(app)</code> and <code>check_websocket_allowlist(app)</code> itself — both
+are exported from <code>forze_fastapi.middlewares</code>, and neither runs on its own.</p>
 <p>When an upstream Forze service forwards its remaining <a href="../../running-in-prod/deadlines/">time
 budget</a> as <code>X-Forze-Deadline-Budget</code>, opt in to
 honoring it with <code>InvocationMetadataMiddleware(...,
