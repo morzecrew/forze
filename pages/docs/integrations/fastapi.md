@@ -80,6 +80,40 @@ server fault, not a missing credential. This matters most in
 cookie rides every request including the one that would replace it. Paths are
 exact, never prefixes.
 
+Probe paths want the opposite treatment. Both middlewares resolve the execution
+context on every HTTP request, so in front of `/livez` they answer 500 while the
+runtime scope is not yet open — precisely the window a liveness probe exists to
+observe. Name the paths neither middleware should run for at all:
+
+```python
+from forze.base.logging import DEFAULT_HEALTH_PATHS
+
+app.add_middleware(
+    InvocationMetadataMiddleware,
+    ctx_dep=runtime.get_context,
+    bypass_paths=DEFAULT_HEALTH_PATHS,
+)
+```
+
+A bypassed path serves with no identity, no tenant and no invocation envelope
+bound, and no error shaping — list probe and scrape paths, never anything that
+reads or writes tenant data. `anonymous_paths` is the softer tool: it still runs
+the middleware, and still binds a valid credential. Paths are exact here too, so
+a route *under* a bypassed path stays governed — and they are the full mounted
+path, since middleware runs before routing: list `/api/livez`, not `/livez`, for a
+router mounted under `/api`.
+
+`check_bypass_paths` (run automatically by `runtime_lifespan`) fails the boot on
+the three ways that goes wrong: a bypassed path serving a **generated operation
+route** (it would read and write tenant data with nothing bound), the two
+middlewares carrying **different sets** (the one still resolving the context fails
+the request anyway, so the bypass reads as configured and does nothing), and a
+non-empty set matching **no route at all** — the prefix mistake above. A superset
+is fine and expected: `DEFAULT_HEALTH_PATHS` names ten paths and most apps serve
+three. An app that supplies its own lifespan instead of `runtime_lifespan` has to
+call `check_bypass_paths(app)` and `check_websocket_allowlist(app)` itself — both
+are exported from `forze_fastapi.middlewares`, and neither runs on its own.
+
 When an upstream Forze service forwards its remaining [time
 budget](../running-in-prod/deadlines.md) as `X-Forze-Deadline-Budget`, opt in to
 honoring it with `InvocationMetadataMiddleware(...,

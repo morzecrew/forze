@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`bypass_paths` on `InvocationMetadataMiddleware` and `SecurityContextMiddleware`** — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of a probe path they answered 500 while the runtime scope was not yet open, which is the window a liveness probe exists to observe. Pass `bypass_paths=DEFAULT_HEALTH_PATHS` (already exported from `forze.base.logging`). Exact full mounted paths, never prefixes; the default (empty) changes nothing. `check_bypass_paths` (run by `runtime_lifespan`) fails the boot on a bypassed path that serves a generated operation route, on the two middlewares carrying different sets, and on a set matching no route at all.
+
 - **`attach_readiness_route` can probe the dependencies, not just the drain gate.** `probes={"postgres": PostgresClientDepKey, ...}` resolves each client and asks the `health()` every forze client port already declares, adding a per-dependency `checks` breakdown and a `degraded` 503 when one is unreachable — an un-drained process whose database is gone used to answer `ready`. `probe_timeout` (default 2s) budgets **each** probe, so a hanging dependency is one named failed check rather than an empty breakdown. No `probes` keeps today's behaviour.
 
 - Four helpers each integration package used to carry its own copy of are now core and exported: `log_server_error`, `drain_domain_events`, `resolve_result_snapshot`, `domains_from_create_payloads`.
@@ -16,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every backend the published skill described now has code you can run.** Mongo, Firestore, Meilisearch, Neo4j, Socket.IO, Kafka, MCP, SageMaker, DuckDB, GCP and Yandex KMS, authz and the mock server were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.
 
 ### Changed
+
+- **`forze[fastapi]` now needs `fastapi>=0.138.0`** (was `>=0.137.0`). The startup checks walk the app's real routes through `fastapi.routing.iter_route_contexts`, which 0.137.0 does not export — importing `forze_fastapi.middlewares` raised `ImportError` there before the app ever started.
 
 - **BREAKING — `forze[mcp]` moves to FastMCP 4 and MCP SDK v2** (`fastmcp>=4.0.0b3`, `mcp>=2.0.0`). `build_mcp_server`, `register_tools` and the auth/identity classes are unchanged; the SDK's protocol fields are snake_case now, so client code reading `tool.inputSchema` / `template.uriTemplate` wants `input_schema` / `uri_template` — `fastmcp.settings.mcp_camelcase_compat = False` finds the reads that still rely on the old spellings. **Migration:** FastMCP 4 is a pre-release; pin `fastmcp<4` to stay on the 3.x line.
 - **BREAKING — the 21 published Agent Skills are merged into one, `forze-skills`.** `npx skills add morzecrew/forze` now installs a routing index over 43 lazily-read reference files instead of 21 top-level skills. Per-skill install (`@forze-wiring`) is removed: it left every cross-link dangling. Adds a reference pair for `forze_dst`, which had no skill. **Migration:** re-run `npx skills add morzecrew/forze`, then delete the stale directories by hand — `rm -rf .claude/skills/forze-*` — since the installer cannot prune a directory it is not overwriting.

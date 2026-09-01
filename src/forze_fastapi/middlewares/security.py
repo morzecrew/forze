@@ -83,6 +83,25 @@ class SecurityContextMiddleware:
     prefix is one refactor away from an ungoverned hole.
     """
 
+    bypass_paths: frozenset[str] = attrs.field(
+        default=frozenset(), kw_only=True, converter=frozenset
+    )
+    """Exact HTTP paths this middleware does not run for.
+
+    Liveness must not depend on anything: this middleware resolves the execution
+    context on every request, so in front of a probe path it answers 500 while the
+    runtime scope is not yet open — which is precisely the window a liveness probe
+    exists to observe. Exact paths, never prefixes. A bypassed path serves with **no
+    identity and no tenant bound** and no error shaping — list probe and scrape
+    paths, never anything that reads or writes tenant data (``anonymous_paths`` is
+    the softer tool: it still runs this middleware and still binds a *valid*
+    credential). Entries are the **full mounted path** (router prefixes included),
+    the same as ``allowed_websocket_paths``: this middleware runs before routing, so
+    a prefix mismatch simply never matches and the probe goes on failing.
+    :func:`~forze_fastapi.middlewares.check_bypass_paths` (run by ``runtime_lifespan``)
+    fails the boot on that, on a bypassed path that serves a generated operation route,
+    and on the two middlewares carrying different sets."""
+
     # ....................... #
 
     async def _resolve_authn(
@@ -133,6 +152,10 @@ class SecurityContextMiddleware:
                 await refuse_raw_websocket(scope, receive, send)
                 return
 
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get("path") in self.bypass_paths:
             await self.app(scope, receive, send)
             return
 

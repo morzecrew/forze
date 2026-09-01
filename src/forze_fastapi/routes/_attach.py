@@ -39,6 +39,7 @@ from forze.application.execution.operations import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
+from forze_fastapi.middlewares.bypass import GOVERNED_OPERATION_ATTR
 from forze_fastapi.middlewares.invocation import IDEMPOTENCY_KEY_HEADER
 
 # ----------------------- #
@@ -609,6 +610,11 @@ def attach_operation_routes(
         # router-level tags). MCP attachers have no tag concept — this mapping
         # is HTTP-surface-specific by design.
         tags: list[str | Enum] = list(descriptor.tags) if descriptor is not None else []
+
+        # The governed marker check_bypass_paths verifies at startup: a path listed in
+        # a middleware's bypass_paths must not be one of these, since the operation
+        # behind it reads and writes tenant data the bypassed middleware would bind.
+        setattr(endpoint, GOVERNED_OPERATION_ATTR, True)
 
         router.add_api_route(
             path,

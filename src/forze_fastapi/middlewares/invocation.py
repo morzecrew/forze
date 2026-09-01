@@ -83,6 +83,20 @@ class InvocationMetadataMiddleware:
     Exact paths, never prefixes.
     """
 
+    bypass_paths: frozenset[str] = attrs.field(
+        default=frozenset(), kw_only=True, converter=frozenset
+    )
+    """Exact HTTP paths this middleware does not run for.
+
+    Liveness must not depend on anything: this middleware resolves the execution
+    context on every request, so in front of a probe path it answers 500 while the
+    runtime scope is not yet open — which is precisely the window a liveness probe
+    exists to observe. Exact paths, never prefixes. Entries are the **full mounted
+    path** (router prefixes included), the same as ``allowed_websocket_paths``: this
+    middleware runs before routing, so a prefix mismatch simply never matches and the
+    probe goes on failing — :func:`~forze_fastapi.middlewares.check_bypass_paths` (run
+    by ``runtime_lifespan``) fails the boot on that rather than letting the probe 500."""
+
     # ....................... #
 
     @staticmethod
@@ -160,6 +174,10 @@ class InvocationMetadataMiddleware:
                 await refuse_raw_websocket(scope, receive, send)
                 return
 
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get("path") in self.bypass_paths:
             await self.app(scope, receive, send)
             return
 

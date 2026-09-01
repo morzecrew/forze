@@ -1,3 +1,4 @@
+from .bypass import GOVERNED_OPERATION_ATTR, check_bypass_paths
 from .custom_headers import CustomHeadersMiddleware
 from .invocation import IDEMPOTENCY_KEY_HEADER, InvocationMetadataMiddleware
 from .logging import LoggingMiddleware
@@ -13,4 +14,6 @@ __all__ = [
     "SecurityContextMiddleware",
     "InvocationMetadataMiddleware",
     "check_websocket_allowlist",
+    "check_bypass_paths",
+    "GOVERNED_OPERATION_ATTR",
 ]
