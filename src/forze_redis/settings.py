@@ -11,7 +11,7 @@ delimiter and extra-key policy belong to the deploying application.
 from datetime import timedelta
 from urllib.parse import quote
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 
 from forze.base.settings import EndpointSettings, configured_fields
 
@@ -37,7 +37,17 @@ the defaults live in :class:`RedisConfig` and cannot drift out of a second copy 
 class RedisSettings(EndpointSettings):
     """Endpoint, credentials and pool tuning for one Redis client."""
 
+    username: str | None = None
+    """ACL user. Unset is the default user, which is the classic ``:password@`` form —
+    and the only one a Redis without ACLs accepts. A managed Redis with ACLs enabled
+    needs this, and could not be reached without it."""
+
     password: SecretStr = SecretStr("")
+
+    db: int | None = Field(default=None, ge=0)
+    """Logical database index, appended as ``/{db}``. Unset means the URL names none, so
+    the client uses 0 — which is what a deployment separating a cache from a queue on one
+    Redis has to be able to change."""
 
     ssl: bool = False
     """Select the ``rediss://`` scheme."""
@@ -58,7 +68,7 @@ class RedisSettings(EndpointSettings):
 
     @property
     def dsn(self) -> SecretStr:
-        """``redis[s]://[:password@]host[:port]``.
+        """``redis[s]://[[username]:password@]host[:port][/db]``.
 
         A plain property, not a ``computed_field``: it refuses an unconfigured endpoint,
         and a serialized field that raises would make ``model_dump()`` fail on a settings
@@ -73,10 +83,13 @@ class RedisSettings(EndpointSettings):
         # No credentials at all rather than a bare `:@`, which is noise in every log the
         # URL reaches and an empty credential to any client that does read it.
         password = quote(self.password.get_secret_value(), safe="")
-        auth = f":{password}@" if password else ""
-        scheme = "rediss" if self.ssl else "redis"
+        username = quote(self.username, safe="") if self.username else ""
+        auth = f"{username}:{password}@" if (password or username) else ""
 
-        return SecretStr(f"{scheme}://{auth}{endpoint}")
+        scheme = "rediss" if self.ssl else "redis"
+        path = f"/{self.db}" if self.db is not None else ""
+
+        return SecretStr(f"{scheme}://{auth}{endpoint}{path}")
 
     # ....................... #
 

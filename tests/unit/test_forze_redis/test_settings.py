@@ -40,6 +40,27 @@ class TestDsn:
 
     # ....................... #
 
+    def test_an_acl_username_reaches_the_url(self) -> None:
+        """A managed Redis with ACLs enabled cannot be reached without one."""
+
+        settings = RedisSettings(host="c", username="app", password=SecretStr("pw"))
+
+        assert settings.dsn.get_secret_value() == "redis://app:pw@c"
+
+    # ....................... #
+
+    def test_a_logical_database_becomes_the_path(self) -> None:
+        assert RedisSettings(host="c", db=3).dsn.get_secret_value() == "redis://c/3"
+
+    # ....................... #
+
+    def test_database_zero_is_still_written(self) -> None:
+        """`0` is a choice an operator made, not the absence of one."""
+
+        assert RedisSettings(host="c", db=0).dsn.get_secret_value() == "redis://c/0"
+
+    # ....................... #
+
     def test_percent_encodes_the_password(self) -> None:
         settings = RedisSettings(password=SecretStr("p@ss/word"), host="cache.internal")
 

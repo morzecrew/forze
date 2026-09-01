@@ -31,8 +31,8 @@ Use `RoutedRedisClient` when the tenant or route selects the endpoint.
 ### Settings
 
 `RedisSettings` builds the URL from parts, so its grammar — which scheme TLS selects,
-percent-encoding the password, omitting the credentials entirely when there is no
-password rather than emitting a bare `:@` — stays here:
+percent-encoding the credentials, the ACL username and logical database index, omitting
+the credentials entirely when there is none rather than emitting a bare `:@` — stays here:
 
 ```python
 from forze_redis import RedisSettings
