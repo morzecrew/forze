@@ -91,6 +91,15 @@ class TestUri:
         with pytest.raises(CoreException, match="Mongo host is required"):
             _ = MongoSettings().uri
 
+    # ....................... #
+
+    def test_a_seed_list_in_the_host_is_refused(self) -> None:
+        """The docstring says one endpoint or one SRV record; a comma in the host would
+        have made that true only where the entries happen to carry no port."""
+
+        with pytest.raises(CoreException, match="must not contain"):
+            _ = MongoSettings(host="a.internal,b.internal").uri
+
 
 # ....................... #
 

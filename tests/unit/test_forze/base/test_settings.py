@@ -113,7 +113,17 @@ class TestEndpointSettings:
 
     @pytest.mark.parametrize(
         "host",
-        ["evil.com/x?a=b", "evil.com@real", "db#frag", "db\\x", "two words"],
+        [
+            "evil.com/x?a=b",
+            "evil.com@real",
+            "db#frag",
+            "db\\x",
+            "two words",
+            "a\vb",
+            "a\fb",
+            "a\u00a0b",
+            "a,b",
+        ],
     )
     def test_refuses_a_host_carrying_a_uri_delimiter(self, host: str) -> None:
         """The host is interpolated unescaped, so `HOST=db.internal/x@elsewhere` would
@@ -131,6 +141,25 @@ class TestEndpointSettings:
 
         with pytest.raises(CoreException, match="must not carry a port"):
             EndpointSettings(host=host, port=5432).authority(service="X")
+
+    # ....................... #
+
+    @pytest.mark.parametrize("host", ["[::1", "::1]", "[::1]x", "[[::1]]"])
+    def test_refuses_malformed_ipv6_brackets(self, host: str) -> None:
+        """An unclosed bracket slips past the port check — there is nothing after a `]`
+        that is not there — and `authority` then leaves it alone because it already starts
+        with one, so `[::1` reached the client as `[::1:5432`."""
+
+        with pytest.raises(CoreException, match="malformed IPv6 brackets"):
+            EndpointSettings(host=host, port=5432).authority(service="X")
+
+    # ....................... #
+
+    def test_a_bracketed_host_with_a_port_names_the_port(self) -> None:
+        """Sound brackets, so the more useful of the two messages wins."""
+
+        with pytest.raises(CoreException, match="must not carry a port"):
+            EndpointSettings(host="[::1]:5432").authority(service="X")
 
 
 class TestRuntimeSettings:

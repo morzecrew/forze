@@ -30,12 +30,16 @@ from forze.base.telemetry import ExporterChoice
 
 _NORMALIZED_FIELDS = ("log_level", "log_render", "access_log", "telemetry")
 
-_NOT_IN_A_HOST = "/?#@\\ \t"
-"""Characters that end (or redirect) a URL's authority component, and so cannot be in a
-host. Refused rather than escaped: percent-encoding them would corrupt an IPv6 literal's
-brackets, and none of them is ever part of a hostname anyway."""
+_NOT_IN_A_HOST = "/?#@\\,"
+"""Characters that end, redirect, or split a URL's authority component, and so cannot be
+in a host. Refused rather than escaped: percent-encoding them would corrupt an IPv6
+literal's brackets, and none of them is ever part of a hostname anyway.
 
-_NOT_IN_A_HOST_TEXT = "'/', '?', '#', '@', '\\' or whitespace"
+The comma is here because a host holding one is a *seed list* — several endpoints in the
+field for one — which every model in this family declares it does not take. Accepting it
+would make that contract true only where the entry happens to carry no port."""
+
+_NOT_IN_A_HOST_TEXT = "'/', '?', '#', '@', '\\', ',' or whitespace"
 
 # ....................... #
 
@@ -123,8 +127,19 @@ class EndpointSettings(BaseModel):
         # instead. `HOST=db.internal/x?a=b` would otherwise repoint the whole URL, and a
         # host arriving from a compromised config source is exactly the case where that
         # matters.
-        if any(character in host for character in _NOT_IN_A_HOST):
+        # `isspace()` rather than a literal space and tab: a vertical tab or a non-breaking
+        # space inside a hostname is a paste accident, and one that survives to become a
+        # DNS lookup for a name nobody typed.
+        if any(character in _NOT_IN_A_HOST or character.isspace() for character in host):
             raise exc.configuration(f"{service} host must not contain {_NOT_IN_A_HOST_TEXT}.")
+
+        # An unclosed bracket passes the port check below — there is nothing after a `]`
+        # that is not there — and then `authority` leaves it alone because it already
+        # starts with one, so `[::1` would reach the client as `[::1:5432`. A trailing
+        # `:port` is allowed through here on purpose: the check below refuses it with the
+        # message that names the port setting, which is the more useful one.
+        if not self._brackets_are_sound(host):
+            raise exc.configuration(f"{service} host has malformed IPv6 brackets.")
 
         # One colon is a port somebody put in the wrong setting; two or more is an IPv6
         # literal. Refusing the first is what stops it being bracketed as though it were
@@ -135,6 +150,23 @@ class EndpointSettings(BaseModel):
             )
 
         return host
+
+    # ....................... #
+
+    @staticmethod
+    def _brackets_are_sound(host: str) -> bool:
+        """Whether *host* is either unbracketed, or a well-formed ``[...]`` with at most a
+        ``:port`` after it."""
+
+        if host.count("[") != host.count("]"):
+            return False
+
+        if not host.startswith("["):
+            return "]" not in host
+
+        tail = host.partition("]")[2]
+
+        return tail == "" or tail.startswith(":")
 
     # ....................... #
 
