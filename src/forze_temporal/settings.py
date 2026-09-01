@@ -13,7 +13,7 @@ from .kernel.client import TemporalConfig
 
 # ----------------------- #
 
-CLIENT_FIELDS = ("namespace", "tls", "api_key", "encrypt_payloads")
+CLIENT_FIELDS = ("namespace", "tls", "api_key", "encrypt_payloads", "lazy")
 """Client knobs :class:`TemporalSettings` exposes, by their :class:`TemporalConfig` name.
 Every entry is ``None`` by default and dropped when unset, so the defaults live in
 :class:`TemporalConfig` and cannot drift out of a second copy here.
@@ -36,6 +36,9 @@ class TemporalSettings(EndpointSettings):
 
     api_key: SecretStr | None = None
     """Bearer credential, e.g. Temporal Cloud."""
+
+    lazy: bool | None = None
+    """Defer the connection until the first call, rather than dialling at startup."""
 
     encrypt_payloads: bool | None = None
     """Seal workflow and activity payloads with the wired keyring. Fails closed at startup

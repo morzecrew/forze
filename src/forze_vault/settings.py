@@ -24,6 +24,8 @@ CLIENT_FIELDS = (
     "timeout",
     "renew_token",
     "renew_interval",
+    "retry_total",
+    "retry_backoff_factor",
 )
 """Knobs :class:`VaultSettings` forwards, by their :class:`VaultConfig` name. Every entry
 is ``None`` by default and dropped when unset, so the defaults live in
@@ -58,6 +60,12 @@ class VaultSettings(BaseModel):
     timeout: timedelta | None = None
     renew_token: bool | None = None
     renew_interval: timedelta | None = None
+
+    retry_total: int | None = None
+    """Retries per request. The dial an operator reaches for when Vault is the thing
+    flapping, which is why it belongs in the environment rather than in code."""
+
+    retry_backoff_factor: float | None = None
 
     # ....................... #
 

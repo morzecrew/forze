@@ -31,9 +31,15 @@ class TestConfig:
     # ....................... #
 
     def test_set_knobs_reach_the_client_config(self) -> None:
-        config = VaultSettings(url="https://v", namespace="team-a", verify=False).config
+        config = VaultSettings(
+            url="https://v",
+            namespace="team-a",
+            verify=False,
+            retry_total=7,
+        ).config
 
         assert (config.namespace, config.verify) == ("team-a", False)
+        assert config.retry_total == 7
 
     # ....................... #
 

@@ -30,14 +30,16 @@ entry is ``None`` by default and dropped when unset, so the defaults live in
 class DuckDbSettings(BaseModel):
     """Database path and resource limits for one DuckDB client."""
 
-    database: str = ":memory:"
+    database: str = Field(default=":memory:", min_length=1)
     """A file path, or ``:memory:`` for an ephemeral database. The default is in-memory
     because that is the analytics-over-a-lake shape DuckDB is wired for here — a path is
     what you set when the process needs its results to outlive it."""
 
     threads: int | None = Field(default=None, ge=1)
-    memory_limit: str | None = None
-    """DuckDB's own spelling, e.g. ``"4GB"``. Unset means DuckDB sizes it from the host,
+    memory_limit: str | None = Field(default=None, min_length=1)
+    """DuckDB's own spelling, e.g. ``"4GB"``. Empty is refused rather than forwarded: an
+    unset environment variable is ``None``, and an empty one is a typo that DuckDB would
+    only reject at startup. Unset means DuckDB sizes it from the host,
     which in a container is the *host's* memory rather than the cgroup limit — so this is
     the setting that stops a query getting the process OOM-killed."""
 

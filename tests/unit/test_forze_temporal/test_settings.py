@@ -35,9 +35,9 @@ class TestConfig:
     # ....................... #
 
     def test_set_knobs_reach_the_client_config(self) -> None:
-        config = TemporalSettings(host="t", namespace="orders", tls=True).config
+        config = TemporalSettings(host="t", namespace="orders", tls=True, lazy=True).config
 
-        assert (config.namespace, config.tls) == ("orders", True)
+        assert (config.namespace, config.tls, config.lazy) == ("orders", True, True)
 
     # ....................... #
 

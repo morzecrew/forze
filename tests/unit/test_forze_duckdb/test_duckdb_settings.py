@@ -37,6 +37,16 @@ class TestSettings:
 
     # ....................... #
 
+    @pytest.mark.parametrize("kwargs", [{"database": ""}, {"memory_limit": ""}])
+    def test_empty_strings_are_refused(self, kwargs: dict[str, str]) -> None:
+        """An unset variable is `None`; an empty one is a typo DuckDB would only reject
+        at startup."""
+
+        with pytest.raises(ValidationError):
+            DuckDbSettings(**kwargs)
+
+    # ....................... #
+
     def test_field_names_match_the_client_config(self) -> None:
         """Fails the day a `DuckDbConfig` field is renamed out from under the settings."""
 

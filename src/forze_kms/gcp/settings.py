@@ -25,9 +25,11 @@ class GcpKmsSettings(BaseModel):
     """Emulator endpoint and client tuning for one GCP KMS client."""
 
     endpoint: str | None = None
-    """Plaintext emulator endpoint (``host:port``). Unset is the real service, reached
-    with Application Default Credentials — which is why there is no credential field
-    here at all."""
+    """Plaintext emulator endpoint (``host:port``), passed to
+    :func:`~forze_kms.gcp.gcpkms_lifecycle_step` as its own ``endpoint`` argument rather
+    than through :attr:`config` — :class:`GcpKmsConfig` has no endpoint field. Unset is
+    the real service, reached with Application Default Credentials, which is why there is
+    no credential field here at all."""
 
     request_timeout: float | None = None
     """Per-call deadline in seconds."""
