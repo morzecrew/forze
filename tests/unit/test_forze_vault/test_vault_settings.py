@@ -2,7 +2,7 @@
 
 import attrs
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from forze.base.exceptions import CoreException
 
@@ -47,6 +47,39 @@ class TestConfig:
     def test_requires_a_url(self, url: str | None) -> None:
         with pytest.raises(CoreException, match="Vault url is required"):
             _ = VaultSettings(url=url).config
+
+    # ....................... #
+
+    @pytest.mark.parametrize("url", ["http://vault.internal:8200", "http://10.0.0.5:8200"])
+    def test_refuses_plaintext_to_a_remote_host(self, url: str) -> None:
+        """The token rides on every request and every response carries a secret, so
+        plaintext to anything but this machine puts both on the wire — and `verify` cannot
+        protect a connection that was never encrypted."""
+
+        with pytest.raises(ValidationError, match="must be https"):
+            VaultSettings(url=url, token=SecretStr("hvs.x"))
+
+    # ....................... #
+
+    @pytest.mark.parametrize("url", ["vault.internal", "ftp://v", "ftp://127.0.0.1:8200"])
+    def test_refuses_a_url_that_is_not_http_at_all(self, url: str) -> None:
+        """Checked before the loopback carve-out, which is why `ftp://127.0.0.1` is
+        refused rather than waved through as "loopback, therefore fine"."""
+
+        with pytest.raises(ValidationError, match="must start with https"):
+            VaultSettings(url=url, token=SecretStr("hvs.x"))
+
+    # ....................... #
+
+    @pytest.mark.parametrize(
+        "url",
+        ["http://127.0.0.1:8200", "http://localhost:8200", "http://[::1]:8200"],
+    )
+    def test_allows_plaintext_to_loopback(self, url: str) -> None:
+        """`vault server -dev` listens on `http://127.0.0.1:8200`, and a packet that never
+        leaves the machine is not a cleartext transmission."""
+
+        assert VaultSettings(url=url, token=SecretStr("hvs.x")).config.url == url
 
     # ....................... #
 

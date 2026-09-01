@@ -24,7 +24,10 @@ Needs a Vault server with a KV v2 mount.
 ### Settings
 
 `VaultSettings` is the mountable form of `VaultConfig`: address, token, mount points and
-namespace as a pydantic model — see [connection settings](index.md#connection-settings).
+namespace as a pydantic model. The address must be `https://` unless it is a loopback one
+— the token rides on every request and every response carries a secret, so `http://` to
+anything but this machine puts both on the wire. See
+[connection settings](index.md#connection-settings).
 
 ## Wire it
 

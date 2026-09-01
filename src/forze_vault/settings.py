@@ -6,8 +6,11 @@ requires the address — so this adds one thing: it can mount on an application'
 """
 
 from datetime import timedelta
+from ipaddress import ip_address
+from typing import Self
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, model_validator
 
 from forze.base.settings import configured_fields, require
 
@@ -35,13 +38,37 @@ is ``None`` by default and dropped when unset, so the defaults live in
 # ....................... #
 
 
+def _is_loopback(hostname: str | None) -> bool:
+    """Whether *hostname* names this machine, by name or by address."""
+
+    if not hostname:
+        return False
+
+    if hostname == "localhost":
+        return True
+
+    try:
+        return ip_address(hostname.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+# ....................... #
+
+
 class VaultSettings(BaseModel):
     """Address, token and mount points for one Vault client."""
 
     url: str | None = None
     """Vault's address, as a full URL rather than a host and port — the form every Vault
     tool writes, and the one an operator already has in ``VAULT_ADDR``. Nothing here reads
-    that variable: your settings root decides which one fills this field."""
+    that variable: your settings root decides which one fills this field.
+
+    Must be ``https://``, except to a loopback address. Every response Vault sends carries
+    a secret, and :attr:`token` rides on every request, so plaintext to anything but this
+    machine puts both on the wire — and :attr:`verify` cannot protect a connection that
+    was never encrypted.
+    """
 
     token: SecretStr = SecretStr("")
 
@@ -66,6 +93,42 @@ class VaultSettings(BaseModel):
     flapping, which is why it belongs in the environment rather than in code."""
 
     retry_backoff_factor: float | None = None
+
+    # ....................... #
+
+    @model_validator(mode="after")
+    def _url_is_https_or_loopback(self) -> Self:
+        """Eager, unlike the missing-url refusal: an unset URL is the normal state of a
+        settings object nobody has configured, while a plaintext one is a decision already
+        made — and one whose consequence (a token on the wire) is invisible when it works.
+
+        Loopback is the carve-out, and only that: ``vault server -dev`` listens on
+        ``http://127.0.0.1:8200``, and a packet that never leaves the machine is not a
+        cleartext transmission. Anything else must be ``https``.
+        """
+
+        # Blank counts as unset, not as a bad scheme: `config` refuses it with the message
+        # that names the setting, which is the one an operator can act on.
+        url = (self.url or "").strip()
+
+        if not url:
+            return self
+
+        parts = urlsplit(url)
+
+        if parts.scheme not in ("http", "https"):
+            raise ValueError("Vault url must start with https:// (or http:// on loopback)")
+
+        if parts.scheme == "https":
+            return self
+
+        if not _is_loopback(parts.hostname):
+            raise ValueError(
+                f"Vault url must be https:// for {parts.hostname} — http:// would put the "
+                f"token and every secret Vault returns on the wire"
+            )
+
+        return self
 
     # ....................... #
 

@@ -654,3 +654,4 @@ _._credentials_are_both_or_neither  # unused method (src/forze_s3/settings.py:58
 _.require_base_url  # unused method (src/forze_inference/http/settings.py:34)
 _._one_credential_at_most  # unused method (src/forze_kms/yc/settings.py:39)
 _._a_username_needs_a_password  # unused method (src/forze_redis/settings.py:70)
+_._url_is_https_or_loopback  # unused method (src/forze_vault/settings.py:99)
