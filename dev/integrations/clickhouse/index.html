@@ -3187,6 +3187,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6156,6 +6173,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6299,6 +6333,11 @@ parameterized SQL against pre-provisioned tables, plus optional append. Like
 <span class="n">ch</span> <span class="o">=</span> <span class="n">ClickHouseClient</span><span class="p">()</span>
 </code></pre></div>
 <p><code>RoutedClickHouseClient</code> resolves per-tenant host/database/credentials.</p>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<p><code>ClickHouseSettings</code> is the mountable form of <code>ClickHouseConfig</code>: the same host, port,
+credentials and database, as a pydantic model your settings root can carry. With <code>secure</code>
+set and no port given it resolves 8443 rather than <code>ClickHouseConfig</code>'s 8123, which is the
+plaintext listener. See <a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Each analytics route maps <code>query_key</code>s to SQL, keyed by <code>AnalyticsSpec.name</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>

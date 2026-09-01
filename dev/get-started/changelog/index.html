@@ -8374,6 +8374,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>attach_readiness_route</code> can probe the dependencies, not just the drain gate.</strong> <code>probes={"postgres": PostgresClientDepKey, ...}</code> resolves each client and asks the <code>health()</code> every forze client port already declares, adding a per-dependency <code>checks</code> breakdown and a <code>degraded</code> 503 when one is unreachable — an un-drained process whose database is gone used to answer <code>ready</code>. <code>probe_timeout</code> (default 2s) budgets <strong>each</strong> probe, so a hanging dependency is one named failed check rather than an empty breakdown. No <code>probes</code> keeps today's behaviour.</p>
 </li>
 <li>
+<p><strong>Settings models for the three things every deploying application re-declares.</strong> <code>forze_postgres.PostgresSettings</code> and <code>forze_redis.RedisSettings</code> hold the endpoint parts and build the DSN from them — percent-encoding credentials, bracketing an IPv6 host, selecting <code>rediss://</code>, appending <code>sslmode=require</code> — plus a <code>config</code> property carrying the pool knobs that were call-site arguments. <code>forze.base.settings.RuntimeSettings</code> holds the argument lists of <code>bootstrap_logging</code> and <code>bootstrap_telemetry</code> (<code>log_level</code>, <code>log_render</code>, <code>access_log</code>, <code>telemetry</code>, <code>version</code>/<code>build_id</code>/<code>git_sha</code>, computed <code>full_version</code>), and defaults <code>log_render</code> to <code>json</code> — unlike <code>bootstrap_logging</code> itself, since a settings object exists because something is being deployed. All three are plain <code>BaseModel</code>s: the environment prefix, delimiter and extra-key policy stay with the application's own <code>BaseSettings</code> root.</p>
+</li>
+<li>
+<p><strong>Every integration now ships a <code>&lt;Backend&gt;Settings</code> model</strong> — Mongo, RabbitMQ, Neo4j, Kafka, ClickHouse, Temporal, Vault, Meilisearch, S3, SQS, HTTP, GCS, BigQuery, Firestore, Inngest, DuckDB, Socket.IO, the three cloud <abbr title="Key Management Service">KMS</abbr> packages and both inference adapters join Postgres and Redis. Each holds the endpoint, credentials and client knobs a deployment sets, exposes the connection string its lifecycle step takes (<code>.dsn</code> / <code>.uri</code> / <code>.url</code> / <code>.address</code> / <code>.servers</code>) and the backend's own config object (<code>.config</code>), refuses a missing endpoint by name when it is read, and types every secret as <code>SecretStr</code>. The Redis model carries an ACL <code>username</code> and a logical <code>db</code>; Yandex <abbr title="Key Management Service">KMS</abbr> carries a <code>service_account_key</code>; <code>VaultSettings</code> refuses a non-loopback <code>http://</code> address. <code>ssl=True</code> means a <em>verified</em> connection everywhere — <code>sslmode=verify-full</code>, <code>neo4j+s://</code>, <code>rediss://</code> — and the assembled value is a plain property, so <code>model_dump()</code> works on a root that mounts a backend it has not configured and no DSN lands in a dump. Plain pydantic <code>BaseModel</code>s: mount them on your own <code>BaseSettings</code> root, which keeps the prefix, delimiter and extra-key policy. Only <code>fastapi</code> and <code>mcp</code> ship none: they are inbound, and where they bind is the deployment's concern. See <a href="https://morzecrew.github.io/forze/integrations/">Integrations → Connection settings</a>.</p>
+</li>
+<li>
+<p><strong><code>forze.base.settings.EndpointSettings</code></strong> — the <code>host</code>/<code>port</code> pair and the URL-authority grammar that applies to every scheme built from it: IPv6 bracketing, port joining, blank-host refusal. Subclassed by the URL-building integration settings; the scheme and query parameters stay per-package. <code>configured_fields</code> and <code>require</code> are the two helpers beside it.</p>
+</li>
+<li>
+<p><strong><code>MIN_SECRET_BYTES</code> is exported from <code>forze_identity</code></strong> — the 32-byte floor <code>AuthnKernelConfig</code>, <code>Hs256Signer</code> and the peppered-HMAC services already enforced, now readable by an application that validates its own settings so a short secret fails at boot naming the environment variable. <code>RenderMode</code> is exported from <code>forze.base.logging</code>, which had <code>LogLevel</code> but not the type beside it in every signature.</p>
+</li>
+<li>
 <p>Four helpers each integration package used to carry its own copy of are now core and exported: <code>log_server_error</code>, <code>drain_domain_events</code>, <code>resolve_result_snapshot</code>, <code>domains_from_create_payloads</code>.</p>
 </li>
 <li>
@@ -8382,6 +8394,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong><code>yckms_lifecycle_step</code> and <code>build_socketio_server</code> accept a <code>SecretStr</code></strong> for their token and Redis DSN, matching every sibling lifecycle step, and unwrap it at the boundary — so <code>YcKmsSettings</code> and <code>SocketIOSettings</code> feed them without an unwrap at the call site. Plain <code>str</code> is unchanged.</p>
+</li>
 <li>
 <p><strong><code>forze[fastapi]</code> now needs <code>fastapi&gt;=0.138.0</code></strong> (was <code>&gt;=0.137.0</code>). The startup checks walk the app's real routes through <code>fastapi.routing.iter_route_contexts</code>, which 0.137.0 does not export — importing <code>forze_fastapi.middlewares</code> raised <code>ImportError</code> there before the app ever started.</p>
 </li>
@@ -8404,7 +8419,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>The Firestore integration suite runs again.</strong> Its pinned emulator image had aged out of the registry, so all 104 tests errored on <code>manifest unknown</code> and took the coverage and conformance gates with them. Bumped to the newest tag the registry serves.</li>
 </ul>
 <h2 id="060-2026-08-15"><a href="https://github.com/morzecrew/forze/compare/v0.5.1...v0.6.0">0.6.0</a> - 2026-08-15<a class="headerlink" href="#060-2026-08-15" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>

@@ -3158,6 +3158,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6156,6 +6173,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6300,6 +6334,10 @@ warehouse reads, not OLTP document storage.</p>
 <span class="n">bq</span> <span class="o">=</span> <span class="n">BigQueryClient</span><span class="p">()</span>
 </code></pre></div>
 <p><code>RoutedBigQueryClient</code> resolves a per-tenant project/credentials.</p>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<p><code>BigQuerySettings</code> holds the project, the optional service-account file and
+<code>maximum_bytes_billed</code>, the ceiling that stops a runaway query costing money — see
+<a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Each analytics route maps <code>query_key</code>s to SQL, keyed by <code>AnalyticsSpec.name</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>

@@ -2833,6 +2833,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#connection-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connection settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6101,6 +6112,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#connection-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Connection settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6230,6 +6252,82 @@ on each integration's page. Two key backends need no extra at all: the
 command-line tool), and <code>zstd</code> adds the zstd codec for
 <a href="../running-in-prod/portability/">portable archives</a>.</p>
 <p>Install one or several at once — <code>uv add 'forze[fastapi,postgres,redis]'</code>.</p>
+<h2 id="connection-settings">Connection settings<a class="headerlink" href="#connection-settings" title="Permanent link">&para;</a></h2>
+<p>Every integration ships a <code>&lt;Backend&gt;Settings</code> model holding the endpoint, the credentials
+and the client knobs a deployment sets — the thing an application would otherwise declare
+for itself, once per backend, and get subtly wrong. They are plain pydantic <code>BaseModel</code>s,
+so you mount them on your own settings root and the environment fills them in:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresSettings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_rabbitmq</span><span class="w"> </span><span class="kn">import</span> <span class="n">RabbitMQSettings</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic_settings</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseSettings</span><span class="p">,</span> <span class="n">SettingsConfigDict</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Settings</span><span class="p">(</span><span class="n">BaseSettings</span><span class="p">):</span>
+    <span class="n">model_config</span> <span class="o">=</span> <span class="n">SettingsConfigDict</span><span class="p">(</span><span class="n">env_nested_delimiter</span><span class="o">=</span><span class="s2">"__"</span><span class="p">)</span>
+
+    <span class="n">postgres</span><span class="p">:</span> <span class="n">PostgresSettings</span> <span class="o">=</span> <span class="n">PostgresSettings</span><span class="p">()</span>
+    <span class="n">rabbitmq</span><span class="p">:</span> <span class="n">RabbitMQSettings</span> <span class="o">=</span> <span class="n">RabbitMQSettings</span><span class="p">()</span>
+</code></pre></div>
+<p><code>POSTGRES__HOST</code>, <code>RABBITMQ__VHOST</code> and the rest then populate them. The prefix, the
+delimiter and the extra-key policy stay yours — Forze ships no <code>BaseSettings</code> root,
+because those are deployment decisions.</p>
+<p>Each model exposes what its wiring takes:</p>
+<table>
+<thead>
+<tr>
+<th>It gives you</th>
+<th>Where it goes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.dsn</code> / <code>.uri</code> / <code>.url</code> / <code>.address</code> / <code>.servers</code></td>
+<td>the lifecycle step's connection argument</td>
+</tr>
+<tr>
+<td><code>.config</code></td>
+<td>the same step's <code>config=</code>, as the backend's own config object</td>
+</tr>
+<tr>
+<td><code>.require_host()</code> / <code>.require_endpoint()</code> / <code>.require_project_id()</code></td>
+<td>wherever the wiring wants a plain <code>str</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
+    <span class="n">postgres_lifecycle_step</span><span class="p">(</span><span class="n">dsn</span><span class="o">=</span><span class="n">settings</span><span class="o">.</span><span class="n">postgres</span><span class="o">.</span><span class="n">dsn</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">settings</span><span class="o">.</span><span class="n">postgres</span><span class="o">.</span><span class="n">config</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Three rules hold across all of them:</p>
+<ul>
+<li><strong>A missing endpoint is refused by name</strong>, when it is read rather than when the model is
+  built — so <code>Settings()</code> still constructs with an empty environment, and a boot without
+  <code>POSTGRES__HOST</code> fails saying so instead of dialling localhost.</li>
+<li><strong>Unset knobs are dropped, not forwarded as <code>None</code>.</strong> The defaults live in the backend's
+  own config object, never in a second copy on the settings model.</li>
+<li><strong>Secrets are <code>SecretStr</code></strong> and the assembled URL is one too wherever it carries a
+  credential, so neither reaches a log by accident. The assembled value is a plain
+  property rather than a serialized field: <code>model_dump()</code> on a settings root works even
+  where a mounted backend was never configured, and no DSN lands in a dump.</li>
+<li><strong><code>ssl=True</code> verifies the server certificate</strong> — <code>sslmode=verify-full</code>, <code>neo4j+s://</code>,
+  <code>rediss://</code>, <code>https://</code>. A deployment that wants weaker TLS leaves the flag off and
+  configures the backend's own environment variables.</li>
+</ul>
+<p>The URL-building models share <code>forze.base.settings.EndpointSettings</code> for the parts that are
+URL grammar rather than backend knowledge — bracketing a bare IPv6 host, joining the port.
+The scheme and the query parameters stay in each package, because that is the part that
+actually differs.</p>
+<p><code>forze.base.settings.RuntimeSettings</code> is the same idea for the process itself: the argument
+lists of <code>bootstrap_logging</code> and <code>bootstrap_telemetry</code>. See
+<a href="../running-in-prod/grafana-stack/">Grafana stack</a>.</p>
+<p>Two packages ship no settings model, for the same reason both times: they are <em>inbound</em>,
+so there is no connection to configure. <code>fastapi</code> and <code>mcp</code> serve requests; where they bind
+is the deployment's uvicorn or transport concern, not the integration's.</p>
+<p>Everything else has one, including the ones that are barely a connection at all: <code>duckdb</code>
+is in-process, so <code>DuckDbSettings</code> carries the database path and the two resource limits
+that decide whether a query is slow or the container is killed; <code>SocketIOSettings</code> carries
+only the Redis backplane URL (build it from a <code>RedisSettings.dsn</code>, since integration
+packages do not import each other); <code>GcpKmsSettings</code> is one emulator endpoint and one
+timeout, because Google's credentials come from the ambient environment.</p>
 
 
 

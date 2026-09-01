@@ -3230,6 +3230,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#wire-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6181,6 +6192,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#wire-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6344,6 +6366,12 @@ local runs):</p>
 
 <span class="n">creds</span> <span class="o">=</span> <span class="n">S3Credentials</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"lake"</span><span class="p">,</span> <span class="n">secret_ref</span><span class="o">=</span><span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"lake/s3"</span><span class="p">))</span>
 </code></pre></div>
+<h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
+<p><code>DuckDbSettings</code> carries the database path and the resource limits — <code>memory_limit</code> in
+particular, since DuckDB otherwise sizes itself from the host's memory rather than the
+cgroup's, which is how a query gets the container OOM-killed. Extensions, object stores and
+named sources stay wiring arguments. See
+<a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Each analytics route maps <code>query_key</code>s to DuckDB SQL (referencing a registered
 source view or an inline <code>read_parquet(...)</code>), keyed by <code>AnalyticsSpec.name</code>. The

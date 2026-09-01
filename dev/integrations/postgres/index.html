@@ -2930,6 +2930,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#bulk-loading" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6177,6 +6188,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#bulk-loading" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6336,6 +6358,21 @@ ranked text, pgvector for similarity).</p>
 </code></pre></div>
 <p>Use <code>RoutedPostgresClient</code> when the tenant or route decides the DSN — see
 <a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>.</p>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<p><code>PostgresSettings</code> builds the DSN from parts, so URI grammar — percent-encoding a
+password that contains <code>@</code>, bracketing an IPv6 host, choosing an <code>sslmode</code> that actually
+authenticates the server — stays in this package rather than in every application's
+settings module:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresSettings</span>
+
+<span class="n">pg_settings</span> <span class="o">=</span> <span class="n">PostgresSettings</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">"db.internal"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5432</span><span class="p">,</span> <span class="n">database</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">,</span> <span class="n">ssl</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">pg_settings</span><span class="o">.</span><span class="n">dsn</span>      <span class="c1"># SecretStr("postgresql://postgres:@db.internal:5432/orders?sslmode=verify-full")</span>
+<span class="n">pg_settings</span><span class="o">.</span><span class="n">config</span>   <span class="c1"># PostgresConfig, from the pool fields that are set</span>
+</code></pre></div>
+<p>A plain <code>BaseModel</code>, not a <code>BaseSettings</code>: mount it on your own root settings class, which
+owns the environment prefix and delimiter. <code>host</code> has no default — an unset one raises a
+configuration error naming the setting rather than connecting to whatever is on localhost.</p>
 <h3 id="bulk-loading">Bulk loading<a class="headerlink" href="#bulk-loading" title="Permanent link">&para;</a></h3>
 <p><code>copy_rows</code> runs <code>COPY … FROM STDIN</code>, the engine's own bulk path — no bind-parameter
 ceiling, and 20–79× faster than a multi-VALUES <code>INSERT</code> at 10⁴–10⁵ rows:</p>

@@ -3861,6 +3861,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#wire-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6159,6 +6170,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#wire-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6332,6 +6354,11 @@ over operator-provided master keys, with no extra to install — see
 </div>
 </div>
 </div>
+<h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
+<p>Each cloud <abbr title="Key Management Service">KMS</abbr> ships its own: <code>AwsKmsSettings</code> (region, optional endpoint override,
+optional static credentials, refusing a half-set pair), <code>GcpKmsSettings</code> (emulator endpoint
+and timeout — credentials are ambient) and <code>YcKmsSettings</code> (an IAM <em>or</em> OAuth token, never
+both). See <a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Build the client and register its deps module — that publishes the client so the
 lifecycle step can open it. <code>CryptoDepsModule</code> composes the keyring over the

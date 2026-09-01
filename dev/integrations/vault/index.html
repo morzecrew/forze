@@ -3829,6 +3829,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Install">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6134,6 +6151,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Install">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6275,6 +6309,14 @@ provisioning, JWT signing, token renewal).</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[vault]'</span>
 </code></pre></div>
 <p>Needs a Vault server with a KV v2 mount.</p>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<p><code>VaultSettings</code> is the mountable form of <code>VaultConfig</code>: address, token, mount points and
+namespace as a pydantic model. The address must be <code>https://</code> unless it is a loopback one
+— the token rides on every request and every response carries a secret, so <code>http://</code> to
+anything but this machine puts both on the wire. On a loopback address the client stops
+honouring <code>HTTP_PROXY</code>, since <code>requests</code> would otherwise route even a localhost request
+(and its token) through the proxy. See
+<a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Build a client with its config, register the deps module (which publishes a
 <code>SecretsPort</code>), and wire the lifecycle step:</p>

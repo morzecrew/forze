@@ -6561,6 +6561,22 @@ variables; <code>bootstrap_telemetry</code> deliberately adds no second vocabula
 the exporter with the <code>observability</code> extra:</p>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s2">"forze[observability]"</span>
 </code></pre></div>
+<p>Both argument lists are also a settings model, so a deployment configures them from the
+environment instead of retyping the defaults:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.settings</span><span class="w"> </span><span class="kn">import</span> <span class="n">RuntimeSettings</span>
+
+<span class="n">rt</span> <span class="o">=</span> <span class="n">RuntimeSettings</span><span class="p">(</span><span class="n">version</span><span class="o">=</span><span class="n">APP_VERSION</span><span class="p">,</span> <span class="n">build_id</span><span class="o">=</span><span class="n">BUILD_ID</span><span class="p">,</span> <span class="n">telemetry</span><span class="o">=</span><span class="s2">"otlp"</span><span class="p">)</span>
+
+<span class="n">bootstrap_logging</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">rt</span><span class="o">.</span><span class="n">log_level</span><span class="p">,</span> <span class="n">render_mode</span><span class="o">=</span><span class="n">rt</span><span class="o">.</span><span class="n">log_render</span><span class="p">)</span>
+<span class="n">bootstrap_telemetry</span><span class="p">(</span>
+    <span class="n">service_name</span><span class="o">=</span><span class="s2">"orders-api"</span><span class="p">,</span>
+    <span class="n">service_version</span><span class="o">=</span><span class="n">rt</span><span class="o">.</span><span class="n">full_version</span><span class="p">,</span>
+    <span class="n">exporter</span><span class="o">=</span><span class="n">rt</span><span class="o">.</span><span class="n">telemetry</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><code>RuntimeSettings</code> is a plain <code>BaseModel</code> — mount it on your own <code>BaseSettings</code> root, which
+owns the environment prefix and delimiter. It defaults <code>log_render</code> to <code>json</code>, unlike
+<code>bootstrap_logging</code> itself: a settings object exists because something is being deployed.</p>
 <p>Then flush on the way out, after the drain gate flips:</p>
 <div class="highlight"><pre><span></span><code><span class="nd">@asynccontextmanager</span>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">lifespan</span><span class="p">(</span><span class="n">app</span><span class="p">:</span> <span class="n">FastAPI</span><span class="p">):</span>

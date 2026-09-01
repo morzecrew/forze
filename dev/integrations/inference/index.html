@@ -3991,6 +3991,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-both-adapters-guarantee" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6148,6 +6159,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-both-adapters-guarantee" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6348,6 +6370,11 @@ database. A <code>tenant_aware=True</code> route with no bound tenant fails clos
 <p>Requests send <code>{"instances": [...]}</code> and expect <code>{"predictions": [...]}</code> — the
 TF-Serving / sklearn container convention. Credentials default to the botocore
 chain; <code>endpoint_name</code> is per-tenant capable like <code>model_name</code> above.</p>
+<h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
+<p><code>InferenceHttpSettings</code> holds the model endpoint, default headers and a bearer token
+(merged into <code>Authorization</code> unless the headers already carry one); <code>SageMakerSettings</code>
+holds the AWS region and optional static credentials, refusing a half-set pair. See
+<a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="what-both-adapters-guarantee">What both adapters guarantee<a class="headerlink" href="#what-both-adapters-guarantee" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Explicit data egress.</strong> Features leave the encryption boundary in plaintext

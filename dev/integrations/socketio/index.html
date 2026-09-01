@@ -3688,6 +3688,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6314,6 +6325,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6615,6 +6637,11 @@ per-device cursors, trimming, and opting an event out (<code>offline_delivery=Fa
   before serving (the gateway reads but doesn't create it) and reclaims stranded pending
   entries so a durable signal whose consumer died is recovered, not lost.</li>
 </ul>
+<h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
+<p><code>SocketIOSettings</code> carries the Redis backplane: the URL (as a <code>SecretStr</code> — it holds the
+password), the channel, and whether this process publishes without subscribing. Build the
+URL from a <code>RedisSettings.dsn</code>; this package cannot import <code>forze_redis</code> itself. See
+<a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

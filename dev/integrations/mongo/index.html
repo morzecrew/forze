@@ -2955,6 +2955,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6156,6 +6173,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6301,6 +6335,20 @@ set</strong> (or sharded cluster), not a standalone server.</p>
 </code></pre></div>
 <p><code>RoutedMongoClient</code> resolves a per-tenant connection — see
 <a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>.</p>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<p><code>MongoSettings</code> builds the URI from parts, so the pieces that are easy to get wrong —
+the <code>mongodb+srv://</code> scheme, percent-encoded credentials, and <code>authSource</code> (very often
+<code>admin</code> rather than the database you read, which is what turns a correct password into
+"auth failed") — stay in this package:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mongo</span><span class="w"> </span><span class="kn">import</span> <span class="n">MongoSettings</span>
+
+<span class="n">mongo_settings</span> <span class="o">=</span> <span class="n">MongoSettings</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">"m.internal"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">27017</span><span class="p">,</span> <span class="n">auth_source</span><span class="o">=</span><span class="s2">"admin"</span><span class="p">)</span>
+
+<span class="n">mongo_settings</span><span class="o">.</span><span class="n">uri</span>     <span class="c1"># SecretStr("mongodb://...@m.internal:27017/?authSource=admin")</span>
+<span class="n">mongo_settings</span><span class="o">.</span><span class="n">config</span>  <span class="c1"># MongoConfig, from the client fields that are set</span>
+</code></pre></div>
+<p>See <a href="../#connection-settings">connection settings</a> for the rules every one of these
+models follows.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Relations are <code>(database, collection)</code> tuples, keyed by spec name:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>

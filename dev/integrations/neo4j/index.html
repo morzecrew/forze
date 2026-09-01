@@ -3013,6 +3013,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6156,6 +6173,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The client">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6301,6 +6335,20 @@ Bolt driver) — nodes, edges, and traversals behind the graph ports.</p>
 <p>Neo4j spans the full isolation ladder (see Notes): a tenant <strong>property partition</strong>
 (<code>tagged</code>), a per-tenant <strong>database</strong> (<code>namespace</code>), or a <strong>routed client</strong>
 (<code>dedicated</code>) — <code>RoutedNeo4jClient</code> resolves per-tenant Bolt URI/credentials from secrets.</p>
+<h3 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h3>
+<p><code>Neo4jSettings</code> picks the scheme, which is a two-by-two choice spelled as four strings —
+routing or direct, encrypted or not — and does not fail cleanly when wrong: <code>bolt://</code>
+against a cluster connects to whichever member answers, then fails on the first write it
+cannot route.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_neo4j</span><span class="w"> </span><span class="kn">import</span> <span class="n">Neo4jSettings</span>
+
+<span class="n">graph</span> <span class="o">=</span> <span class="n">Neo4jSettings</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">"g.internal"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">7687</span><span class="p">,</span> <span class="n">ssl</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="s2">"neo4j"</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="s2">"…"</span><span class="p">)</span>
+
+<span class="n">graph</span><span class="o">.</span><span class="n">uri</span>     <span class="c1"># SecretStr("neo4j+s://g.internal:7687")</span>
+<span class="n">graph</span><span class="o">.</span><span class="n">auth</span>    <span class="c1"># ("neo4j", "…") — or None when neither is set; half-set is refused</span>
+<span class="n">graph</span><span class="o">.</span><span class="n">config</span>  <span class="c1"># Neo4jConfig, from the driver fields that are set</span>
+</code></pre></div>
+<p>See <a href="../#connection-settings">connection settings</a>.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Graphs are keyed by their module spec name:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>
