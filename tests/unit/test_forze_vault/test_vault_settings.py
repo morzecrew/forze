@@ -170,6 +170,18 @@ class TestIsLoopback:
 
     # ....................... #
 
+    @pytest.mark.parametrize("hostname", ["::ffff:127.0.0.1", "[::ffff:127.0.0.1]"])
+    def test_recognises_an_ipv4_mapped_loopback(self, hostname: str) -> None:
+        """Leaning on the stdlib rather than restating it: `IPv6Address.is_loopback`
+        delegates to the mapped IPv4 address from 3.13, which is this project's floor. The
+        test is here because that is a version-dependent guarantee a security decision
+        rests on — if it ever stops holding, this fails rather than the token quietly
+        starting to travel through a proxy."""
+
+        assert is_loopback(hostname) is True
+
+    # ....................... #
+
     @pytest.mark.parametrize(
         "hostname",
         [None, "", "vault.internal", "10.0.0.5", "2001:db8::1", "localhost.evil.com"],
