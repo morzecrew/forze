@@ -66,7 +66,9 @@ An empty page can also say *why* it's empty. Every page type carries an optional
 permission-gated read can tell "nothing exists" apart from "rows exist but you
 may not see them" without a second, ungated query. It's a result, not an error:
 adapters that can't tell the causes apart leave it `None`, and a page with hits
-never carries one.
+never carries one. On governed list operations, `AuthzDocumentScopeWrap`'s
+opt-in `explain_empty` sets the reason for you (see the
+[authz recipe](../recipes/authn-authz-tenancy-fastapi.md)).
 
 ## Searching
 

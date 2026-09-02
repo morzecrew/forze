@@ -122,6 +122,14 @@ registry = (
   rows they're entitled to. Authorization scoping *is* [query-DSL](../reference/query-syntax.md)
   filter injection.
 
+With `explain_empty=True`, the wrap also says *why* a page came back empty: when
+the policy restricted nothing, an empty page is `no_match` outright; when it did,
+one probe re-runs the read with the caller's own filters, clamped to a single
+first-page row — rows there mean `not_permitted`, none mean `no_match`. The
+probe's rows never reach the caller, only whether any exist. Off by default;
+note that `not_permitted` discloses that hidden rows exist, so surfacing it to
+end users is your API's disclosure decision.
+
 ## HTTP login endpoints
 
 The login flows themselves come for free: `build_authn_registry` registers the
