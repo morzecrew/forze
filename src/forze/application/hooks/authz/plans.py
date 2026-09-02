@@ -96,8 +96,8 @@ def _existence_probe_args(args: Any, base_filters: Any, filter_attr: str) -> Any
         def rebuild(update: dict[str, Any]) -> Any:
             return args.model_copy(update=update)
 
-    elif attrs.has(type(args)):
-        fields = {f.name for f in attrs.fields(type(args))}
+    elif attrs.has(type(args)):  # pyright: ignore[reportUnknownArgumentType]
+        fields = {f.name for f in attrs.fields(type(args))}  # pyright: ignore[reportUnknownArgumentType]
 
         def rebuild(update: dict[str, Any]) -> Any:
             return attrs.evolve(args, **update)
