@@ -71,6 +71,18 @@ class TestIdentityDocumentNames:
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
+    def test_unpacked_group_misuse_is_refused_cleanly(self) -> None:
+        # A tuple-of-groups (missing the * unpack) must fail as configuration,
+        # not as a raw AttributeError deep in the loop.
+        with pytest.raises(CoreException, match="unpack groups") as ei:
+            identity_document_names((GRANT_RESOLUTION_SPECS, DELEGATION_SPECS))  # type: ignore[arg-type]
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_bare_string_selection_is_one_name(self) -> None:
+        # A str is itself an iterable of characters; it must mean one name.
+        assert identity_document_names("authn_token_sessions") == ("authn_token_sessions",)
+
     def test_empty_selection_is_refused(self) -> None:
         with pytest.raises(CoreException, match="selection is empty") as ei:
             identity_document_names([])
@@ -151,6 +163,7 @@ class TestFeatureGroupsMatchTheFactories:
             ConfigurablePasswordAccountProvisioning,
             ConfigurablePasswordLifecycle,
             ConfigurablePasswordReset,
+            ConfigurablePolicyPrincipalEligibility,
         )
 
         ctx = _RecordingCtx()
@@ -160,6 +173,10 @@ class TestFeatureGroupsMatchTheFactories:
         ConfigurablePasswordLifecycle(shared=shared)(ctx, spec)  # type: ignore[arg-type]
         ConfigurablePasswordReset(shared=shared)(ctx, spec)  # type: ignore[arg-type]
         ConfigurablePasswordAccountProvisioning(shared=shared)(ctx, spec)  # type: ignore[arg-type]
+        # The default eligibility gate runs on every flow and reads the policy
+        # principal; the group must cover a default deployment, not just the
+        # lifecycle adapters themselves.
+        ConfigurablePolicyPrincipalEligibility()(ctx, spec)  # type: ignore[arg-type]
 
         assert ctx.resolved == _names(PASSWORD_LIFECYCLE_SPECS)
 

@@ -104,9 +104,12 @@ PASSWORD_LIFECYCLE_SPECS = (
     password_reset_spec,
     password_invite_spec,
     session_spec,
+    policy_principal_spec,
 )
-"""What password lifecycle touches end to end: accounts, reset tokens, invites, and the
-sessions revoked on password change or reset."""
+"""What password lifecycle touches end to end: accounts, reset tokens, invites, the
+sessions revoked on password change or reset, and the policy principal the default
+eligibility gate reads on every flow (unused but harmless under
+``eligibility="allow_all"``)."""
 
 TENANT_RESOLUTION_SPECS = (principal_tenant_binding_spec, tenant_spec)
 """What tenant resolution reads: the principal-tenant binding, plus the tenant row when
@@ -117,7 +120,7 @@ active-tenant verification is on."""
 
 
 def identity_document_names(
-    specs: Iterable[DocumentSpec[Any, Any, Any, Any] | str] | None = None,
+    specs: Iterable[DocumentSpec[Any, Any, Any, Any] | str] | str | None = None,
 ) -> tuple[str, ...]:
     """The validated spec names for a selection of identity documents.
 
@@ -131,9 +134,19 @@ def identity_document_names(
 
     known = {str(spec.name): spec for spec in (*AUTHN_SPECS, *AUTHZ_SPECS, *TENANCY_SPECS)}
 
+    if isinstance(specs, str):
+        # A bare string is one name, not an iterable of characters.
+        specs = (specs,)
+
     names: dict[str, None] = {}
 
     for item in known.values() if specs is None else specs:
+        if not isinstance(item, str) and not isinstance(item, DocumentSpec):
+            raise exc.configuration(
+                f"Expected an identity document spec or name, got {type(item).__name__}; "
+                "unpack groups into the selection (*GROUP_A, *GROUP_B)",
+            )
+
         name = item if isinstance(item, str) else str(item.name)
 
         if name not in known or (not isinstance(item, str) and item is not known[name]):
