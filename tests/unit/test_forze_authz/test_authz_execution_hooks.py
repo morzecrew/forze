@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
+import attrs
 import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
@@ -267,6 +268,13 @@ class _NoSizeArgs(BaseDTO):
     filters: object = None
 
 
+@attrs.define(kw_only=True)
+class _AttrsListArgs:
+    filters: object = None
+    page: int = 1
+    size: int = 10
+
+
 class _FixedScope:
     def __init__(self, scope: AuthzDocumentScope) -> None:
         self.scope = scope
@@ -351,7 +359,14 @@ class TestExplainEmpty:
             return CountlessPage(hits=["hidden"], page=1, size=1)
 
         with patcher, binder:
-            result = await self._wrap(ctx)(_next, _ListArgs(filters=base, page=3, size=50))
+            token = ctx.inv_ctx.set_read_only()
+
+            try:
+                result = await self._wrap(ctx)(
+                    _next, _ListArgs(filters=base, page=3, size=50)
+                )
+            finally:
+                ctx.inv_ctx.reset_read_only(token)
 
         assert result.abstention == "not_permitted"
         assert result.hits == []
@@ -373,7 +388,12 @@ class TestExplainEmpty:
             return _empty_page()
 
         with patcher, binder:
-            result = await self._wrap(ctx)(_next, _ListArgs())
+            token = ctx.inv_ctx.set_read_only()
+
+            try:
+                result = await self._wrap(ctx)(_next, _ListArgs())
+            finally:
+                ctx.inv_ctx.reset_read_only(token)
 
         assert result.abstention == "no_match"
 
@@ -404,7 +424,12 @@ class TestExplainEmpty:
             return _empty_page()
 
         with patcher, binder:
-            result = await self._wrap(ctx)(_next, _NoSizeArgs())
+            token = ctx.inv_ctx.set_read_only()
+
+            try:
+                result = await self._wrap(ctx)(_next, _NoSizeArgs())
+            finally:
+                ctx.inv_ctx.reset_read_only(token)
 
         assert result.abstention is None
         assert len(calls) == 1
@@ -423,7 +448,12 @@ class TestExplainEmpty:
             raise RuntimeError("backend blip")
 
         with patcher, binder:
-            result = await self._wrap(ctx)(_next, _ListArgs())
+            token = ctx.inv_ctx.set_read_only()
+
+            try:
+                result = await self._wrap(ctx)(_next, _ListArgs())
+            finally:
+                ctx.inv_ctx.reset_read_only(token)
 
         assert result.abstention is None
         assert result.hits == []
@@ -445,6 +475,62 @@ class TestExplainEmpty:
 
         assert isinstance(result, _PageDTO)
         assert result.abstention == "no_match"
+
+    @pytest.mark.asyncio
+    async def test_probe_skipped_when_invocation_is_not_read_only(self) -> None:
+        # A probe re-invokes the inner chain, and only a QUERY invocation is known
+        # read-only — a COMMAND-classified operation must not replay its handler.
+        ctx, patcher, binder = self._bound_ctx(_POLICY)
+        calls: list[Any] = []
+
+        async def _next(args: Any) -> Any:
+            calls.append(args)
+            return _empty_page()
+
+        with patcher, binder:
+            result = await self._wrap(ctx)(_next, _ListArgs())
+
+        assert result.abstention is None
+        assert len(calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_attrs_args_probe_to_not_permitted(self) -> None:
+        base = {"$values": {"status": "open"}}
+        ctx, patcher, binder = self._bound_ctx(_POLICY)
+        calls: list[Any] = []
+
+        async def _next(args: Any) -> Any:
+            calls.append(args)
+
+            if len(calls) == 1:
+                return _empty_page()
+
+            return CountlessPage(hits=["hidden"], page=1, size=1)
+
+        with patcher, binder:
+            token = ctx.inv_ctx.set_read_only()
+
+            try:
+                result = await self._wrap(ctx)(
+                    _next, _AttrsListArgs(filters=base, page=3, size=50)
+                )
+            finally:
+                ctx.inv_ctx.reset_read_only(token)
+
+        assert result.abstention == "not_permitted"
+        assert len(calls) == 2
+        probe = calls[1]
+        assert probe.filters == base
+        assert (probe.page, probe.size) == (1, 1)
+
+    def test_probe_args_refused_for_unknown_args_shape(self) -> None:
+        from forze.application.hooks.authz.plans import _existence_probe_args
+
+        class _Plain:
+            filters = None
+            size = 10
+
+        assert _existence_probe_args(_Plain(), None, "filters") is None
 
     @pytest.mark.asyncio
     async def test_non_page_result_is_untouched(self) -> None:

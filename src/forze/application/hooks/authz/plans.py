@@ -1,6 +1,6 @@
 """Wire authz into :class:`~forze.application.execution.operations.registry.OperationRegistry` plans."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any, final
 
 import attrs
@@ -90,16 +90,31 @@ def _existence_probe_args(args: Any, base_filters: Any, filter_attr: str) -> Any
     filter exists to prevent.
     """
 
-    if not isinstance(args, BaseModel) or "size" not in type(args).model_fields:
+    if isinstance(args, BaseModel):
+        fields: Collection[str] = type(args).model_fields.keys()
+
+        def rebuild(update: dict[str, Any]) -> Any:
+            return args.model_copy(update=update)
+
+    elif attrs.has(type(args)):
+        fields = {f.name for f in attrs.fields(type(args))}
+
+        def rebuild(update: dict[str, Any]) -> Any:
+            return attrs.evolve(args, **update)
+
+    else:
+        return None
+
+    if "size" not in fields:
         return None
 
     update: dict[str, Any] = {filter_attr: base_filters, "size": 1}
 
     for field, first_page_value in (("page", 1), ("after", None), ("before", None)):
-        if field in type(args).model_fields:
+        if field in fields:
             update[field] = first_page_value
 
-    return args.model_copy(update=update)
+    return rebuild(update)
 
 
 # ....................... #
@@ -239,10 +254,10 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
     If it did, one probe re-invokes the inner chain with the caller's own filters,
     clamped to a single first-page row — rows there mean ``not_permitted``, none mean
     ``no_match``. The probe's rows never reach the caller, only whether any exist; it
-    runs the inner middlewares and handler a second time, so turn this on only for
-    read (``QUERY``) operations, and when the args shape offers no ``size`` field to
-    clamp, or the probe itself fails, the page is returned without a reason rather
-    than with a guess."""
+    runs the inner middlewares and handler a second time, so it fires only when the
+    invocation is bound read-only (a ``QUERY``-classified operation) — on any other
+    operation, and when the args shape offers no ``size`` field to clamp or the probe
+    itself fails, the page is returned without a reason rather than with a guess."""
 
     # ....................... #
 
@@ -302,6 +317,11 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             if doc_scope.filters is None:
                 # The policy restricted nothing, so the caller's own query matched nothing.
                 return _stamp_abstention(result, "no_match")
+
+            if not ctx.inv_ctx.is_read_only():
+                # The probe re-invokes the inner chain, and only a QUERY invocation is
+                # known read-only — never replay a handler that may write.
+                return result
 
             probe_args = _existence_probe_args(args, base_filters, self.args_filter_attr)
 
