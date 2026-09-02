@@ -1,15 +1,39 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, overload
+from typing import Any, Literal, TypeAlias, overload
 
 import attrs
+
+from forze.base.exceptions import exc
 
 # ----------------------- #
 # Pagination — generic page value objects with no search-specific metadata. The
 # result-level facets / highlights / snapshot handle live on the SearchPage family
 # in the search contract (forze.application.contracts.search.pages), which extends
 # these; the base contract must not depend on the search contract.
+
+
+AbstentionReason: TypeAlias = Literal["no_match", "ambiguous", "not_permitted"]
+"""Why an empty page is empty, when the adapter can tell:
+
+- ``no_match`` — nothing in the store/index matches the query;
+- ``ambiguous`` — the query resolved to more than one candidate and the surface refuses
+  to pick one;
+- ``not_permitted`` — matching rows exist, but the caller's permissions filtered all of
+  them out.
+
+Abstention is a *result*, not an error: infrastructure failures stay typed exceptions.
+The reason is optional — an adapter that cannot distinguish the causes returns an empty
+page with no reason, which is what every adapter did before the field existed."""
+
+
+def _reject_abstention_on_hits(page: CountlessPage[Any] | CursorPage[Any]) -> None:
+    if page.abstention is not None and page.hits:
+        raise exc.internal(
+            "An abstention reason is only valid on an empty page "
+            f"(abstention={page.abstention!r}, hits={len(page.hits)}).",
+        )
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -24,6 +48,13 @@ class CountlessPage[T]:
 
     size: int
     """Page size (number of records per page)."""
+
+    abstention: AbstentionReason | None = None
+    """Optional reason an empty page is empty; see :data:`AbstentionReason`. Never set on
+    a page that carries hits."""
+
+    def __attrs_post_init__(self) -> None:
+        _reject_abstention_on_hits(self)
 
 
 # ....................... #
@@ -56,6 +87,13 @@ class CursorPage[T]:
     has_more: bool = False
     """Whether there are more pages after this one."""
 
+    abstention: AbstentionReason | None = None
+    """Optional reason an empty page is empty; see :data:`AbstentionReason`. Never set on
+    a page that carries hits."""
+
+    def __attrs_post_init__(self) -> None:
+        _reject_abstention_on_hits(self)
+
 
 # ....................... #
 
@@ -86,6 +124,7 @@ def page_from_limit_offset[T](
     pagination: Mapping[str, Any] | None,
     *,
     total: None = None,
+    abstention: AbstentionReason | None = None,
 ) -> CountlessPage[T]: ...
 
 
@@ -95,6 +134,7 @@ def page_from_limit_offset[T](
     pagination: Mapping[str, Any] | None,
     *,
     total: int,
+    abstention: AbstentionReason | None = None,
 ) -> Page[T]: ...
 
 
@@ -103,6 +143,7 @@ def page_from_limit_offset[T](
     pagination: Mapping[str, Any] | None,
     *,
     total: int | None = None,
+    abstention: AbstentionReason | None = None,
 ) -> Page[T] | CountlessPage[T]:
     """Build ``Page`` or ``CountlessPage`` from offset/limit window params.
 
@@ -113,6 +154,6 @@ def page_from_limit_offset[T](
     page_num, size = offset_page_coords(pagination, len(hits))
 
     if total is None:
-        return CountlessPage(hits=hits, page=page_num, size=size)
+        return CountlessPage(hits=hits, page=page_num, size=size, abstention=abstention)
 
-    return Page(hits=hits, page=page_num, size=size, count=int(total))
+    return Page(hits=hits, page=page_num, size=size, count=int(total), abstention=abstention)

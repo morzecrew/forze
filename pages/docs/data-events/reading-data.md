@@ -61,6 +61,13 @@ forged or replayed against a different query.
 The name *is* the combination: `select_page(...)` is an alternate return type,
 offset-paged, with a count; `find_cursor(...)` is the read model, keyset-paged.
 
+An empty page can also say *why* it's empty. Every page type carries an optional
+`abstention` reason — `no_match`, `ambiguous`, or `not_permitted` — so a
+permission-gated read can tell "nothing exists" apart from "rows exist but you
+may not see them" without a second, ungated query. It's a result, not an error:
+adapters that can't tell the causes apart leave it `None`, and a page with hits
+never carries one.
+
 ## Searching
 
 Full-text and vector search are a parallel surface, through the **search query

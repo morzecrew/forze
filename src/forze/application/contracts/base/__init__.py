@@ -1,5 +1,6 @@
 from .specs import BaseSpec, EncryptionReach, MessageCodecSpec, MessageEncryptionTier
 from .value_objects import (
+    AbstentionReason,
     CountlessPage,
     CursorPage,
     Page,
@@ -10,6 +11,7 @@ from .value_objects import (
 # ----------------------- #
 
 __all__ = [
+    "AbstentionReason",
     "BaseSpec",
     "CountlessPage",
     "CursorPage",
