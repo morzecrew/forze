@@ -429,6 +429,24 @@ class TestExplainEmpty:
         assert result.hits == []
 
     @pytest.mark.asyncio
+    async def test_pydantic_page_result_is_stamped_via_model_copy(self) -> None:
+        class _PageDTO(BaseDTO):
+            hits: list[str]
+            abstention: str | None = None
+
+        ctx, patcher, binder = self._bound_ctx(_UNRESTRICTED)
+
+        async def _next(args: Any) -> Any:
+            _ = args
+            return _PageDTO(hits=[])
+
+        with patcher, binder:
+            result = await self._wrap(ctx)(_next, _ListArgs())
+
+        assert isinstance(result, _PageDTO)
+        assert result.abstention == "no_match"
+
+    @pytest.mark.asyncio
     async def test_non_page_result_is_untouched(self) -> None:
         ctx, patcher, binder = self._bound_ctx(_POLICY)
 
