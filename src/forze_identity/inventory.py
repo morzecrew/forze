@@ -130,7 +130,8 @@ def identity_document_relations(
     """Map identity specs onto one schema: spec name to its ``(schema, table)`` relation.
 
     ``specs`` takes spec objects (the plane tuples or feature groups above) or bare
-    names, defaulting to every identity spec; overlapping groups deduplicate. Every
+    names, defaulting to every identity spec; overlapping groups deduplicate and an
+    empty selection is refused. Every
     entry is validated against the identity inventory, so a renamed or misspelled spec
     fails a test naming the spec rather than a deploy naming a missing table. Feed the
     result to the backend's document config — reads and writes both target the returned
