@@ -6,7 +6,7 @@ from typing import Any, Final, cast
 
 from pydantic import BaseModel, Field, PositiveInt
 
-from forze.application.contracts.base import CursorPage, Page
+from forze.application.contracts.base import AbstentionReason, CursorPage, Page
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
@@ -94,6 +94,7 @@ def offset_page_fields(page: Page[Any]) -> dict[str, Any]:
         "page": page.page,
         "size": page.size,
         "count": page.count,
+        "abstention": page.abstention,
     }
 
 
@@ -108,6 +109,7 @@ def cursor_page_fields(page: CursorPage[Any]) -> dict[str, Any]:
         "next_cursor": page.next_cursor,
         "prev_cursor": page.prev_cursor,
         "has_more": page.has_more,
+        "abstention": page.abstention,
     }
 
 
@@ -133,6 +135,9 @@ class Paginated[T: BaseModel](BaseDTO):
 
     count: int
     """Total number of matching records across all pages."""
+
+    abstention: AbstentionReason | None = None
+    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
 
     # ....................... #
 
@@ -165,6 +170,9 @@ class ProjectedPaginated(BaseDTO):
     count: int
     """Total number of matching records across all pages."""
 
+    abstention: AbstentionReason | None = None
+    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
+
     # ....................... #
 
     @classmethod
@@ -189,6 +197,9 @@ class CursorPaginated[T: BaseModel](BaseDTO):
 
     has_more: bool = False
     """Whether there are more pages after this one."""
+
+    abstention: AbstentionReason | None = None
+    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
 
     # ....................... #
 
@@ -216,6 +227,9 @@ class ProjectedCursorPaginated(BaseDTO):
 
     has_more: bool = False
     """Whether there are more pages after this one."""
+
+    abstention: AbstentionReason | None = None
+    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
 
     # ....................... #
 

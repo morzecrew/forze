@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Four helpers each integration package used to carry its own copy of are now core and exported: `log_server_error`, `drain_domain_events`, `resolve_result_snapshot`, `domains_from_create_payloads`.
 
-- **Empty pages can say why they are empty.** Every page value object carries an optional `abstention` reason — `no_match`, `ambiguous` or `not_permitted` — so a gated read can tell "nothing matches" from "rows you may not see". Defaults to no reason, leaving existing adapters unchanged; a page with hits refuses one.
+- **Empty pages can say why they are empty.** Every page value object and kits response DTO carries an optional `abstention` — `no_match`, `ambiguous` or `not_permitted` — so a gated read can tell "nothing matches" from "rows you may not see". No reason by default; hits beside a reason, or an unknown one, refused.
 
 - **Every backend the published skill described now has code you can run.** Mongo, Firestore, Meilisearch, Neo4j, Socket.IO, Kafka, MCP, SageMaker, DuckDB, GCP and Yandex KMS, authz and the mock server were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.
 
