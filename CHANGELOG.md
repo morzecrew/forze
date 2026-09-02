@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Identity specs bind to a schema by name.** `identity_document_relations(schema, specs=...)` maps identity specs to validated `(schema, table)` relations; `IDENTITY_BOOKKEEPING_STRATEGY` and five feature groups (grant resolution's nine tables, decisions, delegation, password lifecycle, tenancy) ship beside it.
+
 - **`AuthzDocumentScopeWrap` can explain empty pages** (`explain_empty=True`): no policy restriction makes an empty page `no_match`; otherwise one single-row probe of the caller's own filters decides `not_permitted` vs `no_match`. The probe's rows never reach the caller; off by default.
 
 - **`bypass_paths` on `InvocationMetadataMiddleware` and `SecurityContextMiddleware`** — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of a probe path they answered 500 while the runtime scope was not yet open, which is the window a liveness probe exists to observe. Pass `bypass_paths=DEFAULT_HEALTH_PATHS` (already exported from `forze.base.logging`). Exact full mounted paths, never prefixes; the default (empty) changes nothing. `check_bypass_paths` (run by `runtime_lifespan`) fails the boot on a bypassed path that serves a generated operation route, on the two middlewares carrying different sets, and on a set matching no route at all.
