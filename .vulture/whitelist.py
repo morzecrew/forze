@@ -531,6 +531,7 @@ _.select_search_stream  # unused method (src/forze/application/integrations/sear
 docs_route  # unused function (src/forze_fastapi/docs.py:180)
 _.list_delegators  # unused method (src/forze_identity/authz/adapters/delegation.py:154)
 _.list_roles  # unused method (src/forze_identity/authz/adapters/role_assignment.py:143)
+_._no_abstention_with_hits  # unused method (src/forze_kits/dto/paginated.py:29)
 _._error_belongs_to_a_failure  # unused method (src/forze_kits/integrations/progress/events.py:86)
 _.sweep_now  # unused method (src/forze_kits/integrations/secrets/credential_sweep.py:222)
 _.project_run  # unused method (src/forze_mock/adapters/analytics.py:307)

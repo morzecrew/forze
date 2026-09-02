@@ -16,6 +16,7 @@ from typing import Any, overload
 import attrs
 
 from forze.application.contracts.base import (
+    AbstentionReason,
     CountlessPage,
     CursorPage,
     Page,
@@ -62,6 +63,7 @@ class SearchCountlessPage[T](CountlessPage[T]):
     so treat scores as ordinal within one response rather than comparable across queries."""
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         if self.scores is not None and len(self.scores) != len(self.hits):
             raise exc.internal(
                 "Search page scores must be index-aligned with hits "
@@ -98,6 +100,7 @@ class SearchCursorPage[T](CursorPage[T]):
     See :attr:`SearchCountlessPage.scores`."""
 
     def __attrs_post_init__(self) -> None:
+        super().__attrs_post_init__()
         if self.scores is not None and len(self.scores) != len(self.hits):
             raise exc.internal(
                 "Search page scores must be index-aligned with hits "
@@ -118,6 +121,7 @@ def search_page_from_limit_offset[T](
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
     scores: list[float] | None = None,
+    abstention: AbstentionReason | None = None,
 ) -> SearchCountlessPage[T]: ...
 
 
@@ -131,6 +135,7 @@ def search_page_from_limit_offset[T](
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
     scores: list[float] | None = None,
+    abstention: AbstentionReason | None = None,
 ) -> SearchPage[T]: ...
 
 
@@ -143,12 +148,13 @@ def search_page_from_limit_offset[T](
     facets: FacetResults | None = None,
     highlights: list[HitHighlights] | None = None,
     scores: list[float] | None = None,
+    abstention: AbstentionReason | None = None,
 ) -> SearchPage[T] | SearchCountlessPage[T]:
     """Build a ``SearchPage`` / ``SearchCountlessPage`` from offset/limit window params.
 
     The search counterpart to :func:`~forze.application.contracts.base.page_from_limit_offset`:
     same one-based page numbering, plus the optional snapshot handle / facets / highlights /
-    per-hit scores.
+    per-hit scores / abstention reason.
     """
 
     page_num, size = offset_page_coords(pagination, len(hits))
@@ -162,6 +168,7 @@ def search_page_from_limit_offset[T](
             facets=facets,
             highlights=highlights,
             scores=scores,
+            abstention=abstention,
         )
 
     return SearchPage(
@@ -173,4 +180,5 @@ def search_page_from_limit_offset[T](
         facets=facets,
         highlights=highlights,
         scores=scores,
+        abstention=abstention,
     )
