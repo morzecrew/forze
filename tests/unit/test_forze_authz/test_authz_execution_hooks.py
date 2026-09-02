@@ -523,6 +523,35 @@ class TestExplainEmpty:
         assert probe.filters == base
         assert (probe.page, probe.size) == (1, 1)
 
+    @pytest.mark.asyncio
+    async def test_probe_args_build_failure_returns_the_real_result(self) -> None:
+        # attrs.evolve re-runs validators; a DTO refusing the clamped values must
+        # degrade to an unexplained page, never fail the successful read.
+        @attrs.define(kw_only=True)
+        class _StrictArgs:
+            filters: object = None
+            page: int = 1
+            size: int = attrs.field(default=10, validator=attrs.validators.ge(5))
+
+        ctx, patcher, binder = self._bound_ctx(_POLICY)
+        calls: list[Any] = []
+
+        async def _next(args: Any) -> Any:
+            calls.append(args)
+            return _empty_page()
+
+        with patcher, binder:
+            token = ctx.inv_ctx.set_read_only()
+
+            try:
+                result = await self._wrap(ctx)(_next, _StrictArgs())
+            finally:
+                ctx.inv_ctx.reset_read_only(token)
+
+        assert result.abstention is None
+        assert result.hits == []
+        assert len(calls) == 1
+
     def test_probe_args_refused_for_unknown_args_shape(self) -> None:
         from forze.application.hooks.authz.plans import _existence_probe_args
 

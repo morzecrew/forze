@@ -323,15 +323,17 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
                 # known read-only — never replay a handler that may write.
                 return result
 
-            probe_args = _existence_probe_args(args, base_filters, self.args_filter_attr)
-
-            if probe_args is None:
-                return result
-
+            # The reason is advisory, so nothing on the probe path — building the args
+            # (attrs.evolve re-runs validators, which may reject the clamped values) or
+            # running the read — may outrank the real result.
             try:
+                probe_args = _existence_probe_args(args, base_filters, self.args_filter_attr)
+
+                if probe_args is None:
+                    return result
+
                 probe = await next(probe_args)
             except Exception:
-                # The reason is advisory; a probe failure must not outrank the real result.
                 logger.exception(
                     "Abstention existence probe failed for document %s (operation %s); "
                     "returning the empty page without a reason",
