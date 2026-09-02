@@ -4,7 +4,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any, final
 
 import attrs
+from pydantic import BaseModel
 
+from forze.application._logger import logger
 from forze.application.contracts.authz import (
     AuthzDocumentScopeRequest,
     AuthzRequest,
@@ -13,6 +15,7 @@ from forze.application.contracts.authz import (
     AuthzSpec,
     subject_from_authn,
 )
+from forze.application.contracts.base import AbstentionReason
 from forze.application.contracts.execution import (
     Before,
     BeforeFactory,
@@ -59,6 +62,44 @@ def merge_query_filters(
         return base
 
     return {"$and": [base, extra]}
+
+
+# ....................... #
+
+
+def _empty_unexplained_page(result: Any) -> bool:
+    """A page-like result (has ``hits`` and ``abstention``) with no hits and no reason yet."""
+
+    hits = getattr(result, "hits", None)
+
+    return hits == [] and getattr(result, "abstention", ...) is None
+
+
+def _stamp_abstention(result: Any, reason: AbstentionReason) -> Any:
+    if isinstance(result, BaseModel):
+        return result.model_copy(update={"abstention": reason})
+
+    return attrs.evolve(result, abstention=reason)
+
+
+def _existence_probe_args(args: Any, base_filters: Any, filter_attr: str) -> Any | None:
+    """Rebuild ``args`` as a smallest-possible first-page read of the caller's own filters.
+
+    Returns ``None`` when no safe probe can be built: the probe must be clamped to one
+    row (a ``size`` field) or it would materialize the unscoped result set the policy
+    filter exists to prevent.
+    """
+
+    if not isinstance(args, BaseModel) or "size" not in type(args).model_fields:
+        return None
+
+    update: dict[str, Any] = {filter_attr: base_filters, "size": 1}
+
+    for field, first_page_value in (("page", 1), ("after", None), ("before", None)):
+        if field in type(args).model_fields:
+            update[field] = first_page_value
+
+    return args.model_copy(update=update)
 
 
 # ....................... #
@@ -192,6 +233,17 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
     action: str | None = None
     args_filter_attr: str = "filters"
 
+    explain_empty: bool = False
+    """When on, an empty page result carries an abstention reason instead of a bare
+    empty page. If the policy added no filters, empty means ``no_match`` outright.
+    If it did, one probe re-invokes the inner chain with the caller's own filters,
+    clamped to a single first-page row — rows there mean ``not_permitted``, none mean
+    ``no_match``. The probe's rows never reach the caller, only whether any exist; it
+    runs the inner middlewares and handler a second time, so turn this on only for
+    read (``QUERY``) operations, and when the args shape offers no ``size`` field to
+    clamp, or the probe itself fails, the page is returned without a reason rather
+    than with a guess."""
+
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext) -> Middleware[Any, Any]:
@@ -242,7 +294,35 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
                 else:
                     args = attrs.evolve(args, **{self.args_filter_attr: merged})  # type: ignore[arg-type]
 
-            return await next(args)
+            result = await next(args)
+
+            if not self.explain_empty or not _empty_unexplained_page(result):
+                return result
+
+            if doc_scope.filters is None:
+                # The policy restricted nothing, so the caller's own query matched nothing.
+                return _stamp_abstention(result, "no_match")
+
+            probe_args = _existence_probe_args(args, base_filters, self.args_filter_attr)
+
+            if probe_args is None:
+                return result
+
+            try:
+                probe = await next(probe_args)
+            except Exception:
+                # The reason is advisory; a probe failure must not outrank the real result.
+                logger.exception(
+                    "Abstention existence probe failed for document %s (operation %s); "
+                    "returning the empty page without a reason",
+                    self.document_name,
+                    self.operation,
+                )
+                return result
+
+            reason: AbstentionReason = "not_permitted" if getattr(probe, "hits", []) else "no_match"
+
+            return _stamp_abstention(result, reason)
 
         return _wrap
 
