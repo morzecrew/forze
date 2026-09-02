@@ -25,8 +25,7 @@ _EXPORTS: dict[str, str] = {
     "DELEGATION_SPECS": "forze_identity.inventory",
     "PASSWORD_LIFECYCLE_SPECS": "forze_identity.inventory",
     "TENANT_RESOLUTION_SPECS": "forze_identity.inventory",
-    "IDENTITY_BOOKKEEPING_STRATEGY": "forze_identity.inventory",
-    "identity_document_relations": "forze_identity.inventory",
+    "identity_document_names": "forze_identity.inventory",
 }
 
 __all__ = [
@@ -36,11 +35,10 @@ __all__ = [
     "AUTHZ_SPECS",
     "DELEGATION_SPECS",
     "GRANT_RESOLUTION_SPECS",
-    "IDENTITY_BOOKKEEPING_STRATEGY",
     "PASSWORD_LIFECYCLE_SPECS",
     "TENANCY_SPECS",
     "TENANT_RESOLUTION_SPECS",
-    "identity_document_relations",
+    "identity_document_names",
     "spec_contributions",
 ]
 
@@ -54,10 +52,9 @@ if TYPE_CHECKING:
         AUTHZ_SPECS,
         DELEGATION_SPECS,
         GRANT_RESOLUTION_SPECS,
-        IDENTITY_BOOKKEEPING_STRATEGY,
         PASSWORD_LIFECYCLE_SPECS,
         TENANCY_SPECS,
         TENANT_RESOLUTION_SPECS,
-        identity_document_relations,
+        identity_document_names,
         spec_contributions,
     )

@@ -131,32 +131,34 @@ disagrees.
 ## Binding the specs to a schema
 
 Once the tables exist, the deps module needs a `rw_documents` mapping for them.
-`identity_document_relations` builds it from the identity inventory — every name
-validated against the frozen spec set, so a renamed spec fails a test naming the
-spec rather than a deploy naming a missing table:
+The relation each name binds to is yours — this recipe happens to name tables
+after the specs, so the mapping is a comprehension — but the *names* come from
+`identity_document_names`, validated against the identity inventory, so a
+renamed or misspelled spec fails a test naming the spec rather than a deploy
+naming a missing table:
 
 ```python
-from forze_identity import IDENTITY_BOOKKEEPING_STRATEGY, identity_document_relations
+from forze_identity import identity_document_names
 from forze_postgres import PostgresDocumentConfig
 
 IDENTITY_PG = {
     name: PostgresDocumentConfig(
-        read=relation,
-        write=relation,
-        bookkeeping_strategy=IDENTITY_BOOKKEEPING_STRATEGY,
+        read=("identity", name),
+        write=("identity", name),
+        # the DDL in this recipe ships no optimistic-locking trigger,
+        # so bookkeeping stays application-side
+        bookkeeping_strategy="application",
     )
-    for name, relation in identity_document_relations("identity").items()
+    for name in identity_document_names()
 }
 ```
 
-`IDENTITY_BOOKKEEPING_STRATEGY` is `"application"` because identity tables carry
-no optimistic-locking trigger — that fact lives in forze, not in your wiring.
 Binding a subset? Choose from the named feature groups
 (`GRANT_RESOLUTION_SPECS`, `AUTHZ_DECISION_SPECS`, `DELEGATION_SPECS`,
 `PASSWORD_LIFECYCLE_SPECS`, `TENANT_RESOLUTION_SPECS`) via
-`identity_document_relations("identity", specs=(*AUTHZ_DECISION_SPECS, ...))`
-rather than hand-listing names: a principal can reach a role directly or through
-a group, so binding only part of the grant-resolution set resolves fewer grants
+`identity_document_names((*AUTHZ_DECISION_SPECS, *DELEGATION_SPECS))` rather
+than hand-listing names: a principal can reach a role directly or through a
+group, so binding only part of the grant-resolution set resolves fewer grants
 than the database holds, silently.
 
 ## Trust but verify

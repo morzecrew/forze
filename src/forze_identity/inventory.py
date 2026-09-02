@@ -11,7 +11,7 @@ and grant in the application — and the artifact would look complete.
 """
 
 from collections.abc import Iterable
-from typing import Any, Final
+from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.inventory import SpecRegistry, SpecSource
@@ -116,34 +116,22 @@ active-tenant verification is on."""
 # ....................... #
 
 
-IDENTITY_BOOKKEEPING_STRATEGY: Final = "application"
-"""Identity tables carry no optimistic-locking trigger, so a backend document config
-binding them must keep bookkeeping application-side. Pass it verbatim, e.g.
-``PostgresDocumentConfig(bookkeeping_strategy=IDENTITY_BOOKKEEPING_STRATEGY, ...)``."""
-
-
-def identity_document_relations(
-    schema: str,
-    *,
+def identity_document_names(
     specs: Iterable[DocumentSpec[Any, Any, Any, Any] | str] | None = None,
-) -> dict[str, tuple[str, str]]:
-    """Map identity specs onto one schema: spec name to its ``(schema, table)`` relation.
+) -> tuple[str, ...]:
+    """The validated spec names for a selection of identity documents.
 
     ``specs`` takes spec objects (the plane tuples or feature groups above) or bare
-    names, defaulting to every identity spec; overlapping groups deduplicate and an
-    empty selection is refused. Every
-    entry is validated against the identity inventory, so a renamed or misspelled spec
-    fails a test naming the spec rather than a deploy naming a missing table. Feed the
-    result to the backend's document config — reads and writes both target the returned
-    relation, with :data:`IDENTITY_BOOKKEEPING_STRATEGY` as the bookkeeping strategy.
+    names, defaulting to every identity spec; overlapping groups deduplicate, an empty
+    selection is refused, and an unknown or foreign entry fails naming the spec — so a
+    renamed or misspelled spec fails a test naming the spec rather than a deploy naming
+    a missing binding. Where the rows live — schema, table or collection names, the
+    backend config that binds them — is the application's, keyed by these names.
     """
-
-    if not schema or not schema.strip():
-        raise exc.configuration("Identity document schema must be a non-empty string")
 
     known = {str(spec.name): spec for spec in (*AUTHN_SPECS, *AUTHZ_SPECS, *TENANCY_SPECS)}
 
-    relations: dict[str, tuple[str, str]] = {}
+    names: dict[str, None] = {}
 
     for item in known.values() if specs is None else specs:
         name = item if isinstance(item, str) else str(item.name)
@@ -153,14 +141,14 @@ def identity_document_relations(
                 f"Unknown identity document spec {name!r}; known specs: {sorted(known)}",
             )
 
-        relations[name] = (schema, name)
+        names[name] = None
 
-    if not relations:
+    if not names:
         # An empty selection binds nothing and would read as success; an emptied group
         # constant or a bad comprehension should fail here, at the seam.
         raise exc.configuration("Identity document selection is empty; pass specs or omit them")
 
-    return relations
+    return tuple(names)
 
 
 # ....................... #

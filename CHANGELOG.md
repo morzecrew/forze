@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Identity specs bind to a schema by name.** `identity_document_relations(schema, specs=...)` maps identity specs to validated `(schema, table)` relations; `IDENTITY_BOOKKEEPING_STRATEGY` and five feature groups (grant resolution's nine tables, decisions, delegation, password lifecycle, tenancy) ship beside it.
+- **Identity spec selections are enumerable and validated.** `identity_document_names(specs=...)` returns validated names for a selection of identity documents; five feature groups ship beside it (grant resolution's nine tables, decisions, delegation, password lifecycle, tenancy), each pinned to its factory by test.
 
 - **`AuthzDocumentScopeWrap` can explain empty pages** (`explain_empty=True`): no policy restriction makes an empty page `no_match`; otherwise one single-row probe of the caller's own filters decides `not_permitted` vs `no_match`. The probe's rows never reach the caller; off by default.
 

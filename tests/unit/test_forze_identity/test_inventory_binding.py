@@ -20,11 +20,10 @@ from forze_identity.inventory import (
     AUTHZ_SPECS,
     DELEGATION_SPECS,
     GRANT_RESOLUTION_SPECS,
-    IDENTITY_BOOKKEEPING_STRATEGY,
     PASSWORD_LIFECYCLE_SPECS,
     TENANCY_SPECS,
     TENANT_RESOLUTION_SPECS,
-    identity_document_relations,
+    identity_document_names,
 )
 
 pytestmark = pytest.mark.unit
@@ -40,32 +39,26 @@ def _names(specs: tuple[Any, ...]) -> set[str]:
 # The mapping helper
 
 
-class TestIdentityDocumentRelations:
-    def test_default_maps_every_spec(self) -> None:
-        relations = identity_document_relations("identity")
+class TestIdentityDocumentNames:
+    def test_default_names_every_spec(self) -> None:
+        names = identity_document_names()
 
-        assert set(relations) == _ALL_NAMES
-        assert len(relations) == 19
-
-        for name, relation in relations.items():
-            assert relation == ("identity", name)
+        assert set(names) == _ALL_NAMES
+        assert len(names) == 19
 
     def test_groups_compose_and_deduplicate(self) -> None:
-        # policy_principal appears in both groups; the mapping holds it once.
-        relations = identity_document_relations(
-            "id", specs=(*AUTHZ_DECISION_SPECS, *DELEGATION_SPECS)
-        )
+        # policy_principal appears in both groups; the selection holds it once.
+        names = identity_document_names((*AUTHZ_DECISION_SPECS, *DELEGATION_SPECS))
 
-        assert set(relations) == _names(AUTHZ_DECISION_SPECS) | _names(DELEGATION_SPECS)
+        assert set(names) == _names(AUTHZ_DECISION_SPECS) | _names(DELEGATION_SPECS)
+        assert len(names) == len(set(names))
 
     def test_accepts_bare_names(self) -> None:
-        relations = identity_document_relations("id", specs=["authn_token_sessions"])
-
-        assert relations == {"authn_token_sessions": ("id", "authn_token_sessions")}
+        assert identity_document_names(["authn_token_sessions"]) == ("authn_token_sessions",)
 
     def test_unknown_name_is_refused_naming_it(self) -> None:
         with pytest.raises(CoreException, match="authn_sesions") as ei:
-            identity_document_relations("id", specs=["authn_sesions"])
+            identity_document_names(["authn_sesions"])
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
@@ -74,25 +67,15 @@ class TestIdentityDocumentRelations:
         foreign.name = "authn_token_sessions"
 
         with pytest.raises(CoreException) as ei:
-            identity_document_relations("id", specs=[foreign])
-
-        assert ei.value.kind is ExceptionKind.CONFIGURATION
-
-    @pytest.mark.parametrize("schema", ["", "   "])
-    def test_blank_schema_is_refused(self, schema: str) -> None:
-        with pytest.raises(CoreException) as ei:
-            identity_document_relations(schema)
+            identity_document_names([foreign])
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
     def test_empty_selection_is_refused(self) -> None:
         with pytest.raises(CoreException, match="selection is empty") as ei:
-            identity_document_relations("id", specs=[])
+            identity_document_names([])
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
-
-    def test_bookkeeping_fact_is_application(self) -> None:
-        assert IDENTITY_BOOKKEEPING_STRATEGY == "application"
 
 
 # ....................... #
