@@ -89,3 +89,19 @@ class TestFromPageKeepsAbstention:
         page = Page[_Hit](hits=[], page=1, size=10, count=0)
 
         assert Paginated.from_page(page).abstention is None
+
+    def test_direct_construction_rejects_reason_beside_hits(self) -> None:
+        # The same invariant the page value objects enforce, held at the HTTP boundary:
+        # a DTO built directly must not serialize a contradictory response.
+        with pytest.raises(ValidationError, match="only valid on an empty page"):
+            ProjectedPaginated(
+                hits=[{"id": "a"}], page=1, size=1, count=1, abstention="no_match"
+            )
+
+        with pytest.raises(ValidationError, match="only valid on an empty page"):
+            ProjectedCursorPaginated(
+                hits=[{"id": "a"}],
+                next_cursor=None,
+                prev_cursor=None,
+                abstention="not_permitted",
+            )

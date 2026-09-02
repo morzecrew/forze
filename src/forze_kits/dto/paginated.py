@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Final, cast
+from typing import Any, Final, Self, cast
 
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import BaseModel, Field, PositiveInt, model_validator
 
 from forze.application.contracts.base import AbstentionReason, CursorPage, Page
 from forze.application.contracts.querying import (
@@ -13,6 +13,31 @@ from forze.application.contracts.querying import (
 )
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
+
+# ----------------------- #
+
+
+class _AbstainablePageDTO(BaseDTO):
+    """Response DTO base carrying the optional abstention reason.
+
+    Mirrors the page value objects' construction invariant at the HTTP boundary: a DTO
+    built directly (not via ``from_page``) must not serialize a reason beside hits."""
+
+    abstention: AbstentionReason | None = None
+    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
+
+    @model_validator(mode="after")
+    def _no_abstention_with_hits(self) -> Self:
+        hits: list[Any] = getattr(self, "hits", [])
+
+        if self.abstention is not None and hits:
+            raise ValueError(
+                "An abstention reason is only valid on an empty page "
+                f"(abstention={self.abstention!r}, hits={len(hits)})."
+            )
+
+        return self
+
 
 # ----------------------- #
 
@@ -116,7 +141,7 @@ def cursor_page_fields(page: CursorPage[Any]) -> dict[str, Any]:
 # ....................... #
 
 
-class Paginated[T: BaseModel](BaseDTO):
+class Paginated[T: BaseModel](_AbstainablePageDTO):
     """Paginated response with typed hit records.
 
     Used when search returns domain read models (e.g. `ReadDocument`).
@@ -136,9 +161,6 @@ class Paginated[T: BaseModel](BaseDTO):
     count: int
     """Total number of matching records across all pages."""
 
-    abstention: AbstentionReason | None = None
-    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
-
     # ....................... #
 
     @classmethod
@@ -151,7 +173,7 @@ class Paginated[T: BaseModel](BaseDTO):
 # ....................... #
 
 
-class ProjectedPaginated(BaseDTO):
+class ProjectedPaginated(_AbstainablePageDTO):
     """Paginated response with raw dict hit records.
 
     Used when search returns field-projected JSON mappings instead of typed
@@ -170,9 +192,6 @@ class ProjectedPaginated(BaseDTO):
     count: int
     """Total number of matching records across all pages."""
 
-    abstention: AbstentionReason | None = None
-    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
-
     # ....................... #
 
     @classmethod
@@ -183,7 +202,7 @@ class ProjectedPaginated(BaseDTO):
 # ....................... #
 
 
-class CursorPaginated[T: BaseModel](BaseDTO):
+class CursorPaginated[T: BaseModel](_AbstainablePageDTO):
     """Cursor-paginated response with typed hit records."""
 
     hits: list[T]
@@ -198,9 +217,6 @@ class CursorPaginated[T: BaseModel](BaseDTO):
     has_more: bool = False
     """Whether there are more pages after this one."""
 
-    abstention: AbstentionReason | None = None
-    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
-
     # ....................... #
 
     @classmethod
@@ -213,7 +229,7 @@ class CursorPaginated[T: BaseModel](BaseDTO):
 # ....................... #
 
 
-class ProjectedCursorPaginated(BaseDTO):
+class ProjectedCursorPaginated(_AbstainablePageDTO):
     """Cursor-paginated response with raw dict hit records."""
 
     hits: list[JsonDict]
@@ -227,9 +243,6 @@ class ProjectedCursorPaginated(BaseDTO):
 
     has_more: bool = False
     """Whether there are more pages after this one."""
-
-    abstention: AbstentionReason | None = None
-    """Optional reason an empty page is empty; ``None`` when the adapter gave none."""
 
     # ....................... #
 
