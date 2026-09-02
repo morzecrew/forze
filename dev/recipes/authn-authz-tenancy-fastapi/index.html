@@ -6438,6 +6438,13 @@ are <strong>before-hooks</strong> (<code>.before</code>); the authz scope filter
   rows they're entitled to. Authorization scoping <em>is</em> <a href="../../reference/query-syntax/">query-DSL</a>
   filter injection.</li>
 </ul>
+<p>With <code>explain_empty=True</code>, the wrap also says <em>why</em> a page came back empty: when
+the policy restricted nothing, an empty page is <code>no_match</code> outright; when it did,
+one probe re-runs the read with the caller's own filters, clamped to a single
+first-page row — rows there mean <code>not_permitted</code>, none mean <code>no_match</code>. The
+probe's rows never reach the caller, only whether any exist. Off by default;
+note that <code>not_permitted</code> discloses that hidden rows exist, so surfacing it to
+end users is your API's disclosure decision.</p>
 <h2 id="http-login-endpoints">HTTP login endpoints<a class="headerlink" href="#http-login-endpoints" title="Permanent link">&para;</a></h2>
 <p>The login flows themselves come for free: <code>build_authn_registry</code> registers the
 password-login, refresh, logout, change-password, password-reset, and

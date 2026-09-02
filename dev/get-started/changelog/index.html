@@ -8368,6 +8368,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>AuthzDocumentScopeWrap</code> can explain empty pages</strong> (<code>explain_empty=True</code>): no policy restriction makes an empty page <code>no_match</code>; otherwise one single-row probe of the caller's own filters decides <code>not_permitted</code> vs <code>no_match</code>. The probe's rows never reach the caller; off by default.</p>
+</li>
+<li>
 <p><strong><code>bypass_paths</code> on <code>InvocationMetadataMiddleware</code> and <code>SecurityContextMiddleware</code></strong> — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of a probe path they answered 500 while the runtime scope was not yet open, which is the window a liveness probe exists to observe. Pass <code>bypass_paths=DEFAULT_HEALTH_PATHS</code> (already exported from <code>forze.base.logging</code>). Exact full mounted paths, never prefixes; the default (empty) changes nothing. <code>check_bypass_paths</code> (run by <code>runtime_lifespan</code>) fails the boot on a bypassed path that serves a generated operation route, on the two middlewares carrying different sets, and on a set matching no route at all.</p>
 </li>
 <li>
