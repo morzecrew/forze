@@ -65,6 +65,21 @@ class TestAbstentionOnEmptyPage:
 
         assert ei.value.kind is ExceptionKind.INTERNAL
 
+    @pytest.mark.parametrize(
+        "page_factory",
+        [
+            lambda: CountlessPage(hits=[], page=1, size=1, abstention="bogus"),  # type: ignore[arg-type]
+            lambda: CursorPage(hits=[], next_cursor=None, prev_cursor=None, abstention="NO_MATCH"),  # type: ignore[arg-type]
+        ],
+    )
+    def test_unknown_reason_rejected(self, page_factory: Callable[[], Any]) -> None:
+        # The vocabulary is closed at runtime too: a reason string arrives from adapter
+        # code, and a typo would otherwise pass as a legitimate reason.
+        with pytest.raises(CoreException, match="Unknown abstention reason") as ei:
+            page_factory()
+
+        assert ei.value.kind is ExceptionKind.INTERNAL
+
     def test_search_pages_inherit_the_field(self) -> None:
         page = SearchCursorPage[str](
             hits=[],

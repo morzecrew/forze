@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, TypeAlias, overload
+from typing import Any, Final, Literal, TypeAlias, get_args, overload
 
 import attrs
 
@@ -28,8 +28,22 @@ The reason is optional — an adapter that cannot distinguish the causes returns
 page with no reason, which is what every adapter did before the field existed."""
 
 
-def _reject_abstention_on_hits(page: CountlessPage[Any] | CursorPage[Any]) -> None:
-    if page.abstention is not None and page.hits:
+_ABSTENTION_REASONS: Final[frozenset[str]] = frozenset(get_args(AbstentionReason))
+
+
+def _validate_abstention(page: CountlessPage[Any] | CursorPage[Any]) -> None:
+    if page.abstention is None:
+        return
+
+    # The vocabulary is closed at runtime too, not just for the type checker: a page is
+    # built by adapter code whose reason strings no annotation reaches.
+    if page.abstention not in _ABSTENTION_REASONS:
+        raise exc.internal(
+            f"Unknown abstention reason {page.abstention!r}; "
+            f"expected one of {sorted(_ABSTENTION_REASONS)}.",
+        )
+
+    if page.hits:
         raise exc.internal(
             "An abstention reason is only valid on an empty page "
             f"(abstention={page.abstention!r}, hits={len(page.hits)}).",
@@ -54,7 +68,7 @@ class CountlessPage[T]:
     a page that carries hits."""
 
     def __attrs_post_init__(self) -> None:
-        _reject_abstention_on_hits(self)
+        _validate_abstention(self)
 
 
 # ....................... #
@@ -92,7 +106,7 @@ class CursorPage[T]:
     a page that carries hits."""
 
     def __attrs_post_init__(self) -> None:
-        _reject_abstention_on_hits(self)
+        _validate_abstention(self)
 
 
 # ....................... #
