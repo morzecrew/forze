@@ -6361,6 +6361,12 @@ itself is a client-held token; on a public API you can
 forged or replayed against a different query.</p>
 <p>The name <em>is</em> the combination: <code>select_page(...)</code> is an alternate return type,
 offset-paged, with a count; <code>find_cursor(...)</code> is the read model, keyset-paged.</p>
+<p>An empty page can also say <em>why</em> it's empty. Every page type carries an optional
+<code>abstention</code> reason — <code>no_match</code>, <code>ambiguous</code>, or <code>not_permitted</code> — so a
+permission-gated read can tell "nothing exists" apart from "rows exist but you
+may not see them" without a second, ungated query. It's a result, not an error:
+adapters that can't tell the causes apart leave it <code>None</code>, and a page with hits
+never carries one.</p>
 <h2 id="searching">Searching<a class="headerlink" href="#searching" title="Permanent link">&para;</a></h2>
 <p>Full-text and vector search are a parallel surface, through the <strong>search query
 port</strong> — the same shape × pagination naming, but results come back <strong>ranked</strong>:</p>

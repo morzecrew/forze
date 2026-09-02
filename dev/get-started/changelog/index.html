@@ -8389,6 +8389,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p>Four helpers each integration package used to carry its own copy of are now core and exported: <code>log_server_error</code>, <code>drain_domain_events</code>, <code>resolve_result_snapshot</code>, <code>domains_from_create_payloads</code>.</p>
 </li>
 <li>
+<p><strong>Empty pages can say why they are empty.</strong> Every page value object and kits response DTO carries an optional <code>abstention</code> — <code>no_match</code>, <code>ambiguous</code> or <code>not_permitted</code> — so a gated read can tell "nothing matches" from "rows you may not see". No reason by default; hits beside a reason, or an unknown one, refused.</p>
+</li>
+<li>
 <p><strong>Every backend the published skill described now has code you can run.</strong> Mongo, Firestore, Meilisearch, Neo4j, Socket.IO, Kafka, <abbr title="Model Context Protocol">MCP</abbr>, SageMaker, DuckDB, GCP and Yandex <abbr title="Key Management Service">KMS</abbr>, authz and the mock server were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.</p>
 </li>
 </ul>
