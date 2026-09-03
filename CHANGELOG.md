@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Archives carry a logical identity beside the byte one.** Each data file records an order-independent `content_digest` of its rows; `compare_content` says whether two builds are the same content, refusing files it cannot compare; `run_manifest` binds a run's report to the commit and lockfile that produced it.
+
 - **Three reflection gates in `forze.testing`.** `assert_pure_module` (import allowlist plus a named forbidden list), `assert_scope_first` (every Protocol method takes the ownership key first: named, typed, positional-only, undefaulted), `assert_operation_namespaces` (edges disjoint). Each refuses an empty discovery.
 
 - **Identity spec selections are enumerable and validated.** `identity_document_names(specs=...)` returns validated names for a selection of identity documents; five feature groups ship beside it (grant resolution's nine tables, decisions, delegation, password lifecycle, tenancy), each pinned to its factory by test.

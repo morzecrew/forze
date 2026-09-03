@@ -190,11 +190,16 @@ class JsonlWriter:
     another file. Required (and matched on read) whenever *cipher* is set."""
 
     rows: int = attrs.field(default=0, init=False)
+    _content_acc: int = attrs.field(default=0, init=False)
     _sink: _HashingSink | None = attrs.field(default=None, init=False)
     _sealing: Any = attrs.field(default=None, init=False)
     _stream: _ByteSink | None = attrs.field(default=None, init=False)
 
     def __enter__(self) -> JsonlWriter:
+        # A fresh context is a fresh file: the row count and content accumulator must
+        # not leak from a previous run of the same writer instance.
+        self.rows = 0
+        self._content_acc = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._sink = _HashingSink(self.path.open("wb"))
 
@@ -210,7 +215,21 @@ class JsonlWriter:
         if self._stream is None:  # pragma: no cover - misuse outside the context manager
             raise exc.internal("JsonlWriter written to before entering its context")
 
-        self._stream.write(orjson.dumps(row, option=_CANONICAL))
+        data = orjson.dumps(row, option=_CANONICAL)
+
+        if self.cipher is None:
+            # Order-independent multiset digest of the canonical row bytes: per-row
+            # SHA-256 summed mod 2^256, so the same rows in any order — or a re-export
+            # whose cursor walked differently — yield the same content digest, while the
+            # file digest (compression, order) may differ. O(1) memory; a duplicated row
+            # changes the sum, so multiplicity counts. Never computed for a sealed file:
+            # a plaintext-derived digest in the plaintext manifest would let anyone
+            # confirm a guessed row set against the ciphertext.
+            self._content_acc = (
+                self._content_acc + int.from_bytes(hashlib.sha256(data).digest())
+            ) % (1 << 256)
+
+        self._stream.write(data)
         self.rows += 1
 
     def __exit__(self, *_: object) -> None:
@@ -237,6 +256,20 @@ class JsonlWriter:
             raise exc.internal("JsonlWriter digest read before any write")
 
         return self._sink.digest.hexdigest()
+
+    @property
+    def content_digest(self) -> str | None:
+        """Order-independent multiset digest of the rows written (64 hex chars).
+
+        Equal for two files carrying the same rows regardless of row order, compression
+        or platform — the *logical* identity ``compare_content`` checks, where
+        :attr:`sha256` is the *byte* identity only a pinned environment reproduces. Not a
+        plain SHA-256 and not an integrity check: file verification stays on
+        :attr:`sha256`. ``None`` for a sealed file — a plaintext-derived digest in the
+        plaintext manifest would let anyone confirm a guessed row set against the
+        ciphertext."""
+
+        return None if self.cipher is not None else f"{self._content_acc:064x}"
 
 
 # ....................... #

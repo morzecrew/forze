@@ -18,6 +18,14 @@ blobs, graph and counters, under a per-tenant or full-system scope, all ship tod
 
 from ._core import OnConflict
 from ._crypt import ArchiveSealer
+from .determinism import (
+    ContentComparison,
+    FileDifference,
+    RunManifest,
+    RunStatus,
+    compare_content,
+    run_manifest,
+)
 from .export import ArchiveExporter, export_archive
 from .import_ import ArchiveImporter, import_archive
 from .manifest import FORMAT_VERSION, ArchiveEncryption, ArchiveFile, Manifest, ScopeManifest
@@ -47,12 +55,14 @@ __all__ = [
     "ArchiveImporter",
     "ArchiveMigrator",
     "ArchiveSealer",
+    "ContentComparison",
     "CounterExport",
     "CounterImport",
     "DocumentExport",
     "DocumentImport",
     "ExportReport",
     "ExportScope",
+    "FileDifference",
     "FullScope",
     "UNTENANTED",
     "GraphExport",
@@ -61,11 +71,15 @@ __all__ = [
     "Manifest",
     "MigrateReport",
     "OnConflict",
+    "RunManifest",
+    "RunStatus",
     "ScopeManifest",
     "StorageExport",
     "StorageImport",
     "TenantScope",
+    "compare_content",
     "export_archive",
     "import_archive",
     "migrate",
+    "run_manifest",
 ]

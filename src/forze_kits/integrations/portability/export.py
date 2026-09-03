@@ -386,7 +386,9 @@ class ArchiveExporter:
                     sink.write(portable_row(doc))
 
         return (
-            ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows),
+            ArchiveFile(
+                path=rel, sha256=sink.sha256, rows=sink.rows, content_digest=sink.content_digest
+            ),
             DocumentExport(name=section_label(section, entry.name), rows=sink.rows),
         )
 
@@ -448,7 +450,12 @@ class ArchiveExporter:
                 )
 
         return (
-            ArchiveFile(path=index_rel, sha256=index.sha256, rows=index.rows),
+            ArchiveFile(
+                path=index_rel,
+                sha256=index.sha256,
+                rows=index.rows,
+                content_digest=index.content_digest,
+            ),
             StorageExport(name=section_label(section, route), blobs=index.rows),
         )
 
@@ -503,7 +510,11 @@ class ArchiveExporter:
                     for vertex in batch:
                         sink.write(portable_row(vertex))
 
-            files.append(ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows))
+            files.append(
+                ArchiveFile(
+                    path=rel, sha256=sink.sha256, rows=sink.rows, content_digest=sink.content_digest
+                )
+            )
             vertices += sink.rows
 
         export_query = cast("GraphEdgeExportAware", query)
@@ -523,7 +534,11 @@ class ArchiveExporter:
                     for exported in edge_batch:
                         sink.write(exported_edge_row(exported))
 
-            files.append(ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows))
+            files.append(
+                ArchiveFile(
+                    path=rel, sha256=sink.sha256, rows=sink.rows, content_digest=sink.content_digest
+                )
+            )
             edges += sink.rows
 
         return files, GraphExport(
@@ -563,7 +578,9 @@ class ArchiveExporter:
                 sink.write(counter_row(counter))
 
         return (
-            ArchiveFile(path=rel, sha256=sink.sha256, rows=sink.rows),
+            ArchiveFile(
+                path=rel, sha256=sink.sha256, rows=sink.rows, content_digest=sink.content_digest
+            ),
             CounterExport(name=section_label(section, entry.name), partitions=sink.rows),
         )
 
