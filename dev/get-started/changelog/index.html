@@ -8368,6 +8368,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Three reflection gates in <code>forze.testing</code>.</strong> <code>assert_pure_module</code> (import allowlist plus a named forbidden list), <code>assert_scope_first</code> (every Protocol method takes the ownership key first: named, typed, positional-only, undefaulted), <code>assert_operation_namespaces</code> (edges disjoint). Each refuses an empty discovery.</p>
+</li>
+<li>
 <p><strong>Identity spec selections are enumerable and validated.</strong> <code>identity_document_names(specs=...)</code> returns validated names for a selection of identity documents; five feature groups ship beside it (grant resolution's nine tables, decisions, delegation, password lifecycle, tenancy), each pinned to its factory by test.</p>
 </li>
 <li>

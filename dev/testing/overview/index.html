@@ -2376,6 +2376,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reflection-gates-test-a-property-not-a-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reflection gates: test a property, not a case
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#test-organization" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6279,6 +6290,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reflection-gates-test-a-property-not-a-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reflection gates: test a property, not a case
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#test-organization" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6503,6 +6525,43 @@
 <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">events</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span>
 </code></pre></div>
 <p>See <a href="../../data-events/events-sagas/">Events &amp; sagas</a> for the full model and the runnable order-fulfillment walkthrough that drives the whole aggregate → event → saga → outbox → relay → inbox flow in-process.</p>
+<h2 id="reflection-gates-test-a-property-not-a-case">Reflection gates: test a property, not a case<a class="headerlink" href="#reflection-gates-test-a-property-not-a-case" title="Permanent link">&para;</a></h2>
+<p>Some guarantees are about a <em>whole surface</em> — every import in a module tree, every
+port signature, every operation id — and a per-case test can't keep up with a
+surface that grows. <code>forze.testing</code> ships three gates for that; each discovers its
+set by reflection, checks the property over everything found, and <strong>refuses an
+empty discovery</strong>, so a rename can't turn the gate into a test that quietly checks
+nothing:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">uuid</span><span class="w"> </span><span class="kn">import</span> <span class="n">UUID</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.testing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">assert_operation_namespaces</span><span class="p">,</span>
+    <span class="n">assert_pure_module</span><span class="p">,</span>
+    <span class="n">assert_scope_first</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_engine_is_pure</span><span class="p">():</span>
+    <span class="c1"># allowlist catches the module nobody thought to name; the forbidden list is a</span>
+    <span class="c1"># named refusal that widening the allowlist can never step over</span>
+    <span class="n">assert_pure_module</span><span class="p">(</span>
+        <span class="s2">"app.core.engine"</span><span class="p">,</span>
+        <span class="n">allowed</span><span class="o">=</span><span class="p">[</span><span class="s2">"math"</span><span class="p">,</span> <span class="s2">"decimal"</span><span class="p">,</span> <span class="s2">"attrs"</span><span class="p">],</span>
+        <span class="n">forbidden</span><span class="o">=</span><span class="p">[</span><span class="s2">"time"</span><span class="p">,</span> <span class="s2">"random"</span><span class="p">,</span> <span class="s2">"uuid"</span><span class="p">,</span> <span class="s2">"os"</span><span class="p">],</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_ports_take_the_tenant_first</span><span class="p">():</span>
+    <span class="c1"># positional-only is the mechanism: a keyword parameter can be omitted and</span>
+    <span class="c1"># filled by a default — a caller must be physically unable to leave the key out</span>
+    <span class="n">assert_scope_first</span><span class="p">(</span><span class="s2">"app.ports.documents"</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">"tenant_id"</span><span class="p">,</span> <span class="n">annotation</span><span class="o">=</span><span class="n">UUID</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">test_edges_stay_disjoint</span><span class="p">():</span>
+    <span class="n">assert_operation_namespaces</span><span class="p">({</span>
+        <span class="s2">"product"</span><span class="p">:</span> <span class="n">product_registry</span><span class="o">.</span><span class="n">operation_ids</span><span class="p">(),</span>
+        <span class="s2">"operator"</span><span class="p">:</span> <span class="n">operator_registry</span><span class="o">.</span><span class="n">operation_ids</span><span class="p">(),</span>
+    <span class="p">})</span>
+</code></pre></div>
+<p>Failures list every violation at once with its location. <code>assert_scope_first</code>
+takes <code>exclude=["Port.method"]</code> for deliberate exceptions — and an exclusion that
+matches nothing fails, so the list can only shrink.</p>
 <h2 id="test-organization">Test organization<a class="headerlink" href="#test-organization" title="Permanent link">&para;</a></h2>
 <p>A typical test structure for a Forze application:</p>
 <div class="highlight"><pre><span></span><code>tests/
