@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Three reflection gates in `forze.testing`.** `assert_pure_module` (import allowlist plus a named forbidden list), `assert_scope_first` (every Protocol method takes the ownership key first: named, typed, positional-only, undefaulted), `assert_operation_namespaces` (edges disjoint). Each refuses an empty discovery.
+
 - **Identity spec selections are enumerable and validated.** `identity_document_names(specs=...)` returns validated names for a selection of identity documents; five feature groups ship beside it (grant resolution's nine tables, decisions, delegation, password lifecycle, tenancy), each pinned to its factory by test.
 
 - **`AuthzDocumentScopeWrap` can explain empty pages** (`explain_empty=True`): no policy restriction makes an empty page `no_match`; otherwise one single-row probe of the caller's own filters decides `not_permitted` vs `no_match`. The probe's rows never reach the caller; off by default.

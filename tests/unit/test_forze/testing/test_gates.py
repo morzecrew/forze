@@ -1,0 +1,261 @@
+"""The reflection gates catch what they claim to and refuse to pass vacuously."""
+
+from __future__ import annotations
+
+import sys
+import textwrap
+import types
+from pathlib import Path
+from typing import Protocol
+from uuid import UUID
+
+import pytest
+
+from forze.testing import (
+    assert_operation_namespaces,
+    assert_pure_module,
+    assert_scope_first,
+)
+
+pytestmark = pytest.mark.unit
+
+# ----------------------- #
+# Purity gate
+
+
+def _module_from_source(tmp_path: Path, name: str, source: str) -> types.ModuleType:
+    path = tmp_path / f"{name}.py"
+    path.write_text(textwrap.dedent(source))
+
+    module = types.ModuleType(name)
+    module.__file__ = str(path)
+
+    return module
+
+
+class TestPurityGate:
+    def test_allowed_imports_pass(self, tmp_path: Path) -> None:
+        module = _module_from_source(
+            tmp_path,
+            "engine",
+            """
+            import math
+            from decimal import Decimal
+            from . import sibling
+            """,
+        )
+
+        assert_pure_module(module, allowed=["math", "decimal"])
+
+    def test_unlisted_import_fails_with_location(self, tmp_path: Path) -> None:
+        module = _module_from_source(tmp_path, "engine", "import math\nimport socket\n")
+
+        with pytest.raises(AssertionError, match=r"engine\.py:2: import of unlisted.*'socket'"):
+            assert_pure_module(module, allowed=["math"])
+
+    def test_forbidden_import_fails(self, tmp_path: Path) -> None:
+        module = _module_from_source(tmp_path, "engine", "from time import sleep\n")
+
+        with pytest.raises(AssertionError, match="forbidden module 'time'"):
+            assert_pure_module(module, allowed=["math"], forbidden=["time"])
+
+    def test_contradictory_lists_are_refused(self, tmp_path: Path) -> None:
+        module = _module_from_source(tmp_path, "engine", "import math\n")
+
+        with pytest.raises(AssertionError, match="allows and forbids the same roots"):
+            assert_pure_module(module, allowed=["time"], forbidden=["time"])
+
+    def test_own_package_and_future_are_implicitly_allowed(self, tmp_path: Path) -> None:
+        pkg = tmp_path / "engine"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("from __future__ import annotations\n")
+        (pkg / "core.py").write_text("import math\nfrom engine import helpers\n")
+        (pkg / "helpers.py").write_text("")
+
+        module = types.ModuleType("engine")
+        module.__path__ = [str(pkg)]  # type: ignore[attr-defined]
+
+        assert_pure_module(module, allowed=["math"])
+
+    def test_empty_package_is_refused(self, tmp_path: Path) -> None:
+        module = types.ModuleType("hollow")
+        module.__path__ = [str(tmp_path / "nothing")]  # type: ignore[attr-defined]
+
+        with pytest.raises(AssertionError, match="discovered no source files"):
+            assert_pure_module(module, allowed=["math"])
+
+    def test_sourceless_module_is_refused(self) -> None:
+        with pytest.raises(AssertionError, match="no source file"):
+            assert_pure_module(types.ModuleType("synthetic"), allowed=["math"])
+
+    def test_all_violations_reported_at_once(self, tmp_path: Path) -> None:
+        module = _module_from_source(tmp_path, "engine", "import socket\nimport json\n")
+
+        with pytest.raises(AssertionError) as ei:
+            assert_pure_module(module, allowed=[])
+
+        assert "'socket'" in str(ei.value) and "'json'" in str(ei.value)
+
+
+# ----------------------- #
+# Scope-first gate
+
+
+def _ports_module(name: str, **classes: type) -> types.ModuleType:
+    module = types.ModuleType(name)
+
+    for cls_name, cls in classes.items():
+        cls.__module__ = name
+        setattr(module, cls_name, cls)
+
+    sys.modules[name] = module
+
+    return module
+
+
+def _good_port() -> type:
+    class GoodPort(Protocol):
+        async def read(self, tenant_id: UUID, /, key: str) -> str: ...
+        async def write(self, tenant_id: UUID, /, key: str, value: str) -> None: ...
+
+    return GoodPort
+
+
+def _keyword_port() -> type:
+    class KeywordPort(Protocol):
+        async def read(self, tenant_id: UUID, key: str) -> str: ...
+
+    return KeywordPort
+
+
+class TestScopeFirstGate:
+    def test_compliant_ports_pass(self) -> None:
+        module = _ports_module("gate_ports_good", GoodPort=_good_port())
+
+        assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_non_method_members_are_skipped(self) -> None:
+        class Port(Protocol):
+            marker: str
+
+            async def read(self, tenant_id: UUID, /) -> str: ...
+
+        module = _ports_module("gate_ports_attr", Port=Port)
+
+        assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_keyword_capable_parameter_fails(self) -> None:
+        # The whole mechanism: a keyword parameter can be omitted; positional-only cannot.
+        module = _ports_module("gate_ports_kw", KeywordPort=_keyword_port())
+
+        with pytest.raises(AssertionError, match="not positional-only"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_default_fails(self) -> None:
+        class Port(Protocol):
+            async def read(self, tenant_id: UUID | None = None, /) -> str: ...
+
+        module = _ports_module("gate_ports_def", Port=Port)
+
+        with pytest.raises(AssertionError, match="carries a default"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID | None)
+
+    def test_wrong_name_fails(self) -> None:
+        class Port(Protocol):
+            async def read(self, owner: UUID, /) -> str: ...
+
+        module = _ports_module("gate_ports_name", Port=Port)
+
+        with pytest.raises(AssertionError, match="first parameter is 'owner'"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_wrong_annotation_fails(self) -> None:
+        class Port(Protocol):
+            async def read(self, tenant_id: str, /) -> str: ...
+
+        module = _ports_module("gate_ports_type", Port=Port)
+
+        with pytest.raises(AssertionError, match="annotated"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_parameterless_method_fails(self) -> None:
+        class Port(Protocol):
+            async def ping(self) -> None: ...
+
+        module = _ports_module("gate_ports_none", Port=Port)
+
+        with pytest.raises(AssertionError, match="takes no parameter"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_exclusion_skips_a_named_method(self) -> None:
+        module = _ports_module(
+            "gate_ports_excl", GoodPort=_good_port(), KeywordPort=_keyword_port()
+        )
+
+        assert_scope_first(module, name="tenant_id", annotation=UUID, exclude=["KeywordPort.read"])
+
+    def test_stale_exclusion_fails(self) -> None:
+        # An exclusion matching nothing is a rename that silently widened the gate.
+        module = _ports_module("gate_ports_stale", GoodPort=_good_port())
+
+        with pytest.raises(AssertionError, match="exclusion matches no method"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID, exclude=["Gone.read"])
+
+    def test_module_without_protocols_is_refused(self) -> None:
+        module = types.ModuleType("gate_ports_empty")
+
+        with pytest.raises(AssertionError, match="no Protocols"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_fully_excluded_module_is_refused(self) -> None:
+        module = _ports_module("gate_ports_allexcl", KeywordPort=_keyword_port())
+
+        with pytest.raises(AssertionError, match="checked no methods"):
+            assert_scope_first(
+                module, name="tenant_id", annotation=UUID, exclude=["KeywordPort.read"]
+            )
+
+
+# ----------------------- #
+# Operation-namespace gate
+
+
+class TestOperationNamespaceGate:
+    def test_disjoint_namespaced_edges_pass(self) -> None:
+        assert_operation_namespaces(
+            {
+                "product": ["product.orders.list", "product.orders.get"],
+                "operator": ["operator.orders.list"],
+            }
+        )
+
+    def test_foreign_prefix_fails(self) -> None:
+        with pytest.raises(AssertionError, match=r"'operator\.orders\.list' is not under"):
+            assert_operation_namespaces(
+                {
+                    "product": ["product.orders.list", "operator.orders.list"],
+                    "operator": ["operator.x"],
+                }
+            )
+
+    def test_bare_edge_name_is_not_namespaced(self) -> None:
+        with pytest.raises(AssertionError, match="'product' is not under"):
+            assert_operation_namespaces({"product": ["product"]})
+
+    def test_shared_id_across_edges_fails(self) -> None:
+        # An id under one prefix registered on both edges: disjointness is its own check.
+        with pytest.raises(AssertionError, match="appears on both"):
+            assert_operation_namespaces(
+                {
+                    "a": ["a.op"],
+                    "a.b": ["a.b.op", "a.op"],
+                }
+            )
+
+    def test_empty_mapping_is_refused(self) -> None:
+        with pytest.raises(AssertionError, match="no edges"):
+            assert_operation_namespaces({})
+
+    def test_empty_edge_is_refused(self) -> None:
+        with pytest.raises(AssertionError, match=r"'ghost'.*no operation ids"):
+            assert_operation_namespaces({"product": ["product.x"], "ghost": []})

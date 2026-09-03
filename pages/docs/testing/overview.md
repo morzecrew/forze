@@ -138,6 +138,48 @@ assert len(events) == 1
 
 See [Events & sagas](../data-events/events-sagas.md) for the full model and the runnable order-fulfillment walkthrough that drives the whole aggregate → event → saga → outbox → relay → inbox flow in-process.
 
+## Reflection gates: test a property, not a case
+
+Some guarantees are about a *whole surface* — every import in a module tree, every
+port signature, every operation id — and a per-case test can't keep up with a
+surface that grows. `forze.testing` ships three gates for that; each discovers its
+set by reflection, checks the property over everything found, and **refuses an
+empty discovery**, so a rename can't turn the gate into a test that quietly checks
+nothing:
+
+```python
+from uuid import UUID
+from forze.testing import (
+    assert_operation_namespaces,
+    assert_pure_module,
+    assert_scope_first,
+)
+
+def test_engine_is_pure():
+    # allowlist catches the module nobody thought to name; the forbidden list is a
+    # named refusal that widening the allowlist can never step over
+    assert_pure_module(
+        "app.core.engine",
+        allowed=["math", "decimal", "attrs"],
+        forbidden=["time", "random", "uuid", "os"],
+    )
+
+def test_ports_take_the_tenant_first():
+    # positional-only is the mechanism: a keyword parameter can be omitted and
+    # filled by a default — a caller must be physically unable to leave the key out
+    assert_scope_first("app.ports.documents", name="tenant_id", annotation=UUID)
+
+def test_edges_stay_disjoint():
+    assert_operation_namespaces({
+        "product": product_registry.operation_ids(),
+        "operator": operator_registry.operation_ids(),
+    })
+```
+
+Failures list every violation at once with its location. `assert_scope_first`
+takes `exclude=["Port.method"]` for deliberate exceptions — and an exclusion that
+matches nothing fails, so the list can only shrink.
+
 ## Test organization
 
 A typical test structure for a Forze application:
