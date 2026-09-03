@@ -128,6 +128,39 @@ grants) follow the same mapping rule — apply the table above to their model
 fields, and startup validation will tell you, field by field, if a column
 disagrees.
 
+## Binding the specs to a schema
+
+Once the tables exist, the deps module needs a `rw_documents` mapping for them.
+The relation each name binds to is yours — this recipe happens to name tables
+after the specs, so the mapping is a comprehension — but the *names* come from
+`identity_document_names`, validated against the identity inventory, so a
+renamed or misspelled spec fails a test naming the spec rather than a deploy
+naming a missing table:
+
+```python
+from forze_identity import identity_document_names
+from forze_postgres import PostgresDocumentConfig
+
+IDENTITY_PG = {
+    name: PostgresDocumentConfig(
+        read=("identity", name),
+        write=("identity", name),
+        # the DDL in this recipe ships no optimistic-locking trigger,
+        # so bookkeeping stays application-side
+        bookkeeping_strategy="application",
+    )
+    for name in identity_document_names()
+}
+```
+
+Binding a subset? Choose from the named feature groups
+(`GRANT_RESOLUTION_SPECS`, `AUTHZ_DECISION_SPECS`, `DELEGATION_SPECS`,
+`PASSWORD_LIFECYCLE_SPECS`, `TENANT_RESOLUTION_SPECS`) via
+`identity_document_names((*AUTHZ_DECISION_SPECS, *DELEGATION_SPECS))` rather
+than hand-listing names: a principal can reach a role directly or through a
+group, so binding only part of the grant-resolution set resolves fewer grants
+than the database holds, silently.
+
 ## Trust but verify
 
 These shapes are the ones forze's own Postgres integration tests provision and

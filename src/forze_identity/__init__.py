@@ -20,13 +20,25 @@ _EXPORTS: dict[str, str] = {
     "AUTHN_SPECS": "forze_identity.inventory",
     "AUTHZ_SPECS": "forze_identity.inventory",
     "TENANCY_SPECS": "forze_identity.inventory",
+    "GRANT_RESOLUTION_SPECS": "forze_identity.inventory",
+    "AUTHZ_DECISION_SPECS": "forze_identity.inventory",
+    "DELEGATION_SPECS": "forze_identity.inventory",
+    "PASSWORD_LIFECYCLE_SPECS": "forze_identity.inventory",
+    "TENANT_RESOLUTION_SPECS": "forze_identity.inventory",
+    "identity_document_names": "forze_identity.inventory",
 }
 
 __all__ = [
-    "MIN_SECRET_BYTES",
     "AUTHN_SPECS",
+    "AUTHZ_DECISION_SPECS",
     "AUTHZ_SPECS",
+    "DELEGATION_SPECS",
+    "GRANT_RESOLUTION_SPECS",
+    "MIN_SECRET_BYTES",
+    "PASSWORD_LIFECYCLE_SPECS",
     "TENANCY_SPECS",
+    "TENANT_RESOLUTION_SPECS",
+    "identity_document_names",
     "spec_contributions",
 ]
 
@@ -36,7 +48,13 @@ if TYPE_CHECKING:
     from forze_identity.authn.services.constants import MIN_SECRET_BYTES
     from forze_identity.inventory import (
         AUTHN_SPECS,
+        AUTHZ_DECISION_SPECS,
         AUTHZ_SPECS,
+        DELEGATION_SPECS,
+        GRANT_RESOLUTION_SPECS,
+        PASSWORD_LIFECYCLE_SPECS,
         TENANCY_SPECS,
+        TENANT_RESOLUTION_SPECS,
+        identity_document_names,
         spec_contributions,
     )
