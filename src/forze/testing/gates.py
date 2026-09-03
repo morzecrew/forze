@@ -111,7 +111,15 @@ def assert_pure_module(
     violations: list[str] = []
 
     for path in files:
-        for lineno, root in _import_roots(ast.parse(path.read_text(), filename=str(path))):
+        try:
+            tree = ast.parse(path.read_text(), filename=str(path))
+        except (OSError, SyntaxError, UnicodeDecodeError) as error:
+            # A file the gate cannot read is a gate failure, not a traceback: the
+            # documented contract is an AssertionError listing everything wrong.
+            violations.append(f"{path}: could not parse ({error})")
+            continue
+
+        for lineno, root in _import_roots(tree):
             if root in forbid:
                 violations.append(f"{path}:{lineno}: import of forbidden module {root!r}")
             elif root not in allow:
@@ -125,14 +133,24 @@ def assert_pure_module(
 # Scope-first gate
 
 
-def _protocol_methods(proto: type) -> list[tuple[str, FunctionType]]:
-    members = []
+def _protocol_methods(proto: type) -> list[tuple[str, FunctionType, bool]]:
+    """Each method with whether its signature carries a receiver to skip.
+
+    ``getattr_static`` hands back ``staticmethod`` / ``classmethod`` descriptors rather
+    than functions, so both are unwrapped here — a silently skipped member would be a
+    hole in the gate. A static method has no receiver; plain and class methods do."""
+
+    members: list[tuple[str, FunctionType, bool]] = []
 
     for member in sorted(typing.get_protocol_members(proto)):
-        func = inspect.getattr_static(proto, member, None)
+        obj = inspect.getattr_static(proto, member, None)
 
-        if inspect.isfunction(func):
-            members.append((member, func))
+        if isinstance(obj, staticmethod) and inspect.isfunction(obj.__func__):
+            members.append((member, obj.__func__, False))
+        elif isinstance(obj, classmethod) and inspect.isfunction(obj.__func__):
+            members.append((member, obj.__func__, True))
+        elif inspect.isfunction(obj):
+            members.append((member, obj, True))
 
     return members
 
@@ -174,7 +192,7 @@ def assert_scope_first(
     checked = 0
 
     for proto in protocols:
-        for method, func in _protocol_methods(proto):
+        for method, func, has_receiver in _protocol_methods(proto):
             qualified = f"{proto.__name__}.{method}"
 
             if qualified in excluded:
@@ -182,11 +200,9 @@ def assert_scope_first(
                 continue
 
             checked += 1
-            params = [
-                p
-                for p in inspect.signature(func, eval_str=True).parameters.values()
-                if p.name != "self"
-            ]
+            # The receiver is skipped by position, not by spelling — a Protocol is free
+            # to name it something other than ``self``.
+            params = list(inspect.signature(func).parameters.values())[1 if has_receiver else 0 :]
 
             if not params:
                 violations.append(f"{qualified}: takes no parameter to carry {name!r}")
@@ -200,11 +216,22 @@ def assert_scope_first(
                 violations.append(f"{qualified}: {first.name!r} is not positional-only")
             if first.default is not inspect.Parameter.empty:
                 violations.append(f"{qualified}: {first.name!r} carries a default")
-            if first.annotation != annotation:
+
+            # Annotations resolve lazily (``from __future__ import annotations``, or a
+            # name importable only under ``TYPE_CHECKING``); an unresolvable one is a
+            # violation of this gate, never a raw traceback that hides the rest.
+            try:
+                resolved = typing.get_type_hints(func).get(first.name)
+            except NameError as error:
                 violations.append(
-                    f"{qualified}: {first.name!r} is annotated {first.annotation!r}, "
-                    f"expected {annotation!r}",
+                    f"{qualified}: annotation of {first.name!r} is unresolvable ({error})"
                 )
+            else:
+                if resolved != annotation:
+                    violations.append(
+                        f"{qualified}: {first.name!r} is annotated {resolved!r}, "
+                        f"expected {annotation!r}",
+                    )
 
     stale = sorted(excluded - seen_exclusions)
 

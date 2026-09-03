@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import sys
 import textwrap
 import types
@@ -84,6 +85,14 @@ class TestPurityGate:
         with pytest.raises(AssertionError, match="discovered no source files"):
             assert_pure_module(module, allowed=["math"])
 
+    def test_unparsable_file_is_a_gate_failure(self, tmp_path: Path) -> None:
+        # The contract is an AssertionError listing everything wrong, never a raw
+        # SyntaxError escaping mid-walk.
+        module = _module_from_source(tmp_path, "engine", "def broken(:\n")
+
+        with pytest.raises(AssertionError, match="could not parse"):
+            assert_pure_module(module, allowed=["math"])
+
     def test_sourceless_module_is_refused(self) -> None:
         with pytest.raises(AssertionError, match="no source file"):
             assert_pure_module(types.ModuleType("synthetic"), allowed=["math"])
@@ -133,6 +142,59 @@ class TestScopeFirstGate:
         module = _ports_module("gate_ports_good", GoodPort=_good_port())
 
         assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_static_and_class_methods_are_checked(self) -> None:
+        # getattr_static hands back descriptors; a silently skipped member would be a
+        # hole in the gate. A static method has no receiver to skip.
+        class Port(Protocol):
+            @staticmethod
+            async def read(key: str) -> str: ...
+
+            @classmethod
+            async def scan(cls, owner: UUID, /) -> str: ...
+
+        module = _ports_module("gate_ports_desc", Port=Port)
+
+        with pytest.raises(AssertionError) as ei:
+            assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+        message = str(ei.value)
+        assert "Port.read: first parameter is 'key'" in message
+        assert "Port.scan: first parameter is 'owner'" in message
+
+    def test_receiver_is_skipped_by_position_not_spelling(self) -> None:
+        class Port(Protocol):
+            async def read(this, tenant_id: UUID, /) -> str: ...
+
+        module = _ports_module("gate_ports_recv", Port=Port)
+
+        assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_unresolvable_annotation_is_a_violation_not_a_crash(self, tmp_path: Path) -> None:
+        # A TYPE_CHECKING-only import leaves the annotation unresolvable at runtime;
+        # the gate must report it and keep going, never crash with a NameError.
+        path = tmp_path / "lazy_ports.py"
+        path.write_text(
+            textwrap.dedent(
+                """
+                from __future__ import annotations
+                from typing import TYPE_CHECKING, Protocol
+                if TYPE_CHECKING:
+                    from uuid import UUID
+                class Port(Protocol):
+                    async def read(self, tenant_id: UUID, /) -> str: ...
+                """
+            )
+        )
+        sys.path.insert(0, str(tmp_path))
+
+        try:
+            lazy_ports = importlib.import_module("lazy_ports")
+        finally:
+            sys.path.remove(str(tmp_path))
+
+        with pytest.raises(AssertionError, match="unresolvable"):
+            assert_scope_first(lazy_ports, name="tenant_id", annotation=UUID)
 
     def test_non_method_members_are_skipped(self) -> None:
         class Port(Protocol):
