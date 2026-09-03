@@ -248,6 +248,12 @@ class TestRunManifest:
 
         assert failed.error == "boom"
 
+    def test_missing_lockfile_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(CoreException, match="lockfile does not exist") as ei:
+            run_manifest(_EXPORT, run_id="r", started_at=_STARTED, lockfile=tmp_path / "gone.lock")
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
     def test_json_roundtrip(self) -> None:
         manifest = run_manifest(_EXPORT, run_id="r", started_at=_STARTED)
 

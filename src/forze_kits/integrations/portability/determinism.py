@@ -224,6 +224,9 @@ def run_manifest(
             "counters": report.total_counters,
         }
 
+    if lockfile is not None and not lockfile.is_file():
+        raise exc.configuration(f"Run manifest lockfile does not exist: {lockfile}")
+
     return RunManifest(
         run_id=run_id,
         kind=kind,
