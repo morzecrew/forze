@@ -8368,6 +8368,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Archives carry a logical identity beside the byte one.</strong> Each data file records an order-independent <code>content_digest</code> of its rows; <code>compare_content</code> says whether two builds are the same content, refusing files it cannot compare; <code>run_manifest</code> binds a run's report to the commit and lockfile that produced it.</p>
+</li>
+<li>
 <p><strong>Three reflection gates in <code>forze.testing</code>.</strong> <code>assert_pure_module</code> (import allowlist plus a named forbidden list), <code>assert_scope_first</code> (every Protocol method takes the ownership key first: named, typed, positional-only, undefaulted), <code>assert_operation_namespaces</code> (edges disjoint). Each refuses an empty discovery.</p>
 </li>
 <li>

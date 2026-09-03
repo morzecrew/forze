@@ -2177,6 +2177,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#same-content-different-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Same content, different bytes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6224,6 +6235,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#same-content-different-bytes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Same content, different bytes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6524,6 +6546,35 @@ request. A full-system export always carries them — moving a live system means
 moving its sessions.</p>
 <p>Archives are gzip-compressed by default; <code>compression="zstd"</code> needs the
 <code>forze[zstd]</code> extra and fails closed without it.</p>
+<h2 id="same-content-different-bytes">Same content, different bytes<a class="headerlink" href="#same-content-different-bytes" title="Permanent link">&para;</a></h2>
+<p>Two exports of the same data are rarely the same file: row order follows the
+backend's cursors, compression and sealing differ per run, and byte identity
+holds only inside a pinned build environment while proving nothing about
+meaning. The manifest therefore records two identities per data file — <code>sha256</code>
+over the bytes (what import verifies) and <code>content_digest</code>, an order-independent
+digest of the canonical rows (what <em>reproducibility</em> means). <code>compare_content</code>
+renders the verdict for two manifests:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.portability</span><span class="w"> </span><span class="kn">import</span> <span class="n">compare_content</span>
+
+<span class="n">verdict</span> <span class="o">=</span> <span class="n">compare_content</span><span class="p">(</span><span class="n">manifest_a</span><span class="p">,</span> <span class="n">manifest_b</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">verdict</span><span class="o">.</span><span class="n">same_content</span><span class="p">,</span> <span class="n">verdict</span><span class="o">.</span><span class="n">differing</span> <span class="ow">or</span> <span class="n">verdict</span><span class="o">.</span><span class="n">unknown</span>
+</code></pre></div>
+<p>The verdict refuses to call archives equal on files it cannot compare: sealed
+archives carry no content digest (a plaintext-derived digest beside ciphertext
+would let anyone confirm a guessed row set), so their files land in
+<code>verdict.unknown</code> rather than counting as matches.</p>
+<p>When two builds <em>aren't</em> the same content, <code>run_manifest</code> says what each was
+built with — it binds a run's report (per-plane counts and all) to the code
+identity and lockfile digest that made it, as one JSON document to persist as a
+row, a file, or both:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.portability</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_manifest</span>
+
+<span class="n">manifest</span> <span class="o">=</span> <span class="n">run_manifest</span><span class="p">(</span>
+    <span class="n">report</span><span class="p">,</span> <span class="n">run_id</span><span class="o">=</span><span class="n">run_id</span><span class="p">,</span> <span class="n">started_at</span><span class="o">=</span><span class="n">started</span><span class="p">,</span>
+    <span class="n">git_sha</span><span class="o">=</span><span class="n">settings</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">git_sha</span><span class="p">,</span> <span class="n">lockfile</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">"uv.lock"</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">manifest</span><span class="o">.</span><span class="n">model_dump_json</span><span class="p">(</span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+</code></pre></div>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Both halves refuse to run without a spec inventory. An export that cannot
