@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 import attrs
 import orjson
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from forze._version import __version__
 from forze.base.exceptions import exc
@@ -150,6 +150,11 @@ class RunManifest(BaseModel):
     :func:`compare_content`: the comparison says two builds are the same content, the
     manifest says what to rebuild with when they are not.
     """
+
+    model_config = ConfigDict(frozen=True)
+    """A run manifest is a terminal record: attribute assignment would skip the status
+    invariant below, so there is none — build a corrected manifest instead of editing
+    one."""
 
     run_id: str
     kind: Literal["export", "import", "migrate"]

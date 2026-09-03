@@ -306,6 +306,14 @@ class TestRunManifest:
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
+    def test_manifest_is_immutable(self) -> None:
+        # A mutable manifest would let assignment skip the status invariant
+        # (manifest.status = "failed" with error=None) and persist a contradiction.
+        manifest = run_manifest(_EXPORT, run_id="r", started_at=_STARTED)
+
+        with pytest.raises(ValidationError):
+            manifest.status = "failed"  # type: ignore[misc]
+
     def test_json_roundtrip(self) -> None:
         manifest = run_manifest(_EXPORT, run_id="r", started_at=_STARTED)
 
