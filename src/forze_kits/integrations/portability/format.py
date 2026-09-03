@@ -196,6 +196,10 @@ class JsonlWriter:
     _stream: _ByteSink | None = attrs.field(default=None, init=False)
 
     def __enter__(self) -> JsonlWriter:
+        # A fresh context is a fresh file: the row count and content accumulator must
+        # not leak from a previous run of the same writer instance.
+        self.rows = 0
+        self._content_acc = 0
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._sink = _HashingSink(self.path.open("wb"))
 

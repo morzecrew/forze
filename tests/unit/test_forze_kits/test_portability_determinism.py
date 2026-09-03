@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import JsonDict
@@ -76,10 +77,26 @@ class TestContentDigest:
 
     def test_sealed_writer_carries_no_digest(self, tmp_path: Path) -> None:
         # A plaintext-derived digest in the plaintext manifest would let anyone confirm
-        # a guessed row set against the ciphertext.
+        # a guessed row set against the ciphertext. The writer is actually entered and
+        # written through a pass-through "sealing" sink, so the omission is proven on
+        # the real write path, not on an idle instance.
+        class _PassthroughSealing:
+            def __init__(self, sink: object) -> None:
+                self._sink = sink
+
+            def write(self, data: bytes) -> int:
+                return self._sink.write(data)  # type: ignore[attr-defined]
+
+            def flush(self) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
         class _FakeCipher:
             def sealing_sink(self, sink: object, *, base_aad: str) -> object:
-                raise AssertionError("never entered")
+                _ = base_aad
+                return _PassthroughSealing(sink)
 
         writer = JsonlWriter(
             tmp_path / "sealed.jsonl.gz",
@@ -87,7 +104,27 @@ class TestContentDigest:
             cipher=_FakeCipher(),  # type: ignore[arg-type]
         )
 
+        with writer:
+            for row in _ROWS:
+                writer.write(row)
+
+        assert writer.rows == len(_ROWS)
         assert writer.content_digest is None
+
+    def test_reused_writer_starts_fresh(self, tmp_path: Path) -> None:
+        # A second context on the same instance is a second file: neither the row count
+        # nor the content accumulator may leak from the first run.
+        writer = _write(tmp_path, "first.jsonl.gz", _ROWS)
+        first = writer.content_digest
+
+        writer.path = tmp_path / "second.jsonl.gz"
+
+        with writer:
+            for row in _ROWS:
+                writer.write(row)
+
+        assert writer.rows == len(_ROWS)
+        assert writer.content_digest == first
 
 
 # ----------------------- #
@@ -242,11 +279,26 @@ class TestRunManifest:
         with pytest.raises(CoreException):
             run_manifest(_EXPORT, run_id="r", started_at=_STARTED, error="boom")
 
+        with pytest.raises(CoreException):
+            # A blank error is no explanation at all.
+            run_manifest(_EXPORT, run_id="r", started_at=_STARTED, status="failed", error="  ")
+
         failed = run_manifest(
             _EXPORT, run_id="r", started_at=_STARTED, status="failed", error="boom"
         )
 
         assert failed.error == "boom"
+
+    def test_direct_construction_holds_the_invariant(self) -> None:
+        # The invariant lives on the model, not just the factory: a manifest built or
+        # parsed directly must not persist a contradiction.
+        base = run_manifest(_EXPORT, run_id="r", started_at=_STARTED)
+
+        with pytest.raises(ValidationError):
+            RunManifest.model_validate({**base.model_dump(), "error": "boom"})
+
+        with pytest.raises(ValidationError):
+            RunManifest.model_validate({**base.model_dump(), "status": "failed", "error": None})
 
     def test_missing_lockfile_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(CoreException, match="lockfile does not exist") as ei:
