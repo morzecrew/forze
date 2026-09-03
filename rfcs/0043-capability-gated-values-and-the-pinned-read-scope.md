@@ -9,9 +9,9 @@
   through a mint function scoped to its owning package, so a value that must carry
   provenance cannot be assembled elsewhere — with the `model_construct` bypass documented
   as a ceiling, not fought. A **pinned-read scope** beside
-  `src/forze_kits/scopes/dlock.py`: something resolved once per unit of work and threaded
-  implicitly, so a caller can neither read unpinned nor read against two pins in one
-  request. No contract changes; no existing module is edited beyond exports.
+  `src/forze_kits/scopes/dlock.py`: something resolved once per scope and threaded
+  implicitly, so within the scope a caller can neither read unpinned nor introduce a
+  second pin. No contract changes; no existing module is edited beyond exports.
 - **Related:** `src/forze/base/primitives/` (the tier the gate joins),
   `src/forze/base/validators.py`, `src/forze_kits/scopes/dlock.py` (the scope shape the
   facade parallels), `src/forze/application/execution/operations/planning/scopes.py`,
@@ -27,9 +27,11 @@
 Two provenance mechanisms, shipped only when something in-tree needs them. The gate makes
 "where did this value come from" a property of the type: constructing it anywhere but its
 owning package's mint function raises, on every pydantic construction path at once. The
-pinned-read scope makes "every read in this request saw the same pin" a property of the
-call shape: the pin is resolved once, the facade's methods take no pin argument, and a
-second pin cannot be introduced mid-request because there is nowhere to pass it.
+pinned-read scope makes "every read through this facade saw the same pin" a property of
+the call shape: the pin is resolved once per scope, the facade's methods take no pin
+argument, and a second pin cannot be introduced *within the scope* because there is
+nowhere to pass it. Whether a unit of work may open a second scope is a policy this
+document delegates rather than claims away (§11 row 9).
 
 ## 2. Motivation
 
@@ -63,11 +65,14 @@ Verified against the tree at `4443635`:
 - `src/forze_kits/scopes/` contains exactly one scope, `DistributedLockScope`
   (`dlock.py`) — acquire once, heartbeat implicitly, raise on loss. Its docstring is the
   behavioural template the pinned-read scope mirrors on the read side.
-- `model_construct` appears twice in `src/`: the outbound-HTTP empty-body path
-  (`contracts/http/specs.py:66`) and a comment in `base/serialization/pydantic.py:108`
-  explaining why the codec has no skip-validation fast path. Neither touches a would-be
-  gated type today; both confirm the bypass is a real, used pydantic surface — which is
-  why §5.1 documents it rather than pretending to close it.
+- `model_construct` appears four times in `src/`: two runtime call sites — the
+  outbound-HTTP empty-body path (`forze_http/adapters/http_service.py:120`) and its mock
+  twin (`forze_mock/adapters/http.py:144`) — plus the config docstring that names that
+  path (`contracts/http/specs.py:66`) and a comment in
+  `base/serialization/pydantic.py:108` explaining why the codec has no skip-validation
+  fast path. None touches a would-be gated type today; the two live call sites confirm
+  the bypass is a real, used pydantic surface — which is why §5.1 documents it rather
+  than pretending to close it, and why a gate rollout must leave those paths alone.
 - No in-tree read surface currently takes a "pin" the scope could resolve: search
   snapshots (`SearchResultSnapshotPort`) come closest but already thread their handle
   explicitly per call. This is why the RFC is demand-gated rather than executed.
@@ -80,7 +85,8 @@ Verified against the tree at `4443635`:
   lines, with the guard holding on `__init__`, `model_validate`, `model_validate_json`,
   and `model_copy(update=...)` simultaneously.
 - A read-side scope with the same ergonomics as `DistributedLockScope`: enter once,
-  everything inside is consistent by construction, exit cleans up.
+  everything inside is consistent by construction; post-exit lifetime and any cleanup a
+  resource-owning pin needs are settled by §11 row 8 before first use.
 - Honest documentation of what the gate is: provenance hygiene that turns forgery into a
   greppable act, **not** a security boundary.
 
@@ -152,6 +158,12 @@ application implements or a generated wrapper over a document query port is dele
 implementation (§11 row 7): the first consumer's shape should decide it, not this
 document.
 
+The sketch treats a pin as a plain value (a handle, a timestamp, a row) with nothing to
+release; a pin that *owns* a resource — an open snapshot the backend must drop — needs a
+close protocol the sketch deliberately does not invent. Both halves of the post-exit
+question (does the facade refuse use after exit; does the pin need releasing) are one
+decision, §11 row 8, and neither mechanism ships until its consumer answers it.
+
 Pairing the two mechanisms is the intended idiom: the facade's read results are the
 natural gated values, minted by the facade's owning module, so "this value came from a
 pinned read" becomes checkable at the type.
@@ -165,7 +177,7 @@ pinned read" becomes checkable at the type.
   (`ContextVar` isolation). Anti-vacuity per RFC 0040's house rule: the battery asserts
   the refusal *kind*, not bare `raises`.
 - Scope: `resolve` called exactly once per scope; a facade built in one scope refuses
-  use after exit only if the first consumer needs it (delegated, §11 row 7).
+  use after exit only if the first consumer needs it (delegated, §11 row 8).
 
 ## 7. Docs
 
@@ -199,7 +211,7 @@ paragraph: the gate is provenance hygiene, not a security boundary, and the
 ## 10. Unresolved questions
 
 - **Q1 (gates execution):** which in-tree consumer goes first? Candidates, in likelihood
-  order: a portability import receipt (RFC 0016/0017 family), an attested
+  order: a portability import receipt (`forze_kits.integrations.portability`), an attested
   `QuiesceReport` handed between processes, a grant snapshot in `forze_identity`.
   Settled by whichever lands a need first; until then this RFC stays Draft.
 - **Q2:** does the pinned facade generalize over document query ports (a generated
@@ -217,7 +229,8 @@ paragraph: the gate is provenance hygiene, not a security boundary, and the
 | 5 | `ASSUMED` | The mint window is a per-gate `ContextVar` token, not a token-as-field (product's shape) — cleaner payloads, survives `model_validate_json`. If execution finds a pydantic path the ContextVar cannot cover, the token-as-field fallback is the recorded alternative. |
 | 6 | `ASSUMED` | The pinned-read scope lives in `forze_kits/scopes/pinned.py` mirroring `DistributedLockScope`'s ergonomics; a `resolve`/`build` pair is enough surface. |
 | 7 | `OPEN` | Facade shape: Protocol implemented per application vs. generated wrapper over a query port. The first consumer decides and logs the choice with its rationale. |
-| 8 | `OPEN` | Whether a facade refuses use after its scope exits (a closed-over "stale" flag) or stays a plain closure. Decide against the first consumer's failure mode: if a leaked facade can read a torn-down pin, add the flag. |
+| 8 | `OPEN` | Post-exit lifetime, both halves: whether a facade refuses use after its scope exits (a closed-over "stale" flag vs a plain closure), and whether `resolve` may own a resource needing a close hook on exit. Decide against the first consumer's failure mode: if a leaked facade can read a torn-down pin, add the flag; if the pin holds a backend resource, add the hook. |
+| 9 | `OPEN` | Second-scope policy per unit of work: refuse nesting with a ContextVar guard, or permit deliberate multi-pin reads. The structural guarantee is scope-wide (§5.2); this row is what would extend it request-wide. The first consumer decides and logs the choice. |
 
 ## 12. Phasing
 
