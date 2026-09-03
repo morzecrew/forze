@@ -133,6 +133,18 @@ callback *invoked synchronously inside* `mint()` could construct extra instances
 functions therefore do nothing but validate-and-return (a rule the gate's docstring
 carries, and its tests pin).
 
+**Serialization contract:** a gated model does not round-trip through generic codecs —
+by design, not by accident. `model_validate` outside a mint window refuses, so
+`base/serialization/pydantic.py`'s validate paths reject a gated payload rather than
+re-minting it, and that is the correct behaviour: in-process provenance is precisely the
+property a byte round-trip cannot preserve, since anything readable from bytes is
+forgeable from bytes. A gated value that must cross a process or persistence boundary
+re-enters through its owning package's mint (which re-verifies whatever made it
+mintable) or carries a signature — §8's named escape hatch. Serializing *out*
+(`model_dump`) stays allowed; it is re-entry that requires provenance. The gate's test
+battery pins the codec refusal (§6), so the first consumer discovers this contract in a
+test name, not in production.
+
 **Rejected alternative — token-as-field** (the product's shape: a private sentinel
 passed as a model field). It works, but the sentinel leaks into `model_dump()` handling,
 every schema export, and every serializer edge; the `ContextVar` keeps the payload
@@ -172,7 +184,9 @@ pinned read" becomes checkable at the type.
 
 - Gate: a battery over every construction path — `__init__`, `model_validate`,
   `model_validate_json`, `model_copy` with and without `update`, and `model_construct`
-  (asserting it *does* bypass, so the ceiling claim stays true in CI). Concurrency leg:
+  (asserting it *does* bypass, so the ceiling claim stays true in CI). One leg runs a
+  gated model through the shared codec's validate path and asserts the refusal, pinning
+  §5.1's serialization contract. Concurrency leg:
   two tasks minting through one gate must not observe each other's open window
   (`ContextVar` isolation). Anti-vacuity per RFC 0040's house rule: the battery asserts
   the refusal *kind*, not bare `raises`.
@@ -231,6 +245,7 @@ paragraph: the gate is provenance hygiene, not a security boundary, and the
 | 7 | `OPEN` | Facade shape: Protocol implemented per application vs. generated wrapper over a query port. The first consumer decides and logs the choice with its rationale. |
 | 8 | `OPEN` | Post-exit lifetime, both halves: whether a facade refuses use after its scope exits (a closed-over "stale" flag vs a plain closure), and whether `resolve` may own a resource needing a close hook on exit. Decide against the first consumer's failure mode: if a leaked facade can read a torn-down pin, add the flag; if the pin holds a backend resource, add the hook. |
 | 9 | `OPEN` | Second-scope policy per unit of work: refuse nesting with a ContextVar guard, or permit deliberate multi-pin reads. The structural guarantee is scope-wide (§5.2); this row is what would extend it request-wide. The first consumer decides and logs the choice. |
+| 10 | `ASSUMED` | Gated models do not deserialize through generic codecs: `model_validate` outside a mint window refuses, and re-entry from bytes goes through the owning package's mint or a signature (§8). If the first consumer's value must ride a codec path routinely, the recorded fallback is a codec-level mint hook — a departure to log, not to improvise. |
 
 ## 12. Phasing
 
