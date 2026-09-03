@@ -48,6 +48,13 @@ class ArchiveFile(BaseModel):
     sha256: str
     rows: int
 
+    content_digest: str | None = None
+    """Order-independent multiset digest of the file's canonical rows, when the writer computed
+    one (JSONL data files); ``None`` otherwise. The *logical* identity — equal across re-exports
+    of the same rows whatever the row order, compression or platform — where :attr:`sha256` is
+    the *byte* identity only a pinned environment reproduces. Reproducibility signal, not an
+    integrity check: verification stays on :attr:`sha256`."""
+
 
 # ....................... #
 

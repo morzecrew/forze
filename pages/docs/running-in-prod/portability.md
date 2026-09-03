@@ -201,6 +201,43 @@ moving its sessions.
 Archives are gzip-compressed by default; `compression="zstd"` needs the
 `forze[zstd]` extra and fails closed without it.
 
+## Same content, different bytes
+
+Two exports of the same data are rarely the same file: row order follows the
+backend's cursors, compression and sealing differ per run, and byte identity
+holds only inside a pinned build environment while proving nothing about
+meaning. The manifest therefore records two identities per data file — `sha256`
+over the bytes (what import verifies) and `content_digest`, an order-independent
+digest of the canonical rows (what *reproducibility* means). `compare_content`
+renders the verdict for two manifests:
+
+```python
+from forze_kits.integrations.portability import compare_content
+
+verdict = compare_content(manifest_a, manifest_b)
+assert verdict.same_content, verdict.differing or verdict.unknown
+```
+
+The verdict refuses to call archives equal on files it cannot compare: sealed
+archives carry no content digest (a plaintext-derived digest beside ciphertext
+would let anyone confirm a guessed row set), so their files land in
+`verdict.unknown` rather than counting as matches.
+
+When two builds *aren't* the same content, `run_manifest` says what each was
+built with — it binds a run's report (per-plane counts and all) to the code
+identity and lockfile digest that made it, as one JSON document to persist as a
+row, a file, or both:
+
+```python
+from forze_kits.integrations.portability import run_manifest
+
+manifest = run_manifest(
+    report, run_id=run_id, started_at=started,
+    git_sha=settings.runtime.git_sha, lockfile=Path("uv.lock"),
+)
+path.write_text(manifest.model_dump_json(indent=2))
+```
+
 ## Notes
 
 - Both halves refuse to run without a spec inventory. An export that cannot
