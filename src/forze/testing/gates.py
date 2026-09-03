@@ -177,9 +177,9 @@ def _resolve_annotation(func: FunctionType, param: str) -> object:
     if raw is _MISSING:
         raise NameError(f"parameter {param!r} carries no annotation")
 
-    if not isinstance(raw, str):
-        return raw
-
+    # Every annotation goes through the shim, string or not: get_type_hints also
+    # normalizes live objects (``None`` to ``NoneType``, nested ForwardRefs resolved),
+    # and skipping that for the non-string case would reject a semantic match.
     shim = FunctionType((lambda: None).__code__, func.__globals__)
     shim.__annotations__ = {param: raw}
 

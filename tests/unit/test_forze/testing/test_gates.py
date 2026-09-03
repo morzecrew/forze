@@ -270,6 +270,28 @@ class TestScopeFirstGate:
         with pytest.raises(AssertionError, match="carries no annotation"):
             assert_scope_first(bare_ports, name="tenant_id", annotation=UUID)
 
+    def test_live_none_annotation_is_normalized(self, tmp_path: Path) -> None:
+        # get_type_hints normalizes a live None annotation to NoneType; the gate must
+        # apply the same normalization to non-string annotations before comparing.
+        path = tmp_path / "none_ports.py"
+        path.write_text(
+            textwrap.dedent(
+                """
+                from typing import Protocol
+                class Port(Protocol):
+                    async def read(self, marker: None, /) -> str: ...
+                """
+            )
+        )
+        sys.path.insert(0, str(tmp_path))
+
+        try:
+            none_ports = importlib.import_module("none_ports")
+        finally:
+            sys.path.remove(str(tmp_path))
+
+        assert_scope_first(none_ports, name="marker", annotation=type(None))
+
     def test_live_object_annotation_is_compared_directly(self, tmp_path: Path) -> None:
         # Without deferred annotations the hint is already an object, not a string.
         path = tmp_path / "live_ports.py"
