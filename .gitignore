@@ -228,6 +228,9 @@ entities.json
 
 .claude/projects/
 
+# Repowise-managed local index summary (regenerated per machine)
+.claude/CLAUDE.md
+
 # DST run artifacts (raw JSONL; the committed artifact is the generated summary in pages/)
 dst-*.jsonl
 
