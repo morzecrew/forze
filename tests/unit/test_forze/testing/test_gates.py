@@ -7,7 +7,7 @@ import sys
 import textwrap
 import types
 from pathlib import Path
-from typing import Protocol
+from typing import Annotated, Protocol
 from uuid import UUID
 
 import pytest
@@ -92,6 +92,16 @@ class TestPurityGate:
 
         with pytest.raises(AssertionError, match="could not parse"):
             assert_pure_module(module, allowed=["math"])
+
+    def test_pep263_encoding_cookie_is_honored(self, tmp_path: Path) -> None:
+        # A valid non-UTF-8 source must be parsed, not reported as a false violation.
+        path = tmp_path / "legacy.py"
+        path.write_bytes("# -*- coding: latin-1 -*-\n# caf\xe9\nimport math\n".encode("latin-1"))
+
+        module = types.ModuleType("legacy")
+        module.__file__ = str(path)
+
+        assert_pure_module(module, allowed=["math"])
 
     def test_sourceless_module_is_refused(self) -> None:
         with pytest.raises(AssertionError, match="no source file"):
@@ -195,6 +205,92 @@ class TestScopeFirstGate:
 
         with pytest.raises(AssertionError, match="unresolvable"):
             assert_scope_first(lazy_ports, name="tenant_id", annotation=UUID)
+
+    def test_annotated_metadata_is_preserved(self) -> None:
+        class Port(Protocol):
+            async def read(self, tenant_id: Annotated[UUID, "owner"], /) -> str: ...
+
+        module = _ports_module("gate_ports_annotated", Port=Port)
+
+        assert_scope_first(module, name="tenant_id", annotation=Annotated[UUID, "owner"])
+
+    def test_broken_sibling_annotation_is_not_blamed_on_the_key(self, tmp_path: Path) -> None:
+        # get_type_hints over the whole function would fail on the return annotation
+        # and misattribute it; only the key's own annotation is resolved.
+        path = tmp_path / "sibling_ports.py"
+        path.write_text(
+            textwrap.dedent(
+                """
+                from __future__ import annotations
+                from typing import Protocol
+                from uuid import UUID
+                class Port(Protocol):
+                    async def read(self, tenant_id: UUID, /) -> Broken: ...
+                """
+            )
+        )
+        sys.path.insert(0, str(tmp_path))
+
+        try:
+            sibling_ports = importlib.import_module("sibling_ports")
+        finally:
+            sys.path.remove(str(tmp_path))
+
+        assert_scope_first(sibling_ports, name="tenant_id", annotation=UUID)
+
+    def test_invalid_annotation_syntax_is_a_violation_not_a_crash(self) -> None:
+        class Port(Protocol):
+            async def read(self, tenant_id: "not valid !", /) -> str: ...  # type: ignore[valid-type]  # noqa: F722
+
+        module = _ports_module("gate_ports_synerr", Port=Port)
+
+        with pytest.raises(AssertionError, match="unresolvable"):
+            assert_scope_first(module, name="tenant_id", annotation=UUID)
+
+    def test_unannotated_key_is_a_violation(self, tmp_path: Path) -> None:
+        # Defined in its own module without deferred annotations, so the missing
+        # annotation is genuinely absent rather than an empty string.
+        path = tmp_path / "bare_ports.py"
+        path.write_text(
+            textwrap.dedent(
+                """
+                from typing import Protocol
+                class Port(Protocol):
+                    async def read(self, tenant_id, /) -> str: ...
+                """
+            )
+        )
+        sys.path.insert(0, str(tmp_path))
+
+        try:
+            bare_ports = importlib.import_module("bare_ports")
+        finally:
+            sys.path.remove(str(tmp_path))
+
+        with pytest.raises(AssertionError, match="carries no annotation"):
+            assert_scope_first(bare_ports, name="tenant_id", annotation=UUID)
+
+    def test_live_object_annotation_is_compared_directly(self, tmp_path: Path) -> None:
+        # Without deferred annotations the hint is already an object, not a string.
+        path = tmp_path / "live_ports.py"
+        path.write_text(
+            textwrap.dedent(
+                """
+                from typing import Protocol
+                from uuid import UUID
+                class Port(Protocol):
+                    async def read(self, tenant_id: UUID, /) -> str: ...
+                """
+            )
+        )
+        sys.path.insert(0, str(tmp_path))
+
+        try:
+            live_ports = importlib.import_module("live_ports")
+        finally:
+            sys.path.remove(str(tmp_path))
+
+        assert_scope_first(live_ports, name="tenant_id", annotation=UUID)
 
     def test_non_method_members_are_skipped(self) -> None:
         class Port(Protocol):

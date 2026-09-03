@@ -18,10 +18,12 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
+import tokenize
 import typing
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from types import FunctionType, ModuleType
+from typing import Final
 
 # ----------------------- #
 
@@ -112,7 +114,10 @@ def assert_pure_module(
 
     for path in files:
         try:
-            tree = ast.parse(path.read_text(), filename=str(path))
+            # tokenize.open honors PEP 263 encoding cookies, so a valid non-UTF-8
+            # source is parsed rather than reported as a false violation.
+            with tokenize.open(str(path)) as source:
+                tree = ast.parse(source.read(), filename=str(path))
         except (OSError, SyntaxError, UnicodeDecodeError) as error:
             # A file the gate cannot read is a gate failure, not a traceback: the
             # documented contract is an AssertionError listing everything wrong.
@@ -153,6 +158,32 @@ def _protocol_methods(proto: type) -> list[tuple[str, FunctionType, bool]]:
             members.append((member, obj, True))
 
     return members
+
+
+_MISSING: Final = object()
+
+
+def _resolve_annotation(func: FunctionType, param: str) -> object:
+    """Resolve one parameter's annotation in the function's own namespace.
+
+    ``typing.get_type_hints(func)`` would resolve *every* annotation on the function, so
+    a broken return or sibling annotation would fail — and be blamed on — the key. A
+    shim function carrying only this annotation keeps the resolution scoped, and
+    ``include_extras`` keeps ``Annotated[...]`` metadata intact for the comparison.
+    """
+
+    raw = func.__annotations__.get(param, _MISSING)
+
+    if raw is _MISSING:
+        raise NameError(f"parameter {param!r} carries no annotation")
+
+    if not isinstance(raw, str):
+        return raw
+
+    shim = FunctionType((lambda: None).__code__, func.__globals__)
+    shim.__annotations__ = {param: raw}
+
+    return typing.get_type_hints(shim, include_extras=True)[param]
 
 
 def assert_scope_first(
@@ -219,12 +250,15 @@ def assert_scope_first(
 
             # Annotations resolve lazily (``from __future__ import annotations``, or a
             # name importable only under ``TYPE_CHECKING``); an unresolvable one is a
-            # violation of this gate, never a raw traceback that hides the rest.
+            # violation of this gate, never a raw traceback that hides the rest. Only
+            # the key's own annotation is resolved, so a broken return or sibling
+            # annotation is never misattributed to the key.
             try:
-                resolved = typing.get_type_hints(func).get(first.name)
-            except NameError as error:
+                resolved = _resolve_annotation(func, first.name)
+            except Exception as error:
                 violations.append(
-                    f"{qualified}: annotation of {first.name!r} is unresolvable ({error})"
+                    f"{qualified}: annotation of {first.name!r} is unresolvable "
+                    f"({type(error).__name__}: {error})"
                 )
             else:
                 if resolved != annotation:
