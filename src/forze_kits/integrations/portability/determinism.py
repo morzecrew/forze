@@ -24,7 +24,7 @@ from typing import Any, Literal
 
 import attrs
 import orjson
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from forze._version import __version__
 from forze.base.exceptions import exc
@@ -177,6 +177,19 @@ class RunManifest(BaseModel):
     lockfile_sha256: str | None = None
     """Digest of the dependency lockfile the run executed under, when one was given."""
 
+    @model_validator(mode="after")
+    def _terminal_status_matches_error(self) -> RunManifest:
+        # The invariant holds at the model, not just the factory: a manifest built or
+        # parsed directly must not persist a contradiction, and a blank error is no
+        # explanation at all.
+        if (self.status == "failed") == (self.error is None or not self.error.strip()):
+            raise ValueError(
+                "a failed run manifest requires a non-blank error, "
+                "and a succeeded one refuses an error"
+            )
+
+        return self
+
 
 def run_manifest(
     report: ExportReport | ImportReport | MigrateReport,
@@ -198,10 +211,10 @@ def run_manifest(
     a ``succeeded`` one must not carry an ``error``.
     """
 
-    if (status == "failed") == (error is None):
+    if (status == "failed") == (error is None or not error.strip()):
         raise exc.configuration(
-            "A failed run manifest requires an error, and a succeeded one refuses it "
-            f"(status={status!r}, error={error!r})",
+            "A failed run manifest requires a non-blank error, and a succeeded one "
+            f"refuses an error (status={status!r}, error={error!r})",
         )
 
     if isinstance(report, ExportReport):

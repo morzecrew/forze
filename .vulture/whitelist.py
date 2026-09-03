@@ -162,6 +162,7 @@ reexported  # unused variable (src/forze_kits/integrations/portability/conforman
 PORTABILITY_DIVERGENCES  # unused variable (src/forze_kits/integrations/portability/conformance.py:268)
 quiesce_attestation  # unused variable (src/forze_kits/integrations/portability/manifest.py:137)
 _.same_content  # unused property (src/forze_kits/integrations/portability/determinism.py:74)
+_._terminal_status_matches_error  # unused method (src/forze_kits/integrations/portability/determinism.py:180)
 model_config  # unused variable (src/forze_kits/integrations/progress/events.py:35)
 finished_at  # unused variable (src/forze_kits/integrations/progress/record.py:99)
 finished_at  # unused variable (src/forze_kits/integrations/progress/record.py:114)
