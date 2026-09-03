@@ -4560,6 +4560,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#binding-the-specs-to-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Binding the specs to a schema
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trust-but-verify" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6130,6 +6141,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#binding-the-specs-to-a-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Binding the specs to a schema
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#trust-but-verify" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6383,6 +6405,34 @@ deployment needs for the default eligibility gate
 grants) follow the same mapping rule — apply the table above to their model
 fields, and startup validation will tell you, field by field, if a column
 disagrees.</p>
+<h2 id="binding-the-specs-to-a-schema">Binding the specs to a schema<a class="headerlink" href="#binding-the-specs-to-a-schema" title="Permanent link">&para;</a></h2>
+<p>Once the tables exist, the deps module needs a <code>rw_documents</code> mapping for them.
+The relation each name binds to is yours — this recipe happens to name tables
+after the specs, so the mapping is a comprehension — but the <em>names</em> come from
+<code>identity_document_names</code>, validated against the identity inventory, so a
+renamed or misspelled spec fails a test naming the spec rather than a deploy
+naming a missing table:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity</span><span class="w"> </span><span class="kn">import</span> <span class="n">identity_document_names</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresDocumentConfig</span>
+
+<span class="n">IDENTITY_PG</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">name</span><span class="p">:</span> <span class="n">PostgresDocumentConfig</span><span class="p">(</span>
+        <span class="n">read</span><span class="o">=</span><span class="p">(</span><span class="s2">"identity"</span><span class="p">,</span> <span class="n">name</span><span class="p">),</span>
+        <span class="n">write</span><span class="o">=</span><span class="p">(</span><span class="s2">"identity"</span><span class="p">,</span> <span class="n">name</span><span class="p">),</span>
+        <span class="c1"># the DDL in this recipe ships no optimistic-locking trigger,</span>
+        <span class="c1"># so bookkeeping stays application-side</span>
+        <span class="n">bookkeeping_strategy</span><span class="o">=</span><span class="s2">"application"</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">identity_document_names</span><span class="p">()</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Binding a subset? Choose from the named feature groups
+(<code>GRANT_RESOLUTION_SPECS</code>, <code>AUTHZ_DECISION_SPECS</code>, <code>DELEGATION_SPECS</code>,
+<code>PASSWORD_LIFECYCLE_SPECS</code>, <code>TENANT_RESOLUTION_SPECS</code>) via
+<code>identity_document_names((*AUTHZ_DECISION_SPECS, *DELEGATION_SPECS))</code> rather
+than hand-listing names: a principal can reach a role directly or through a
+group, so binding only part of the grant-resolution set resolves fewer grants
+than the database holds, silently.</p>
 <h2 id="trust-but-verify">Trust but verify<a class="headerlink" href="#trust-but-verify" title="Permanent link">&para;</a></h2>
 <p>These shapes are the ones forze's own Postgres integration tests provision and
 run schema validation against, so they cannot drift from the models silently. If
