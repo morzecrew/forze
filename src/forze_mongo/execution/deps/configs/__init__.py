@@ -2,6 +2,7 @@
 
 from .counter import MongoCounterConfig
 from .document import MongoDocumentConfig, MongoReadOnlyDocumentConfig
+from .inbox import MongoInboxConfig
 from .outbox import MongoOutboxConfig
 from .search import (
     MongoAtlasEngine,
@@ -18,6 +19,7 @@ __all__ = [
     "MongoAtlasEngine",
     "MongoCounterConfig",
     "MongoDocumentConfig",
+    "MongoInboxConfig",
     "MongoOutboxConfig",
     "MongoReadOnlyDocumentConfig",
     "MongoSearchConfig",

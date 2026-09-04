@@ -20,6 +20,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.document.wiring import derive_read_only_document_config
+from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import (
     OutboxAdminDepKey,
     OutboxCommandDepKey,
@@ -41,12 +42,14 @@ from ._warnings import (
     MONGO_COUNTER_WARNING,
     MONGO_DOCUMENT_RO_WARNING,
     MONGO_DOCUMENT_RW_WARNING,
+    MONGO_INBOX_WARNING,
     MONGO_OUTBOX_WARNING,
     MONGO_SEARCH_WARNING,
 )
 from .configs import (
     MongoCounterConfig,
     MongoDocumentConfig,
+    MongoInboxConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
     MongoSearchConfig,
@@ -55,6 +58,7 @@ from .factories import (
     ConfigurableMongoCounter,
     ConfigurableMongoCounterAdmin,
     ConfigurableMongoDocument,
+    ConfigurableMongoInbox,
     ConfigurableMongoOutboxAdmin,
     ConfigurableMongoOutboxCommand,
     ConfigurableMongoOutboxQuery,
@@ -119,6 +123,15 @@ class MongoDepsModule(DepsModule):
     )
     """Mapping from outbox route names to Mongo-specific configurations."""
 
+    inboxes: StrKeyMapping[MongoInboxConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from inbox route names to Mongo-specific configurations.
+
+    Consumer-side dedup marks as one atomic ``_id`` upsert per message. The mark rides the
+    ambient transaction/session, so it commits — or rolls back — with the handler's writes."""
+
     counters: StrKeyMapping[MongoCounterConfig] | None = attrs.field(
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
@@ -172,6 +185,12 @@ class MongoDepsModule(DepsModule):
         )
         warn_integration_routes(
             integration="Mongo",
+            routes=self.inboxes,
+            warning=MONGO_INBOX_WARNING,
+            log_warning=logger.warning,
+        )
+        warn_integration_routes(
+            integration="Mongo",
             routes=self.counters,
             warning=MONGO_COUNTER_WARNING,
             log_warning=logger.warning,
@@ -202,6 +221,12 @@ class MongoDepsModule(DepsModule):
                     kind="outbox",
                     configs=self.outboxes,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                ),
+                TenancyRouteGroup(
+                    kind="inbox",
+                    configs=self.inboxes,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
                 ),
                 TenancyRouteGroup(
                     kind="counter",
@@ -271,6 +296,10 @@ class MongoDepsModule(DepsModule):
                     # Always registered: quiesce depends on it and it is read-only.
                     (OutboxAdminDepKey, ConfigurableMongoOutboxAdmin),
                 ],
+            ),
+            routed_from_mapping(
+                self.inboxes,
+                bindings=[(InboxDepKey, ConfigurableMongoInbox)],
             ),
             routed_from_mapping(
                 self.counters,

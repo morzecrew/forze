@@ -1,12 +1,12 @@
 ---
 title: MongoDB
 icon: lucide/leaf
-summary: Document storage, search, transactions, and outbox on MongoDB
+summary: Document storage, search, transactions, outbox, and inbox on MongoDB
 ---
 
 `forze[mongo]` implements document storage, search, transaction coordination,
-and the transactional outbox on MongoDB — the same contracts as Postgres, behind
-collections instead of tables.
+and the transactional outbox and inbox on MongoDB — the same contracts as
+Postgres, behind collections instead of tables.
 
 ## Install
 
@@ -73,6 +73,7 @@ lifecycle = LifecyclePlan.from_steps(
 | Transactions | route in `tx` | `tx` |
 | Search | `SearchSpec.name` | `searches` |
 | Outbox | `OutboxSpec.name` | `outboxes` |
+| Inbox | `InboxSpec.name` | `inboxes` |
 | Counter | `CounterSpec.name` | `counters` |
 
 ## Notes
@@ -80,7 +81,11 @@ lifecycle = LifecyclePlan.from_steps(
 - **You own the collections and indexes.** Forze reads existing collections; it
   doesn't create or index them.
 - **Transactions and outbox need a replica set** — a standalone `mongod` can't
-  open multi-document transactions.
+  open multi-document transactions. The inbox marks messages without one, but
+  the exactly-once guarantee (mark rolls back with the handler) only exists
+  inside a transaction.
+- The inbox needs no index migration: the dedup key is the document `_id`, so
+  concurrent marks serialize on it out of the box.
 - `MongoSearchConfig` is imported from `forze_mongo.execution.deps` (not the
   top-level package).
 - Relations accept a static `(database, collection)` tuple or a per-tenant
