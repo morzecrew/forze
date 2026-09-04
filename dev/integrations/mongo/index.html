@@ -6321,8 +6321,8 @@
   <h1 id="__skip">MongoDB</h1>
 
 <p><code>forze[mongo]</code> implements document storage, search, transaction coordination,
-and the transactional outbox and inbox on MongoDB — the same contracts as
-Postgres, behind collections instead of tables.</p>
+and the transactional outbox, inbox and idempotency store on MongoDB — the
+same contracts as Postgres, behind collections instead of tables.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[mongo]'</span>
 </code></pre></div>
@@ -6399,6 +6399,11 @@ models follows.</p>
 <td><code>inboxes</code></td>
 </tr>
 <tr>
+<td>Idempotency</td>
+<td><code>IdempotencySpec.name</code></td>
+<td><code>idempotencies</code></td>
+</tr>
+<tr>
 <td>Counter</td>
 <td><code>CounterSpec.name</code></td>
 <td><code>counters</code></td>
@@ -6417,6 +6422,13 @@ models follows.</p>
   concurrent marks serialize on it out of the box. <code>InboxSpec.ttl</code> is advisory —
   to actually expire old marks, create a TTL index on <code>processed_at</code> with your
   dedup window (you own the collections and indexes).</li>
+<li><strong>Idempotency is co-located</strong>: the result record is written on the caller's
+  session, so it commits atomically with the business writes — the crash window
+  an out-of-transaction store (Redis) leaves open. Claims and releases run
+  detached, so a claim blocks a concurrent duplicate the moment it is taken and
+  survives the rollback of the operation it guards. Expired claims are reclaimed
+  in place; a TTL index on <code>expires_at</code> is optional cleanup for keys that are
+  never reused.</li>
 <li><code>MongoSearchConfig</code> is imported from <code>forze_mongo.execution.deps</code> (not the
   top-level package).</li>
 <li>Relations accept a static <code>(database, collection)</code> tuple or a per-tenant
