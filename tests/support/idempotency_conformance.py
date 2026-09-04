@@ -24,14 +24,36 @@ What each check pins:
 7. ``fail`` leaves a claim for a *different* payload hash untouched.
 8. ``fail`` leaves a *completed* record untouched — it releases claims, not results.
 9. ``commit`` without a matching pending claim is refused rather than writing a record.
+10. A lapsed claim stops blocking its key — a crashed operation does not hold it forever.
+11. A lapsed record re-executes instead of replaying, which is what makes the TTL a window.
 
 Checks 3 and 4 are the control for 7: they are what make "the claim is still there" after
 an unowned ``fail`` observable at all.
+
+Checks 10 and 11 cover the dedup **window**, which the port's own docstring promises ("a
+duplicate within the record's TTL replays … one that arrives after the TTL re-executes")
+and which nothing here asserted: every store tested expiry against a different subset (the
+oracle seven ways, Postgres once, Redis not at all), so the plane had no statement that
+they agree about it either.
+
+**What is deliberately not asserted, and why.** An operation that outlives its own claim
+may find the key reclaimed — by a *duplicate of the same request*, which carries the same
+``op``, key and ``payload_hash``. Nothing in this port's signature distinguishes the two
+callers, so no store can refuse the late one: verified against all four, including the
+Redis compare-and-set, whose byte-exact fence matches because the reclaimer wrote
+byte-identical claim metadata. Fencing it needs an ownership handle the contract does not
+carry, so a check for it would fail everywhere and prove only that the promise is
+unmakeable. What each store does when the claim lapsed and *nobody* reclaimed it follows
+from its expiry mechanism rather than a decision — Redis and the oracle refuse (the claim
+is simply gone), Postgres and Mongo complete the record — and both outcomes are safe, so
+asserting either would freeze an accident into a contract.
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 import attrs
@@ -72,6 +94,22 @@ class IdempotencyHarness:
     A factory rather than a fixed key because Postgres and Redis keep state across the
     checks in one session, so a shared key would make the battery order-dependent — and an
     order-dependent conformance suite is one that passes for the wrong reason.
+    """
+
+    store_with_ttl: Callable[[timedelta], IdempotencyPort]
+    """Mint a second store over the same backing state with a different dedup window.
+
+    The TTL checks need a claim to lapse while the test watches. Rather than wait out
+    :attr:`store`'s window (an hour, so the other checks never race the clock), they mint a
+    short-window store and sleep past it — the same rows, a different `IdempotencySpec.ttl`.
+    """
+
+    min_ttl: timedelta = timedelta(milliseconds=50)
+    """The shortest dedup window this store accepts, and so how long a TTL check waits.
+
+    Per-store because Redis keeps its claim under a native key TTL and refuses anything
+    below one second; the others compare a stored timestamp and take milliseconds. A single
+    shared value would make every leg pay the slowest store's floor.
     """
 
 
@@ -217,6 +255,52 @@ async def check_commit_without_a_matching_claim_is_refused(h: IdempotencyHarness
 
 # ....................... #
 
+
+async def _lapsed_claim(h: IdempotencyHarness, key: str, payload_hash: str = HASH_A) -> Any:
+    """Take a claim through a short-window store and wait until it has lapsed.
+
+    Returns that store, because the checks below need to keep speaking as the operation
+    whose claim just expired — that caller is the one whose late ``commit`` and ``fail``
+    the promises are about.
+    """
+
+    short = h.store_with_ttl(h.min_ttl)
+
+    assert await short.begin(OP, key, payload_hash) is None, h.backend
+    await asyncio.sleep(h.min_ttl.total_seconds() * 1.5 + 0.05)
+
+    return short
+
+
+async def check_a_lapsed_claim_is_reclaimable(h: IdempotencyHarness) -> None:
+    """Past its window a claim stops blocking the key, so a crashed operation that never
+    released does not hold its key until someone intervenes."""
+
+    key = h.key()
+    await _lapsed_claim(h, key)
+
+    assert await h.store.begin(OP, key, HASH_A) is None, h.backend
+
+
+async def check_a_lapsed_record_re_executes(h: IdempotencyHarness) -> None:
+    """The dedup window is a window: past it the stored result is not replayed.
+
+    This is the promise ``IdempotencySpec.ttl`` exists to size — a duplicate arriving later
+    than the window runs again, which is why the TTL must cover the redelivery horizon.
+    """
+
+    key = h.key()
+    short = h.store_with_ttl(h.min_ttl)
+
+    assert await short.begin(OP, key, HASH_A) is None, h.backend
+    await short.commit(OP, key, HASH_A, _record())
+    await asyncio.sleep(h.min_ttl.total_seconds() * 1.5 + 0.05)
+
+    assert await h.store.begin(OP, key, HASH_A) is None, h.backend
+
+
+# ....................... #
+
 IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
     check_a_fresh_claim_returns_none,
     check_a_completed_operation_replays_its_record,
@@ -227,4 +311,6 @@ IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
     check_fail_ignores_a_claim_it_does_not_own,
     check_fail_leaves_a_completed_record_intact,
     check_commit_without_a_matching_claim_is_refused,
+    check_a_lapsed_claim_is_reclaimable,
+    check_a_lapsed_record_re_executes,
 )

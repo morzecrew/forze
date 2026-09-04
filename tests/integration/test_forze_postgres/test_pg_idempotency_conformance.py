@@ -48,14 +48,18 @@ async def harness(pg_client: PostgresClient) -> IdempotencyHarness:
         ).format(table=sql.Identifier("public", table))
     )
 
-    return IdempotencyHarness(
-        store=PostgresIdempotencyStore(
+    def _store(ttl: timedelta) -> PostgresIdempotencyStore:
+        return PostgresIdempotencyStore(
             client=pg_client,
-            spec=IdempotencySpec(name="idem", ttl=timedelta(hours=1)),
+            spec=IdempotencySpec(name="idem", ttl=ttl),
             config=PostgresIdempotencyConfig(relation=("public", table)),
-        ),
+        )
+
+    return IdempotencyHarness(
+        store=_store(timedelta(hours=1)),
         backend="pg",
         key=lambda: f"battery-{uuid4().hex[:12]}",
+        store_with_ttl=_store,
     )
 
 

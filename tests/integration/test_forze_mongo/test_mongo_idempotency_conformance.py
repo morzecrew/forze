@@ -31,16 +31,20 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 async def harness(mongo_client_replica: MongoClient) -> IdempotencyHarness:
     db_name = (await mongo_client_replica.db()).name
 
-    return IdempotencyHarness(
-        store=MongoIdempotencyStore(
+    config = MongoIdempotencyConfig(collection=(db_name, f"idem_conf_{uuid4().hex[:8]}"))
+
+    def _store(ttl: timedelta) -> MongoIdempotencyStore:
+        return MongoIdempotencyStore(
             client=mongo_client_replica,
-            spec=IdempotencySpec(name="idem", ttl=timedelta(hours=1)),
-            config=MongoIdempotencyConfig(
-                collection=(db_name, f"idem_conf_{uuid4().hex[:8]}"),
-            ),
-        ),
+            spec=IdempotencySpec(name="idem", ttl=ttl),
+            config=config,
+        )
+
+    return IdempotencyHarness(
+        store=_store(timedelta(hours=1)),
         backend="mongo",
         key=lambda: f"battery-{uuid4().hex[:12]}",
+        store_with_ttl=_store,
     )
 
 
