@@ -1,12 +1,12 @@
 ---
 title: MongoDB
 icon: lucide/leaf
-summary: Document storage, search, transactions, outbox, and inbox on MongoDB
+summary: Document storage, search, transactions, outbox, inbox, and idempotency on MongoDB
 ---
 
 `forze[mongo]` implements document storage, search, transaction coordination,
-and the transactional outbox and inbox on MongoDB — the same contracts as
-Postgres, behind collections instead of tables.
+and the transactional outbox, inbox and idempotency store on MongoDB — the
+same contracts as Postgres, behind collections instead of tables.
 
 ## Install
 
@@ -74,6 +74,7 @@ lifecycle = LifecyclePlan.from_steps(
 | Search | `SearchSpec.name` | `searches` |
 | Outbox | `OutboxSpec.name` | `outboxes` |
 | Inbox | `InboxSpec.name` | `inboxes` |
+| Idempotency | `IdempotencySpec.name` | `idempotencies` |
 | Counter | `CounterSpec.name` | `counters` |
 
 ## Notes
@@ -88,6 +89,13 @@ lifecycle = LifecyclePlan.from_steps(
   concurrent marks serialize on it out of the box. `InboxSpec.ttl` is advisory —
   to actually expire old marks, create a TTL index on `processed_at` with your
   dedup window (you own the collections and indexes).
+- **Idempotency is co-located**: the result record is written on the caller's
+  session, so it commits atomically with the business writes — the crash window
+  an out-of-transaction store (Redis) leaves open. Claims and releases run
+  detached, so a claim blocks a concurrent duplicate the moment it is taken and
+  survives the rollback of the operation it guards. Expired claims are reclaimed
+  in place; a TTL index on `expires_at` is optional cleanup for keys that are
+  never reused.
 - `MongoSearchConfig` is imported from `forze_mongo.execution.deps` (not the
   top-level package).
 - Relations accept a static `(database, collection)` tuple or a per-tenant
