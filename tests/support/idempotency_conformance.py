@@ -105,11 +105,12 @@ class IdempotencyHarness:
     """
 
     min_ttl: timedelta = timedelta(milliseconds=50)
-    """The shortest dedup window this store accepts, and so how long a TTL check waits.
+    """The shortest window a TTL check may use against this store, and so how long it waits.
 
-    Per-store because Redis keeps its claim under a native key TTL and refuses anything
-    below one second; the others compare a stored timestamp and take milliseconds. A single
-    shared value would make every leg pay the slowest store's floor.
+    Per-store because Redis keeps its claim under a native key TTL and *refuses* anything
+    below one second, while the stores that compare a stored timestamp accept milliseconds
+    and only need a margin the runner cannot eat. A single shared value would make every
+    leg pay the slowest store's floor.
     """
 
 
@@ -256,20 +257,10 @@ async def check_commit_without_a_matching_claim_is_refused(h: IdempotencyHarness
 # ....................... #
 
 
-async def _lapsed_claim(h: IdempotencyHarness, key: str, payload_hash: str = HASH_A) -> Any:
-    """Take a claim through a short-window store and wait until it has lapsed.
+async def _sleep_past(ttl: timedelta) -> None:
+    """Wait out a dedup window, with enough margin that a loaded runner cannot shorten it."""
 
-    Returns that store, because the checks below need to keep speaking as the operation
-    whose claim just expired — that caller is the one whose late ``commit`` and ``fail``
-    the promises are about.
-    """
-
-    short = h.store_with_ttl(h.min_ttl)
-
-    assert await short.begin(OP, key, payload_hash) is None, h.backend
-    await asyncio.sleep(h.min_ttl.total_seconds() * 1.5 + 0.05)
-
-    return short
+    await asyncio.sleep(ttl.total_seconds() * 1.5 + 0.05)
 
 
 async def check_a_lapsed_claim_is_reclaimable(h: IdempotencyHarness) -> None:
@@ -277,7 +268,10 @@ async def check_a_lapsed_claim_is_reclaimable(h: IdempotencyHarness) -> None:
     released does not hold its key until someone intervenes."""
 
     key = h.key()
-    await _lapsed_claim(h, key)
+    short = h.store_with_ttl(h.min_ttl)
+
+    assert await short.begin(OP, key, HASH_A) is None, h.backend
+    await _sleep_past(h.min_ttl)
 
     assert await h.store.begin(OP, key, HASH_A) is None, h.backend
 
@@ -294,7 +288,7 @@ async def check_a_lapsed_record_re_executes(h: IdempotencyHarness) -> None:
 
     assert await short.begin(OP, key, HASH_A) is None, h.backend
     await short.commit(OP, key, HASH_A, _record())
-    await asyncio.sleep(h.min_ttl.total_seconds() * 1.5 + 0.05)
+    await _sleep_past(h.min_ttl)
 
     assert await h.store.begin(OP, key, HASH_A) is None, h.backend
 
