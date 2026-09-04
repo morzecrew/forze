@@ -69,6 +69,13 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter, ClaimOwnerMixin
     An ownerless claim — nothing wired, or one written before this field — still
     matches, so the fence is additive rather than a flag day.
 
+    The reverse direction is stricter here than on Mongo or the mock: a caller with **no**
+    owner cannot finish a claim that carries one, because there is no ownerless byte
+    sequence that matches an owned claim. That asymmetry is safe rather than accidental —
+    an invocation only commits a claim it took, so a claim it did not write carrying
+    someone else's owner is precisely the reclaim the fence exists to refuse, and refusing
+    it there costs a duplicate the right to overwrite a live operation.
+
     The caller-supplied idempotency key is untrusted (an ``Idempotency-Key``
     header): it is SHA-256 hashed before it enters any Redis key, and the body
     lives under its own scope segment, so no caller value can collide the

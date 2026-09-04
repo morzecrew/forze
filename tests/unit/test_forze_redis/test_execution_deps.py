@@ -40,7 +40,6 @@ from forze_redis.execution.deps.configs import (
 from forze_redis.execution.deps.keys import RedisBlockingClientDepKey, RedisClientDepKey
 from forze_redis.execution.deps.module import RedisDepsModule
 from forze_redis.kernel.client import RedisClient
-from forze.application.execution.context.invocation import InvocationMetadata
 from tests.support.execution_context import (
     context_from_deps,
     frozen_deps_from_deps,
