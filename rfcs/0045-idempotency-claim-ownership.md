@@ -130,6 +130,12 @@ return MongoIdempotencyStore(
 )
 ```
 
+`execution_id` and not `correlation_id`: the FastAPI middleware mints the execution id
+itself (`uuid7()` per request, `forze_fastapi/middlewares/invocation.py`), while the
+correlation id is read from an advisory client header. An owner a caller can set is an
+owner a caller can forge, which would turn the fence into a way to steal a claim rather
+than a way to hold one.
+
 `begin` writes the owner into the claim; `commit` and `fail` add it to the predicate
 they already use. The lapsed-but-unreclaimed case keeps working precisely because
 the owner, not the expiry, is what is checked: the claim is still the caller's.
@@ -223,7 +229,7 @@ un-migrated table cannot refuse a reclaimed commit.
 
 | # | Grade | Decision |
 | --- | --- | --- |
-| 1 | `LOCKED` | The owner is the invocation's `execution_id`, not a store-minted token. A store-minted value cannot reach `commit`/`fail` (the hook resolves the port twice), and the invocation id already separates exactly the two callers the payload hash cannot. |
+| 1 | `LOCKED` | The owner is the invocation's `execution_id`, not a store-minted token and not the correlation id. A store-minted value cannot reach `commit`/`fail` (the hook resolves the port twice); the invocation id already separates exactly the two callers the payload hash cannot; and it is server-minted, where the correlation id arrives in a client header and could be forged to steal a claim. |
 | 2 | `LOCKED` | The owner arrives through a wiring-injected provider callable, mirroring `tenant_provider` — not through a port signature change. This keeps a shipped contract intact; the signature change stays specified in §5 as the escape hatch if Q2 rules the conditional guarantee too weak to state. |
 | 3 | `LOCKED` | Fencing is conditional on an owner being present on both sides. An absent owner keeps today's behaviour, so the Postgres column is additive and no deployment breaks on upgrade. Consequence: the guarantee is deployment-dependent, which §7 and §9 must state plainly rather than paper over. |
 | 4 | `ASSUMED` | The lapsed-but-unreclaimed `commit` keeps succeeding. Ownership is the right axis; expiry is not, and PR #401's probe is the evidence. Depart only with a new probe showing harm. |
