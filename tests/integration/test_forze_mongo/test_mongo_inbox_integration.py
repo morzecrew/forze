@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import UUID, uuid4
 
 import pytest
@@ -78,6 +79,20 @@ async def test_marks_are_scoped_per_tenant(mongo_client: MongoClient) -> None:
     assert await store_a.mark_if_unseen("events", "m1") is True
     assert await store_b.mark_if_unseen("events", "m1") is True
     assert await store_a.mark_if_unseen("events", "m1") is False
+
+
+@pytest.mark.asyncio
+async def test_concurrent_marks_have_exactly_one_winner(mongo_client: MongoClient) -> None:
+    """Racing marks of one message serialize on the ``_id``: one True, the rest False,
+    and none raises (the server retries an upsert duplicate-key on an exact ``_id``)."""
+
+    store = await _store(mongo_client)
+
+    results = await asyncio.gather(
+        *(store.mark_if_unseen("events", "m1") for _ in range(10)),
+    )
+
+    assert sorted(results) == [False] * 9 + [True]
 
 
 @pytest.mark.asyncio
