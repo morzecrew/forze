@@ -38,6 +38,7 @@ they agree about it either.
 
 12. A claim reclaimed by another invocation cannot be completed or released by the one
     that lost it — the ownership fence, which needs an owner wired on both stores.
+13. A second ``commit`` for a key that already completed is refused, not an overwrite.
 
 Check 12 is the one that used to be impossible. Two duplicates of one request carry the
 same ``op``, key and ``payload_hash``, so an operation that outlived its window and found
@@ -54,6 +55,13 @@ and the oracle refuse (the claim is simply gone), Postgres and Mongo complete th
 and both outcomes are safe, so asserting either would freeze an accident into a contract.
 Ownership deliberately does not change that: the work is the caller's own, and refusing it
 would roll back a business transaction that already succeeded.
+
+Nor is the *degraded* direction asserted — a caller with no owner meeting a claim that has
+one. Redis refuses it (nothing ownerless matches an owned claim byte-for-byte) where Mongo
+and the oracle accept it, and both readings are defensible, since an invocation commits
+only a claim it took: meeting someone else's owner means the key was reclaimed. Pinning
+either would freeze one store's mechanism into the contract, which is what checks 10 and 11
+already had to avoid.
 """
 
 from __future__ import annotations
@@ -271,6 +279,31 @@ async def check_fail_leaves_a_completed_record_intact(h: IdempotencyHarness) -> 
     assert replayed.result == RESULT_B, h.backend
 
 
+async def check_commit_over_a_completed_record_is_refused(h: IdempotencyHarness) -> None:
+    """A key that already completed has no pending claim, so a second ``commit`` is refused.
+
+    The other half of check 9, and the half a store can fail while passing it: an absent key
+    is easy to reject, a *done* one requires actually looking at the status. A store that
+    overwrote it would replace a delivered result with a later operation's — the duplicate
+    that arrives next then replays an answer nobody was given.
+    """
+
+    key = h.key()
+
+    assert await h.store.begin(OP, key, HASH_A) is None, h.backend
+    await h.store.commit(OP, key, HASH_A, _record(RESULT_A))
+
+    with pytest.raises(CoreException) as ei:
+        await h.store.commit(OP, key, HASH_A, _record(RESULT_B))
+
+    assert ei.value.kind == ExceptionKind.CONFLICT, h.backend
+
+    replayed = await h.store.begin(OP, key, HASH_A)
+
+    assert replayed is not None, h.backend
+    assert replayed.result == RESULT_A, h.backend
+
+
 async def check_commit_without_a_matching_claim_is_refused(h: IdempotencyHarness) -> None:
     """Committing a result nobody claimed is a conflict, not a silent write.
 
@@ -379,6 +412,7 @@ IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
     check_fail_ignores_a_claim_it_does_not_own,
     check_fail_leaves_a_completed_record_intact,
     check_commit_without_a_matching_claim_is_refused,
+    check_commit_over_a_completed_record_is_refused,
     check_a_lapsed_claim_is_reclaimable,
     check_a_lapsed_record_re_executes,
     check_a_reclaimed_claim_is_not_the_previous_owners_to_finish,

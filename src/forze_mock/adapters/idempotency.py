@@ -181,10 +181,18 @@ class MockIdempotencyAdapter(MockTenancyMixin, ClaimOwnerMixin, IdempotencyPort)
             if current is None:
                 raise exc.conflict("Idempotency commit failed (missing key)")
 
-            _, existing_hash, entry = current
+            status, existing_hash, entry = current
 
             if existing_hash != payload_hash:
                 raise exc.conflict("Payload hash mismatch")
+
+            if status != "pending":
+                # No pending claim of anyone's: the key already completed. Overwriting it
+                # would replace a delivered result with this operation's, and the next
+                # duplicate would replay an answer nobody was given. Postgres and Mongo
+                # refuse this through their ``status = 'pending'`` filter; the oracle has
+                # to check it, or it models a store no deployment runs.
+                raise exc.conflict("Idempotency commit failed (non-pending claim)")
 
             owner = self.claim_owner()
 
