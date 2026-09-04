@@ -31,8 +31,8 @@ from psycopg import sql
 from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.adapters.idempotency import (
-    _LAST_PROBE,  # pyright: ignore[reportPrivateUsage]
-    _UNFENCED_RELATIONS,  # pyright: ignore[reportPrivateUsage]
+    _PROBE_COOLDOWN,  # pyright: ignore[reportPrivateUsage]
+    _REPORTED_UNFENCED,  # pyright: ignore[reportPrivateUsage]
     PostgresIdempotencyStore,
 )
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
@@ -144,7 +144,7 @@ class TestUnmigratedTable:
 
         # An unfenced relation is knowable rather than silent — the mitigation for a
         # guarantee that holds only where the table was migrated.
-        assert f"public.{table}" in _UNFENCED_RELATIONS
+        assert _REPORTED_UNFENCED.lookup(("", f"public.{table}")) is not None
 
 
 class TestMigratedTableWithoutAnOwner:
@@ -318,7 +318,7 @@ class TestTheColumnArrivingUnderARunningProcess:
                 table=sql.Identifier("public", table)
             )
         )
-        _LAST_PROBE.pop(f"public.{table}", None)  # stand in for the cooldown elapsing
+        _PROBE_COOLDOWN.invalidate(("", f"public.{table}"))  # stand in for the cooldown elapsing
 
         assert await store().begin(OP, "after-migration", HASH) is None
 
@@ -369,3 +369,67 @@ class TestTheColumnArrivingUnderARunningProcess:
 
         assert row is not None
         assert row[0] is None
+
+
+class TestRoutedDeployments:
+    """Detection is per *database*, so the cooldown has to be too.
+
+    With database-per-tenant routing one process reaches many databases through one
+    introspector, whose caches are partitioned by the routing identity. A cooldown keyed by
+    relation name alone lets a probe against tenant A's un-migrated table stand in for
+    tenant B's, and B — which never probed and whose cached answer predates its own
+    migration — keeps writing ownerless claims and omitting the owner predicate until a
+    cooldown it never started elapses.
+
+    The stale cache for B is warmed through the introspector directly, because that is the
+    only way to reach the state the finding describes: any *idempotency* call that caches
+    B's absence also starts B's own cooldown, and then no key scheme would probe again.
+    Another adapter introspecting the same relation does exactly this.
+    """
+
+    async def test_one_tenants_probe_does_not_suppress_anothers(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client, owner_column=False)
+        owner = uuid4()
+        partition = "tenant-a"
+        # One introspector for both routes, partitioned the way a routed client wires it.
+        introspector = PostgresIntrospector(
+            client=pg_client,
+            cache_partition_key=lambda: partition,
+        )
+
+        def store() -> PostgresIdempotencyStore:
+            return PostgresIdempotencyStore(
+                client=pg_client,
+                spec=IdempotencySpec(name="idem", ttl=timedelta(hours=1)),
+                config=PostgresIdempotencyConfig(relation=("public", table)),
+                owner_provider=lambda: owner,
+                introspector=introspector,
+            )
+
+        partition = "tenant-b"
+        await introspector.get_column_types(schema="public", relation=table)  # B's stale read
+
+        partition = "tenant-a"
+        assert await store().begin(OP, "a-before", HASH) is None  # A probes; A's cooldown
+
+        await pg_client.execute(
+            sql.SQL("ALTER TABLE {table} ADD COLUMN owner UUID").format(
+                table=sql.Identifier("public", table)
+            )
+        )
+
+        partition = "tenant-b"
+        assert await store().begin(OP, "b-after", HASH) is None
+
+        row = await pg_client.fetch_one(
+            sql.SQL("SELECT owner FROM {table} WHERE idem_key = {key}").format(
+                table=sql.Identifier("public", table), key=sql.Placeholder()
+            ),
+            ["b-after"],
+            row_factory="tuple",
+        )
+
+        assert row is not None
+        assert row[0] == owner

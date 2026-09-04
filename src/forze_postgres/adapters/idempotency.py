@@ -15,7 +15,7 @@ from forze.application.contracts.idempotency import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import monotonic
+from forze.base.primitives import CacheLane
 from forze_postgres.execution.deps.configs.idempotency import PostgresIdempotencyConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClientPort
@@ -36,15 +36,37 @@ shelf life. Long enough that an un-migrated table costs one catalog row a minute
 short enough that "run the migration" does not silently mean "and restart".
 """
 
-_LAST_PROBE: dict[str, float] = {}
-"""Monotonic timestamp of the last direct probe per relation (see ``_RECHECK_AFTER``)."""
+_MAX_TRACKED_RELATIONS: Final[int] = 2048
+"""Cap on both lanes below.
 
-_UNFENCED_RELATIONS: set[str] = set()
+A relation name is not a bounded quantity: table-per-tenant and database-per-tenant
+deployments mint one key per tenant, so an unbounded dict here would grow with the tenant
+list for the life of the process. Evicting the oldest costs one extra probe or one repeated
+warning, which is the cheapest possible consequence.
+"""
+
+_ProbeKey = tuple[str, str]
+"""``(cache partition, qualified relation)`` — the introspector's own cache identity.
+
+Keyed by the partition too, because the answer being cached is per *database*: with
+database-per-tenant routing a relation name alone would let one tenant's probe stand in for
+another's, and a tenant that had just migrated would keep running unfenced until a cooldown
+it never started elapsed.
+"""
+
+_PROBE_COOLDOWN: Final[CacheLane[_ProbeKey, bool]] = CacheLane(
+    max_entries=_MAX_TRACKED_RELATIONS,
+    ttl_seconds=_RECHECK_AFTER,
+)
+"""Relations probed recently and still without the column. Expiry *is* the cooldown."""
+
+_REPORTED_UNFENCED: Final[CacheLane[_ProbeKey, bool]] = CacheLane(
+    max_entries=_MAX_TRACKED_RELATIONS,
+)
 """Relations already reported as lacking the ``owner`` column.
 
 Process-wide so the operator hears about an un-migrated table once rather than on every
-operation. A set of names rather than a counter: the interesting question is *which*
-relations run unfenced, and a deployment has a handful.
+operation, and capped for the same reason the cooldown is.
 """
 
 
@@ -146,40 +168,55 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
         if _OWNER_COLUMN in columns:
             return True
 
-        qualified = table.string()
+        key = (self._cache_partition(), table.string())
 
-        if not self._recheck_due(qualified):
+        if not self._recheck_due(key):
             return False
 
         if not await self._probe_owner_column(table):
-            self._report_unfenced(qualified)
+            self._report_unfenced(key)
             return False
 
         # The column arrived under a running process: drop the stale entry so every later
-        # call takes the cached fast path again, and let this one through fenced.
+        # call takes the cached fast path again, drop the cooldown this relation no longer
+        # needs, and let this one through fenced.
         self.introspector.invalidate_relation(schema=table.schema, relation=table.name)
+        _PROBE_COOLDOWN.invalidate(key)
 
         return True
 
     # ....................... #
 
-    @staticmethod
-    def _recheck_due(qualified: str) -> bool:
-        """Whether *qualified* is due another probe for a late-arriving ``owner`` column.
+    def _cache_partition(self) -> str:
+        """The routing identity the introspector caches under, or ``""`` when unrouted.
 
-        Keyed by name rather than by tenant partition, so on database-per-tenant routing
-        one tenant's probe defers the others by up to the cooldown. That costs a later
-        activation, never a wrong answer: the probe itself runs on the caller's own
-        connection, and the introspector's cache stays partition-keyed.
+        Read from the introspector rather than tracked separately, so the cooldown and the
+        cache it defers to can never disagree about which database an answer belongs to.
+        Reached only after :meth:`_has_owner_column` has already queried through the same
+        introspector, which refuses a partition callable that yields nothing — so the
+        ``or ""`` is a type narrowing, not a silent merge of two tenants into one key.
         """
 
-        now = monotonic()
-        last = _LAST_PROBE.get(qualified)
+        if self.introspector is None or self.introspector.cache_partition_key is None:
+            return ""
 
-        if last is not None and now - last < _RECHECK_AFTER:
+        return self.introspector.cache_partition_key() or ""
+
+    # ....................... #
+
+    @staticmethod
+    def _recheck_due(key: _ProbeKey) -> bool:
+        """Whether *key* is due another probe for a late-arriving ``owner`` column.
+
+        The lane's TTL is the cooldown: an entry present means one ran recently, and its
+        expiry is what makes the next one due. Its cap means a deployment with more
+        relations than the cap re-probes some of them sooner, which costs a catalog row.
+        """
+
+        if _PROBE_COOLDOWN.lookup(key) is not None:
             return False
 
-        _LAST_PROBE[qualified] = now
+        _PROBE_COOLDOWN.store(key, True)
 
         return True
 
@@ -224,13 +261,14 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     # ....................... #
 
     @staticmethod
-    def _report_unfenced(qualified: str) -> None:
+    def _report_unfenced(key: _ProbeKey) -> None:
         """Say once per relation that it is running without the fence, and how to fix it."""
 
-        if qualified in _UNFENCED_RELATIONS:
+        if _REPORTED_UNFENCED.lookup(key) is not None:
             return
 
-        _UNFENCED_RELATIONS.add(qualified)
+        _REPORTED_UNFENCED.store(key, True)
+        qualified = key[1]
         logger.warning(
             "Idempotency table %s has no 'owner' column: a claim reclaimed by a "
             "duplicate can still be committed by the operation it displaced. "
