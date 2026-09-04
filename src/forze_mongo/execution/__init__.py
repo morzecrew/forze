@@ -4,6 +4,7 @@ from .deps import (
     MongoClientDepKey,
     MongoDepsModule,
     MongoDocumentConfig,
+    MongoInboxConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "mongo_document_index_spec_for_binding",
     "mongo_document_index_validation_lifecycle_step",
     "MongoDocumentConfig",
+    "MongoInboxConfig",
     "MongoOutboxConfig",
     "MongoReadOnlyDocumentConfig",
 ]
