@@ -597,14 +597,7 @@ transactional behaviour is covered by the graph mock conformance suite instead.\
 [tool.conformance_manifest.planes.delivery]
 scenario = "forze_dst.conformance.delivery:run_crash_recovery_delivery"
 dep_keys = ["outbox_command", "outbox_query", "outbox_admin", "inbox"]
-engines = ["mock", "postgres"]
-
-[tool.conformance_manifest.planes.delivery.waivers]
-mongo = """
-Mongo registers the outbox trio but no inbox, so the exactly-once half of the crash-recovery \
-scenario (publish, crash, recover, dedupe on the inbox) has nothing to dedupe against. Open \
-gap rather than a property of Mongo: it becomes a leg the moment a Mongo inbox adapter lands.\
-"""
+engines = ["mock", "postgres", "mongo"]
 
 [tool.conformance_manifest.planes.realtime_delivery]
 scenario = "forze_dst.conformance.realtime:run_gateway_crash_delivery"
