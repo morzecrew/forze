@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -20,10 +21,12 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey
+from forze.application.contracts.idempotency import IdempotencySpec
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution.context.invocation import InvocationMetadata
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_postgres.adapters import (
     PostgresDocumentAdapter,
@@ -31,6 +34,7 @@ from forze_postgres.adapters import (
     PostgresPGroongaSearchAdapter,
     PostgresVectorSearchAdapter,
 )
+from forze_postgres.adapters.idempotency import PostgresIdempotencyStore
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
@@ -44,6 +48,7 @@ from forze_postgres.execution.deps.configs import (
     PostgresDocumentConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
+    PostgresIdempotencyConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresSearchConfig,
     VectorEngine,
@@ -762,3 +767,40 @@ def test_postgres_hub_search_config_same_heap_as_hub_pgroonga_v1() -> None:
                 ),
             },
         )
+
+
+class TestPostgresIdempotencyFactory:
+    def test_wires_the_claim_owner_and_the_introspector(self) -> None:
+        # Both are silent when missing: no provider leaves every claim unowned, and no
+        # introspector leaves the store on the legacy statements. Neither shows up in a
+        # store-level test, so the factory is where they are asserted.
+        from forze_postgres.execution.deps.factories.idempotency import (
+            ConfigurablePostgresIdempotency,
+        )
+
+        ctx = _ctx()
+        factory = ConfigurablePostgresIdempotency(
+            config=PostgresIdempotencyConfig(relation=("public", "idem")),
+        )
+        store = factory(ctx, IdempotencySpec(name="orders"))
+        metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+        assert store.introspector is ctx.deps.provide(PostgresIntrospectorDepKey)
+
+        with ctx.inv_ctx.bind_metadata(metadata=metadata):
+            assert store.claim_owner() == metadata.execution_id
+
+    def test_an_idempotency_only_module_resolves_the_store(self) -> None:
+        # The factory now asks the container for the introspector, so a module wiring
+        # nothing but idempotency has to register one — otherwise every operation on such
+        # a deployment fails at dep resolution rather than at a query.
+        module = PostgresDepsModule(
+            client=MagicMock(spec=PostgresClient),
+            idempotencies={"orders": PostgresIdempotencyConfig(relation=("public", "idem"))},
+        )
+        ctx = context_from_deps(module())
+
+        store = ctx.idempotency(IdempotencySpec(name="orders"))
+
+        assert isinstance(store, PostgresIdempotencyStore)
+        assert store.introspector is not None

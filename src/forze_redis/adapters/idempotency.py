@@ -117,8 +117,8 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter, ClaimOwnerMixin
 
         Both because the fence is a byte-exact compare: the first is what ``begin`` stores
         and ``commit`` / ``fail`` must match, the second is what a claim taken before the
-        owner existed looks like and is still the caller's to finish. Key order is fixed by
-        construction here so the two sites cannot serialize the same claim differently.
+        owner existed looks like and is still the caller's to finish. One helper for all
+        three call sites, so no site can build a payload the others would fail to match.
         """
 
         legacy: _MetaPayload = {"st": _PENDING, "ph": payload_hash}

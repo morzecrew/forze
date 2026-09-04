@@ -1,6 +1,7 @@
 """Unit tests for ``forze_mongo.execution.deps`` (module, factories, utils)."""
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -38,6 +39,7 @@ from forze_mongo.execution.deps import (
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
 from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
+from forze.application.execution.context.invocation import InvocationMetadata
 from tests.support.execution_context import context_from_deps
 
 
@@ -142,6 +144,20 @@ def test_configurable_mongo_idempotency_builds_store() -> None:
     store = factory(_ctx(), IdempotencySpec(name="orders"))
 
     assert isinstance(store, MongoIdempotencyStore)
+
+
+def test_configurable_mongo_idempotency_wires_the_claim_owner() -> None:
+    # The fence degrades silently without a provider, so a factory that forgot to pass one
+    # would leave every claim unowned and every store test still green.
+    ctx = _ctx()
+    factory = ConfigurableMongoIdempotency(
+        config=MongoIdempotencyConfig(collection=("db", "idem")),
+    )
+    store = factory(ctx, IdempotencySpec(name="orders"))
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+    with ctx.inv_ctx.bind_metadata(metadata=metadata):
+        assert store.claim_owner() == metadata.execution_id
 
 
 def test_mongo_deps_module_ro_only() -> None:

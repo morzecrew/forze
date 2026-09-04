@@ -381,3 +381,27 @@ async def test_a_document_without_an_owner_is_committable(mongo_client: MongoCli
 
     assert replayed is not None
     assert replayed.result == RESULT
+
+
+async def test_a_live_claim_of_another_invocation_is_still_a_conflict(
+    mongo_client: MongoClient,
+) -> None:
+    """A duplicate arriving while the first operation runs is refused, owner or not.
+
+    The other half of keeping the token and the owner apart: ``begin`` decides "is this
+    document mine, or one I read back" from the per-call token, never from the owner. A
+    second invocation reads back a live claim whose token *and* owner differ from its own,
+    and both facts must land it in the same place — in progress.
+    """
+
+    coll_name = f"idem_{uuid4().hex[:8]}"
+    first = await _store(mongo_client, coll_name=coll_name, owner=uuid4())
+    second = await _store(mongo_client, coll_name=coll_name, owner=uuid4())
+    key = f"k-{uuid4().hex[:8]}"
+
+    assert await first.begin(OP, key, HASH_A) is None
+
+    with pytest.raises(CoreException) as ei:
+        await second.begin(OP, key, HASH_A)
+
+    assert ei.value.kind == ExceptionKind.CONFLICT

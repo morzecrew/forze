@@ -281,6 +281,8 @@ All three settled in execution; the answers are recorded in §11.
 | 8 | `LOCKED` | Q3 settled: the encryption wrapper forwards nothing. `commits_in_transaction` is a property of the store; the owner is ambient and the inner store reads it. Pinned by a test so the two paths cannot diverge. |
 | 9 | `LOCKED` | `ClaimOwnerMixin` is non-slotted. Every store already inherits `TenancyMixin`, and two slotted bases are a C-level lay-out conflict; the alternative was the field copied into four adapters, where the degradation rules would drift apart one adapter at a time. Cost: a `__dict__` on a per-invocation object. |
 | 10 | `LOCKED` | Redis carries a second, ownerless copy of the claim metadata into both scripts, so a claim written before the field is still its caller's to finish. Without it a rolling deploy fails live requests for the length of one dedup window. |
+| 11 | `LOCKED` | The provider is `InvocationContext.get_execution_id`, a new bound accessor, rather than §5.1's `lambda: (m := ctx.inv_ctx.get_metadata()) and m.execution_id`. That expression does not have the declared type (it yields the metadata object, not a UUID, when there is none), and every factory would have carried its own copy. One accessor beside `get_tenant`, which is what the wiring already hands over. |
+| 12 | `LOCKED` | The Postgres store's `introspector` is optional, defaulting to `None` — which means legacy statements and no fencing. Every shipped factory supplies one; the default exists so tests and tooling can build the store without a dep registry. It is a silent degradation, and the reason the field's docstring says so rather than leaving a reader to infer it from a default. |
 
 ## 12. Phasing
 

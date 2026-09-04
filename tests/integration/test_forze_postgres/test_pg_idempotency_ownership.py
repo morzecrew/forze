@@ -34,6 +34,7 @@ from forze_postgres.adapters.idempotency import (
     _UNFENCED_RELATIONS,  # pyright: ignore[reportPrivateUsage]
     PostgresIdempotencyStore,
 )
+from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps.configs import PostgresIdempotencyConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClient
@@ -225,5 +226,61 @@ class TestOwnerlessRows:
 
         with pytest.raises(CoreException) as ei:
             await stranger.commit(OP, key, HASH, IdempotencyRecord(result=b"stale"))
+
+        assert ei.value.kind == ExceptionKind.CONFLICT
+
+
+class TestDetectionInsideTheBusinessTransaction:
+    """Detection runs wherever the fence does, and `commit` runs on the caller's connection.
+
+    So the catalog read can land *inside* the business transaction — on a cold cache, which
+    is what a process that restarted between the claim and the commit has. It is a plain
+    read and the client's `commit` flag is inert inside a transaction, but "should be
+    harmless" is a hypothesis until the record survives a real commit and reverts on a real
+    rollback with the owner-aware statement in play.
+    """
+
+    async def test_the_record_is_durable_after_an_in_tx_commit(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client, owner_column=True)
+        owner = uuid4()
+        key = f"k-{uuid4().hex[:8]}"
+        tx = PostgresTxManagerAdapter(client=pg_client)
+
+        assert await _store(pg_client, table, owner=owner).begin(OP, key, HASH) is None
+
+        # A fresh store, so its introspector cache is cold exactly as a restarted process's
+        # would be, and the detection query runs on the transaction connection.
+        committer = _store(pg_client, table, owner=owner)
+
+        async with tx.transaction():
+            await committer.commit(OP, key, HASH, IdempotencyRecord(result=b"done"))
+
+        replayed = await committer.begin(OP, key, HASH)
+
+        assert replayed is not None
+        assert replayed.result == b"done"
+
+    async def test_the_record_reverts_on_a_business_rollback(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client, owner_column=True)
+        owner = uuid4()
+        key = f"k-{uuid4().hex[:8]}"
+        tx = PostgresTxManagerAdapter(client=pg_client)
+        store = _store(pg_client, table, owner=owner)
+
+        assert await store.begin(OP, key, HASH) is None
+
+        with pytest.raises(RuntimeError, match="rollback"):
+            async with tx.transaction():
+                await store.commit(OP, key, HASH, IdempotencyRecord(result=b"r"))
+                raise RuntimeError("rollback")
+
+        # Back to a pending claim — the fence did not cost the atomicity this store exists
+        # for, and the claim is still the same caller's.
+        with pytest.raises(CoreException) as ei:
+            await store.begin(OP, key, HASH)
 
         assert ei.value.kind == ExceptionKind.CONFLICT

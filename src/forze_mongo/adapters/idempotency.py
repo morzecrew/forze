@@ -256,6 +256,11 @@ class MongoIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
         claim written before this store carried an owner still be completed; omitting the
         predicate entirely is what a store with no provider does, since a caller who cannot
         name itself has nothing to prove ownership with.
+
+        Merged into a filter with ``**``, so the two call sites must stay free of their own
+        top-level ``$or`` — a second one would silently replace this. :meth:`_reclaim` has
+        one, and deliberately does not use this predicate: a reclaim takes a claim *from*
+        whoever held it.
         """
 
         owner = self.claim_owner()
