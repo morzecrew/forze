@@ -1,6 +1,6 @@
 # RFC 0045 — Idempotency claim ownership
 
-- **Status:** ✅ Executed
+- **Status:** ✅ Complete — shipped 2026-09-05
 - **Scope:** One missing fence in the idempotency plane: `commit` and `fail` cannot
   tell the caller's own claim from a duplicate's reclaim of the same key, so a late
   operation can complete or release an operation that is not its own. Adds an
@@ -249,7 +249,9 @@ un-migrated table cannot refuse a reclaimed commit.
 
 ## 10. Unresolved questions
 
-All three settled in execution; the answers are recorded in §11.
+None remain open: each carries the answer execution produced, graded in §11. They stay
+here rather than being deleted, because what a design could not settle on its own is part
+of its record.
 
 - **Q1 — the mock's default.** It fences exactly like the real stores, and exactly as
   conditionally: `ConfigurableMockIdempotency` wires the provider, a direct construction

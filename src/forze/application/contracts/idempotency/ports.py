@@ -85,11 +85,12 @@ class IdempotencyPort(Protocol):
         commit and this call leaves a committed effect with a stuck in-progress
         claim until its TTL expires (an at-least-once gap, by design).
 
-        :raises CoreException: ``conflict`` when no claim of the caller's own is pending —
-            it was never taken, already released, or (with an owner wired) reclaimed by
-            another invocation. Failing closed is what lets a co-located store roll the
-            business transaction back rather than commit an effect whose record went to
-            someone else's operation.
+        :raises CoreException: ``conflict`` when ``key`` is given and no claim of the
+            caller's own is pending — never taken, already released, already completed, or
+            (with an owner wired) reclaimed by another invocation. Failing closed is what
+            lets a co-located store roll the business transaction back rather than commit
+            an effect whose record went to someone else's operation. ``key=None`` skips
+            idempotency entirely and never raises.
         """
         ...  # pragma: no cover
 
