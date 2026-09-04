@@ -211,9 +211,18 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
         # The ``expires_at`` guard is what makes this a race rather than a steal: exactly
         # one of two writers seeing the same expired document matches the filter, and the
         # loser is told the operation is in progress instead of running a duplicate.
+        #
+        # The ``None`` branch is not decoration: a Mongo range query does not match a
+        # document whose field is *missing*, so without it a document written by something
+        # other than this store — which :meth:`_is_expired` judges expired precisely so it
+        # can be taken over — would fail this filter and refuse its key forever. ``None``
+        # matches both a null and an absent field, which is what keeps the two in step.
         doc = await self.client.find_one_and_update(
             coll,
-            {"_id": doc_id, "expires_at": {"$lte": now}},
+            {
+                "_id": doc_id,
+                "$or": [{"expires_at": {"$lte": now}}, {"expires_at": None}],
+            },
             {"$set": self._claim_fields(op, key, payload_hash, tenant_id, claim_token, now)},
         )
 

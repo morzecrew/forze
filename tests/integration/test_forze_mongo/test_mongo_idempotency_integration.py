@@ -201,6 +201,41 @@ async def test_a_reclaim_clears_the_previous_result(mongo_client: MongoClient) -
     assert doc["status"] == "pending"
 
 
+async def test_a_document_without_an_expiry_is_reclaimable(mongo_client: MongoClient) -> None:
+    """A document this store did not write has no ``expires_at``, and is taken over rather
+    than blocking its key.
+
+    Asserted against a real collection because the bug this pins lives in the driver's own
+    semantics: a Mongo range query does not match a *missing* field, so a reclaim filtered
+    only on ``expires_at <= now`` refused the very documents the expiry judgement had just
+    cleared for takeover — and refused them permanently. A mocked client cannot see it.
+    """
+
+    coll_name = f"idem_{uuid4().hex[:8]}"
+    store = await _store(mongo_client, coll_name=coll_name)
+    key = f"k-{uuid4().hex[:8]}"
+
+    coll = await mongo_client.collection(coll_name)
+    await mongo_client.insert_one(
+        coll,
+        {
+            "_id": store._doc_id(OP, key, None),
+            "op": OP,
+            "idem_key": key,
+            "payload_hash": HASH_A,
+            "status": "pending",
+        },
+    )
+
+    assert await store.begin(OP, key, HASH_A) is None
+
+    # And the takeover is a real claim, not a pass-through: the next caller is held off.
+    with pytest.raises(CoreException) as ei:
+        await store.begin(OP, key, HASH_A)
+
+    assert ei.value.kind == ExceptionKind.CONFLICT
+
+
 async def test_only_one_racer_reclaims_an_expired_claim(mongo_client: MongoClient) -> None:
     """Duplicates finding the same expired claim: one takes it, the rest are refused — an
     expired claim must not become permission for everyone to run at once.

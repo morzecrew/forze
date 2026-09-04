@@ -198,26 +198,6 @@ async def test_a_live_claim_for_another_payload_is_refused() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_document_without_an_expiry_is_reclaimable() -> None:
-    """Only something other than this store writes a document with no ``expires_at``;
-    treating it as live would block its key forever, so it is taken over instead."""
-
-    client = _client()
-    client.find_one_and_update = AsyncMock(
-        side_effect=[
-            {"claim_token": "someone-else", "payload_hash": HASH_A, "status": "pending"},
-            {"claim_token": "reclaimed", "payload_hash": HASH_A, "status": "pending"},
-        ],
-    )
-    store = _store(client)
-
-    assert await store.begin(OP, "k", HASH_A) is None
-
-    reclaim_filter = client.find_one_and_update.await_args.args[1]
-    assert "expires_at" in reclaim_filter  # took the reclaim path, not the replay one
-
-
-@pytest.mark.asyncio
 async def test_losing_the_reclaim_race_is_a_conflict() -> None:
     """Another writer got the expired document first: this caller is refused rather than
     running a duplicate of the operation that writer just claimed."""
