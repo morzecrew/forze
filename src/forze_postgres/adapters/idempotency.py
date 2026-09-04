@@ -15,6 +15,7 @@ from forze.application.contracts.idempotency import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
+from forze.base.primitives import monotonic
 from forze_postgres.execution.deps.configs.idempotency import PostgresIdempotencyConfig
 from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClientPort
@@ -26,6 +27,17 @@ from ._logger import logger
 # ----------------------- #
 
 _OWNER_COLUMN: Final[str] = "owner"
+
+_RECHECK_AFTER: Final[float] = 60.0
+"""Seconds before a relation reported without the ``owner`` column is probed again.
+
+The column can be added to a running deployment, so an absent one is a fact with a
+shelf life. Long enough that an un-migrated table costs one catalog row a minute,
+short enough that "run the migration" does not silently mean "and restart".
+"""
+
+_LAST_PROBE: dict[str, float] = {}
+"""Monotonic timestamp of the last direct probe per relation (see ``_RECHECK_AFTER``)."""
 
 _UNFENCED_RELATIONS: set[str] = set()
 """Relations already reported as lacking the ``owner`` column.
@@ -65,10 +77,11 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     a claim another invocation reclaimed — the failure two duplicates of one request can
     otherwise produce, since their ``op``, key and payload hash are identical. Without it
     the store keeps its previous behaviour, which is what lets a deployment upgrade before
-    it migrates: the column is detected once per relation through the catalog (the
-    introspector's cache), because a statement naming a column the table lacks does not
-    execute at all, so no conditional predicate could rescue it. A relation running
-    unfenced is logged once per process rather than left silent.
+    it migrates: the column is detected through the catalog, because a statement naming a
+    column the table lacks does not execute at all, so no conditional predicate could
+    rescue it. A relation running unfenced is logged once per process rather than left
+    silent, and re-probed on a cooldown, so applying the migration to a running deployment
+    turns the fence on without a restart (see :meth:`_has_owner_column`).
 
     ``ALTER TABLE <relation> ADD COLUMN owner uuid;`` is the whole migration — nullable, so
     existing rows need no backfill: they expire inside the dedup window, and a row with a
@@ -107,11 +120,19 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     async def _has_owner_column(self, table: PostgresQualifiedName) -> bool:
         """Whether *table* carries the optional ``owner`` column.
 
-        Reads the catalog through the introspector, whose per-relation cache makes this a
-        query once per relation (per tenant partition) rather than once per operation. The
-        answer selects between two statement shapes for this call: a column the table does
-        not have cannot be named in SQL at all, which is why detection exists instead of a
-        predicate that tolerates its absence.
+        Reads the catalog through the introspector, whose per-relation cache makes a
+        *present* column free after the first query. An **absent** one is re-probed on a
+        cooldown instead of being trusted for the life of the process: the migration is
+        documented as something a running deployment may apply, and a cached "no such
+        column" would keep every process it reached unfenced until a restart nobody was
+        told to perform. The re-probe is one catalog row at most once per
+        :data:`_RECHECK_AFTER`, and the introspector's entry is invalidated exactly once —
+        when the column appears — rather than on a timer, so the caches it shares with the
+        document and search planes are not swept on every check.
+
+        The answer selects between two statement shapes for this call: a column the table
+        does not have cannot be named in SQL at all, which is why detection exists instead
+        of a predicate that tolerates its absence.
         """
 
         if self.introspector is None:
@@ -127,17 +148,96 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
 
         qualified = table.string()
 
-        if qualified not in _UNFENCED_RELATIONS:
-            _UNFENCED_RELATIONS.add(qualified)
-            logger.warning(
-                "Idempotency table %s has no 'owner' column: a claim reclaimed by a "
-                "duplicate can still be committed by the operation it displaced. "
-                "ALTER TABLE %s ADD COLUMN owner uuid;",
-                qualified,
-                qualified,
-            )
+        if not self._recheck_due(qualified):
+            return False
 
-        return False
+        if not await self._probe_owner_column(table):
+            self._report_unfenced(qualified)
+            return False
+
+        # The column arrived under a running process: drop the stale entry so every later
+        # call takes the cached fast path again, and let this one through fenced.
+        self.introspector.invalidate_relation(schema=table.schema, relation=table.name)
+
+        return True
+
+    # ....................... #
+
+    @staticmethod
+    def _recheck_due(qualified: str) -> bool:
+        """Whether *qualified* is due another probe for a late-arriving ``owner`` column.
+
+        Keyed by name rather than by tenant partition, so on database-per-tenant routing
+        one tenant's probe defers the others by up to the cooldown. That costs a later
+        activation, never a wrong answer: the probe itself runs on the caller's own
+        connection, and the introspector's cache stays partition-keyed.
+        """
+
+        now = monotonic()
+        last = _LAST_PROBE.get(qualified)
+
+        if last is not None and now - last < _RECHECK_AFTER:
+            return False
+
+        _LAST_PROBE[qualified] = now
+
+        return True
+
+    # ....................... #
+
+    async def _probe_owner_column(self, table: PostgresQualifiedName) -> bool:
+        """Ask the catalog directly whether the column exists now, bypassing every cache.
+
+        Matches schema, relation and column by exact name — the introspector's own shape —
+        rather than parsing an identifier through ``to_regclass``, which would lowercase a
+        mixed-case relation and answer about a table that does not exist.
+        """
+
+        stmt = sql.SQL(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_attribute a
+                JOIN pg_class c ON c.oid = a.attrelid
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = {schema}
+                  AND c.relname = {relation}
+                  AND a.attname = {column}
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
+            )
+            """
+        ).format(
+            schema=sql.Placeholder(),
+            relation=sql.Placeholder(),
+            column=sql.Placeholder(),
+        )
+
+        found = await self.client.fetch_value(
+            stmt,
+            [table.schema, table.name, _OWNER_COLUMN],
+            default=False,
+        )
+
+        return bool(found)
+
+    # ....................... #
+
+    @staticmethod
+    def _report_unfenced(qualified: str) -> None:
+        """Say once per relation that it is running without the fence, and how to fix it."""
+
+        if qualified in _UNFENCED_RELATIONS:
+            return
+
+        _UNFENCED_RELATIONS.add(qualified)
+        logger.warning(
+            "Idempotency table %s has no 'owner' column: a claim reclaimed by a "
+            "duplicate can still be committed by the operation it displaced. "
+            "ALTER TABLE %s ADD COLUMN owner uuid;",
+            qualified,
+            qualified,
+        )
 
     # ....................... #
 
