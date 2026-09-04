@@ -235,3 +235,17 @@ async def test_losing_the_reclaim_race_is_a_conflict() -> None:
         await store.begin(OP, "k", HASH_A)
 
     assert ei.value.kind == ExceptionKind.CONFLICT
+
+
+def test_expiry_boundary_matches_the_reclaim_filter() -> None:
+    """``expires_at == now`` counts as expired, exactly as ``$lte`` does in the reclaim
+    filter. A document judged expired here that the filter then declined would refuse a
+    caller the store had just cleared to proceed — the two comparisons must stay identical,
+    and only asserting the boundary keeps them that way."""
+
+    store = _store(_client())
+    now = utcnow()
+
+    assert store._is_expired({"expires_at": now}, now) is True
+    assert store._is_expired({"expires_at": now + timedelta(microseconds=1)}, now) is False
+    assert store._is_expired({}, now) is True
