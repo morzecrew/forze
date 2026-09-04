@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0044**. Before creating an RFC, glance at the table below
+The next free number is **0045**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -70,6 +70,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0041](0041-skills-consolidation.md) | Skills consolidation: one published skill with lazy references | 📝 Draft | 21 published skills → `skills/forze-skills/` with a routing index over **48 locked reference files** (§6 maps every current section to its destination). Takes rust-skills' packaging, **rejects its rule atomization**: those rules are orthogonal and normative, Forze's skills are compositional and procedural, and 55 cross-links prove it. Fixes a documented feature that cannot work — per-skill install leaves 6–8 dangling links per skill. Installer constraints read from `skills@1.5.22`: a root `SKILL.md` would copy the whole monorepo, and install never prunes, so 21 stale directories survive in every consumer repo. **Breaking, hard cut** — the 21 directories are deleted, not stubbed, licensed by there being no external installed base and recorded as a one-time shortcut that does not set precedent. Chief risk is the routing table, not the split |
 | [0042](0042-skills-coverage-ratchet.md) | Skills coverage ratchet: every shipped package triaged, every choice point proven | 📝 Draft | The corpus is **Postgres-shaped**: `forze_postgres` imported in 4 skills, `forze_mongo` in none, though that skill's own description advertises Mongo. 19 of 29 wheel packages reached by an executable import; the other 10 live in prose where **no gate can see them** — so coverage and verifiability are one problem. Triages all 29 into four doctrines in the RFC 0010 shape, commits to 10 D1 units + 3 D2 anchors (including `forze_dst`, promoted and given two reference files in 0041), and makes a package with **no doctrine an error** so a new plane cannot ship with zero corpus reach. Census unit = **import root subdivided wherever an extra draws a boundary** — reconciling the two lists rather than picking one, because package granularity alone scores `forze_kms` and `forze_identity` green while `kms.gcp`, `kms.yc`, `inference.sagemaker` and `identity.authz` have no code at all. Scores **consumption, not declaration** |
 | [0043](0043-capability-gated-values-and-the-pinned-read-scope.md) | Capability-gated values and the pinned-read scope | 📝 Draft | Two provenance mechanisms, demand-gated: a value type constructible only through its owning package's mint function, and a read scope that resolves a pin once so no request reads against two pins. |
+| [0044](0044-lancedb-retrieval-integration.md) | LanceDB retrieval integration | 📝 Draft | A `forze_lancedb` adapter for the existing search plane — vector-first, embedded/object-storage LanceDB — adopting an external request while rejecting its parallel retrieval-contracts package. |
 
 ## Status legend
 
