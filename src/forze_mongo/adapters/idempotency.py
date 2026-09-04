@@ -55,7 +55,7 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
 
     Documents look like ``{_id, op, idem_key, payload_hash, tenant_id, status, result,
     expires_at, claim_token}``; the ``_id`` is the atomicity anchor, so concurrent claims
-    serialize on it without a unique index the application ever migrated. Expired
+    serialize on it without a unique index the application never migrated. Expired
     documents (past ``IdempotencySpec.ttl``) are re-claimed in place; a TTL index on
     ``expires_at`` is the optional cleanup for keys that are never reused.
     """
@@ -115,9 +115,10 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
             "payload_hash": payload_hash,
             "tenant_id": str(tenant_id) if tenant_id is not None else None,
             "status": _PENDING,
-            # A reclaim overwrites a previous record, so the stale result must go with it:
-            # ``begin`` only replays a ``done`` document, but leaving the bytes behind would
-            # keep a completed operation's result readable past its own expiry.
+            # A reclaim overwrites a previous record, and the stale result goes with it: no
+            # read path would serve those bytes again (``begin`` replays only a ``done``
+            # document), so keeping them would retain an operation's payload past the expiry
+            # that retired it, for nothing.
             "result": None,
             "expires_at": now + self.spec.ttl,
             "claim_token": claim_token,
@@ -171,6 +172,18 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
     # ....................... #
 
     def _is_expired(self, doc: JsonDict, now: datetime) -> bool:
+        """Whether *doc* has passed its dedup window, against the caller's own ``now``.
+
+        The same ``now`` decides this and matches :meth:`_reclaim`'s ``$lte`` filter, so a
+        document judged expired here cannot then fail to match the reclaim — the two must
+        keep using one comparison and one clock, or a caller gets a conflict for a document
+        it was just told it could take.
+
+        A document with **no** ``expires_at`` counts as expired: only something other than
+        this store could have written one, and treating it as live would block its key
+        forever with no way to clear it, where treating it as expired costs one re-execution.
+        """
+
         expires_at = doc.get("expires_at")
 
         return expires_at is None or expires_at <= now
