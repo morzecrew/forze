@@ -70,10 +70,14 @@ class _FakeRedis:
     async def run_script(
         self, script: str, keys: Sequence[str], args: Sequence[Any]
     ) -> str:
+        # Both scripts accept the caller's own pending claim *or* its ownerless form, which
+        # is how a claim written before the ``own`` field stays completable. Modelled here
+        # rather than simplified away: a fake that matched only the first payload would
+        # pass while the real script rejected every legacy claim, and vice versa.
         if script is IDEMPOTENCY_COMMIT:
             meta_k, body_k = keys
-            expected_pending, done_meta, body, _ex = args
-            if self.store.get(meta_k) != expected_pending:
+            expected_pending, done_meta, body, _ex, legacy_pending = args
+            if self.store.get(meta_k) not in (expected_pending, legacy_pending):
                 return "0"
             self.store[body_k] = body
             self.store[meta_k] = done_meta
@@ -81,8 +85,8 @@ class _FakeRedis:
 
         if script is IDEMPOTENCY_RELEASE:
             meta_k, body_k = keys
-            (expected_pending,) = args
-            if self.store.get(meta_k) != expected_pending:
+            expected_pending, legacy_pending = args
+            if self.store.get(meta_k) not in (expected_pending, legacy_pending):
                 return "0"
             return str(await self.delete(meta_k, body_k))
 
@@ -340,7 +344,9 @@ async def test_fail_uses_release_script(
     script, keys, args = mock_redis_client.run_script.call_args[0]
     assert script is IDEMPOTENCY_RELEASE
     assert keys == [_meta_with_tenant(), _body_with_tenant()]
-    assert args == [_pending_bytes("hash123")]
+    # Both fence payloads: the caller's own claim and its ownerless form. This adapter has
+    # no owner wired, so the two coincide — the arity is the assertion.
+    assert args == [_pending_bytes("hash123"), _pending_bytes("hash123")]
 
 
 @pytest.mark.asyncio

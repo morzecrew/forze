@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -23,16 +23,20 @@ def harness() -> IdempotencyHarness:
     # the same claims as the long-window one.
     state = MockState()
 
-    def _store(ttl: timedelta) -> MockIdempotencyAdapter:
-        return MockIdempotencyAdapter(state=state, namespace="idem", ttl=ttl)
+    def _store(ttl: timedelta, owner: UUID | None) -> MockIdempotencyAdapter:
+        return MockIdempotencyAdapter(
+            state=state,
+            namespace="idem",
+            ttl=ttl,
+            # What ``ConfigurableMockIdempotency`` wires from the invocation context; the
+            # oracle fences only when it is given one, exactly like the real stores.
+            owner_provider=lambda: owner,
+        )
 
     return IdempotencyHarness(
-        # Far longer than any non-TTL check needs: a short window here would make the
-        # battery race the clock instead of asserting the promises.
-        store=_store(timedelta(hours=1)),
         backend="mock",
         key=lambda: f"battery-{uuid4().hex[:12]}",
-        store_with_ttl=_store,
+        store_for=_store,
     )
 
 

@@ -16,6 +16,7 @@ import attrs
 from pymongo.asynchronous.collection import AsyncCollection
 
 from forze.application.contracts.idempotency import (
+    ClaimOwnerMixin,
     IdempotencyPort,
     IdempotencyRecord,
     IdempotencySpec,
@@ -38,7 +39,7 @@ _DONE: Final[str] = "done"
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
+class MongoIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     """Mongo-backed co-located idempotency store (``commits_in_transaction``).
 
     :meth:`commit` runs on the caller's session — the auto-injected ``on_success`` hook
@@ -54,10 +55,18 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
     invisible until commit, or be rolled back with the operation they are reporting on.
 
     Documents look like ``{_id, op, idem_key, payload_hash, tenant_id, status, result,
-    expires_at, claim_token}``; the ``_id`` is the atomicity anchor, so concurrent claims
+    expires_at, claim_token, owner}``; the ``_id`` is the atomicity anchor, so concurrent claims
     serialize on it without a unique index the application never migrated. Expired
     documents (past ``IdempotencySpec.ttl``) are re-claimed in place; a TTL index on
     ``expires_at`` is the optional cleanup for keys that are never reused.
+
+    ``claim_token`` and ``owner`` are separate fields answering different questions.
+    The token is how :meth:`begin` tells its own fresh insert from a live document it
+    merely read back, so it must be unique *per call*; the owner is the invocation, which
+    is unique per request and deliberately the same across one invocation's calls. Folding
+    the two into one field would break the first test twice — with no provider both sides
+    are ``None`` and a live claim reads as a fresh insert, and even with one an invocation
+    that calls :meth:`begin` twice for a key would match its own earlier claim.
     """
 
     client: MongoClientPort
@@ -109,7 +118,14 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
     ) -> dict[str, Any]:
         """The pending-claim document body, shared by a fresh claim and an expired reclaim."""
 
+        owner = self.claim_owner()
+
         return {
+            # The invocation this claim belongs to, so a duplicate that reclaims the key
+            # cannot have its claim completed or released by the operation it displaced.
+            # ``None`` when nothing was wired, which is what leaves the fence degraded
+            # rather than refusing every commit.
+            "owner": str(owner) if owner is not None else None,
             "op": op,
             "idem_key": key,
             "payload_hash": payload_hash,
@@ -233,6 +249,24 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
 
     # ....................... #
 
+    def _owner_filter(self) -> dict[str, Any]:
+        """The ownership predicate for :meth:`commit` / :meth:`fail`, empty when degraded.
+
+        ``{"owner": None}`` matches a null **and a missing** field, which is what lets a
+        claim written before this store carried an owner still be completed; omitting the
+        predicate entirely is what a store with no provider does, since a caller who cannot
+        name itself has nothing to prove ownership with.
+        """
+
+        owner = self.claim_owner()
+
+        if owner is None:
+            return {}
+
+        return {"$or": [{"owner": str(owner)}, {"owner": None}]}
+
+    # ....................... #
+
     def _replay(self, doc: JsonDict, payload_hash: str) -> IdempotencyRecord:
         """Decide what a live document owned by someone else means for this caller."""
 
@@ -272,6 +306,7 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
                 "_id": self._doc_id(op, key, tenant_id),
                 "payload_hash": payload_hash,
                 "status": _PENDING,
+                **self._owner_filter(),
             },
             {
                 "$set": {
@@ -283,9 +318,13 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
         )
 
         if matched == 0:
-            # No matching pending claim: fail closed so the business transaction rolls back
-            # rather than committing an effect with no idempotency record.
-            raise exc.conflict("Idempotency commit failed (missing or non-pending claim)")
+            # No matching pending claim of our own: fail closed so the business transaction
+            # rolls back rather than committing an effect with no idempotency record — or,
+            # where the claim was reclaimed by a duplicate, rather than replacing that
+            # operation's live claim with this one's result.
+            raise exc.conflict(
+                "Idempotency commit failed (claim missing, non-pending, or reclaimed)"
+            )
 
     # ....................... #
 
@@ -302,13 +341,14 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
         tenant_id = self.require_tenant_if_aware()
 
         async with self.client.detached():
-            # Only release our own pending claim: a completed record, or a claim taken for a
-            # different payload hash, is left untouched.
+            # Only release our own pending claim: a completed record, a claim taken for a
+            # different payload hash, or one a duplicate reclaimed is left untouched.
             await self.client.delete_one(
                 coll,
                 {
                     "_id": self._doc_id(op, key, tenant_id),
                     "payload_hash": payload_hash,
                     "status": _PENDING,
+                    **self._owner_filter(),
                 },
             )

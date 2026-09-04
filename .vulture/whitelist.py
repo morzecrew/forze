@@ -192,6 +192,7 @@ PostgresPrimaryKeyCache  # unused variable (src/forze_postgres/kernel/catalog/in
 PostgresUniqueColumnSetsCache  # unused variable (src/forze_postgres/kernel/catalog/introspect/types.py:95)
 create_cmd_type  # unused variable (src/forze_postgres/kernel/gateways/write.py:106)
 queue_backend_label  # unused variable (src/forze_rabbitmq/adapters/queue.py:55)
+own  # unused variable (src/forze_redis/adapters/idempotency.py:46)
 st  # unused variable (src/forze_redis/adapters/idempotency.py:40)
 S3Head  # unused variable (src/forze_s3/kernel/client/value_objects.py:18)
 S3ListedObject  # unused variable (src/forze_s3/kernel/client/value_objects.py:19)

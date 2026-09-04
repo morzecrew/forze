@@ -23,6 +23,18 @@ class IdempotencyPort(Protocol):
     (:attr:`commits_in_transaction`) closes the crash window; an out-of-transaction store
     (the Redis / mock adapters) leaves a crash between the business commit and
     :meth:`commit` uncached, whose retry re-executes (see :meth:`commit`).
+
+    Guarantee: **a claim reclaimed by someone else cannot be completed or released by its
+    previous holder — where the store carries an owner.** ``op`` / key / ``payload_hash``
+    are identical across duplicates of one request, so an operation that overruns its
+    window and finds the key reclaimed would otherwise overwrite the reclaimer's live
+    claim. Every shipped store fences on the invocation that took the claim
+    (:class:`~forze.application.contracts.idempotency.ClaimOwnerMixin`), which the wiring
+    supplies; the condition is real rather than decorative, because a store built without
+    a provider, a call made outside an invocation, and a claim written before the owner
+    existed all degrade to the unfenced behaviour instead of refusing work. Postgres adds
+    one condition of its own — the table needs the ``owner`` column, detected at runtime —
+    documented on that store.
     """
 
     @property
@@ -72,6 +84,12 @@ class IdempotencyPort(Protocol):
         Runs *outside* the business transaction: a crash between the transaction
         commit and this call leaves a committed effect with a stuck in-progress
         claim until its TTL expires (an at-least-once gap, by design).
+
+        :raises CoreException: ``conflict`` when no claim of the caller's own is pending —
+            it was never taken, already released, or (with an owner wired) reclaimed by
+            another invocation. Failing closed is what lets a co-located store roll the
+            business transaction back rather than commit an effect whose record went to
+            someone else's operation.
         """
         ...  # pragma: no cover
 
@@ -86,7 +104,9 @@ class IdempotencyPort(Protocol):
         Clears the pending claim taken by :meth:`begin` for this ``op`` /
         ``key`` / ``payload_hash``, so a legitimate retry of the failed request
         can re-execute instead of waiting for the claim TTL. A missing or
-        non-matching claim is a no-op.
+        non-matching claim is a no-op — including one reclaimed by another
+        invocation, where an owner is wired: releasing that would hand a third
+        duplicate permission to run alongside the operation now holding the key.
 
         :param op: Operation name.
         :param key: Idempotency key supplied by the boundary (``None`` skips idempotency).
