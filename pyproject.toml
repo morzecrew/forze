@@ -558,7 +558,7 @@ engines = ["mock", "neo4j"]
 [tool.conformance_manifest.planes.idempotency]
 scenario = "tests.support.idempotency_conformance:IDEMPOTENCY_BATTERY"
 dep_keys = ["idempotency"]
-engines = ["mock", "postgres", "redis"]
+engines = ["mock", "postgres", "redis", "mongo"]
 
 [tool.conformance_manifest.planes.inference]
 scenario = "forze_dst.conformance.inference:run_capability_gates"

@@ -19,17 +19,20 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
 def harness() -> IdempotencyHarness:
+    # One state for both stores: the TTL checks mint a short-window store that has to see
+    # the same claims as the long-window one.
+    state = MockState()
+
+    def _store(ttl: timedelta) -> MockIdempotencyAdapter:
+        return MockIdempotencyAdapter(state=state, namespace="idem", ttl=ttl)
+
     return IdempotencyHarness(
-        store=MockIdempotencyAdapter(
-            state=MockState(),
-            namespace="idem",
-            # Far longer than any check needs: expiry has its own dedicated suite, and a
-            # short TTL here would make the battery race the clock instead of asserting
-            # the promises.
-            ttl=timedelta(hours=1),
-        ),
+        # Far longer than any non-TTL check needs: a short window here would make the
+        # battery race the clock instead of asserting the promises.
+        store=_store(timedelta(hours=1)),
         backend="mock",
         key=lambda: f"battery-{uuid4().hex[:12]}",
+        store_with_ttl=_store,
     )
 
 

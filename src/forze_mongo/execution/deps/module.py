@@ -20,6 +20,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.document.wiring import derive_read_only_document_config
+from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import (
     OutboxAdminDepKey,
@@ -42,6 +43,7 @@ from ._warnings import (
     MONGO_COUNTER_WARNING,
     MONGO_DOCUMENT_RO_WARNING,
     MONGO_DOCUMENT_RW_WARNING,
+    MONGO_IDEMPOTENCY_WARNING,
     MONGO_INBOX_WARNING,
     MONGO_OUTBOX_WARNING,
     MONGO_SEARCH_WARNING,
@@ -49,6 +51,7 @@ from ._warnings import (
 from .configs import (
     MongoCounterConfig,
     MongoDocumentConfig,
+    MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
@@ -58,6 +61,7 @@ from .factories import (
     ConfigurableMongoCounter,
     ConfigurableMongoCounterAdmin,
     ConfigurableMongoDocument,
+    ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoOutboxAdmin,
     ConfigurableMongoOutboxCommand,
@@ -132,6 +136,17 @@ class MongoDepsModule(DepsModule):
     Consumer-side dedup marks as one atomic ``_id`` upsert per message. The mark rides the
     ambient transaction/session, so it commits — or rolls back — with the handler's writes."""
 
+    idempotencies: StrKeyMapping[MongoIdempotencyConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from idempotency route names to Mongo-specific configurations.
+
+    A co-located store: the result record is written on the caller's session, so it commits
+    atomically with the business writes (replica set required, as for every Mongo
+    transaction). Claims and releases run detached, so a claim blocks a concurrent duplicate
+    the moment it is taken."""
+
     counters: StrKeyMapping[MongoCounterConfig] | None = attrs.field(
         default=None,
         converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
@@ -191,6 +206,12 @@ class MongoDepsModule(DepsModule):
         )
         warn_integration_routes(
             integration="Mongo",
+            routes=self.idempotencies,
+            warning=MONGO_IDEMPOTENCY_WARNING,
+            log_warning=logger.warning,
+        )
+        warn_integration_routes(
+            integration="Mongo",
             routes=self.counters,
             warning=MONGO_COUNTER_WARNING,
             log_warning=logger.warning,
@@ -225,6 +246,12 @@ class MongoDepsModule(DepsModule):
                 TenancyRouteGroup(
                     kind="inbox",
                     configs=self.inboxes,
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
+                ),
+                TenancyRouteGroup(
+                    kind="idempotency",
+                    configs=self.idempotencies,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.collection,
                 ),
@@ -300,6 +327,10 @@ class MongoDepsModule(DepsModule):
             routed_from_mapping(
                 self.inboxes,
                 bindings=[(InboxDepKey, ConfigurableMongoInbox)],
+            ),
+            routed_from_mapping(
+                self.idempotencies,
+                bindings=[(IdempotencyDepKey, ConfigurableMongoIdempotency)],
             ),
             routed_from_mapping(
                 self.counters,

@@ -3,6 +3,7 @@
 from .configs import (
     MongoAtlasEngine,
     MongoDocumentConfig,
+    MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
@@ -14,6 +15,7 @@ from .configs import (
 )
 from .factories import (
     ConfigurableMongoDocument,
+    ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoOutbox,
     ConfigurableMongoReadOnlyDocument,
@@ -29,6 +31,7 @@ __all__ = [
     "MongoDepsModule",
     "MongoClientDepKey",
     "MongoDocumentConfig",
+    "MongoIdempotencyConfig",
     "MongoInboxConfig",
     "MongoOutboxConfig",
     "MongoReadOnlyDocumentConfig",
@@ -39,6 +42,7 @@ __all__ = [
     "MongoTextEngine",
     "MongoVectorEngine",
     "ConfigurableMongoDocument",
+    "ConfigurableMongoIdempotency",
     "ConfigurableMongoInbox",
     "ConfigurableMongoOutbox",
     "ConfigurableMongoReadOnlyDocument",

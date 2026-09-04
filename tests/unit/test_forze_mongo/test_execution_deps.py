@@ -13,20 +13,24 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters import MongoDocumentAdapter, MongoTxManagerAdapter
+from forze_mongo.adapters.idempotency import MongoIdempotencyStore
 from forze_mongo.adapters.inbox import MongoInboxStore
 from forze_mongo.execution.deps import (
     ConfigurableMongoDocument,
+    ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,
     MongoClientDepKey,
     MongoDepsModule,
     MongoDocumentConfig,
+    MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoReadOnlyDocumentConfig,
     mongo_txmanager,
@@ -115,6 +119,29 @@ def test_configurable_mongo_inbox_builds_store() -> None:
     store = factory(_ctx(), InboxSpec(name="events"))
 
     assert isinstance(store, MongoInboxStore)
+
+
+def test_mongo_deps_module_registers_idempotency() -> None:
+    client = MagicMock(spec=MongoClient)
+    module = MongoDepsModule(
+        client=client,
+        idempotencies={"orders": MongoIdempotencyConfig(collection=("db", "idem"))},
+    )
+
+    deps = module()
+
+    assert deps.exists(IdempotencyDepKey, route="orders")
+    assert not deps.exists(IdempotencyDepKey, route="other")
+
+
+def test_configurable_mongo_idempotency_builds_store() -> None:
+    factory = ConfigurableMongoIdempotency(
+        config=MongoIdempotencyConfig(collection=("db", "idem")),
+    )
+
+    store = factory(_ctx(), IdempotencySpec(name="orders"))
+
+    assert isinstance(store, MongoIdempotencyStore)
 
 
 def test_mongo_deps_module_ro_only() -> None:

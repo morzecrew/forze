@@ -7,8 +7,10 @@ store most likely to be wired for it.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import uuid4
 
+import attrs
 import pytest
 
 from forze_redis.adapters import RedisIdempotencyAdapter
@@ -27,6 +29,11 @@ def harness(redis_idempotency: RedisIdempotencyAdapter) -> IdempotencyHarness:
         store=redis_idempotency,
         backend="redis",
         key=lambda: f"battery-{uuid4().hex[:12]}",
+        # Same client and namespace, so the short-window store sees the same keys.
+        store_with_ttl=lambda ttl: attrs.evolve(redis_idempotency, ttl=ttl),
+        # Redis keeps the claim under a native key TTL and refuses anything below a
+        # second, so this leg waits where the others take milliseconds.
+        min_ttl=timedelta(seconds=1),
     )
 
 

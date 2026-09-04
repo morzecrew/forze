@@ -5,6 +5,7 @@ from forze.application.contracts.tenancy import IntegrationRouteWarning
 from .configs import (
     MongoCounterConfig,
     MongoDocumentConfig,
+    MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
@@ -34,6 +35,12 @@ MONGO_SEARCH_WARNING = IntegrationRouteWarning[MongoSearchConfig](
     tenant_aware=lambda config: config.tenant_aware,
     relation_fields=lambda config: [("read", config.read)],
     named_fields=lambda config: [("index_name", config.index_name)],
+)
+
+MONGO_IDEMPOTENCY_WARNING = IntegrationRouteWarning[MongoIdempotencyConfig](
+    kind="idempotency",
+    tenant_aware=lambda config: config.tenant_aware,
+    relation_fields=lambda config: [("collection", config.collection)],
 )
 
 MONGO_INBOX_WARNING = IntegrationRouteWarning[MongoInboxConfig](

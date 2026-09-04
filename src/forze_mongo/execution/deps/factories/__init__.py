@@ -2,6 +2,7 @@
 
 from .counter import ConfigurableMongoCounter, ConfigurableMongoCounterAdmin
 from .document import ConfigurableMongoDocument, ConfigurableMongoReadOnlyDocument
+from .idempotency import ConfigurableMongoIdempotency
 from .inbox import ConfigurableMongoInbox
 from .outbox import (
     ConfigurableMongoOutbox,
@@ -18,6 +19,7 @@ __all__ = [
     "ConfigurableMongoCounter",
     "ConfigurableMongoCounterAdmin",
     "ConfigurableMongoDocument",
+    "ConfigurableMongoIdempotency",
     "ConfigurableMongoInbox",
     "ConfigurableMongoOutbox",
     "ConfigurableMongoOutboxAdmin",
