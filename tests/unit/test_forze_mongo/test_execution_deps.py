@@ -13,17 +13,21 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters import MongoDocumentAdapter, MongoTxManagerAdapter
+from forze_mongo.adapters.inbox import MongoInboxStore
 from forze_mongo.execution.deps import (
     ConfigurableMongoDocument,
+    ConfigurableMongoInbox,
     ConfigurableMongoReadOnlyDocument,
     ConfigurableMongoSearch,
     MongoClientDepKey,
     MongoDepsModule,
     MongoDocumentConfig,
+    MongoInboxConfig,
     MongoReadOnlyDocumentConfig,
     mongo_txmanager,
 )
@@ -88,6 +92,29 @@ def test_mongo_deps_module_rw_registers_query_and_command() -> None:
     assert deps.exists(DocumentQueryDepKey, route="doc")
     assert deps.exists(DocumentCommandDepKey, route="doc")
     assert deps.exists(TransactionManagerDepKey, route="session")
+
+
+def test_mongo_deps_module_registers_inbox() -> None:
+    client = MagicMock(spec=MongoClient)
+    module = MongoDepsModule(
+        client=client,
+        inboxes={"events": MongoInboxConfig(collection=("db", "inbox"))},
+    )
+
+    deps = module()
+
+    assert deps.exists(InboxDepKey, route="events")
+    assert not deps.exists(InboxDepKey, route="other")
+
+
+def test_configurable_mongo_inbox_builds_store() -> None:
+    factory = ConfigurableMongoInbox(
+        config=MongoInboxConfig(collection=("db", "inbox")),
+    )
+
+    store = factory(_ctx(), InboxSpec(name="events"))
+
+    assert isinstance(store, MongoInboxStore)
 
 
 def test_mongo_deps_module_ro_only() -> None:

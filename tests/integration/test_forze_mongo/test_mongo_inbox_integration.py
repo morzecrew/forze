@@ -120,6 +120,8 @@ async def test_enlistment_tracks_transaction_scope(
     assert store.is_transactionally_enlisted() is False
 
     async with mongo_client_replica.transaction():
-        # Force the (possibly lazy) transaction to materialize before asking.
+        # Depth-based: reports enlisted even before a lazy session materializes,
+        # so assert_enlisted can run ahead of the first operation.
+        assert store.is_transactionally_enlisted() is True
         await store.mark_if_unseen("events", "m0")
         assert store.is_transactionally_enlisted() is True

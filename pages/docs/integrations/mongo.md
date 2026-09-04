@@ -85,7 +85,9 @@ lifecycle = LifecyclePlan.from_steps(
   the exactly-once guarantee (mark rolls back with the handler) only exists
   inside a transaction.
 - The inbox needs no index migration: the dedup key is the document `_id`, so
-  concurrent marks serialize on it out of the box.
+  concurrent marks serialize on it out of the box. `InboxSpec.ttl` is advisory —
+  to actually expire old marks, create a TTL index on `processed_at` with your
+  dedup window (you own the collections and indexes).
 - `MongoSearchConfig` is imported from `forze_mongo.execution.deps` (not the
   top-level package).
 - Relations accept a static `(database, collection)` tuple or a per-tenant
