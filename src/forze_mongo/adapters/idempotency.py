@@ -165,7 +165,8 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
                 return None  # fresh claim
 
             if self._is_expired(doc, now):
-                return await self._reclaim(coll, doc_id, op, key, payload_hash, tenant_id, now)
+                await self._reclaim(coll, doc_id, op, key, payload_hash, tenant_id, now)
+                return None
 
         return self._replay(doc, payload_hash)
 
@@ -199,8 +200,12 @@ class MongoIdempotencyStore(TenancyMixin, IdempotencyPort):
         payload_hash: str,
         tenant_id: UUID | None,
         now: datetime,
-    ) -> IdempotencyRecord | None:
-        """Take over an expired document, or refuse if another writer took it first."""
+    ) -> None:
+        """Take over an expired document, or refuse if another writer took it first.
+
+        Returns nothing on success, like a fresh claim: a reclaimed document never carries
+        a result to replay, because taking it over is what cleared one.
+        """
 
         claim_token = uuid4().hex
         # The ``expires_at`` guard is what makes this a race rather than a steal: exactly
