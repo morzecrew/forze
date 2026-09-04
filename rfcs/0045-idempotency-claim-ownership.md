@@ -144,20 +144,48 @@ the owner, not the expiry, is what is checked: the claim is still the caller's.
 
 | Store | Claim carries | Fence |
 |---|---|---|
-| Mongo | the existing `claim_token` field, set to the owner | add `owner` to the `commit`/`fail` filters |
+| Mongo | the existing random `claim_token`, **plus a separate `owner` field** | add `owner` to the `commit`/`fail` filters |
 | Redis | `own` in the claim metadata JSON | free — the CAS already compares the metadata byte-for-byte |
-| Postgres | a new nullable `owner uuid` column | `AND (owner IS NULL OR owner = %s)` |
+| Postgres | a new nullable `owner uuid` column | two query shapes, chosen at wiring — see §5.3 |
 | Mock | a field on the stored entry | direct comparison |
+
+**The Mongo token and the owner are different fields on purpose.** `claim_token` is how
+`begin` tells its own fresh insert from a live claim it merely read back, so it must be
+unique *per call*; an owner is not, and cannot be. Setting the token to the owner breaks
+that test twice over: with no provider both sides are `None`, so a live claim reads as a
+fresh insert and two callers believe they hold it, and even with a provider an invocation
+that calls `begin` twice for one key matches its own earlier claim. One field answers "did
+I just create this", the other "is this still mine".
 
 ### 5.3 Degrading instead of breaking
 
-Two situations have no owner: a store wired without the provider, and an existing
-Postgres row whose `owner` is `NULL` (written before the migration). Both must keep
-working, so the fence is **conditional on an owner being present on both sides** —
-absent owner, today's behaviour. That is what makes the Postgres column additive
-rather than a coordinated migration, and it is also the design's weakness: a
-deployment that never migrates never gets the guarantee and is told nothing.
-§9 carries the mitigation.
+Three situations have no owner to fence on, and each must keep working:
+
+1. **The store is wired without a provider.** No owner exists to write or match.
+2. **The Postgres table predates the migration**, so there is no `owner` column.
+3. **A row was written without an owner** while the column existed.
+
+(1) and (3) are predicate questions; (2) is not — a query naming a column the table
+does not have fails to execute, so no amount of conditional SQL text rescues it and a
+warning log certainly does not. Postgres therefore needs **capability detection**, not
+just a nullable column: the store asks the catalog for the column once at wiring (the
+introspection `forze_postgres.kernel.catalog.introspect` already performs for schema
+validation) and selects between two statement shapes for the life of the store —
+
+- **legacy** — today's predicate exactly, with no mention of `owner`, used when the
+  column is absent;
+- **owner-aware** — the same predicate plus `AND (owner IS NULL OR owner = %s)`, used
+  when the column exists *and* the provider yielded an owner. The `IS NULL` arm is what
+  lets (3) still complete.
+
+When the column exists but the provider yields nothing, the owner predicate is
+**omitted**, not bound to `NULL`: `owner = NULL` is `UNKNOWN` in SQL, so binding it
+would silently stop matching every owned row — the opposite of degrading to today's
+behaviour. That is the trap this paragraph exists to name.
+
+The design's weakness is what remains: a deployment that never migrates never gets the
+guarantee. Detection makes that state *knowable* rather than silent — §9 carries the
+mitigation.
 
 ### Alternatives considered
 
@@ -181,8 +209,13 @@ gains a seam for minting a store with a different owner, alongside the TTL seam 
 already has. The battery paragraph declaring this unassertable is deleted in the
 same change — an entry that outlives its truth is worse than none.
 
-Per store: the Postgres leg runs once against a table with the column and once
-against one without, since the un-migrated path is a shipped configuration.
+Per store, Postgres carries three legs, because each is a shipped configuration and
+they fail differently: the column absent (legacy statement, no fencing), the column
+present with an owner (fenced), and the column present with **no** provider (predicate
+omitted — the leg that catches a `NULL` binding, which would match no owned row while
+looking like it worked). Mongo adds one: a claim whose `claim_token` and `owner` differ
+must still be read as someone else's live claim, which is the misclassification §5.2
+describes.
 
 ## 7. Docs
 
@@ -203,9 +236,10 @@ un-migrated table cannot refuse a reclaimed commit.
 
 - **A guarantee that silently does not hold.** The conditional fence means an
   un-migrated Postgres deployment believes it has ownership fencing and does not.
-  Mitigation: the store logs once at wiring when it cannot see the column, and the
-  docs state it; the alternative (refusing to start) breaks every existing
-  deployment on upgrade.
+  Mitigation: the wiring-time capability detection this needs anyway is exactly what
+  makes the state observable — the store logs once when the column is absent, and the
+  docs state it. The alternative (refusing to start) breaks every existing deployment
+  on upgrade.
 - **`execution_id` is not stable across a retry that re-enters the same claim.** A
   retried invocation is a new execution and so a new owner, which is correct for
   this purpose but must not be read as a general "request identity".
@@ -231,7 +265,7 @@ un-migrated table cannot refuse a reclaimed commit.
 | --- | --- | --- |
 | 1 | `LOCKED` | The owner is the invocation's `execution_id`, not a store-minted token and not the correlation id. A store-minted value cannot reach `commit`/`fail` (the hook resolves the port twice); the invocation id already separates exactly the two callers the payload hash cannot; and it is server-minted, where the correlation id arrives in a client header and could be forged to steal a claim. |
 | 2 | `LOCKED` | The owner arrives through a wiring-injected provider callable, mirroring `tenant_provider` — not through a port signature change. This keeps a shipped contract intact; the signature change stays specified in §5 as the escape hatch if Q2 rules the conditional guarantee too weak to state. |
-| 3 | `LOCKED` | Fencing is conditional on an owner being present on both sides. An absent owner keeps today's behaviour, so the Postgres column is additive and no deployment breaks on upgrade. Consequence: the guarantee is deployment-dependent, which §7 and §9 must state plainly rather than paper over. |
+| 3 | `LOCKED` | Fencing is conditional on an owner being present on both sides, and on Postgres also on the column existing — detected at wiring, selecting between a legacy and an owner-aware statement. An absent owner omits the predicate rather than binding `NULL`, which would match nothing. That is what makes the column additive and keeps un-migrated deployments running. Consequence: the guarantee is deployment-dependent, which §7 and §9 must state plainly rather than paper over. |
 | 4 | `ASSUMED` | The lapsed-but-unreclaimed `commit` keeps succeeding. Ownership is the right axis; expiry is not, and PR #401's probe is the evidence. Depart only with a new probe showing harm. |
 | 5 | `ASSUMED` | One conformance check is enough to state the guarantee, because the failure mode is single-shaped: a reclaim by a same-payload duplicate. |
 | 6 | `OPEN` | Q1 — the mock's default. Whether the oracle fences without a factory decides if the battery check is meaningful there; the executor settles it and logs the choice. |
