@@ -9,6 +9,7 @@ require_mongo()
 # ....................... #
 
 from typing import final
+from uuid import UUID
 
 import attrs
 from pymongo.asynchronous.collection import AsyncCollection
@@ -57,11 +58,12 @@ class MongoInboxStore(TenancyMixin, InboxPort):
 
     # ....................... #
 
-    def _doc_id(self, inbox: str, message_id: str) -> str:
+    def _doc_id(self, inbox: str, message_id: str, tenant_id: UUID | None) -> str:
         # The ``_id`` is the atomicity anchor. The tenant prefix keeps tagged-tier tenants
         # apart; the length prefix on the route makes the composition unambiguous for any
         # route/message-id contents (``a|b`` + ``c`` cannot collide with ``a`` + ``b|c``).
-        tenant_id = self.require_tenant_if_aware()
+        # The tenant is resolved once by the caller so the ``_id`` tag and the stored
+        # ``tenant_id`` field can never disagree.
         body = f"{len(inbox)}:{inbox}|{message_id}"
 
         return f"tenant:{tenant_id}|{body}" if tenant_id is not None else body
@@ -87,7 +89,7 @@ class MongoInboxStore(TenancyMixin, InboxPort):
 
         result = await self.client.update_one_upsert(
             coll,
-            {"_id": self._doc_id(inbox, message_id)},
+            {"_id": self._doc_id(inbox, message_id, tenant_id)},
             {
                 "$setOnInsert": {
                     "inbox_route": inbox,
