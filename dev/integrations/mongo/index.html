@@ -6321,8 +6321,8 @@
   <h1 id="__skip">MongoDB</h1>
 
 <p><code>forze[mongo]</code> implements document storage, search, transaction coordination,
-and the transactional outbox on MongoDB — the same contracts as Postgres, behind
-collections instead of tables.</p>
+and the transactional outbox and inbox on MongoDB — the same contracts as
+Postgres, behind collections instead of tables.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>uv<span class="w"> </span>add<span class="w"> </span><span class="s1">'forze[mongo]'</span>
 </code></pre></div>
@@ -6394,6 +6394,11 @@ models follows.</p>
 <td><code>outboxes</code></td>
 </tr>
 <tr>
+<td>Inbox</td>
+<td><code>InboxSpec.name</code></td>
+<td><code>inboxes</code></td>
+</tr>
+<tr>
 <td>Counter</td>
 <td><code>CounterSpec.name</code></td>
 <td><code>counters</code></td>
@@ -6405,7 +6410,13 @@ models follows.</p>
 <li><strong>You own the collections and indexes.</strong> Forze reads existing collections; it
   doesn't create or index them.</li>
 <li><strong>Transactions and outbox need a replica set</strong> — a standalone <code>mongod</code> can't
-  open multi-document transactions.</li>
+  open multi-document transactions. The inbox marks messages without one, but
+  the exactly-once guarantee (mark rolls back with the handler) only exists
+  inside a transaction.</li>
+<li>The inbox needs no index migration: the dedup key is the document <code>_id</code>, so
+  concurrent marks serialize on it out of the box. <code>InboxSpec.ttl</code> is advisory —
+  to actually expire old marks, create a TTL index on <code>processed_at</code> with your
+  dedup window (you own the collections and indexes).</li>
 <li><code>MongoSearchConfig</code> is imported from <code>forze_mongo.execution.deps</code> (not the
   top-level package).</li>
 <li>Relations accept a static <code>(database, collection)</code> tuple or a per-tenant
