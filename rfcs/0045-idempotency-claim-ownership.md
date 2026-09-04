@@ -1,6 +1,6 @@
 # RFC 0045 — Idempotency claim ownership
 
-- **Status:** 📝 Draft
+- **Status:** ✅ Executed
 - **Scope:** One missing fence in the idempotency plane: `commit` and `fail` cannot
   tell the caller's own claim from a duplicate's reclaim of the same key, so a late
   operation can complete or release an operation that is not its own. Adds an
@@ -249,15 +249,23 @@ un-migrated table cannot refuse a reclaimed commit.
 
 ## 10. Unresolved questions
 
-- **Q1:** does the mock adapter fence by default, given DST builds it directly rather
-  than through a factory? If it degrades silently there, the oracle is weaker than
-  the real stores and the battery check would pass for the wrong reason.
-- **Q2:** is the conditional fence strong enough to state as a *port guarantee*, or
-  should the port say "fenced when an owner is wired"? The honest wording depends on
-  whether every shipped factory sets the provider — settled by writing them.
-- **Q3:** does the encryption wrapper (`integrations/idempotency/encryption.py`) need
-  to forward anything, or does it pass through unchanged? It delegates
-  `commits_in_transaction`; the owner may need the same treatment.
+All three settled in execution; the answers are recorded in §11.
+
+- **Q1 — the mock's default.** It fences exactly like the real stores, and exactly as
+  conditionally: `ConfigurableMockIdempotency` wires the provider, a direct construction
+  (DST, unit tests) has none and so runs unfenced. Modelling the weaker behaviour on
+  purpose was the alternative and it is worse — an oracle that never refuses would let DST
+  explore an interleaving the deployed system rejects. The battery wires an owner
+  explicitly, so its check means the same thing on all four engines.
+- **Q2 — the port's wording.** Conditional, stated as such: the guarantee names the
+  condition ("where the store carries an owner") rather than implying an unconditional
+  refusal, because three degradations are real — no provider, no ambient invocation, and
+  on Postgres no column. Decision 2 survived: no signature change was needed.
+- **Q3 — the encryption wrapper.** Nothing to forward. It delegates
+  `commits_in_transaction` because that is a *property of the store*; the owner is read
+  from the ambient invocation by the inner store itself, so the wrapper is transparent to
+  it. Pinned by a test rather than left as a reading, since a wrapper that re-derived the
+  owner would fence differently from the plain path.
 
 ## 11. Decisions
 
@@ -268,9 +276,11 @@ un-migrated table cannot refuse a reclaimed commit.
 | 3 | `LOCKED` | Fencing is conditional on an owner being present on both sides, and on Postgres also on the column existing — detected at wiring, selecting between a legacy and an owner-aware statement. An absent owner omits the predicate rather than binding `NULL`, which would match nothing. That is what makes the column additive and keeps un-migrated deployments running. Consequence: the guarantee is deployment-dependent, which §7 and §9 must state plainly rather than paper over. |
 | 4 | `ASSUMED` | The lapsed-but-unreclaimed `commit` keeps succeeding. Ownership is the right axis; expiry is not, and PR #401's probe is the evidence. Depart only with a new probe showing harm. |
 | 5 | `ASSUMED` | One conformance check is enough to state the guarantee, because the failure mode is single-shaped: a reclaim by a same-payload duplicate. |
-| 6 | `OPEN` | Q1 — the mock's default. Whether the oracle fences without a factory decides if the battery check is meaningful there; the executor settles it and logs the choice. |
-| 7 | `OPEN` | Q2 — the port's wording, and with it whether decision 2 survives contact. |
-| 8 | `OPEN` | Q3 — whether the encryption wrapper forwards the owner. |
+| 6 | `LOCKED` | Q1 settled: the oracle fences on the same terms as the real stores — the factory wires a provider, a direct construction has none. An oracle deliberately weaker than the deployed system would make DST explore interleavings production refuses. |
+| 7 | `LOCKED` | Q2 settled: the port states the guarantee *with* its condition. Three degradations are real (no provider, no invocation, no Postgres column), and a guarantee that hides them is the risk in §9 written into the contract. Decision 2 stands: no signature change was needed. |
+| 8 | `LOCKED` | Q3 settled: the encryption wrapper forwards nothing. `commits_in_transaction` is a property of the store; the owner is ambient and the inner store reads it. Pinned by a test so the two paths cannot diverge. |
+| 9 | `LOCKED` | `ClaimOwnerMixin` is non-slotted. Every store already inherits `TenancyMixin`, and two slotted bases are a C-level lay-out conflict; the alternative was the field copied into four adapters, where the degradation rules would drift apart one adapter at a time. Cost: a `__dict__` on a per-invocation object. |
+| 10 | `LOCKED` | Redis carries a second, ownerless copy of the claim metadata into both scripts, so a claim written before the field is still its caller's to finish. Without it a rolling deploy fails live requests for the length of one dedup window. |
 
 ## 12. Phasing
 

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import timedelta
+from uuid import UUID, uuid4
+
 import attrs
 import pytest
 
@@ -18,7 +22,8 @@ from forze.application.integrations.idempotency import (
 )
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_mock import MockKeyManagement
+from forze_mock import MockKeyManagement, MockState
+from forze_mock.adapters.idempotency import MockIdempotencyAdapter
 
 # ----------------------- #
 
@@ -121,3 +126,45 @@ def test_fail_closed_without_keyring() -> None:
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
     assert ei.value.code == "core.idempotency.encryption_wiring"
+
+
+@pytest.mark.asyncio
+async def test_the_wrapper_does_not_disarm_the_ownership_fence() -> None:
+    """Encryption is transparent to claim ownership: it forwards, it does not carry.
+
+    The wrapper delegates ``commits_in_transaction`` explicitly, so the obvious question is
+    whether the owner needs the same treatment. It does not — the fence lives in the inner
+    store, which reads the ambient invocation itself — and this is the assertion that keeps
+    the answer true: a wrapper that swallowed or re-derived the owner would let a reclaimed
+    claim be committed through the encrypting path but not the plain one.
+    """
+
+    state = MockState()
+
+    def _store(owner: UUID) -> IdempotencyPort:
+        return encrypting_idempotency_port(
+            MockIdempotencyAdapter(
+                state=state,
+                namespace="idem",
+                ttl=timedelta(milliseconds=50),
+                owner_provider=lambda: owner,
+            ),
+            cipher=_keyring(),
+            tenant_provider=lambda: None,
+            spec_name="idem",
+        )
+
+    displaced = _store(uuid4())
+
+    assert await displaced.begin("op", "k", "hash") is None
+
+    await asyncio.sleep(0.1)
+
+    reclaimer = _store(uuid4())
+
+    assert await reclaimer.begin("op", "k", "hash") is None
+
+    with pytest.raises(CoreException) as ei:
+        await displaced.commit("op", "k", "hash", IdempotencyRecord(result=b"stale"))
+
+    assert ei.value.kind == ExceptionKind.CONFLICT

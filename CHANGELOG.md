@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An idempotency claim reclaimed by a duplicate can no longer be committed or released by the operation it displaced.** The claim records the invocation that took it, wired like the tenant provider — no port signature change. Postgres: `ALTER TABLE <relation> ADD COLUMN owner uuid` (nullable, detected at runtime, logged once while absent); Redis, Mongo and the mock need no migration. Without an owner on both sides the previous behaviour stands.
+
 - **The Firestore integration suite runs again.** Its pinned emulator image had aged out of the registry, so all 104 tests errored on `manifest unknown` and took the coverage and conformance gates with them. Bumped to the newest tag the registry serves.
 
 ## [0.6.0] - 2026-08-15

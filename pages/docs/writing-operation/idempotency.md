@@ -41,6 +41,28 @@ under that name. The operation's result type must be a Pydantic model,
 since the stored result is encoded and decoded. Wired end to end in the
 [Add idempotency](../recipes/add-idempotency.md) recipe.
 
+## When an operation outlives its window
+
+The TTL is a dedup **window**, so an operation slow enough to outlive it can find
+its key already reclaimed by a duplicate. The claim records which invocation took
+it, and a store refuses to complete or release a claim that now belongs to someone
+else — otherwise the slow operation would overwrite the live one's claim, and a
+third duplicate would replay a result for work that never finished.
+
+On **Postgres** this needs one column on your table:
+
+```sql
+ALTER TABLE <your idempotency table> ADD COLUMN owner uuid;
+```
+
+It is nullable and additive, so nothing breaks before you run it and existing rows
+need no backfill. Until you do, that table runs without the refusal above — the
+store logs the relation once at startup so the state is visible rather than
+assumed. Redis, Mongo and the mock need no migration.
+
+Size the TTL for your redelivery horizon and this stays a corner case; the column
+is what makes the corner safe rather than silent.
+
 ## Idempotency vs the inbox
 
 Both dedupe, at different layers: idempotency dedupes **inbound operations** by

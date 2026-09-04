@@ -113,7 +113,7 @@ lifecycle = LifecyclePlan.from_modules(
 | Transactions | route in the module `tx` set | coordinates Postgres-backed ports on one connection |
 | Analytics | `AnalyticsSpec.name` (`analytics`) | named, parameterized warehouse SQL — optional |
 | Outbox / inbox | `OutboxSpec.name` (`outboxes`), `InboxSpec.name` (`inboxes`) | transactional outbox + consumer-side dedup inbox |
-| Idempotency | `IdempotencySpec.name` (`idempotencies`) | co-located store — the record commits inside the business transaction |
+| Idempotency | `IdempotencySpec.name` (`idempotencies`) | co-located store — the record commits inside the business transaction; add the optional `owner uuid` column to fence a reclaimed claim ([idempotency](../writing-operation/idempotency.md)) |
 | Counter | `CounterSpec.name` (`counters`) | atomic upsert-increment over an app-provided table (admin enumeration included) |
 | Procedures | `ProcedureSpec.name` (`procedures`) | named, governed SQL command / compute |
 | Durable execution | `durable_step` / `durable_run` / `durable_schedule` | step memo, run store, and cron schedules — optional |
