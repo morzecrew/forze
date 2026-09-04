@@ -31,6 +31,7 @@ from psycopg import sql
 from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.adapters.idempotency import (
+    _LAST_PROBE,  # pyright: ignore[reportPrivateUsage]
     _UNFENCED_RELATIONS,  # pyright: ignore[reportPrivateUsage]
     PostgresIdempotencyStore,
 )
@@ -284,3 +285,87 @@ class TestDetectionInsideTheBusinessTransaction:
             await store.begin(OP, key, HASH)
 
         assert ei.value.kind == ExceptionKind.CONFLICT
+
+
+class TestTheColumnArrivingUnderARunningProcess:
+    """The migration is documented as something a live deployment can apply.
+
+    So the *absent* answer has a shelf life: cached for the life of the process it would
+    leave every already-running worker unfenced until a restart nobody was told to perform,
+    which is the failure mode of a safety net that reports itself as installed.
+    """
+
+    async def test_fencing_activates_without_a_restart(self, pg_client: PostgresClient) -> None:
+        table = await _table(pg_client, owner_column=False)
+        owner = uuid4()
+        # One introspector across both stores — the shared, long-lived one a deployment
+        # wires, which is what makes the cached answer sticky in the first place.
+        introspector = PostgresIntrospector(client=pg_client)
+
+        def store() -> PostgresIdempotencyStore:
+            return PostgresIdempotencyStore(
+                client=pg_client,
+                spec=IdempotencySpec(name="idem", ttl=timedelta(hours=1)),
+                config=PostgresIdempotencyConfig(relation=("public", table)),
+                owner_provider=lambda: owner,
+                introspector=introspector,
+            )
+
+        assert await store().begin(OP, "before-migration", HASH) is None
+
+        await pg_client.execute(
+            sql.SQL("ALTER TABLE {table} ADD COLUMN owner UUID").format(
+                table=sql.Identifier("public", table)
+            )
+        )
+        _LAST_PROBE.pop(f"public.{table}", None)  # stand in for the cooldown elapsing
+
+        assert await store().begin(OP, "after-migration", HASH) is None
+
+        row = await pg_client.fetch_one(
+            sql.SQL("SELECT owner FROM {table} WHERE idem_key = {key}").format(
+                table=sql.Identifier("public", table), key=sql.Placeholder()
+            ),
+            ["after-migration"],
+            row_factory="tuple",
+        )
+
+        assert row is not None
+        assert row[0] == owner
+
+    async def test_the_cooldown_holds_between_probes(self, pg_client: PostgresClient) -> None:
+        # The other half: without a cooldown this would be a catalog round trip on every
+        # operation against an un-migrated table, which is the cost the cache exists to
+        # avoid. Asserted through behaviour — the stale answer stands until it lapses.
+        table = await _table(pg_client, owner_column=False)
+        introspector = PostgresIntrospector(client=pg_client)
+
+        def store() -> PostgresIdempotencyStore:
+            return PostgresIdempotencyStore(
+                client=pg_client,
+                spec=IdempotencySpec(name="idem", ttl=timedelta(hours=1)),
+                config=PostgresIdempotencyConfig(relation=("public", table)),
+                owner_provider=uuid4,
+                introspector=introspector,
+            )
+
+        assert await store().begin(OP, "first", HASH) is None
+
+        await pg_client.execute(
+            sql.SQL("ALTER TABLE {table} ADD COLUMN owner UUID").format(
+                table=sql.Identifier("public", table)
+            )
+        )
+
+        assert await store().begin(OP, "second", HASH) is None
+
+        row = await pg_client.fetch_one(
+            sql.SQL("SELECT owner FROM {table} WHERE idem_key = {key}").format(
+                table=sql.Identifier("public", table), key=sql.Placeholder()
+            ),
+            ["second"],
+            row_factory="tuple",
+        )
+
+        assert row is not None
+        assert row[0] is None

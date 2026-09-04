@@ -56,9 +56,11 @@ ALTER TABLE <your idempotency table> ADD COLUMN owner uuid;
 ```
 
 It is nullable and additive, so nothing breaks before you run it and existing rows
-need no backfill. Until you do, that table runs without the refusal above — the
-store logs the relation once at startup so the state is visible rather than
-assumed. Redis, Mongo and the mock need no migration.
+need no backfill, and you can apply it to a running deployment — the store notices
+the column within a minute and starts fencing, no restart required. Until you run
+it, that table works exactly as before but without the refusal above, and the store
+logs the relation once so the state is visible rather than assumed. Redis, Mongo and
+the mock need no migration.
 
 Size the TTL for your redelivery horizon and this stays a corner case; the column
 is what makes the corner safe rather than silent.
