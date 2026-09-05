@@ -1,6 +1,6 @@
 # RFC 0046 — Durable-store tenant resolution
 
-- **Status:** 📝 Draft (execution-ready — one PR)
+- **Status:** ✅ Complete — shipped 2026-09-05
 - **Scope:** The durable-execution plane resolves a tenant twice per operation and
   gets two different answers. A caller-supplied `tenant_id` decides the row's tag
   and its scoped id while the *relation* it lands in is resolved from the binding,
