@@ -8,7 +8,7 @@ from .deps import (
 )
 from .fingerprint import ensure_dsn_fingerprint, ensure_structured_fingerprint
 from .integration_config import TenantAwareIntegrationConfig
-from .mixins import TenancyMixin
+from .mixins import TenancyMixin, effective_tenant
 from .ports import TenantManagementPort, TenantProviderPort, TenantResolverPort
 from .provisioning import (
     CompositeTenantProvisioner,
@@ -63,6 +63,7 @@ __all__ = [
     "CompositeTenantProvisioner",
     "TenantAwareIntegrationConfig",
     "TenancyMixin",
+    "effective_tenant",
     "TENANT_ID_HEADER",
     "coalesce_tenant_request_hints",
     "parse_tenant_hint",

@@ -11,6 +11,7 @@ require_mongo()
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, final
+from uuid import UUID
 
 import attrs
 from pymongo.asynchronous.collection import AsyncCollection
@@ -78,22 +79,31 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     # ....................... #
 
-    async def _collection(self) -> AsyncCollection[JsonDict]:
-        db_name, coll_name = await resolve_mongo_collection(
-            self.config.collection,
-            self._tenant_id_for_resolve(),
-        )
+    async def _collection(self, tenant_id: UUID | None = None) -> AsyncCollection[JsonDict]:
+        """Resolve the collection, under *tenant_id* when the caller has already settled it.
+
+        Only :meth:`put` passes one — it is the sole verb that accepts an explicit tenant,
+        and the collection it writes into has to be the one the stored ``_id`` is scoped for.
+        """
+
+        if tenant_id is None:
+            tenant_id = self._tenant_id_for_resolve()
+
+        db_name, coll_name = await resolve_mongo_collection(self.config.collection, tenant_id)
+
         return await self.client.collection(coll_name, db_name=db_name)
 
     # ....................... #
 
     async def put(self, record: DurableScheduleRecord) -> None:
-        coll = await self._collection()
+        # One effective tenant for the stored field, the scoped ``_id`` *and* the collection.
+        # A record naming a tenant the caller is not bound to is refused; one naming a tenant
+        # where nothing is bound resolves the collection under it, so the schedule lands
+        # where that tenant's scheduler will look for it rather than in the unbound
+        # collection under an ``_id`` nobody composes.
+        tenant_id = self._effective_tenant(record.tenant_id)
+        coll = await self._collection(tenant_id)
         now = utcnow()
-        # Tag the schedule with the bound tenant so a bound scheduler's claim matches it.
-        tenant_id = (
-            record.tenant_id if record.tenant_id is not None else self._tenant_id_for_resolve()
-        )
 
         await self.client.update_one_upsert(
             coll,

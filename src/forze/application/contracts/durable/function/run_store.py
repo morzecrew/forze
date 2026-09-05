@@ -163,6 +163,24 @@ class DurableRunStorePort(Protocol):
     Single-relation, tagged-tier tenancy (a ``tenant_id`` column): recovery scans across
     tenants and re-binds each run's tenant. Per-tenant-schema (namespace) recovery is a
     future extension.
+
+    **What a bound tenant reaches.** Every implementation answers this the same way, and the
+    shared conformance battery holds them to it:
+
+    - The verbs taking a run id — :meth:`begin`, :meth:`renew`, :meth:`load` and every
+      terminal write — reach that tenant's runs **and untagged ones**. The untagged arm is
+      what keeps a run belonging to no tenant completable: without it such a run's terminal
+      write would match nothing, and it would be reclaimed and re-run forever.
+    - The verbs that enumerate or control — ``claim_abandoned``, ``list_runs``,
+      ``request_cancel``, ``refuse_cancel`` — match the tenant **exactly**. Widening an
+      enumeration is a disclosure, and none of them has the liveness problem above.
+    - Unbound reaches everything. That is the recovery and single-tenant role, and it is
+      what lets one sweep serve every tenant on a tagged relation.
+
+    :meth:`enqueue` takes an explicit *tenant_id*: it is used for the row's tag, its scoped
+    idempotency key and the relation the row lands in, all three. Passing one that
+    contradicts a bound tenant is refused (``authentication`` / ``tenant_mismatch``) rather
+    than applied to some of the three.
     """
 
     def enqueue(
