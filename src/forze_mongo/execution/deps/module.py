@@ -26,6 +26,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStoreDepKey,
     DurableScheduleStoreDepKey,
 )
+from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import (
@@ -60,6 +61,7 @@ from .configs import (
     MongoDurableRunConfig,
     MongoDurableScheduleConfig,
     MongoDurableStepConfig,
+    MongoHlcCheckpointConfig,
     MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoOutboxConfig,
@@ -73,6 +75,7 @@ from .factories import (
     ConfigurableMongoDurableRun,
     ConfigurableMongoDurableSchedule,
     ConfigurableMongoDurableStep,
+    ConfigurableMongoHlcCheckpoint,
     ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoOutboxAdmin,
@@ -177,6 +180,14 @@ class MongoDepsModule(DepsModule):
     Monotonic sequence allocation as one atomic ``$inc`` upsert per operation. The admin
     (enumeration) port is registered from the same config, so a wired counter is always
     exportable."""
+
+    hlc_checkpoint: MongoHlcCheckpointConfig | None = attrs.field(default=None)
+    """Optional Mongo HLC high-water-mark store (node-global; default unwired).
+
+    When set, the outbox flush persists the runtime's clock mark in the business transaction
+    so ``hlc_checkpoint_recovery_lifecycle_step`` can resume the clock above its prior
+    emissions after a restart, keeping HLC monotonicity across process boundaries. Unset
+    leaves the clock resuming from ``(0, 0)`` (the prior behavior)."""
 
     durable_step: MongoDurableStepConfig | None = attrs.field(default=None)
     """Optional Mongo durable-function step-memo journal (execution-scoped).
@@ -439,6 +450,13 @@ class MongoDepsModule(DepsModule):
         if self.durable_schedule is not None:
             registrations[DurableScheduleStoreDepKey] = ConfigurableMongoDurableSchedule(
                 config=self.durable_schedule
+            )
+
+        if self.hlc_checkpoint is not None:
+            # Node-global singleton, like the durable stores above: one clock per runtime,
+            # so the mark it persists is not addressed by a route name.
+            registrations[HlcCheckpointDepKey] = ConfigurableMongoHlcCheckpoint(
+                config=self.hlc_checkpoint
             )
 
         return registrations

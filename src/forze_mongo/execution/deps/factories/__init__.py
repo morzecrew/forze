@@ -7,6 +7,7 @@ from .durable import (
     ConfigurableMongoDurableSchedule,
     ConfigurableMongoDurableStep,
 )
+from .hlc_checkpoint import ConfigurableMongoHlcCheckpoint
 from .idempotency import ConfigurableMongoIdempotency
 from .inbox import ConfigurableMongoInbox
 from .outbox import (
@@ -23,6 +24,7 @@ from .tx import mongo_txmanager
 __all__ = [
     "ConfigurableMongoCounter",
     "ConfigurableMongoCounterAdmin",
+    "ConfigurableMongoHlcCheckpoint",
     "ConfigurableMongoDocument",
     "ConfigurableMongoDurableRun",
     "ConfigurableMongoDurableSchedule",

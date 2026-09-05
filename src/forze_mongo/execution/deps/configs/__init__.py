@@ -7,6 +7,7 @@ from .durable import (
     MongoDurableScheduleConfig,
     MongoDurableStepConfig,
 )
+from .hlc_checkpoint import MongoHlcCheckpointConfig
 from .idempotency import MongoIdempotencyConfig
 from .inbox import MongoInboxConfig
 from .outbox import MongoOutboxConfig
@@ -24,6 +25,7 @@ from .search import (
 __all__ = [
     "MongoAtlasEngine",
     "MongoCounterConfig",
+    "MongoHlcCheckpointConfig",
     "MongoDocumentConfig",
     "MongoDurableRunConfig",
     "MongoDurableScheduleConfig",

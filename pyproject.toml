@@ -550,6 +550,11 @@ scenario = "forze_dst.conformance.graph:run_bounded_neighbors"
 dep_keys = ["graph_command", "graph_query"]
 engines = ["mock", "neo4j"]
 
+[tool.conformance_manifest.planes.hlc_checkpoint]
+scenario = "tests.support.hlc_checkpoint_conformance:HLC_CHECKPOINT_BATTERY"
+dep_keys = ["hlc_checkpoint"]
+engines = ["mock", "postgres", "mongo"]
+
 [tool.conformance_manifest.planes.graph_management]
 scenario = "tests.support.graph_management_conformance:GRAPH_MANAGEMENT_BATTERY"
 dep_keys = ["graph_management"]
@@ -765,11 +770,11 @@ mock against Vault for the fetch/rotate/verify-before-promote sequence.\
 
 [[tool.conformance_manifest.exempt_groups]]
 kind = "single-engine"
-keys = ["hlc_checkpoint", "procedure_command", "http_service"]
+keys = ["procedure_command", "http_service"]
 reason = """
-One implementation each (Postgres for the HLC checkpoint and the procedure port, forze_http \
-for the outbound service port) and no second backend to disagree with. Each is exercised \
-directly against its real server; there is simply no second party to a differential.\
+One implementation each (Postgres for the procedure port, forze_http for the outbound \
+service port) and no second backend to disagree with. Each is exercised directly against \
+its real server; there is simply no second party to a differential.\
 """
 
 [[tool.conformance_manifest.exempt_groups]]

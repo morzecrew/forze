@@ -136,3 +136,22 @@ rows drain oldest-first, the inverse of Postgres `NULLS LAST` (both best-effort)
 ```javascript
 db.outbox.createIndex({ outbox_route: 1, status: 1, available_at: 1, hlc: 1, created_at: 1, id: 1 })
 ```
+
+#### Restart monotonicity on Mongo
+
+The high-water mark works the same way and needs **no index at all**: the write is
+keyed on the document `_id`, and recovery reads one document per node. Wire it with
+`MongoDepsModule(hlc_checkpoint=MongoHlcCheckpointConfig(collection=("app", "hlc_checkpoint")))`
+and the same `hlc_checkpoint_recovery_lifecycle_step()`:
+
+```javascript
+// { _id: <node_key>, hlc: <packed HlcTimestamp> } — created on first advance.
+```
+
+The advance is one `$max` upsert, which is what `GREATEST` does in the Postgres
+statement: the server keeps the larger value, so concurrent writers never lower the
+mark. It rides the ambient session, so inside a transaction it commits — or rolls
+back — with the rows it stamps. **Mongo transactions need a replica set**, so on a
+standalone server an outbox route with `require_transaction=True` cannot run at all,
+and with it the checkpoint has nothing to ride; the mark is only atomic where the
+flush itself is.
