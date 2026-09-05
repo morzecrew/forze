@@ -5490,6 +5490,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#what-a-bound-tenant-reaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a bound tenant reaches
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stopping-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6161,6 +6172,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#what-a-bound-tenant-reaches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a bound tenant reaches
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#stopping-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6405,6 +6427,44 @@ queue's delayed jobs.</p>
 <p>A <code>DurableFunctionEventSpec</code> binds an event channel to its payload codec. A run's status is
 a <code>DurableRunStatus</code> — <code>pending</code> / <code>running</code> / <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code>
 / <code>cancelled</code> / <code>timed_out</code>.</p>
+<h2 id="what-a-bound-tenant-reaches">What a bound tenant reaches<a class="headerlink" href="#what-a-bound-tenant-reaches" title="Permanent link">&para;</a></h2>
+<p>Every store behind these ports answers this the same way, and the shared conformance battery
+holds all three to it.</p>
+<table>
+<thead>
+<tr>
+<th>Verbs</th>
+<th>Reach when a tenant is bound</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>begin</code>, <code>renew</code>, <code>load</code>, <code>complete</code> / <code>fail</code> / <code>mark_*</code></td>
+<td>that tenant's runs <strong>and untagged ones</strong></td>
+</tr>
+<tr>
+<td><code>claim_abandoned</code>, <code>list_runs</code>, <code>request_cancel</code>, <code>refuse_cancel</code></td>
+<td>that tenant's runs, exactly</td>
+</tr>
+<tr>
+<td>all of them, unbound</td>
+<td>everything — the recovery and single-tenant role</td>
+</tr>
+</tbody>
+</table>
+<p>The untagged arm on the first row is liveness, not laxity. A run tagged with no tenant belongs
+to none, and a terminal write that matched nothing would leave it running until its lease
+expired, reclaimed, and re-run — forever. The second row has no such problem, and widening an
+enumeration is a disclosure, so it stays exact.</p>
+<p><code>enqueue</code> and <code>put</code> accept an explicit tenant. It is used for the relation, the stored tag and
+the scoped id <strong>together</strong>, or refused: naming a tenant that contradicts a bound one raises
+<code>authentication</code> / <code>tenant_mismatch</code>, while naming one where nothing is bound is honoured in
+full. A <code>tenant_aware</code> store reads its binding first, so naming a tenant does not stand in for
+being bound to one.</p>
+<p>The schedule store expresses tenancy in its key rather than in a predicate — the stored id is
+the schedule id scoped by its tenant — so it has no untagged allowance: a fallback lookup
+would let two keys answer one <code>load</code>, and the compare-and-set that makes firing exactly-once
+depends on that key being exact.</p>
 <h2 id="stopping-a-run">Stopping a run<a class="headerlink" href="#stopping-a-run" title="Permanent link">&para;</a></h2>
 <p><code>request_cancel(run_id)</code> is the self-hosted tier's answer to the workflow tier's <code>cancel</code>.
 It is <strong>cooperative and only cooperative</strong>: it records an ask and returns whether the ask was

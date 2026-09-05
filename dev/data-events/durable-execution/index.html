@@ -6448,6 +6448,25 @@ runner re-binds each run's tenant to execute it. On a <strong>namespace</strong>
 <code>relation</code> resolver, one table per tenant schema) pass <code>tenants=…</code> to the lifecycle step: each
 sweep binds every assigned tenant in turn and recovers its table — shard the tenant set across
 instances to parallelize.</p>
+<p>Each operation resolves <strong>one</strong> tenant and uses it for everything it decides — the table, the
+row's tag and the scoped id together. <code>enqueue(tenant_id=…)</code> and a schedule record carrying a
+<code>tenant_id</code> are therefore honoured in full, including which table the row lands in, so a
+control plane bound to nothing can register work for a tenant and that tenant's scanner will
+find it. Naming a tenant that <strong>contradicts</strong> a bound one is refused
+(<code>authentication</code> / <code>tenant_mismatch</code>) rather than applied to some of the three.</p>
+<p>What a bound caller reaches splits by what the verb does. The verbs taking a run id —
+<code>begin</code>, <code>renew</code>, <code>load</code> and every terminal write — reach that tenant's runs and <strong>untagged</strong>
+ones; the untagged arm is what keeps a run belonging to no tenant completable, since a
+terminal write that matched nothing would leave it reclaimed and re-run forever. The verbs
+that enumerate or control — the recovery scan, <code>list_runs</code>, <code>request_cancel</code>, <code>refuse_cancel</code>
+— match the tenant exactly. Unbound reaches everything, which is what lets one sweep serve
+every tenant.</p>
+<p>Declaring <code>required_tenant_isolation</code> covers the durable routes: a <code>durable_step</code>,
+<code>durable_run</code> or <code>durable_schedule</code> wired below the declared floor now fails at wiring rather
+than passing on the strength of the other planes. Note the coupling that creates —
+<code>tenant_aware=True</code> on a run store fails closed when nothing is bound, which is how the
+cross-tenant sweep runs, so a deployment declaring <code>tagged</code> runs per-tenant recovery
+(<code>tenants=…</code>) instead.</p>
 <h3 id="stopping-a-run">Stopping a run<a class="headerlink" href="#stopping-a-run" title="Permanent link">&para;</a></h3>
 <p>A "Stop" button on a self-hosted run goes through <code>request_cancel</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">request_cancel</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">run_id</span><span class="p">)</span>      <span class="c1"># True if the ask was recorded</span>
