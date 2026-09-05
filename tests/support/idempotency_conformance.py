@@ -36,17 +36,32 @@ and which nothing here asserted: every store tested expiry against a different s
 oracle seven ways, Postgres once, Redis not at all), so the plane had no statement that
 they agree about it either.
 
-**What is deliberately not asserted, and why.** An operation that outlives its own claim
-may find the key reclaimed — by a *duplicate of the same request*, which carries the same
-``op``, key and ``payload_hash``. Nothing in this port's signature distinguishes the two
-callers, so no store can refuse the late one: verified against all four, including the
-Redis compare-and-set, whose byte-exact fence matches because the reclaimer wrote
-byte-identical claim metadata. Fencing it needs an ownership handle the contract does not
-carry, so a check for it would fail everywhere and prove only that the promise is
-unmakeable. What each store does when the claim lapsed and *nobody* reclaimed it follows
-from its expiry mechanism rather than a decision — Redis and the oracle refuse (the claim
-is simply gone), Postgres and Mongo complete the record — and both outcomes are safe, so
-asserting either would freeze an accident into a contract.
+12. A claim reclaimed by another invocation cannot be completed or released by the one
+    that lost it — the ownership fence, which needs an owner wired on both stores.
+13. A second ``commit`` for a key that already completed is refused, not an overwrite.
+
+Check 12 is the one that used to be impossible. Two duplicates of one request carry the
+same ``op``, key and ``payload_hash``, so an operation that outlived its window and found
+the key reclaimed matched the reclaimer's live claim on every predicate the port's
+signature permits — including the Redis compare-and-set, whose byte-exact fence matched
+because the reclaimer wrote byte-identical metadata. The claim now carries the invocation
+that took it, so the check the battery once documented as unmakeable is the check it runs.
+It fences only where an owner reaches both sides: the harness wires distinct owners
+explicitly, which is what a deployment's factory does and a direct construction does not.
+
+**What is still deliberately not asserted.** What each store does when the claim lapsed
+and *nobody* reclaimed it follows from its expiry mechanism rather than a decision — Redis
+and the oracle refuse (the claim is simply gone), Postgres and Mongo complete the record —
+and both outcomes are safe, so asserting either would freeze an accident into a contract.
+Ownership deliberately does not change that: the work is the caller's own, and refusing it
+would roll back a business transaction that already succeeded.
+
+Nor is the *degraded* direction asserted — a caller with no owner meeting a claim that has
+one. Redis refuses it (nothing ownerless matches an owned claim byte-for-byte) where Mongo
+and the oracle accept it, and both readings are defensible, since an invocation commits
+only a claim it took: meeting someone else's owner means the key was reclaimed. Pinning
+either would freeze one store's mechanism into the contract, which is what checks 10 and 11
+already had to avoid.
 """
 
 from __future__ import annotations
@@ -55,6 +70,7 @@ import asyncio
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
+from uuid import UUID, uuid4
 
 import attrs
 import pytest
@@ -82,9 +98,6 @@ RESULT_B = b'{"outcome":"second"}'
 class IdempotencyHarness:
     """One store's seam for the battery."""
 
-    store: IdempotencyPort
-    """The store under test."""
-
     backend: str
     """Label used in assertion messages, so a failure names the store that disagreed."""
 
@@ -96,12 +109,15 @@ class IdempotencyHarness:
     order-dependent conformance suite is one that passes for the wrong reason.
     """
 
-    store_with_ttl: Callable[[timedelta], IdempotencyPort]
-    """Mint a second store over the same backing state with a different dedup window.
+    store_for: Callable[[timedelta, UUID | None], IdempotencyPort]
+    """Mint a store over the same backing state with a given dedup window and claim owner.
 
-    The TTL checks need a claim to lapse while the test watches. Rather than wait out
-    :attr:`store`'s window (an hour, so the other checks never race the clock), they mint a
-    short-window store and sleep past it — the same rows, a different `IdempotencySpec.ttl`.
+    Two seams in one because check 12 needs both at once. The TTL checks would otherwise
+    wait out :attr:`store`'s window (an hour, so the other checks never race the clock), so
+    they mint a short-window store and sleep past it — the same rows, a different
+    ``IdempotencySpec.ttl``. The ownership check additionally needs two stores that are
+    *different invocations*, which is what the owner argument supplies; passing ``None``
+    models a store wired without a provider.
     """
 
     min_ttl: timedelta = timedelta(milliseconds=50)
@@ -112,6 +128,28 @@ class IdempotencyHarness:
     and only need a margin the runner cannot eat. A single shared value would make every
     leg pay the slowest store's floor.
     """
+
+    ttl: timedelta = timedelta(hours=1)
+    """The window :attr:`store` runs under — far longer than any non-TTL check needs, so
+    the battery asserts promises instead of racing the clock."""
+
+    owner: UUID = attrs.field(factory=uuid4)
+    """The invocation :attr:`store` claims as. Wired rather than absent so every check runs
+    the fenced path a deployment runs: a fence that refused its own owner's ``commit``
+    would fail check 2 here, not only the ownership check."""
+
+    # ....................... #
+
+    @property
+    def store(self) -> IdempotencyPort:
+        """The store under test — one invocation, the long window.
+
+        Derived from :attr:`store_for` rather than passed separately, so a leg cannot wire
+        a default store whose owner disagrees with :attr:`owner` and quietly turn check 12
+        into an assertion about two anonymous stores.
+        """
+
+        return self.store_for(self.ttl, self.owner)
 
 
 Check = Callable[[IdempotencyHarness], Any]
@@ -241,6 +279,31 @@ async def check_fail_leaves_a_completed_record_intact(h: IdempotencyHarness) -> 
     assert replayed.result == RESULT_B, h.backend
 
 
+async def check_commit_over_a_completed_record_is_refused(h: IdempotencyHarness) -> None:
+    """A key that already completed has no pending claim, so a second ``commit`` is refused.
+
+    The other half of check 9, and the half a store can fail while passing it: an absent key
+    is easy to reject, a *done* one requires actually looking at the status. A store that
+    overwrote it would replace a delivered result with a later operation's — the duplicate
+    that arrives next then replays an answer nobody was given.
+    """
+
+    key = h.key()
+
+    assert await h.store.begin(OP, key, HASH_A) is None, h.backend
+    await h.store.commit(OP, key, HASH_A, _record(RESULT_A))
+
+    with pytest.raises(CoreException) as ei:
+        await h.store.commit(OP, key, HASH_A, _record(RESULT_B))
+
+    assert ei.value.kind == ExceptionKind.CONFLICT, h.backend
+
+    replayed = await h.store.begin(OP, key, HASH_A)
+
+    assert replayed is not None, h.backend
+    assert replayed.result == RESULT_A, h.backend
+
+
 async def check_commit_without_a_matching_claim_is_refused(h: IdempotencyHarness) -> None:
     """Committing a result nobody claimed is a conflict, not a silent write.
 
@@ -268,7 +331,7 @@ async def check_a_lapsed_claim_is_reclaimable(h: IdempotencyHarness) -> None:
     released does not hold its key until someone intervenes."""
 
     key = h.key()
-    short = h.store_with_ttl(h.min_ttl)
+    short = h.store_for(h.min_ttl, h.owner)
 
     assert await short.begin(OP, key, HASH_A) is None, h.backend
     await _sleep_past(h.min_ttl)
@@ -284,13 +347,57 @@ async def check_a_lapsed_record_re_executes(h: IdempotencyHarness) -> None:
     """
 
     key = h.key()
-    short = h.store_with_ttl(h.min_ttl)
+    short = h.store_for(h.min_ttl, h.owner)
 
     assert await short.begin(OP, key, HASH_A) is None, h.backend
     await short.commit(OP, key, HASH_A, _record())
     await _sleep_past(h.min_ttl)
 
     assert await h.store.begin(OP, key, HASH_A) is None, h.backend
+
+
+# ....................... #
+
+
+async def check_a_reclaimed_claim_is_not_the_previous_owners_to_finish(
+    h: IdempotencyHarness,
+) -> None:
+    """An operation whose claim was reclaimed can neither complete nor release it.
+
+    The scenario the plane exists to prevent, and the one nothing but the owner can tell
+    apart: A overruns its dedup window, duplicate B reclaims the key with the *same* ``op``,
+    key and ``payload_hash``, and A then reports in. Without an owner A's ``commit`` matches
+    B's live claim on every predicate the port carries, and a third duplicate replays A's
+    result while B is still executing — two executions, one cached answer, and the record
+    describing whichever committed first rather than whichever effects survived.
+
+    The trailing refusal is the control: it is what makes "B still holds the claim"
+    observable, so a store that satisfied the first two assertions by dropping the claim
+    entirely does not pass.
+    """
+
+    key = h.key()
+    other = uuid4()
+
+    lapsing = h.store_for(h.min_ttl, h.owner)
+    reclaimer = h.store_for(h.ttl, other)
+
+    assert await lapsing.begin(OP, key, HASH_A) is None, h.backend
+    await _sleep_past(h.min_ttl)
+
+    assert await reclaimer.begin(OP, key, HASH_A) is None, h.backend
+
+    with pytest.raises(CoreException) as ei:
+        await lapsing.commit(OP, key, HASH_A, _record())
+
+    assert ei.value.kind == ExceptionKind.CONFLICT, h.backend
+
+    await lapsing.fail(OP, key, HASH_A)
+
+    with pytest.raises(CoreException) as ei:
+        await reclaimer.begin(OP, key, HASH_A)
+
+    assert ei.value.kind == ExceptionKind.CONFLICT, h.backend
 
 
 # ....................... #
@@ -305,6 +412,8 @@ IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
     check_fail_ignores_a_claim_it_does_not_own,
     check_fail_leaves_a_completed_record_intact,
     check_commit_without_a_matching_claim_is_refused,
+    check_commit_over_a_completed_record_is_refused,
     check_a_lapsed_claim_is_reclaimable,
     check_a_lapsed_record_re_executes,
+    check_a_reclaimed_claim_is_not_the_previous_owners_to_finish,
 )

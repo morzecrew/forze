@@ -6,10 +6,15 @@ from datetime import datetime, timedelta
 from typing import (
     final,
 )
+from uuid import UUID
 
 import attrs
 
-from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
+from forze.application.contracts.idempotency import (
+    ClaimOwnerMixin,
+    IdempotencyPort,
+    IdempotencyRecord,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow
 from forze_mock.adapters._journal import record_undo
@@ -26,6 +31,8 @@ class _MockIdemEntry:
 
     expires_at: datetime
     record: IdempotencyRecord | None = None
+    owner: UUID | None = None
+    """Invocation that took the claim, when one was available (see ``ClaimOwnerMixin``)."""
 
 
 # ....................... #
@@ -33,7 +40,7 @@ class _MockIdemEntry:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
+class MockIdempotencyAdapter(MockTenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     """In-memory idempotency adapter.
 
     Mirrors the Redis adapter's TTL semantics: both *pending* claims and
@@ -41,6 +48,12 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
     and expired entries are treated as absent — checked lazily on access,
     no background sweeper. :meth:`fail` releases a matching pending claim
     so a retry can re-execute before the TTL elapses.
+
+    Fences :meth:`commit` and :meth:`fail` on the claim's owner like every real store,
+    rather than modelling the weaker behaviour: an oracle that skipped the fence would
+    let DST explore an interleaving the deployed system refuses. Constructed directly
+    (as DST does) it has no ``owner_provider`` and so no fence — the same degradation
+    the real stores make, and the reason the conformance check wires one explicitly.
     """
 
     state: MockState
@@ -99,6 +112,22 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
 
     # ....................... #
 
+    @staticmethod
+    def _owned(entry: _MockIdemEntry | None, owner: UUID | None) -> bool:
+        """Whether *owner* may complete or release the claim in *entry*.
+
+        Both sides have to carry an identity for the fence to mean anything: a store wired
+        without a provider, or a claim taken before one existed, degrades to the previous
+        behaviour rather than refusing work it cannot prove is foreign.
+        """
+
+        if entry is None or entry.owner is None or owner is None:
+            return True
+
+        return entry.owner == owner
+
+    # ....................... #
+
     async def begin(
         self,
         op: str,
@@ -115,7 +144,7 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
             current = self._live(k, now)
 
             if current is None:
-                claim = _MockIdemEntry(expires_at=now + self.ttl)
+                claim = _MockIdemEntry(expires_at=now + self.ttl, owner=self.claim_owner())
                 self.state.idempotency[k] = ("pending", payload_hash, claim)
                 return None
 
@@ -152,12 +181,28 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
             if current is None:
                 raise exc.conflict("Idempotency commit failed (missing key)")
 
-            _, existing_hash, _ = current
+            status, existing_hash, entry = current
 
             if existing_hash != payload_hash:
                 raise exc.conflict("Payload hash mismatch")
 
-            done = _MockIdemEntry(expires_at=now + self.ttl, record=record)
+            if status != "pending":
+                # No pending claim of anyone's: the key already completed. Overwriting it
+                # would replace a delivered result with this operation's, and the next
+                # duplicate would replay an answer nobody was given. Postgres and Mongo
+                # refuse this through their ``status = 'pending'`` filter; the oracle has
+                # to check it, or it models a store no deployment runs.
+                raise exc.conflict("Idempotency commit failed (non-pending claim)")
+
+            owner = self.claim_owner()
+
+            if not self._owned(entry, owner):
+                # The claim under this key belongs to another invocation — a duplicate that
+                # reclaimed it after this one overran its window. Writing the record here
+                # would replace that operation's claim with this one's result.
+                raise exc.conflict("Idempotency commit failed (claim reclaimed)")
+
+            done = _MockIdemEntry(expires_at=now + self.ttl, record=record, owner=owner)
 
             if self.transactional:
                 # Participate in the mock transaction: record how to revert this write so
@@ -200,11 +245,14 @@ class MockIdempotencyAdapter(MockTenancyMixin, IdempotencyPort):
             if current is None:
                 return  # claim expired, already released, or never taken
 
-            status, existing_hash, _ = current
+            status, existing_hash, entry = current
 
-            # Only release our own pending claim: a completed record or a claim
-            # for a different payload hash is left untouched.
+            # Only release our own pending claim: a completed record, a claim for a
+            # different payload hash, or one another invocation reclaimed is left untouched.
             if status != "pending" or existing_hash != payload_hash:
+                return
+
+            if not self._owned(entry, self.claim_owner()):
                 return
 
             del self.state.idempotency[k]

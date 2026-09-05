@@ -92,6 +92,23 @@ class InvocationContext:
 
     # ....................... #
 
+    def get_execution_id(self) -> UUID | None:
+        """Return the current invocation's execution id, or ``None`` outside one.
+
+        A bound accessor so wiring can hand it to an adapter the way ``get_tenant`` is
+        handed over — the idempotency stores fence a claim on it, and two duplicates of
+        one request are two invocations, which is exactly the pair their arguments cannot
+        tell apart. The *execution* id and not the correlation id: this one is minted
+        server-side per invocation, where the correlation id arrives in a client header
+        and could be forged into a way to steal someone else's claim.
+        """
+
+        metadata = self.__metadata.get()
+
+        return metadata.execution_id if metadata is not None else None
+
+    # ....................... #
+
     def get_authn(self) -> AuthnIdentity | None:
         """Return the current authenticated identity."""
 

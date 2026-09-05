@@ -8,7 +8,7 @@ import attrs
 
 from ....adapters.idempotency import PostgresIdempotencyStore
 from ..configs.idempotency import PostgresIdempotencyConfig
-from ..keys import PostgresClientDepKey
+from ..keys import PostgresClientDepKey, PostgresIntrospectorDepKey
 
 if TYPE_CHECKING:
     from forze.application.contracts.idempotency import IdempotencySpec
@@ -37,4 +37,8 @@ class ConfigurablePostgresIdempotency:
             config=self.config,
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
+            owner_provider=ctx.inv_ctx.get_execution_id,
+            # Detects the optional ``owner`` column; its cache keeps that one query per
+            # relation rather than one per operation.
+            introspector=ctx.deps.provide(PostgresIntrospectorDepKey),
         )

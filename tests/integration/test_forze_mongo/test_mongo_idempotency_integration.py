@@ -21,6 +21,7 @@ import pytest
 from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import utcnow
 from forze_mongo.adapters.idempotency import MongoIdempotencyStore
 from forze_mongo.execution.deps.configs import MongoIdempotencyConfig
 from forze_mongo.kernel.client import MongoClient
@@ -43,6 +44,7 @@ async def _store(
     ttl: timedelta = timedelta(hours=1),
     tenant: UUID | None = None,
     coll_name: str | None = None,
+    owner: UUID | None = None,
 ) -> MongoIdempotencyStore:
     db_name = (await client.db()).name
     tenant_aware = tenant is not None
@@ -56,6 +58,7 @@ async def _store(
         ),
         tenant_aware=tenant_aware,
         tenant_provider=(lambda: TenantIdentity(tenant_id=tenant)) if tenant else (lambda: None),
+        owner_provider=lambda: owner,
     )
 
 
@@ -316,3 +319,89 @@ async def test_operations_do_not_share_a_key(mongo_client: MongoClient) -> None:
 
     assert await store.begin(OP, key, HASH_A) is None
     assert await store.begin("cancel_order", key, HASH_A) is None
+
+
+async def test_one_invocation_claiming_twice_is_still_refused(
+    mongo_client: MongoClient,
+) -> None:
+    """The claim token and the owner answer different questions, and must stay separate.
+
+    ``begin`` tells its own fresh insert from a live document it merely read back by the
+    per-call ``claim_token``. The owner cannot do that job: it is deliberately *stable*
+    across one invocation's calls, so folding the two together would make an invocation's
+    second ``begin`` match its own earlier claim and read as a fresh insert — two callers
+    believing they hold the key, which is what the whole plane exists to prevent.
+    """
+
+    owner = uuid4()
+    store = await _store(mongo_client, owner=owner)
+    key = f"k-{uuid4().hex[:8]}"
+
+    assert await store.begin(OP, key, HASH_A) is None
+
+    with pytest.raises(CoreException) as ei:
+        await store.begin(OP, key, HASH_A)
+
+    assert ei.value.kind == ExceptionKind.CONFLICT
+
+
+async def test_a_document_without_an_owner_is_committable(mongo_client: MongoClient) -> None:
+    """A claim written before the ``owner`` field existed stays its caller's to complete.
+
+    The document has no ``owner`` key at all, and a Mongo equality filter on ``None``
+    matches a *missing* field as well as a null one — which is the whole reason the fence
+    can be added without a migration. An ``$exists``-style predicate would refuse these
+    documents forever and take live requests down through a rolling deploy.
+    """
+
+    coll_name = f"idem_{uuid4().hex[:8]}"
+    store = await _store(mongo_client, coll_name=coll_name, owner=uuid4())
+    key = f"k-{uuid4().hex[:8]}"
+
+    db_name = (await mongo_client.db()).name
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+
+    await coll.insert_one(
+        {
+            "_id": f"{len(OP)}:{OP}|{key}",
+            "op": OP,
+            "idem_key": key,
+            "payload_hash": HASH_A,
+            "tenant_id": None,
+            "status": "pending",
+            "result": None,
+            "expires_at": utcnow() + timedelta(hours=1),
+            "claim_token": uuid4().hex,
+        }
+    )
+
+    await store.commit(OP, key, HASH_A, IdempotencyRecord(result=RESULT))
+
+    replayed = await store.begin(OP, key, HASH_A)
+
+    assert replayed is not None
+    assert replayed.result == RESULT
+
+
+async def test_a_live_claim_of_another_invocation_is_still_a_conflict(
+    mongo_client: MongoClient,
+) -> None:
+    """A duplicate arriving while the first operation runs is refused, owner or not.
+
+    The other half of keeping the token and the owner apart: ``begin`` decides "is this
+    document mine, or one I read back" from the per-call token, never from the owner. A
+    second invocation reads back a live claim whose token *and* owner differ from its own,
+    and both facts must land it in the same place — in progress.
+    """
+
+    coll_name = f"idem_{uuid4().hex[:8]}"
+    first = await _store(mongo_client, coll_name=coll_name, owner=uuid4())
+    second = await _store(mongo_client, coll_name=coll_name, owner=uuid4())
+    key = f"k-{uuid4().hex[:8]}"
+
+    assert await first.begin(OP, key, HASH_A) is None
+
+    with pytest.raises(CoreException) as ei:
+        await second.begin(OP, key, HASH_A)
+
+    assert ei.value.kind == ExceptionKind.CONFLICT

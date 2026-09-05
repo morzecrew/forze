@@ -9,7 +9,7 @@ unowned-``fail`` promise had no Postgres coverage at all.
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -18,6 +18,7 @@ from psycopg import sql
 from forze.application.contracts.idempotency import IdempotencySpec
 from forze_postgres.adapters.idempotency import PostgresIdempotencyStore
 from forze_postgres.execution.deps.configs import PostgresIdempotencyConfig
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client import PostgresClient
 from tests.support.idempotency_conformance import (
     IDEMPOTENCY_BATTERY,
@@ -42,24 +43,29 @@ async def harness(pg_client: PostgresClient) -> IdempotencyHarness:
                 status       TEXT        NOT NULL,
                 result       BYTEA,
                 expires_at   TIMESTAMPTZ NOT NULL,
+                owner        UUID,
                 PRIMARY KEY (op, idem_key)
             )
             """
         ).format(table=sql.Identifier("public", table))
     )
 
-    def _store(ttl: timedelta) -> PostgresIdempotencyStore:
+    def _store(ttl: timedelta, owner: UUID | None) -> PostgresIdempotencyStore:
         return PostgresIdempotencyStore(
             client=pg_client,
             spec=IdempotencySpec(name="idem", ttl=ttl),
             config=PostgresIdempotencyConfig(relation=("public", table)),
+            owner_provider=lambda: owner,
+            # The migrated table, so the battery runs the owner-aware statements; the
+            # un-migrated and no-provider shapes are separate legs in this store's own
+            # suite, because each is a shipped configuration that fails differently.
+            introspector=PostgresIntrospector(client=pg_client),
         )
 
     return IdempotencyHarness(
-        store=_store(timedelta(hours=1)),
         backend="pg",
         key=lambda: f"battery-{uuid4().hex[:12]}",
-        store_with_ttl=_store,
+        store_for=_store,
     )
 
 

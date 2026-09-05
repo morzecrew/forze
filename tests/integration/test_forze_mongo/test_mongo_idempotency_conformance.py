@@ -9,7 +9,7 @@ the port" a statement rather than a structural-typing claim.
 from __future__ import annotations
 
 from datetime import timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -33,18 +33,18 @@ async def harness(mongo_client_replica: MongoClient) -> IdempotencyHarness:
 
     config = MongoIdempotencyConfig(collection=(db_name, f"idem_conf_{uuid4().hex[:8]}"))
 
-    def _store(ttl: timedelta) -> MongoIdempotencyStore:
+    def _store(ttl: timedelta, owner: UUID | None) -> MongoIdempotencyStore:
         return MongoIdempotencyStore(
             client=mongo_client_replica,
             spec=IdempotencySpec(name="idem", ttl=ttl),
             config=config,
+            owner_provider=lambda: owner,
         )
 
     return IdempotencyHarness(
-        store=_store(timedelta(hours=1)),
         backend="mongo",
         key=lambda: f"battery-{uuid4().hex[:12]}",
-        store_with_ttl=_store,
+        store_for=_store,
     )
 
 

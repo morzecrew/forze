@@ -17,6 +17,7 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.idempotency import IdempotencyWrap
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockDepsModule
+from forze_mock.execution.keys import MockStateDepKey
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -303,3 +304,57 @@ def test_hash_args_is_identical_across_processes() -> None:
     }
 
     assert len(set(digests.values())) == 1, f"idempotency hash varies by hash seed: {digests}"
+
+
+class TestClaimOwnerReachesTheStore:
+    """The wiring half of the ownership fence: an owner has to actually arrive.
+
+    The fence is only as good as what the factory hands the store, and the hook resolves
+    the port twice per operation — once for the wrap, once for the in-transaction commit —
+    so "the mechanism exists" and "a real invocation fences" are different claims. This
+    asserts the second one against the store's own state, not against a provider callable.
+    """
+
+    async def test_a_wired_store_records_the_invocation_id(self) -> None:
+        from uuid import uuid4
+
+        from forze.application.execution.context.invocation import InvocationMetadata
+
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+        metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+        async def handler(args: _Args) -> _Result:
+            return _Result(value=args.n)
+
+        with (
+            ctx.inv_ctx.bind_metadata(metadata=metadata),
+            ctx.inv_ctx.bind_idempotency("key-owner"),
+        ):
+            await mw(handler, _Args(n=1))
+
+        state = ctx.deps.provide(MockStateDepKey)
+        entries = [entry for (_ns, _op, _key), (_st, _ph, entry) in state.idempotency.items()]
+
+        assert entries, "the wrap stored no claim at all"
+        assert all(entry.owner == metadata.execution_id for entry in entries)
+
+    async def test_no_invocation_metadata_leaves_the_claim_unowned(self) -> None:
+        # The documented degradation, asserted rather than assumed: outside an invocation
+        # there is nobody to name, and the store must still work.
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+
+        async def handler(args: _Args) -> _Result:
+            return _Result(value=args.n)
+
+        with ctx.inv_ctx.bind_idempotency("key-unowned"):
+            result = await mw(handler, _Args(n=2))
+
+        assert result.value == 2
+
+        state = ctx.deps.provide(MockStateDepKey)
+        entries = [entry for (_ns, _op, _key), (_st, _ph, entry) in state.idempotency.items()]
+
+        assert entries
+        assert all(entry.owner is None for entry in entries)

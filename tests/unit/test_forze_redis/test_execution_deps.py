@@ -133,6 +133,19 @@ class TestRedisDepsModule:
         assert isinstance(adapter, RedisIdempotencyAdapter)
         assert adapter.ttl == timedelta(minutes=5)
 
+    def test_idempotency_adapter_wires_the_claim_owner(self) -> None:
+        # Without a provider the store degrades to unfenced and every other test stays
+        # green, so the wiring is asserted where the wiring happens.
+        ctx = _ctx()
+        factory = ConfigurableRedisIdempotency(
+            config=RedisIdempotencyConfig(namespace="idem"),
+        )
+        adapter = factory(ctx, IdempotencySpec(name="i", ttl=timedelta(minutes=5)))
+        metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+
+        with ctx.inv_ctx.bind_metadata(metadata=metadata):
+            assert adapter.claim_owner() == metadata.execution_id
+
     def test_distributed_lock_adapter(self) -> None:
         factory = ConfigurableRedisDistributedLock(
             config=RedisDistributedLockConfig(namespace="dl"),
