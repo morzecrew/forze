@@ -25,14 +25,16 @@ rule, written twice: reading the code proves nothing here and only running both 
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 
 from forze.application.contracts.durable.function import DurableRunStorePort
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.primitives import utcnow
 from forze_mock import (
     MockDurableFunctionStepAdapter,
@@ -61,6 +63,7 @@ from tests.support.durable_conformance import (
     run_lifecycle_scenario,
     run_list_scenario,
     run_schedule_scenario,
+    run_tenancy_scenario,
 )
 
 # ----------------------- #
@@ -96,6 +99,21 @@ async def step_collection(mongo_client: MongoClient) -> tuple[str, str]:
     db_name = (await mongo_client.db()).name
 
     return db_name, f"durable_step_{uuid4().hex[:8]}"
+
+
+@pytest_asyncio.fixture
+async def schedule_collection(mongo_client: MongoClient) -> tuple[str, str]:
+    """A schedule collection, which needs no index: its key is the scoped ``_id``."""
+
+    db_name = (await mongo_client.db()).name
+
+    return db_name, f"durable_schedule_{uuid4().hex[:8]}"
+
+
+def _provider(tenant: UUID | None) -> Callable[[], TenantIdentity | None]:
+    """A tenant provider for one binding — including the unbound one."""
+
+    return lambda: None if tenant is None else TenantIdentity(tenant_id=tenant)
 
 
 def _mongo_store(client: MongoClient, collection: tuple[str, str]) -> MongoDurableRunStore:
@@ -252,6 +270,65 @@ class TestDurableMockVsMongo:
         assert mock_out["holder_still_holds"] is True
         assert mock_out["begin_while_running"] is True
         assert mock_out["zero_limit_scan"] == []
+
+    async def test_mock_matches_mongo_for_the_tenant_boundary(
+        self,
+        mongo_client: MongoClient,
+        run_collection: tuple[str, str],
+        schedule_collection: tuple[str, str],
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_tenancy_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=_provider(tenant),
+            ),
+            lambda tenant: MockDurableScheduleStore(
+                state=mock_state,
+                tenant_provider=_provider(tenant),
+            ),
+        )
+
+        mongo_out = await run_tenancy_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=_provider(tenant),
+            ),
+            lambda tenant: MongoDurableScheduleStore(
+                client=mongo_client,
+                config=MongoDurableScheduleConfig(collection=schedule_collection),
+                tenant_provider=_provider(tenant),
+            ),
+        )
+
+        assert mock_out == mongo_out
+
+        # A bound tenant reaches none of another's run, on any verb that takes a run id.
+        assert (mongo_out["cross_load"], mongo_out["cross_begin"]) == (True, True)
+        assert mongo_out["cross_renew"] is False
+        assert mongo_out["own_begin"] == "running"
+        assert mongo_out["cross_complete_status"] == "running"
+        assert mongo_out["cross_complete_output"] is None
+        assert mongo_out["own_complete_status"] == "completed"
+        assert mongo_out["own_complete_output"] == {"ok": True}
+
+        # An untagged run is completable from anywhere and readable afterwards. On Mongo the
+        # null arm also matches a *missing* field, which is the intent: a document written
+        # before the tag existed is untagged, not unreachable.
+        assert mongo_out["orphan_begin"] is True
+        assert mongo_out["orphan_status"] == "completed"
+        assert mongo_out["orphan_output"] == {"ok": True}
+
+        # …and invisible to a bound listing. Enumeration matches the tenant exactly.
+        assert mongo_out["orphan_listed_by_b"] == []
+
+        assert mongo_out["enqueue_mismatch"] == "authentication"
+        assert mongo_out["explicit_tenant_reaches_owner"] == "for-b"
+        assert mongo_out["explicit_tenant_hidden_from_other"] is True
+        assert mongo_out["schedule_mismatch"] == "authentication"
+        assert mongo_out["schedule_reaches_owner"] == "fn"
+        assert mongo_out["schedule_hidden_from_other"] is True
 
     async def test_mock_matches_mongo_for_schedules(self, mongo_client: MongoClient) -> None:
         db_name = (await mongo_client.db()).name

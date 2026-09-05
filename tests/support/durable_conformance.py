@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any, cast
+from uuid import UUID
 
 from forze.application.contracts.durable.function import (
     DurableFunctionStepPort,
@@ -379,6 +380,133 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
         record.run_id
         for record in await store.claim_abandoned(limit=0, lease_for=timedelta(minutes=5))
     ]
+
+    return out
+
+
+# ....................... #
+
+
+async def run_tenancy_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+    schedules_for: Callable[[UUID | None], DurableScheduleStorePort],
+) -> dict[str, Any]:
+    """Drive the tenant boundary from both sides of it.
+
+    Takes factories rather than a store, because every observable here is about two stores
+    that differ *only* by their binding, over one relation. The engine's leg supplies stores
+    sharing one relation; the mock's supplies stores sharing one ``MockState``.
+
+    Three properties, and the reason each is not the obvious one:
+
+    - The verbs taking a run id reach the bound tenant's runs and untagged ones, and nothing
+      else. The untagged arm is liveness, not laxity: a run belonging to no tenant whose
+      terminal write matched nothing would be reclaimed and re-run forever.
+    - The verbs that enumerate match the tenant exactly, so an untagged run is completable
+      under a binding and invisible to that binding's listing. The asymmetry is deliberate.
+    - An explicit tenant is used for the relation, the tag and the scoped id together, or
+      refused. Contradicting a binding refuses; naming one where nothing is bound is
+      honoured, which is what puts the row where its owner will look for it.
+    """
+
+    out: dict[str, Any] = {}
+    tenant_a = UUID("00000000-0000-0000-0000-00000000000a")
+    tenant_b = UUID("00000000-0000-0000-0000-00000000000b")
+
+    as_a = store_for(tenant_a)
+    as_b = store_for(tenant_b)
+    unbound = store_for(None)
+
+    # 1. A's run is out of B's reach on every verb that takes a run id.
+    owned = await as_a.enqueue("owned", input_json={"t": "a"})
+
+    out["cross_load"] = await as_b.load(owned.run_id) is None
+    out["cross_begin"] = await as_b.begin(owned.run_id, lease_for=timedelta(minutes=5)) is None
+
+    held = await as_a.begin(owned.run_id, lease_for=timedelta(minutes=5))
+    assert held is not None
+    out["own_begin"] = held.status.value
+
+    out["cross_renew"] = (
+        await as_b.renew(owned.run_id, lease_for=timedelta(minutes=5), fence=held.attempts)
+    ).held
+
+    await as_b.complete(owned.run_id, output_json={"stolen": True}, fence=held.attempts)
+    after_cross = await as_a.load(owned.run_id)
+    out["cross_complete_status"] = None if after_cross is None else after_cross.status.value
+    out["cross_complete_output"] = None if after_cross is None else after_cross.output_json
+
+    await as_a.complete(owned.run_id, output_json={"ok": True}, fence=held.attempts)
+    landed = await as_a.load(owned.run_id)
+    out["own_complete_status"] = None if landed is None else landed.status.value
+    out["own_complete_output"] = None if landed is None else landed.output_json
+
+    # 2. An untagged run stays completable from anywhere — the arm that keeps it out of a
+    #    reclaim loop — and its output is still readable, which is what makes that safe.
+    orphan = await unbound.enqueue("orphan", input_json={"t": None})
+    orphan_held = await as_b.begin(orphan.run_id, lease_for=timedelta(minutes=5))
+    out["orphan_begin"] = orphan_held is not None
+
+    assert orphan_held is not None
+    await as_b.complete(orphan.run_id, output_json={"ok": True}, fence=orphan_held.attempts)
+    orphan_after = await unbound.load(orphan.run_id)
+    out["orphan_status"] = None if orphan_after is None else orphan_after.status.value
+    out["orphan_output"] = None if orphan_after is None else orphan_after.output_json
+
+    # 3. …and is invisible to a bound listing, which matches the tenant exactly. Widening an
+    #    enumeration is a disclosure; the arm above is a liveness fix. Different questions.
+    listed = await cast("DurableRunAdminPort", as_b).list_runs(limit=50)
+    out["orphan_listed_by_b"] = [r.name for r in listed.records if r.name == "orphan"]
+
+    # 4. An explicit tenant contradicting the binding is refused rather than half-applied.
+    try:
+        await as_a.enqueue("mismatched", input_json=None, tenant_id=tenant_b)
+    except CoreException as error:
+        out["enqueue_mismatch"] = error.kind.value
+    else:  # pragma: no cover - a store that allows it is the failure being pinned
+        out["enqueue_mismatch"] = "allowed"
+
+    # 5. Naming a tenant where nothing is bound is honoured — relation included, which is
+    #    what makes the run reachable by the tenant it was enqueued for.
+    for_b = await unbound.enqueue("for-b", input_json={"t": "b"}, tenant_id=tenant_b)
+    reached = await as_b.load(for_b.run_id)
+    out["explicit_tenant_reaches_owner"] = None if reached is None else reached.name
+    out["explicit_tenant_hidden_from_other"] = await as_a.load(for_b.run_id) is None
+
+    # 6. The schedule store answers both halves the same way, over its scoped key.
+    schedule_a = schedules_for(tenant_a)
+    schedule_b = schedules_for(tenant_b)
+    schedule_unbound = schedules_for(None)
+    fire_at = utcnow() - timedelta(minutes=1)
+
+    try:
+        await schedule_a.put(
+            DurableScheduleRecord(
+                schedule_id="cross",
+                name="fn",
+                cron="0 3 * * *",
+                next_fire_at=fire_at,
+                tenant_id=tenant_b,
+            )
+        )
+    except CoreException as error:
+        out["schedule_mismatch"] = error.kind.value
+    else:  # pragma: no cover - a store that allows it is the failure being pinned
+        out["schedule_mismatch"] = "allowed"
+
+    await schedule_unbound.put(
+        DurableScheduleRecord(
+            schedule_id="nightly-b",
+            name="fn",
+            cron="0 3 * * *",
+            next_fire_at=fire_at,
+            tenant_id=tenant_b,
+        )
+    )
+
+    owner_sees = await schedule_b.load("nightly-b")
+    out["schedule_reaches_owner"] = None if owner_sees is None else owner_sees.name
+    out["schedule_hidden_from_other"] = await schedule_a.load("nightly-b") is None
 
     return out
 

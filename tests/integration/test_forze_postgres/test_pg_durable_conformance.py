@@ -22,9 +22,10 @@ the code proves nothing and only running both does.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import timedelta
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg import sql
@@ -32,6 +33,7 @@ from psycopg import sql
 from forze.application.contracts.durable.function import (
     DurableRunStorePort,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.primitives import utcnow
 from forze_mock import (
     MockDurableFunctionStepAdapter,
@@ -60,9 +62,16 @@ from tests.support.durable_conformance import (
     run_lifecycle_scenario,
     run_list_scenario,
     run_schedule_scenario,
+    run_tenancy_scenario,
 )
 
 # ----------------------- #
+
+
+def _provider(tenant: UUID | None) -> Callable[[], TenantIdentity | None]:
+    """A tenant provider for one binding — including the unbound one."""
+
+    return lambda: None if tenant is None else TenantIdentity(tenant_id=tenant)
 
 
 @pytest.fixture
@@ -288,6 +297,63 @@ class TestDurableMockVsPostgres:
         assert mock_out["holder_still_holds"] is True
         assert mock_out["begin_while_running"] is True
         assert mock_out["zero_limit_scan"] == []
+
+    async def test_mock_matches_postgres_for_the_tenant_boundary(
+        self, pg_client: PostgresClient, run_table: str, schedule_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_tenancy_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=_provider(tenant),
+            ),
+            lambda tenant: MockDurableScheduleStore(
+                state=mock_state,
+                tenant_provider=_provider(tenant),
+            ),
+        )
+
+        pg_out = await run_tenancy_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=_provider(tenant),
+            ),
+            lambda tenant: PostgresDurableScheduleStore(
+                client=pg_client,
+                config=PostgresDurableScheduleConfig(relation=("public", schedule_table)),
+                tenant_provider=_provider(tenant),
+            ),
+        )
+
+        assert mock_out == pg_out
+
+        # A bound tenant reaches none of another's run, on any verb that takes a run id.
+        assert (mock_out["cross_load"], mock_out["cross_begin"]) == (True, True)
+        assert mock_out["cross_renew"] is False
+        assert mock_out["own_begin"] == "running"
+        assert mock_out["cross_complete_status"] == "running"
+        assert mock_out["cross_complete_output"] is None
+        assert mock_out["own_complete_status"] == "completed"
+        assert mock_out["own_complete_output"] == {"ok": True}
+
+        # An untagged run is completable from anywhere and readable afterwards — the arm
+        # that keeps it out of a reclaim loop, and the seal that makes the arm safe.
+        assert mock_out["orphan_begin"] is True
+        assert mock_out["orphan_status"] == "completed"
+        assert mock_out["orphan_output"] == {"ok": True}
+
+        # …and invisible to a bound listing. Enumeration matches the tenant exactly.
+        assert mock_out["orphan_listed_by_b"] == []
+
+        # One tenant per operation: contradicting the binding refuses, naming a tenant with
+        # nothing bound resolves everything — relation included — under it.
+        assert mock_out["enqueue_mismatch"] == "authentication"
+        assert mock_out["explicit_tenant_reaches_owner"] == "for-b"
+        assert mock_out["explicit_tenant_hidden_from_other"] is True
+        assert mock_out["schedule_mismatch"] == "authentication"
+        assert mock_out["schedule_reaches_owner"] == "fn"
+        assert mock_out["schedule_hidden_from_other"] is True
 
     async def test_mock_matches_postgres_for_schedules(
         self, pg_client: PostgresClient, schedule_table: str
