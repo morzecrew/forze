@@ -60,6 +60,20 @@ class DurableScheduleStorePort(Protocol):
     Single-relation, tagged-tier tenancy. Firing is made exactly-once by the enqueued run's
     idempotency key (``{schedule_id}:{fire_epoch}``) plus a compare-and-set on
     :meth:`advance`, so concurrent schedulers converge without a lease.
+
+    **Tenancy lives in the key here, not in a predicate.** The stored id is the schedule id
+    scoped by its tenant, so :meth:`advance`, :meth:`load` and :meth:`delete` compose the key
+    from the bound tenant and reach exactly that tenant's schedules — there is no untagged
+    allowance of the kind the run store's worker verbs carry, because a fallback lookup would
+    let two keys answer one :meth:`load` and the compare-and-set that makes firing
+    exactly-once depends on the key being exact.
+
+    A record carrying a *tenant_id* that contradicts a bound tenant is refused
+    (``authentication`` / ``tenant_mismatch``); one carrying a tenant where nothing is bound
+    is honoured, relation included, so the schedule lands where that tenant will look — on a
+    store that is not ``tenant_aware``. A ``tenant_aware`` store reads its binding first and
+    refuses the unbound call outright (``tenant_required``), so naming a tenant there does
+    not stand in for being bound to one.
     """
 
     def put(self, record: DurableScheduleRecord) -> Awaitable[None]:

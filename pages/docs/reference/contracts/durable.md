@@ -63,6 +63,33 @@ A `DurableFunctionEventSpec` binds an event channel to its payload codec. A run'
 a `DurableRunStatus` — `pending` / `running` / `completed` / `failed` / `forward_incomplete`
 / `cancelled` / `timed_out`.
 
+## What a bound tenant reaches
+
+Every store behind these ports answers this the same way, and the shared conformance battery
+holds all three to it.
+
+| Verbs | Reach when a tenant is bound |
+|-------|------------------------------|
+| `begin`, `renew`, `load`, `complete` / `fail` / `mark_*` | that tenant's runs **and untagged ones** |
+| `claim_abandoned`, `list_runs`, `request_cancel`, `refuse_cancel` | that tenant's runs, exactly |
+| all of them, unbound | everything — the recovery and single-tenant role |
+
+The untagged arm on the first row is liveness, not laxity. A run tagged with no tenant belongs
+to none, and a terminal write that matched nothing would leave it running until its lease
+expired, reclaimed, and re-run — forever. The second row has no such problem, and widening an
+enumeration is a disclosure, so it stays exact.
+
+`enqueue` and `put` accept an explicit tenant. It is used for the relation, the stored tag and
+the scoped id **together**, or refused: naming a tenant that contradicts a bound one raises
+`authentication` / `tenant_mismatch`, while naming one where nothing is bound is honoured in
+full. A `tenant_aware` store reads its binding first, so naming a tenant does not stand in for
+being bound to one.
+
+The schedule store expresses tenancy in its key rather than in a predicate — the stored id is
+the schedule id scoped by its tenant — so it has no untagged allowance: a fallback lookup
+would let two keys answer one `load`, and the compare-and-set that makes firing exactly-once
+depends on that key being exact.
+
 ## Stopping a run
 
 `request_cancel(run_id)` is the self-hosted tier's answer to the workflow tier's `cancel`.

@@ -16,6 +16,7 @@ cross-tenant test written against the namespace tier passes with the predicate d
 # covers: DurableRunStorePort.load
 # covers: DurableRunAdminPort.request_cancel
 # covers: DurableRunStorePort.refuse_cancel
+# covers: DurableScheduleStorePort.put
 """
 
 from __future__ import annotations
@@ -26,9 +27,18 @@ from uuid import UUID, uuid4
 import pytest
 from psycopg import sql
 
+from forze.application.contracts.durable.function import DurableScheduleRecord
 from forze.application.contracts.tenancy import TenantIdentity
-from forze_postgres.adapters.durable import PostgresDurableRunStore
-from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
+from forze.base.exceptions import CoreException
+from forze.base.primitives import utcnow
+from forze_postgres.adapters.durable import (
+    PostgresDurableRunStore,
+    PostgresDurableScheduleStore,
+)
+from forze_postgres.execution.deps.configs import (
+    PostgresDurableRunConfig,
+    PostgresDurableScheduleConfig,
+)
 from forze_postgres.kernel.client import PostgresClient
 
 # ----------------------- #
@@ -79,6 +89,167 @@ def _store(
         config=PostgresDurableRunConfig(relation=relation),
         tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
     )
+
+
+def _unbound_store(pg_client: PostgresClient, table: str) -> PostgresDurableRunStore:
+    """A store with *no* binding over the same per-tenant resolver.
+
+    The shape a control plane has: it knows which tenant it is enqueueing for and is bound
+    to none of them. The relation it writes into can only come from the tenant it names.
+    """
+
+    def relation(tenant_id: UUID | None) -> tuple[str, str]:
+        assert tenant_id is not None
+        return (f"tnt_{tenant_id.hex[:8]}", table)
+
+    return PostgresDurableRunStore(
+        client=pg_client,
+        config=PostgresDurableRunConfig(relation=relation),
+    )
+
+
+def _schedule_store(
+    pg_client: PostgresClient, table: str, tenant: UUID | None
+) -> PostgresDurableScheduleStore:
+    def relation(tenant_id: UUID | None) -> tuple[str, str]:
+        assert tenant_id is not None
+        return (f"tnt_{tenant_id.hex[:8]}", table)
+
+    return PostgresDurableScheduleStore(
+        client=pg_client,
+        config=PostgresDurableScheduleConfig(relation=relation),
+        tenant_provider=(
+            None if tenant is None else (lambda: TenantIdentity(tenant_id=tenant))
+        ),
+    )
+
+
+@pytest.fixture
+async def namespaced_schedule_tenants(pg_client: PostgresClient) -> tuple[str, UUID, UUID]:
+    """A per-tenant ``durable_schedule`` table in each of two tenant schemas."""
+
+    table = f"durable_schedule_{uuid4().hex[:8]}"
+    tenant_a, tenant_b = uuid4(), uuid4()
+
+    for tenant in (tenant_a, tenant_b):
+        schema = f"tnt_{tenant.hex[:8]}"
+        await pg_client.execute(
+            sql.SQL("CREATE SCHEMA IF NOT EXISTS {schema}").format(schema=sql.Identifier(schema))
+        )
+        await pg_client.execute(
+            sql.SQL(
+                """
+                CREATE TABLE {table} (
+                    schedule_id text NOT NULL, name text NOT NULL, cron text NOT NULL,
+                    tz text, input jsonb, next_fire_at timestamptz NOT NULL,
+                    enabled boolean NOT NULL DEFAULT true, tenant_id uuid,
+                    created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+                    PRIMARY KEY (schedule_id)
+                )
+                """
+            ).format(table=sql.Identifier(schema, table))
+        )
+
+    return table, tenant_a, tenant_b
+
+
+# ....................... #
+
+
+class TestNamespacePlacement:
+    """Where a row lands when the caller names a tenant it is not bound to.
+
+    The tier that can prove it: with a per-tenant resolver the relation is *the* isolation
+    mechanism, so a row written into the wrong one is unreachable rather than merely
+    unfiltered. On a shared relation both readings put the row in the same table and the
+    defect is invisible — which is why the shared battery cannot cover this and this file
+    must.
+    """
+
+    async def test_a_run_enqueued_for_a_tenant_lands_in_that_tenants_schema(
+        self, pg_client: PostgresClient, namespaced_tenants: tuple[str, UUID, UUID]
+    ) -> None:
+        table, tenant_a, _ = namespaced_tenants
+
+        run = await _unbound_store(pg_client, table).enqueue(
+            "for-a", input_json={"t": "a"}, tenant_id=tenant_a
+        )
+
+        # A's own store resolves A's schema. Finding the run there is the whole assertion:
+        # resolving the relation from the (absent) binding would have raised, and resolving
+        # it from anywhere else would leave A's scanner reading an empty table forever.
+        reached = await _store(pg_client, table, tenant_a).load(run.run_id)
+
+        assert reached is not None
+        assert reached.name == "for-a"
+        assert reached.tenant_id == tenant_a
+
+    async def test_a_schedule_put_for_a_tenant_lands_where_that_tenant_looks(
+        self, pg_client: PostgresClient, namespaced_schedule_tenants: tuple[str, UUID, UUID]
+    ) -> None:
+        table, tenant_a, tenant_b = namespaced_schedule_tenants
+
+        await _schedule_store(pg_client, table, None).put(
+            DurableScheduleRecord(
+                schedule_id="nightly",
+                name="fn",
+                cron="0 3 * * *",
+                next_fire_at=utcnow() - timedelta(minutes=1),
+                tenant_id=tenant_a,
+            )
+        )
+
+        loaded = await _schedule_store(pg_client, table, tenant_a).load("nightly")
+
+        assert loaded is not None
+        assert loaded.name == "fn"
+        # And it is due for the tenant it was registered for, which is the point of putting
+        # it there — a schedule in the wrong relation never fires and nothing reports it.
+        due = await _schedule_store(pg_client, table, tenant_a).claim_due(now=utcnow(), limit=10)
+        assert [record.schedule_id for record in due] == ["nightly"]
+        assert await _schedule_store(pg_client, table, tenant_b).load("nightly") is None
+
+    async def test_a_contradicted_tenant_is_refused_rather_than_half_applied(
+        self, pg_client: PostgresClient, namespaced_tenants: tuple[str, UUID, UUID]
+    ) -> None:
+        table, tenant_a, tenant_b = namespaced_tenants
+
+        with pytest.raises(CoreException) as raised:
+            await _store(pg_client, table, tenant_a).enqueue(
+                "cross", input_json=None, tenant_id=tenant_b
+            )
+
+        assert raised.value.code == "tenant_mismatch"
+
+    async def test_a_tenant_aware_store_refuses_the_unbound_call_first(
+        self, pg_client: PostgresClient, namespaced_tenants: tuple[str, UUID, UUID]
+    ) -> None:
+        """Fail-closed outranks an explicitly named tenant.
+
+        A ``tenant_aware`` store reads its binding before it considers what the caller
+        passed, so naming a tenant does not stand in for being bound to one — the refusal is
+        the missing binding, not a mismatch.
+        """
+
+        table, tenant_a, _ = namespaced_tenants
+
+        def relation(tenant_id: UUID | None) -> tuple[str, str]:
+            assert tenant_id is not None
+            return (f"tnt_{tenant_id.hex[:8]}", table)
+
+        # ``tenant_aware`` on the adapter, which is where the fail-closed read lives; the
+        # config field of the same name is what the factory copies into it.
+        store = PostgresDurableRunStore(
+            client=pg_client,
+            config=PostgresDurableRunConfig(relation=relation),
+            tenant_aware=True,
+            tenant_provider=lambda: None,
+        )
+
+        with pytest.raises(CoreException) as raised:
+            await store.enqueue("named", input_json=None, tenant_id=tenant_a)
+
+        assert raised.value.code == "tenant_required"
 
 
 # ....................... #

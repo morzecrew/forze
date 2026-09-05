@@ -370,3 +370,37 @@ class TestPostgresDurableRunStore:
         assert loaded.tenant_id == tenant
         assert loaded.input_json == {"secret": "in"}
         assert loaded.output_json == {"secret": "out"}
+
+    async def test_an_untagged_run_completed_under_a_binding_still_decrypts(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        """The case the stored-tenant read exists for.
+
+        A run tagged with no tenant stays completable from any binding — otherwise its
+        terminal write matches nothing and it is reclaimed and re-run forever. Sealing that
+        output under the *binding* would then write ciphertext whose AAD names a tenant the
+        row does not, and ``load`` — which unseals with the column — could never open it. The
+        run would complete and its result would be unreadable.
+        """
+
+        keyring = _keyring()
+        unbound = PostgresDurableRunStore(
+            client=pg_client,
+            config=PostgresDurableRunConfig(relation=("public", durable_run_table)),
+            cipher=keyring,
+        )
+        bound = _tenant_store(pg_client, durable_run_table, uuid4(), cipher=keyring)
+
+        run = await unbound.enqueue("orphan", input_json=None)
+        held = await bound.begin(run.run_id, lease_for=timedelta(minutes=5))
+
+        assert held is not None
+
+        await bound.complete(run.run_id, output_json={"secret": "out"}, fence=held.attempts)
+
+        loaded = await unbound.load(run.run_id)
+
+        assert loaded is not None
+        assert loaded.tenant_id is None
+        assert loaded.status.value == "completed"
+        assert loaded.output_json == {"secret": "out"}

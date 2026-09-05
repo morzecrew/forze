@@ -64,6 +64,13 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     is stored **tenant-scoped**, so two tenants registering the same id stay distinct
     schedules instead of overwriting each other.
 
+    Tenancy lives in that key rather than in a predicate, so :meth:`advance`, :meth:`load`
+    and :meth:`delete` reach exactly the bound tenant's schedules — there is no untagged
+    allowance of the kind the run store's worker verbs carry, because a fallback lookup would
+    let two keys answer one :meth:`load` and the compare-and-set above depends on the key
+    being exact. :meth:`put` resolves one effective tenant for the table, the tag and the key
+    together, and refuses a record naming a tenant that contradicts the binding.
+
     The table is provided by the application; expected schema::
 
         CREATE TABLE <relation> (
@@ -94,18 +101,29 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     # ....................... #
 
-    async def _table(self) -> PostgresQualifiedName:
-        return await resolve_postgres_qname(self.config.relation, self._tenant_id_for_resolve())
+    async def _table(self, tenant_id: UUID | None = None) -> PostgresQualifiedName:
+        """Resolve the relation, under *tenant_id* when the caller has already settled it.
+
+        Only :meth:`put` passes one — it is the sole verb that accepts an explicit tenant,
+        and the relation it writes into has to be the one the stored id is scoped for.
+        """
+
+        if tenant_id is None:
+            tenant_id = self._tenant_id_for_resolve()
+
+        return await resolve_postgres_qname(self.config.relation, tenant_id)
 
     # ....................... #
 
     async def put(self, record: DurableScheduleRecord) -> None:
-        table = await self._table()
+        # One effective tenant for the stored tag, the scoped id *and* the relation. A
+        # record naming a tenant the caller is not bound to is refused; one naming a tenant
+        # where nothing is bound resolves the relation under it, so the schedule lands where
+        # that tenant's scheduler will look for it rather than in the unbound relation with
+        # an id nobody composes.
+        tenant_id = self._effective_tenant(record.tenant_id)
+        table = await self._table(tenant_id)
         now = utcnow()
-        # Tag the schedule with the bound tenant so a bound scheduler's claim matches it.
-        tenant_id = (
-            record.tenant_id if record.tenant_id is not None else self._tenant_id_for_resolve()
-        )
 
         await self.client.execute(
             sql.SQL(

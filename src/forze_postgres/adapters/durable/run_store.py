@@ -101,9 +101,16 @@ class PostgresDurableRunStore(
     shared **tagged** table (``tenant_id`` column) and a per-tenant ``relation`` resolver is a
     **namespace** table. Recovery either runs unbound over a tagged table (claims every
     tenant's runs; the runner re-binds each run's tenant to execute it) or per-tenant over a
-    namespace table (the scanner binds each tenant in turn). Non-enforcing: an unbound scan
-    never fails, and a bound scan claims only that tenant's runs. The table is provided by the
-    application; expected schema::
+    namespace table (the scanner binds each tenant in turn). An unbound scan never fails, and
+    a bound scan claims only that tenant's runs.
+
+    What a bound caller reaches splits by verb. ``begin``, ``renew``, ``load`` and every
+    terminal write reach that tenant's runs and untagged ones (see :meth:`_worker_scope`);
+    ``claim_abandoned``, ``list_runs``, ``request_cancel`` and ``refuse_cancel`` match the
+    tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the
+    scoped key together, and refuses an explicit tenant that contradicts the binding.
+
+    The table is provided by the application; expected schema::
 
         CREATE TABLE <relation> (
             run_id              text        NOT NULL,
@@ -169,8 +176,47 @@ class PostgresDurableRunStore(
 
     # ....................... #
 
-    async def _table(self) -> PostgresQualifiedName:
-        return await resolve_postgres_qname(self.config.relation, self._tenant_id_for_resolve())
+    async def _table(self, tenant_id: UUID | None = None) -> PostgresQualifiedName:
+        """Resolve the relation, under *tenant_id* when the caller has already settled it.
+
+        A verb that accepts an explicit tenant passes the effective one here so the row
+        lands in the relation its tag says it belongs to; every other verb resolves from
+        the binding, as before.
+        """
+
+        if tenant_id is None:
+            tenant_id = self._tenant_id_for_resolve()
+
+        return await resolve_postgres_qname(self.config.relation, tenant_id)
+
+    # ....................... #
+
+    def _worker_scope(self) -> tuple[sql.Composable, dict[str, Any]]:
+        """Tenant predicate for the verbs reached with a run id: ``begin``, ``renew``,
+        ``load`` and every terminal write.
+
+        Bound, a caller reaches its own tenant's runs and the untagged ones; unbound — the
+        recovery and single-tenant role — it reaches everything, which is what lets one
+        sweep serve every tenant.
+
+        The ``IS NULL`` arm is load-bearing rather than lax. A run tagged with no tenant
+        belongs to none, and the runner leaves the ambient binding alone for such a run, so
+        an exact match would make its terminal write hit nothing: the run would sit
+        ``running`` until its lease expired, be reclaimed, and re-run forever. Tightening
+        this re-opens that loop.
+        """
+
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is None:
+            return sql.SQL(""), {}
+
+        return (
+            sql.SQL(" AND (tenant_id = {scope} OR tenant_id IS NULL)").format(
+                scope=sql.Placeholder("scope_tenant"),
+            ),
+            {"scope_tenant": tenant_id},
+        )
 
     # ....................... #
 
@@ -183,10 +229,11 @@ class PostgresDurableRunStore(
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
     ) -> DurableRunRecord:
-        # Default the tenant column to the bound tenant so a run enqueued under a namespace
-        # binding still tags its tenant (the recovery filter matches on it).
-        tenant_id = tenant_id if tenant_id is not None else self._tenant_id_for_resolve()
-        table = await self._table()
+        # One effective tenant for the row's column, its scoped idempotency key *and* the
+        # relation it lands in — resolving the relation from the binding while tagging from
+        # the argument is how a row ends up where nobody looks for it.
+        tenant_id = self._effective_tenant(tenant_id)
+        table = await self._table(tenant_id)
         run_id = str(uuid7())
         now = utcnow()
         stored_input = await self._seal(input_json, run_id, "input", tenant_id)
@@ -261,13 +308,14 @@ class PostgresDurableRunStore(
         lease_for: timedelta,
     ) -> DurableRunRecord | None:
         table = await self._table()
+        scope_clause, scope_params = self._worker_scope()
 
         row = await self.client.fetch_one(
             sql.SQL(
                 """
                 WITH picked AS (
                     SELECT run_id FROM {table}
-                    WHERE run_id = {run_id} AND status = 'pending'
+                    WHERE run_id = {run_id} AND status = 'pending'{scope}
                     FOR UPDATE SKIP LOCKED
                 )
                 UPDATE {table} AS t
@@ -284,8 +332,9 @@ class PostgresDurableRunStore(
                 run_id=sql.Placeholder("run_id"),
                 lease=sql.Placeholder("lease"),
                 columns=sql.SQL(_T_COLUMNS),
+                scope=scope_clause,
             ),
-            {"run_id": run_id, "lease": lease_for},
+            {"run_id": run_id, "lease": lease_for, **scope_params},
         )
 
         if row is None:
@@ -303,6 +352,7 @@ class PostgresDurableRunStore(
         fence: int,
     ) -> DurableLeaseRenewal:
         table = await self._table()
+        scope_clause, scope_params = self._worker_scope()
 
         # Fenced on ``attempts = fence`` (and ``status = 'running'``), mirroring ``_finish``:
         # the lease is pushed forward only while this worker is still the current claim
@@ -316,7 +366,7 @@ class PostgresDurableRunStore(
                 """
                 UPDATE {table}
                 SET leased_until = now() + {lease}, updated_at = now()
-                WHERE run_id = {run_id} AND status = 'running' AND attempts = {fence}
+                WHERE run_id = {run_id} AND status = 'running' AND attempts = {fence}{scope}
                 RETURNING (cancel_requested_at IS NOT NULL) AS cancel_requested
                 """
             ).format(
@@ -324,8 +374,9 @@ class PostgresDurableRunStore(
                 lease=sql.Placeholder("lease"),
                 run_id=sql.Placeholder("run_id"),
                 fence=sql.Placeholder("fence"),
+                scope=scope_clause,
             ),
-            {"lease": lease_for, "run_id": run_id, "fence": fence},
+            {"lease": lease_for, "run_id": run_id, "fence": fence, **scope_params},
         )
 
         if row is None:
@@ -400,10 +451,11 @@ class PostgresDurableRunStore(
         output_json: JsonDict | None,
         fence: int | None = None,
     ) -> None:
-        # Seal under the bound tenant so the output AAD matches what ``_record_from_row``
-        # reconstructs on load: the runner binds the run's tenant before completing it, so
-        # this resolves the run's ``tenant_id`` (mirrors the input seal in ``enqueue``).
-        stored = await self._seal(output_json, run_id, "output", self._tenant_id_for_resolve())
+        # Seal under the run's *stored* tenant, read here rather than taken from the
+        # binding: ``_record_from_row`` unseals with the column, and the two must agree or a
+        # completed run is one nothing can open. They differ for exactly the case
+        # ``_worker_scope`` keeps reachable — an untagged run finished under a binding.
+        stored = await self._seal(output_json, run_id, "output", await self._stored_tenant(run_id))
         await self._finish(
             run_id,
             status=DurableRunStatus.COMPLETED,
@@ -558,14 +610,16 @@ class PostgresDurableRunStore(
 
     async def load(self, run_id: str) -> DurableRunRecord | None:
         table = await self._table()
+        scope_clause, scope_params = self._worker_scope()
 
         row = await self.client.fetch_one(
-            sql.SQL("SELECT {columns} FROM {table} WHERE run_id = {run_id}").format(
+            sql.SQL("SELECT {columns} FROM {table} WHERE run_id = {run_id}{scope}").format(
                 columns=sql.SQL(_COLUMNS),
                 table=table.ident(),
                 run_id=sql.Placeholder("run_id"),
+                scope=scope_clause,
             ),
-            {"run_id": run_id},
+            {"run_id": run_id, **scope_params},
         )
 
         return None if row is None else await self._record_from_row(row)
@@ -647,6 +701,7 @@ class PostgresDurableRunStore(
         fence: int | None = None,
     ) -> None:
         table = await self._table()
+        scope_clause, scope_params = self._worker_scope()
 
         # Guarded on ``status = 'running'`` so a terminal state is not overwritten and a
         # duplicate/late completion is a no-op (idempotent under recovery re-invocation).
@@ -664,7 +719,7 @@ class PostgresDurableRunStore(
                 UPDATE {table}
                 SET status = {status}, output = {output}, error = {error},
                     leased_until = NULL, updated_at = now()
-                WHERE run_id = {run_id} AND status = 'running'{fence_clause}
+                WHERE run_id = {run_id} AND status = 'running'{fence_clause}{scope}
                 """
             ).format(
                 table=table.ident(),
@@ -673,6 +728,7 @@ class PostgresDurableRunStore(
                 error=sql.Placeholder("error"),
                 run_id=sql.Placeholder("run_id"),
                 fence_clause=fence_clause,
+                scope=scope_clause,
             ),
             {
                 "status": str(status),
@@ -680,8 +736,34 @@ class PostgresDurableRunStore(
                 "error": error,
                 "run_id": run_id,
                 **({"fence": fence} if fence is not None else {}),
+                **scope_params,
             },
         )
+
+    # ....................... #
+
+    async def _stored_tenant(self, run_id: str) -> UUID | None:
+        """The tenant column of a run this caller can reach, or ``None``.
+
+        Scoped like the write that follows it, so a run outside the caller's reach reads as
+        untagged and the terminal write it feeds then matches nothing — the same silence an
+        unreachable run already answers with, rather than a seal against a tenant whose key
+        this caller does not hold.
+        """
+
+        table = await self._table()
+        scope_clause, scope_params = self._worker_scope()
+
+        row = await self.client.fetch_one(
+            sql.SQL("SELECT tenant_id FROM {table} WHERE run_id = {run_id}{scope}").format(
+                table=table.ident(),
+                run_id=sql.Placeholder("run_id"),
+                scope=scope_clause,
+            ),
+            {"run_id": run_id, **scope_params},
+        )
+
+        return None if row is None else row["tenant_id"]
 
     # ....................... #
 

@@ -86,8 +86,15 @@ class MongoDurableRunStore(
     ``collection`` is a shared **tagged** collection (``tenant_id`` field) and a per-tenant
     resolver is a **namespace** collection. Recovery either runs unbound over a tagged
     collection (claims every tenant's runs; the runner re-binds each run's tenant to execute
-    it) or per-tenant over a namespace collection. Non-enforcing: an unbound scan never
-    fails, and a bound scan claims only that tenant's runs.
+    it) or per-tenant over a namespace collection. An unbound scan never fails, and a bound
+    scan claims only that tenant's runs.
+
+    What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`
+    and every terminal write reach that tenant's runs and untagged ones (see
+    :meth:`_worker_scope`); :meth:`claim_abandoned`, :meth:`list_runs`,
+    :meth:`request_cancel` and :meth:`refuse_cancel` match the tenant exactly.
+    :meth:`enqueue` resolves one effective tenant for the collection, the tag and the scoped
+    key together, and refuses an explicit tenant that contradicts the binding.
 
     Documents look like ``{_id, name, status, idempotency_key, input, output, error,
     tenant_id, attempts, leased_until, available_at, created_at, updated_at,
@@ -124,11 +131,19 @@ class MongoDurableRunStore(
 
     # ....................... #
 
-    async def _collection(self) -> AsyncCollection[JsonDict]:
-        db_name, coll_name = await resolve_mongo_collection(
-            self.config.collection,
-            self._tenant_id_for_resolve(),
-        )
+    async def _collection(self, tenant_id: UUID | None = None) -> AsyncCollection[JsonDict]:
+        """Resolve the collection, under *tenant_id* when the caller has already settled it.
+
+        A verb that accepts an explicit tenant passes the effective one here so the document
+        lands in the collection its tag says it belongs to; every other verb resolves from
+        the binding, as before.
+        """
+
+        if tenant_id is None:
+            tenant_id = self._tenant_id_for_resolve()
+
+        db_name, coll_name = await resolve_mongo_collection(self.config.collection, tenant_id)
+
         return await self.client.collection(coll_name, db_name=db_name)
 
     # ....................... #
@@ -147,6 +162,31 @@ class MongoDurableRunStore(
 
     # ....................... #
 
+    def _worker_scope(self) -> dict[str, Any]:
+        """Tenant predicate for the verbs reached with a run id: :meth:`begin`,
+        :meth:`renew`, :meth:`load` and every terminal write.
+
+        Bound, a caller reaches its own tenant's runs and the untagged ones; unbound — the
+        recovery and single-tenant role — it reaches everything, which is what lets one
+        sweep serve every tenant.
+
+        The null arm is load-bearing rather than lax. A run tagged with no tenant belongs to
+        none, and the runner leaves the ambient binding alone for such a run, so an exact
+        match would make its terminal write hit nothing: the run would sit ``running`` until
+        its lease expired, be reclaimed, and re-run forever. Tightening this re-opens that
+        loop. ``{"tenant_id": None}`` matches a missing field as well as a null one, which
+        is the intent — a document written before the field existed is untagged.
+        """
+
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is None:
+            return {}
+
+        return {"$or": [{"tenant_id": str(tenant_id)}, {"tenant_id": None}]}
+
+    # ....................... #
+
     async def enqueue(
         self,
         name: str,
@@ -156,10 +196,11 @@ class MongoDurableRunStore(
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
     ) -> DurableRunRecord:
-        # Default the tenant field to the bound tenant so a run enqueued under a namespace
-        # binding still tags its tenant (the recovery filter matches on it).
-        tenant_id = tenant_id if tenant_id is not None else self._tenant_id_for_resolve()
-        coll = await self._collection()
+        # One effective tenant for the document's field, its scoped idempotency key *and*
+        # the collection it lands in — resolving the collection from the binding while
+        # tagging from the argument is how a document ends up where nobody looks for it.
+        tenant_id = self._effective_tenant(tenant_id)
+        coll = await self._collection(tenant_id)
         run_id = str(uuid7())
         now = utcnow()
         stored_input = await self._seal(input_json, run_id, "input", tenant_id)
@@ -244,7 +285,7 @@ class MongoDurableRunStore(
         # server as it writes, so two workers racing the same run cannot both claim it.
         doc = await self.client.find_one_and_update(
             coll,
-            {"_id": run_id, "status": _PENDING},
+            {"_id": run_id, "status": _PENDING, **self._worker_scope()},
             {
                 "$set": {
                     "status": _RUNNING,
@@ -358,7 +399,7 @@ class MongoDurableRunStore(
         # costs the heartbeat the body already makes rather than a second polling loop.
         doc = await self.client.find_one_and_update(
             coll,
-            {"_id": run_id, "status": _RUNNING, "attempts": fence},
+            {"_id": run_id, "status": _RUNNING, "attempts": fence, **self._worker_scope()},
             {"$set": {"leased_until": now + lease_for, "updated_at": now}},
         )
 
@@ -379,10 +420,11 @@ class MongoDurableRunStore(
         output_json: JsonDict | None,
         fence: int | None = None,
     ) -> None:
-        # Seal under the bound tenant so the output AAD matches what ``_record_from_row``
-        # reconstructs on load: the runner binds the run's tenant before completing it
-        # (mirrors the input seal in ``enqueue``).
-        stored = await self._seal(output_json, run_id, "output", self._tenant_id_for_resolve())
+        # Seal under the run's *stored* tenant, read here rather than taken from the
+        # binding: ``_record_from_row`` unseals with the field, and the two must agree or a
+        # completed run is one nothing can open. They differ for exactly the case
+        # ``_worker_scope`` keeps reachable — an untagged run finished under a binding.
+        stored = await self._seal(output_json, run_id, "output", await self._stored_tenant(run_id))
         await self._finish(
             run_id,
             status=DurableRunStatus.COMPLETED,
@@ -527,7 +569,7 @@ class MongoDurableRunStore(
 
     async def load(self, run_id: str) -> DurableRunRecord | None:
         coll = await self._collection()
-        doc = await self.client.find_one(coll, {"_id": run_id})
+        doc = await self.client.find_one(coll, {"_id": run_id, **self._worker_scope()})
 
         return None if doc is None else await self._record_from_row(doc)
 
@@ -595,7 +637,7 @@ class MongoDurableRunStore(
         # duplicate/late completion is a no-op (idempotent under recovery re-invocation).
         # When *fence* is given, also require it to match ``attempts`` so a stale worker
         # whose lease was reclaimed cannot finish the run.
-        filter_: dict[str, Any] = {"_id": run_id, "status": _RUNNING}
+        filter_: dict[str, Any] = {"_id": run_id, "status": _RUNNING, **self._worker_scope()}
 
         if fence is not None:
             filter_["attempts"] = fence
@@ -613,6 +655,26 @@ class MongoDurableRunStore(
                 }
             },
         )
+
+    # ....................... #
+
+    async def _stored_tenant(self, run_id: str) -> UUID | None:
+        """The ``tenant_id`` of a run this caller can reach, or ``None``.
+
+        Scoped like the write that follows it, so a run outside the caller's reach reads as
+        untagged and the terminal write it feeds then matches nothing — the same silence an
+        unreachable run already answers with, rather than a seal against a tenant whose key
+        this caller does not hold.
+        """
+
+        coll = await self._collection()
+        doc = await self.client.find_one(
+            coll,
+            {"_id": run_id, **self._worker_scope()},
+            projection={"tenant_id": 1},
+        )
+
+        return None if doc is None else as_uuid(doc.get("tenant_id"))
 
     # ....................... #
 

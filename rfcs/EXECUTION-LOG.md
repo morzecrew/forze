@@ -810,3 +810,258 @@ proposed at reconciliation and accepted. Nothing was refused this unit.
 - **The doctrine map is now the thing that rots.** Nothing checks that a D1 unit's block is
   still a *worked example* rather than a bare import that happens to resolve; the distinction
   between D1 and D2 is enforced only by review.
+
+---
+
+# Unit 4 · Durable-store tenant resolution
+
+Branch `feat/durable-tenant-resolution`. RFC 0046 in full — §5.1 the effective tenant,
+§5.2 the worker surface, §5.3 the seal, §5.4 the wiring floor.
+
+**Drift count: 0.** Four entries: two `OPEN` rows the RFC delegated (D-015, D-016) and two
+unlisted decisions the plan needed and the document does not settle (D-017, D-018).
+
+## D-015 — The control surface keeps the exact tenant match
+
+- **Touches:** RFC 0046 §5.2 and decision row 9. `OPEN` — the row asks execution to decide
+  whether the untagged allowance (`tenant_id IS NULL`) extends to `request_cancel`,
+  `refuse_cancel` and `list_runs`, which today match the bound tenant exactly.
+- **RFC said:** "making them consistent with §5.2 is defensible, and so is leaving the
+  control surface strict. Whichever, the battery states it."
+- **Found:** the two surfaces answer different questions. The worker verbs are reached with
+  a run id the caller already holds, and the allowance exists there to stop an untagged run
+  being stranded in a reclaim loop — a liveness argument. The control verbs are reached by
+  an operator asking about runs it has *not* seen: `list_runs` enumerates, and
+  `request_cancel` is documented at
+  [`configs/durable.py`](../src/forze_postgres/execution/deps/configs/durable.py) as granting
+  run control to anyone who can resolve the admin key. Extending the allowance there would
+  put every untagged run into every bound operator's listing, which no failure mode requires.
+- **Because:** the allowance is a liveness fix, and the control surface has no liveness
+  problem — an untagged run nobody can cancel from a bound context is still cancellable from
+  an unbound one, and still completes on its own.
+- **Class:** `discovery` — the asymmetry only becomes a question once §5.2's predicate
+  exists to be copied.
+- **Consequence:** `request_cancel`, `refuse_cancel` and `list_runs` are untouched. The
+  battery asserts the difference rather than leaving it to be inferred: an untagged run is
+  completable under a binding and invisible to that binding's `list_runs`.
+- **Proposed row (RFC 0046):** `LOCKED` — the untagged allowance is a worker-surface
+  property. The control surface matches the tenant exactly, because widening an enumeration
+  is a disclosure and widening a terminal write is a liveness fix.
+
+## D-016 — The step journal gets a route group it does not need for enforcement
+
+- **Touches:** RFC 0046 §5.4 and decision row 10. `OPEN`.
+- **RFC said:** the group "adds no enforcement — but omitting it leaves one durable route
+  invisible to a declared floor".
+- **Found:** confirmed that the journal's key already carries the tenant
+  ([`function_step.py`](../src/forze_mongo/adapters/durable/function_step.py), `_doc_id`;
+  the Postgres journal's primary key does the same), so the group changes no runtime
+  behaviour. What it changes is what `required_tenant_isolation` *means*: without the group,
+  a deployment declaring `tagged` gets a tier derived from its other planes and is told
+  nothing about a `durable_step` wired with `tenant_aware=False`.
+- **Because:** the floor is a statement about the module's routes. A route the validator
+  cannot see makes the statement narrower than it reads, and that gap is invisible at the
+  call site — which is the failure this whole RFC is about.
+- **Class:** `discovery`.
+- **Consequence:** all three durable configs get groups. `durable_step` with
+  `tenant_aware=False` under a declared `tagged` floor now fails at wiring, which is a
+  deployment-visible change and is named in the changelog.
+- **Proposed row (RFC 0046):** `ASSUMED` — a route joins the wiring floor because the floor
+  describes the module, not because the route needs the check.
+
+## D-017 — §5.1's table does not hold for a tenant-aware store
+
+- **Touches:** RFC 0046 §5.1, specifically the table's last row ("unbound + requested B →
+  **B**, and the relation now resolves under B"). Unlisted: the interaction between
+  `_effective_tenant` and `tenant_aware=True` appears nowhere in the document.
+- **RFC said:** the table presents five cases as total.
+- **Found:** they are not. `_effective_tenant` reads the binding through
+  `TenancyMixin._tenant_id_for_resolve()`
+  ([`mixins.py:43-60`](../src/forze/application/contracts/tenancy/mixins.py)), which on a
+  `tenant_aware=True` store with nothing bound **raises** `authentication` /
+  `tenant_required` before any comparison happens. So on such a store the last row is
+  unreachable: `enqueue(tenant_id=B)` unbound raises rather than resolving under B.
+- **Because:** the table was written about the *explicit-versus-bound* question and did not
+  account for the mixin's pre-existing fail-closed read, which fires first.
+- **Class:** `spec-gap` — knowable from the document plus the mixin, and found by walking
+  the five rows against the real helper before writing it.
+- **Consequence:** fail-closed wins, and the helper is written so that it does: it calls
+  `_tenant_id_for_resolve()` first and never catches. §5.1's last row is true of stores that
+  are not `tenant_aware`, which is every durable store a cross-tenant deployment can use
+  (§3: `tenant_aware=True` on `durable_run` is incompatible with unbound recovery). The
+  battery pins the raise so the narrower claim is checked rather than assumed.
+- **Proposed row (RFC 0046):** `LOCKED` — a `tenant_aware` store refuses an unbound call
+  before it considers an explicitly passed tenant. The fail-closed read is the mixin's
+  canonical contract and this RFC does not carve an exception into it.
+
+## D-018 — The schedule store gets no untagged allowance, and the asymmetry is deliberate
+
+- **Touches:** RFC 0046 §5.2, which specifies the `tenant_id IS NULL` arm for the run
+  store's worker surface and says nothing about the schedule store. Unlisted.
+- **RFC said:** nothing. §5.1 covers `put`; the other schedule verbs are out of its frame.
+- **Found:** the schedule store has no tenant *predicate* to widen — `advance`, `load` and
+  `delete` scope the **id** (`scope_id(schedule_id, bound)`), so tenancy is expressed in the
+  key rather than in a filter. An untagged schedule is therefore stored under the bare
+  `schedule_id` and is unreachable from a bound caller, which looks like the stranding §5.2
+  exists to prevent.
+- **Because:** it is not the same failure. A run is claimed by a scanner and *must* reach a
+  terminal state or it re-runs forever; a schedule that a bound caller cannot see simply
+  does not fire for that caller, and still fires for the unbound one that registered it.
+  Adding a fallback lookup would make `load` ambiguous — `sid` and `A:sid` can both exist —
+  and ambiguity in the key that `advance` compare-and-sets is how a schedule fires twice.
+- **Class:** `spec-gap` — the asymmetry is derivable from the two stores' code without
+  building anything.
+- **Consequence:** the schedule store keeps exact id scoping. Only `put` changes, per §5.1.
+  The battery states the difference so a later reader does not "fix" it into the run store's
+  shape.
+- **Proposed row (RFC 0046):** `ASSUMED` — where tenancy lives in the key rather than in a
+  predicate, there is no untagged allowance: a fallback lookup trades a liveness gap for an
+  ambiguous key, and the compare-and-set that makes firing exactly-once depends on that key
+  being exact.
+
+## D-019 — The rule lives in a free function; the mixin method delegates to it
+
+- **Touches:** RFC 0046 §5.1 and decision row 6, which locates `_effective_tenant` on
+  `TenancyMixin`. `ASSUMED`.
+- **RFC said:** one method on the mixin, shared by every adapter built on it.
+- **Found:** the mock stores are not built on it. `MockDurableRunStore` and
+  `MockDurableScheduleStore` carry their own `tenant_provider` and a local `_bound_tenant`
+  ([`run_store.py`](../src/forze_mock/adapters/durable/run_store.py)), and row 8 requires
+  all three implementations to move together — so a method reachable only through the mixin
+  would have left the oracle applying a second copy of the rule.
+- **Because:** the design was written from the two relational stores, where the mixin is
+  universal. The oracle is the one implementation that deliberately is not an adapter.
+- **Class:** `spec-gap`.
+- **Consequence:** the comparison is a module-level `effective_tenant(bound=…, requested=…)`
+  in the same tenancy package, and `TenancyMixin._effective_tenant` is a one-line delegation
+  that supplies the bound value. Row 6's placement decision is unchanged — the rule is still
+  tenancy's, not durability's — and there is still exactly one implementation of it.
+- **Proposed row (RFC 0046):** `ASSUMED` — a rule the mock must apply too is written as a
+  free function that takes both values, with the mixin method as the adapter-side shorthand.
+
+## D-020 — Only one of the two modules uses `TenancyRouteGroup`
+
+- **Touches:** RFC 0046 §5.4 and decision row 7 ("the durable configs join the existing
+  `TenancyRouteGroup` machinery unchanged, via a small helper"). `ASSUMED`.
+- **RFC said:** one shared helper lifting a scalar config into a one-entry route map, used by
+  both modules.
+- **Found:** `PostgresDepsModule` does not use `TenancyRouteGroup` at all. It appends
+  `PostgresTenancyRouteSpec` values to a list and calls `validate_postgres_tenancy_wiring`
+  ([`module.py`](../src/forze_postgres/execution/deps/module.py), the `rotating_credentials`
+  block is the precedent for a single optional field). Only Mongo builds groups. A shared
+  helper would therefore have had exactly one caller.
+- **Because:** §5.4's snippet was written against the Mongo module and the RFC's §3 did not
+  check the Postgres one, which reads the same from the outside — both take
+  `required_tenant_isolation` and both fail with a `*_tenancy_validation_failed` code.
+- **Class:** `spec-gap`.
+- **Consequence:** each module follows its own idiom — three `TenancyRouteGroup`s and a local
+  `_route` helper on Mongo, three `PostgresTenancyRouteSpec` appends beside
+  `rotating_credentials` on Postgres. That required one unplanned edit outside both modules:
+  `PostgresTenancyRouteKind` is a closed `Literal` and gains `durable_step`, `durable_run`
+  and `durable_schedule`.
+- **Proposed row (RFC 0046):** `ASSUMED` — a route joins each module's own validation idiom.
+  There is no shared shape to extend: Postgres's route kinds are a closed `Literal` and
+  Mongo's are free-form strings, and unifying them is its own change.
+
+## D-021 — The worker verbs are pinned in the shared battery, not in the Postgres tier class
+
+- **Touches:** RFC 0046 §6 ("the tagged-tier isolation class is extended … the worker verbs
+  join it, and Mongo gets the mirror"). §6 is prose, not a graded row, so this is unlisted.
+- **RFC said:** extend `TestTaggedTierRunControlIsolation` with the worker verbs.
+- **Found:** the shared battery covers them against both engines already — `run_tenancy_scenario`
+  runs over one static relation, which *is* the tagged tier, and both legs assert the same
+  observables. Extending the Postgres class as well would have been a per-engine copy of a
+  comparison the battery already makes against the oracle.
+- **Because:** §6 was written before the battery scenario's shape was settled, and assumed the
+  worker verbs would need a place the tagged tier already had.
+- **Class:** `discovery`.
+- **Consequence:** the engine-specific files carry only what the battery cannot: namespace
+  *placement*, which is invisible over a static relation and therefore invisible to the
+  battery. `TestTaggedTierRunControlIsolation` is untouched.
+- **Proposed row (RFC 0046):** `ASSUMED` — a property observable over a static relation
+  belongs in the shared battery; an engine's own file carries only what a shared relation
+  cannot express.
+
+## Audit findings — 2026-09-05
+
+Adversarial pass over the whole branch (8 commits, 28 files, +1908/-71) after execution.
+These are departures the executor did not notice while making them; the entries above are the
+ones it did.
+
+**F1 — the stored-tenant read was unproven (fixed).** Reverting `complete`'s
+`_stored_tenant(run_id)` back to the binding passed all 25 durable integration tests on both
+engines. Every fixture builds its store with `cipher=None`, and the read exists only for the
+sealed case: an untagged run stays completable from any binding (§5.2), so sealing under the
+binding writes ciphertext whose AAD names a tenant the row does not, and `load` — which
+unseals with the column — can never open it. The run completes and its result is
+unreadable. Both engines now carry
+`test_an_untagged_run_completed_under_a_binding_still_decrypts`, verified red without the
+read (`core.crypto.aead_auth_failed`) and green with it.
+
+**F2 — both run stores still called their tenancy "Non-enforcing" (fixed).** True before this
+branch, false after it; the sentence sat three lines above the predicate that contradicts it.
+Both class docstrings now state the split by verb, and both schedule stores say why a
+key-scoped tenancy has no untagged allowance.
+
+**F3 — the tenant provider was declared twice (fixed).** Both conformance legs carried an
+identical four-line `_provider`, for a scenario whose entire subject is two stores differing
+only by that value. It is now `tenant_provider_for` beside the scenario.
+
+Sabotage sweep, all killed: the mismatch refusal (4 legs red), the untagged arm (2 red),
+the worker predicate (red), the relation resolution on both engines (2 red each), the
+route-group registration (6 red), and — after F1 — the stored-tenant read (2 red).
+
+**Residue.** `claim_abandoned` still matches the tenant exactly, so a bound scanner never
+reclaims an untagged run; only an unbound one does. That follows D-015 and is unchanged by
+this branch, but it means an untagged run in a deployment whose scanners are all bound is
+recovered by nobody — worth a look when the control surface is next revisited.
+
+## D-022 — Corrections to this unit's own record
+
+Appended rather than edited, per the rule that an entry is never revised: what was written
+stands, and what turned out to be true is written next to it.
+
+- **Drift count: 0.** Seven entries, not the four the unit header claims — the header was
+  written before the audit added D-019, D-020 and D-021, and the count line is revised by
+  appending this one rather than by editing that one. Classes: three `discovery`, four
+  `spec-gap`, no `drift`.
+- **D-017's citation is stale.** It cites `mixins.py:43-60` for `_tenant_id_for_resolve()`.
+  That range was correct when the entry was written and stopped being correct in the same
+  branch: inserting `effective_tenant` above it moved the function to
+  [`mixins.py:91`](../src/forze/application/contracts/tenancy/mixins.py), and lines 43-60 now
+  cover `require_tenant_if_aware`. The claim the entry makes is unaffected — the fail-closed
+  read happens first either way, and
+  `tests/integration/test_forze_postgres/test_pg_durable_tenancy_integration.py::TestNamespacePlacement::test_a_tenant_aware_store_refuses_the_unbound_call_first`
+  is the executable form of it.
+- **A line number in a citation goes stale from the citing branch's own edits**, which is
+  the general shape worth carrying forward: cite the symbol, and add a line only when the
+  claim is about a specific line rather than about a function.
+
+## D-023 — The kit method that calls the store needed the rule three times
+
+Appended after review, which found what the audit did not: three defects, all in
+`DurableScheduler.ensure_schedule` and none in the stores this unit's design is about.
+
+- **Touches:** RFC 0046 §5.1 (the effective-tenant rule) and D-018, which recorded that the
+  schedule store's tenancy lives in its *key* rather than in a predicate.
+- **Found:** `ensure_schedule` reads, returns early if nothing changed, and otherwise
+  writes. (1) Reading unbound while writing for a named tenant looked up a key the write
+  never used, so it re-put on every call and reset `next_fire_at` — the schedule skipped its
+  own due fire, silently. (2) Binding the named tenant to make both halves agree replaced an
+  existing binding, so the store's contradiction check compared a tenant against itself and
+  asking for a tenant became a way to write as it. (3) Settling it at the write left the
+  early return unchecked, handing back the *bound* tenant's schedule as the answer to a
+  question about another one.
+- **Because:** D-018 is what makes this method fragile. Where tenancy is a predicate the
+  store applies it on every path; where it is *in the key*, a caller that composes the key
+  twice — once to read, once to write — has to get the same tenant both times, and every
+  exit needs the rule independently.
+- **Class:** `spec-gap`. The RFC scoped its callers as "the shipped paths never take the
+  split" and stopped there; it never asked which callers *compose the key twice*.
+- **Consequence:** fixed in 2c1bef933, 79fbfad02 and 5807e5406; the rule is now settled
+  before the read by calling `effective_tenant`, with the stores still enforcing it. The
+  general shape: **settle identity before the read in a read-then-write helper, and test
+  every exit — the create path and the no-op path are different tests.**
+- **Proposed row (RFC 0046):** `ASSUMED` — where a store expresses tenancy in its key, any
+  caller that both reads and writes must settle the tenant once, before the read. Enforcing
+  it only at the write leaves every early return unguarded.

@@ -21,7 +21,7 @@ from forze.application.contracts.durable.function import (
     build_run_page,
     decode_run_cursor,
 )
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenantProviderPort, effective_tenant
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_mock.state import MockState
@@ -39,6 +39,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
     ask/land split), in memory. A bound tenant scopes ``enqueue``/``claim_abandoned``/
     ``request_cancel`` to that tenant (per-tenant recovery and control); unbound, the scan
     spans every tenant.
+
+    The verbs reached with a run id — ``begin``, ``renew``, ``load`` and every terminal
+    write — reach the bound tenant's runs and the untagged ones (see :meth:`_reaches`);
+    unbound they reach everything, which is the recovery and single-tenant role.
     """
 
     state: MockState
@@ -56,6 +60,21 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
     # ....................... #
 
+    def _reaches(self, data: dict[str, Any]) -> bool:
+        """Whether a run is reachable by the verbs that take a run id.
+
+        Bound, that is this tenant's runs plus the untagged ones; unbound, everything. The
+        untagged arm is load-bearing: a run tagged with no tenant belongs to none, and the
+        runner leaves the ambient binding alone for such a run, so an exact match would make
+        its terminal write hit nothing and leave it re-running forever.
+        """
+
+        bound = self._bound_tenant()
+
+        return bound is None or data["tenant_id"] in (bound, None)
+
+    # ....................... #
+
     async def enqueue(
         self,
         name: str,
@@ -65,7 +84,9 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         tenant_id: UUID | None = None,
         available_at: datetime | None = None,
     ) -> DurableRunRecord:
-        tenant_id = tenant_id if tenant_id is not None else self._bound_tenant()
+        # One effective tenant for the stored tag and for convergence — the same rule the
+        # relational stores apply to their relation, tag and scoped key together.
+        tenant_id = effective_tenant(bound=self._bound_tenant(), requested=tenant_id)
 
         with self.state.lock:
             if idempotency_key is not None:
@@ -111,7 +132,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         with self.state.lock:
             data = self.state.durable_runs.get(run_id)
 
-            if data is None or data["status"] != DurableRunStatus.PENDING.value:
+            if data is None or not self._reaches(data):
+                return None
+
+            if data["status"] != DurableRunStatus.PENDING.value:
                 return None
 
             self._lease(data, lease_for)
@@ -134,7 +158,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             # current claim holder (``attempts == fence``) and the run is still RUNNING. A
             # reclaim advanced ``attempts``, so the fence no longer matches and the caller is
             # told to stop.
-            if data is None or data["status"] != DurableRunStatus.RUNNING.value:
+            if data is None or not self._reaches(data):
+                return DurableLeaseRenewal(held=False)
+
+            if data["status"] != DurableRunStatus.RUNNING.value:
                 return DurableLeaseRenewal(held=False)
 
             if data["attempts"] != fence:
@@ -295,7 +322,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
         with self.state.lock:
             data = self.state.durable_runs.get(run_id)
 
-            return None if data is None else _to_record(data)
+            if data is None or not self._reaches(data):
+                return None
+
+            return _to_record(data)
 
     # ....................... #
 
@@ -361,7 +391,10 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             # Guarded on RUNNING so a terminal state is not overwritten (idempotent finish);
             # when *fence* is given it must match ``attempts`` so a stale worker whose lease
             # was reclaimed cannot finish the run.
-            if data is None or data["status"] != DurableRunStatus.RUNNING.value:
+            if data is None or not self._reaches(data):
+                return
+
+            if data["status"] != DurableRunStatus.RUNNING.value:
                 return
 
             if fence is not None and data["attempts"] != fence:

@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Firestore integration suite runs again.** Its pinned emulator image had aged out of the registry, so all 104 tests errored on `manifest unknown` and took the coverage and conformance gates with them. Bumped to the newest tag the registry serves.
 
+- **A durable run or schedule registered for a tenant nothing is bound to now lands where that tenant looks for it.** The relation came from the binding while the tag and the scoped id came from the argument, so on a per-tenant relation the row was written somewhere nobody reads and the schedule never fired.
+
+### Security
+
+- **A bound tenant can no longer reach another tenant's durable run.** `begin`, `renew`, `load` and the terminal writes enforced no tenant; they now reach the bound tenant's runs and untagged ones. Postgres, Mongo and the mock.
+
+- **`required_tenant_isolation` now covers `durable_step`, `durable_run` and `durable_schedule`**, which previously passed wiring below a declared floor. An explicit tenant contradicting a bound one is refused (`authentication` / `tenant_mismatch`).
+
 ## [0.6.0] - 2026-08-15
 
 ### Added

@@ -13,7 +13,7 @@ from forze.application.contracts.durable.function import (
     DurableScheduleRecord,
     DurableScheduleStorePort,
 )
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenantProviderPort, effective_tenant
 from forze_mock.state import MockState
 
 # ----------------------- #
@@ -50,7 +50,10 @@ class MockDurableScheduleStore(DurableScheduleStorePort):
     # ....................... #
 
     async def put(self, record: DurableScheduleRecord) -> None:
-        tenant_id = record.tenant_id if record.tenant_id is not None else self._bound_tenant()
+        # One effective tenant for the stored tag and the scoped key — the same rule the
+        # relational stores apply to their relation as well. A record naming a tenant the
+        # caller is not bound to is refused rather than half-honoured.
+        tenant_id = effective_tenant(bound=self._bound_tenant(), requested=record.tenant_id)
 
         with self.state.lock:
             self.state.durable_run_schedules[_scoped_key(record.schedule_id, tenant_id)] = {

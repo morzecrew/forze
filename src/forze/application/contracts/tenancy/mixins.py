@@ -9,6 +9,30 @@ from .ports import TenantProviderPort
 # ----------------------- #
 
 
+def effective_tenant(*, bound: UUID | None, requested: UUID | None) -> UUID | None:
+    """Reconcile a caller-supplied tenant with a bound one, or refuse the contradiction.
+
+    The rule itself, free of how either value was obtained, so an adapter that carries its
+    own provider (the mock stores) applies the same one as every adapter built on
+    :class:`TenancyMixin`. See :meth:`TenancyMixin._effective_tenant` for why refusing beats
+    preferring either side.
+    """
+
+    if requested is None:
+        return bound
+
+    if bound is not None and requested != bound:
+        raise exc.authentication(
+            "Requested tenant does not match the bound tenant.",
+            code="tenant_mismatch",
+        )
+
+    return requested
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class TenancyMixin:
     """Mixin to handle multi-tenancy."""
@@ -37,6 +61,30 @@ class TenancyMixin:
             raise exc.authentication("Tenant ID is required", code="tenant_required")
 
         return tenant.tenant_id
+
+    # ....................... #
+
+    def _effective_tenant(self, requested: UUID | None) -> UUID | None:
+        """The one tenant an operation resolves against — its relation, its tag, its ids.
+
+        An adapter method that accepts a caller-supplied tenant has two answers available
+        to it, and the defect this exists to prevent is using each for a different half of
+        the same write: tagging a row with the requested tenant while resolving the
+        relation from the binding puts the row where nobody looks for it.
+
+        A *contradiction* — an explicit tenant that differs from a bound one — is refused
+        rather than resolved, because either resolution is wrong: preferring the request
+        sanctions a cross-tenant write, and preferring the binding silently discards what
+        the caller asked for. Where only one answer exists, that answer is used, so an
+        unbound caller may still name the tenant it is writing for.
+
+        Note the order: the bound tenant is read **first**, so a ``tenant_aware`` adapter
+        with nothing bound fails closed on the missing binding before an explicitly passed
+        tenant is ever considered. That read is the canonical contract and this does not
+        carve an exception into it.
+        """
+
+        return effective_tenant(bound=self._tenant_id_for_resolve(), requested=requested)
 
     # ....................... #
 
