@@ -23,7 +23,15 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    KeyRef,
+    StaticKeyDirectory,
+    is_encrypted_payload,
+)
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.integrations.crypto import Keyring
+from forze_mock import MockKeyManagement
 from forze_mongo.adapters.durable import MongoDurableRunStore
 from forze_mongo.execution.deps.configs import MongoDurableRunConfig
 from forze_mongo.kernel.client import MongoClient
@@ -48,6 +56,14 @@ async def run_collection(mongo_client: MongoClient) -> tuple[str, str]:
     )
 
     return db_name, name
+
+
+def _keyring() -> Keyring:
+    return Keyring(
+        kms=MockKeyManagement(),
+        aead=AesGcmAead(),
+        directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+    )
 
 
 def _store(
@@ -248,3 +264,42 @@ async def test_a_bound_tenant_claims_and_lists_only_its_own_runs(
     claimed_unbound = await unbound.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
 
     assert [record.name for record in claimed_unbound] == ["b-run"]
+
+
+async def test_run_payloads_are_sealed_at_rest_and_load_in_the_clear(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    """Input and output are the run's business payload, so a wired keyring seals both.
+
+    Asserted against the stored document, not just the round trip: a store that returned
+    plaintext because it never encrypted would pass a round-trip check perfectly.
+    """
+
+    store = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection),
+        cipher=_keyring(),
+        tenant_provider=lambda: TenantIdentity(tenant_id=_TENANT_A),
+    )
+
+    run = await store.enqueue("fn", input_json={"card": "4111"}, idempotency_key="sealed")
+    claimed = await store.begin(run.run_id, lease_for=timedelta(minutes=5))
+
+    assert claimed is not None
+    assert claimed.input_json == {"card": "4111"}
+
+    await store.complete(run.run_id, output_json={"receipt": "r-1"}, fence=claimed.attempts)
+
+    loaded = await store.load(run.run_id)
+
+    assert loaded is not None
+    assert (loaded.input_json, loaded.output_json) == ({"card": "4111"}, {"receipt": "r-1"})
+
+    db_name, coll_name = run_collection
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+    stored = await mongo_client.find_one(coll, {"_id": run.run_id})
+
+    assert stored is not None
+    assert is_encrypted_payload(stored["input"])
+    assert is_encrypted_payload(stored["output"])
+    assert "4111" not in str(stored) and "r-1" not in str(stored)

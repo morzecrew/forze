@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 pytest.importorskip("pymongo")
 
@@ -14,16 +14,25 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
     DocumentSpec,
 )
+from forze.application.contracts.durable.function import (
+    DurableFunctionStepDepKey,
+    DurableRunAdminDepKey,
+    DurableRunStoreDepKey,
+    DurableScheduleStoreDepKey,
+)
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution.context.invocation import InvocationMetadata
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters import MongoDocumentAdapter, MongoTxManagerAdapter
 from forze_mongo.adapters.idempotency import MongoIdempotencyStore
 from forze_mongo.adapters.inbox import MongoInboxStore
 from forze_mongo.execution.deps import (
     ConfigurableMongoDocument,
+    ConfigurableMongoDurableRun,
+    ConfigurableMongoDurableStep,
     ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoReadOnlyDocument,
@@ -31,6 +40,9 @@ from forze_mongo.execution.deps import (
     MongoClientDepKey,
     MongoDepsModule,
     MongoDocumentConfig,
+    MongoDurableRunConfig,
+    MongoDurableScheduleConfig,
+    MongoDurableStepConfig,
     MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoReadOnlyDocumentConfig,
@@ -39,7 +51,6 @@ from forze_mongo.execution.deps import (
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
 from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
-from forze.application.execution.context.invocation import InvocationMetadata
 from tests.support.execution_context import context_from_deps
 
 
@@ -300,3 +311,73 @@ def test_doc_write_gw_with_history() -> None:
 
     assert gw.history_gw is not None
     assert gw.history_gw.collection == "h"
+
+
+class TestMongoDurableWiring:
+    """What the module registers for durable execution, and what it refuses to.
+
+    Each of these is silent when wrong: a missing admin key looks like an unavailable ops
+    plane rather than a wiring bug, and a route that asked for encryption and got none would
+    journal business payloads in the clear while every functional test still passed.
+    """
+
+    def test_each_store_registers_under_its_own_key(self) -> None:
+        module = MongoDepsModule(
+            client=MagicMock(spec=MongoClient),
+            durable_step=MongoDurableStepConfig(collection=("db", "steps")),
+            durable_run=MongoDurableRunConfig(collection=("db", "runs")),
+            durable_schedule=MongoDurableScheduleConfig(collection=("db", "schedules")),
+        )
+
+        deps = module()
+
+        assert deps.exists(DurableFunctionStepDepKey)
+        assert deps.exists(DurableRunStoreDepKey)
+        assert deps.exists(DurableScheduleStoreDepKey)
+
+    def test_nothing_is_registered_by_default(self) -> None:
+        deps = MongoDepsModule(client=MagicMock(spec=MongoClient))()
+
+        assert not deps.exists(DurableFunctionStepDepKey)
+        assert not deps.exists(DurableRunStoreDepKey)
+        assert not deps.exists(DurableScheduleStoreDepKey)
+
+    def test_the_ops_plane_is_opt_in(self) -> None:
+        # `admin` grants run *control*, not just visibility (request_cancel stops runs), so
+        # it must never arrive with the store.
+        client = MagicMock(spec=MongoClient)
+        without = MongoDepsModule(
+            client=client,
+            durable_run=MongoDurableRunConfig(collection=("db", "runs")),
+        )()
+        with_admin = MongoDepsModule(
+            client=client,
+            durable_run=MongoDurableRunConfig(collection=("db", "runs"), admin=True),
+        )()
+
+        assert not without.exists(DurableRunAdminDepKey)
+        assert with_admin.exists(DurableRunAdminDepKey)
+
+    def test_encryption_without_a_keyring_fails_closed(self) -> None:
+        ctx = context_from_deps(Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)}))
+
+        for factory in (
+            ConfigurableMongoDurableStep(
+                config=MongoDurableStepConfig(collection=("db", "steps"), encrypt=True)
+            ),
+            ConfigurableMongoDurableRun(
+                config=MongoDurableRunConfig(collection=("db", "runs"), encrypt=True)
+            ),
+        ):
+            with pytest.raises(CoreException) as ei:
+                factory(ctx)
+
+            assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+    def test_a_plain_route_builds_without_a_keyring(self) -> None:
+        ctx = context_from_deps(Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)}))
+        store = ConfigurableMongoDurableRun(
+            config=MongoDurableRunConfig(collection=("db", "runs"))
+        )(ctx)
+
+        assert store.cipher is None
