@@ -662,12 +662,14 @@ dep_keys = [
     "durable_function_schedule_store",
     "durable_function_event_command",
 ]
-engines = ["postgres", "inngest"]
+engines = ["postgres", "mongo", "inngest"]
 reason = """
-Postgres and Inngest both implement the durable-function step port with materially \
-different execution models (in-process replay against a step store versus a hosted \
-event-driven runner). Step idempotency, replay determinism and JSON-only step results are \
-exactly the guarantees a differential should pin, and none of them are compared today.\
+Postgres, Mongo and Inngest implement the durable-function ports with materially different \
+execution models (in-process replay against a step store versus a hosted event-driven \
+runner). The two self-hosted stores are each pinned against the mock oracle by a scenario \
+battery (tests/support/durable_conformance.py), which is what keeps them agreeing with each \
+other; Inngest is compared to nothing. Step idempotency, replay determinism and JSON-only \
+step results across the hosted runner are what a differential still has to pin.\
 """
 
 [tool.conformance_manifest.planes.field_encryption]
