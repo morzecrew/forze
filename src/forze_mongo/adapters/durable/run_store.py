@@ -86,8 +86,15 @@ class MongoDurableRunStore(
     ``collection`` is a shared **tagged** collection (``tenant_id`` field) and a per-tenant
     resolver is a **namespace** collection. Recovery either runs unbound over a tagged
     collection (claims every tenant's runs; the runner re-binds each run's tenant to execute
-    it) or per-tenant over a namespace collection. Non-enforcing: an unbound scan never
-    fails, and a bound scan claims only that tenant's runs.
+    it) or per-tenant over a namespace collection. An unbound scan never fails, and a bound
+    scan claims only that tenant's runs.
+
+    What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`
+    and every terminal write reach that tenant's runs and untagged ones (see
+    :meth:`_worker_scope`); :meth:`claim_abandoned`, :meth:`list_runs`,
+    :meth:`request_cancel` and :meth:`refuse_cancel` match the tenant exactly.
+    :meth:`enqueue` resolves one effective tenant for the collection, the tag and the scoped
+    key together, and refuses an explicit tenant that contradicts the binding.
 
     Documents look like ``{_id, name, status, idempotency_key, input, output, error,
     tenant_id, attempts, leased_until, available_at, created_at, updated_at,

@@ -64,6 +64,13 @@ class PostgresDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     is stored **tenant-scoped**, so two tenants registering the same id stay distinct
     schedules instead of overwriting each other.
 
+    Tenancy lives in that key rather than in a predicate, so :meth:`advance`, :meth:`load`
+    and :meth:`delete` reach exactly the bound tenant's schedules — there is no untagged
+    allowance of the kind the run store's worker verbs carry, because a fallback lookup would
+    let two keys answer one :meth:`load` and the compare-and-set above depends on the key
+    being exact. :meth:`put` resolves one effective tenant for the table, the tag and the key
+    together, and refuses a record naming a tenant that contradicts the binding.
+
     The table is provided by the application; expected schema::
 
         CREATE TABLE <relation> (

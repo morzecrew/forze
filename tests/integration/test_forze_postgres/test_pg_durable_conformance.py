@@ -22,10 +22,9 @@ the code proves nothing and only running both does.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import timedelta
 from typing import cast
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from psycopg import sql
@@ -33,7 +32,6 @@ from psycopg import sql
 from forze.application.contracts.durable.function import (
     DurableRunStorePort,
 )
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.primitives import utcnow
 from forze_mock import (
     MockDurableFunctionStepAdapter,
@@ -63,15 +61,10 @@ from tests.support.durable_conformance import (
     run_list_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
+    tenant_provider_for,
 )
 
 # ----------------------- #
-
-
-def _provider(tenant: UUID | None) -> Callable[[], TenantIdentity | None]:
-    """A tenant provider for one binding — including the unbound one."""
-
-    return lambda: None if tenant is None else TenantIdentity(tenant_id=tenant)
 
 
 @pytest.fixture
@@ -305,11 +298,11 @@ class TestDurableMockVsPostgres:
         mock_out = await run_tenancy_scenario(
             lambda tenant: MockDurableRunStore(
                 state=mock_state,
-                tenant_provider=_provider(tenant),
+                tenant_provider=tenant_provider_for(tenant),
             ),
             lambda tenant: MockDurableScheduleStore(
                 state=mock_state,
-                tenant_provider=_provider(tenant),
+                tenant_provider=tenant_provider_for(tenant),
             ),
         )
 
@@ -317,12 +310,12 @@ class TestDurableMockVsPostgres:
             lambda tenant: PostgresDurableRunStore(
                 client=pg_client,
                 config=PostgresDurableRunConfig(relation=("public", run_table)),
-                tenant_provider=_provider(tenant),
+                tenant_provider=tenant_provider_for(tenant),
             ),
             lambda tenant: PostgresDurableScheduleStore(
                 client=pg_client,
                 config=PostgresDurableScheduleConfig(relation=("public", schedule_table)),
-                tenant_provider=_provider(tenant),
+                tenant_provider=tenant_provider_for(tenant),
             ),
         )
 

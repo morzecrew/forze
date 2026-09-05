@@ -40,6 +40,7 @@ from forze.application.contracts.durable.function import (
     durable_run_control_capabilities,
     reset_durable_run,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 
@@ -382,6 +383,20 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
     ]
 
     return out
+
+
+# ....................... #
+
+
+def tenant_provider_for(tenant: UUID | None) -> Callable[[], TenantIdentity | None]:
+    """A tenant provider for one binding, including the unbound one.
+
+    Lives here rather than in each engine's leg because the scenario below is *about* two
+    stores that differ only by this, and two copies of it would be two chances to bind them
+    differently.
+    """
+
+    return lambda: None if tenant is None else TenantIdentity(tenant_id=tenant)
 
 
 # ....................... #

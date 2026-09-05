@@ -101,9 +101,16 @@ class PostgresDurableRunStore(
     shared **tagged** table (``tenant_id`` column) and a per-tenant ``relation`` resolver is a
     **namespace** table. Recovery either runs unbound over a tagged table (claims every
     tenant's runs; the runner re-binds each run's tenant to execute it) or per-tenant over a
-    namespace table (the scanner binds each tenant in turn). Non-enforcing: an unbound scan
-    never fails, and a bound scan claims only that tenant's runs. The table is provided by the
-    application; expected schema::
+    namespace table (the scanner binds each tenant in turn). An unbound scan never fails, and
+    a bound scan claims only that tenant's runs.
+
+    What a bound caller reaches splits by verb. ``begin``, ``renew``, ``load`` and every
+    terminal write reach that tenant's runs and untagged ones (see :meth:`_worker_scope`);
+    ``claim_abandoned``, ``list_runs``, ``request_cancel`` and ``refuse_cancel`` match the
+    tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the
+    scoped key together, and refuses an explicit tenant that contradicts the binding.
+
+    The table is provided by the application; expected schema::
 
         CREATE TABLE <relation> (
             run_id              text        NOT NULL,

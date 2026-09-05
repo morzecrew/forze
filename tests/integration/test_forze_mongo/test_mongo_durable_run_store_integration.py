@@ -395,3 +395,42 @@ async def test_a_bound_scheduler_claims_only_its_own_due_schedules(
     # And deleting A's leaves B's registered.
     assert await store(_TENANT_A).delete("nightly")
     assert await store(_TENANT_B).load("nightly") is not None
+
+async def test_an_untagged_run_completed_under_a_binding_still_decrypts(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    """The case the stored-tenant read exists for.
+
+    A run tagged with no tenant stays completable from any binding — otherwise its terminal
+    write matches nothing and it is reclaimed and re-run forever. Sealing that output under
+    the *binding* would then write ciphertext whose AAD names a tenant the document does
+    not, and ``load`` — which unseals with the field — could never open it.
+    """
+
+    keyring = _keyring()
+    unbound = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection),
+        cipher=keyring,
+        tenant_provider=lambda: None,
+    )
+    bound = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection),
+        cipher=keyring,
+        tenant_provider=lambda: TenantIdentity(tenant_id=uuid4()),
+    )
+
+    run = await unbound.enqueue("orphan", input_json=None)
+    held = await bound.begin(run.run_id, lease_for=timedelta(minutes=5))
+
+    assert held is not None
+
+    await bound.complete(run.run_id, output_json={"secret": "out"}, fence=held.attempts)
+
+    loaded = await unbound.load(run.run_id)
+
+    assert loaded is not None
+    assert loaded.tenant_id is None
+    assert loaded.status.value == "completed"
+    assert loaded.output_json == {"secret": "out"}

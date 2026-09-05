@@ -65,6 +65,13 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
     schedules. On a shared tagged collection the ``_id`` is the **tenant-scoped**
     ``schedule_id``.
 
+    Tenancy lives in that key rather than in a predicate, so :meth:`advance`, :meth:`load`
+    and :meth:`delete` reach exactly the bound tenant's schedules — there is no untagged
+    allowance of the kind the run store's worker verbs carry, because a fallback lookup
+    would let two keys answer one :meth:`load` and the compare-and-set above depends on the
+    key being exact. :meth:`put` resolves one effective tenant for the collection, the tag
+    and the key together, and refuses a record naming a tenant that contradicts the binding.
+
     Documents look like ``{_id, name, cron, tz, input, next_fire_at, enabled, tenant_id,
     created_at, updated_at}``. One index is worth creating; none is required::
 

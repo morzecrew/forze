@@ -918,3 +918,66 @@ unlisted decisions the plan needed and the document does not settle (D-017, D-01
   predicate, there is no untagged allowance: a fallback lookup trades a liveness gap for an
   ambiguous key, and the compare-and-set that makes firing exactly-once depends on that key
   being exact.
+
+## D-019 — The rule lives in a free function; the mixin method delegates to it
+
+- **Touches:** RFC 0046 §5.1 and decision row 6, which locates `_effective_tenant` on
+  `TenancyMixin`. `ASSUMED`.
+- **RFC said:** one method on the mixin, shared by every adapter built on it.
+- **Found:** the mock stores are not built on it. `MockDurableRunStore` and
+  `MockDurableScheduleStore` carry their own `tenant_provider` and a local `_bound_tenant`
+  ([`run_store.py`](../src/forze_mock/adapters/durable/run_store.py)), and row 8 requires
+  all three implementations to move together — so a method reachable only through the mixin
+  would have left the oracle applying a second copy of the rule.
+- **Because:** the design was written from the two relational stores, where the mixin is
+  universal. The oracle is the one implementation that deliberately is not an adapter.
+- **Class:** `spec-gap`.
+- **Consequence:** the comparison is a module-level `effective_tenant(bound=…, requested=…)`
+  in the same tenancy package, and `TenancyMixin._effective_tenant` is a one-line delegation
+  that supplies the bound value. Row 6's placement decision is unchanged — the rule is still
+  tenancy's, not durability's — and there is still exactly one implementation of it.
+- **Proposed row (RFC 0046):** `ASSUMED` — a rule the mock must apply too is written as a
+  free function that takes both values, with the mixin method as the adapter-side shorthand.
+
+## D-020 — Only one of the two modules uses `TenancyRouteGroup`
+
+- **Touches:** RFC 0046 §5.4 and decision row 7 ("the durable configs join the existing
+  `TenancyRouteGroup` machinery unchanged, via a small helper"). `ASSUMED`.
+- **RFC said:** one shared helper lifting a scalar config into a one-entry route map, used by
+  both modules.
+- **Found:** `PostgresDepsModule` does not use `TenancyRouteGroup` at all. It appends
+  `PostgresTenancyRouteSpec` values to a list and calls `validate_postgres_tenancy_wiring`
+  ([`module.py`](../src/forze_postgres/execution/deps/module.py), the `rotating_credentials`
+  block is the precedent for a single optional field). Only Mongo builds groups. A shared
+  helper would therefore have had exactly one caller.
+- **Because:** §5.4's snippet was written against the Mongo module and the RFC's §3 did not
+  check the Postgres one, which reads the same from the outside — both take
+  `required_tenant_isolation` and both fail with a `*_tenancy_validation_failed` code.
+- **Class:** `spec-gap`.
+- **Consequence:** each module follows its own idiom — three `TenancyRouteGroup`s and a local
+  `_route` helper on Mongo, three `PostgresTenancyRouteSpec` appends beside
+  `rotating_credentials` on Postgres. That required one unplanned edit outside both modules:
+  `PostgresTenancyRouteKind` is a closed `Literal` and gains `durable_step`, `durable_run`
+  and `durable_schedule`.
+- **Proposed row (RFC 0046):** `ASSUMED` — a route joins each module's own validation idiom.
+  There is no shared shape to extend: Postgres's route kinds are a closed `Literal` and
+  Mongo's are free-form strings, and unifying them is its own change.
+
+## D-021 — The worker verbs are pinned in the shared battery, not in the Postgres tier class
+
+- **Touches:** RFC 0046 §6 ("the tagged-tier isolation class is extended … the worker verbs
+  join it, and Mongo gets the mirror"). §6 is prose, not a graded row, so this is unlisted.
+- **RFC said:** extend `TestTaggedTierRunControlIsolation` with the worker verbs.
+- **Found:** the shared battery covers them against both engines already — `run_tenancy_scenario`
+  runs over one static relation, which *is* the tagged tier, and both legs assert the same
+  observables. Extending the Postgres class as well would have been a per-engine copy of a
+  comparison the battery already makes against the oracle.
+- **Because:** §6 was written before the battery scenario's shape was settled, and assumed the
+  worker verbs would need a place the tagged tier already had.
+- **Class:** `discovery`.
+- **Consequence:** the engine-specific files carry only what the battery cannot: namespace
+  *placement*, which is invisible over a static relation and therefore invisible to the
+  battery. `TestTaggedTierRunControlIsolation` is untouched.
+- **Proposed row (RFC 0046):** `ASSUMED` — a property observable over a static relation
+  belongs in the shared battery; an engine's own file carries only what a shared relation
+  cannot express.
