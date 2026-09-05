@@ -58,6 +58,7 @@ from ...kernel.catalog.validation.validate_relation_specs import (
     warn_dynamic_relation_with_tenant_aware,
 )
 from ...kernel.catalog.validation.validate_tenancy import (
+    PostgresTenancyRouteKind,
     PostgresTenancyRouteSpec,
     PostgresTenantIsolationMode,
     validate_postgres_tenancy_wiring,
@@ -573,6 +574,37 @@ class PostgresDepsModule(DepsModule):
                 kind="rotating_credentials",
                 tenant_aware=self.rotating_credentials.tenant_aware,
                 fields=[("relation", self.rotating_credentials.relation)],
+            )
+
+        # The durable routes are single optional fields rather than route maps, like
+        # ``rotating_credentials`` above, and belong here for the same reason: a declared
+        # floor describes the module, and a route the validator cannot see makes that
+        # description narrower than it reads. The step journal's key already carries its
+        # tenant, so its route adds no enforcement — it is here so a floor covers every
+        # durable route or none of them.
+        durable_routes: tuple[tuple[PostgresTenancyRouteKind, Any], ...] = (
+            ("durable_step", self.durable_step),
+            ("durable_run", self.durable_run),
+            ("durable_schedule", self.durable_schedule),
+        )
+
+        for kind, durable_cfg in durable_routes:
+            if durable_cfg is None:
+                continue
+
+            routes.append(
+                PostgresTenancyRouteSpec(
+                    name=kind,
+                    tenant_aware=durable_cfg.tenant_aware,
+                    kind=kind,
+                    has_namespace_routing=callable(durable_cfg.relation),
+                ),
+            )
+            warn_dynamic_relation_with_tenant_aware(
+                route_name=kind,
+                kind=kind,
+                tenant_aware=durable_cfg.tenant_aware,
+                fields=[("relation", durable_cfg.relation)],
             )
 
         # Namespace tier is now tracked per route (a DYNAMIC per-tenant relation /

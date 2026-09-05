@@ -30,6 +30,9 @@ PostgresTenancyRouteKind = Literal[
     "inbox",
     "counter",
     "rotating_credentials",
+    "durable_step",
+    "durable_run",
+    "durable_schedule",
 ]
 
 # ....................... #

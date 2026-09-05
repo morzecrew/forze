@@ -87,6 +87,15 @@ from .keys import MongoClientDepKey
 # ----------------------- #
 
 
+def _route[ConfigT](name: str, config: ConfigT | None) -> dict[str, ConfigT]:
+    """Lift an optional single config into the route mapping a tenancy group expects."""
+
+    return {} if config is None else {name: config}
+
+
+# ....................... #
+
+
 def _rw_document_query_factory(
     *,
     config: MongoDocumentConfig,
@@ -290,6 +299,31 @@ class MongoDepsModule(DepsModule):
                     kind="counter",
                     configs=self.counters,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
+                ),
+                # The durable routes are single optional fields rather than route maps — a
+                # module has one run store, not a named set of them — so each is lifted into
+                # a one-entry mapping. They belong here for the same reason every other
+                # route does: a declared floor describes the module, and a route the
+                # validator cannot see makes that description narrower than it reads. The
+                # step journal's key already carries its tenant, so its group adds no
+                # enforcement; it is here so a floor covers every durable route or none.
+                TenancyRouteGroup(
+                    kind="durable_step",
+                    configs=_route("durable_step", self.durable_step),
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
+                ),
+                TenancyRouteGroup(
+                    kind="durable_run",
+                    configs=_route("durable_run", self.durable_run),
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
+                ),
+                TenancyRouteGroup(
+                    kind="durable_schedule",
+                    configs=_route("durable_schedule", self.durable_schedule),
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
                 ),
             ],
             required_isolation=self.required_tenant_isolation,
