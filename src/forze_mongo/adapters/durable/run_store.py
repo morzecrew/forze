@@ -318,6 +318,12 @@ class MongoDurableRunStore(
         # Read back by this batch's own token rather than by the candidate ids: the ids
         # include the runs another scanner took, and a stale token left on a row by an
         # earlier batch cannot match a token minted for this one.
+        #
+        # Crashing between the claim and this read leaves those runs RUNNING under a lease
+        # nobody is serving — a window Postgres does not have, since its claim and its
+        # RETURNING are one statement. It closes itself: the lease expires and the next scan
+        # reclaims them, which is the same recovery path a worker that died mid-body takes.
+        # The cost is one lease interval of delay, not a lost run.
         rows = await self.client.find_many(
             coll,
             {"claim_token": claim_token},

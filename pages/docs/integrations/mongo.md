@@ -110,7 +110,11 @@ lifecycle = LifecyclePlan.from_steps(
   candidates and stamps them in one update whose per-document filter still
   requires the run to be claimable — exactly one scanner wins each. A contended
   batch takes fewer runs than it asked for and the next scan catches up; nothing
-  is claimed twice.
+  is claimed twice. A scanner that dies between claiming and reading back leaves
+  those runs leased to nobody — Postgres has no such window, since its claim and
+  its result are one statement — and they come back on the next scan once the
+  lease expires, so size `lease_for` for how long you can wait, not just for how
+  long a body runs.
 - `MongoSearchConfig` is imported from `forze_mongo.execution.deps` (not the
   top-level package).
 - Relations accept a static `(database, collection)` tuple or a per-tenant
