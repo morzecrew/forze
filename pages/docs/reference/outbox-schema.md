@@ -155,3 +155,16 @@ back — with the rows it stamps. **Mongo transactions need a replica set**, so 
 standalone server an outbox route with `require_transaction=True` cannot run at all,
 and with it the checkpoint has nothing to ride; the mark is only atomic where the
 flush itself is.
+
+Two operational notes that differ from Postgres:
+
+- **Give each replica its own `node_key` when more than one flushes concurrently.**
+  Two transactions advancing one document contend, and Mongo aborts one with a write
+  conflict the flush must retry; Postgres serialises the same contention on a row lock.
+- **Keep the keys stable and few** — one per replica, not one per boot. Recovery reads
+  every key's document, so per-process keys turn a fixed handful into an unbounded scan.
+
+The checkpoint also **cannot be wired on a routed (per-tenant) client**, on either
+backend: the mark is node-global while a routed client picks its backend from the bound
+tenant, which startup recovery does not have. Both modules refuse that combination at
+wiring rather than at the first read.

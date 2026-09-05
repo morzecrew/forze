@@ -62,7 +62,7 @@ from forze_mongo.execution.deps import (
     mongo_txmanager,
 )
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
-from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.client import MongoClient, RoutedMongoClient
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
 from tests.support.execution_context import context_from_deps
 
@@ -347,6 +347,28 @@ class TestMongoHlcCheckpointWiring:
         )()
 
         assert wired.exists(HlcCheckpointDepKey)
+
+    def test_a_routed_client_is_refused_at_wiring(self) -> None:
+        """There is no binding under which this combination works, so it fails at startup.
+
+        The mark is node-global and a routed client picks its backend from the bound
+        tenant. Recovery runs unbound, so ``load`` would refuse with ``tenant_required``
+        and the node would never start — and an ``advance`` that *did* have a tenant bound
+        would scatter one clock's mark across tenant clusters.
+        """
+
+        with pytest.raises(CoreException) as raised:
+            MongoDepsModule(
+                client=MagicMock(spec=RoutedMongoClient),
+                hlc_checkpoint=MongoHlcCheckpointConfig(collection=("db", "hlc")),
+            )
+
+        assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_a_routed_client_is_fine_without_a_checkpoint(self) -> None:
+        """The refusal is about this pairing, not about routed clients."""
+
+        MongoDepsModule(client=MagicMock(spec=RoutedMongoClient))
 
     def test_the_factory_builds_the_store_over_the_configured_collection(self) -> None:
         client = MagicMock(spec=MongoClient)

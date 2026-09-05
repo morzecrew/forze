@@ -16,6 +16,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.hlc import HlcCheckpointPort
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mongo.adapters import MongoTxManagerAdapter
 from forze_mongo.adapters.hlc_checkpoint import MongoHlcCheckpointStore
 from forze_mongo.execution.deps.configs import MongoHlcCheckpointConfig
@@ -55,6 +56,36 @@ def harness(
         transaction=lambda: MongoTxManagerAdapter(client=mongo_client_replica).transaction(),
         backend="mongo",
     )
+
+
+async def test_a_corrupt_mark_is_refused_rather_than_read_as_no_mark(
+    mongo_client_replica: MongoClient, hlc_collection: tuple[str, str]
+) -> None:
+    """What Mongo's schemalessness costs, and why the answer is to fail loudly.
+
+    Postgres declares ``hlc BIGINT`` and the question cannot arise; here any document can
+    land in the collection. Reading a non-integer mark as "no mark" is the dangerous
+    reading — the clock would resume at ``(0, 0)`` and re-issue beneath stamps this node
+    already relayed, which is the one failure the checkpoint exists to prevent, reached in
+    silence. Refusing stops the node instead, which is recoverable.
+    """
+
+    db_name, coll_name = hlc_collection
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await coll.insert_one({"_id": "default", "hlc": "not-a-mark"})
+
+    store = MongoHlcCheckpointStore(
+        client=mongo_client_replica,
+        config=MongoHlcCheckpointConfig(collection=hlc_collection),
+    )
+
+    with pytest.raises(CoreException) as raised:
+        await store.load()
+
+    assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+
+# ....................... #
 
 
 @pytest.mark.conformance(plane="hlc_checkpoint", engine="mongo")

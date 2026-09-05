@@ -14,6 +14,7 @@ import attrs
 from pymongo.asynchronous.collection import AsyncCollection
 
 from forze.application.contracts.hlc import HlcCheckpointPort
+from forze.base.exceptions import exc
 from forze.base.primitives import HlcTimestamp, JsonDict
 from forze_mongo.execution.deps.configs.hlc_checkpoint import MongoHlcCheckpointConfig
 from forze_mongo.kernel.client import MongoClientPort
@@ -80,7 +81,21 @@ class MongoHlcCheckpointStore(HlcCheckpointPort):
         # lacking one only reaches the front when nothing in the collection has a mark yet.
         packed = rows[0].get("hlc") if rows else None
 
-        return None if packed is None else HlcTimestamp.unpack(int(packed))
+        if packed is None:
+            return None
+
+        if not isinstance(packed, int) or isinstance(packed, bool):
+            # Refuse rather than resume from nothing. A collection this store did not write
+            # is an operator error, and the safe-looking alternative is the unsafe one:
+            # treating a corrupt mark as "no mark" resumes the clock at ``(0, 0)`` and
+            # re-issues beneath stamps this node already relayed — the exact failure the
+            # checkpoint exists to prevent, arrived at silently.
+            raise exc.configuration(
+                f"HLC checkpoint document {rows[0].get('_id')!r} holds a non-integer mark; "
+                "the collection must hold only marks this store wrote.",
+            )
+
+        return HlcTimestamp.unpack(packed)
 
     # ....................... #
 

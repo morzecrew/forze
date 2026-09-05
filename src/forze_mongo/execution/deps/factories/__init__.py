@@ -24,11 +24,11 @@ from .tx import mongo_txmanager
 __all__ = [
     "ConfigurableMongoCounter",
     "ConfigurableMongoCounterAdmin",
-    "ConfigurableMongoHlcCheckpoint",
     "ConfigurableMongoDocument",
     "ConfigurableMongoDurableRun",
     "ConfigurableMongoDurableSchedule",
     "ConfigurableMongoDurableStep",
+    "ConfigurableMongoHlcCheckpoint",
     "ConfigurableMongoIdempotency",
     "ConfigurableMongoInbox",
     "ConfigurableMongoOutbox",

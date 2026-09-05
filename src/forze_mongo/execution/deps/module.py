@@ -42,6 +42,7 @@ from forze.application.contracts.tenancy import (
     warn_integration_routes,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
@@ -225,6 +226,20 @@ class MongoDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.hlc_checkpoint is not None and isinstance(self.client, RoutedMongoClient):
+            # The mark is node-global — one clock per runtime, spanning every tenant — and a
+            # routed client resolves its backend *from* the bound tenant. Startup recovery
+            # runs unbound, so ``load`` would refuse with ``tenant_required`` and the node
+            # would never start; worse, ``advance`` runs inside a flush that may have a
+            # tenant bound, scattering one clock's mark across tenant clusters. Refused here
+            # rather than at the first read, because there is no binding under which this
+            # wiring works.
+            raise exc.configuration(
+                "Mongo HLC checkpoint cannot use a routed client: the mark is node-global "
+                "and a routed client resolves its backend from the bound tenant, which "
+                "startup recovery does not have. Wire the checkpoint on a direct MongoClient.",
+            )
+
         warn_integration_routes(
             integration="Mongo",
             routes=self.ro_documents,
@@ -417,18 +432,18 @@ class MongoDepsModule(DepsModule):
                     (CounterAdminDepKey, ConfigurableMongoCounterAdmin),
                 ],
             ),
-            plain={MongoClientDepKey: self.client, **self._durable_deps()},
+            plain={MongoClientDepKey: self.client, **self._singleton_deps()},
         )
 
     # ....................... #
 
-    def _durable_deps(self) -> dict[Any, Any]:
-        """Plain (unrouted) registrations for the three durable-execution ports.
+    def _singleton_deps(self) -> dict[Any, Any]:
+        """Plain (unrouted) registrations for the ports a deployment has exactly one of.
 
-        Plain rather than routed because each is a single store per deployment, resolved
-        per scope: the step journal reads its run from the ambient ``DurableRunContext``,
-        and the run and schedule stores are swept by the runner rather than addressed by a
-        route name.
+        Plain rather than routed because none of them is addressed by a route name: the
+        step journal reads its run from the ambient ``DurableRunContext``, the run and
+        schedule stores are swept by the runner, and the HLC checkpoint is node-global —
+        one clock per runtime, spanning every tenant.
         """
 
         registrations: dict[Any, Any] = {}

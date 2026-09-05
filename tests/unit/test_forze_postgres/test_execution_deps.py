@@ -46,6 +46,7 @@ from forze_postgres.execution.deps.configs import (
     FtsEngine,
     PgroongaEngine,
     PostgresDocumentConfig,
+    PostgresHlcCheckpointConfig,
     PostgresHubSearchConfig,
     PostgresHubSearchMemberConfig,
     PostgresIdempotencyConfig,
@@ -276,6 +277,31 @@ class TestPostgresDepsModule:
 
         with pytest.raises(CoreException, match="postgres_tenancy_validation_failed"):
             PostgresDepsModule(client=routed)
+
+    def test_routed_client_is_refused_for_the_hlc_checkpoint(self) -> None:
+        """The mark is node-global; a routed client picks its backend from the bound tenant.
+
+        Startup recovery runs unbound, so ``load`` would refuse with ``tenant_required`` and
+        the node would never start — and an ``advance`` that *did* have a tenant bound would
+        scatter one clock's mark across tenant databases. Refused at wiring, because there
+        is no binding under which the pairing works.
+        """
+
+        from uuid import UUID
+
+        tid = UUID("11111111-1111-1111-1111-111111111111")
+        routed = RoutedPostgresClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/dsn"),
+            tenant_provider=lambda: tid,
+        )
+
+        with pytest.raises(CoreException, match="node-global"):
+            PostgresDepsModule(
+                client=routed,
+                introspector_cache_partition_key=lambda: str(tid),
+                hlc_checkpoint=PostgresHlcCheckpointConfig(relation=("app", "hlc")),
+            )
 
     def test_routed_client_with_partition_key_builds(self) -> None:
         from uuid import UUID

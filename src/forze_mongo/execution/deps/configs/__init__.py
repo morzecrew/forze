@@ -25,11 +25,11 @@ from .search import (
 __all__ = [
     "MongoAtlasEngine",
     "MongoCounterConfig",
-    "MongoHlcCheckpointConfig",
     "MongoDocumentConfig",
     "MongoDurableRunConfig",
     "MongoDurableScheduleConfig",
     "MongoDurableStepConfig",
+    "MongoHlcCheckpointConfig",
     "MongoIdempotencyConfig",
     "MongoInboxConfig",
     "MongoOutboxConfig",

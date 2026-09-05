@@ -340,6 +340,20 @@ class PostgresDepsModule(DepsModule):
         ):
             raise exc.configuration("Introspector cache TTL must be positive")
 
+        if self.hlc_checkpoint is not None and isinstance(self.client, RoutedPostgresClient):
+            # The mark is node-global — one clock per runtime, spanning every tenant — and a
+            # routed client resolves its backend *from* the bound tenant. Startup recovery
+            # runs unbound, so ``load`` would refuse with ``tenant_required`` and the node
+            # would never start; worse, the flush's advance may have a tenant bound,
+            # scattering one clock's mark across tenant databases. Refused here rather than
+            # at the first read, because there is no binding under which this wiring works.
+            raise exc.configuration(
+                "Postgres HLC checkpoint cannot use a routed client: the mark is "
+                "node-global and a routed client resolves its backend from the bound "
+                "tenant, which startup recovery does not have. Wire the checkpoint on a "
+                "direct PostgresClient.",
+            )
+
         if self.ro_documents:
             for name, cfg in self.ro_documents.items():
                 routes.append(
