@@ -75,10 +75,12 @@ class MongoHlcCheckpointStore(HlcCheckpointPort):
             limit=1,
         )
 
-        if not rows:
-            return None
+        # ``.get`` rather than ``[...]``: the collection is schemaless, and a document
+        # without the field is not a mark. Mongo sorts a missing field lowest, so a document
+        # lacking one only reaches the front when nothing in the collection has a mark yet.
+        packed = rows[0].get("hlc") if rows else None
 
-        return HlcTimestamp.unpack(int(rows[0]["hlc"]))
+        return None if packed is None else HlcTimestamp.unpack(int(packed))
 
     # ....................... #
 
