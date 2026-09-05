@@ -29,11 +29,17 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
     is_encrypted_payload,
 )
+from forze.application.contracts.durable.function import DurableScheduleRecord
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import Keyring
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import utcnow
 from forze_mock import MockKeyManagement
-from forze_mongo.adapters.durable import MongoDurableRunStore
-from forze_mongo.execution.deps.configs import MongoDurableRunConfig
+from forze_mongo.adapters.durable import MongoDurableRunStore, MongoDurableScheduleStore
+from forze_mongo.execution.deps.configs import (
+    MongoDurableRunConfig,
+    MongoDurableScheduleConfig,
+)
 from forze_mongo.kernel.client import MongoClient
 
 # ----------------------- #
@@ -303,3 +309,89 @@ async def test_run_payloads_are_sealed_at_rest_and_load_in_the_clear(
     assert is_encrypted_payload(stored["input"])
     assert is_encrypted_payload(stored["output"])
     assert "4111" not in str(stored) and "r-1" not in str(stored)
+
+
+async def test_a_tenant_aware_store_cannot_run_the_unbound_recovery_sweep(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    """Why the run config's ``tenant_aware`` should stay off for a shared collection.
+
+    ``tenant_aware`` fails closed when no tenant is bound — correct for a store that must
+    never read across tenants, and wrong for this one, whose recovery sweep is *defined* as
+    running unbound over a tagged collection so a crashed run of any tenant is picked up.
+    Asserted rather than left in a docstring, since the failure only appears in the
+    deployment shape (multi-tenant, recovering) that is hardest to exercise by hand.
+    """
+
+    store = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection, tenant_aware=True),
+        tenant_aware=True,
+        tenant_provider=lambda: None,
+    )
+
+    with pytest.raises(CoreException) as ei:
+        await store.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+
+    assert ei.value.kind == ExceptionKind.AUTHENTICATION
+
+    # The same store bound to a tenant works, which is what makes this a wiring choice
+    # rather than a broken configuration.
+    bound = MongoDurableRunStore(
+        client=mongo_client,
+        config=MongoDurableRunConfig(collection=run_collection, tenant_aware=True),
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=_TENANT_A),
+    )
+
+    assert await bound.claim_abandoned(limit=10, lease_for=timedelta(minutes=5)) == []
+
+
+async def test_a_bound_scheduler_claims_only_its_own_due_schedules(
+    mongo_client: MongoClient,
+) -> None:
+    """The schedule store's tenant scoping, which the shared scenario runs unbound.
+
+    A schedule id is a caller's own string — ``nightly`` for every tenant that registers
+    one — so both halves matter: two tenants keep distinct schedules under one id, and a
+    bound scheduler's claim never reaches across to fire someone else's.
+    """
+
+    db_name = (await mongo_client.db()).name
+    collection = (db_name, f"durable_schedule_{uuid4().hex[:8]}")
+    due_at = utcnow() - timedelta(minutes=1)
+
+    def store(tenant: UUID) -> MongoDurableScheduleStore:
+        return MongoDurableScheduleStore(
+            client=mongo_client,
+            config=MongoDurableScheduleConfig(collection=collection),
+            tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
+        )
+
+    for tenant, name in ((_TENANT_A, "a-fn"), (_TENANT_B, "b-fn")):
+        await store(tenant).put(
+            DurableScheduleRecord(
+                schedule_id="nightly",
+                name=name,
+                cron="0 3 * * *",
+                next_fire_at=due_at,
+            )
+        )
+
+    a_due = await store(_TENANT_A).claim_due(now=utcnow(), limit=10)
+    b_due = await store(_TENANT_B).claim_due(now=utcnow(), limit=10)
+
+    assert [record.name for record in a_due] == ["a-fn"]
+    assert [record.name for record in b_due] == ["b-fn"]
+    # Both surface the id the caller registered, not the scoped form it is stored under.
+    assert {record.schedule_id for record in (*a_due, *b_due)} == {"nightly"}
+
+    # A's advance moves A's schedule only, so B still fires on its own cadence.
+    assert await store(_TENANT_A).advance(
+        "nightly", from_fire_at=due_at, to_fire_at=due_at + timedelta(hours=1)
+    )
+    assert [r.name for r in await store(_TENANT_B).claim_due(now=utcnow(), limit=10)] == ["b-fn"]
+
+    # And deleting A's leaves B's registered.
+    assert await store(_TENANT_A).delete("nightly")
+    assert await store(_TENANT_B).load("nightly") is not None

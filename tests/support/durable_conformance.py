@@ -39,6 +39,7 @@ from forze.application.contracts.durable.function import (
     durable_run_control_capabilities,
     reset_durable_run,
 )
+from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
 
 # ----------------------- #
@@ -132,6 +133,15 @@ async def run_list_scenario(store: DurableRunStorePort) -> dict[str, Any]:
 
     by_name = await admin.list_runs(name="fn0", limit=10)
     out["by_name_count"] = len(by_name.records)
+
+    # A page of nothing is a caller error, not an empty page: every engine refuses it the
+    # same way, so a boundary that slipped through would be one engine's private behaviour.
+    try:
+        await admin.list_runs(limit=0)
+    except CoreException as error:
+        out["zero_limit_list"] = error.kind.value
+    else:  # pragma: no cover - a store that allows it is the failure being pinned
+        out["zero_limit_list"] = "allowed"
 
     return out
 
@@ -252,6 +262,35 @@ async def run_control_scenario(store: DurableRunStorePort) -> dict[str, Any]:
     out["late_refusal_stamped"] = (
         landed_late is not None and landed_late.cancel_refused_at is not None
     )
+
+    # 8. The two terminals that are neither success nor cancellation: an ordinary failure,
+    # and a saga that committed at its pivot and could not finish going forward. Each is a
+    # distinct state because each sends an operator somewhere different, and a store that
+    # collapsed either into ``failed`` would be readable only by reading its code.
+    failing = await store.enqueue("failed-run", input_json=None)
+    failing_holder = await store.begin(failing.run_id, lease_for=timedelta(minutes=5))
+    assert failing_holder is not None
+
+    await store.fail(failing.run_id, error="boom", fence=failing_holder.attempts)
+    failed = await store.load(failing.run_id)
+    out["failed_status"] = None if failed is None else failed.status.value
+    out["failed_error"] = None if failed is None else failed.error
+
+    # A stale worker cannot fail a run it no longer holds, like every other terminal write.
+    await store.fail(failing.run_id, error="late", fence=failing_holder.attempts + 99)
+    still_failed = await store.load(failing.run_id)
+    out["failed_error_after_stale_write"] = None if still_failed is None else still_failed.error
+
+    pivoted = await store.enqueue("forward-incomplete", input_json=None)
+    pivot_holder = await store.begin(pivoted.run_id, lease_for=timedelta(minutes=5))
+    assert pivot_holder is not None
+
+    await store.mark_forward_incomplete(
+        pivoted.run_id, error="pivot committed, step 3 failed", fence=pivot_holder.attempts
+    )
+    incomplete = await store.load(pivoted.run_id)
+    out["forward_incomplete_status"] = None if incomplete is None else incomplete.status.value
+    out["forward_incomplete_error"] = None if incomplete is None else incomplete.error
 
     # 9. The deadline terminal is its own state on both engines.
     expired = await store.enqueue("timed-out", input_json=None)

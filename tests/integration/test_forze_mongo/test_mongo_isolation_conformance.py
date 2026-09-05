@@ -46,9 +46,9 @@ from forze_dst.conformance import (
     write_matrix,
 )
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
-from tests.support.isolation_conformance import MockConformanceBackend
 from forze_mongo.execution.deps import MongoDepsModule, MongoDocumentConfig
 from forze_mongo.kernel.client import MongoClient
+from tests.support.isolation_conformance import MockConformanceBackend
 
 # ----------------------- #
 

@@ -37,6 +37,11 @@ class MongoDurableRunConfig(TenantAwareIntegrationConfig):
     """Configuration for the Mongo durable-run store.
 
     See :class:`~forze_mongo.adapters.durable.run_store.MongoDurableRunStore`.
+
+    Inherited ``tenant_aware`` is a **namespace** switch here, not a filter: the store tags
+    every run with the bound tenant and scopes its scans to it whenever one is bound. Leave
+    it ``False`` for a shared tagged collection — with it on, the unbound recovery sweep the
+    runner uses to recover every tenant's runs cannot resolve a collection at all.
     """
 
     collection: RelationSpec = attrs.field(converter=coerce_relation_spec)

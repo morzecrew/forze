@@ -5,7 +5,15 @@ from uuid import uuid4
 
 import pytest
 
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    KeyRef,
+    KeyringDepKey,
+    StaticKeyDirectory,
+)
+from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze_mock import MockKeyManagement
 
 pytest.importorskip("pymongo")
 
@@ -32,6 +40,7 @@ from forze_mongo.adapters.inbox import MongoInboxStore
 from forze_mongo.execution.deps import (
     ConfigurableMongoDocument,
     ConfigurableMongoDurableRun,
+    ConfigurableMongoDurableSchedule,
     ConfigurableMongoDurableStep,
     ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
@@ -373,6 +382,37 @@ class TestMongoDurableWiring:
                 factory(ctx)
 
             assert ei.value.kind == ExceptionKind.CONFIGURATION
+
+    def test_a_sealing_route_gets_the_wired_keyring(self) -> None:
+        # The other side of failing closed: where a keyring *is* registered, the store has
+        # to actually receive it — a factory that resolved it and dropped it would journal
+        # plaintext with no error anywhere.
+        keyring = Keyring(
+            kms=MockKeyManagement(),
+            aead=AesGcmAead(),
+            directory=StaticKeyDirectory(KeyRef(key_id="cmk")),
+        )
+        ctx = context_from_deps(
+            Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient), KeyringDepKey: keyring})
+        )
+
+        run = ConfigurableMongoDurableRun(
+            config=MongoDurableRunConfig(collection=("db", "runs"), encrypt=True)
+        )(ctx)
+        step = ConfigurableMongoDurableStep(
+            config=MongoDurableStepConfig(collection=("db", "steps"), encrypt=True)
+        )(ctx)
+
+        assert run.cipher is keyring
+        assert step.cipher is keyring
+
+    def test_the_schedule_store_is_built_from_its_config(self) -> None:
+        ctx = context_from_deps(Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)}))
+        store = ConfigurableMongoDurableSchedule(
+            config=MongoDurableScheduleConfig(collection=("db", "schedules"))
+        )(ctx)
+
+        assert store.config.collection == ("db", "schedules")
 
     def test_a_plain_route_builds_without_a_keyring(self) -> None:
         ctx = context_from_deps(Deps.plain({MongoClientDepKey: MagicMock(spec=MongoClient)}))

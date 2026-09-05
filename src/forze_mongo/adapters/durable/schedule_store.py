@@ -11,7 +11,6 @@ require_mongo()
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, final
-from uuid import UUID
 
 import attrs
 from pymongo.asynchronous.collection import AsyncCollection
@@ -22,6 +21,7 @@ from forze.application.contracts.durable.function import (
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.primitives import JsonDict, utcnow
+from forze_mongo.adapters.durable._ids import as_uuid, scope_id, unscope_id
 from forze_mongo.execution.deps.configs.durable import MongoDurableScheduleConfig
 from forze_mongo.kernel.client import MongoClientPort
 from forze_mongo.kernel.relation import resolve_mongo_collection
@@ -29,38 +29,11 @@ from forze_mongo.kernel.relation import resolve_mongo_collection
 # ----------------------- #
 
 
-def _scope_schedule_id(schedule_id: str, tenant_id: UUID | None) -> str:
-    """Namespace a schedule id under its tenant for the stored ``_id``.
-
-    A shared **tagged** collection keys schedules by id alone, so prefixing with the tenant
-    keeps two tenants registering the same ``schedule_id`` as distinct schedules instead of
-    overwriting each other. Single-tenant ids (``tenant_id is None``) are stored verbatim.
-    """
-
-    return schedule_id if tenant_id is None else f"{tenant_id}:{schedule_id}"
-
-
-def _unscope_schedule_id(stored: str, tenant_id: UUID | None) -> str:
-    """Strip the tenant prefix :func:`_scope_schedule_id` added, so a record surfaces the id
-    the caller registered (the fixed-width ``{uuid}:`` prefix makes the strip exact)."""
-
-    if tenant_id is None:
-        return stored
-
-    prefix = f"{tenant_id}:"
-
-    return stored[len(prefix) :] if stored.startswith(prefix) else stored
-
-
-def _as_uuid(value: Any) -> UUID | None:
-    return None if value is None else (value if isinstance(value, UUID) else UUID(str(value)))
-
-
 def _record_from_row(row: JsonDict) -> DurableScheduleRecord:
-    tenant_id = _as_uuid(row.get("tenant_id"))
+    tenant_id = as_uuid(row.get("tenant_id"))
 
     return DurableScheduleRecord(
-        schedule_id=_unscope_schedule_id(str(row["_id"]), tenant_id),
+        schedule_id=unscope_id(str(row["_id"]), tenant_id),
         name=str(row["name"]),
         cron=str(row["cron"]),
         next_fire_at=row["next_fire_at"],
@@ -124,7 +97,7 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
         await self.client.update_one_upsert(
             coll,
-            {"_id": _scope_schedule_id(record.schedule_id, tenant_id)},
+            {"_id": scope_id(record.schedule_id, tenant_id)},
             {
                 "$set": {
                     "name": record.name,
@@ -182,7 +155,7 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
         to_fire_at: datetime,
     ) -> bool:
         coll = await self._collection()
-        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+        stored_sid = scope_id(schedule_id, self._tenant_id_for_resolve())
 
         # The compare-and-set that makes firing exactly-once: only the scheduler whose read
         # matches the stored instant moves it on, so a second one firing the same instant
@@ -199,7 +172,7 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     async def load(self, schedule_id: str) -> DurableScheduleRecord | None:
         coll = await self._collection()
-        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+        stored_sid = scope_id(schedule_id, self._tenant_id_for_resolve())
         row = await self.client.find_one(coll, {"_id": stored_sid})
 
         return None if row is None else _record_from_row(row)
@@ -208,7 +181,7 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
 
     async def delete(self, schedule_id: str) -> bool:
         coll = await self._collection()
-        stored_sid = _scope_schedule_id(schedule_id, self._tenant_id_for_resolve())
+        stored_sid = scope_id(schedule_id, self._tenant_id_for_resolve())
         deleted = await self.client.delete_one(coll, {"_id": stored_sid})
 
         return bool(deleted)

@@ -36,6 +36,7 @@ from forze.application.integrations.crypto.payload import (
 )
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
+from forze_mongo.adapters.durable._ids import as_uuid, scope_id, unscope_id
 from forze_mongo.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
 from forze_mongo.execution.deps.configs.durable import MongoDurableRunConfig
 from forze_mongo.kernel.client import MongoClientPort
@@ -43,40 +44,18 @@ from forze_mongo.kernel.relation import resolve_mongo_collection
 
 # ----------------------- #
 
+
+def _unscope_key(stored: str | None, tenant_id: UUID | None) -> str | None:
+    """:func:`unscope_id` over an optional key — ``None`` means no idempotency was asked
+    for, so there is nothing scoped and nothing to strip."""
+
+    return None if stored is None else unscope_id(stored, tenant_id)
+
+
+# ....................... #
+
 _PENDING = DurableRunStatus.PENDING.value
 _RUNNING = DurableRunStatus.RUNNING.value
-
-
-def _scope_idem(idempotency_key: str | None, tenant_id: UUID | None) -> str | None:
-    """Namespace an idempotency key under its tenant for the stored ``idempotency_key``.
-
-    A shared **tagged** collection carries every tenant's runs, so prefixing the key with
-    the tenant scopes convergence per tenant: two tenants reusing one key (e.g. a
-    scheduler's ``{schedule_id}:{fire_epoch}``) stay distinct runs. Single-tenant keys
-    (``tenant_id is None``) are stored verbatim, and a ``None`` key is never namespaced —
-    no idempotency was asked for, so nothing converges.
-    """
-
-    if idempotency_key is None or tenant_id is None:
-        return idempotency_key
-
-    return f"{tenant_id}:{idempotency_key}"
-
-
-def _unscope_idem(stored: str | None, tenant_id: UUID | None) -> str | None:
-    """Strip the tenant prefix :func:`_scope_idem` added, so a record surfaces the key the
-    caller passed (the fixed-width ``{uuid}:`` prefix makes the strip exact)."""
-
-    if stored is None or tenant_id is None:
-        return stored
-
-    prefix = f"{tenant_id}:"
-
-    return stored[len(prefix) :] if stored.startswith(prefix) else stored
-
-
-def _as_uuid(value: Any) -> UUID | None:
-    return None if value is None else (value if isinstance(value, UUID) else UUID(str(value)))
 
 
 @final
@@ -179,7 +158,7 @@ class MongoDurableRunStore(
         run_id = str(uuid7())
         now = utcnow()
         stored_input = await self._seal(input_json, run_id, "input", tenant_id)
-        stored_idem = _scope_idem(idempotency_key, tenant_id)
+        stored_idem = scope_id(idempotency_key, tenant_id) if idempotency_key is not None else None
 
         document: dict[str, Any] = {
             "_id": run_id,
@@ -642,11 +621,11 @@ class MongoDurableRunStore(
             run_id=str(document["_id"]),
             name=str(document["name"]),
             status=DurableRunStatus(document["status"]),
-            idempotency_key=_unscope_idem(
-                document["idempotency_key"], _as_uuid(document["tenant_id"])
+            idempotency_key=_unscope_key(
+                document["idempotency_key"], as_uuid(document["tenant_id"])
             ),
             input_json=input_json,
-            tenant_id=_as_uuid(document["tenant_id"]),
+            tenant_id=as_uuid(document["tenant_id"]),
             attempts=int(document["attempts"]),
             available_at=document["available_at"],
             created_at=document["created_at"],
@@ -655,7 +634,7 @@ class MongoDurableRunStore(
     # ....................... #
 
     async def _record_from_row(self, row: JsonDict) -> DurableRunRecord:
-        tenant_id = _as_uuid(row.get("tenant_id"))
+        tenant_id = as_uuid(row.get("tenant_id"))
         run_id = str(row["_id"])
         input_json = await self._unseal(row.get("input"), run_id, "input", tenant_id)
         output_json = await self._unseal(row.get("output"), run_id, "output", tenant_id)
@@ -664,7 +643,7 @@ class MongoDurableRunStore(
             run_id=run_id,
             name=str(row["name"]),
             status=DurableRunStatus(row["status"]),
-            idempotency_key=_unscope_idem(row.get("idempotency_key"), tenant_id),
+            idempotency_key=_unscope_key(row.get("idempotency_key"), tenant_id),
             input_json=input_json,
             output_json=output_json,
             error=row.get("error"),

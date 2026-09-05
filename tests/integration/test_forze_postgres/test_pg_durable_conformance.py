@@ -167,6 +167,7 @@ class TestDurableMockVsPostgres:
         assert mock_out["page2_names"] == ["fn2", "fn1"]
         assert mock_out["completed_names"] == ["fn2"]
         assert mock_out["by_name_count"] == 1
+        assert mock_out["zero_limit_list"] == "validation"
 
     async def test_mock_matches_postgres_under_every_forced_race_schedule(
         self, pg_client: PostgresClient, run_table: str
@@ -253,6 +254,11 @@ class TestDurableMockVsPostgres:
         # ordering the runner produces (the stamp goes down in a ``finally``).
         assert mock_out["late_refusal_status"] == "completed"
         assert mock_out["late_refusal_stamped"] is True
+
+        assert mock_out["failed_status"] == "failed"
+        assert mock_out["failed_error"] == "boom"
+        assert mock_out["failed_error_after_stale_write"] == "boom"
+        assert mock_out["forward_incomplete_status"] == "forward_incomplete"
 
         assert mock_out["timed_out_status"] == "timed_out"
         assert mock_out["timed_out_error"] == "cap exceeded"

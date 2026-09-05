@@ -147,6 +147,7 @@ class TestDurableMockVsMongo:
         assert mock_out["page2_names"] == ["fn2", "fn1"]
         assert mock_out["completed_names"] == ["fn2"]
         assert mock_out["by_name_count"] == 1
+        assert mock_out["zero_limit_list"] == "validation"
 
     async def test_mock_matches_mongo_for_run_control(
         self, mongo_client: MongoClient, run_collection: tuple[str, str]
@@ -185,6 +186,11 @@ class TestDurableMockVsMongo:
         # ordering the runner produces, since the stamp goes down in a ``finally``.
         assert mock_out["late_refusal_status"] == "completed"
         assert mock_out["late_refusal_stamped"] is True
+
+        assert mock_out["failed_status"] == "failed"
+        assert mock_out["failed_error"] == "boom"
+        assert mock_out["failed_error_after_stale_write"] == "boom"
+        assert mock_out["forward_incomplete_status"] == "forward_incomplete"
 
         assert mock_out["timed_out_status"] == "timed_out"
         assert mock_out["timed_out_error"] == "cap exceeded"
