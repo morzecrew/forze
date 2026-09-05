@@ -6408,6 +6408,11 @@ models follows.</p>
 <td><code>CounterSpec.name</code></td>
 <td><code>counters</code></td>
 </tr>
+<tr>
+<td>Durable execution</td>
+<td><code>durable_step</code> / <code>durable_run</code> / <code>durable_schedule</code></td>
+<td>step memo, run store, and cron schedules — optional</td>
+</tr>
 </tbody>
 </table>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
@@ -6429,6 +6434,25 @@ models follows.</p>
   survives the rollback of the operation it guards. Expired claims are reclaimed
   in place; a TTL index on <code>expires_at</code> is optional cleanup for keys that are
   never reused.</li>
+<li><strong>Durable execution needs one index</strong>, and only one: a partial unique index on
+  the run collection's <code>idempotency_key</code>
+  (<code>partialFilterExpression: {idempotency_key: {$type: "string"}}</code>). Without it
+  two simultaneous submits of one key can both insert, and the port promises they
+  converge on a single run. The step journal needs none — its dedup key is the
+  document <code>_id</code>. Indexes on <code>{status: 1, created_at: 1}</code>, a sparse
+  <code>{claim_token: 1}</code> (the batch claim reads back what it just took) and
+  <code>{enabled: 1, next_fire_at: 1}</code> keep the recovery scan and the scheduler off
+  collection scans as the collections grow.</li>
+<li><strong>Claiming without row locks.</strong> Postgres hands out runs under
+  <code>FOR UPDATE SKIP LOCKED</code>; Mongo has no equivalent, so the batch claim reads
+  candidates and stamps them in one update whose per-document filter still
+  requires the run to be claimable — exactly one scanner wins each. A contended
+  batch takes fewer runs than it asked for and the next scan catches up; nothing
+  is claimed twice. A scanner that dies between claiming and reading back leaves
+  those runs leased to nobody — Postgres has no such window, since its claim and
+  its result are one statement — and they come back on the next scan once the
+  lease expires, so size <code>lease_for</code> for how long you can wait, not just for how
+  long a body runs.</li>
 <li><code>MongoSearchConfig</code> is imported from <code>forze_mongo.execution.deps</code> (not the
   top-level package).</li>
 <li>Relations accept a static <code>(database, collection)</code> tuple or a per-tenant

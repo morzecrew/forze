@@ -8371,6 +8371,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Mongo implements the inbox.</strong> <code>MongoDepsModule(inboxes={...})</code> with <code>MongoInboxConfig</code> registers a consumer-side dedup store: one atomic <code>_id</code> upsert per message, no index migration, riding the ambient transaction so the mark rolls back with the handler (exactly-once effect).</p>
 </li>
 <li>
+<p><strong>Mongo implements durable execution.</strong> <code>MongoDepsModule(durable_step=…, durable_run=…, durable_schedule=…)</code> registers the step-memo journal, the run store (claims, leases, fences, run control) and the cron schedule store. The run collection needs a partial unique index on <code>idempotency_key</code>.</p>
+</li>
+<li>
 <p><strong>Mongo implements idempotency, co-located.</strong> <code>MongoDepsModule(idempotencies={...})</code> with <code>MongoIdempotencyConfig</code> registers a store whose <code>commit</code> rides the caller's session, so the result record and the business writes commit atomically; claims and releases run detached.</p>
 </li>
 <li>

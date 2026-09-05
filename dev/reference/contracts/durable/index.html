@@ -6281,7 +6281,7 @@
 process restarts, a schedule that fires it on a cron, or an event-driven function. These
 contracts are <strong>resolved by dep key</strong> — there is no short <code>ctx.*</code> accessor — and an engine
 integration (<a href="../../../integrations/temporal/">Temporal</a> /
-<a href="../../../integrations/inngest/">Inngest</a>) or the self-hosted Postgres tier provides the
+<a href="../../../integrations/inngest/">Inngest</a>) or the self-hosted tier (Postgres or MongoDB) provides the
 adapter. The concept is
 <a href="../../../data-events/durable-execution/">Durable execution</a>; worked flows are the
 <a href="../../../recipes/background-workflow/">background workflow</a> and
@@ -6475,8 +6475,8 @@ forward).</p>
 </tr>
 <tr>
 <td>Functions + steps + cron (self-hosted: run/step/schedule stores + <code>forze_kits</code> runner)</td>
-<td>Postgres</td>
-<td><a href="../../../integrations/postgres/">Postgres</a> — see <a href="../../../data-events/durable-execution/#self-hosted-on-postgres">Durable execution → Self-hosted</a></td>
+<td>Postgres, MongoDB</td>
+<td><a href="../../../integrations/postgres/">Postgres</a>, <a href="../../../integrations/mongo/">MongoDB</a> — see <a href="../../../data-events/durable-execution/#self-hosted-on-your-own-database">Durable execution → Self-hosted</a></td>
 </tr>
 </tbody>
 </table>

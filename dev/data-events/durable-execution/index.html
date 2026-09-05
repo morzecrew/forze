@@ -1721,15 +1721,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#self-hosted-on-postgres" class="md-nav__link">
+  <a href="#self-hosted-on-your-own-database" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Self-hosted on Postgres
+        Self-hosted on your own database
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Self-hosted on Postgres">
+    <nav class="md-nav" aria-label="Self-hosted on your own database">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -6186,15 +6186,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#self-hosted-on-postgres" class="md-nav__link">
+  <a href="#self-hosted-on-your-own-database" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Self-hosted on Postgres
+        Self-hosted on your own database
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Self-hosted on Postgres">
+    <nav class="md-nav" aria-label="Self-hosted on your own database">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -6357,9 +6357,9 @@ retries a flaky payment, waits on a human approval, and must survive a deploy or
 the middle. In-process <a href="../events-sagas/">sagas</a> coordinate steps <em>within</em> one process;
 <strong>durable execution</strong> runs the orchestration against a store that persists every step — so a
 crash resumes exactly where it left off, not from the top. That store can be an external
-engine (<a href="../../integrations/temporal/">Temporal</a> / <a href="../../integrations/inngest/">Inngest</a>) or,
-for a deployment that runs <strong>only Postgres</strong>, the <a href="#self-hosted-on-postgres">self-hosted tier</a>
-on the database you already operate.</p>
+engine (<a href="../../integrations/temporal/">Temporal</a> / <a href="../../integrations/inngest/">Inngest</a>) or
+the <a href="#self-hosted-on-your-own-database">self-hosted tier</a> on the database you already
+operate — Postgres or MongoDB.</p>
 <h2 id="the-mental-model-journaled-progress">The mental model: journaled progress<a class="headerlink" href="#the-mental-model-journaled-progress" title="Permanent link">&para;</a></h2>
 <p>A durable workflow is ordinary code whose progress the engine <strong>journals</strong>. Each step's
 result is recorded, so after a crash the engine replays the workflow and skips the steps
@@ -6383,15 +6383,18 @@ it was.</p>
 <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">queries</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>         <span class="c1"># the typed return value, once complete</span>
 </code></pre></div>
 <p>A stable <code>workflow_id</code> makes <code>start</code> idempotent — the same id won't launch a second run.</p>
-<h2 id="self-hosted-on-postgres">Self-hosted on Postgres<a class="headerlink" href="#self-hosted-on-postgres" title="Permanent link">&para;</a></h2>
+<h2 id="self-hosted-on-your-own-database">Self-hosted on your own database<a class="headerlink" href="#self-hosted-on-your-own-database" title="Permanent link">&para;</a></h2>
 <p>The external engines are <em>operational</em> dependencies — a Temporal cluster or the Inngest
-service. For the common deployment that runs <strong>only Postgres</strong>, the self-hosted tier gives
-you the <strong>functions</strong> form (memoized steps + crash recovery) and crash-resumable <strong>sagas</strong>
-on the same database, with no engine to stand up.</p>
-<p>It reuses the journaled-progress model, backed by two app-provided tables: a <code>durable_step</code>
-<strong>memo journal</strong> (each step's result recorded so a replay skips it) and a <code>durable_run</code>
-<strong>run store</strong> (run instances, claimed for recovery with <code>FOR UPDATE SKIP LOCKED</code>). Wire both
-on the Postgres module and drive them with the <code>forze_kits</code> runner:</p>
+service. For the common deployment that runs one database and no engine, the self-hosted
+tier gives you the <strong>functions</strong> form (memoized steps + crash recovery) and crash-resumable
+<strong>sagas</strong> on that database, with nothing to stand up. <strong>Postgres and MongoDB both implement
+it</strong>, behind the same ports and the same runner.</p>
+<p>It reuses the journaled-progress model, backed by two app-provided relations: a
+<code>durable_step</code> <strong>memo journal</strong> (each step's result recorded so a replay skips it) and a
+<code>durable_run</code> <strong>run store</strong> (run instances, claimed for recovery — under
+<code>FOR UPDATE SKIP LOCKED</code> on Postgres, under a token-stamped batch claim on Mongo, which has
+no row locks to take). Wire both on your database's module and drive them with the
+<code>forze_kits</code> runner:</p>
 <div class="highlight"><pre><span></span><code><span class="n">deps</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span>
     <span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span>
     <span class="n">durable_step</span><span class="o">=</span><span class="n">PostgresDurableStepConfig</span><span class="p">(</span><span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"durable_step"</span><span class="p">)),</span>
@@ -6404,6 +6407,18 @@ on the Postgres module and drive them with the <code>forze_kits</code> runner:</
 
 <span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">enqueue</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="s2">"fulfil-order"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"order_id"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">order_id</span><span class="p">)})</span>
 </code></pre></div>
+<p>On MongoDB the wiring is the same shape, over collections instead of tables:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mongo.execution.deps</span><span class="w"> </span><span class="kn">import</span> <span class="n">MongoDurableRunConfig</span><span class="p">,</span> <span class="n">MongoDurableStepConfig</span>
+
+<span class="n">deps</span> <span class="o">=</span> <span class="n">MongoDepsModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span>
+    <span class="n">durable_step</span><span class="o">=</span><span class="n">MongoDurableStepConfig</span><span class="p">(</span><span class="n">collection</span><span class="o">=</span><span class="p">(</span><span class="s2">"app"</span><span class="p">,</span> <span class="s2">"durable_step"</span><span class="p">)),</span>
+    <span class="n">durable_run</span><span class="o">=</span><span class="n">MongoDurableRunConfig</span><span class="p">(</span><span class="n">collection</span><span class="o">=</span><span class="p">(</span><span class="s2">"app"</span><span class="p">,</span> <span class="s2">"durable_run"</span><span class="p">)),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The run collection needs one index — a partial unique index on <code>idempotency_key</code> — or two
+simultaneous submits of one key can both insert. See
+<a href="../../integrations/mongo/">MongoDB → durable execution</a> for it and the two optional ones.</p>
 <p>A registered function does its work in <strong>steps</strong> via the step port; each step memoizes, so a
 re-invocation after a crash replays completed steps and resumes at the first incomplete one:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fulfil_order</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="nb">input</span><span class="p">):</span>
@@ -6499,14 +6514,16 @@ leaving committed steps un-compensated:</p>
 <p>The saga context must be a serializable <code>pydantic.BaseModel</code> (it is journaled between
 steps). A step failure classified retryable (infrastructure, throttled, concurrency) is
 retried in place with backoff before it is journaled — compensation only runs on genuine
-failures or exhausted retries, never a one-off blip. This tier is self-hosted-Postgres only;
-a full workflow engine (timers, signals, versioning) is still Temporal/Inngest. The two
-tables come from your migrations; their schema is documented on the adapter classes.</p>
+failures or exhausted retries, never a one-off blip. This tier is self-hosted only
+(Postgres or MongoDB); a full workflow engine (timers, signals, versioning) is still
+Temporal/Inngest. The relations come from your migrations; their schema — and the one index
+the Mongo run store needs — is documented on the adapter classes.</p>
 <h3 id="recurring-schedules">Recurring schedules<a class="headerlink" href="#recurring-schedules" title="Permanent link">&para;</a></h3>
 <p>A <code>durable_schedule</code> table + the <code>DurableScheduler</code> fire a run on a <strong>cron cadence</strong>. Put a
 schedule and run the scheduler step (alongside the recovery step, which executes the runs it
 enqueues):</p>
 <div class="highlight"><pre><span></span><code><span class="n">deps</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">durable_run</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">durable_schedule</span><span class="o">=</span><span class="err">…</span><span class="p">)</span>
+<span class="c1"># …or MongoDepsModule(client=client, durable_run=…, durable_schedule=…)</span>
 
 <span class="k">await</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="s2">"nightly-report"</span><span class="p">,</span> <span class="s2">"report"</span><span class="p">,</span> <span class="s2">"0 3 * * *"</span><span class="p">,</span> <span class="n">tz</span><span class="o">=</span><span class="s2">"Europe/Berlin"</span><span class="p">)</span>
 
