@@ -303,11 +303,14 @@ class TestDurableMockVsMongo:
         assert mongo_out["cross_complete_output"] is None
         assert mongo_out["own_complete_status"] == "completed"
         assert mongo_out["own_complete_output"] == {"ok": True}
+        assert mongo_out["cross_fail_status"] == "running"
+        assert mongo_out["cross_fail_error"] is None
 
         # An untagged run is completable from anywhere and readable afterwards. On Mongo the
         # null arm also matches a *missing* field, which is the intent: a document written
         # before the tag existed is untagged, not unreachable.
         assert mongo_out["orphan_begin"] is True
+        assert mongo_out["orphan_renew"] is True
         assert mongo_out["orphan_status"] == "completed"
         assert mongo_out["orphan_output"] == {"ok": True}
 

@@ -456,6 +456,18 @@ async def run_tenancy_scenario(
     out["own_complete_status"] = None if landed is None else landed.status.value
     out["own_complete_output"] = None if landed is None else landed.output_json
 
+    # 1b. The other terminal verbs share ``_finish``, but they are separate port verbs and a
+    #     predicate can be lost from one of them: ``fail`` is driven from the other side of
+    #     the boundary too, over a second run so the first one's landing cannot mask it.
+    second = await as_a.enqueue("owned-2", input_json=None)
+    second_held = await as_a.begin(second.run_id, lease_for=timedelta(minutes=5))
+    assert second_held is not None
+
+    await as_b.fail(second.run_id, error="stolen", fence=second_held.attempts)
+    after_cross_fail = await as_a.load(second.run_id)
+    out["cross_fail_status"] = None if after_cross_fail is None else after_cross_fail.status.value
+    out["cross_fail_error"] = None if after_cross_fail is None else after_cross_fail.error
+
     # 2. An untagged run stays completable from anywhere — the arm that keeps it out of a
     #    reclaim loop — and its output is still readable, which is what makes that safe.
     orphan = await unbound.enqueue("orphan", input_json={"t": None})
@@ -463,6 +475,12 @@ async def run_tenancy_scenario(
     out["orphan_begin"] = orphan_held is not None
 
     assert orphan_held is not None
+    # …and its holder can keep the lease alive, which is the verb a long body leans on: an
+    # untagged run whose renewal were refused would be reclaimed mid-flight.
+    out["orphan_renew"] = (
+        await as_b.renew(orphan.run_id, lease_for=timedelta(minutes=5), fence=orphan_held.attempts)
+    ).held
+
     await as_b.complete(orphan.run_id, output_json={"ok": True}, fence=orphan_held.attempts)
     orphan_after = await unbound.load(orphan.run_id)
     out["orphan_status"] = None if orphan_after is None else orphan_after.status.value

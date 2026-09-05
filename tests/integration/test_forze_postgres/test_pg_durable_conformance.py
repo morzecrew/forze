@@ -329,10 +329,13 @@ class TestDurableMockVsPostgres:
         assert mock_out["cross_complete_output"] is None
         assert mock_out["own_complete_status"] == "completed"
         assert mock_out["own_complete_output"] == {"ok": True}
+        assert mock_out["cross_fail_status"] == "running"
+        assert mock_out["cross_fail_error"] is None
 
         # An untagged run is completable from anywhere and readable afterwards — the arm
         # that keeps it out of a reclaim loop, and the seal that makes the arm safe.
         assert mock_out["orphan_begin"] is True
+        assert mock_out["orphan_renew"] is True
         assert mock_out["orphan_status"] == "completed"
         assert mock_out["orphan_output"] == {"ok": True}
 

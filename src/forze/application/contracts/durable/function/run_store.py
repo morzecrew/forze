@@ -180,7 +180,9 @@ class DurableRunStorePort(Protocol):
     :meth:`enqueue` takes an explicit *tenant_id*: it is used for the row's tag, its scoped
     idempotency key and the relation the row lands in, all three. Passing one that
     contradicts a bound tenant is refused (``authentication`` / ``tenant_mismatch``) rather
-    than applied to some of the three.
+    than applied to some of the three. Passing one with *nothing* bound is honoured — except
+    on a ``tenant_aware`` store, which reads its binding first and refuses the unbound call
+    (``tenant_required``): naming a tenant is not a substitute for being bound to one.
     """
 
     def enqueue(

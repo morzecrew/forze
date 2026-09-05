@@ -70,7 +70,10 @@ class DurableScheduleStorePort(Protocol):
 
     A record carrying a *tenant_id* that contradicts a bound tenant is refused
     (``authentication`` / ``tenant_mismatch``); one carrying a tenant where nothing is bound
-    is honoured, relation included, so the schedule lands where that tenant will look.
+    is honoured, relation included, so the schedule lands where that tenant will look — on a
+    store that is not ``tenant_aware``. A ``tenant_aware`` store reads its binding first and
+    refuses the unbound call outright (``tenant_required``), so naming a tenant there does
+    not stand in for being bound to one.
     """
 
     def put(self, record: DurableScheduleRecord) -> Awaitable[None]:
