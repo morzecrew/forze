@@ -11,6 +11,7 @@ where a memo has to be told apart from an absent one.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -127,6 +128,36 @@ async def test_the_first_execution_returns_what_the_body_returned(
 
 async def _tuple_result() -> tuple[str, str]:
     return ("a", "b")
+
+
+async def test_a_result_bson_would_store_natively_replays_as_its_json_projection(
+    mongo_client: MongoClient, step_collection: tuple[str, str]
+) -> None:
+    """The journal is JSON, and BSON is not JSON.
+
+    ``orjson`` — which is what validates a step result — encodes a ``datetime`` to a string
+    and a ``UUID`` to one too. BSON stores the first natively and refuses the second, so
+    journaling the envelope as it stands would replay a ``datetime`` where the port promises
+    its JSON projection, and would fail outright on a ``UUID`` that Postgres journals
+    without complaint. Both go through the round trip the validation already performed.
+    """
+
+    step = _adapter(mongo_client, step_collection)
+    moment = datetime(2026, 1, 1, tzinfo=UTC)
+    identifier = uuid4()
+    token = bind_durable_run(DurableRunContext(run_id=f"r-{uuid4().hex[:8]}", name="fn"))
+
+    async def result() -> dict[str, object]:
+        return {"at": moment, "id": identifier}
+
+    try:
+        first = await step.run("s1", result)
+        replay = await step.run("s1", result)
+    finally:
+        reset_durable_run(token)
+
+    assert first == {"at": moment, "id": identifier}
+    assert replay == {"at": "2026-01-01T00:00:00+00:00", "id": str(identifier)}
 
 
 async def test_ids_that_would_collide_naively_stay_distinct(

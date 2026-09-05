@@ -198,7 +198,7 @@ class MongoDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
         envelope: JsonDict = {"value": result}
 
         try:
-            orjson.dumps(envelope)
+            encoded = orjson.dumps(envelope)
         except TypeError as error:
             raise exc.validation(
                 f"Durable step {step_id!r} returned a non-JSON-serializable result; "
@@ -206,7 +206,14 @@ class MongoDurableFunctionStepAdapter(TenancyMixin, DurableFunctionStepPort):
             ) from error
 
         if self.cipher is None:
-            return envelope
+            # Journal the JSON projection rather than the envelope as it stands. BSON is not
+            # JSON: it stores a datetime natively (so a replay would hand back a datetime
+            # where the contract promises its JSON projection) and refuses a UUID outright,
+            # even though both encode fine above. Round-tripping through what was just
+            # validated makes the journaled document exactly the JSON this step promised.
+            # The sealed branch needs none of it — the cipher serialises the payload itself
+            # and stores opaque bytes.
+            return cast("dict[str, Any]", orjson.loads(encoded))
 
         return await encrypt_payload(
             self.cipher,
