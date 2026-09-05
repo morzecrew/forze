@@ -1036,3 +1036,32 @@ stands, and what turned out to be true is written next to it.
 - **A line number in a citation goes stale from the citing branch's own edits**, which is
   the general shape worth carrying forward: cite the symbol, and add a line only when the
   claim is about a specific line rather than about a function.
+
+## D-023 — The kit method that calls the store needed the rule three times
+
+Appended after review, which found what the audit did not: three defects, all in
+`DurableScheduler.ensure_schedule` and none in the stores this unit's design is about.
+
+- **Touches:** RFC 0046 §5.1 (the effective-tenant rule) and D-018, which recorded that the
+  schedule store's tenancy lives in its *key* rather than in a predicate.
+- **Found:** `ensure_schedule` reads, returns early if nothing changed, and otherwise
+  writes. (1) Reading unbound while writing for a named tenant looked up a key the write
+  never used, so it re-put on every call and reset `next_fire_at` — the schedule skipped its
+  own due fire, silently. (2) Binding the named tenant to make both halves agree replaced an
+  existing binding, so the store's contradiction check compared a tenant against itself and
+  asking for a tenant became a way to write as it. (3) Settling it at the write left the
+  early return unchecked, handing back the *bound* tenant's schedule as the answer to a
+  question about another one.
+- **Because:** D-018 is what makes this method fragile. Where tenancy is a predicate the
+  store applies it on every path; where it is *in the key*, a caller that composes the key
+  twice — once to read, once to write — has to get the same tenant both times, and every
+  exit needs the rule independently.
+- **Class:** `spec-gap`. The RFC scoped its callers as "the shipped paths never take the
+  split" and stopped there; it never asked which callers *compose the key twice*.
+- **Consequence:** fixed in 2c1bef933, 79fbfad02 and 5807e5406; the rule is now settled
+  before the read by calling `effective_tenant`, with the stores still enforcing it. The
+  general shape: **settle identity before the read in a read-then-write helper, and test
+  every exit — the create path and the no-op path are different tests.**
+- **Proposed row (RFC 0046):** `ASSUMED` — where a store expresses tenancy in its key, any
+  caller that both reads and writes must settle the tenant once, before the read. Enforcing
+  it only at the write leaves every early return unguarded.
