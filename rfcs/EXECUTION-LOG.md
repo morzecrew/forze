@@ -981,3 +981,37 @@ unlisted decisions the plan needed and the document does not settle (D-017, D-01
 - **Proposed row (RFC 0046):** `ASSUMED` — a property observable over a static relation
   belongs in the shared battery; an engine's own file carries only what a shared relation
   cannot express.
+
+## Audit findings — 2026-09-05
+
+Adversarial pass over the whole branch (8 commits, 28 files, +1908/-71) after execution.
+These are departures the executor did not notice while making them; the entries above are the
+ones it did.
+
+**F1 — the stored-tenant read was unproven (fixed).** Reverting `complete`'s
+`_stored_tenant(run_id)` back to the binding passed all 25 durable integration tests on both
+engines. Every fixture builds its store with `cipher=None`, and the read exists only for the
+sealed case: an untagged run stays completable from any binding (§5.2), so sealing under the
+binding writes ciphertext whose AAD names a tenant the row does not, and `load` — which
+unseals with the column — can never open it. The run completes and its result is
+unreadable. Both engines now carry
+`test_an_untagged_run_completed_under_a_binding_still_decrypts`, verified red without the
+read (`core.crypto.aead_auth_failed`) and green with it.
+
+**F2 — both run stores still called their tenancy "Non-enforcing" (fixed).** True before this
+branch, false after it; the sentence sat three lines above the predicate that contradicts it.
+Both class docstrings now state the split by verb, and both schedule stores say why a
+key-scoped tenancy has no untagged allowance.
+
+**F3 — the tenant provider was declared twice (fixed).** Both conformance legs carried an
+identical four-line `_provider`, for a scenario whose entire subject is two stores differing
+only by that value. It is now `tenant_provider_for` beside the scenario.
+
+Sabotage sweep, all killed: the mismatch refusal (4 legs red), the untagged arm (2 red),
+the worker predicate (red), the relation resolution on both engines (2 red each), the
+route-group registration (6 red), and — after F1 — the stored-tenant read (2 red).
+
+**Residue.** `claim_abandoned` still matches the tenant exactly, so a bound scanner never
+reclaims an untagged run; only an unbound one does. That follows D-015 and is unchanged by
+this branch, but it means an untagged run in a deployment whose scanners are all bound is
+recovered by nobody — worth a look when the control surface is next revisited.
