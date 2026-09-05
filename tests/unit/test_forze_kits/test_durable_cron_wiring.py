@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -64,6 +65,37 @@ class TestEnsureSchedule:
         loaded = await resolve_durable_schedule_store(ctx).load("s")
         assert loaded is not None
         assert loaded.next_fire_at == created.next_fire_at
+
+    async def test_re_ensure_for_an_explicit_tenant_finds_what_it_stored(self) -> None:
+        """A schedule registered for a tenant nothing is bound to must still be found again.
+
+        ``ensure_schedule`` reads before it writes, and the store scopes its key by the
+        tenant. Naming a tenant on the write while reading unbound looks up a key the write
+        never used, so every call re-puts and resets ``next_fire_at`` — a schedule that keeps
+        skipping its own due fire, silently. The control-plane shape this protects: a caller
+        that knows which tenant it is registering for and is bound to none of them.
+        """
+
+        ctx = context_from_modules(MockDepsModule())
+        scheduler = DurableScheduler()
+        tenant = UUID("00000000-0000-0000-0000-0000000000aa")
+
+        created = await scheduler.ensure_schedule(
+            ctx, "s", "fn", "* * * * *", tenant_id=tenant, now=_T0
+        )
+        reensured = await scheduler.ensure_schedule(
+            ctx,
+            "s",
+            "fn",
+            "* * * * *",
+            tenant_id=tenant,
+            # Past the first fire's minute, so a re-put moves the instant and the reset is
+            # visible — inside the same minute both calls compute the same next fire and a
+            # broken re-ensure looks identical to a working one.
+            now=datetime(2026, 1, 1, 0, 1, 10, tzinfo=UTC),
+        )
+
+        assert reensured.next_fire_at == created.next_fire_at
 
     async def test_reregisters_when_cron_changes(self) -> None:
         ctx = context_from_modules(MockDepsModule())

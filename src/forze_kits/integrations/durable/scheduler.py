@@ -199,24 +199,38 @@ class DurableScheduler:
         Creates it if absent, re-registers it if its cron/timezone changed, and otherwise
         leaves the existing schedule untouched — so calling this on every startup does **not**
         reset ``next_fire_at`` (which would skip a due fire) or un-pause a disabled schedule.
+
+        An explicit *tenant_id* is bound for both halves. The store scopes a schedule's key
+        by its tenant, so reading unbound and writing for a named tenant would look up a key
+        the write never used: the read misses every time, the write re-puts, and the schedule
+        resets its own ``next_fire_at`` on every call — skipping the fire it was registered
+        for, silently. Binding once makes the read and the write agree, which is what the
+        scheduler's own fire loop already does per tenant.
         """
 
-        existing = await resolve_durable_schedule_store(ctx).load(schedule_id)
-
-        if existing is not None and existing.cron == cron and existing.tz == tz:
-            return existing
-
-        return await self.put(
-            ctx,
-            schedule_id,
-            name,
-            cron,
-            input_json=input_json,
-            tz=tz,
-            tenant_id=tenant_id,
-            enabled=enabled,
-            now=now,
+        binding = (
+            ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id))
+            if tenant_id is not None
+            else nullcontext()
         )
+
+        with binding:
+            existing = await resolve_durable_schedule_store(ctx).load(schedule_id)
+
+            if existing is not None and existing.cron == cron and existing.tz == tz:
+                return existing
+
+            return await self.put(
+                ctx,
+                schedule_id,
+                name,
+                cron,
+                input_json=input_json,
+                tz=tz,
+                tenant_id=tenant_id,
+                enabled=enabled,
+                now=now,
+            )
 
     # ....................... #
 
