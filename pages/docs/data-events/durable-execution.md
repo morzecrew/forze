@@ -78,8 +78,8 @@ from forze_mongo.execution.deps import MongoDurableRunConfig, MongoDurableStepCo
 
 deps = MongoDepsModule(
     client=client,
-    durable_step=MongoDurableStepConfig(collection=(db, "durable_step")),
-    durable_run=MongoDurableRunConfig(collection=(db, "durable_run")),
+    durable_step=MongoDurableStepConfig(collection=("app", "durable_step")),
+    durable_run=MongoDurableRunConfig(collection=("app", "durable_run")),
 )
 ```
 
