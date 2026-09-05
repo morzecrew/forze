@@ -121,6 +121,28 @@ runner re-binds each run's tenant to execute it. On a **namespace** store (a per
 sweep binds every assigned tenant in turn and recovers its table — shard the tenant set across
 instances to parallelize.
 
+Each operation resolves **one** tenant and uses it for everything it decides — the table, the
+row's tag and the scoped id together. `enqueue(tenant_id=…)` and a schedule record carrying a
+`tenant_id` are therefore honoured in full, including which table the row lands in, so a
+control plane bound to nothing can register work for a tenant and that tenant's scanner will
+find it. Naming a tenant that **contradicts** a bound one is refused
+(`authentication` / `tenant_mismatch`) rather than applied to some of the three.
+
+What a bound caller reaches splits by what the verb does. The verbs taking a run id —
+`begin`, `renew`, `load` and every terminal write — reach that tenant's runs and **untagged**
+ones; the untagged arm is what keeps a run belonging to no tenant completable, since a
+terminal write that matched nothing would leave it reclaimed and re-run forever. The verbs
+that enumerate or control — the recovery scan, `list_runs`, `request_cancel`, `refuse_cancel`
+— match the tenant exactly. Unbound reaches everything, which is what lets one sweep serve
+every tenant.
+
+Declaring `required_tenant_isolation` covers the durable routes: a `durable_step`,
+`durable_run` or `durable_schedule` wired below the declared floor now fails at wiring rather
+than passing on the strength of the other planes. Note the coupling that creates —
+`tenant_aware=True` on a run store fails closed when nothing is bound, which is how the
+cross-tenant sweep runs, so a deployment declaring `tagged` runs per-tenant recovery
+(`tenants=…`) instead.
+
 ### Stopping a run
 
 A "Stop" button on a self-hosted run goes through `request_cancel`:
