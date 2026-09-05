@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, final
 
 import attrs
 
-from forze.application.contracts.crypto import KeyringDepKey
+from forze.application.contracts.crypto import KeyringDepKey, KeyringPort
 from forze.base.exceptions import exc
 
 from ....adapters.durable import (
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 
-def _cipher(ctx: ExecutionContext, *, encrypt: bool, what: str) -> object | None:
+def _cipher(ctx: ExecutionContext, *, encrypt: bool, what: str) -> KeyringPort | None:
     """Resolve the keyring for a route that seals payloads, or fail closed.
 
     Shared by the step and run factories because the failure has to read the same from
@@ -63,7 +63,7 @@ class ConfigurableMongoDurableStep:
         return MongoDurableFunctionStepAdapter(
             client=ctx.deps.provide(MongoClientDepKey),
             config=self.config,
-            cipher=_cipher(ctx, encrypt=self.config.encrypt, what="step"),  # type: ignore[arg-type]
+            cipher=_cipher(ctx, encrypt=self.config.encrypt, what="step"),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
@@ -84,7 +84,7 @@ class ConfigurableMongoDurableRun:
         return MongoDurableRunStore(
             client=ctx.deps.provide(MongoClientDepKey),
             config=self.config,
-            cipher=_cipher(ctx, encrypt=self.config.encrypt, what="run"),  # type: ignore[arg-type]
+            cipher=_cipher(ctx, encrypt=self.config.encrypt, what="run"),
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
         )
