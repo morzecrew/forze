@@ -33,10 +33,13 @@ from forze.application.contracts.durable.function import (
     DurableRunContext,
     DurableRunStatus,
     DurableRunStorePort,
+    DurableScheduleRecord,
+    DurableScheduleStorePort,
     bind_durable_run,
     durable_run_control_capabilities,
     reset_durable_run,
 )
+from forze.base.primitives import utcnow
 
 # ----------------------- #
 
@@ -267,5 +270,123 @@ async def run_control_scenario(store: DurableRunStorePort) -> dict[str, Any]:
     out["timed_out_names"] = sorted(r.name for r in by_timed_out.records)
 
     out["supports_cancel"] = durable_run_control_capabilities(store).supports_cancel
+
+    return out
+
+
+# ....................... #
+
+
+async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
+    """Drive the recovery scan's exclusivity and collect plane-independent observables.
+
+    The rule every engine has to enforce and each one enforces differently: a run claimed by
+    one scanner is **not** claimable by the next until its lease lapses. Postgres gets it
+    from ``FOR UPDATE SKIP LOCKED`` plus the lease predicate; Mongo re-checks the claimable
+    predicate inside the batch update, because its candidate read holds no lock. A store
+    that dropped the re-check would let the second scan steal a live claim, bump the fence
+    out from under the first, and leave a worker executing a run it no longer holds.
+
+    Also pins the two filters the scan applies before anything else: a delayed run is not
+    due, and a lapsed lease is reclaimable — with the *fence advancing* on the reclaim,
+    which is what makes the previous holder's writes bounce.
+    """
+
+    out: dict[str, Any] = {}
+
+    ready = await store.enqueue("claimable", input_json=None)
+    delayed = await store.enqueue(
+        "delayed",
+        input_json=None,
+        available_at=utcnow() + timedelta(hours=1),
+    )
+
+    first = await store.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+    out["first_scan_names"] = sorted(record.name for record in first)
+    out["delayed_not_claimed"] = delayed.run_id not in {record.run_id for record in first}
+
+    # The whole point: a live lease is not a claim opportunity.
+    second = await store.claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+    out["second_scan_names"] = sorted(record.name for record in second)
+
+    # ...and the first scanner still holds what it took, at the fence it was handed.
+    claimed = next(record for record in first if record.run_id == ready.run_id)
+    renewal = await store.renew(
+        ready.run_id, lease_for=timedelta(minutes=5), fence=claimed.attempts
+    )
+    out["holder_still_holds"] = renewal.held
+
+    # A single-run claim of an already-running run is refused for the same reason.
+    out["begin_while_running"] = (
+        await store.begin(ready.run_id, lease_for=timedelta(minutes=5)) is None
+    )
+
+    return out
+
+
+# ....................... #
+
+
+async def run_schedule_scenario(store: DurableScheduleStorePort) -> dict[str, Any]:
+    """Drive the recurring-schedule store and collect plane-independent observables.
+
+    Firing is made exactly-once by :meth:`advance`'s compare-and-set rather than by a lease,
+    so the observable that matters is that a *stale* advance loses: two schedulers reading
+    one due instant must produce one advance between them.
+    """
+
+    out: dict[str, Any] = {}
+    fire_at = utcnow() - timedelta(minutes=1)
+    later = fire_at + timedelta(hours=1)
+
+    await store.put(
+        DurableScheduleRecord(
+            schedule_id="nightly",
+            name="fn",
+            cron="0 3 * * *",
+            next_fire_at=fire_at,
+            tz="UTC",
+            input_json={"n": 1},
+        )
+    )
+
+    loaded = await store.load("nightly")
+    out["loaded_name"] = None if loaded is None else loaded.name
+    out["loaded_cron"] = None if loaded is None else loaded.cron
+    out["loaded_tz"] = None if loaded is None else loaded.tz
+    out["loaded_input"] = None if loaded is None else loaded.input_json
+    out["loaded_enabled"] = None if loaded is None else loaded.enabled
+
+    due = await store.claim_due(now=utcnow(), limit=10)
+    out["due_ids"] = sorted(record.schedule_id for record in due)
+
+    out["advanced"] = await store.advance("nightly", from_fire_at=fire_at, to_fire_at=later)
+    # The second scheduler read the same due instant and loses the compare-and-set, which is
+    # what keeps one due instant to one run.
+    out["advanced_again"] = await store.advance("nightly", from_fire_at=fire_at, to_fire_at=later)
+
+    out["not_due_after_advance"] = [
+        record.schedule_id for record in await store.claim_due(now=utcnow(), limit=10)
+    ]
+
+    # Re-putting the same id updates in place rather than adding a second schedule.
+    await store.put(
+        DurableScheduleRecord(
+            schedule_id="nightly",
+            name="fn",
+            cron="*/5 * * * *",
+            next_fire_at=fire_at,
+            enabled=False,
+        )
+    )
+    repuit = await store.load("nightly")
+    out["reput_cron"] = None if repuit is None else repuit.cron
+    out["paused_not_due"] = [
+        record.schedule_id for record in await store.claim_due(now=utcnow(), limit=10)
+    ]
+
+    out["deleted"] = await store.delete("nightly")
+    out["delete_again"] = await store.delete("nightly")
+    out["load_after_delete"] = await store.load("nightly")
 
     return out

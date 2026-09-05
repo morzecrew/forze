@@ -34,13 +34,20 @@ import pytest_asyncio
 
 from forze.application.contracts.durable.function import DurableRunStorePort
 from forze.base.primitives import utcnow
-from forze_mock import MockDurableFunctionStepAdapter, MockDurableRunStore, MockState
+from forze_mock import (
+    MockDurableFunctionStepAdapter,
+    MockDurableRunStore,
+    MockDurableScheduleStore,
+    MockState,
+)
 from forze_mongo.adapters.durable import (
     MongoDurableFunctionStepAdapter,
     MongoDurableRunStore,
+    MongoDurableScheduleStore,
 )
 from forze_mongo.execution.deps.configs import (
     MongoDurableRunConfig,
+    MongoDurableScheduleConfig,
     MongoDurableStepConfig,
 )
 from forze_mongo.kernel.client import MongoClient
@@ -49,9 +56,11 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    run_claim_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_schedule_scenario,
 )
 
 # ----------------------- #
@@ -218,3 +227,43 @@ class TestDurableMockVsMongo:
         ) == await run_stale_holder_race(
             lambda: _mongo_store(mongo_client, run_collection), mongo_expire
         )
+
+    async def test_mock_matches_mongo_for_the_recovery_scan(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_out = await run_claim_scenario(MockDurableRunStore(state=MockState()))
+        mongo_out = await run_claim_scenario(_mongo_store(mongo_client, run_collection))
+
+        assert mock_out == mongo_out
+
+        # Anchors, because "both scanners took the same run" is a pair of matching wrong
+        # answers away from passing: the second scan must come back empty while the first
+        # holder's lease is live, and the holder's fence must still be the one it was given.
+        assert mock_out["first_scan_names"] == ["claimable"]
+        assert mock_out["delayed_not_claimed"] is True
+        assert mock_out["second_scan_names"] == []
+        assert mock_out["holder_still_holds"] is True
+        assert mock_out["begin_while_running"] is True
+
+    async def test_mock_matches_mongo_for_schedules(self, mongo_client: MongoClient) -> None:
+        db_name = (await mongo_client.db()).name
+        collection = (db_name, f"durable_schedule_{uuid4().hex[:8]}")
+
+        mock_out = await run_schedule_scenario(MockDurableScheduleStore(state=MockState()))
+        mongo_out = await run_schedule_scenario(
+            MongoDurableScheduleStore(
+                client=mongo_client,
+                config=MongoDurableScheduleConfig(collection=collection),
+            )
+        )
+
+        assert mock_out == mongo_out
+
+        assert mock_out["due_ids"] == ["nightly"]
+        # One due instant, one advance: the loser is told it advanced nothing.
+        assert (mock_out["advanced"], mock_out["advanced_again"]) == (True, False)
+        assert mock_out["not_due_after_advance"] == []
+        assert mock_out["reput_cron"] == "*/5 * * * *"
+        assert mock_out["paused_not_due"] == []
+        assert (mock_out["deleted"], mock_out["delete_again"]) == (True, False)
+        assert mock_out["load_after_delete"] is None
