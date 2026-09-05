@@ -181,6 +181,7 @@ class TestDurableMockVsMongo:
         assert mock_out["refused_status"] == "completed"
         assert mock_out["refused_while_running"] is True
         assert (mock_out["refused_asked"], mock_out["refused_stamped"]) == (True, True)
+        assert mock_out["unfenced_refusal_recorded"] is True
 
         # Not guarded on RUNNING, unlike every other write on this port — and that is the
         # ordering the runner produces, since the stamp goes down in a ``finally``.

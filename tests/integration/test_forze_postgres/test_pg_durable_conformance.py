@@ -248,6 +248,7 @@ class TestDurableMockVsPostgres:
         assert mock_out["refused_status"] == "completed"
         assert mock_out["refused_while_running"] is True
         assert (mock_out["refused_asked"], mock_out["refused_stamped"]) == (True, True)
+        assert mock_out["unfenced_refusal_recorded"] is True
 
         # The refusal survives being written against an already-terminal run: unlike every
         # other write on this port it is not guarded on RUNNING, and that is exactly the

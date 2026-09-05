@@ -236,6 +236,18 @@ async def run_control_scenario(store: DurableRunStorePort) -> dict[str, Any]:
         mid_flight is not None and mid_flight.cancel_refused_at is not None
     )
 
+    # An unfenced refusal is the port's other shape: a caller with no claim of its own
+    # (an operator tool, a bridge) records that the ask was declined, and lands on the
+    # first instant just the same.
+    unfenced = await store.enqueue("cancel-refused-unfenced", input_json=None)
+    assert await store.begin(unfenced.run_id, lease_for=timedelta(minutes=5)) is not None
+    await admin.request_cancel(unfenced.run_id)
+    await store.refuse_cancel(unfenced.run_id)
+    unfenced_pending = await store.load(unfenced.run_id)
+    out["unfenced_refusal_recorded"] = (
+        unfenced_pending is not None and unfenced_pending.cancel_refused_at is not None
+    )
+
     await store.complete(
         refused.run_id, output_json={"forward": True}, fence=refused_holder.attempts
     )
