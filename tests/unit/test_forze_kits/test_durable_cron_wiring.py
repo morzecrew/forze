@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.durable.function import (
@@ -17,7 +18,9 @@ from forze.application.contracts.durable.function import (
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.base.exceptions import CoreException
 from forze_kits.integrations.durable import (
     DurableScheduler,
     cron_schedule_id,
@@ -96,6 +99,29 @@ class TestEnsureSchedule:
         )
 
         assert reensured.next_fire_at == created.next_fire_at
+
+    async def test_a_contradicted_tenant_is_still_refused(self) -> None:
+        """Binding the explicit tenant must not launder a contradiction into a write.
+
+        The store refuses a record naming a tenant the caller is not bound to. Binding the
+        named tenant before the write would make that check compare the tenant against
+        itself, so a caller bound to A could write B's schedule by asking for it — turning
+        the refusal into the very cross-tenant write it exists to stop.
+        """
+
+        ctx = context_from_modules(MockDepsModule())
+        scheduler = DurableScheduler()
+        tenant_a = UUID("00000000-0000-0000-0000-0000000000aa")
+        tenant_b = UUID("00000000-0000-0000-0000-0000000000bb")
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_a)):
+            with pytest.raises(CoreException) as raised:
+                await scheduler.ensure_schedule(
+                    ctx, "s", "fn", "* * * * *", tenant_id=tenant_b, now=_T0
+                )
+
+        assert raised.value.code == "tenant_mismatch"
+        assert await resolve_durable_schedule_store(ctx).load("s") is None
 
     async def test_reregisters_when_cron_changes(self) -> None:
         ctx = context_from_modules(MockDepsModule())

@@ -200,17 +200,24 @@ class DurableScheduler:
         leaves the existing schedule untouched — so calling this on every startup does **not**
         reset ``next_fire_at`` (which would skip a due fire) or un-pause a disabled schedule.
 
-        An explicit *tenant_id* is bound for both halves. The store scopes a schedule's key
-        by its tenant, so reading unbound and writing for a named tenant would look up a key
-        the write never used: the read misses every time, the write re-puts, and the schedule
-        resets its own ``next_fire_at`` on every call — skipping the fire it was registered
-        for, silently. Binding once makes the read and the write agree, which is what the
-        scheduler's own fire loop already does per tenant.
+        An explicit *tenant_id* is bound for both halves **when nothing is bound already**.
+        The store scopes a schedule's key by its tenant, so reading unbound and writing for a
+        named tenant would look up a key the write never used: the read misses every time,
+        the write re-puts, and the schedule resets its own ``next_fire_at`` on every call —
+        skipping the fire it was registered for, silently. Binding once makes the read and
+        the write agree, which is what the scheduler's own fire loop already does per tenant.
+
+        An existing binding is never replaced, and that restraint is the load-bearing half:
+        binding the named tenant over a caller bound to another one would make the store's
+        contradiction check compare a tenant against itself, so asking for a tenant would
+        become a way to write as it. Left alone, the mismatch reaches the store and is
+        refused there — one rule, enforced in one place.
         """
 
+        bound = ctx.inv_ctx.get_tenant()
         binding = (
             ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id))
-            if tenant_id is not None
+            if tenant_id is not None and bound is None
             else nullcontext()
         )
 
