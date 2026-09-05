@@ -123,6 +123,30 @@ class TestEnsureSchedule:
         assert raised.value.code == "tenant_mismatch"
         assert await resolve_durable_schedule_store(ctx).load("s") is None
 
+    async def test_a_contradicted_tenant_is_refused_on_the_no_op_path_too(self) -> None:
+        """The early return is the half a create-path test cannot see.
+
+        When the schedule already exists with the same cron, ``ensure_schedule`` returns it
+        without ever reaching the store's write — so a contradiction checked only at the
+        write is not checked at all here, and the caller is handed the *bound* tenant's
+        schedule as the answer to a question about another one.
+        """
+
+        ctx = context_from_modules(MockDepsModule())
+        scheduler = DurableScheduler()
+        tenant_a = UUID("00000000-0000-0000-0000-0000000000aa")
+        tenant_b = UUID("00000000-0000-0000-0000-0000000000bb")
+
+        with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_a)):
+            await scheduler.ensure_schedule(ctx, "s", "fn", "* * * * *", now=_T0)
+
+            with pytest.raises(CoreException) as raised:
+                await scheduler.ensure_schedule(
+                    ctx, "s", "fn", "* * * * *", tenant_id=tenant_b, now=_T0
+                )
+
+        assert raised.value.code == "tenant_mismatch"
+
     async def test_reregisters_when_cron_changes(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         scheduler = DurableScheduler()

@@ -15,7 +15,7 @@ from forze.application.contracts.durable.function import (
     DurableFunctionSpec,
     DurableScheduleRecord,
 )
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TenantIdentity, effective_tenant
 from forze.application.integrations.durable import next_cron_fire, validate_cron
 from forze.base.primitives import current_time_source
 
@@ -207,17 +207,24 @@ class DurableScheduler:
         skipping the fire it was registered for, silently. Binding once makes the read and
         the write agree, which is what the scheduler's own fire loop already does per tenant.
 
-        An existing binding is never replaced, and that restraint is the load-bearing half:
-        binding the named tenant over a caller bound to another one would make the store's
-        contradiction check compare a tenant against itself, so asking for a tenant would
-        become a way to write as it. Left alone, the mismatch reaches the store and is
-        refused there — one rule, enforced in one place.
+        An existing binding is never replaced, and the contradiction is settled *before*
+        either half runs — by the same rule the stores apply, called here rather than
+        re-implemented. Both halves need it. Binding the named tenant over a caller bound to
+        another one would make the store's own check compare a tenant against itself, so
+        asking for a tenant would become a way to write as it; and leaving the check to the
+        write alone would miss the path below that returns early, handing back the *bound*
+        tenant's schedule as the answer to a question about another one. The store still
+        refuses independently — this is the same rule reaching the caller sooner, not a
+        second copy of it.
         """
 
         bound = ctx.inv_ctx.get_tenant()
+        bound_id = None if bound is None else bound.tenant_id
+        effective_tenant(bound=bound_id, requested=tenant_id)
+
         binding = (
             ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id))
-            if tenant_id is not None and bound is None
+            if tenant_id is not None and bound_id is None
             else nullcontext()
         )
 
