@@ -6455,7 +6455,7 @@ module, and open the pool from the lifecycle plan:</p>
 <tr>
 <td>Idempotency</td>
 <td><code>IdempotencySpec.name</code> (<code>idempotencies</code>)</td>
-<td>co-located store — the record commits inside the business transaction</td>
+<td>co-located store — the record commits inside the business transaction; add the optional <code>owner uuid</code> column to fence a reclaimed claim (<a href="../../writing-operation/idempotency/">idempotency</a>)</td>
 </tr>
 <tr>
 <td>Counter</td>

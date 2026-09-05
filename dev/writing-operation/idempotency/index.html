@@ -1294,6 +1294,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#when-an-operation-outlives-its-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When an operation outlives its window
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#idempotency-vs-the-inbox" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6158,6 +6169,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#when-an-operation-outlives-its-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When an operation outlives its window
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#idempotency-vs-the-inbox" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6306,6 +6328,23 @@ remembered) and register an idempotency adapter — commonly <a href="../../inte
 under that name. The operation's result type must be a Pydantic model,
 since the stored result is encoded and decoded. Wired end to end in the
 <a href="../../recipes/add-idempotency/">Add idempotency</a> recipe.</p>
+<h2 id="when-an-operation-outlives-its-window">When an operation outlives its window<a class="headerlink" href="#when-an-operation-outlives-its-window" title="Permanent link">&para;</a></h2>
+<p>The TTL is a dedup <strong>window</strong>, so an operation slow enough to outlive it can find
+its key already reclaimed by a duplicate. The claim records which invocation took
+it, and a store refuses to complete or release a claim that now belongs to someone
+else — otherwise the slow operation would overwrite the live one's claim, and a
+third duplicate would replay a result for work that never finished.</p>
+<p>On <strong>Postgres</strong> this needs one column on your table:</p>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">your</span><span class="w"> </span><span class="n">idempotency</span><span class="w"> </span><span class="k">table</span><span class="o">&gt;</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="k">owner</span><span class="w"> </span><span class="n">uuid</span><span class="p">;</span>
+</code></pre></div>
+<p>It is nullable and additive, so nothing breaks before you run it and existing rows
+need no backfill, and you can apply it to a running deployment — the store notices
+the column within a minute and starts fencing, no restart required. Until you run
+it, that table works exactly as before but without the refusal above, and the store
+logs the relation once so the state is visible rather than assumed. Redis, Mongo and
+the mock need no migration.</p>
+<p>Size the TTL for your redelivery horizon and this stays a corner case; the column
+is what makes the corner safe rather than silent.</p>
 <h2 id="idempotency-vs-the-inbox">Idempotency vs the inbox<a class="headerlink" href="#idempotency-vs-the-inbox" title="Permanent link">&para;</a></h2>
 <p>Both dedupe, at different layers: idempotency dedupes <strong>inbound operations</strong> by
 caller-supplied key; the <a href="../../data-events/events-sagas/">inbox</a> dedupes <strong>consumed events</strong> by
