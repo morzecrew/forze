@@ -9,9 +9,9 @@ retries a flaky payment, waits on a human approval, and must survive a deploy or
 the middle. In-process [sagas](events-sagas.md) coordinate steps *within* one process;
 **durable execution** runs the orchestration against a store that persists every step — so a
 crash resumes exactly where it left off, not from the top. That store can be an external
-engine ([Temporal](../integrations/temporal.md) / [Inngest](../integrations/inngest.md)) or,
-for a deployment that runs **only Postgres**, the [self-hosted tier](#self-hosted-on-postgres)
-on the database you already operate.
+engine ([Temporal](../integrations/temporal.md) / [Inngest](../integrations/inngest.md)) or
+the [self-hosted tier](#self-hosted-on-your-own-database) on the database you already
+operate — Postgres or MongoDB.
 
 ## The mental model: journaled progress
 
@@ -42,17 +42,20 @@ result = await queries.result(handle)         # the typed return value, once com
 
 A stable `workflow_id` makes `start` idempotent — the same id won't launch a second run.
 
-## Self-hosted on Postgres
+## Self-hosted on your own database
 
 The external engines are *operational* dependencies — a Temporal cluster or the Inngest
-service. For the common deployment that runs **only Postgres**, the self-hosted tier gives
-you the **functions** form (memoized steps + crash recovery) and crash-resumable **sagas**
-on the same database, with no engine to stand up.
+service. For the common deployment that runs one database and no engine, the self-hosted
+tier gives you the **functions** form (memoized steps + crash recovery) and crash-resumable
+**sagas** on that database, with nothing to stand up. **Postgres and MongoDB both implement
+it**, behind the same ports and the same runner.
 
-It reuses the journaled-progress model, backed by two app-provided tables: a `durable_step`
-**memo journal** (each step's result recorded so a replay skips it) and a `durable_run`
-**run store** (run instances, claimed for recovery with `FOR UPDATE SKIP LOCKED`). Wire both
-on the Postgres module and drive them with the `forze_kits` runner:
+It reuses the journaled-progress model, backed by two app-provided relations: a
+`durable_step` **memo journal** (each step's result recorded so a replay skips it) and a
+`durable_run` **run store** (run instances, claimed for recovery — under
+`FOR UPDATE SKIP LOCKED` on Postgres, under a token-stamped batch claim on Mongo, which has
+no row locks to take). Wire both on your database's module and drive them with the
+`forze_kits` runner:
 
 ```python
 deps = PostgresDepsModule(
@@ -67,6 +70,22 @@ runner = DurableFunctionRunner(registry=registry)
 
 await runner.enqueue(ctx, "fulfil-order", {"order_id": str(order_id)})
 ```
+
+On MongoDB the wiring is the same shape, over collections instead of tables:
+
+```python
+from forze_mongo.execution.deps import MongoDurableRunConfig, MongoDurableStepConfig
+
+deps = MongoDepsModule(
+    client=client,
+    durable_step=MongoDurableStepConfig(collection=(db, "durable_step")),
+    durable_run=MongoDurableRunConfig(collection=(db, "durable_run")),
+)
+```
+
+The run collection needs one index — a partial unique index on `idempotency_key` — or two
+simultaneous submits of one key can both insert. See
+[MongoDB → durable execution](../integrations/mongo.md) for it and the two optional ones.
 
 A registered function does its work in **steps** via the step port; each step memoizes, so a
 re-invocation after a crash replays completed steps and resumes at the first incomplete one:
@@ -184,9 +203,10 @@ await runner.run_now(ctx, str(saga.name), initial.model_dump(mode="json"))
 The saga context must be a serializable `pydantic.BaseModel` (it is journaled between
 steps). A step failure classified retryable (infrastructure, throttled, concurrency) is
 retried in place with backoff before it is journaled — compensation only runs on genuine
-failures or exhausted retries, never a one-off blip. This tier is self-hosted-Postgres only;
-a full workflow engine (timers, signals, versioning) is still Temporal/Inngest. The two
-tables come from your migrations; their schema is documented on the adapter classes.
+failures or exhausted retries, never a one-off blip. This tier is self-hosted only
+(Postgres or MongoDB); a full workflow engine (timers, signals, versioning) is still
+Temporal/Inngest. The relations come from your migrations; their schema — and the one index
+the Mongo run store needs — is documented on the adapter classes.
 
 ### Recurring schedules
 
@@ -196,6 +216,7 @@ enqueues):
 
 ```python
 deps = PostgresDepsModule(client=client, durable_run=…, durable_schedule=…)
+# …or MongoDepsModule(client=client, durable_run=…, durable_schedule=…)
 
 await scheduler.put(ctx, "nightly-report", "report", "0 3 * * *", tz="Europe/Berlin")
 

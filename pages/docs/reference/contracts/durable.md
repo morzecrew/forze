@@ -8,7 +8,7 @@ Durable execution runs **crash-resumable** work: a long-running workflow that su
 process restarts, a schedule that fires it on a cron, or an event-driven function. These
 contracts are **resolved by dep key** — there is no short `ctx.*` accessor — and an engine
 integration ([Temporal](../../integrations/temporal.md) /
-[Inngest](../../integrations/inngest.md)) or the self-hosted Postgres tier provides the
+[Inngest](../../integrations/inngest.md)) or the self-hosted tier (Postgres or MongoDB) provides the
 adapter. The concept is
 [Durable execution](../../data-events/durable-execution.md); worked flows are the
 [background workflow](../../recipes/background-workflow.md) and
@@ -98,6 +98,6 @@ forward).
 |---------|--------|-------------|
 | Workflows + schedules | Temporal | [Temporal](../../integrations/temporal.md) |
 | Event-driven functions | Inngest | [Inngest](../../integrations/inngest.md) |
-| Functions + steps + cron (self-hosted: run/step/schedule stores + `forze_kits` runner) | Postgres | [Postgres](../../integrations/postgres.md) — see [Durable execution → Self-hosted](../../data-events/durable-execution.md#self-hosted-on-postgres) |
+| Functions + steps + cron (self-hosted: run/step/schedule stores + `forze_kits` runner) | Postgres, MongoDB | [Postgres](../../integrations/postgres.md), [MongoDB](../../integrations/mongo.md) — see [Durable execution → Self-hosted](../../data-events/durable-execution.md#self-hosted-on-your-own-database) |
 
 A mock implements the surfaces so durable flows are testable without an engine.
