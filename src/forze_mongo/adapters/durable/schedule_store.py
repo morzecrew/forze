@@ -151,6 +151,11 @@ class MongoDurableScheduleStore(TenancyMixin, DurableScheduleStorePort):
         now: datetime,
         limit: int,
     ) -> Sequence[DurableScheduleRecord]:
+        if limit <= 0:
+            # Like the run store's scan: the driver refuses a zero cursor length where
+            # Postgres answers ``LIMIT 0`` with no rows.
+            return []
+
         coll = await self._collection()
         filter_: dict[str, Any] = {"enabled": True, "next_fire_at": {"$lte": now}}
         tenant_id = self._tenant_id_for_resolve()

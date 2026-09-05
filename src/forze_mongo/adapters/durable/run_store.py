@@ -34,7 +34,7 @@ from forze.application.integrations.crypto.payload import (
     decrypt_payload,
     encrypt_payload,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
 from forze_mongo.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
 from forze_mongo.execution.deps.configs.durable import MongoDurableRunConfig
@@ -210,12 +210,32 @@ class MongoDurableRunStore(
         # back holding the first run. That is what makes convergence hold without relying on
         # the unique index to raise — the index is the backstop for two writers racing this
         # same statement, which is why it is required rather than recommended.
-        existing = await self.client.find_one_and_update(
-            coll,
-            {"idempotency_key": stored_idem},
-            {"$setOnInsert": document},
-            upsert=True,
-        )
+        try:
+            existing = await self.client.find_one_and_update(
+                coll,
+                {"idempotency_key": stored_idem},
+                {"$setOnInsert": document},
+                upsert=True,
+            )
+
+        except CoreException as error:
+            if error.kind is not ExceptionKind.CONFLICT:
+                raise
+
+            # Two writers reached the upsert together and the unique index refused the
+            # loser's insert — documented Mongo behaviour for concurrent upserts, and the
+            # reason that index is required rather than advisory. Converge on the winner,
+            # which is what ``ON CONFLICT DO NOTHING`` plus a re-read gives on Postgres:
+            # the caller asked for idempotency and must not get an error for using it.
+            existing = await self.client.find_one(coll, {"idempotency_key": stored_idem})
+
+            if existing is None:  # pragma: no cover - the conflicting document must exist
+                raise exc.internal(
+                    "Durable run enqueue conflicted on idempotency_key but the existing "
+                    "run could not be loaded.",
+                ) from error
+
+            return await self._record_from_row(existing)
 
         if existing is None:  # pragma: no cover - the driver always returns the document
             raise exc.internal("Durable run enqueue returned no document.")
@@ -261,6 +281,13 @@ class MongoDurableRunStore(
         limit: int,
         lease_for: timedelta,
     ) -> Sequence[DurableRunRecord]:
+        if limit <= 0:
+            # The driver refuses a zero cursor length, where Postgres answers ``LIMIT 0``
+            # with no rows and the oracle slices an empty list. A scanner computing a
+            # remaining budget hits zero routinely, and it must idle rather than take the
+            # recovery loop down.
+            return []
+
         coll = await self._collection()
         now = utcnow()
         claimable: dict[str, Any] = {

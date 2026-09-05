@@ -33,13 +33,20 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
 )
 from forze.base.primitives import utcnow
-from forze_mock import MockDurableFunctionStepAdapter, MockDurableRunStore, MockState
+from forze_mock import (
+    MockDurableFunctionStepAdapter,
+    MockDurableRunStore,
+    MockDurableScheduleStore,
+    MockState,
+)
 from forze_postgres.adapters.durable import (
     PostgresDurableFunctionStepAdapter,
     PostgresDurableRunStore,
+    PostgresDurableScheduleStore,
 )
 from forze_postgres.execution.deps.configs import (
     PostgresDurableRunConfig,
+    PostgresDurableScheduleConfig,
     PostgresDurableStepConfig,
 )
 from forze_postgres.kernel.client import PostgresClient
@@ -48,9 +55,11 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    run_claim_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_schedule_scenario,
 )
 
 # ----------------------- #
@@ -70,6 +79,25 @@ async def run_table(pg_client: PostgresClient) -> str:
                 created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
                 cancel_requested_at timestamptz, cancel_refused_at timestamptz,
                 PRIMARY KEY (run_id), UNIQUE (idempotency_key)
+            )
+            """
+        ).format(table=sql.Identifier("public", table))
+    )
+    return table
+
+
+@pytest.fixture
+async def schedule_table(pg_client: PostgresClient) -> str:
+    table = f"durable_schedule_{uuid4().hex[:8]}"
+    await pg_client.execute(
+        sql.SQL(
+            """
+            CREATE TABLE {table} (
+                schedule_id text NOT NULL, name text NOT NULL, cron text NOT NULL,
+                tz text, input jsonb, next_fire_at timestamptz NOT NULL,
+                enabled boolean NOT NULL DEFAULT true, tenant_id uuid,
+                created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
+                PRIMARY KEY (schedule_id)
             )
             """
         ).format(table=sql.Identifier("public", table))
@@ -232,3 +260,48 @@ class TestDurableMockVsPostgres:
         assert mock_out["cancelled_names"] == ["cancel-pending", "cancel-running"]
         assert mock_out["timed_out_names"] == ["timed-out"]
         assert mock_out["supports_cancel"] is True
+
+    async def test_mock_matches_postgres_for_the_recovery_scan(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_out = await run_claim_scenario(MockDurableRunStore(state=MockState()))
+
+        pg_out = await run_claim_scenario(
+            PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+            )
+        )
+
+        assert mock_out == pg_out
+
+        assert mock_out["first_scan_names"] == ["claimable"]
+        assert mock_out["delayed_not_claimed"] is True
+        assert mock_out["second_scan_names"] == []
+        assert mock_out["holder_still_holds"] is True
+        assert mock_out["begin_while_running"] is True
+        assert mock_out["zero_limit_scan"] == []
+
+    async def test_mock_matches_postgres_for_schedules(
+        self, pg_client: PostgresClient, schedule_table: str
+    ) -> None:
+        mock_out = await run_schedule_scenario(MockDurableScheduleStore(state=MockState()))
+
+        pg_out = await run_schedule_scenario(
+            PostgresDurableScheduleStore(
+                client=pg_client,
+                config=PostgresDurableScheduleConfig(relation=("public", schedule_table)),
+            )
+        )
+
+        assert mock_out == pg_out
+
+        assert mock_out["due_ids"] == ["nightly"]
+        # One due instant, one advance: the loser is told it advanced nothing.
+        assert (mock_out["advanced"], mock_out["advanced_again"]) == (True, False)
+        assert mock_out["not_due_after_advance"] == []
+        assert mock_out["reput_cron"] == "*/5 * * * *"
+        assert mock_out["paused_not_due"] == []
+        assert mock_out["zero_limit_due"] == []
+        assert (mock_out["deleted"], mock_out["delete_again"]) == (True, False)
+        assert mock_out["load_after_delete"] is None

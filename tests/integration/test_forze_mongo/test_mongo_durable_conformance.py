@@ -244,6 +244,7 @@ class TestDurableMockVsMongo:
         assert mock_out["second_scan_names"] == []
         assert mock_out["holder_still_holds"] is True
         assert mock_out["begin_while_running"] is True
+        assert mock_out["zero_limit_scan"] == []
 
     async def test_mock_matches_mongo_for_schedules(self, mongo_client: MongoClient) -> None:
         db_name = (await mongo_client.db()).name
@@ -266,4 +267,5 @@ class TestDurableMockVsMongo:
         assert mock_out["reput_cron"] == "*/5 * * * *"
         assert mock_out["paused_not_due"] == []
         assert (mock_out["deleted"], mock_out["delete_again"]) == (True, False)
+        assert mock_out["zero_limit_due"] == []
         assert mock_out["load_after_delete"] is None

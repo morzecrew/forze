@@ -321,6 +321,14 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
         await store.begin(ready.run_id, lease_for=timedelta(minutes=5)) is None
     )
 
+    # A scanner's budget reaches zero routinely — it must idle, not fail. Asserted here
+    # because each engine expresses it differently (``LIMIT 0``, a list slice, a driver that
+    # refuses a zero cursor length outright) and only one of those is free.
+    out["zero_limit_scan"] = [
+        record.run_id
+        for record in await store.claim_abandoned(limit=0, lease_for=timedelta(minutes=5))
+    ]
+
     return out
 
 
@@ -383,6 +391,10 @@ async def run_schedule_scenario(store: DurableScheduleStorePort) -> dict[str, An
     out["reput_cron"] = None if repuit is None else repuit.cron
     out["paused_not_due"] = [
         record.schedule_id for record in await store.claim_due(now=utcnow(), limit=10)
+    ]
+
+    out["zero_limit_due"] = [
+        record.schedule_id for record in await store.claim_due(now=utcnow(), limit=0)
     ]
 
     out["deleted"] = await store.delete("nightly")
