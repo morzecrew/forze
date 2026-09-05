@@ -1,7 +1,7 @@
 ---
 title: MongoDB
 icon: lucide/leaf
-summary: Document storage, search, transactions, outbox, inbox, and idempotency on MongoDB
+summary: Document storage, search, transactions, outbox, inbox, idempotency, and durable execution on MongoDB
 ---
 
 `forze[mongo]` implements document storage, search, transaction coordination,
@@ -76,6 +76,7 @@ lifecycle = LifecyclePlan.from_steps(
 | Inbox | `InboxSpec.name` | `inboxes` |
 | Idempotency | `IdempotencySpec.name` | `idempotencies` |
 | Counter | `CounterSpec.name` | `counters` |
+| Durable execution | `durable_step` / `durable_run` / `durable_schedule` | step memo, run store, and cron schedules — optional |
 
 ## Notes
 
@@ -96,6 +97,25 @@ lifecycle = LifecyclePlan.from_steps(
   survives the rollback of the operation it guards. Expired claims are reclaimed
   in place; a TTL index on `expires_at` is optional cleanup for keys that are
   never reused.
+- **Durable execution needs one index**, and only one: a partial unique index on
+  the run collection's `idempotency_key`
+  (`partialFilterExpression: {idempotency_key: {$type: "string"}}`). Without it
+  two simultaneous submits of one key can both insert, and the port promises they
+  converge on a single run. The step journal needs none — its dedup key is the
+  document `_id`. Indexes on `{status: 1, created_at: 1}`, a sparse
+  `{claim_token: 1}` (the batch claim reads back what it just took) and
+  `{enabled: 1, next_fire_at: 1}` keep the recovery scan and the scheduler off
+  collection scans as the collections grow.
+- **Claiming without row locks.** Postgres hands out runs under
+  `FOR UPDATE SKIP LOCKED`; Mongo has no equivalent, so the batch claim reads
+  candidates and stamps them in one update whose per-document filter still
+  requires the run to be claimable — exactly one scanner wins each. A contended
+  batch takes fewer runs than it asked for and the next scan catches up; nothing
+  is claimed twice. A scanner that dies between claiming and reading back leaves
+  those runs leased to nobody — Postgres has no such window, since its claim and
+  its result are one statement — and they come back on the next scan once the
+  lease expires, so size `lease_for` for how long you can wait, not just for how
+  long a body runs.
 - `MongoSearchConfig` is imported from `forze_mongo.execution.deps` (not the
   top-level package).
 - Relations accept a static `(database, collection)` tuple or a per-tenant

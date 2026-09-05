@@ -2,6 +2,11 @@
 
 from .counter import MongoCounterConfig
 from .document import MongoDocumentConfig, MongoReadOnlyDocumentConfig
+from .durable import (
+    MongoDurableRunConfig,
+    MongoDurableScheduleConfig,
+    MongoDurableStepConfig,
+)
 from .idempotency import MongoIdempotencyConfig
 from .inbox import MongoInboxConfig
 from .outbox import MongoOutboxConfig
@@ -20,6 +25,9 @@ __all__ = [
     "MongoAtlasEngine",
     "MongoCounterConfig",
     "MongoDocumentConfig",
+    "MongoDurableRunConfig",
+    "MongoDurableScheduleConfig",
+    "MongoDurableStepConfig",
     "MongoIdempotencyConfig",
     "MongoInboxConfig",
     "MongoOutboxConfig",

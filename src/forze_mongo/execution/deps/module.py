@@ -20,6 +20,12 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.contracts.document.wiring import derive_read_only_document_config
+from forze.application.contracts.durable.function import (
+    DurableFunctionStepDepKey,
+    DurableRunAdminDepKey,
+    DurableRunStoreDepKey,
+    DurableScheduleStoreDepKey,
+)
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import (
@@ -51,6 +57,9 @@ from ._warnings import (
 from .configs import (
     MongoCounterConfig,
     MongoDocumentConfig,
+    MongoDurableRunConfig,
+    MongoDurableScheduleConfig,
+    MongoDurableStepConfig,
     MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoOutboxConfig,
@@ -61,6 +70,9 @@ from .factories import (
     ConfigurableMongoCounter,
     ConfigurableMongoCounterAdmin,
     ConfigurableMongoDocument,
+    ConfigurableMongoDurableRun,
+    ConfigurableMongoDurableSchedule,
+    ConfigurableMongoDurableStep,
     ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoOutboxAdmin,
@@ -156,6 +168,25 @@ class MongoDepsModule(DepsModule):
     Monotonic sequence allocation as one atomic ``$inc`` upsert per operation. The admin
     (enumeration) port is registered from the same config, so a wired counter is always
     exportable."""
+
+    durable_step: MongoDurableStepConfig | None = attrs.field(default=None)
+    """Optional Mongo durable-function step-memo journal (execution-scoped).
+
+    When set, registers the ``DurableFunctionStepPort`` over a step collection so a durable
+    function replays completed steps after a crash instead of re-running them."""
+
+    durable_run: MongoDurableRunConfig | None = attrs.field(default=None)
+    """Optional Mongo durable-run store (execution-scoped).
+
+    When set, registers the ``DurableRunStorePort`` over a run collection so run instances
+    survive a crash and are re-claimed by the recovery scan. Pairs with
+    :attr:`durable_step` and the ``forze_kits`` durable-function runner."""
+
+    durable_schedule: MongoDurableScheduleConfig | None = attrs.field(default=None)
+    """Optional Mongo durable-schedule store (execution-scoped).
+
+    When set, registers the ``DurableScheduleStorePort`` over a schedule collection so
+    recurring cron triggers fire runs on a cadence."""
 
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
@@ -341,5 +372,39 @@ class MongoDepsModule(DepsModule):
                     (CounterAdminDepKey, ConfigurableMongoCounterAdmin),
                 ],
             ),
-            plain={MongoClientDepKey: self.client},
+            plain={MongoClientDepKey: self.client, **self._durable_deps()},
         )
+
+    # ....................... #
+
+    def _durable_deps(self) -> dict[Any, Any]:
+        """Plain (unrouted) registrations for the three durable-execution ports.
+
+        Plain rather than routed because each is a single store per deployment, resolved
+        per scope: the step journal reads its run from the ambient ``DurableRunContext``,
+        and the run and schedule stores are swept by the runner rather than addressed by a
+        route name.
+        """
+
+        registrations: dict[Any, Any] = {}
+
+        if self.durable_step is not None:
+            registrations[DurableFunctionStepDepKey] = ConfigurableMongoDurableStep(
+                config=self.durable_step
+            )
+
+        if self.durable_run is not None:
+            # One store implements both ports; the same factory registers under the admin
+            # key when the ops plane is opted in.
+            run_factory = ConfigurableMongoDurableRun(config=self.durable_run)
+            registrations[DurableRunStoreDepKey] = run_factory
+
+            if self.durable_run.admin:
+                registrations[DurableRunAdminDepKey] = run_factory
+
+        if self.durable_schedule is not None:
+            registrations[DurableScheduleStoreDepKey] = ConfigurableMongoDurableSchedule(
+                config=self.durable_schedule
+            )
+
+        return registrations

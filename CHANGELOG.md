@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mongo implements the inbox.** `MongoDepsModule(inboxes={...})` with `MongoInboxConfig` registers a consumer-side dedup store: one atomic `_id` upsert per message, no index migration, riding the ambient transaction so the mark rolls back with the handler (exactly-once effect).
 
+- **Mongo implements durable execution.** `MongoDepsModule(durable_step=…, durable_run=…, durable_schedule=…)` registers the step-memo journal, the run store (claims, leases, fences, run control) and the cron schedule store. The run collection needs a partial unique index on `idempotency_key`.
+
 - **Mongo implements idempotency, co-located.** `MongoDepsModule(idempotencies={...})` with `MongoIdempotencyConfig` registers a store whose `commit` rides the caller's session, so the result record and the business writes commit atomically; claims and releases run detached.
 
 - **Archives carry a logical identity beside the byte one.** Each data file records an order-independent `content_digest` of its rows; `compare_content` says whether two builds are the same content, refusing files it cannot compare; `run_manifest` binds a run's report to the commit and lockfile that produced it.
