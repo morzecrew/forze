@@ -85,6 +85,33 @@ async def test_a_corrupt_mark_is_refused_rather_than_read_as_no_mark(
     assert raised.value.kind is ExceptionKind.CONFIGURATION
 
 
+async def test_a_nulled_mark_is_refused_rather_than_read_as_no_mark(
+    mongo_client_replica: MongoClient, hlc_collection: tuple[str, str]
+) -> None:
+    """The corruption that looks exactly like an empty collection.
+
+    A document whose ``hlc`` was overwritten with ``null`` sorts where a document that
+    never had one sorts, so "the field is absent" cannot be the test for emptiness — and
+    reading it as no mark is the failure this store refuses everywhere else: the clock
+    resumes at ``(0, 0)`` and re-issues beneath stamps already relayed. Emptiness is
+    "no documents at all"; anything present must carry a real mark.
+    """
+
+    db_name, coll_name = hlc_collection
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await coll.insert_one({"_id": "default", "hlc": None})
+
+    store = MongoHlcCheckpointStore(
+        client=mongo_client_replica,
+        config=MongoHlcCheckpointConfig(collection=hlc_collection),
+    )
+
+    with pytest.raises(CoreException) as raised:
+        await store.load()
+
+    assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+
 # ....................... #
 
 

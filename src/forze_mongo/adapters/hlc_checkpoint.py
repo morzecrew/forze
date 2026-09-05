@@ -76,23 +76,22 @@ class MongoHlcCheckpointStore(HlcCheckpointPort):
             limit=1,
         )
 
-        # ``.get`` rather than ``[...]``: the collection is schemaless, and a document
-        # without the field is not a mark. Mongo sorts a missing field lowest, so a document
-        # lacking one only reaches the front when nothing in the collection has a mark yet.
-        packed = rows[0].get("hlc") if rows else None
-
-        if packed is None:
+        # Emptiness is "no documents at all", never "the front document has no usable
+        # mark". Mongo sorts a null field exactly where a missing one sorts, so a mark
+        # overwritten with ``null`` looks identical to a collection nothing ever wrote —
+        # and reading either as "no mark" is the failure this store exists to prevent: the
+        # clock resumes at ``(0, 0)`` and re-issues beneath stamps already relayed, in
+        # silence. Every document here is written by ``advance``, which always sets an
+        # integer, so anything else present is corruption and says so.
+        if not rows:
             return None
 
+        packed = rows[0].get("hlc")
+
         if not isinstance(packed, int) or isinstance(packed, bool):
-            # Refuse rather than resume from nothing. A collection this store did not write
-            # is an operator error, and the safe-looking alternative is the unsafe one:
-            # treating a corrupt mark as "no mark" resumes the clock at ``(0, 0)`` and
-            # re-issues beneath stamps this node already relayed — the exact failure the
-            # checkpoint exists to prevent, arrived at silently.
             raise exc.configuration(
-                f"HLC checkpoint document {rows[0].get('_id')!r} holds a non-integer mark; "
-                "the collection must hold only marks this store wrote.",
+                f"HLC checkpoint document {rows[0].get('_id')!r} holds no usable mark "
+                f"({packed!r}); the collection must hold only marks this store wrote.",
             )
 
         return HlcTimestamp.unpack(packed)
