@@ -108,6 +108,11 @@ class MongoDurableRunStore(
         db.<collection>.createIndex({status: 1, created_at: 1})
         db.<collection>.createIndex({created_at: -1, _id: -1})
 
+        // Read-back of a batch claim, which every recovery cycle performs. Recommended for
+        // the same reason as the scan itself: without it the read-back collection-scans.
+        // Sparse, because only a run some scan has claimed carries a token at all.
+        db.<collection>.createIndex({claim_token: 1}, {sparse: true})
+
     ``attempts`` doubles as the fence token (a claim advances it), so a terminal write can
     be fenced against a reclaimed lease — the store is multi-worker-safe, not just
     single-leader.
