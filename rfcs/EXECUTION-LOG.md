@@ -1015,3 +1015,24 @@ route-group registration (6 red), and — after F1 — the stored-tenant read (2
 reclaims an untagged run; only an unbound one does. That follows D-015 and is unchanged by
 this branch, but it means an untagged run in a deployment whose scanners are all bound is
 recovered by nobody — worth a look when the control surface is next revisited.
+
+## D-022 — Corrections to this unit's own record
+
+Appended rather than edited, per the rule that an entry is never revised: what was written
+stands, and what turned out to be true is written next to it.
+
+- **Drift count: 0.** Seven entries, not the four the unit header claims — the header was
+  written before the audit added D-019, D-020 and D-021, and the count line is revised by
+  appending this one rather than by editing that one. Classes: three `discovery`, four
+  `spec-gap`, no `drift`.
+- **D-017's citation is stale.** It cites `mixins.py:43-60` for `_tenant_id_for_resolve()`.
+  That range was correct when the entry was written and stopped being correct in the same
+  branch: inserting `effective_tenant` above it moved the function to
+  [`mixins.py:91`](../src/forze/application/contracts/tenancy/mixins.py), and lines 43-60 now
+  cover `require_tenant_if_aware`. The claim the entry makes is unaffected — the fail-closed
+  read happens first either way, and
+  `tests/integration/test_forze_postgres/test_pg_durable_tenancy_integration.py::TestNamespacePlacement::test_a_tenant_aware_store_refuses_the_unbound_call_first`
+  is the executable form of it.
+- **A line number in a citation goes stale from the citing branch's own edits**, which is
+  the general shape worth carrying forward: cite the symbol, and add a line only when the
+  claim is about a specific line rather than about a function.

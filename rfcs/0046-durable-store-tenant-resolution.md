@@ -86,7 +86,7 @@ without a binding.
 Verified against the code, not from memory.
 
 **The two resolutions.** `TenancyMixin._tenant_id_for_resolve()`
-(`contracts/tenancy/mixins.py:43`) is the single canonical read: it returns the bound
+(`contracts/tenancy/mixins.py`) is the single canonical read: it returns the bound
 tenant, or raises `authentication` / `tenant_required` when `tenant_aware` and
 nothing is bound. Every store calls it directly *and* again inside its
 `_table()` / `_collection()` helper. Within one operation the two calls always agree
