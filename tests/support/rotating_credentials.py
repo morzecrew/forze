@@ -941,12 +941,23 @@ async def check_the_scan_orders_by_idleness_not_by_insertion(
     await h.seed(first)
     await h.seed(second)
 
-    stored_order = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
-    assert [d.ref.path for d in stored_order] == [first.path, second.path]
+    stored = {
+        d.ref.path: d
+        for d in await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+    }
 
+    assert set(stored) == {first.path, second.path}
+
+    # Deliberately *not* asserting which of the two comes back first here. Both were written
+    # in the same breath, so an engine whose clock cannot separate them is entitled to return
+    # either order, and pinning one would make this check fail for a reason it is not about.
+    # What it is about starts on the next line, where the two stop being interchangeable.
+    #
     # The grant written last has in fact been idle the longest — a re-authorization that
-    # landed out of order, a restored backup, a clock the provider reset.
-    aged_to = stored_order[0].last_exchanged_at - timedelta(hours=1)
+    # landed out of order, a restored backup, a clock the provider reset. Anchored to the
+    # *other* grant's stamp by name rather than by position, so the aging is an hour behind
+    # the grant it has to sort before whatever order the scan just used.
+    aged_to = stored[first.path].last_exchanged_at - timedelta(hours=1)
     await h.set_idle_stamp(second, aged_to)
 
     by_idleness = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
