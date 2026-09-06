@@ -7,8 +7,10 @@ mechanisms the mock models rather than shares, which is what the comparison is f
 
 from __future__ import annotations
 
+from typing import Any, cast
 from uuid import uuid4
 
+import attrs
 import pytest
 from psycopg import sql
 
@@ -21,6 +23,7 @@ from tests.support.hlc_checkpoint_conformance import (
     HLC_CHECKPOINT_BATTERY,
     Check,
     HlcCheckpointHarness,
+    WriteGate,
 )
 
 # ----------------------- #
@@ -46,6 +49,30 @@ async def hlc_table(pg_client: PostgresClient) -> str:
     return table
 
 
+@attrs.define(slots=True)
+class _GatedWriteClient:
+    """Delegates to a real client, holding the first ``execute`` at the gate.
+
+    Reads pass straight through, so the store stops *at its write* — after whatever it read
+    — and another writer can land in that window. Only the first write is held: the store
+    issues one, and holding every write would deadlock a check that advances twice.
+    """
+
+    inner: PostgresClient
+    gate: WriteGate
+    held: bool = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        if not self.held:
+            self.held = True
+            await self.gate.hold()
+
+        return await self.inner.execute(*args, **kwargs)
+
+
 @pytest.fixture
 def harness(pg_client: PostgresClient, hlc_table: str) -> HlcCheckpointHarness:
     def store_for(node_key: str) -> HlcCheckpointPort:
@@ -56,10 +83,22 @@ def harness(pg_client: PostgresClient, hlc_table: str) -> HlcCheckpointHarness:
             ),
         )
 
+    def gated_writer(node_key: str) -> tuple[HlcCheckpointPort, WriteGate]:
+        gate = WriteGate()
+        # Run in its own task, and the pooled client binds it a separate connection — so
+        # holding this statement does not hold the other writer's.
+        gated = PostgresHlcCheckpointStore(
+            client=cast("PostgresClient", _GatedWriteClient(inner=pg_client, gate=gate)),
+            config=PostgresHlcCheckpointConfig(relation=("public", hlc_table), node_key=node_key),
+        )
+
+        return gated, gate
+
     return HlcCheckpointHarness(
         store_for=store_for,
         transaction=lambda: PostgresTxManagerAdapter(client=pg_client).transaction(),
         backend="postgres",
+        gated_writer=gated_writer,
     )
 
 

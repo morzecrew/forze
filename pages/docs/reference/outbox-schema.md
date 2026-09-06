@@ -164,6 +164,11 @@ Two operational notes that differ from Postgres:
 - **Keep the keys stable and few** — one per replica, not one per boot. Recovery reads
   every key's document, so per-process keys turn a fixed handful into an unbounded scan.
 
+The mark is written with one atomic compare-and-set on both backends, so two replicas
+advancing it concurrently keep the higher value rather than one clobbering the other. That
+is asserted rather than assumed: the shared battery forces a second writer into the middle
+of a held write, which a read-modify-write implementation cannot survive.
+
 The checkpoint also **cannot be wired on a routed (per-tenant) client**, on either
 backend: the mark is node-global while a routed client picks its backend from the bound
 tenant, which startup recovery does not have. Both modules refuse that combination at
