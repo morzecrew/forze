@@ -11,8 +11,10 @@ and the atomicity half of this port is not testable on a standalone server.
 
 from __future__ import annotations
 
+from typing import Any, cast
 from uuid import uuid4
 
+import attrs
 import pytest
 
 from forze.application.contracts.hlc import HlcCheckpointPort
@@ -25,6 +27,7 @@ from tests.support.hlc_checkpoint_conformance import (
     HLC_CHECKPOINT_BATTERY,
     Check,
     HlcCheckpointHarness,
+    WriteGate,
 )
 
 # ----------------------- #
@@ -41,6 +44,31 @@ async def hlc_collection(mongo_client_replica: MongoClient) -> tuple[str, str]:
     return db_name, f"hlc_checkpoint_{uuid4().hex[:8]}"
 
 
+@attrs.define(slots=True)
+class _GatedWriteClient:
+    """Delegates to a real client, holding the first ``update_one_upsert`` at the gate.
+
+    Everything else passes straight through — the point is to stop the store *at its write*,
+    after any reading it does, so another writer can land in that window. Only the first
+    write is held; the store issues one, and a wrapper that held every write would deadlock
+    a battery check that advances twice.
+    """
+
+    inner: MongoClient
+    gate: WriteGate
+    held: bool = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    async def update_one_upsert(self, coll: Any, flt: Any, update: Any) -> Any:
+        if not self.held:
+            self.held = True
+            await self.gate.hold()
+
+        return await self.inner.update_one_upsert(coll, flt, update)
+
+
 @pytest.fixture
 def harness(
     mongo_client_replica: MongoClient, hlc_collection: tuple[str, str]
@@ -51,10 +79,22 @@ def harness(
             config=MongoHlcCheckpointConfig(collection=hlc_collection, node_key=node_key),
         )
 
+    def gated_writer() -> tuple[HlcCheckpointPort, WriteGate]:
+        gate = WriteGate()
+        # Its own task gets its own session from the pooled client, so holding this write
+        # does not hold the other writer's.
+        gated = MongoHlcCheckpointStore(
+            client=cast("MongoClient", _GatedWriteClient(inner=mongo_client_replica, gate=gate)),
+            config=MongoHlcCheckpointConfig(collection=hlc_collection, node_key="solo"),
+        )
+
+        return gated, gate
+
     return HlcCheckpointHarness(
         store_for=store_for,
         transaction=lambda: MongoTxManagerAdapter(client=mongo_client_replica).transaction(),
         backend="mongo",
+        gated_writer=gated_writer,
     )
 
 

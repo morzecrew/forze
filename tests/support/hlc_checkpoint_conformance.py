@@ -29,6 +29,7 @@ Used by:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from typing import Any
@@ -44,6 +45,26 @@ from forze.base.primitives import HlcTimestamp
 
 class _Rollback(RuntimeError):
     """Raised inside a transaction to abort it, and swallowed by the check that raises it."""
+
+
+@attrs.define(slots=True, kw_only=True)
+class WriteGate:
+    """Holds a store's next write open so another writer can land inside it.
+
+    ``reached`` fires when the gated store is about to write — that is, after it has done
+    whatever reading it does. ``release`` lets that write proceed. A backend whose advance is
+    a read-modify-write has therefore already chosen its value when ``reached`` fires; one
+    that hands the comparison to the server has not.
+    """
+
+    reached: asyncio.Event = attrs.field(factory=asyncio.Event)
+    release: asyncio.Event = attrs.field(factory=asyncio.Event)
+
+    async def hold(self) -> None:
+        """Called by the gated transport at the write: announce, then wait."""
+
+        self.reached.set()
+        await self.release.wait()
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -63,6 +84,19 @@ class HlcCheckpointHarness:
 
     backend: str
     """Label used in assertion messages."""
+
+    gated_writer: Callable[[], tuple[HlcCheckpointPort, WriteGate]] | None = None
+    """Build a store whose next *write* blocks until released, on its own connection.
+
+    The seam the concurrency check needs, and the only one it needs: holding the write is
+    what separates a store that decided what to write **before** the other advance from one
+    that lets the server decide **at** the write.
+
+    ``None`` declares that this backend's advance has no client-visible read/write split to
+    gate — the mock compares and assigns under one held lock with no await point, so there is
+    no interleaving to force and no mutant for the check to catch. Declared rather than
+    quietly skipped, so "not applicable" is visible in the run.
+    """
 
 
 Check = Callable[[HlcCheckpointHarness], Any]
@@ -173,6 +207,44 @@ async def check_a_rolled_back_advance_leaves_the_mark_alone(h: HlcCheckpointHarn
     assert await store.load() == HlcTimestamp(4_000, 0), h.backend
 
 
+async def check_a_concurrent_advance_cannot_lose_the_higher_mark(
+    h: HlcCheckpointHarness,
+) -> None:
+    """The promise no sequential test can reach: two writers, and the higher mark survives.
+
+    Every other check here runs one writer at a time, and against those a plain
+    read-modify-write is indistinguishable from a compare-and-set — it reads, finds nothing
+    larger, and assigns the right answer. The difference only shows when a second writer
+    lands *between* the read and the write, which is why this forces that interleaving
+    rather than hoping for it: a gathered pair would pass on either implementation most of
+    the time, and fail on neither reliably.
+
+    The schedule: hold the low writer at its write, land the high mark from another
+    connection, then release. A store that compares server-side keeps the high mark. A store
+    that read before the gate already decided to write the low one, and clobbers it.
+    """
+
+    if h.gated_writer is None:
+        pytest.skip(f"{h.backend}: advance is structurally atomic — no write to gate")
+
+    gated, gate = h.gated_writer()
+    low, high = HlcTimestamp(5_000, 0), HlcTimestamp(9_000, 0)
+
+    held = asyncio.create_task(gated.advance(low))
+
+    try:
+        await asyncio.wait_for(gate.reached.wait(), timeout=10)
+
+        # Lands entirely inside the held write's window, on its own connection.
+        await h.store_for("solo").advance(high)
+
+    finally:
+        gate.release.set()
+        await held
+
+    assert await h.store_for("solo").load() == high, h.backend
+
+
 # ....................... #
 
 HLC_CHECKPOINT_BATTERY: tuple[Check, ...] = (
@@ -182,4 +254,5 @@ HLC_CHECKPOINT_BATTERY: tuple[Check, ...] = (
     check_load_reads_the_max_across_node_keys,
     check_an_in_transaction_advance_commits_with_it,
     check_a_rolled_back_advance_leaves_the_mark_alone,
+    check_a_concurrent_advance_cannot_lose_the_higher_mark,
 )
