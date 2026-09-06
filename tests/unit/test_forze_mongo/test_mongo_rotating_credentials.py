@@ -95,7 +95,9 @@ def _factory_ctx(*, keyring: bool) -> Any:
 
 
 def _store(**overrides: Any) -> MongoRotatingCredentialStore:
-    config = overrides.pop("config", None) or _config()
+    # No cipher here, so the config has to say so: a store refuses to be built on a config
+    # that promises encryption it was given no way to perform.
+    config = overrides.pop("config", None) or _config(encrypt=False, acknowledge_plaintext=True)
     options: dict[str, Any] = {
         "client": MagicMock(name="client"),
         "config": config,
@@ -151,6 +153,22 @@ class TestDocumentKey:
 
 
 class TestEncryptionWiring:
+    def test_a_store_refuses_a_config_it_cannot_keep(self) -> None:
+        """The factory's fail-closed check is not the only way a store gets built.
+
+        A config carrying ``encrypt=True`` beside a store with no cipher is a promise nothing
+        would keep and nothing would report: the credentials go to disk in the clear and every
+        read still works. The pairing is refused where the object is made, so no other
+        construction path can quietly opt out of it.
+        """
+
+        with pytest.raises(CoreException, match="no cipher was given"):
+            _store(config=_config())
+
+        # Said in both places, it builds — and a keyring satisfies it without the flag.
+        assert _store(config=_config(encrypt=False, acknowledge_plaintext=True)).cipher is None
+        assert _store(config=_config(), cipher=MagicMock(name="keyring")).cipher is not None
+
     def test_sealing_is_on_by_default(self) -> None:
         """Every document is a replayable credential, so this is the one store whose
         ``encrypt`` defaults to ``True`` rather than following the plane's usual opt-in."""

@@ -40,7 +40,7 @@ from forze.base.primitives import JsonDict, driver_deadline_budget
 
 from .._logger import logger
 from .errors import exc_interceptor
-from .port import MongoClientPort
+from .port import MongoClientPort, MongoUpdate
 from .value_objects import MongoConfig, MongoTransactionOptions
 
 # ----------------------- #
@@ -538,7 +538,7 @@ class MongoClient(MongoClientPort):
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
-        update: Mapping[str, Any],
+        update: MongoUpdate,
         *,
         sort: Sequence[tuple[str, int]] | None = None,
         upsert: bool = False,
@@ -552,7 +552,7 @@ class MongoClient(MongoClientPort):
         session = await self._session_for_op()
         doc = await coll.find_one_and_update(
             filter,
-            update,
+            update if isinstance(update, Mapping) else list(update),
             sort=sort,
             upsert=upsert,
             return_document=ReturnDocument.AFTER,

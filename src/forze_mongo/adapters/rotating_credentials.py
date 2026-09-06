@@ -80,7 +80,10 @@ whichever pass natural order puts it. Postgres gets the same guarantee free from
 
 Only this clock changes unit. ``expires_at`` stays a BSON date, because it is the field an
 operator reads directly when hunting grants about to expire, and nothing sorts on it at a
-resolution a date cannot carry.
+resolution a date cannot carry. ``lease_until`` is a date too, and deliberately a date the
+*server* writes (``$$NOW``): it is the one field workers compare against each other, so it
+must not be read off whichever machine happened to write it. The two clocks answer different
+questions — idleness wants resolution, a lease wants agreement.
 
 **The payload is sealed at rest by default.** Every document here is a replayable long-lived
 credential, so a plaintext collection turns a leaked backup or a read-only secondary into
@@ -221,13 +224,21 @@ class _MongoRotatingBase(TenancyMixin):
 
     # ....................... #
 
-    async def _collection(self) -> AsyncCollection[JsonDict]:
-        # Namespace-tier resolution: the bound tenant scopes a per-tenant collection even
-        # without tagged-tier ``tenant_aware`` (see the counter and inbox adapters).
-        db_name, coll_name = await resolve_mongo_collection(
-            self.config.collection,
-            self._tenant_id_for_resolve(),
-        )
+    async def _collection(self, tenant_id: UUID | None) -> AsyncCollection[JsonDict]:
+        """Resolve the collection for a tenant the caller has already settled on.
+
+        The tenant is a parameter rather than something read again here, so one operation
+        cannot address one tenant's document inside another tenant's collection. Reading the
+        ambient tenant twice is what makes that possible: the key and the namespace are two
+        answers to the same question, and nothing forces them to have been asked at the same
+        moment. Same rule the durable stores settled on — resolve once per operation, then
+        thread it.
+
+        Namespace-tier resolution: the bound tenant scopes a per-tenant collection even
+        without tagged-tier ``tenant_aware`` (see the counter and inbox adapters).
+        """
+
+        db_name, coll_name = await resolve_mongo_collection(self.config.collection, tenant_id)
 
         return await self.client.collection(coll_name, db_name=db_name)
 
@@ -293,6 +304,19 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
             raise exc.configuration(
                 "Exchange timeout must be positive; an unbounded exchange holds the "
                 "credential's lease for as long as the counterparty stalls.",
+            )
+
+        if self.config.encrypt and self.cipher is None:
+            # The factory refuses this pairing too, but a store is constructible directly —
+            # by a test, a script, an application wiring its own — and the failure is silent
+            # everywhere else: the config says the credentials are sealed, the store writes
+            # them in the clear, and nothing looks wrong until someone reads the collection.
+            # A config that asks for encryption is a promise this object either keeps or
+            # refuses to be built on.
+            raise exc.configuration(
+                "Rotating-credential encryption is enabled on the config but no cipher was "
+                "given, which would store replayable credentials in the clear. Pass a "
+                "keyring, or set encrypt=False with acknowledge_plaintext=True.",
             )
 
     # ....................... #
@@ -424,7 +448,6 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         coll: AsyncCollection[JsonDict],
         doc_id: str,
         owner: str,
-        now: datetime,
     ) -> JsonDict | None:
         """Claim the credential's lease atomically, or return ``None`` if someone holds it.
 
@@ -435,18 +458,43 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         ``presented`` is deliberately left alone: the claim returns the document *after* the
         update, so this is the one moment the previous holder's flag is still readable, and
         it is the flag that says whether their token ever left the process.
+
+        **Both halves of the expiry run on the server's clock**, never on the caller's. A
+        lease is a comparison between one worker's watch and another's, and workers do not
+        agree: a machine running a minute fast would read a live lease as expired and take it,
+        while the holder is mid-exchange. The flag above keeps that from becoming a double
+        exchange — a thief seeing ``presented`` refuses — but the grant is still burnt for
+        nothing, and the burn needs a human. ``$$NOW`` is the same instant for every worker,
+        so the question stops being whose watch is right.
         """
+
+        bound_ms = int(self._lease_bound.total_seconds() * 1000)
 
         return await self.client.find_one_and_update(
             coll,
             {
                 "_id": doc_id,
-                # ``lease_until: None`` matches an explicit null and a missing field alike,
-                # which is what a document written by ``put`` or by an older build looks
-                # like — both are unleased.
-                "$or": [{"lease_until": None}, {"lease_until": {"$lte": now}}],
+                # ``$expr`` so the comparison can name the server's clock. ``lease_until:
+                # null`` matches an explicit null and a missing field alike — what a document
+                # written by ``put``, or by a build before leases existed, looks like — and
+                # ``$lte`` catches one that has run out.
+                "$expr": {
+                    "$or": [
+                        {"$eq": [{"$ifNull": ["$lease_until", None]}, None]},
+                        {"$lte": ["$lease_until", "$$NOW"]},
+                    ]
+                },
             },
-            {"$set": {"lease_until": now + self._lease_bound, "lease_owner": owner}},
+            # A pipeline update, for the same reason: the deadline is written from the same
+            # clock it will later be compared against.
+            [
+                {
+                    "$set": {
+                        "lease_until": {"$add": ["$$NOW", bound_ms]},
+                        "lease_owner": owner,
+                    }
+                }
+            ],
         )
 
     # ....................... #
@@ -586,7 +634,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         reason: str,
         version: int,
         owner: str,
-    ) -> None:
+    ) -> bool:
         """Mark a grant unusable after its token was presented but the outcome was lost.
 
         Leaving the document untouched is what makes that state dangerous: it still *looks*
@@ -596,6 +644,13 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         Fenced like the persist, on version and owner, so a re-authorization that landed in
         the meantime is never clobbered. Best effort by nature: if this write fails too, the
         caller still learns its own outcome, and the log carries the rest.
+
+        Returns whether the store was told. That answer decides whether the lease may be
+        released afterwards: a lease given back over a document that carries no record of the
+        presentation is a document indistinguishable from a healthy grant, and the next
+        worker would present the spent token. A lease left in place expires on its own, and
+        whoever takes it next reads ``presented`` and refuses — the same answer, one round
+        later.
         """
 
         try:
@@ -622,6 +677,10 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                 ref=ref.path,
                 error=str(e),
             )
+
+            return False
+
+        return True
 
     # ....................... #
 
@@ -688,7 +747,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
 
     async def get(self, ref: SecretRef) -> RotatingCredential:
         tenant_id, tenant = self._tenant_scope()
-        coll = await self._collection()
+        coll = await self._collection(tenant_id)
 
         async with self.client.detached():
             doc = self._guard_live(
@@ -759,7 +818,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         deadline = asyncio.get_running_loop().time() + self._lease_bound.total_seconds()
 
         while True:
-            leased = await self._take_lease(coll, doc_id, owner, utcnow())
+            leased = await self._take_lease(coll, doc_id, owner)
 
             if leased is not None:
                 return leased
@@ -815,10 +874,22 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         expires, including exits a later edit adds.
         """
 
-        coll = await self._collection()
+        coll = await self._collection(tenant_id)
         doc_id = self._doc_id(tenant, ref)
         owner = str(uuid7())
-        presented = False
+        # Whether the token was handed to the counterparty at all. Decides whether a
+        # cancellation has anything to recover from.
+        called = False
+        # Whether this document's token is spent-with-no-answer: a timeout, a cancellation
+        # mid-flight, a replacement that did not land, or a lease inherited from a holder in
+        # one of those states. Deliberately *not* set by a failure the exchanger classified as
+        # transient — its contract is that such a request never reached the counterparty, so
+        # the stored credential is still good and burning it would destroy a working grant
+        # over a network blip.
+        spent = False
+        # Whether the store has been *told* about a spend. An unrecorded one is the single
+        # state in which the lease must not be handed back (see the ``finally``).
+        recorded = False
 
         async with self.client.detached():
             leased = await self._await_lease(coll, doc_id, ref, observed, owner, tenant_id)
@@ -835,7 +906,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                 # over a dead grant is released on the way out.
                 self._guard_live(leased, ref)
 
-                if leased.get("presented"):
+                if spent := bool(leased.get("presented")):
                     # A previous holder showed the token and never recorded what came back —
                     # its lease expired mid-flight. Exchanging now would replay a token the
                     # counterparty may have consumed, and reuse revokes the whole grant
@@ -844,7 +915,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                         "rotating credential inherited from an exchange that never settled",
                         ref=ref.path,
                     )
-                    await self._write_poison(
+                    recorded = await self._write_poison(
                         coll,
                         doc_id,
                         ref,
@@ -874,13 +945,13 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                 # Recorded before the call and only once the record landed: if this write
                 # fails the token never left, so the release below is the right ending.
                 await self._mark_presented(coll, doc_id, ref, owner)
-                presented = True
+                called = True
 
                 credential = await self._exchange(ref, payload)
 
                 # Inside the ``try``, and deliberately: the fenced write needs the lease this
                 # call still owns, so it cannot wait for the release below.
-                return await self._commit(
+                stored = await self._commit(
                     coll,
                     doc_id,
                     ref,
@@ -890,16 +961,45 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                     tenant_id=tenant_id,
                 )
 
+                if stored is not None:
+                    # The persist cleared the lease and the flag in the same write.
+                    recorded = True
+
+                    return stored
+
+                spent = True
+
+                # The exchange happened and its replacement did not land, so the grant is
+                # gone: say exactly that, since a generic storage error would read as
+                # retryable and no retry can help.
+                log.critical("rotating credential lost after a successful exchange", ref=ref.path)
+                recorded = await self._write_poison(
+                    coll,
+                    doc_id,
+                    ref,
+                    reason="exchange succeeded but its replacement could not be stored",
+                    version=locked_version,
+                    owner=owner,
+                )
+
+                raise exc.internal(
+                    f"Exchanged credential for {ref.path!r} could not be stored; the presented "
+                    "token is already burned, so this grant needs re-authorization.",
+                    code=CREDENTIAL_PERSIST_LOST_CODE,
+                    details={"ref": ref.path},
+                )
+
             except asyncio.CancelledError:
                 # Cancellation is not an Exception, so a handler for the rest does nothing
                 # here — and a shutdown landing mid-exchange is the ordinary way it happens.
-                if presented:
+                if called:
+                    spent = True
                     log.critical(
                         "rotating credential left unusable by a cancelled exchange",
                         ref=ref.path,
                     )
                     # Shielded: the write has to survive the cancellation that prompted it.
-                    await asyncio.shield(
+                    recorded = await asyncio.shield(
                         self._write_poison(
                             coll,
                             doc_id,
@@ -914,9 +1014,15 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
 
             except CoreException as e:
                 if e.code == INVALID_GRANT_CODE:
-                    # The grant is dead, not merely unusable: record the notice and let the
-                    # release below hand the (now burnt) document straight to any waiter.
-                    await self._mark_burnt(coll, doc_id, tenant, ref, e.summary)
+                    # The grant is dead, not merely unusable. Recorded through the *fenced*
+                    # write, never the unconditional one ``burn`` uses: a re-authorization
+                    # that landed while this exchange was in flight is a live grant, and
+                    # stamping this counterparty's refusal over it would burn a credential
+                    # that was never rejected. Postgres holds the row lock across both, so
+                    # there the fence is the lock; here it is the version and the owner.
+                    recorded = await self._write_poison(
+                        coll, doc_id, ref, reason=e.summary, version=locked_version, owner=owner
+                    )
 
                     raise exc.precondition(
                         f"Counterparty permanently rejected the grant at {ref.path!r}; "
@@ -933,7 +1039,8 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                         ref=ref.path,
                         error=str(e),
                     )
-                    await self._write_poison(
+                    spent = True
+                    recorded = await self._write_poison(
                         coll,
                         doc_id,
                         ref,
@@ -945,12 +1052,22 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                 raise
 
             finally:
-                # Fenced on this call's ownership, so a terminal write that already cleared
-                # the lease — or a re-authorization that superseded it — is untouched. It
-                # also clears ``presented``, which is what keeps a transient failure (the
-                # exchanger's own classification: the request never reached the counterparty)
-                # from looking like a lost outcome to the next worker.
-                await asyncio.shield(self._release_lease(coll, doc_id, owner))
+                # Handing the lease back is only safe while the document tells the truth about
+                # itself. The release clears ``presented`` along with the lease — which is
+                # right when the token never reached the counterparty (the exchanger says so,
+                # or the failure landed before the call), and catastrophic when it did and the
+                # recovery write failed: the next worker would find no lease, no burn notice
+                # and the version its caller still holds, present the spent token, and lose
+                # the whole grant family to reuse detection.
+                #
+                # So an unrecorded spend keeps its lease. That lease expires on its own, and
+                # whoever takes it next reads ``presented`` and refuses — the same answer, one
+                # round later, which is a far better trade than a replay.
+                if not spent or recorded:
+                    # Fenced on this call's ownership, so a terminal write that already
+                    # cleared the lease — or a re-authorization that superseded it — is
+                    # untouched.
+                    await asyncio.shield(self._release_lease(coll, doc_id, owner))
 
     # ....................... #
 
@@ -964,13 +1081,15 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         version: int,
         owner: str,
         tenant_id: UUID | None,
-    ) -> RotatingCredential:
-        """Make the replacement durable, or report it lost — there is no third answer.
+    ) -> RotatingCredential | None:
+        """Make the replacement durable, or report that it did not land.
 
-        The exchange already happened, so a write that fails or is fenced out has destroyed
-        the grant: the presented token is burned at the counterparty and this frame holds the
-        only copy of what replaced it. Say exactly that — a generic storage error would read
-        as retryable, and no retry can help.
+        ``None`` is the second half of the port's hardest promise: the exchange already
+        happened, so a write that fails or is fenced out has destroyed the grant — the
+        presented token is burned at the counterparty and this frame holds the only copy of
+        what replaced it. Saying so by returning rather than raising keeps the decision about
+        what to do next — mark it unusable, and whether the lease may then be released — in
+        the one place that tracks it.
         """
 
         try:
@@ -994,34 +1113,18 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
             # already holds in the clear.
             return self._view_of(credential, version + 1)
 
-        log.critical(
-            "rotating credential lost after a successful exchange",
+        log.warning(
+            "rotating credential replacement did not land",
             ref=ref.path,
             error=str(failure) if failure is not None else "the fenced write matched nothing",
         )
-        await self._write_poison(
-            coll,
-            doc_id,
-            ref,
-            reason="exchange succeeded but its replacement could not be stored",
-            version=version,
-            owner=owner,
-        )
 
-        raise exc.internal(
-            f"Exchanged credential for {ref.path!r} could not be stored; the presented "
-            "token is already burned, so this grant needs re-authorization.",
-            code=CREDENTIAL_PERSIST_LOST_CODE,
-            details={"ref": ref.path},
-        ) from failure
-
-    # ....................... #
+        return None
 
     async def put(self, ref: SecretRef, credential: ExchangedCredential) -> RotatingCredential:
         tenant_id, tenant = self._tenant_scope()
-        coll = await self._collection()
+        coll = await self._collection(tenant_id)
         doc_id = self._doc_id(tenant, ref)
-        now = _now_us()
         payload: JsonDict = await self._seal(
             {
                 "access_token": credential.access_token,
@@ -1033,6 +1136,13 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         )
 
         async with self._locks.for_key(f"{tenant}|{ref.path}"), self.client.detached():
+            # Read after the lock and immediately before the write, not before sealing: a
+            # stamp taken early can be overtaken by a re-authorization that started later and
+            # finished first, landing an older clock on the newer credential and reversing
+            # the idleness order the sweep depends on. Sealing can cost a KMS round trip,
+            # which is exactly the delay that makes it happen.
+            now = _now_us()
+
             # Unconditional, and it clears the lease: a human has just proven possession of a
             # new grant, so there is no earlier version — and no rotation in flight — worth
             # defending. A rotation this overtakes finds its own fenced write matched nothing
@@ -1071,8 +1181,8 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
     # ....................... #
 
     async def burn(self, ref: SecretRef, *, reason: str) -> None:
-        _, tenant = self._tenant_scope()
-        coll = await self._collection()
+        tenant_id, tenant = self._tenant_scope()
+        coll = await self._collection(tenant_id)
 
         async with self._locks.for_key(f"{tenant}|{ref.path}"), self.client.detached():
             await self._mark_burnt(coll, self._doc_id(tenant, ref), tenant, ref, reason)
@@ -1110,8 +1220,8 @@ class MongoRotatingCredentialsAdmin(_MongoRotatingBase, RotatingCredentialsAdmin
                 f"due_for_refresh limit must be positive, got {limit}.",
             )
 
-        _, tenant = self._tenant_scope()
-        coll = await self._collection()
+        tenant_id, tenant = self._tenant_scope()
+        coll = await self._collection(tenant_id)
 
         async with self.client.detached():
             docs = await self.client.find_many(

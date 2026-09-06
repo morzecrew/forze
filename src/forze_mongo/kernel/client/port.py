@@ -22,6 +22,16 @@ from .value_objects import MongoTransactionOptions
 # ----------------------- #
 
 
+MongoUpdate = Mapping[str, Any] | Sequence[Mapping[str, Any]]
+"""An update document, or an aggregation pipeline standing in for one.
+
+The pipeline form is what lets a write name server-side expressions — ``$$NOW`` for a
+deadline every worker reads the same way, a field computed from the document it is
+replacing. The driver has always accepted it; this alias is where the ports say so, rather
+than each caller casting past a signature that is narrower than the operation.
+"""
+
+
 class MongoClientPort(Protocol):
     """Operations implemented by :class:`MongoClient` and routed variants."""
 
@@ -77,7 +87,7 @@ class MongoClientPort(Protocol):
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
-        update: Mapping[str, Any],
+        update: MongoUpdate,
         *,
         sort: Sequence[tuple[str, int]] | None = None,
         upsert: bool = False,
