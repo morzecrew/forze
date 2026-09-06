@@ -35,6 +35,10 @@ from forze.application.contracts.outbox import (
     OutboxQueryDepKey,
 )
 from forze.application.contracts.search import SearchQueryDepKey
+from forze.application.contracts.secrets import (
+    RotatingCredentialsAdminDepKey,
+    RotatingCredentialsDepKey,
+)
 from forze.application.contracts.tenancy import (
     TenancyRouteGroup,
     TenantIsolationMode,
@@ -67,6 +71,7 @@ from .configs import (
     MongoInboxConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
+    MongoRotatingCredentialsConfig,
     MongoSearchConfig,
 )
 from .factories import (
@@ -83,6 +88,8 @@ from .factories import (
     ConfigurableMongoOutboxCommand,
     ConfigurableMongoOutboxQuery,
     ConfigurableMongoReadOnlyDocument,
+    ConfigurableMongoRotatingCredentials,
+    ConfigurableMongoRotatingCredentialsAdmin,
     ConfigurableMongoSearch,
     mongo_txmanager,
 )
@@ -208,6 +215,15 @@ class MongoDepsModule(DepsModule):
 
     When set, registers the ``DurableScheduleStorePort`` over a schedule collection so
     recurring cron triggers fire runs on a cadence."""
+
+    rotating_credentials: MongoRotatingCredentialsConfig | None = attrs.field(default=None)
+    """Optional store for credentials a counterparty rotates on use (execution-scoped).
+
+    When set, registers the ``RotatingCredentialStorePort`` over a collection holding one
+    grant per ``(tenant, ref)``, so single-use refresh tokens survive concurrent use and
+    crashes. Requires the config's ``exchanger`` — the call to the provider's token
+    endpoint — because no default for someone else's provider could exist. Unset leaves the
+    key unregistered."""
 
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
@@ -351,6 +367,15 @@ class MongoDepsModule(DepsModule):
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.collection,
                 ),
+                # The store holding third-party credentials must clear the same isolation
+                # floor as any other route — leaving it out would let a deployment declare
+                # ``dedicated`` and still serve every tenant's grants from one collection.
+                TenancyRouteGroup(
+                    kind="rotating_credentials",
+                    configs=_route("rotating_credentials", self.rotating_credentials),
+                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    namespace_resolver=lambda cfg: cfg.collection,
+                ),
             ],
             required_isolation=self.required_tenant_isolation,
             max_supported_isolation="dedicated",
@@ -465,6 +490,20 @@ class MongoDepsModule(DepsModule):
         if self.durable_schedule is not None:
             registrations[DurableScheduleStoreDepKey] = ConfigurableMongoDurableSchedule(
                 config=self.durable_schedule
+            )
+
+        if self.rotating_credentials is not None:
+            # Execution-scoped store, resolved per invocation so the ambient tenant scopes
+            # the document it reads. Plain rather than routed: a module has one credential
+            # store, addressed by ``SecretRef`` rather than by a route name.
+            registrations[RotatingCredentialsDepKey] = ConfigurableMongoRotatingCredentials(
+                config=self.rotating_credentials
+            )
+            # The control-plane scan rides on the same config: one wiring decision covers
+            # both planes, and the sweep can never see a different collection than the
+            # store writes.
+            registrations[RotatingCredentialsAdminDepKey] = (
+                ConfigurableMongoRotatingCredentialsAdmin(config=self.rotating_credentials)
             )
 
         if self.hlc_checkpoint is not None:

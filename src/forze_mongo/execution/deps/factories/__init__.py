@@ -16,6 +16,10 @@ from .outbox import (
     ConfigurableMongoOutboxCommand,
     ConfigurableMongoOutboxQuery,
 )
+from .rotating_credentials import (
+    ConfigurableMongoRotatingCredentials,
+    ConfigurableMongoRotatingCredentialsAdmin,
+)
 from .search import ConfigurableMongoSearch
 from .tx import mongo_txmanager
 
@@ -36,6 +40,8 @@ __all__ = [
     "ConfigurableMongoOutboxCommand",
     "ConfigurableMongoOutboxQuery",
     "ConfigurableMongoReadOnlyDocument",
+    "ConfigurableMongoRotatingCredentials",
+    "ConfigurableMongoRotatingCredentialsAdmin",
     "ConfigurableMongoSearch",
     "mongo_txmanager",
 ]

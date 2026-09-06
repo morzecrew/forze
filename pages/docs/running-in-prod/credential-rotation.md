@@ -271,8 +271,8 @@ if credential.expires_before(utcnow()):
 ```
 
 That `observed` version is the whole single-flight mechanism. Under a per-credential
-lock — in-process, plus a row lock across processes — the store re-reads first: if the
-stored version has moved past yours, someone already exchanged and you get *their*
+lock — in-process, plus a cross-process exclusion the store owns — it re-reads first: if
+the stored version has moved past yours, someone already exchanged and you get *their*
 credential instead of a second exchange. The replacement is committed before
 `refresh` returns, so nothing ever observes a credential that is not durable, and a
 write or commit that fails after a successful exchange raises `credential_persist_lost`
@@ -306,9 +306,34 @@ authentication rather than decrypting into the wrong grant. `expires_at` stays a
 column, so operators keep visibility into expiring grants without holding a key. Turning
 sealing on needs no migration: existing plaintext reads through and seals on next write.
 
-`forze_postgres.PostgresRotatingCredentialStore` is the shipped store (one row per
-`(tenant_id, ref)`, `SELECT … FOR UPDATE`); see the runnable walkthrough in
-`examples/recipes/rotating_credentials/`.
+Two shipped stores answer the port, and the same conformance battery runs against both:
+
+| Store | Exclusion | Notes |
+| --- | --- | --- |
+| `forze_postgres.PostgresRotatingCredentialStore` | `SELECT … FOR UPDATE`, held across the exchange | One row per `(tenant_id, ref)`. A racer blocks on the row |
+| `forze_mongo.adapters.rotating_credentials.MongoRotatingCredentialStore` | A lease on the credential's own document | One document per `(tenant, ref)`. A racer waits for the lease, then converges. No transaction needed, so a standalone deployment is not excluded |
+
+The difference is not a preference. Mongo has no blocking wait on a document — a second
+transaction writing it is aborted rather than queued — and it caps a transaction's lifetime,
+which a third party's token endpoint has no obligation to respect. So the Mongo store takes
+an explicit lease instead, and answers the one thing a lease has that a row lock does not:
+**a lease expires.** Each document records that its token was presented, so a worker
+inheriting an expired lease can tell the two cases apart — a holder that died *before*
+calling the provider leaves a grant that is still good, and one that died *after* leaves an
+outcome nobody knows, which is marked unusable rather than re-exchanged.
+
+Mongo's store needs one index for the sweep's idleness scan:
+
+```javascript
+db.<collection>.createIndex({tenant_id: 1, updated_us: 1})
+```
+
+`updated_us` is microseconds since the epoch, not a BSON date: dates carry milliseconds,
+and a batch of grants stored back to back all land inside one — which would leave
+"oldest first" decided by storage order rather than by the clock. Postgres gets the same
+guarantee free from `timestamptz`.
+
+See the runnable walkthrough in `examples/recipes/rotating_credentials/`.
 
 On-demand refresh keeps a grant alive only while something uses it — and providers expire
 refresh tokens from **non-use** (weeks to months, reset by every exchange), so an idle

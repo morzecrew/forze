@@ -11,6 +11,7 @@ from .configs import (
     MongoInboxConfig,
     MongoOutboxConfig,
     MongoReadOnlyDocumentConfig,
+    MongoRotatingCredentialsConfig,
     MongoSearchConfig,
     MongoSearchEngine,
     MongoSearchEngineSpec,
@@ -27,6 +28,8 @@ from .factories import (
     ConfigurableMongoInbox,
     ConfigurableMongoOutbox,
     ConfigurableMongoReadOnlyDocument,
+    ConfigurableMongoRotatingCredentials,
+    ConfigurableMongoRotatingCredentialsAdmin,
     ConfigurableMongoSearch,
     mongo_txmanager,
 )
@@ -47,6 +50,7 @@ __all__ = [
     "MongoInboxConfig",
     "MongoOutboxConfig",
     "MongoReadOnlyDocumentConfig",
+    "MongoRotatingCredentialsConfig",
     "MongoSearchConfig",
     "MongoSearchEngine",
     "MongoSearchEngineSpec",
@@ -62,6 +66,8 @@ __all__ = [
     "ConfigurableMongoInbox",
     "ConfigurableMongoOutbox",
     "ConfigurableMongoReadOnlyDocument",
+    "ConfigurableMongoRotatingCredentials",
+    "ConfigurableMongoRotatingCredentialsAdmin",
     "ConfigurableMongoSearch",
     "mongo_txmanager",
 ]

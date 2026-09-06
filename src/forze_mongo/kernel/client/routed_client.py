@@ -23,7 +23,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .client import MongoClient
-from .port import MongoClientPort
+from .port import MongoClientPort, MongoUpdate
 from .value_objects import MongoConfig, MongoTransactionOptions
 
 # ----------------------- #
@@ -180,7 +180,7 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
         self,
         coll: AsyncCollection[Any],
         filter: Mapping[str, Any],
-        update: Mapping[str, Any],
+        update: MongoUpdate,
         *,
         sort: Sequence[tuple[str, int]] | None = None,
         upsert: bool = False,
