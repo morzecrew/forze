@@ -5873,6 +5873,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Mongo">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restart-monotonicity-on-mongo" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restart monotonicity on Mongo
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -6204,6 +6221,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Mongo">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#restart-monotonicity-on-mongo" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Restart monotonicity on Mongo
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -6406,6 +6440,32 @@ note that Mongo sorts missing-<code>hlc</code> rows <em>first</em> — so during
 rows drain oldest-first, the inverse of Postgres <code>NULLS LAST</code> (both best-effort):</p>
 <div class="highlight"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="nx">outbox</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="w"> </span><span class="nx">outbox_route</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">status</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">available_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">hlc</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">created_at</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="w"> </span><span class="p">})</span>
 </code></pre></div>
+<h4 id="restart-monotonicity-on-mongo">Restart monotonicity on Mongo<a class="headerlink" href="#restart-monotonicity-on-mongo" title="Permanent link">&para;</a></h4>
+<p>The high-water mark works the same way and needs <strong>no index at all</strong>: the write is
+keyed on the document <code>_id</code>, and recovery reads one document per node. Wire it with
+<code>MongoDepsModule(hlc_checkpoint=MongoHlcCheckpointConfig(collection=("app", "hlc_checkpoint")))</code>
+and the same <code>hlc_checkpoint_recovery_lifecycle_step()</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="c1">// { _id: &lt;node_key&gt;, hlc: &lt;packed HlcTimestamp&gt; } — created on first advance.</span>
+</code></pre></div>
+<p>The advance is one <code>$max</code> upsert, which is what <code>GREATEST</code> does in the Postgres
+statement: the server keeps the larger value, so concurrent writers never lower the
+mark. It rides the ambient session, so inside a transaction it commits — or rolls
+back — with the rows it stamps. <strong>Mongo transactions need a replica set</strong>, so on a
+standalone server an outbox route with <code>require_transaction=True</code> cannot run at all,
+and with it the checkpoint has nothing to ride; the mark is only atomic where the
+flush itself is.</p>
+<p>Two operational notes that differ from Postgres:</p>
+<ul>
+<li><strong>Give each replica its own <code>node_key</code> when more than one flushes concurrently.</strong>
+  Two transactions advancing one document contend, and Mongo aborts one with a write
+  conflict the flush must retry; Postgres serialises the same contention on a row lock.</li>
+<li><strong>Keep the keys stable and few</strong> — one per replica, not one per boot. Recovery reads
+  every key's document, so per-process keys turn a fixed handful into an unbounded scan.</li>
+</ul>
+<p>The checkpoint also <strong>cannot be wired on a routed (per-tenant) client</strong>, on either
+backend: the mark is node-global while a routed client picks its backend from the bound
+tenant, which startup recovery does not have. Both modules refuse that combination at
+wiring rather than at the first read.</p>
 
 
 

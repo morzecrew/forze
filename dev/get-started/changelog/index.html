@@ -8393,6 +8393,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Mongo implements the inbox.</strong> <code>MongoDepsModule(inboxes={...})</code> with <code>MongoInboxConfig</code> registers a consumer-side dedup store: one atomic <code>_id</code> upsert per message, no index migration, riding the ambient transaction so the mark rolls back with the handler (exactly-once effect).</p>
 </li>
 <li>
+<p><strong>Mongo implements the <abbr title="Hybrid Logical Clock">HLC</abbr> checkpoint.</strong> <code>MongoDepsModule(hlc_checkpoint=MongoHlcCheckpointConfig(...))</code> persists the runtime's clock high-water mark so a restart resumes above its prior emissions. One <code>$max</code> upsert keyed on <code>_id</code>, riding the ambient session so it commits with the rows it stamps; no index to migrate. The plane now has a shared battery across mock, Postgres and Mongo.</p>
+</li>
+<li>
 <p><strong>Mongo implements durable execution.</strong> <code>MongoDepsModule(durable_step=…, durable_run=…, durable_schedule=…)</code> registers the step-memo journal, the run store (claims, leases, fences, run control) and the cron schedule store. The run collection needs a partial unique index on <code>idempotency_key</code>.</p>
 </li>
 <li>
