@@ -79,13 +79,13 @@ def harness(
             config=MongoHlcCheckpointConfig(collection=hlc_collection, node_key=node_key),
         )
 
-    def gated_writer() -> tuple[HlcCheckpointPort, WriteGate]:
+    def gated_writer(node_key: str) -> tuple[HlcCheckpointPort, WriteGate]:
         gate = WriteGate()
         # Its own task gets its own session from the pooled client, so holding this write
         # does not hold the other writer's.
         gated = MongoHlcCheckpointStore(
             client=cast("MongoClient", _GatedWriteClient(inner=mongo_client_replica, gate=gate)),
-            config=MongoHlcCheckpointConfig(collection=hlc_collection, node_key="solo"),
+            config=MongoHlcCheckpointConfig(collection=hlc_collection, node_key=node_key),
         )
 
         return gated, gate

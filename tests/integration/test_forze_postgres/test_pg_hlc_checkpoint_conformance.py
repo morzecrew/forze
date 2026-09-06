@@ -83,13 +83,13 @@ def harness(pg_client: PostgresClient, hlc_table: str) -> HlcCheckpointHarness:
             ),
         )
 
-    def gated_writer() -> tuple[HlcCheckpointPort, WriteGate]:
+    def gated_writer(node_key: str) -> tuple[HlcCheckpointPort, WriteGate]:
         gate = WriteGate()
         # Run in its own task, and the pooled client binds it a separate connection — so
         # holding this statement does not hold the other writer's.
         gated = PostgresHlcCheckpointStore(
             client=cast("PostgresClient", _GatedWriteClient(inner=pg_client, gate=gate)),
-            config=PostgresHlcCheckpointConfig(relation=("public", hlc_table), node_key="solo"),
+            config=PostgresHlcCheckpointConfig(relation=("public", hlc_table), node_key=node_key),
         )
 
         return gated, gate

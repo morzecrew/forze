@@ -85,8 +85,13 @@ class HlcCheckpointHarness:
     backend: str
     """Label used in assertion messages."""
 
-    gated_writer: Callable[[], tuple[HlcCheckpointPort, WriteGate]] | None = None
-    """Build a store whose next *write* blocks until released, on its own connection.
+    gated_writer: Callable[[str], tuple[HlcCheckpointPort, WriteGate]] | None = None
+    """Build a store for one *node key* whose next write blocks until released, on its own
+    connection.
+
+    The key is passed rather than fixed by the harness: the two writers must contend on one
+    document, and a harness that chose its own key would produce a check that passes because
+    the writers never met.
 
     The seam the concurrency check needs, and the only one it needs: holding the write is
     what separates a store that decided what to write **before** the other advance from one
@@ -227,7 +232,7 @@ async def check_a_concurrent_advance_cannot_lose_the_higher_mark(
     if h.gated_writer is None:
         pytest.skip(f"{h.backend}: advance is structurally atomic — no write to gate")
 
-    gated, gate = h.gated_writer()
+    gated, gate = h.gated_writer("solo")
     low, high = HlcTimestamp(5_000, 0), HlcTimestamp(9_000, 0)
 
     held = asyncio.create_task(gated.advance(low))
