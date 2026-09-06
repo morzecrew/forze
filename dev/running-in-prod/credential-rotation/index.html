@@ -6678,8 +6678,8 @@ version you read back:</p>
     <span class="n">credential</span> <span class="o">=</span> <span class="k">await</span> <span class="n">store</span><span class="o">.</span><span class="n">refresh</span><span class="p">(</span><span class="n">SecretRef</span><span class="p">(</span><span class="s2">"oauth/crm"</span><span class="p">),</span> <span class="n">observed</span><span class="o">=</span><span class="n">credential</span><span class="o">.</span><span class="n">version</span><span class="p">)</span>
 </code></pre></div>
 <p>That <code>observed</code> version is the whole single-flight mechanism. Under a per-credential
-lock — in-process, plus a row lock across processes — the store re-reads first: if the
-stored version has moved past yours, someone already exchanged and you get <em>their</em>
+lock — in-process, plus a cross-process exclusion the store owns — it re-reads first: if
+the stored version has moved past yours, someone already exchanged and you get <em>their</em>
 credential instead of a second exchange. The replacement is committed before
 <code>refresh</code> returns, so nothing ever observes a credential that is not durable, and a
 write or commit that fails after a successful exchange raises <code>credential_persist_lost</code>
@@ -6708,9 +6708,44 @@ credential to its <code>(tenant, ref)</code>, so a row copied into another ref o
 authentication rather than decrypting into the wrong grant. <code>expires_at</code> stays a plain
 column, so operators keep visibility into expiring grants without holding a key. Turning
 sealing on needs no migration: existing plaintext reads through and seals on next write.</p>
-<p><code>forze_postgres.PostgresRotatingCredentialStore</code> is the shipped store (one row per
-<code>(tenant_id, ref)</code>, <code>SELECT … FOR UPDATE</code>); see the runnable walkthrough in
-<code>examples/recipes/rotating_credentials/</code>.</p>
+<p>Two shipped stores answer the port, and the same conformance battery runs against both:</p>
+<table>
+<thead>
+<tr>
+<th>Store</th>
+<th>Exclusion</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze_postgres.PostgresRotatingCredentialStore</code></td>
+<td><code>SELECT … FOR UPDATE</code>, held across the exchange</td>
+<td>One row per <code>(tenant_id, ref)</code>. A racer blocks on the row</td>
+</tr>
+<tr>
+<td><code>forze_mongo.adapters.rotating_credentials.MongoRotatingCredentialStore</code></td>
+<td>A lease on the credential's own document</td>
+<td>One document per <code>(tenant, ref)</code>. A racer waits for the lease, then converges. No transaction needed, so a standalone deployment is not excluded</td>
+</tr>
+</tbody>
+</table>
+<p>The difference is not a preference. Mongo has no blocking wait on a document — a second
+transaction writing it is aborted rather than queued — and it caps a transaction's lifetime,
+which a third party's token endpoint has no obligation to respect. So the Mongo store takes
+an explicit lease instead, and answers the one thing a lease has that a row lock does not:
+<strong>a lease expires.</strong> Each document records that its token was presented, so a worker
+inheriting an expired lease can tell the two cases apart — a holder that died <em>before</em>
+calling the provider leaves a grant that is still good, and one that died <em>after</em> leaves an
+outcome nobody knows, which is marked unusable rather than re-exchanged.</p>
+<p>Mongo's store needs one index for the sweep's idleness scan:</p>
+<div class="highlight"><pre><span></span><code><span class="nx">db</span><span class="p">.</span><span class="o">&lt;</span><span class="nx">collection</span><span class="o">&gt;</span><span class="p">.</span><span class="nx">createIndex</span><span class="p">({</span><span class="nx">tenant_id</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">,</span><span class="w"> </span><span class="nx">updated_us</span><span class="o">:</span><span class="w"> </span><span class="mf">1</span><span class="p">})</span>
+</code></pre></div>
+<p><code>updated_us</code> is microseconds since the epoch, not a BSON date: dates carry milliseconds,
+and a batch of grants stored back to back all land inside one — which would leave
+"oldest first" decided by storage order rather than by the clock. Postgres gets the same
+guarantee free from <code>timestamptz</code>.</p>
+<p>See the runnable walkthrough in <code>examples/recipes/rotating_credentials/</code>.</p>
 <p>On-demand refresh keeps a grant alive only while something uses it — and providers expire
 refresh tokens from <strong>non-use</strong> (weeks to months, reset by every exchange), so an idle
 tenant's grant dies silently no matter how correct the on-demand path is.

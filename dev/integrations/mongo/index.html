@@ -6413,6 +6413,11 @@ models follows.</p>
 <td><code>durable_step</code> / <code>durable_run</code> / <code>durable_schedule</code></td>
 <td>step memo, run store, and cron schedules — optional</td>
 </tr>
+<tr>
+<td>Rotating credentials</td>
+<td><code>rotating_credentials</code></td>
+<td>store + control-plane scan for counterparty-rotated grants — optional</td>
+</tr>
 </tbody>
 </table>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
@@ -6453,6 +6458,22 @@ models follows.</p>
   its result are one statement — and they come back on the next scan once the
   lease expires, so size <code>lease_for</code> for how long you can wait, not just for how
   long a body runs.</li>
+<li><strong>Rotating credentials use a lease, not a transaction.</strong> The store for
+  counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
+  across a third-party call, and Mongo offers neither a blocking wait on a document nor
+  a transaction that may outlive <code>transactionLifetimeLimitSeconds</code>. So it takes an
+  explicit lease on the credential's own document; a racer waits for it and converges on
+  the winner. That means it needs <strong>no replica set</strong>, and unlike the inbox it loses no
+  guarantee without one — the exclusion is a document write, not a transaction. It needs
+  one index for the idleness sweep:
+  <code>{tenant_id: 1, updated_us: 1}</code>. That clock is microseconds since the epoch rather than
+  a BSON date, because dates carry milliseconds and three writes in a row land inside one
+  of those — which would leave the sweep's "oldest first" decided by whatever order the
+  server returns. Because a lease can expire where a row lock cannot,
+  each document also records whether its token was already presented, so a worker
+  inheriting an expired lease refuses to replay a possibly-spent token and marks the
+  grant for re-authorization instead. See
+  <a href="../../running-in-prod/credential-rotation/">credential rotation</a>.</li>
 <li><code>MongoSearchConfig</code> is imported from <code>forze_mongo.execution.deps</code> (not the
   top-level package).</li>
 <li>Relations accept a static <code>(database, collection)</code> tuple or a per-tenant
