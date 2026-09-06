@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 from collections.abc import AsyncIterator, Mapping
 from datetime import timedelta
 from typing import Any, cast, final
@@ -86,7 +87,7 @@ async def credentials_collection(mongo_client: MongoClient) -> tuple[str, str]:
     database = await mongo_client.db()
     name = f"rotating_credentials_{uuid4().hex[:8]}"
     await database.create_collection(name)
-    await database[name].create_index([("tenant_id", 1), ("updated_at", 1)])
+    await database[name].create_index([("tenant_id", 1), ("updated_us", 1)])
 
     return database.name, name
 
@@ -916,3 +917,95 @@ async def test_a_cancellation_delivered_to_the_rotation_still_records_the_outcom
         await harness.store.get(REF)
 
     assert poisoned.value.code == BURNT_CREDENTIAL_CODE
+
+
+# ....................... #
+
+
+async def test_grants_stored_back_to_back_carry_strictly_increasing_stamps(
+    harness: RotatingStoreHarness,
+) -> None:
+    """The idleness clock has to separate writes a real deployment makes back to back.
+
+    "Oldest first" is only a promise if the stamps it sorts are distinct. A BSON date carries
+    milliseconds, and three stores in a row — an onboarding batch, a bulk import — land inside
+    one of those every time, so a clock at that resolution leaves the scan's order decided by
+    whatever Mongo happens to return. The battery's ordering check would then pass on natural
+    order rather than on the property it names, which is the sort of green nobody can act on.
+
+    Asserted on the stamps themselves rather than through the scan, because that is what the
+    ordering rests on: a scan test can be satisfied by luck, a strictly-increasing clock
+    cannot.
+    """
+
+    refs = [SecretRef("oauth/first"), SecretRef("oauth/second"), SecretRef("oauth/third")]
+
+    for ref in refs:
+        await harness.seed(ref)
+
+    scanned = await harness.admin.due_for_refresh(
+        idle_since=utcnow() + timedelta(hours=1), limit=10
+    )
+    stamps = [d.last_exchanged_at for d in scanned]
+
+    assert [d.ref.path for d in scanned] == [ref.path for ref in refs]
+    assert stamps == sorted(stamps)
+    assert len(set(stamps)) == len(refs), "three back-to-back writes share one stamp"
+
+
+# ....................... #
+
+
+async def test_an_abandoned_rotation_leaves_no_unretrieved_exception(
+    harness: RotatingStoreHarness,
+) -> None:
+    """A cancelled caller must not turn into an event-loop complaint nobody can act on.
+
+    The rotation is shielded, so it outlives the caller that gave up on it and ends by
+    raising — a timeout here. Nothing is left awaiting that result, so without deliberately
+    collecting it asyncio reports "Task exception was never retrieved" at some later garbage
+    collection: a critical-looking line, detached from the request that caused it, for an
+    outcome the store already logged and recorded. Operators learn to filter those, and then
+    they filter the real ones too.
+    """
+
+    loop = asyncio.get_running_loop()
+    complaints: list[str] = []
+    loop.set_exception_handler(
+        lambda _loop, context: complaints.append(str(context.get("message")))
+    )
+
+    try:
+        await harness.seed()
+        before = await harness.store.get(REF)
+        harness.counterparty.delay = EXCHANGE_TIMEOUT.total_seconds() * 10
+
+        rotating = asyncio.ensure_future(harness.store.refresh(REF, observed=before.version))
+        await _await_presentation(harness.counterparty)
+        rotating.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await rotating
+
+        # Let the abandoned rotation reach its own end (the exchange times out and the grant
+        # is marked unusable), then make the task collectable.
+        for _ in range(200):
+            try:
+                await harness.store.get(REF)
+            except CoreException as e:
+                if e.code == BURNT_CREDENTIAL_CODE:
+                    break
+
+            await asyncio.sleep(0.02)
+        else:
+            raise AssertionError("the abandoned rotation never recorded an outcome")
+
+        del rotating
+        gc.collect()
+        await asyncio.sleep(0)
+
+        assert complaints == [], "the abandoned rotation's exception was never retrieved"
+
+    finally:
+        harness.counterparty.delay = 0.0
+        loop.set_exception_handler(None)

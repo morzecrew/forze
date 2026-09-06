@@ -125,7 +125,10 @@ lifecycle = LifecyclePlan.from_steps(
   the winner. That means it needs **no replica set**, and unlike the inbox it loses no
   guarantee without one — the exclusion is a document write, not a transaction. It needs
   one index for the idleness sweep:
-  `{tenant_id: 1, updated_at: 1}`. Because a lease can expire where a row lock cannot,
+  `{tenant_id: 1, updated_us: 1}`. That clock is microseconds since the epoch rather than
+  a BSON date, because dates carry milliseconds and three writes in a row land inside one
+  of those — which would leave the sweep's "oldest first" decided by whatever order the
+  server returns. Because a lease can expire where a row lock cannot,
   each document also records whether its token was already presented, so a worker
   inheriting an expired lease refuses to replay a possibly-spent token and marks the
   grant for re-authorization instead. See

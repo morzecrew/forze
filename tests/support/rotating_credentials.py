@@ -898,6 +898,50 @@ async def check_the_scan_is_bounded_and_oldest_first(h: RotatingStoreHarness) ->
     assert refused.value.kind == ExceptionKind.PRECONDITION
 
 
+async def check_the_scan_orders_by_idleness_not_by_insertion(
+    h: RotatingStoreHarness,
+) -> None:
+    """Proof 5b: the order comes from the clock, not from the order the rows were written.
+
+    Every other ordering check here stores grants in the order it then expects them back, so
+    a store that ignored its own sort and returned rows in whatever order the storage holds
+    them would satisfy all of them. That is a green nobody can act on: insertion order and
+    idleness order agree right up until the moment traffic touches one grant, which is the
+    only moment the ordering exists for.
+
+    So this one puts them in conflict. The grant stored *first* is exchanged, moving its
+    clock past the second's, and the scan has to report it *last*.
+
+    Where it bites hardest is the mock, whose storage keeps insertion order literally: drop
+    its sort and this is the only check that notices. On a real engine an update tends to
+    relocate the row to the end, so physical order drifts back into agreement with the clock
+    and a missing ``ORDER BY`` can still answer correctly — measured, not assumed. There the
+    value of this check is that it pins the promise as *stated* rather than as incidentally
+    produced, which is what keeps the next storage-layout change from quietly deciding it.
+    """
+
+    aged, fresh = SecretRef("oauth/stored-first"), SecretRef("oauth/stored-second")
+
+    await h.seed(aged)
+    await h.seed(fresh)
+
+    stored_order = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+    assert [d.ref.path for d in stored_order] == [aged.path, fresh.path]
+
+    # Traffic touches the older grant, so it becomes the least idle of the two.
+    await h.store.refresh(aged, observed=stored_order[0].version)
+
+    by_idleness = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
+
+    assert [d.ref.path for d in by_idleness] == [fresh.path, aged.path]
+
+    # And a bounded pass takes the *endangered* one, which is the whole point of ordering a
+    # scan that a limit can cut short.
+    capped = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=1)
+
+    assert [d.ref.path for d in capped] == [fresh.path]
+
+
 async def check_the_scan_is_tenant_scoped(h: RotatingStoreHarness) -> None:
     """Proof 6: a sweep never surfaces another tenant's refs.
 
@@ -946,6 +990,7 @@ ROTATING_STORE_BATTERY: tuple[Check, ...] = (
     check_the_scan_reports_burnt_grants_instead_of_hiding_them,
     check_a_burn_notice_for_an_unknown_ref_reaches_the_scan,
     check_the_scan_is_bounded_and_oldest_first,
+    check_the_scan_orders_by_idleness_not_by_insertion,
     check_the_scan_is_tenant_scoped,
 )
 """Every check, in the order a reader should meet them. An adapter runs all of them."""

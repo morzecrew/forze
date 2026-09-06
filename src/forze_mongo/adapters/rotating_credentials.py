@@ -49,8 +49,8 @@ The collection is provided by the application; documents look like::
         lease_until:  ISODate | null,
         lease_owner:  "..." | null,
         presented:    true | null,
-        created_at:   ISODate,
-        updated_at:   ISODate,
+        created_us:   NumberLong,
+        updated_us:   NumberLong,
     }
 
 ``_id`` carries the tenant because a collection keyed on the ref alone would hand one
@@ -60,15 +60,23 @@ serialize on it without a unique index the application never migrated. ``tenant_
 
 **The application owns one index**, for :class:`MongoRotatingCredentialsAdmin`::
 
-    db.<collection>.createIndex({tenant_id: 1, updated_at: 1})
+    db.<collection>.createIndex({tenant_id: 1, updated_us: 1})
 
 The scan orders by idleness within a tenant, which ``_id`` cannot answer. Without it the
 scan is a collection scan — tolerable for tens of grants, not for tens of thousands.
 
-``updated_at`` is the idleness clock, and BSON dates carry milliseconds where a Postgres
-``timestamptz`` carries microseconds. The window a sweep runs against is measured in days,
-so the granularity is immaterial to the contract; it is stated because two exchanges inside
-one millisecond record the same stamp.
+``updated_us`` is the idleness clock, and it is **microseconds since the epoch rather than a
+BSON date**, which is the one place this store departs from its neighbours' shape. A BSON
+date carries milliseconds, and three writes in a row — an onboarding batch, a bulk import —
+land inside one of those every time, which leaves the scan's "oldest first" decided by
+whatever order the server happens to return. That promise is what makes a *bounded* sweep
+safe: the grant closest to its provider's deadline has to be in the first pass, not in
+whichever pass natural order puts it. Postgres gets the same guarantee free from
+``timestamptz``; here it costs a unit. ``created_us`` follows it so the two read alike.
+
+Only this clock changes unit. ``expires_at`` stays a BSON date, because it is the field an
+operator reads directly when hunting grants about to expire, and nothing sorts on it at a
+resolution a date cannot carry.
 
 **The payload is sealed at rest by default.** Every document here is a replayable long-lived
 credential, so a plaintext collection turns a leaked backup or a read-only secondary into
@@ -93,7 +101,7 @@ require_mongo()
 
 import asyncio
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Final, cast, final
 from uuid import UUID
 
@@ -154,6 +162,33 @@ handful of racers do not turn a 50 ms exchange into a busy loop.
 """
 
 log = get_logger(__name__)
+
+
+def _micros(moment: datetime) -> int:
+    """*moment* on the idleness clock: whole microseconds since the epoch.
+
+    Whole microseconds and not a float, because this is an ordering key — an int64 survives a
+    BSON round trip unchanged, so two writes a microsecond apart stay distinguishable after
+    storage as well as before it. Used for the stored stamp and for the cutoff a scan
+    compares against, so the two can never be read on different scales.
+    """
+
+    return int(moment.timestamp() * 1_000_000)
+
+
+def _now_us() -> int:
+    """The clock's "now"."""
+
+    return _micros(utcnow())
+
+
+def _as_datetime(stamp: object) -> datetime:
+    """Read the clock back as the ``datetime`` the port's caller-facing type declares.
+
+    The unit is this store's business; a ``DueCredential`` carries an ordinary instant.
+    """
+
+    return datetime.fromtimestamp(int(str(stamp)) / 1_000_000, tz=UTC)
 
 
 def _discard_outcome(rotation: asyncio.Future[RotatingCredential]) -> None:
@@ -528,7 +563,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                     "expires_at": credential.expires_at,
                     "version": version + 1,
                     "burnt_reason": None,
-                    "updated_at": utcnow(),
+                    "updated_us": _now_us(),
                     "lease_until": None,
                     "lease_owner": None,
                     "presented": None,
@@ -569,7 +604,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                 {
                     "$set": {
                         "burnt_reason": reason,
-                        "updated_at": utcnow(),
+                        "updated_us": _now_us(),
                         "lease_until": None,
                         "lease_owner": None,
                         "presented": None,
@@ -600,13 +635,13 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         and a later read must report *needs re-authorization* rather than a bare "not found".
         """
 
-        now = utcnow()
+        now = _now_us()
 
         await self.client.update_one_upsert(
             coll,
             {"_id": doc_id},
             {
-                "$set": {"burnt_reason": reason, "updated_at": now},
+                "$set": {"burnt_reason": reason, "updated_us": now},
                 "$setOnInsert": {
                     "tenant_id": tenant,
                     "ref": ref.path,
@@ -616,7 +651,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                     "lease_until": None,
                     "lease_owner": None,
                     "presented": None,
-                    "created_at": now,
+                    "created_us": now,
                 },
             },
         )
@@ -982,7 +1017,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         tenant_id, tenant = self._tenant_scope()
         coll = await self._collection()
         doc_id = self._doc_id(tenant, ref)
-        now = utcnow()
+        now = _now_us()
         payload: JsonDict = await self._seal(
             {
                 "access_token": credential.access_token,
@@ -1009,7 +1044,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                         "payload": payload,
                         "expires_at": credential.expires_at,
                         "burnt_reason": None,
-                        "updated_at": now,
+                        "updated_us": now,
                         "lease_until": None,
                         "lease_owner": None,
                         "presented": None,
@@ -1018,7 +1053,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
                     "$setOnInsert": {
                         "tenant_id": tenant,
                         "ref": ref.path,
-                        "created_at": now,
+                        "created_us": now,
                     },
                 },
                 upsert=True,
@@ -1049,12 +1084,12 @@ class MongoRotatingCredentialsAdmin(_MongoRotatingBase, RotatingCredentialsAdmin
 
     Control plane only: this adapter never opens ``payload``, so it works identically over
     sealed and plaintext documents and cannot leak a token — the scan reads scheduling fields
-    (``ref``, ``version``, ``burnt_reason``, ``updated_at``) and nothing else.
+    (``ref``, ``version``, ``burnt_reason``, ``updated_us``) and nothing else.
 
-    The scan filters and orders on ``updated_at`` within a tenant, which ``_id`` cannot
+    The scan filters and orders on ``updated_us`` within a tenant, which ``_id`` cannot
     answer, so the documented index exists for this port::
 
-        db.<collection>.createIndex({tenant_id: 1, updated_at: 1})
+        db.<collection>.createIndex({tenant_id: 1, updated_us: 1})
 
     ``tenant_id`` leads it because the scan is always tenant-scoped — a fleet sweep is one
     scan per tenant, so the index prefix matches every query this port ever issues.
@@ -1077,9 +1112,12 @@ class MongoRotatingCredentialsAdmin(_MongoRotatingBase, RotatingCredentialsAdmin
         async with self.client.detached():
             docs = await self.client.find_many(
                 coll,
-                {"tenant_id": tenant, "updated_at": {"$lt": idle_since}},
-                projection={"ref": 1, "version": 1, "burnt_reason": 1, "updated_at": 1},
-                sort=[("updated_at", 1)],
+                # The cutoff arrives as an instant and is compared in the clock's own unit;
+                # converting it here rather than storing dates is what keeps the ordering
+                # total (see the module docstring).
+                {"tenant_id": tenant, "updated_us": {"$lt": _micros(idle_since)}},
+                projection={"ref": 1, "version": 1, "burnt_reason": 1, "updated_us": 1},
+                sort=[("updated_us", 1)],
                 limit=limit,
             )
 
@@ -1087,7 +1125,7 @@ class MongoRotatingCredentialsAdmin(_MongoRotatingBase, RotatingCredentialsAdmin
             DueCredential(
                 ref=SecretRef(path=str(doc["ref"])),
                 version=SecretVersion(str(doc["version"])),
-                last_exchanged_at=cast("datetime", doc["updated_at"]),
+                last_exchanged_at=_as_datetime(doc["updated_us"]),
                 burnt_reason=cast("str | None", doc.get("burnt_reason")),
             )
             for doc in docs

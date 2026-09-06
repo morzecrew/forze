@@ -325,8 +325,13 @@ outcome nobody knows, which is marked unusable rather than re-exchanged.
 Mongo's store needs one index for the sweep's idleness scan:
 
 ```javascript
-db.<collection>.createIndex({tenant_id: 1, updated_at: 1})
+db.<collection>.createIndex({tenant_id: 1, updated_us: 1})
 ```
+
+`updated_us` is microseconds since the epoch, not a BSON date: dates carry milliseconds,
+and a batch of grants stored back to back all land inside one — which would leave
+"oldest first" decided by storage order rather than by the clock. Postgres gets the same
+guarantee free from `timestamptz`.
 
 See the runnable walkthrough in `examples/recipes/rotating_credentials/`.
 
