@@ -1,6 +1,6 @@
 # RFC 0046 — Durable-store tenant resolution
 
-- **Status:** 📝 Draft (execution-ready — one PR)
+- **Status:** ✅ Complete — shipped 2026-09-05
 - **Scope:** The durable-execution plane resolves a tenant twice per operation and
   gets two different answers. A caller-supplied `tenant_id` decides the row's tag
   and its scoped id while the *relation* it lands in is resolved from the binding,
@@ -404,6 +404,10 @@ runtime rather than the design.
   rule is about tenancy rather than about durability; if a second plane never wants
   it, the cost of the choice is one method on a widely-inherited mixin.
 
+*Answered by execution; see decision 14. The prose above stands as written — an RFC is
+not retrofitted to match what building it revealed, and the appended row carries the
+answer with a link to the entry that produced it.*
+
 ## 11. Decisions
 
 | # | Grade | Decision |
@@ -418,6 +422,11 @@ runtime rather than the design.
 | 8 | `LOCKED` | All three implementations move in one change, pinned by the shared battery. A per-engine rollout would put the oracle in disagreement with an engine at every intermediate commit. |
 | 9 | `OPEN` | Whether the untagged-run allowance also applies to `request_cancel` / `refuse_cancel` / `list_runs`, which today match on the exact tenant and therefore cannot see an untagged run from a bound caller. Execution decides: making them consistent with §5.2 is defensible, and so is leaving the control surface strict. Whichever, the battery states it. |
 | 10 | `OPEN` | Whether the step journal's configs get a `TenancyRouteGroup` too. Its key already carries the tenant, so the group adds no enforcement — but omitting it leaves one durable route invisible to a declared floor. Execution decides and logs it. |
+| 11 | `LOCKED` | Resolves row 9: the untagged allowance is a **worker-surface** property, and the control surface keeps its exact match. Widening an enumeration is a disclosure; the allowance is a liveness fix, and the control verbs have no liveness problem. The battery asserts the difference rather than leaving it inferred. Added by execution 2026-09-05 — see `EXECUTION-LOG.md` Unit 4 (D-015). |
+| 12 | `ASSUMED` | Resolves row 10: all three durable configs get a group. The step journal's key already carries the tenant, so the group adds no enforcement — a route joins the wiring floor because the floor describes the *module*, not because the route needs the check. Added by execution 2026-09-05 — see `EXECUTION-LOG.md` Unit 4 (D-016). |
+| 13 | `LOCKED` | Qualifies rows 1-2 and §5.1's table, which are not total: a `tenant_aware` store reads its binding **first**, so an unbound call is refused (`tenant_required`) before an explicitly passed tenant is considered. The fail-closed read is the mixin's canonical contract and this RFC carves no exception into it. Added by execution 2026-09-05 — see `EXECUTION-LOG.md` Unit 4 (D-017). |
+| 14 | `ASSUMED` | Supersedes row 6 in part: the rule ships as a free `effective_tenant` function that `TenancyMixin._effective_tenant` calls, because the mock stores carry their own provider and are not built on the mixin. §10's question is answered — the mixin is the right home for adapters that have one, and the rule itself must live where those that do not can reach it. Added by execution 2026-09-05 — see `EXECUTION-LOG.md` Unit 4 (D-019). |
+| 15 | `ASSUMED` | Where a store expresses tenancy in its **key** rather than in a predicate, a caller that both reads and writes must settle the tenant once, before the read. Enforcing it only at the write leaves every early return unguarded — which is how `DurableScheduler.ensure_schedule` returned one tenant's schedule as the answer about another. Added by execution 2026-09-05 — see `EXECUTION-LOG.md` Unit 4 (D-023). |
 
 ## 12. Phasing
 

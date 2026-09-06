@@ -136,3 +136,35 @@ rows drain oldest-first, the inverse of Postgres `NULLS LAST` (both best-effort)
 ```javascript
 db.outbox.createIndex({ outbox_route: 1, status: 1, available_at: 1, hlc: 1, created_at: 1, id: 1 })
 ```
+
+#### Restart monotonicity on Mongo
+
+The high-water mark works the same way and needs **no index at all**: the write is
+keyed on the document `_id`, and recovery reads one document per node. Wire it with
+`MongoDepsModule(hlc_checkpoint=MongoHlcCheckpointConfig(collection=("app", "hlc_checkpoint")))`
+and the same `hlc_checkpoint_recovery_lifecycle_step()`:
+
+```javascript
+// { _id: <node_key>, hlc: <packed HlcTimestamp> } — created on first advance.
+```
+
+The advance is one `$max` upsert, which is what `GREATEST` does in the Postgres
+statement: the server keeps the larger value, so concurrent writers never lower the
+mark. It rides the ambient session, so inside a transaction it commits — or rolls
+back — with the rows it stamps. **Mongo transactions need a replica set**, so on a
+standalone server an outbox route with `require_transaction=True` cannot run at all,
+and with it the checkpoint has nothing to ride; the mark is only atomic where the
+flush itself is.
+
+Two operational notes that differ from Postgres:
+
+- **Give each replica its own `node_key` when more than one flushes concurrently.**
+  Two transactions advancing one document contend, and Mongo aborts one with a write
+  conflict the flush must retry; Postgres serialises the same contention on a row lock.
+- **Keep the keys stable and few** — one per replica, not one per boot. Recovery reads
+  every key's document, so per-process keys turn a fixed handful into an unbounded scan.
+
+The checkpoint also **cannot be wired on a routed (per-tenant) client**, on either
+backend: the mark is node-global while a routed client picks its backend from the bound
+tenant, which startup recovery does not have. Both modules refuse that combination at
+wiring rather than at the first read.

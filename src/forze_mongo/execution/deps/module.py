@@ -26,6 +26,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStoreDepKey,
     DurableScheduleStoreDepKey,
 )
+from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.inbox import InboxDepKey
 from forze.application.contracts.outbox import (
@@ -41,6 +42,7 @@ from forze.application.contracts.tenancy import (
     warn_integration_routes,
 )
 from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
@@ -60,6 +62,7 @@ from .configs import (
     MongoDurableRunConfig,
     MongoDurableScheduleConfig,
     MongoDurableStepConfig,
+    MongoHlcCheckpointConfig,
     MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoOutboxConfig,
@@ -73,6 +76,7 @@ from .factories import (
     ConfigurableMongoDurableRun,
     ConfigurableMongoDurableSchedule,
     ConfigurableMongoDurableStep,
+    ConfigurableMongoHlcCheckpoint,
     ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoOutboxAdmin,
@@ -178,6 +182,14 @@ class MongoDepsModule(DepsModule):
     (enumeration) port is registered from the same config, so a wired counter is always
     exportable."""
 
+    hlc_checkpoint: MongoHlcCheckpointConfig | None = attrs.field(default=None)
+    """Optional Mongo HLC high-water-mark store (node-global; default unwired).
+
+    When set, the outbox flush persists the runtime's clock mark in the business transaction
+    so ``hlc_checkpoint_recovery_lifecycle_step`` can resume the clock above its prior
+    emissions after a restart, keeping HLC monotonicity across process boundaries. Unset
+    leaves the clock resuming from ``(0, 0)`` (the prior behavior)."""
+
     durable_step: MongoDurableStepConfig | None = attrs.field(default=None)
     """Optional Mongo durable-function step-memo journal (execution-scoped).
 
@@ -214,6 +226,20 @@ class MongoDepsModule(DepsModule):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.hlc_checkpoint is not None and isinstance(self.client, RoutedMongoClient):
+            # The mark is node-global — one clock per runtime, spanning every tenant — and a
+            # routed client resolves its backend *from* the bound tenant. Startup recovery
+            # runs unbound, so ``load`` would refuse with ``tenant_required`` and the node
+            # would never start; worse, ``advance`` runs inside a flush that may have a
+            # tenant bound, scattering one clock's mark across tenant clusters. Refused here
+            # rather than at the first read, because there is no binding under which this
+            # wiring works.
+            raise exc.configuration(
+                "Mongo HLC checkpoint cannot use a routed client: the mark is node-global "
+                "and a routed client resolves its backend from the bound tenant, which "
+                "startup recovery does not have. Wire the checkpoint on a direct MongoClient.",
+            )
+
         warn_integration_routes(
             integration="Mongo",
             routes=self.ro_documents,
@@ -406,18 +432,18 @@ class MongoDepsModule(DepsModule):
                     (CounterAdminDepKey, ConfigurableMongoCounterAdmin),
                 ],
             ),
-            plain={MongoClientDepKey: self.client, **self._durable_deps()},
+            plain={MongoClientDepKey: self.client, **self._singleton_deps()},
         )
 
     # ....................... #
 
-    def _durable_deps(self) -> dict[Any, Any]:
-        """Plain (unrouted) registrations for the three durable-execution ports.
+    def _singleton_deps(self) -> dict[Any, Any]:
+        """Plain (unrouted) registrations for the ports a deployment has exactly one of.
 
-        Plain rather than routed because each is a single store per deployment, resolved
-        per scope: the step journal reads its run from the ambient ``DurableRunContext``,
-        and the run and schedule stores are swept by the runner rather than addressed by a
-        route name.
+        Plain rather than routed because none of them is addressed by a route name: the
+        step journal reads its run from the ambient ``DurableRunContext``, the run and
+        schedule stores are swept by the runner, and the HLC checkpoint is node-global —
+        one clock per runtime, spanning every tenant.
         """
 
         registrations: dict[Any, Any] = {}
@@ -439,6 +465,13 @@ class MongoDepsModule(DepsModule):
         if self.durable_schedule is not None:
             registrations[DurableScheduleStoreDepKey] = ConfigurableMongoDurableSchedule(
                 config=self.durable_schedule
+            )
+
+        if self.hlc_checkpoint is not None:
+            # Node-global singleton, like the durable stores above: one clock per runtime,
+            # so the mark it persists is not addressed by a route name.
+            registrations[HlcCheckpointDepKey] = ConfigurableMongoHlcCheckpoint(
+                config=self.hlc_checkpoint
             )
 
         return registrations

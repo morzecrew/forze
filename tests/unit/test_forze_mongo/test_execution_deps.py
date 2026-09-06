@@ -28,6 +28,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStoreDepKey,
     DurableScheduleStoreDepKey,
 )
+from forze.application.contracts.hlc import HlcCheckpointDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
@@ -35,6 +36,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context.invocation import InvocationMetadata
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.adapters import MongoDocumentAdapter, MongoTxManagerAdapter
+from forze_mongo.adapters.hlc_checkpoint import MongoHlcCheckpointStore
 from forze_mongo.adapters.idempotency import MongoIdempotencyStore
 from forze_mongo.adapters.inbox import MongoInboxStore
 from forze_mongo.execution.deps import (
@@ -42,6 +44,7 @@ from forze_mongo.execution.deps import (
     ConfigurableMongoDurableRun,
     ConfigurableMongoDurableSchedule,
     ConfigurableMongoDurableStep,
+    ConfigurableMongoHlcCheckpoint,
     ConfigurableMongoIdempotency,
     ConfigurableMongoInbox,
     ConfigurableMongoReadOnlyDocument,
@@ -52,13 +55,14 @@ from forze_mongo.execution.deps import (
     MongoDurableRunConfig,
     MongoDurableScheduleConfig,
     MongoDurableStepConfig,
+    MongoHlcCheckpointConfig,
     MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoReadOnlyDocumentConfig,
     mongo_txmanager,
 )
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
-from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.client import MongoClient, RoutedMongoClient
 from forze_mongo.kernel.gateways import MongoReadGateway, MongoWriteGateway
 from tests.support.execution_context import context_from_deps
 
@@ -320,6 +324,68 @@ def test_doc_write_gw_with_history() -> None:
 
     assert gw.history_gw is not None
     assert gw.history_gw.collection == "h"
+
+
+class TestMongoHlcCheckpointWiring:
+    """That the checkpoint a deployment wires is the one the battery verified.
+
+    The battery builds the store directly, so it says nothing about whether the module
+    registers it or whether the factory hands it the right config. Both are silent when
+    wrong: an unregistered key makes recovery a documented no-op, so a restart resumes from
+    ``(0, 0)`` exactly as it did before the store existed — the failure looks like the
+    feature being off.
+    """
+
+    def test_the_checkpoint_registers_only_when_configured(self) -> None:
+        client = MagicMock(spec=MongoClient)
+
+        assert not MongoDepsModule(client=client)().exists(HlcCheckpointDepKey)
+
+        wired = MongoDepsModule(
+            client=client,
+            hlc_checkpoint=MongoHlcCheckpointConfig(collection=("db", "hlc")),
+        )()
+
+        assert wired.exists(HlcCheckpointDepKey)
+
+    def test_a_routed_client_is_refused_at_wiring(self) -> None:
+        """There is no binding under which this combination works, so it fails at startup.
+
+        The mark is node-global and a routed client picks its backend from the bound
+        tenant. Recovery runs unbound, so ``load`` would refuse with ``tenant_required``
+        and the node would never start — and an ``advance`` that *did* have a tenant bound
+        would scatter one clock's mark across tenant clusters.
+        """
+
+        with pytest.raises(CoreException) as raised:
+            MongoDepsModule(
+                client=MagicMock(spec=RoutedMongoClient),
+                hlc_checkpoint=MongoHlcCheckpointConfig(collection=("db", "hlc")),
+            )
+
+        assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_a_routed_client_is_fine_without_a_checkpoint(self) -> None:
+        """The refusal is about this pairing, not about routed clients."""
+
+        MongoDepsModule(client=MagicMock(spec=RoutedMongoClient))
+
+    def test_the_factory_builds_the_store_over_the_configured_collection(self) -> None:
+        client = MagicMock(spec=MongoClient)
+        config = MongoHlcCheckpointConfig(collection=("db", "hlc"), node_key="replica-7")
+        ctx = MagicMock()
+        ctx.deps.provide.return_value = client
+
+        store = ConfigurableMongoHlcCheckpoint(config=config)(ctx)
+
+        assert isinstance(store, MongoHlcCheckpointStore)
+        # The node key rides the config into the store: getting it wrong would make every
+        # replica write one row and the contention the setting exists to avoid come back.
+        assert store.config.node_key == "replica-7"
+        assert store.config.collection == ("db", "hlc")
+
+
+# ....................... #
 
 
 class TestMongoDurableWiring:

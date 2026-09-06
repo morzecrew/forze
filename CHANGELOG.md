@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mongo implements the inbox.** `MongoDepsModule(inboxes={...})` with `MongoInboxConfig` registers a consumer-side dedup store: one atomic `_id` upsert per message, no index migration, riding the ambient transaction so the mark rolls back with the handler (exactly-once effect).
 
+- **Mongo implements the HLC checkpoint.** `MongoDepsModule(hlc_checkpoint=MongoHlcCheckpointConfig(...))` persists the runtime's clock high-water mark so a restart resumes above its prior emissions. One `$max` upsert keyed on `_id`, riding the ambient session so it commits with the rows it stamps; no index to migrate. The plane now has a shared battery across mock, Postgres and Mongo.
+
 - **Mongo implements durable execution.** `MongoDepsModule(durable_step=…, durable_run=…, durable_schedule=…)` registers the step-memo journal, the run store (claims, leases, fences, run control) and the cron schedule store. The run collection needs a partial unique index on `idempotency_key`.
 
 - **Mongo implements idempotency, co-located.** `MongoDepsModule(idempotencies={...})` with `MongoIdempotencyConfig` registers a store whose `commit` rides the caller's session, so the result record and the business writes commit atomically; claims and releases run detached.

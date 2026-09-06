@@ -1,0 +1,121 @@
+"""The Mongo high-water-mark store against the shared battery.
+
+Mongo reaches the port's two promises by different mechanisms than Postgres — ``$max``
+where Postgres writes ``GREATEST``, an ambient session where Postgres has the connection
+itself — so this is exactly the shape the shared battery exists for: one rule, written
+twice, and only running both shows whether they agree.
+
+The whole leg runs against the replica-set client: Mongo has no transactions without one,
+and the atomicity half of this port is not testable on a standalone server.
+"""
+
+from __future__ import annotations
+
+from uuid import uuid4
+
+import pytest
+
+from forze.application.contracts.hlc import HlcCheckpointPort
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze_mongo.adapters import MongoTxManagerAdapter
+from forze_mongo.adapters.hlc_checkpoint import MongoHlcCheckpointStore
+from forze_mongo.execution.deps.configs import MongoHlcCheckpointConfig
+from forze_mongo.kernel.client import MongoClient
+from tests.support.hlc_checkpoint_conformance import (
+    HLC_CHECKPOINT_BATTERY,
+    Check,
+    HlcCheckpointHarness,
+)
+
+# ----------------------- #
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+@pytest.fixture
+async def hlc_collection(mongo_client_replica: MongoClient) -> tuple[str, str]:
+    """A checkpoint collection, which needs no index: the write is keyed on ``_id``."""
+
+    db_name = (await mongo_client_replica.db()).name
+
+    return db_name, f"hlc_checkpoint_{uuid4().hex[:8]}"
+
+
+@pytest.fixture
+def harness(
+    mongo_client_replica: MongoClient, hlc_collection: tuple[str, str]
+) -> HlcCheckpointHarness:
+    def store_for(node_key: str) -> HlcCheckpointPort:
+        return MongoHlcCheckpointStore(
+            client=mongo_client_replica,
+            config=MongoHlcCheckpointConfig(collection=hlc_collection, node_key=node_key),
+        )
+
+    return HlcCheckpointHarness(
+        store_for=store_for,
+        transaction=lambda: MongoTxManagerAdapter(client=mongo_client_replica).transaction(),
+        backend="mongo",
+    )
+
+
+async def test_a_corrupt_mark_is_refused_rather_than_read_as_no_mark(
+    mongo_client_replica: MongoClient, hlc_collection: tuple[str, str]
+) -> None:
+    """What Mongo's schemalessness costs, and why the answer is to fail loudly.
+
+    Postgres declares ``hlc BIGINT`` and the question cannot arise; here any document can
+    land in the collection. Reading a non-integer mark as "no mark" is the dangerous
+    reading — the clock would resume at ``(0, 0)`` and re-issue beneath stamps this node
+    already relayed, which is the one failure the checkpoint exists to prevent, reached in
+    silence. Refusing stops the node instead, which is recoverable.
+    """
+
+    db_name, coll_name = hlc_collection
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await coll.insert_one({"_id": "default", "hlc": "not-a-mark"})
+
+    store = MongoHlcCheckpointStore(
+        client=mongo_client_replica,
+        config=MongoHlcCheckpointConfig(collection=hlc_collection),
+    )
+
+    with pytest.raises(CoreException) as raised:
+        await store.load()
+
+    assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+
+async def test_a_nulled_mark_is_refused_rather_than_read_as_no_mark(
+    mongo_client_replica: MongoClient, hlc_collection: tuple[str, str]
+) -> None:
+    """The corruption that looks exactly like an empty collection.
+
+    A document whose ``hlc`` was overwritten with ``null`` sorts where a document that
+    never had one sorts, so "the field is absent" cannot be the test for emptiness — and
+    reading it as no mark is the failure this store refuses everywhere else: the clock
+    resumes at ``(0, 0)`` and re-issues beneath stamps already relayed. Emptiness is
+    "no documents at all"; anything present must carry a real mark.
+    """
+
+    db_name, coll_name = hlc_collection
+    coll = await mongo_client_replica.collection(coll_name, db_name=db_name)
+    await coll.insert_one({"_id": "default", "hlc": None})
+
+    store = MongoHlcCheckpointStore(
+        client=mongo_client_replica,
+        config=MongoHlcCheckpointConfig(collection=hlc_collection),
+    )
+
+    with pytest.raises(CoreException) as raised:
+        await store.load()
+
+    assert raised.value.kind is ExceptionKind.CONFIGURATION
+
+
+# ....................... #
+
+
+@pytest.mark.conformance(plane="hlc_checkpoint", engine="mongo")
+@pytest.mark.parametrize("check", HLC_CHECKPOINT_BATTERY, ids=lambda check: check.__name__)
+async def test_hlc_checkpoint_battery(check: Check, harness: HlcCheckpointHarness) -> None:
+    await check(harness)

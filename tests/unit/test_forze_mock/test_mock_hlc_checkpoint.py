@@ -1,70 +1,23 @@
-"""In-memory HLC high-water-mark adapter and startup restart recovery."""
+"""Startup restart recovery over the in-memory high-water mark.
+
+The adapter's own contract — monotonic max, reads across node keys, atomic with the
+business transaction — lives in the shared battery
+(``tests/unit/test_forze_mock/test_mock_hlc_checkpoint_conformance.py``), which holds every
+engine to it. What is left here is the lifecycle step above it: resuming a *clock* from a
+persisted mark, which is the mock's own concern and has no engine counterpart.
+"""
 
 from __future__ import annotations
-
-import pytest
 
 from forze.application.execution.lifecycle.builtin import (
     hlc_checkpoint_recovery_lifecycle_step,
 )
 from forze.base.primitives import HlcTimestamp
 from forze_mock import MockDepsModule
-from forze_mock.adapters.hlc_checkpoint import MockHlcCheckpointAdapter
 from forze_mock.state import MockState
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
-
-
-class TestMockHlcCheckpointAdapter:
-    async def test_load_is_none_when_empty(self) -> None:
-        assert await MockHlcCheckpointAdapter(state=MockState()).load() is None
-
-    async def test_advance_then_load_roundtrips(self) -> None:
-        adapter = MockHlcCheckpointAdapter(state=MockState())
-        await adapter.advance(HlcTimestamp(9_000, 3))
-
-        assert await adapter.load() == HlcTimestamp(9_000, 3)
-
-    async def test_advance_is_monotonic(self) -> None:
-        adapter = MockHlcCheckpointAdapter(state=MockState())
-        await adapter.advance(HlcTimestamp(9_000, 3))
-        await adapter.advance(HlcTimestamp(5_000, 0))  # older physical → ignored
-        await adapter.advance(HlcTimestamp(9_000, 3))  # equal → ignored
-
-        assert await adapter.load() == HlcTimestamp(9_000, 3)
-
-    async def test_load_returns_max_across_node_keys(self) -> None:
-        state = MockState()
-        await MockHlcCheckpointAdapter(state=state, node_key="a").advance(
-            HlcTimestamp(1_000, 0)
-        )
-        await MockHlcCheckpointAdapter(state=state, node_key="b").advance(
-            HlcTimestamp(2_000, 9)
-        )
-
-        # A restart resumes above the whole deployment's emissions, not just this node's.
-        loaded = await MockHlcCheckpointAdapter(state=state, node_key="a").load()
-        assert loaded == HlcTimestamp(2_000, 9)
-
-    async def test_advance_reverts_on_transaction_rollback(self) -> None:
-        # Co-located fidelity: a rolled-back business transaction reverts the mark too, so
-        # it never advances for rows that did not commit.
-        state = MockState()
-        ctx = context_from_modules(MockDepsModule(state=state, hlc_checkpoint=True))
-        adapter = MockHlcCheckpointAdapter(state=state)
-
-        class _Boom(Exception): ...
-
-        with pytest.raises(_Boom):
-            async with ctx.tx_ctx.scope("default"):
-                await adapter.advance(HlcTimestamp(7_000, 0))
-                raise _Boom
-
-        assert await adapter.load() is None  # reverted with the transaction
-
-
-# ....................... #
 
 
 class TestRestartRecovery:
