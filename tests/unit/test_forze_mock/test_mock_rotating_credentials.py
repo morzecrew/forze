@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
@@ -81,6 +81,9 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> RotatingStoreHarness:
     async def write_stored_payload(ref: SecretRef, payload: JsonDict) -> None:
         _document(ref)["payload"] = dict(payload)
 
+    async def set_idle_stamp(ref: SecretRef, moment: datetime) -> None:
+        _document(ref)["updated_at"] = moment
+
     @contextlib.asynccontextmanager
     async def break_persist() -> AsyncIterator[None]:
         # The mock cannot lose a process, so its faithful equivalent is a write that
@@ -104,6 +107,7 @@ def harness(monkeypatch: pytest.MonkeyPatch) -> RotatingStoreHarness:
         break_persist=break_persist,
         stored_payload=stored_payload,
         write_stored_payload=write_stored_payload,
+        set_idle_stamp=set_idle_stamp,
     )
 
 

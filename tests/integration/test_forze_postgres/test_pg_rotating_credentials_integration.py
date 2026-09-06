@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -32,7 +32,7 @@ from forze.application.contracts.crypto import (
 from forze.application.contracts.secrets import ExchangedCredential, SecretRef
 from forze.application.integrations.crypto import Keyring
 from forze.base.exceptions import CoreException
-from forze.base.primitives import JsonDict
+from forze.base.primitives import JsonDict, utcnow
 from forze_mock import MockKeyManagement
 from forze_postgres.adapters.rotating_credentials import (
     PostgresRotatingCredentialsAdmin,
@@ -189,6 +189,15 @@ async def _build_harness(
             {"payload": Jsonb(payload), "tenant": _key(), "ref": ref.path},
         )
 
+    async def set_idle_stamp(ref: SecretRef, moment: datetime) -> None:
+        await pg_client.execute(
+            sql.SQL(
+                "UPDATE {table} SET updated_at = %(moment)s "
+                "WHERE tenant_id = %(tenant)s AND ref = %(ref)s"
+            ).format(table=sql.Identifier("public", credentials_table)),
+            {"moment": moment, "tenant": _key(), "ref": ref.path},
+        )
+
     @contextlib.asynccontextmanager
     async def break_persist() -> AsyncIterator[None]:
         # A real database-side failure at the real write, not a patched method: the upsert
@@ -248,6 +257,7 @@ async def _build_harness(
         break_persist=break_persist,
         stored_payload=stored_payload,
         write_stored_payload=write_stored_payload,
+        set_idle_stamp=set_idle_stamp,
     )
 
 
@@ -696,3 +706,75 @@ class TestCredentialSweepEndToEnd:
 
         assert len(counterparty.presented) <= 2  # at most the refreshed token, once
         assert not counterparty.family_revoked
+
+
+# ....................... #
+
+
+async def test_the_scan_orders_correctly_without_its_index(
+    pg_client: PostgresClient,
+    credentials_table: str,
+) -> None:
+    """The index is documented as optional for correctness, so correctness has to survive it.
+
+    With the documented ``(tenant_id, updated_at)`` index in place the planner can answer this
+    scan from the index, whose order *is* idleness order — so the rows come back sorted
+    whether or not the statement asked. That makes the battery's ordering checks agree with a
+    store that dropped its own ``ORDER BY``, right up until a deployment that took the
+    docstring at its word ("without the index the scan still answers correctly by sequential
+    scan") gets silently arbitrary results.
+
+    So this drops the index and runs the conflict the shared battery stages: the grant written
+    *last* is aged behind the one written first, which is the reverse of insertion order and
+    of update order alike, so nothing but the ``ORDER BY`` can produce the answer.
+    """
+
+    indexes = await pg_client.fetch_all(
+        sql.SQL(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE schemaname = 'public' AND tablename = %(table)s "
+            "AND indexdef NOT LIKE '%%UNIQUE%%'"
+        ),
+        {"table": credentials_table},
+    )
+
+    assert indexes, "the fixture is meant to create the documented scan index"
+
+    for row in indexes:
+        await pg_client.execute(
+            sql.SQL("DROP INDEX {name}").format(
+                name=sql.Identifier("public", str(row["indexname"]))
+            )
+        )
+
+    counterparty = FakeCounterparty()
+    store = PostgresRotatingCredentialStore(
+        client=pg_client,
+        relation=("public", credentials_table),
+        exchanger=counterparty,
+        exchange_timeout=EXCHANGE_TIMEOUT,
+    )
+    admin = PostgresRotatingCredentialsAdmin(
+        client=pg_client, relation=("public", credentials_table)
+    )
+
+    first, second = SecretRef("oauth/stored-first"), SecretRef("oauth/stored-second")
+
+    for ref in (first, second):
+        await store.put(ref, ExchangedCredential(access_token="a", refresh_token=f"t-{ref.path}"))
+
+    cutoff = utcnow() + timedelta(hours=1)
+    stored_order = await admin.due_for_refresh(idle_since=cutoff, limit=10)
+    assert [d.ref.path for d in stored_order] == [first.path, second.path]
+
+    aged_to = stored_order[0].last_exchanged_at - timedelta(hours=1)
+    await pg_client.execute(
+        sql.SQL(
+            "UPDATE {table} SET updated_at = %(moment)s WHERE tenant_id = '' AND ref = %(ref)s"
+        ).format(table=sql.Identifier("public", credentials_table)),
+        {"moment": aged_to, "ref": second.path},
+    )
+
+    by_idleness = await admin.due_for_refresh(idle_since=cutoff, limit=10)
+
+    assert [d.ref.path for d in by_idleness] == [second.path, first.path]

@@ -30,7 +30,7 @@ import asyncio
 import contextlib
 import gc
 from collections.abc import AsyncIterator, Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, cast, final
 from uuid import uuid4
 
@@ -148,6 +148,16 @@ async def _build_harness(
         coll = await mongo_client.collection(coll_name, db_name=db_name)
         await mongo_client.update_one(coll, {"_id": _doc_id(ref)}, {"$set": {"payload": payload}})
 
+    async def set_idle_stamp(ref: SecretRef, moment: datetime) -> None:
+        # The clock's own unit, not a date: the store stores microseconds so the ordering
+        # stays total (see the adapter's module docstring).
+        coll = await mongo_client.collection(coll_name, db_name=db_name)
+        await mongo_client.update_one(
+            coll,
+            {"_id": _doc_id(ref)},
+            {"$set": {"updated_us": int(moment.timestamp() * 1_000_000)}},
+        )
+
     @contextlib.asynccontextmanager
     async def break_persist() -> AsyncIterator[None]:
         # A real server-side rejection at the real write, not a patched method — and scoped
@@ -188,6 +198,7 @@ async def _build_harness(
         break_persist=break_persist,
         stored_payload=stored_payload,
         write_stored_payload=write_stored_payload,
+        set_idle_stamp=set_idle_stamp,
     )
 
 
@@ -1009,3 +1020,62 @@ async def test_an_abandoned_rotation_leaves_no_unretrieved_exception(
     finally:
         harness.counterparty.delay = 0.0
         loop.set_exception_handler(None)
+
+
+# ....................... #
+
+
+async def test_the_scan_orders_correctly_without_its_index(
+    mongo_client: MongoClient,
+    harness: RotatingStoreHarness,
+) -> None:
+    """The index is documented as optional for correctness, so correctness has to survive it.
+
+    With the documented ``{tenant_id: 1, updated_us: 1}`` index in place the planner answers
+    this scan from the index, and index order *is* idleness order — so the scan comes out
+    sorted whether or not it asked to be. That makes every ordering assertion in the battery
+    agree with a store that forgot its own sort, right up until a deployment that took the
+    docstring at its word ("without the index the scan still answers correctly, by collection
+    scan") gets silently arbitrary results.
+
+    So this runs the same conflict on an unindexed collection, where nothing but the sort can
+    produce the answer.
+    """
+
+    database = await mongo_client.db()
+    coll_name = f"unindexed_credentials_{uuid4().hex[:8]}"
+    await database.create_collection(coll_name)
+
+    counterparty = FakeCounterparty()
+    config = _config((database.name, coll_name), counterparty, EXCHANGE_TIMEOUT)
+    store = MongoRotatingCredentialStore(
+        client=mongo_client,
+        config=config,
+        exchanger=counterparty,
+        exchange_timeout=EXCHANGE_TIMEOUT,
+        cipher=None,
+    )
+    admin = MongoRotatingCredentialsAdmin(client=mongo_client, config=config)
+
+    first, second = SecretRef("oauth/stored-first"), SecretRef("oauth/stored-second")
+
+    for ref in (first, second):
+        await store.put(ref, ExchangedCredential(access_token="a", refresh_token=f"t-{ref.path}"))
+
+    cutoff = utcnow() + timedelta(hours=1)
+    stored_order = await admin.due_for_refresh(idle_since=cutoff, limit=10)
+    assert [d.ref.path for d in stored_order] == [first.path, second.path]
+
+    # Age the grant written *last* behind the one written first — the reverse of both the
+    # insertion order and the update order, so neither can answer it by accident.
+    coll = await mongo_client.collection(coll_name, db_name=database.name)
+    aged_to = stored_order[0].last_exchanged_at - timedelta(hours=1)
+    await mongo_client.update_one(
+        coll,
+        {"_id": f"|{second.path}"},
+        {"$set": {"updated_us": int(aged_to.timestamp() * 1_000_000)}},
+    )
+
+    by_idleness = await admin.due_for_refresh(idle_since=cutoff, limit=10)
+
+    assert [d.ref.path for d in by_idleness] == [second.path, first.path]

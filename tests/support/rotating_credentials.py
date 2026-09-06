@@ -208,6 +208,21 @@ class RotatingStoreHarness:
     legacy plaintext document written before a keyring was ever wired.
     """
 
+    set_idle_stamp: Callable[[SecretRef, datetime], Awaitable[None]]
+    """Move a grant's idleness clock, bypassing the store.
+
+    The clock only ever moves *forward* through the public surface — every write stamps it
+    with the present — so the one state the battery cannot otherwise reach is a grant that
+    was written recently and is idle anyway. That state is what separates a scan that sorts
+    from one that returns rows in whatever order storage holds them, and it is worth reaching
+    for deliberately (see
+    :func:`check_the_scan_orders_by_idleness_not_by_insertion`).
+
+    Storage-specific like the payload seams above, and for the same reason: the field has a
+    different name and a different unit on every engine, and only the adapter's own leg
+    knows which.
+    """
+
     # ....................... #
 
     async def seed(self, ref: SecretRef = REF) -> None:
@@ -847,7 +862,9 @@ async def check_the_scan_reports_burnt_grants_instead_of_hiding_them(
         await h.store.refresh(REF, observed=due[0].version)
 
     assert burnt.value.code == BURNT_CREDENTIAL_CODE
-    assert len(h.counterparty.presented) == presented_before, "a burnt grant must never be presented"
+    assert len(h.counterparty.presented) == presented_before, (
+        "a burnt grant must never be presented"
+    )
 
 
 async def check_a_burn_notice_for_an_unknown_ref_reaches_the_scan(
@@ -904,42 +921,44 @@ async def check_the_scan_orders_by_idleness_not_by_insertion(
     """Proof 5b: the order comes from the clock, not from the order the rows were written.
 
     Every other ordering check here stores grants in the order it then expects them back, so
-    a store that ignored its own sort and returned rows in whatever order the storage holds
-    them would satisfy all of them. That is a green nobody can act on: insertion order and
-    idleness order agree right up until the moment traffic touches one grant, which is the
-    only moment the ordering exists for.
+    a store that ignored its own sort and returned rows in whatever order storage holds them
+    would satisfy all of them. That is a green nobody can act on — and it is not hypothetical
+    on a real engine, where an update relocates the row to the end and physical order drifts
+    back into agreement with the clock all by itself.
 
-    So this one puts them in conflict. The grant stored *first* is exchanged, moving its
-    clock past the second's, and the scan has to report it *last*.
+    So this puts the two in conflict in the one direction no storage layout repairs: the
+    grant stored **second** is aged **backwards**, behind the one stored first. The expected
+    order is then the reverse of insertion order *and* the reverse of update recency, so
+    neither of the two orders an engine falls back on can answer it correctly.
 
-    Where it bites hardest is the mock, whose storage keeps insertion order literally: drop
-    its sort and this is the only check that notices. On a real engine an update tends to
-    relocate the row to the end, so physical order drifts back into agreement with the clock
-    and a missing ``ORDER BY`` can still answer correctly — measured, not assumed. There the
-    value of this check is that it pins the promise as *stated* rather than as incidentally
-    produced, which is what keeps the next storage-layout change from quietly deciding it.
+    Reaching behind the store to move a clock is the same move the sealing checks make on the
+    payload, and for the same reason: the state is real, the public surface cannot produce it
+    (every write stamps the present), and the property it proves is one the port promises.
     """
 
-    aged, fresh = SecretRef("oauth/stored-first"), SecretRef("oauth/stored-second")
+    first, second = SecretRef("oauth/stored-first"), SecretRef("oauth/stored-second")
 
-    await h.seed(aged)
-    await h.seed(fresh)
+    await h.seed(first)
+    await h.seed(second)
 
     stored_order = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
-    assert [d.ref.path for d in stored_order] == [aged.path, fresh.path]
+    assert [d.ref.path for d in stored_order] == [first.path, second.path]
 
-    # Traffic touches the older grant, so it becomes the least idle of the two.
-    await h.store.refresh(aged, observed=stored_order[0].version)
+    # The grant written last has in fact been idle the longest — a re-authorization that
+    # landed out of order, a restored backup, a clock the provider reset.
+    aged_to = stored_order[0].last_exchanged_at - timedelta(hours=1)
+    await h.set_idle_stamp(second, aged_to)
 
     by_idleness = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=10)
 
-    assert [d.ref.path for d in by_idleness] == [fresh.path, aged.path]
+    assert [d.ref.path for d in by_idleness] == [second.path, first.path]
+    assert by_idleness[0].last_exchanged_at < by_idleness[1].last_exchanged_at
 
     # And a bounded pass takes the *endangered* one, which is the whole point of ordering a
     # scan that a limit can cut short.
     capped = await h.admin.due_for_refresh(idle_since=_cutoff(FAR_FUTURE_CUTOFF), limit=1)
 
-    assert [d.ref.path for d in capped] == [fresh.path]
+    assert [d.ref.path for d in capped] == [second.path]
 
 
 async def check_the_scan_is_tenant_scoped(h: RotatingStoreHarness) -> None:

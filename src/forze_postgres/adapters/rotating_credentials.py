@@ -916,7 +916,8 @@ class PostgresRotatingCredentialsAdmin(TenancyMixin, RotatingCredentialsAdminPor
     ``tenant_id`` leads it because the scan is always tenant-scoped — a fleet sweep is one
     scan per tenant, so the index prefix matches every query this port ever issues. Without
     the index the scan still answers correctly by sequential scan, which is tolerable for
-    tens of grants and not for tens of thousands.
+    tens of grants and not for tens of thousands — and it is the ``ORDER BY`` that keeps that
+    true, since an index scan would deliver idleness order on its own.
     """
 
     client: PostgresClientPort

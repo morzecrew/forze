@@ -63,7 +63,11 @@ serialize on it without a unique index the application never migrated. ``tenant_
     db.<collection>.createIndex({tenant_id: 1, updated_us: 1})
 
 The scan orders by idleness within a tenant, which ``_id`` cannot answer. Without it the
-scan is a collection scan — tolerable for tens of grants, not for tens of thousands.
+scan is a collection scan — tolerable for tens of grants, not for tens of thousands. It stays
+*correct* either way, which is a promise worth stating carefully: with the index the planner
+answers from it and index order already is idleness order, so the ordering survives even a
+store that forgot to ask for it. The explicit sort is what holds the promise up on a
+collection that never got the index.
 
 ``updated_us`` is the idleness clock, and it is **microseconds since the epoch rather than a
 BSON date**, which is the one place this store departs from its neighbours' shape. A BSON
