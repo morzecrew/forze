@@ -122,8 +122,9 @@ lifecycle = LifecyclePlan.from_steps(
   across a third-party call, and Mongo offers neither a blocking wait on a document nor
   a transaction that may outlive `transactionLifetimeLimitSeconds`. So it takes an
   explicit lease on the credential's own document; a racer waits for it and converges on
-  the winner. That means it needs **no replica set** — the one plane here that works
-  unchanged on a standalone `mongod`. It needs one index for the idleness sweep:
+  the winner. That means it needs **no replica set**, and unlike the inbox it loses no
+  guarantee without one — the exclusion is a document write, not a transaction. It needs
+  one index for the idleness sweep:
   `{tenant_id: 1, updated_at: 1}`. Because a lease can expire where a row lock cannot,
   each document also records whether its token was already presented, so a worker
   inheriting an expired lease refuses to replay a possibly-spent token and marks the

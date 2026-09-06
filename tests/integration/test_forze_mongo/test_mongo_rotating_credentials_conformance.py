@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from datetime import timedelta
+from typing import Any, cast, final
 from uuid import uuid4
 
+import attrs
 import pytest
 import pytest_asyncio
 from testcontainers.mongodb import MongoDbContainer
@@ -43,11 +45,14 @@ from forze.application.contracts.crypto import (
 )
 from forze.application.contracts.secrets import (
     BURNT_CREDENTIAL_CODE,
+    CREDENTIAL_EXCHANGE_TIMEOUT_CODE,
+    CREDENTIAL_PERSIST_LOST_CODE,
+    CredentialExchangerPort,
     ExchangedCredential,
     SecretRef,
 )
 from forze.application.integrations.crypto import Keyring
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import JsonDict, utcnow
 from forze_mock import MockKeyManagement
 from forze_mongo.adapters.rotating_credentials import (
@@ -227,6 +232,26 @@ async def second_client(
     await client.close()
 
 
+def _contender(
+    client: MongoClient,
+    collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> MongoRotatingCredentialStore:
+    """A second worker over the same collection, sharing the harness's counterparty and key.
+
+    Sharing the counterparty is what makes the cross-client assertions meaningful: one
+    presentation counter across both "processes" is the whole property.
+    """
+
+    return MongoRotatingCredentialStore(
+        client=client,
+        config=_config(collection, harness.counterparty, CONTENDED_EXCHANGE_TIMEOUT),
+        exchanger=harness.counterparty,
+        exchange_timeout=CONTENDED_EXCHANGE_TIMEOUT,
+        cipher=harness.store.cipher,  # type: ignore[attr-defined]
+    )
+
+
 # ....................... #
 
 
@@ -251,17 +276,7 @@ async def test_the_lease_serializes_two_independent_clients(
     — never present a token the counterparty has already burned.
     """
 
-    contender = MongoRotatingCredentialStore(
-        client=second_client,
-        config=_config(
-            credentials_collection,
-            contended_harness.counterparty,
-            CONTENDED_EXCHANGE_TIMEOUT,
-        ),
-        exchanger=contended_harness.counterparty,
-        exchange_timeout=CONTENDED_EXCHANGE_TIMEOUT,
-        cipher=contended_harness.store.cipher,  # type: ignore[attr-defined]
-    )
+    contender = _contender(second_client, credentials_collection, contended_harness)
 
     await contended_harness.seed()
     observed = (await contended_harness.store.get(REF)).version
@@ -298,17 +313,7 @@ async def test_a_waiting_worker_never_sees_a_failed_rotation_as_live(
     is given back, so the waiter's first sight of the document is an outcome.
     """
 
-    contender = MongoRotatingCredentialStore(
-        client=second_client,
-        config=_config(
-            credentials_collection,
-            contended_harness.counterparty,
-            CONTENDED_EXCHANGE_TIMEOUT,
-        ),
-        exchanger=contended_harness.counterparty,
-        exchange_timeout=CONTENDED_EXCHANGE_TIMEOUT,
-        cipher=contended_harness.store.cipher,  # type: ignore[attr-defined]
-    )
+    contender = _contender(second_client, credentials_collection, contended_harness)
 
     await contended_harness.seed()
     before = await contended_harness.store.get(REF)
@@ -464,3 +469,450 @@ async def test_the_store_needs_no_transaction_support(harness: RotatingStoreHarn
 
     assert rotated.version != before.version
     assert not harness.counterparty.family_revoked
+
+
+# ....................... #
+
+
+async def test_an_explicit_burn_is_not_overwritten_by_a_rotation_that_raced_it(
+    second_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    contended_harness: RotatingStoreHarness,
+) -> None:
+    """``burn`` is unconditional and touches neither the version nor the lease.
+
+    Postgres orders it against a live rotation on the row lock — the burn waits, then applies
+    on top. Mongo has no such wait, so without ``burnt_reason`` in the rotation's fence the
+    later write simply wins: an operator says "the provider revoked this", the rotation
+    finishes a moment later, and the grant reads as live while every call against it fails.
+
+    Staged with the burn arriving from a second client while the first is mid-exchange, so
+    what is asserted is the ordering rule and not one process's internal locking.
+    """
+
+    burner = _contender(second_client, credentials_collection, contended_harness)
+
+    await contended_harness.seed()
+    before = await contended_harness.store.get(REF)
+    contended_harness.counterparty.delay = 0.2
+
+    async def _rotate() -> None:
+        with pytest.raises(CoreException) as lost:
+            await contended_harness.store.refresh(REF, observed=before.version)
+
+        # The exchange happened and its replacement could not land, which is exactly the
+        # lost-credential ending — not a silent success.
+        assert lost.value.code == CREDENTIAL_PERSIST_LOST_CODE
+
+    async def _burn() -> None:
+        await _await_presentation(contended_harness.counterparty)
+        await burner.burn(REF, reason="revoked in the provider console")
+
+    await asyncio.gather(_rotate(), _burn())
+
+    with pytest.raises(CoreException) as burnt:
+        await contended_harness.store.get(REF)
+
+    assert burnt.value.code == BURNT_CREDENTIAL_CODE
+    # The operator's reason survived, rather than being overwritten by the store's own.
+    assert "provider console" in burnt.value.summary
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _ProxyClient:
+    """Delegates everything to a real client, so a subclass overrides one write and nothing else.
+
+    Three of the tests below need a store whose *specific* write misbehaves — a stolen lease,
+    a broken release, a broken poison — and every one of them has to leave the rest of the
+    store talking to the real server, because what is being asserted is how the store reacts
+    to a real document it wrote itself.
+    """
+
+    inner: MongoClient
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+
+@attrs.define(slots=True)
+class _LeaseThief(_ProxyClient):
+    """Steals the lease the store just took, before the store presents its token.
+
+    The one window the ``presented`` flag cannot cover, because the flag is what the write
+    it guards sets: between claiming a lease and recording the presentation, a stalled holder
+    can have its lease expire and taken. A store that did not check its own claim would go on
+    to exchange a token the thief may be exchanging too.
+    """
+
+    stolen: bool = False
+
+    async def find_one_and_update(self, coll: Any, flt: Any, update: Any, **kwargs: Any) -> Any:
+        doc = await self.inner.find_one_and_update(coll, flt, update, **kwargs)
+
+        if doc is not None and not self.stolen and "lease_owner" in update.get("$set", {}):
+            self.stolen = True
+            await self.inner.update_one(
+                coll, {"_id": doc["_id"]}, {"$set": {"lease_owner": "a-worker-that-stole-it"}}
+            )
+
+        return doc
+
+
+async def test_a_stolen_lease_stops_the_holder_before_it_presents(
+    mongo_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> None:
+    """Losing the lease before the token is shown must abort, not proceed.
+
+    Two exchanges of one refresh token is the failure this whole plane is arranged around —
+    reuse detection revokes the entire grant family — so a holder whose claim no longer holds
+    has to stop rather than race the worker that took it.
+    """
+
+    db_name, coll_name = credentials_collection
+    await harness.seed()
+    before = await harness.store.get(REF)
+
+    thief = _LeaseThief(inner=mongo_client)
+    store = MongoRotatingCredentialStore(
+        client=cast(MongoClient, thief),
+        config=_config(credentials_collection, harness.counterparty, EXCHANGE_TIMEOUT),
+        exchanger=harness.counterparty,
+        exchange_timeout=EXCHANGE_TIMEOUT,
+        cipher=harness.store.cipher,  # type: ignore[attr-defined]
+    )
+
+    with pytest.raises(CoreException) as lost:
+        await store.refresh(REF, observed=before.version)
+
+    assert "Lost the lease" in lost.value.summary
+    assert harness.counterparty.presented == [], "a lost lease must not present the token"
+
+    # And the grant is untouched: nothing was shown, so nothing is spent.
+    assert (await harness.store.get(REF)).version == before.version
+
+    # The losing holder's own unwind must not clear the thief's lease on its way out. It
+    # would be the same defect one step later: the thief may be mid-exchange, and a third
+    # worker handed an unleased document with the ``presented`` flag wiped would present a
+    # token that is already in flight.
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+    doc = await mongo_client.find_one(coll, {"_id": f"|{REF.path}"})
+
+    assert doc is not None
+    assert doc["lease_owner"] == "a-worker-that-stole-it", "released a lease it did not own"
+    assert doc["lease_until"] is not None
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class _BrokenRelease(_ProxyClient):
+    """Fails exactly the lease release, and nothing else."""
+
+    async def update_one(self, coll: Any, filter: Any, update: Any, **kwargs: Any) -> Any:
+        fields = update.get("$set", {})
+
+        if "lease_until" in fields and "burnt_reason" not in fields and "payload" not in fields:
+            raise RuntimeError("the lease release is broken")
+
+        return await self.inner.update_one(coll, filter, update, **kwargs)
+
+
+async def test_a_failed_lease_release_never_replaces_the_outcome(
+    mongo_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> None:
+    """The release trails every rotation, so it must never be able to outrank one.
+
+    It runs in a ``finally`` while the real answer — a burn notice, a lost credential — is
+    already propagating. An exception raised there would replace that answer with a storage
+    error, which reads retryable; retrying a permanently rejected grant is precisely what the
+    burn notice exists to stop. The lease expires on its own; the answer does not come back.
+    """
+
+    await harness.seed()
+    before = await harness.store.get(REF)
+    harness.counterparty.fail_permanently = True
+
+    store = MongoRotatingCredentialStore(
+        client=cast(MongoClient, _BrokenRelease(inner=mongo_client)),
+        config=_config(credentials_collection, harness.counterparty, EXCHANGE_TIMEOUT),
+        exchanger=harness.counterparty,
+        exchange_timeout=EXCHANGE_TIMEOUT,
+        cipher=harness.store.cipher,  # type: ignore[attr-defined]
+    )
+
+    with pytest.raises(CoreException) as burnt:
+        await store.refresh(REF, observed=before.version)
+
+    assert burnt.value.code == BURNT_CREDENTIAL_CODE, "the release outranked the outcome"
+
+    # The notice is durable too — the failed release did not take it down with it.
+    with pytest.raises(CoreException) as on_read:
+        await harness.store.get(REF)
+
+    assert on_read.value.code == BURNT_CREDENTIAL_CODE
+
+
+# ....................... #
+
+
+async def test_an_acknowledged_plaintext_store_still_rotates(
+    mongo_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> None:
+    """Plaintext is a supported configuration, so it has to actually work.
+
+    ``acknowledge_plaintext=True`` exists for deployments that have made the call
+    deliberately; a pass-through that only ever ran with a keyring wired would be a store
+    nobody had checked can read back what it wrote.
+    """
+
+    db_name, coll_name = credentials_collection
+    store = MongoRotatingCredentialStore(
+        client=mongo_client,
+        config=_config(credentials_collection, harness.counterparty, EXCHANGE_TIMEOUT),
+        exchanger=harness.counterparty,
+        exchange_timeout=EXCHANGE_TIMEOUT,
+        cipher=None,
+    )
+
+    await store.put(
+        REF, ExchangedCredential(access_token="access-clear", refresh_token="refresh-clear")
+    )
+    stored = await store.get(REF)
+
+    assert stored.access_token == "access-clear"
+
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+    doc = await mongo_client.find_one(coll, {"_id": f"|{REF.path}"})
+
+    # Readable at rest, which is the whole meaning of the acknowledgment — asserted rather
+    # than assumed, so nobody reads this configuration as "encrypted anyway".
+    assert doc is not None
+    assert doc["payload"]["refresh_token"] == "refresh-clear"
+
+    rotated = await store.refresh(REF, observed=stored.version)
+
+    assert harness.counterparty.presented == ["refresh-clear"]
+    assert (await store.get(REF)).access_token == rotated.access_token
+
+
+# ....................... #
+
+
+async def test_a_failed_poison_write_never_replaces_the_outcome(
+    mongo_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> None:
+    """The poison is best effort for the same reason the release is.
+
+    It runs while a timeout is already propagating, and that timeout is the caller's only
+    signal that the credential is spent. An exception from the recovery write would replace
+    it with a storage error — and the grant would be both unmarked *and* misreported.
+    """
+
+    await harness.seed()
+    before = await harness.store.get(REF)
+    harness.counterparty.delay = EXCHANGE_TIMEOUT.total_seconds() * 10
+
+    store = MongoRotatingCredentialStore(
+        client=cast(MongoClient, _BrokenPoison(inner=mongo_client)),
+        config=_config(credentials_collection, harness.counterparty, EXCHANGE_TIMEOUT),
+        exchanger=harness.counterparty,
+        exchange_timeout=EXCHANGE_TIMEOUT,
+        cipher=harness.store.cipher,  # type: ignore[attr-defined]
+    )
+
+    with pytest.raises(CoreException) as timed_out:
+        await store.refresh(REF, observed=before.version)
+
+    assert timed_out.value.code == CREDENTIAL_EXCHANGE_TIMEOUT_CODE, "the poison outranked it"
+
+
+@attrs.define(slots=True)
+class _BrokenPoison(_ProxyClient):
+    """Fails exactly the mark-unusable write, and nothing else."""
+
+    async def update_one(self, coll: Any, filter: Any, update: Any, **kwargs: Any) -> Any:
+        if isinstance(update.get("$set", {}).get("burnt_reason"), str):
+            raise RuntimeError("the poison write is broken")
+
+        return await self.inner.update_one(coll, filter, update, **kwargs)
+
+
+# ....................... #
+
+
+async def test_a_waiting_caller_converges_without_waiting_out_a_foreign_lease(
+    mongo_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> None:
+    """A grant that is busy enough never to be free must still answer.
+
+    Live traffic and a sweep on one credential hand the lease from worker to worker, so a
+    caller that insisted on holding it could wait past its bound and fail while the answer it
+    wanted was already stored. Staged as the state that produces: the version has moved on,
+    and somebody else holds a lease that is nowhere near expiring.
+    """
+
+    db_name, coll_name = credentials_collection
+    await harness.seed()
+    stale = (await harness.store.get(REF)).version
+
+    winner = await harness.store.refresh(REF, observed=stale)
+    assert winner.version != stale
+
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+    await mongo_client.update_one(
+        coll,
+        {"_id": f"|{REF.path}"},
+        {
+            "$set": {
+                "lease_until": utcnow() + timedelta(hours=1),
+                "lease_owner": "a-worker-still-working",
+            }
+        },
+    )
+
+    exchanges = len(harness.counterparty.presented)
+    converged = await harness.store.refresh(REF, observed=stale)
+
+    assert converged.version == winner.version
+    assert converged.access_token == winner.access_token
+    assert len(harness.counterparty.presented) == exchanges
+
+
+# ....................... #
+
+
+async def test_refreshing_a_grant_that_was_never_stored_fails_closed(
+    harness: RotatingStoreHarness,
+) -> None:
+    """The lease claim answers this, so it is asserted rather than assumed.
+
+    Nothing is upserted on the way to a rotation: a claim against a document that does not
+    exist matches nothing, and the read that follows is what turns that into ``not_found``
+    instead of a wait for a lease no one will ever release.
+    """
+
+    with pytest.raises(CoreException) as missing:
+        await harness.store.refresh(SecretRef("oauth/never-authorized"), observed="1")
+
+    assert missing.value.kind is ExceptionKind.NOT_FOUND
+    assert harness.counterparty.presented == []
+
+
+# ....................... #
+
+
+async def test_a_lease_that_never_clears_fails_instead_of_waiting_forever(
+    mongo_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> None:
+    """The wait is bounded, and the bound has to be reachable.
+
+    A holder that neither settles nor lets its lease expire is not a state the store can
+    resolve — but an unbounded wait would hold the caller's request open indefinitely, which
+    is worse than an error naming the credential.
+    """
+
+    db_name, coll_name = credentials_collection
+    await harness.seed()
+    before = await harness.store.get(REF)
+
+    coll = await mongo_client.collection(coll_name, db_name=db_name)
+    await mongo_client.update_one(
+        coll,
+        {"_id": f"|{REF.path}"},
+        {
+            "$set": {
+                "lease_until": utcnow() + timedelta(hours=1),
+                "lease_owner": "a-worker-that-never-finishes",
+            }
+        },
+    )
+
+    with pytest.raises(CoreException) as stuck:
+        await harness.store.refresh(REF, observed=before.version)
+
+    assert "stayed leased" in stuck.value.summary
+    assert harness.counterparty.presented == []
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _SelfCancellingCounterparty(CredentialExchangerPort):
+    """Cancels the task that is running the rotation, from inside the exchange.
+
+    The shutdown case, staged exactly: the token has been shown and the runtime pulls the
+    task out from under the call. Cancelling the *caller* instead only reaches the shield
+    around the rotation, which is a different (and gentler) path.
+    """
+
+    presented: list[str] = attrs.field(factory=list, init=False)
+
+    async def exchange(
+        self,
+        ref: SecretRef,
+        *,
+        refresh_token: str,
+        metadata: Mapping[str, str],
+    ) -> ExchangedCredential:
+        self.presented.append(refresh_token)
+        task = asyncio.current_task()
+        assert task is not None
+        task.cancel()
+
+        await asyncio.sleep(0)
+
+        raise AssertionError("the cancellation was never delivered")
+
+
+async def test_a_cancellation_delivered_to_the_rotation_still_records_the_outcome(
+    mongo_client: MongoClient,
+    credentials_collection: tuple[str, str],
+    harness: RotatingStoreHarness,
+) -> None:
+    """``CancelledError`` is not an ``Exception``, so it needs its own handler — and it needs
+    one because the token is already at the counterparty when a shutdown lands.
+
+    Without it the rotation would unwind past every classification, releasing the lease over
+    a document that still looks refreshable at the version a waiting worker holds.
+    """
+
+    counterparty = _SelfCancellingCounterparty()
+    store = MongoRotatingCredentialStore(
+        client=mongo_client,
+        config=_config(credentials_collection, harness.counterparty, EXCHANGE_TIMEOUT),
+        exchanger=counterparty,
+        exchange_timeout=EXCHANGE_TIMEOUT,
+        cipher=harness.store.cipher,  # type: ignore[attr-defined]
+    )
+
+    await harness.seed()
+    before = await harness.store.get(REF)
+
+    with pytest.raises(asyncio.CancelledError):
+        await store.refresh(REF, observed=before.version)
+
+    assert counterparty.presented == ["refresh-seed"]
+
+    # The grant no longer looks live, so nobody replays the token it was holding.
+    with pytest.raises(CoreException) as poisoned:
+        await harness.store.get(REF)
+
+    assert poisoned.value.code == BURNT_CREDENTIAL_CODE

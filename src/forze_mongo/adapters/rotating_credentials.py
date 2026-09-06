@@ -427,13 +427,23 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         ever happens where the token demonstrably never reached the counterparty (the
         exchanger says so, or the failure landed before the call), so leaving the flag set
         would make the next worker treat a perfectly good grant as spent.
+
+        Best effort, and that is load-bearing rather than lax: this runs on the way out of a
+        rotation that is already carrying its own answer — a lost credential, a burn notice,
+        a fresh grant — and an exception raised here would replace it with a storage error
+        that reads retryable. The lease expires on its own; the outcome does not survive
+        being overwritten.
         """
 
-        await self.client.update_one(
-            coll,
-            {"_id": doc_id, "lease_owner": owner},
-            {"$set": {"lease_until": None, "lease_owner": None, "presented": None}},
-        )
+        try:
+            await self.client.update_one(
+                coll,
+                {"_id": doc_id, "lease_owner": owner},
+                {"$set": {"lease_until": None, "lease_owner": None, "presented": None}},
+            )
+
+        except Exception as e:
+            log.warning("could not release a rotating credential's lease", error=str(e))
 
     # ....................... #
 
@@ -441,6 +451,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         self,
         coll: AsyncCollection[JsonDict],
         doc_id: str,
+        ref: SecretRef,
         owner: str,
     ) -> None:
         """Record that the stored token is about to leave this process.
@@ -449,14 +460,24 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         takes it over, this flag is the difference between "the holder died before showing
         the token, so it is still good" and "the outcome is lost, so the grant is spent".
         Written *before* the exchange, because after it there may be no chance to write
-        anything.
+        anything — and it doubles as the check that this call still holds the lease it took.
+        A write matching nothing means the lease was stolen (it expired under a stalled
+        holder) or superseded by a re-authorization, and the taker owns the outcome now: this
+        call must not also present the token, because two exchanges of one refresh token is
+        the reuse the whole plane is arranged to avoid. It is the only window in which a
+        theft is invisible to the ``presented`` flag, since the flag is what this write sets.
         """
 
-        await self.client.update_one(
+        if not await self.client.update_one(
             coll,
             {"_id": doc_id, "lease_owner": owner},
             {"$set": {"presented": True}},
-        )
+        ):
+            raise exc.infrastructure(
+                f"Lost the lease on the rotating credential at {ref.path!r} before its "
+                "token was presented; another worker owns this rotation.",
+                details={"ref": ref.path},
+            )
 
     # ....................... #
 
@@ -473,11 +494,13 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
     ) -> int:
         """Write the replacement, clearing the burn notice and the lease by construction.
 
-        Fenced on the version the lease was taken at *and* on the lease's owner: a stolen or
-        superseded lease (a re-authorization landed, or this holder stalled past its lease)
-        must not have its replacement land on top of whatever took its place. Returns the
-        matched count so the caller can treat a fenced-out write exactly like a failed one —
-        the token is burned either way.
+        Fenced on the lease's owner: a stolen or superseded lease (a re-authorization landed,
+        or this holder stalled past its lease) must not have its replacement land on top of
+        whatever took its place. The version rides along as defence in depth rather than as a
+        second guard — nothing can move it without also clearing this lease — and the burn
+        notice is the one condition the owner does *not* cover, since ``burn`` is
+        unconditional and touches neither field. Returns the matched count so the caller can
+        treat a fenced-out write exactly like a failed one: the token is burned either way.
         """
 
         payload: JsonDict = await self._seal(
@@ -492,7 +515,13 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
 
         return await self.client.update_one(
             coll,
-            {"_id": doc_id, "version": version, "lease_owner": owner},
+            # ``burnt_reason: None`` matches an explicit null and a missing field alike —
+            # both mean "not burnt". It is in the fence because ``burn`` is unconditional and
+            # touches neither the version nor the lease: without it, a rotation that raced an
+            # operator's "the provider revoked this" would write the notice away and leave a
+            # dead grant reading as live. Postgres serialises the two on its row lock; here
+            # the fence is what orders them.
+            {"_id": doc_id, "version": version, "lease_owner": owner, "burnt_reason": None},
             {
                 "$set": {
                     "payload": payload,
@@ -533,7 +562,10 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         try:
             await self.client.update_one(
                 coll,
-                {"_id": doc_id, "version": version, "lease_owner": owner},
+                # Never overwrites an existing notice: an operator's reason ("revoked in the
+                # provider console") is the more useful of the two, and this store's own
+                # reasons are all variations of "spent". Postgres fences the same way.
+                {"_id": doc_id, "version": version, "lease_owner": owner, "burnt_reason": None},
                 {
                     "$set": {
                         "burnt_reason": reason,
@@ -667,13 +699,18 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         """Hold out for the lease, or converge on the worker that already has it.
 
         Returns the leased document — or, when the holder finished while this call waited,
-        the caller-facing view it should return instead. Three outcomes, and the middle one
-        is the whole point of waiting rather than erroring:
+        the caller-facing view it should return instead:
 
         - the lease is free (or expired) and taken here — the caller proceeds;
-        - it was held and its holder settled: the version has moved past *observed*, so the
-          caller gets the winner's document and never touches the counterparty;
-        - it was held and its holder is still working — wait, up to one lease.
+        - it was held and its holder is still working — wait, up to one lease;
+        - it was held, and meanwhile the version moved past *observed* — return the winner's
+          document without waiting for whoever holds the lease now.
+
+        That third outcome carries no correctness of its own: a caller that waited it out
+        would take the lease and converge on the same document through the single-flight
+        check under it. What it prevents is a *spurious* failure — a busy grant whose lease
+        passes from one worker to the next can outlast this wait, and answering from a
+        version that already moved beats erroring when the answer is sitting there.
 
         Bounded by the lease's own duration, because that is how long a holder can legally
         take. Waiting longer would mean waiting on a lease that is already stealable, which
@@ -688,8 +725,10 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
             if leased is not None:
                 return leased
 
-            # ``None`` also covers a document that no longer exists, which ``_guard_live``
-            # reports as not-found rather than looping until the deadline.
+            # A claim that matched nothing is either a held lease or no document at all, and
+            # the read is what separates them: ``_guard_live`` answers not-found rather than
+            # polling until the deadline for a grant that will never appear. It also lets a
+            # waiter learn the holder burnt the grant without waiting for the lease to clear.
             current = self._guard_live(await self.client.find_one(coll, {"_id": doc_id}), ref)
 
             if SecretVersion(str(current["version"])) != observed:
@@ -730,9 +769,11 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         presented — therefore ends the same way, with the document marked unusable.
 
         The lease is released in a ``finally`` rather than on each branch, and the release is
-        fenced on this call's own ownership. Every terminal write already clears the lease, so
-        on those paths the release matches nothing and costs one no-op; in exchange, no future
-        edit can add an exit that strands a grant behind a lease until it expires.
+        fenced on this call's own ownership — so on the paths whose terminal write already
+        cleared the lease it matches nothing and costs one no-op, and on the ones that did not
+        (a recorded burn notice, a converged read, a guard that refused) it is what hands the
+        document to a waiter immediately. No exit can strand a grant behind a lease until it
+        expires, including exits a later edit adds.
         """
 
         coll = await self._collection()
@@ -741,10 +782,6 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
         presented = False
 
         async with self.client.detached():
-            # A document has to exist before it can be leased: not-found and already-burnt
-            # are answered here rather than by a lease that silently fails to match.
-            self._guard_live(await self.client.find_one(coll, {"_id": doc_id}), ref)
-
             leased = await self._await_lease(coll, doc_id, ref, observed, owner, tenant_id)
 
             if isinstance(leased, RotatingCredential):
@@ -753,8 +790,10 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
             locked_version = int(str(leased["version"]))
 
             try:
-                # Re-checked under the lease: between the read above and the claim, another
-                # worker may have burnt the grant.
+                # The lease is taken before the document is judged, so a burnt grant is
+                # answered here rather than by a pre-read costing every rotation a round trip
+                # to say what the claim is about to say anyway. The lease it briefly holds
+                # over a dead grant is released on the way out.
                 self._guard_live(leased, ref)
 
                 if leased.get("presented"):
@@ -795,7 +834,7 @@ class MongoRotatingCredentialStore(_MongoRotatingBase, RotatingCredentialStorePo
 
                 # Recorded before the call and only once the record landed: if this write
                 # fails the token never left, so the release below is the right ending.
-                await self._mark_presented(coll, doc_id, owner)
+                await self._mark_presented(coll, doc_id, ref, owner)
                 presented = True
 
                 credential = await self._exchange(ref, payload)
