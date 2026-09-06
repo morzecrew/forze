@@ -578,7 +578,7 @@ engines = ["mock", "postgres"]
 [tool.conformance_manifest.planes.rotating_credentials]
 scenario = "tests.support.rotating_credentials:ROTATING_STORE_BATTERY"
 dep_keys = ["rotating_credentials", "rotating_credentials_admin"]
-engines = ["mock", "postgres"]
+engines = ["mock", "postgres", "mongo"]
 
 [tool.conformance_manifest.planes.isolation]
 scenario = "forze_dst.conformance.anomalies:BATTERY"

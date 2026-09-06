@@ -77,6 +77,7 @@ lifecycle = LifecyclePlan.from_steps(
 | Idempotency | `IdempotencySpec.name` | `idempotencies` |
 | Counter | `CounterSpec.name` | `counters` |
 | Durable execution | `durable_step` / `durable_run` / `durable_schedule` | step memo, run store, and cron schedules — optional |
+| Rotating credentials | `rotating_credentials` | store + control-plane scan for counterparty-rotated grants — optional |
 
 ## Notes
 
@@ -116,6 +117,18 @@ lifecycle = LifecyclePlan.from_steps(
   its result are one statement — and they come back on the next scan once the
   lease expires, so size `lease_for` for how long you can wait, not just for how
   long a body runs.
+- **Rotating credentials use a lease, not a transaction.** The store for
+  counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
+  across a third-party call, and Mongo offers neither a blocking wait on a document nor
+  a transaction that may outlive `transactionLifetimeLimitSeconds`. So it takes an
+  explicit lease on the credential's own document; a racer waits for it and converges on
+  the winner. That means it needs **no replica set** — the one plane here that works
+  unchanged on a standalone `mongod`. It needs one index for the idleness sweep:
+  `{tenant_id: 1, updated_at: 1}`. Because a lease can expire where a row lock cannot,
+  each document also records whether its token was already presented, so a worker
+  inheriting an expired lease refuses to replay a possibly-spent token and marks the
+  grant for re-authorization instead. See
+  [credential rotation](../running-in-prod/credential-rotation.md).
 - `MongoSearchConfig` is imported from `forze_mongo.execution.deps` (not the
   top-level package).
 - Relations accept a static `(database, collection)` tuple or a per-tenant

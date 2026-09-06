@@ -11,6 +11,7 @@ from .hlc_checkpoint import MongoHlcCheckpointConfig
 from .idempotency import MongoIdempotencyConfig
 from .inbox import MongoInboxConfig
 from .outbox import MongoOutboxConfig
+from .rotating_credentials import MongoRotatingCredentialsConfig
 from .search import (
     MongoAtlasEngine,
     MongoSearchConfig,
@@ -34,6 +35,7 @@ __all__ = [
     "MongoInboxConfig",
     "MongoOutboxConfig",
     "MongoReadOnlyDocumentConfig",
+    "MongoRotatingCredentialsConfig",
     "MongoSearchConfig",
     "MongoSearchEngine",
     "MongoSearchEngineSpec",
