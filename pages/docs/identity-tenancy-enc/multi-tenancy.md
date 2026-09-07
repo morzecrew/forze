@@ -223,7 +223,9 @@ it — so `MongoDatabaseTenantProvisioner` (`forze_mongo`) writes a marker docum
 into the tenant's own database instead. The write proves at onboarding that the
 connection can reach the tenant's container, and the marker records who is in
 that container, so an offboarding that drops the database can refuse when the
-name resolves somewhere another tenant lives.
+name resolves somewhere another tenant lives — and it holds a lock kept outside
+that database while it decides, so an onboarding cannot land in the gap between
+the check and the drop.
 
 Isolating tenants by data boundary pairs naturally with isolating them by key —
 sealing each tenant's data under its own keys is [Encryption](encryption.md).

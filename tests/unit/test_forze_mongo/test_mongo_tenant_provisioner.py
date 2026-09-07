@@ -105,6 +105,7 @@ class TestResolvedName:
 
         seen: list[UUID | None] = []
         client = AsyncMock(name="client")
+        client.find_one.return_value = None  # no offboarding in flight
 
         async def _resolve(tid: UUID | None) -> str:
             seen.append(tid)
@@ -113,7 +114,11 @@ class TestResolvedName:
         await _provisioner(client=client, database=_resolve).provision(_TENANT)
 
         assert seen == [_TENANT.tenant_id]
-        assert client.collection.await_args.kwargs["db_name"] == f"tenant_{_TENANT.tenant_id}"
+
+        # The first collection resolved is the marker's, in the tenant's own database; the
+        # second is the offboarding lock's, which is deliberately somewhere else.
+        marker_call = client.collection.await_args_list[0]
+        assert marker_call.kwargs["db_name"] == f"tenant_{_TENANT.tenant_id}"
 
     @pytest.mark.asyncio
     async def test_teardown_off_resolves_nothing_at_all(self) -> None:
@@ -127,3 +132,34 @@ class TestResolvedName:
 
         client.collection.assert_not_called()
         client.db.assert_not_called()
+
+
+class TestLockLocation:
+    @pytest.mark.asyncio
+    async def test_a_client_with_no_database_of_its_own_is_named(self) -> None:
+        """The lock defaults to the client's own database, so a client without one has to say
+        which knob fixes it — the driver's "database name is not configured" names neither the
+        lock nor ``lock_database``, and it would surface from an onboarding that has nothing
+        obviously to do with either."""
+
+        client = AsyncMock(name="client")
+        client.db.side_effect = CoreException.configuration("Mongo database name is not configured")
+
+        with pytest.raises(CoreException, match="lock_database"):
+            await _provisioner(client=client).provision(_TENANT)
+
+    @pytest.mark.asyncio
+    async def test_the_lock_is_read_from_the_configured_database(self) -> None:
+        """Not the tenant's: a collection inside the database a teardown drops goes with the
+        drop, so the lock has to be resolved somewhere else even on the onboarding path."""
+
+        client = AsyncMock(name="client")
+        client.find_one.return_value = None
+
+        await _provisioner(client=client, lock_database="ops").provision(_TENANT)
+
+        marker, lock = client.collection.await_args_list
+
+        assert marker.kwargs["db_name"] == f"tenant_{_TENANT.tenant_id}"
+        assert lock.args[0] == "_forze_tenant_offboarding"
+        assert lock.kwargs["db_name"] == "ops"

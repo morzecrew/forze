@@ -16,6 +16,9 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
@@ -36,6 +39,7 @@ from forze_mongo.kernel.uri import with_mongo_credentials
 
 pytestmark = pytest.mark.integration
 
+_LOCK = "_forze_tenant_offboarding"
 _MARKER = "_forze_tenants"
 """Spelled out rather than imported: it is the name written to a live deployment, so a rename
 has to fail here and be decided, not follow the source silently."""
@@ -102,6 +106,83 @@ async def _markers(client: MongoClient, database: str) -> list[dict]:
     coll = await client.collection(_MARKER, db_name=database)
 
     return await client.find_many(coll, {})
+
+
+async def _locks(client: MongoClient) -> list[dict]:
+    """Offboarding locks, read from where the provisioner keeps them by default."""
+
+    coll = await client.collection(_LOCK)
+
+    return await client.find_many(coll, {})
+
+
+@asynccontextmanager
+async def _teardown_stalled_after_its_read(
+    client: MongoClient,
+    tenant: TenantIdentity,
+    database: str,
+) -> AsyncIterator[None]:
+    """Run a teardown of *database* and hold it open at the ownership read.
+
+    The body runs inside the window; leaving it lets the teardown finish. Resumed from a
+    ``finally`` so a failing assertion inside the window cannot strand the task holding the
+    lock — a stalled teardown outliving its test takes the client down with it and buries the
+    real failure under a shutdown error.
+    """
+
+    read, resume = asyncio.Event(), asyncio.Event()
+    stalled = _provisioner(
+        cast(MongoClient, _StallsTheOwnershipRead(client, read, resume)),
+        database,
+        drop_on_deprovision=True,
+    )
+    teardown = asyncio.create_task(stalled.deprovision(tenant))
+
+    try:
+        await asyncio.wait_for(read.wait(), timeout=10)
+        yield
+
+    finally:
+        resume.set()
+        await asyncio.wait_for(teardown, timeout=10)
+
+
+class _StallsTheOwnershipRead:
+    """A client that holds the teardown open at the exact moment the window used to be.
+
+    Everything is delegated to the real client except the ownership read, which signals once
+    it has answered and then waits — so a test can drive an onboarding into the gap between
+    that read and the ``dropDatabase`` deliberately, rather than hoping a scheduler produces
+    it.
+    """
+
+    def __init__(self, inner: MongoClient, read: asyncio.Event, resume: asyncio.Event) -> None:
+        self._inner = inner
+        self._read = read
+        self._resume = resume
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+    async def find_many(self, *args: Any, **kwargs: Any) -> list[Any]:
+        found = await self._inner.find_many(*args, **kwargs)
+        self._read.set()
+        await self._resume.wait()
+
+        return found
+
+
+class _CannotRelease:
+    """A client whose deletes fail, so the lock survives the teardown that took it."""
+
+    def __init__(self, inner: MongoClient) -> None:
+        self._inner = inner
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+    async def delete_one(self, *args: Any, **kwargs: Any) -> int:
+        raise RuntimeError("the release could not be written")
 
 
 # ....................... #
@@ -454,3 +535,181 @@ class TestDeprovision:
         await provisioner.deprovision(tenant)
 
         assert name not in await _database_names(mongo_client)
+
+
+class TestOffboardingLock:
+    """The window between the ownership read and the drop, and what now stands in it."""
+
+    @pytest.mark.asyncio
+    async def test_an_onboarding_inside_the_teardown_window_never_returns_success(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The race itself, driven rather than waited for.
+
+        Two tenants resolving to one database — the misconfiguration teardown refuses under
+        every other schedule — with the second onboarding landing in the one gap where the
+        refusal cannot see it: after the ownership read, before the drop. What must not happen
+        is the pair *onboarding reported success* and *its database was dropped*; either
+        outcome alone is fine, and an onboarding told to retry is the one taken here.
+        """
+
+        leaving, arriving, name = _tenant(), _tenant(), _database(dropper, "window")
+
+        await _provisioner(mongo_client, name).provision(leaving)
+
+        async with _teardown_stalled_after_its_read(mongo_client, leaving, name):
+            with pytest.raises(CoreException) as caught:
+                await _provisioner(mongo_client, name).provision(arriving)
+
+        assert caught.value.code == "tenant_offboarding_in_flight"
+        assert name not in await _database_names(mongo_client)
+
+    @pytest.mark.asyncio
+    async def test_the_lock_is_gone_once_the_teardown_is(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """It is not the drop that releases it — the lock lives outside the database being
+        dropped, which is the whole point — so the release is a write that has to happen."""
+
+        tenant, name = _tenant(), _database(dropper, "released")
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
+
+        await provisioner.provision(tenant)
+        await provisioner.deprovision(tenant)
+
+        assert [doc["_id"] for doc in await _locks(mongo_client)] == []
+
+        # And onboarding the same name again is not blocked by what the teardown left.
+        await provisioner.provision(tenant)
+
+        assert name in await _database_names(mongo_client)
+
+    @pytest.mark.asyncio
+    async def test_a_second_teardown_of_one_database_is_refused_not_queued(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """Two overlapping ``dropDatabase`` calls have no ordering worth waiting for, and a
+        lock left behind by a dead holder is indistinguishable from a live one — so the
+        refusal names the document to remove rather than blocking on it."""
+
+        tenant, name = _tenant(), _database(dropper, "contended")
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
+
+        await provisioner.provision(tenant)
+
+        locks = await mongo_client.collection(_LOCK)
+        await mongo_client.insert_one(locks, {"_id": name, "tenant_id": "someone", "at": utcnow()})
+
+        with pytest.raises(CoreException) as caught:
+            await provisioner.deprovision(tenant)
+
+        assert caught.value.code == "tenant_offboarding_in_flight"
+        assert name in await _database_names(mongo_client)
+
+        # The refusal left the other holder's lock exactly as it found it: a teardown that
+        # released a lock it never took would open the window for whoever does hold it.
+        assert [doc["tenant_id"] for doc in await _locks(mongo_client)] == ["someone"]
+
+    @pytest.mark.asyncio
+    async def test_the_lock_records_who_is_leaving_and_when(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """A stuck lock is cleared by hand, so it has to say enough for someone to decide
+        whether clearing it is safe: which tenant took it, and how long ago."""
+
+        tenant, name = _tenant(), _database(dropper, "contents")
+
+        await _provisioner(mongo_client, name).provision(tenant)
+
+        async with _teardown_stalled_after_its_read(mongo_client, tenant, name):
+            held = await _locks(mongo_client)
+
+        assert [doc["_id"] for doc in held] == [name]
+        assert held[0]["tenant_id"] == str(tenant.tenant_id)
+        assert isinstance(held[0]["at"], datetime)
+
+    @pytest.mark.asyncio
+    async def test_a_lock_inside_the_database_being_dropped_is_refused(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """A lock the teardown destroys is not a lock. It would be released by the very drop
+        it was holding open, and the window would stand open exactly while it was in use."""
+
+        tenant, name = _tenant(), _database(dropper, "selflock")
+        provisioner = MongoDatabaseTenantProvisioner(
+            client=mongo_client,
+            database=lambda _: name,
+            drop_on_deprovision=True,
+            lock_database=name,
+        )
+
+        # Refused at both ends, because the onboarding reads the same misplaced collection.
+        for call in (provisioner.provision, provisioner.deprovision):
+            with pytest.raises(CoreException) as caught:
+                await call(tenant)
+
+            assert caught.value.code == "tenant_lock_inside_target_database"
+
+    @pytest.mark.asyncio
+    async def test_a_release_that_fails_after_a_successful_drop_is_reported(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The drop is durable, so this error outranks nothing — and nothing else would tell
+        the caller that the database name is now wedged for every future onboarding."""
+
+        tenant, name = _tenant(), _database(dropper, "stuck")
+
+        await _provisioner(mongo_client, name).provision(tenant)
+
+        broken = _provisioner(
+            cast(MongoClient, _CannotRelease(mongo_client)),
+            name,
+            drop_on_deprovision=True,
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await broken.deprovision(tenant)
+
+        assert caught.value.code == "tenant_offboarding_lock_stuck"
+        assert name not in await _database_names(mongo_client)
+        assert [doc["_id"] for doc in await _locks(mongo_client)] == [name]
+
+    @pytest.mark.asyncio
+    async def test_a_release_that_fails_does_not_replace_the_teardowns_own_error(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The refusal is what the caller has to act on — a co-tenant's data is about to be
+        destroyed — and a bookkeeping write failing on the way out must not be what they read
+        instead. A stuck lock is the lesser of the two facts, so it goes to the log."""
+
+        first, second, name = _tenant(), _tenant(), _database(dropper, "outranked")
+        keeper = _provisioner(mongo_client, name)
+
+        await keeper.provision(first)
+        await keeper.provision(second)
+
+        broken = _provisioner(
+            cast(MongoClient, _CannotRelease(mongo_client)),
+            name,
+            drop_on_deprovision=True,
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await broken.deprovision(first)
+
+        assert caught.value.code == "tenant_database_shared_across_tenants"
+        assert name in await _database_names(mongo_client)
