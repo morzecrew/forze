@@ -6,7 +6,7 @@ require_mongo()
 
 # ....................... #
 
-from .adapters import MongoRotationTarget
+from .adapters import MongoDatabaseTenantProvisioner, MongoRotationTarget
 from .execution import (
     MongoClientDepKey,
     MongoDepsModule,
@@ -40,6 +40,7 @@ from .settings import MongoSettings
 # ----------------------- #
 
 __all__ = [
+    "MongoDatabaseTenantProvisioner",
     "MongoDepsModule",
     "MongoRotationTarget",
     "MongoClient",
