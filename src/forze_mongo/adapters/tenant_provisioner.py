@@ -40,7 +40,6 @@ require_mongo()
 from typing import Final, final
 
 import attrs
-from pymongo.errors import DuplicateKeyError
 
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
@@ -140,21 +139,18 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         name = await self._database_for(tenant)
         coll = await self.client.collection(self.marker_collection, db_name=name)
 
-        try:
-            await self.client.update_one_upsert(
-                coll,
-                {"_id": _marker_id(tenant)},
-                # Insert-only: a re-provision must not restamp `provisioned_at`, which is the
-                # one field an operator reads to answer when a tenant was onboarded.
-                {"$setOnInsert": {"tenant_id": str(tenant.tenant_id), "provisioned_at": utcnow()}},
-            )
-
-        except Exception as error:
-            # An upsert is check-then-act inside the server, so two onboardings of one tenant
-            # can both find nothing and both insert; the loser gets a duplicate key on `_id`.
-            # Onboarding is re-run routinely, so that is a no-op rather than a failure.
-            if not _is_duplicate_key(error):
-                raise
+        # No duplicate-key tolerance, where the Postgres provisioner needs one: an upsert is
+        # check-then-act, so concurrent onboardings of a tenant all find nothing and all
+        # insert — but the predicate here *is* the unique index, and mongod retries that
+        # collision itself instead of surfacing it. Probed rather than assumed, and the
+        # concurrency test is the standing check that a server still converges them.
+        await self.client.update_one_upsert(
+            coll,
+            {"_id": _marker_id(tenant)},
+            # Insert-only: a re-provision must not restamp `provisioned_at`, which is the one
+            # field an operator reads to answer when a tenant was onboarded.
+            {"$setOnInsert": {"tenant_id": str(tenant.tenant_id), "provisioned_at": utcnow()}},
+        )
 
     # ....................... #
 
@@ -241,8 +237,8 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
 
         # Two is enough to answer the question: this tenant's marker, plus evidence of one
         # other. Naming that other one is what makes the refusal actionable.
-        found = await self.client.find_many(coll, {}, projection={"_id": 1}, limit=2)
-        others = [str(doc["_id"]) for doc in found if str(doc["_id"]) != mine]
+        markers = await self.client.find_many(coll, {}, projection={"_id": 1}, limit=2)
+        others = [str(doc["_id"]) for doc in markers if str(doc["_id"]) != mine]
 
         if others:
             raise exc.configuration(
@@ -256,7 +252,9 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
                 details={"database": database, "also_provisioned_for": others[0]},
             )
 
-        if found:
+        # This tenant's marker and nothing else: the database is theirs, and the drop is what
+        # offboarding asked for.
+        if markers:
             return
 
         db_handle = await self.client.db(database)
@@ -279,35 +277,10 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
 def _marker_id(tenant: TenantIdentity) -> str:
     """The marker document's ``_id`` for *tenant*.
 
-    The tenant id and nothing else: ``_id`` is uniquely indexed by the server, which is what
-    makes concurrent onboardings of one tenant collide instead of duplicating, and what makes
-    "is anyone else in here?" a single bounded read rather than a scan.
+    The tenant id and nothing else, so the identity is carried by the one field MongoDB
+    already indexes uniquely. That is what makes concurrent onboardings of one tenant
+    converge on a single document instead of accumulating near-duplicates, and it is why the
+    marker collection needs no index of its own on a database created per tenant.
     """
 
     return str(tenant.tenant_id)
-
-
-# ....................... #
-
-
-def _is_duplicate_key(error: BaseException) -> bool:
-    """Whether *error* is MongoDB rejecting a write for an existing ``_id``.
-
-    Walked over the cause chain rather than matched at the top, because the client's exception
-    interceptor re-raises its own :class:`~forze.base.exceptions.CoreException` *from* the
-    driver error — so the ``DuplicateKeyError`` sits underneath rather than in hand. The walk
-    carries a seen-set because ``__cause__``/``__context__`` can form a cycle when one error is
-    re-raised while another is being handled.
-    """
-
-    seen: set[int] = set()
-    current: BaseException | None = error
-
-    while current is not None and id(current) not in seen:
-        if isinstance(current, DuplicateKeyError):
-            return True
-
-        seen.add(id(current))
-        current = current.__cause__ or current.__context__
-
-    return False

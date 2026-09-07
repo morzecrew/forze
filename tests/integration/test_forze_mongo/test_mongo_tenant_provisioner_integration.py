@@ -42,10 +42,37 @@ def _tenant() -> TenantIdentity:
     return TenantIdentity(tenant_id=uuid.uuid4())
 
 
-def _database_for(prefix: str) -> str:
-    """A per-test database-name resolver, namespaced so parallel tests cannot collide."""
+def _database(dropper: list[str], prefix: str) -> str:
+    """Name a fresh database and register it for removal.
 
-    return f"forze_tp_{prefix}_{uuid.uuid4().hex[:8]}"
+    Unique per call because these tests create real databases outside the client fixture's
+    own, and registered on the way out because a test that refuses a drop — several here do —
+    leaves one behind on purpose.
+    """
+
+    name = f"forze_tp_{prefix}_{uuid.uuid4().hex[:8]}"
+    dropper.append(name)
+
+    return name
+
+
+def _provisioner(
+    client: MongoClient,
+    database: str,
+    *,
+    drop_on_deprovision: bool = False,
+) -> MongoDatabaseTenantProvisioner:
+    """A provisioner resolving every tenant to *database* — the constant resolver on purpose.
+
+    It is what the per-tenant deployment looks like from one tenant's side, and what a
+    misconfigured deployment looks like from two.
+    """
+
+    return MongoDatabaseTenantProvisioner(
+        client=client,
+        database=lambda _: database,
+        drop_on_deprovision=drop_on_deprovision,
+    )
 
 
 @pytest_asyncio.fixture
@@ -88,15 +115,11 @@ class TestProvision:
         something is written to it. Provisioning is what writes, so the tenant's container is
         real — and visible to an operator listing what is onboarded — before any request."""
 
-        tenant, name = _tenant(), _database_for("exists")
-        dropper.append(name)
+        tenant, name = _tenant(), _database(dropper, "exists")
 
         assert name not in await _database_names(mongo_client)
 
-        await MongoDatabaseTenantProvisioner(
-            client=mongo_client,
-            database=lambda _: name,
-        ).provision(tenant)
+        await _provisioner(mongo_client, name).provision(tenant)
 
         assert name in await _database_names(mongo_client)
 
@@ -114,10 +137,9 @@ class TestProvision:
         has to mean more than "does not error": ``provisioned_at`` is the field somebody reads
         to answer when a tenant joined, and a re-run that moved it would erase that answer."""
 
-        tenant, name = _tenant(), _database_for("rerun")
-        dropper.append(name)
+        tenant, name = _tenant(), _database(dropper, "rerun")
 
-        provisioner = MongoDatabaseTenantProvisioner(client=mongo_client, database=lambda _: name)
+        provisioner = _provisioner(mongo_client, name)
 
         await provisioner.provision(tenant)
         first = (await _markers(mongo_client, name))[0]["provisioned_at"]
@@ -134,15 +156,19 @@ class TestProvision:
         mongo_client: MongoClient,
         dropper: list[str],
     ) -> None:
-        """An upsert is check-then-act inside the server: onboardings that all find nothing
-        all insert, and every loser gets a duplicate key on ``_id``. A retried onboarding, or
-        two workers handed the same event, is that ordering — so the duplicate has to be the
-        no-op it describes rather than a failed onboarding."""
+        """The reason ``provision`` catches nothing.
 
-        tenant, name = _tenant(), _database_for("race")
-        dropper.append(name)
+        An upsert is check-then-act inside the server, so onboardings that all find nothing
+        all insert — a retried onboarding, or two workers handed the same event, is exactly
+        that ordering. What keeps it from surfacing as a duplicate key is that the predicate
+        *is* the unique index, which mongod retries internally. This is the standing check on
+        that: sixteen onboardings released together must leave one marker, and if a server
+        ever stops converging them this is what says so.
+        """
 
-        provisioner = MongoDatabaseTenantProvisioner(client=mongo_client, database=lambda _: name)
+        tenant, name = _tenant(), _database(dropper, "race")
+
+        provisioner = _provisioner(mongo_client, name)
 
         await asyncio.gather(*(provisioner.provision(tenant) for _ in range(16)))
 
@@ -158,10 +184,9 @@ class TestProvision:
         Provisioning does not refuse it — a shared database with per-tenant collections is a
         real deployment — it records who is in there, which is what teardown reads."""
 
-        first, second, name = _tenant(), _tenant(), _database_for("shared")
-        dropper.append(name)
+        first, second, name = _tenant(), _tenant(), _database(dropper, "shared")
 
-        provisioner = MongoDatabaseTenantProvisioner(client=mongo_client, database=lambda _: name)
+        provisioner = _provisioner(mongo_client, name)
 
         await provisioner.provision(first)
         await provisioner.provision(second)
@@ -187,8 +212,7 @@ class TestProvision:
         fixed and retried.
         """
 
-        name = _database_for("denied")
-        dropper.append(name)
+        name = _database(dropper, "denied")
 
         user = f"forze_tp_{uuid.uuid4().hex[:8]}"
         admin = (await mongo_client.db()).client["admin"]
@@ -213,10 +237,7 @@ class TestProvision:
 
             try:
                 with pytest.raises(CoreException) as caught:
-                    await MongoDatabaseTenantProvisioner(
-                        client=confined,
-                        database=lambda _: name,
-                    ).provision(_tenant())
+                    await _provisioner(confined, name).provision(_tenant())
 
                 # Named, not merely "something raised": a provision that failed for an
                 # unrelated reason — an unreachable server, a bad URI — would satisfy a bare
@@ -239,14 +260,9 @@ class TestDeprovision:
         mongo_client: MongoClient,
         dropper: list[str],
     ) -> None:
-        tenant, name = _tenant(), _database_for("drop")
-        dropper.append(name)
+        tenant, name = _tenant(), _database(dropper, "drop")
 
-        provisioner = MongoDatabaseTenantProvisioner(
-            client=mongo_client,
-            database=lambda _: name,
-            drop_on_deprovision=True,
-        )
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
 
         await provisioner.provision(tenant)
         coll = await mongo_client.collection("orders", db_name=name)
@@ -265,10 +281,9 @@ class TestDeprovision:
         """Deleting a tenant's data is never the default: an offboarding that only forgets the
         tenant is recoverable, and one that destroyed the database is not."""
 
-        tenant, name = _tenant(), _database_for("keep")
-        dropper.append(name)
+        tenant, name = _tenant(), _database(dropper, "keep")
 
-        provisioner = MongoDatabaseTenantProvisioner(client=mongo_client, database=lambda _: name)
+        provisioner = _provisioner(mongo_client, name)
 
         await provisioner.provision(tenant)
         await provisioner.deprovision(tenant)
@@ -279,18 +294,15 @@ class TestDeprovision:
     async def test_offboarding_an_absent_database_is_quiet(
         self,
         mongo_client: MongoClient,
+        dropper: list[str],
     ) -> None:
         """Teardown is re-run at least as often as onboarding — a half-finished cleanup job, a
         retried command, an operator repeating themselves. The second pass has nothing to drop
         and nothing to complain about."""
 
-        tenant, name = _tenant(), _database_for("absent")
+        tenant, name = _tenant(), _database(dropper, "absent")
 
-        provisioner = MongoDatabaseTenantProvisioner(
-            client=mongo_client,
-            database=lambda _: name,
-            drop_on_deprovision=True,
-        )
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
 
         await provisioner.provision(tenant)
         await provisioner.deprovision(tenant)
@@ -309,14 +321,9 @@ class TestDeprovision:
         and it may be async — so the collision is read off the server at the moment the drop
         would destroy the other tenant, and the other tenant is named."""
 
-        first, second, name = _tenant(), _tenant(), _database_for("cotenant")
-        dropper.append(name)
+        first, second, name = _tenant(), _tenant(), _database(dropper, "cotenant")
 
-        provisioner = MongoDatabaseTenantProvisioner(
-            client=mongo_client,
-            database=lambda _: name,
-            drop_on_deprovision=True,
-        )
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
 
         await provisioner.provision(first)
         await provisioner.provision(second)
@@ -337,17 +344,12 @@ class TestDeprovision:
         provisioner never registered. That is what a typo looks like from here, and the
         difference between it and a legitimate offboarding is not visible in the name."""
 
-        tenant, name = _tenant(), _database_for("foreign")
-        dropper.append(name)
+        tenant, name = _tenant(), _database(dropper, "foreign")
 
         coll = await mongo_client.collection("payroll", db_name=name)
         await mongo_client.insert_one(coll, {"amount": 1})
 
-        provisioner = MongoDatabaseTenantProvisioner(
-            client=mongo_client,
-            database=lambda _: name,
-            drop_on_deprovision=True,
-        )
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
 
         with pytest.raises(CoreException) as caught:
             await provisioner.deprovision(tenant)
@@ -365,17 +367,12 @@ class TestDeprovision:
         for a database that really was the tenant's — provisioned by hand before this class
         was wired in."""
 
-        tenant, name = _tenant(), _database_for("adopt")
-        dropper.append(name)
+        tenant, name = _tenant(), _database(dropper, "adopt")
 
         coll = await mongo_client.collection("payroll", db_name=name)
         await mongo_client.insert_one(coll, {"amount": 1})
 
-        provisioner = MongoDatabaseTenantProvisioner(
-            client=mongo_client,
-            database=lambda _: name,
-            drop_on_deprovision=True,
-        )
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
 
         await provisioner.provision(tenant)
         await provisioner.deprovision(tenant)
