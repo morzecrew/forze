@@ -29,7 +29,7 @@ pytest.importorskip("testcontainers.mongodb")
 from testcontainers.mongodb import MongoDbContainer
 
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import utcnow
 from forze_mongo.adapters.tenant_provisioner import MongoDatabaseTenantProvisioner
 from forze_mongo.kernel.client.client import MongoClient
@@ -582,6 +582,7 @@ class TestOffboardingLock:
                 await _provisioner(mongo_client, name).provision(arriving)
 
         assert caught.value.code == "tenant_offboarding_in_flight"
+        assert caught.value.kind is ExceptionKind.CONCURRENCY
         assert name not in await _database_names(mongo_client)
 
     @pytest.mark.asyncio
@@ -631,6 +632,7 @@ class TestOffboardingLock:
             resume.set()
 
         assert caught.value.code == "tenant_onboarding_lost_its_database"
+        assert caught.value.kind is ExceptionKind.CONCURRENCY
         assert name not in await _database_names(mongo_client)
 
     @pytest.mark.asyncio
@@ -680,6 +682,7 @@ class TestOffboardingLock:
             resume.set()
 
         assert caught.value.code == "tenant_onboarding_lost_its_database"
+        assert caught.value.kind is ExceptionKind.CONCURRENCY
         assert [doc["_id"] for doc in await _markers(mongo_client, name)] == [
             str(newcomer.tenant_id)
         ]
@@ -736,6 +739,7 @@ class TestOffboardingLock:
             await provisioner.deprovision(tenant)
 
         assert caught.value.code == "tenant_offboarding_in_flight"
+        assert caught.value.kind is ExceptionKind.CONCURRENCY
         assert name in await _database_names(mongo_client)
 
         # The refusal left the other holder's lock exactly as it found it: a teardown that

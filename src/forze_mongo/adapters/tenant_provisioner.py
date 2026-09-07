@@ -283,7 +283,11 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         )
 
         if held:
-            raise exc.configuration(
+            # Concurrency rather than configuration, so a caller's retry strategy can treat it
+            # as what it usually is — a teardown that will be finished shortly. The one shape
+            # that will not clear on its own is the orphaned lock, which is why the message
+            # says so rather than leaving a bounded retry to discover it.
+            raise exc.concurrency(
                 f"An offboarding of database {database!r} is already in flight, so this one "
                 "stops rather than running a second dropDatabase beside it. If no teardown is "
                 "actually running, the previous one died holding the lock: remove "
@@ -346,7 +350,7 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         if await self.client.find_one(coll, {"_id": database}, projection={"_id": 1}) is None:
             return
 
-        raise exc.configuration(
+        raise exc.concurrency(
             f"Database {database!r} is being offboarded, so this onboarding stops rather than "
             "writing into a database that is about to be dropped. Retry once the offboarding "
             f"has finished; if none is running, it died holding {{_id: {database!r}}} in "
@@ -376,7 +380,7 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         if await self.client.find_one(coll, {"_id": _marker_id(tenant)}) is not None:
             return
 
-        raise exc.configuration(
+        raise exc.concurrency(
             f"Database {database!r} was dropped while tenant {tenant.tenant_id} was being "
             "onboarded into it, so this onboarding wrote nothing that still exists. Retry it "
             "— an offboarding that has finished no longer blocks anything, and the retry "
