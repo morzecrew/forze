@@ -36,6 +36,8 @@ from forze_mongo.kernel.uri import with_mongo_credentials
 pytestmark = pytest.mark.integration
 
 _MARKER = "_forze_tenants"
+"""Spelled out rather than imported: it is the name written to a live deployment, so a rename
+has to fail here and be decided, not follow the source silently."""
 
 
 def _tenant() -> TenantIdentity:
@@ -45,9 +47,9 @@ def _tenant() -> TenantIdentity:
 def _database(dropper: list[str], prefix: str) -> str:
     """Name a fresh database and register it for removal.
 
-    Unique per call because these tests create real databases outside the client fixture's
-    own, and registered on the way out because a test that refuses a drop — several here do —
-    leaves one behind on purpose.
+    Unique per call because these tests create real databases beside the client fixture's own,
+    and registered as it is named because several tests here end with the database still
+    standing — a refused drop is the assertion.
     """
 
     name = f"forze_tp_{prefix}_{uuid.uuid4().hex[:8]}"
@@ -77,7 +79,7 @@ def _provisioner(
 
 @pytest_asyncio.fixture
 async def dropper(mongo_client: MongoClient) -> AsyncIterator[list[str]]:
-    """Databases to remove afterwards — these tests create real ones outside the fixture's."""
+    """Databases to remove once the test is done; see :func:`_database`."""
 
     created: list[str] = []
 

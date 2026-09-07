@@ -128,9 +128,10 @@ lifecycle = LifecyclePlan.from_steps(
   database becomes visible to an operator listing what is onboarded; and the
   marker records *whose* database it is, which is what lets `deprovision` refuse
   to `dropDatabase` one holding another tenant's data. Teardown is off by
-  default, refuses a static database name outright, and refuses at run time both
-  a database carrying another tenant's marker and one carrying collections it
-  never registered.
+  default and cannot be turned on for a static database name at all — one name
+  for every tenant means offboarding the first destroys the rest. With a
+  per-tenant resolver it still refuses, at the moment of the drop, a database
+  carrying another tenant's marker or collections it never registered.
 - **Rotating credentials use a lease, not a transaction.** The store for
   counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
   across a third-party call, and Mongo offers neither a blocking wait on a document nor

@@ -155,7 +155,15 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
     # ....................... #
 
     async def deprovision(self, tenant: TenantIdentity) -> None:
-        """Drop *tenant*'s database, if that was asked for and the database is only theirs."""
+        """Drop *tenant*'s database, if that was asked for and the database is only theirs.
+
+        Do not call this inside a transaction expecting it to roll back with one. MongoDB does
+        not admit ``dropDatabase`` into a transaction, so the drop commits on its own while the
+        ownership read above joins the ambient session — an offboarding that aborted afterwards
+        would have kept the tenant record and destroyed the data under it. The shipped
+        :class:`~forze_identity.tenancy.adapters.management.TenantManagementAdapter` calls it
+        outside one.
+        """
 
         if not self.drop_on_deprovision:
             return
