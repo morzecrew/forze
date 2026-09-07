@@ -242,12 +242,11 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         **Not mutual exclusion, and deliberately less.** Only the teardown writes the lock;
         :meth:`provision` writes its marker and then reads two things — this lock, and back
         the marker it just wrote. Suppose a drop destroyed the marker of an onboarding that
-        returned successfully anyway. Reading its marker back and finding it means that read
-        came before the drop, so the lock was still held then, so the onboarding's *earlier*
-        lock read was also before the release. Finding no lock at a moment before the release
-        therefore means before the write, so the marker was in place before the lock, and the
-        ownership read — which follows the lock — must have seen it and refused. No drop
-        happened, contradicting the premise.
+        returned successfully anyway. Finding that marker on the way out puts the marker read
+        before the drop, and the lock read before that, so the lock read happened before the
+        release. A lock read that finds nothing before the release must have run before the
+        write — so the marker was in place before the lock, and the ownership read, which
+        follows the lock, saw it and refused. No drop happened, contradicting the premise.
 
         Neither read is redundant, and the second is the one an argument gets wrong first.
         "No lock" has two readings: not started, or already finished. An onboarding that wrote
@@ -255,11 +254,11 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         lock read on the second reading, having had its marker destroyed in between — which
         only reading the marker back can catch.
 
-        Their *order* is load-bearing too, for the mirror of that reason. Marker first would
-        let an onboarding interrupted between the reads find its marker intact and then find
-        the lock already gone, concluding exactly what this pair exists to refuse. Lock first
-        means whatever it saw was true while the teardown still held the lock, so a later
-        absence cannot be read as an absence all along.
+        Their *order* is load-bearing too, and it is the step the argument above turns on.
+        Reading the lock first is what puts its answer before the marker read, which is what
+        the surviving marker then bounds before the release. Marker first inverts that: an
+        onboarding interrupted between the two finds its marker intact, then finds a lock
+        already released, and concludes exactly what the pair exists to refuse.
 
         What that buys over locking both sides is that onboarding, the frequent operation,
         never contends: concurrent onboardings of one tenant still converge on the server, and
