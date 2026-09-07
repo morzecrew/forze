@@ -196,6 +196,31 @@ class _StallsAfterTheMarkerWrite(_Wraps):
         return result
 
 
+class _StallsAfterTheFirstRead(_Wraps):
+    """Holds an onboarding open between its two reads, and lets the rest through.
+
+    Which read comes first is not arbitrary, and nothing else here can tell the two orders
+    apart: both refuse an onboarding that is merely *inside* a teardown's window. They differ
+    only for one that is interrupted between the reads while the teardown finishes.
+    """
+
+    def __init__(self, inner: MongoClient, read: asyncio.Event, resume: asyncio.Event) -> None:
+        super().__init__(inner)
+        self._read = read
+        self._resume = resume
+        self._stalled = False
+
+    async def find_one(self, *args: Any, **kwargs: Any) -> Any:
+        found = await self._inner.find_one(*args, **kwargs)
+
+        if not self._stalled:
+            self._stalled = True
+            self._read.set()
+            await self._resume.wait()
+
+        return found
+
+
 class _CannotRelease(_Wraps):
     """A client whose deletes fail, so the lock survives the teardown that took it."""
 
@@ -633,6 +658,52 @@ class TestOffboardingLock:
 
         assert caught.value.code == "tenant_onboarding_lost_its_database"
         assert caught.value.kind is ExceptionKind.CONCURRENCY
+        assert name not in await _database_names(mongo_client)
+
+    @pytest.mark.asyncio
+    async def test_the_lock_is_read_before_the_marker_is_read_back(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The two reads are ordered, and the wrong order passes every other test here.
+
+        Reading the marker first and the lock second, an onboarding interrupted between them
+        for the length of a teardown sees its marker still present, then sees the lock already
+        released, and calls that success — the exact failure both reads exist to prevent. The
+        order that holds is lock first: whatever it saw there was true while the teardown was
+        still holding it, so a later "no lock" cannot be mistaken for "never locked".
+
+        Driven by stalling the onboarding after its first read, which is the only place the
+        two orders behave differently at all.
+        """
+
+        leaving, arriving, name = _tenant(), _tenant(), _database(dropper, "readorder")
+        read, resume = asyncio.Event(), asyncio.Event()
+
+        await _provisioner(mongo_client, name).provision(leaving)
+
+        interrupted = _provisioner(
+            cast(MongoClient, _StallsAfterTheFirstRead(mongo_client, read, resume)),
+            name,
+        )
+        onboarding: asyncio.Task[None] | None = None
+
+        try:
+            async with _teardown_stalled_after_its_read(mongo_client, leaving, name):
+                onboarding = asyncio.create_task(interrupted.provision(arriving))
+                await asyncio.wait_for(read.wait(), timeout=10)
+
+            with pytest.raises(CoreException) as caught:
+                resume.set()
+                await asyncio.wait_for(onboarding, timeout=10)
+
+        finally:
+            resume.set()
+
+        # The lock, read while the teardown still held it — not the marker, which was still
+        # sitting there untouched at that moment and says nothing about what came next.
+        assert caught.value.code == "tenant_offboarding_in_flight"
         assert name not in await _database_names(mongo_client)
 
     @pytest.mark.asyncio

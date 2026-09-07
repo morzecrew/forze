@@ -188,9 +188,12 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
             ],
         )
 
-        # Both reads come after the write, and that ordering is the whole protocol: see
-        # :meth:`_offboarding_lock`. Checking before writing would leave the marker landing in
-        # a gap the teardown has already read past.
+        # Both reads come after the write, and the lock before the marker. That ordering is
+        # the whole protocol — see :meth:`_offboarding_lock` — and neither half of it is
+        # cosmetic. Reading before writing leaves the marker landing in a gap the teardown has
+        # already read past; reading the marker first lets an onboarding interrupted between
+        # the two see its marker intact and then see a lock already released, which is the
+        # very conclusion the pair exists to refuse.
         await self._refuse_an_offboarding_in_flight(name)
         await self._refuse_an_onboarding_that_lost_its_database(coll, tenant, database=name)
 
@@ -251,6 +254,12 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         its marker while a teardown sat between its ownership read and its drop passes the
         lock read on the second reading, having had its marker destroyed in between — which
         only reading the marker back can catch.
+
+        Their *order* is load-bearing too, for the mirror of that reason. Marker first would
+        let an onboarding interrupted between the reads find its marker intact and then find
+        the lock already gone, concluding exactly what this pair exists to refuse. Lock first
+        means whatever it saw was true while the teardown still held the lock, so a later
+        absence cannot be read as an absence all along.
 
         What that buys over locking both sides is that onboarding, the frequent operation,
         never contends: concurrent onboardings of one tenant still converge on the server, and
