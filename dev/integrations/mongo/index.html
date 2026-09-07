@@ -6423,7 +6423,9 @@ models follows.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>You own the collections and indexes.</strong> Forze reads existing collections; it
-  doesn't create or index them.</li>
+  doesn't create or index them. The one exception is tenant provisioning below,
+  which writes a marker into a tenant's own database — and even that creates no
+  index, because the field it keys on is <code>_id</code>.</li>
 <li><strong>Transactions and outbox need a replica set</strong> — a standalone <code>mongod</code> can't
   open multi-document transactions. The inbox marks messages without one, but
   the exactly-once guarantee (mark rolls back with the handler) only exists
@@ -6458,6 +6460,20 @@ models follows.</p>
   its result are one statement — and they come back on the next scan once the
   lease expires, so size <code>lease_for</code> for how long you can wait, not just for how
   long a body runs.</li>
+<li><strong>Tenant provisioning writes a marker, because Mongo has no <code>CREATE SCHEMA</code>.</strong>
+  A database appears on its first write, so there is nothing an onboarding
+  <em>has</em> to run for a tenant's routes to work. <code>MongoDatabaseTenantProvisioner</code>
+  writes one document into the tenant's own database anyway, and that buys three
+  things the first request cannot: a connection user missing rights on the
+  tenant's database fails the onboarding rather than a customer's request; the
+  database becomes visible to an operator listing what is onboarded; and the
+  marker records <em>whose</em> database it is, which is what lets <code>deprovision</code> refuse
+  to <code>dropDatabase</code> one holding another tenant's data. Teardown is off by
+  default and cannot be turned on for a static database name at all — one name
+  for every tenant means offboarding the first destroys the rest. With a
+  per-tenant resolver it still refuses, at the moment of the drop, a database
+  carrying another tenant's marker, one whose marker it did not write itself, or
+  collections it never registered.</li>
 <li><strong>Rotating credentials use a lease, not a transaction.</strong> The store for
   counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
   across a third-party call, and Mongo offers neither a blocking wait on a document nor

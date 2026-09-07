@@ -6576,6 +6576,12 @@ default) and provision out of band. Forze includes
 <code>ObjectStorageTenantProvisioner</code> (ensures a bucket) and, from <code>forze_postgres</code>,
 <code>PostgresSchemaTenantProvisioner</code> (<code>CREATE SCHEMA IF NOT EXISTS</code>) — teardown is
 opt-in wherever it would destroy data.</p>
+<p>MongoDB has no schema to create — a database exists once something is written to
+it — so <code>MongoDatabaseTenantProvisioner</code> (<code>forze_mongo</code>) writes a marker document
+into the tenant's own database instead. The write proves at onboarding that the
+connection can reach the tenant's container, and the marker records who is in
+that container, so an offboarding that drops the database can refuse when the
+name resolves somewhere another tenant lives.</p>
 <p>Isolating tenants by data boundary pairs naturally with isolating them by key —
 sealing each tenant's data under its own keys is <a href="../encryption/">Encryption</a>.</p>
 
