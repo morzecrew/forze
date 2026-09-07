@@ -17,7 +17,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 import pytest
@@ -147,22 +147,25 @@ async def _teardown_stalled_after_its_read(
         await asyncio.wait_for(teardown, timeout=10)
 
 
-class _StallsTheOwnershipRead:
-    """A client that holds the teardown open at the exact moment the window used to be.
+class _Wraps:
+    """A real client with one call changed, so a test drives the interleaving rather than
+    hoping a scheduler produces it. Everything not overridden is the server's own behaviour."""
 
-    Everything is delegated to the real client except the ownership read, which signals once
-    it has answered and then waits — so a test can drive an onboarding into the gap between
-    that read and the ``dropDatabase`` deliberately, rather than hoping a scheduler produces
-    it.
-    """
-
-    def __init__(self, inner: MongoClient, read: asyncio.Event, resume: asyncio.Event) -> None:
+    def __init__(self, inner: MongoClient) -> None:
         self._inner = inner
-        self._read = read
-        self._resume = resume
 
     def __getattr__(self, item: str) -> Any:
         return getattr(self._inner, item)
+
+
+class _StallsTheOwnershipRead(_Wraps):
+    """Holds a teardown open where its window is: after the read that authorises the drop and
+    before the drop itself."""
+
+    def __init__(self, inner: MongoClient, read: asyncio.Event, resume: asyncio.Event) -> None:
+        super().__init__(inner)
+        self._read = read
+        self._resume = resume
 
     async def find_many(self, *args: Any, **kwargs: Any) -> list[Any]:
         found = await self._inner.find_many(*args, **kwargs)
@@ -172,14 +175,29 @@ class _StallsTheOwnershipRead:
         return found
 
 
-class _CannotRelease:
+class _StallsAfterTheMarkerWrite(_Wraps):
+    """Holds an onboarding open between writing its marker and looking at anything.
+
+    The other half of the window, and the one an ordering argument gets wrong first: an
+    onboarding can read the lock *after* a teardown has already released it, having written
+    its marker while that teardown was mid-drop.
+    """
+
+    def __init__(self, inner: MongoClient, wrote: asyncio.Event, resume: asyncio.Event) -> None:
+        super().__init__(inner)
+        self._wrote = wrote
+        self._resume = resume
+
+    async def update_one_upsert(self, *args: Any, **kwargs: Any) -> Any:
+        result = await self._inner.update_one_upsert(*args, **kwargs)
+        self._wrote.set()
+        await self._resume.wait()
+
+        return result
+
+
+class _CannotRelease(_Wraps):
     """A client whose deletes fail, so the lock survives the teardown that took it."""
-
-    def __init__(self, inner: MongoClient) -> None:
-        self._inner = inner
-
-    def __getattr__(self, item: str) -> Any:
-        return getattr(self._inner, item)
 
     async def delete_one(self, *args: Any, **kwargs: Any) -> int:
         raise RuntimeError("the release could not be written")
@@ -567,6 +585,106 @@ class TestOffboardingLock:
         assert name not in await _database_names(mongo_client)
 
     @pytest.mark.asyncio
+    async def test_an_onboarding_that_the_whole_teardown_outran_is_refused(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The interleaving a lock read alone does not catch.
+
+        Reading the lock and finding none has two readings, not one: the teardown has not
+        started, or it has already finished. In the second, the onboarding wrote its marker
+        while the teardown was between its ownership read and its drop — so the drop took the
+        marker, the release cleared the lock, and only then did the onboarding look. It would
+        report success having written nothing that still exists.
+
+        So the onboarding also reads back the marker it just wrote. Both checks are needed and
+        neither is redundant: this ordering passes the lock read, and an onboarding that lands
+        squarely inside the window fails the lock read while its marker is still there.
+        """
+
+        leaving, arriving, name = _tenant(), _tenant(), _database(dropper, "outran")
+        wrote, resume = asyncio.Event(), asyncio.Event()
+
+        await _provisioner(mongo_client, name).provision(leaving)
+
+        slow = _provisioner(
+            cast(MongoClient, _StallsAfterTheMarkerWrite(mongo_client, wrote, resume)),
+            name,
+        )
+        onboarding: asyncio.Task[None] | None = None
+
+        try:
+            async with _teardown_stalled_after_its_read(mongo_client, leaving, name):
+                # Started inside the teardown's window, so its ownership read has already been
+                # answered and cannot see what this onboarding is about to write.
+                onboarding = asyncio.create_task(slow.provision(arriving))
+                await asyncio.wait_for(wrote.wait(), timeout=10)
+
+            # The teardown has now dropped the database and released its lock, and only now
+            # does the onboarding get to look at either.
+            with pytest.raises(CoreException) as caught:
+                resume.set()
+                await asyncio.wait_for(onboarding, timeout=10)
+
+        finally:
+            resume.set()
+
+        assert caught.value.code == "tenant_onboarding_lost_its_database"
+        assert name not in await _database_names(mongo_client)
+
+    @pytest.mark.asyncio
+    async def test_an_onboarding_looks_for_its_own_marker_not_any_marker(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """ "Is the database still there" is the wrong question; "is *my* marker still there"
+        is the right one, and under a colliding resolver they come apart.
+
+        A teardown drops the database, a third tenant is onboarded into the same name and
+        recreates it, and only then does the outrun onboarding look. A read that asked whether
+        the collection held anything would find that newcomer's marker and report success for
+        a tenant whose own marker went with the drop.
+        """
+
+        leaving, arriving, newcomer, name = (
+            _tenant(),
+            _tenant(),
+            _tenant(),
+            _database(dropper, "notmine"),
+        )
+        wrote, resume = asyncio.Event(), asyncio.Event()
+
+        await _provisioner(mongo_client, name).provision(leaving)
+
+        slow = _provisioner(
+            cast(MongoClient, _StallsAfterTheMarkerWrite(mongo_client, wrote, resume)),
+            name,
+        )
+        onboarding: asyncio.Task[None] | None = None
+
+        try:
+            async with _teardown_stalled_after_its_read(mongo_client, leaving, name):
+                onboarding = asyncio.create_task(slow.provision(arriving))
+                await asyncio.wait_for(wrote.wait(), timeout=10)
+
+            # The database is gone and back again under somebody else's name.
+            await _provisioner(mongo_client, name).provision(newcomer)
+
+            with pytest.raises(CoreException) as caught:
+                resume.set()
+                await asyncio.wait_for(onboarding, timeout=10)
+
+        finally:
+            resume.set()
+
+        assert caught.value.code == "tenant_onboarding_lost_its_database"
+        assert [doc["_id"] for doc in await _markers(mongo_client, name)] == [
+            str(newcomer.tenant_id)
+        ]
+
+    @pytest.mark.asyncio
     async def test_the_lock_is_gone_once_the_teardown_is(
         self,
         mongo_client: MongoClient,
@@ -604,7 +722,15 @@ class TestOffboardingLock:
         await provisioner.provision(tenant)
 
         locks = await mongo_client.collection(_LOCK)
-        await mongo_client.insert_one(locks, {"_id": name, "tenant_id": "someone", "at": utcnow()})
+        await mongo_client.insert_one(
+            locks,
+            {"_id": name, "tenant_id": "someone", "at": utcnow() - timedelta(minutes=5)},
+        )
+
+        # Read back rather than compared to what went in: a BSON date keeps milliseconds and
+        # `utcnow()` has microseconds, so the value the server holds is the only one that can
+        # be compared to itself.
+        before = await _locks(mongo_client)
 
         with pytest.raises(CoreException) as caught:
             await provisioner.deprovision(tenant)
@@ -614,7 +740,11 @@ class TestOffboardingLock:
 
         # The refusal left the other holder's lock exactly as it found it: a teardown that
         # released a lock it never took would open the window for whoever does hold it.
-        assert [doc["tenant_id"] for doc in await _locks(mongo_client)] == ["someone"]
+        # Down to the stamp: how long the lock has been held is what an operator judges a
+        # stuck one by, and a refusal that quietly restamped it would reset that clock every
+        # time somebody retried the offboarding.
+        assert await _locks(mongo_client) == before
+        assert before[0]["tenant_id"] == "someone"
 
     @pytest.mark.asyncio
     async def test_the_lock_records_who_is_leaving_and_when(

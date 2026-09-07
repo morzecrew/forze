@@ -26,6 +26,21 @@ from forze_mongo import MongoDatabaseTenantProvisioner, RoutedMongoClient
 _TENANT = TenantIdentity(tenant_id=uuid4())
 
 
+def _healthy_client() -> AsyncMock:
+    """A client answering ``provision``'s two reads the way an uncontended server would.
+
+    They are answered in order — no offboarding lock, then the marker read back — because
+    ``provision`` reads both and a single blanket answer makes one of them a lie: ``None``
+    everywhere reads as "the database was dropped underneath us", which is a real refusal and
+    not the state these tests are describing.
+    """
+
+    client = AsyncMock(name="client")
+    client.find_one.side_effect = [None, {"_id": str(_TENANT.tenant_id)}]
+
+    return client
+
+
 def _provisioner(**overrides: Any) -> MongoDatabaseTenantProvisioner:
     options: dict[str, Any] = {
         "client": AsyncMock(name="client"),
@@ -104,8 +119,7 @@ class TestResolvedName:
         the resolver must be fed the argument rather than anything ambient."""
 
         seen: list[UUID | None] = []
-        client = AsyncMock(name="client")
-        client.find_one.return_value = None  # no offboarding in flight
+        client = _healthy_client()
 
         async def _resolve(tid: UUID | None) -> str:
             seen.append(tid)
@@ -145,7 +159,10 @@ class TestLockLocation:
         client = AsyncMock(name="client")
         client.db.side_effect = CoreException.configuration("Mongo database name is not configured")
 
-        with pytest.raises(CoreException, match="lock_database"):
+        # Matched on the sentence, not the bare word: the error code is
+        # `tenant_lock_database_unresolved`, so a message saying nothing at all would still
+        # contain "lock_database" and satisfy a looser assertion.
+        with pytest.raises(CoreException, match="Set lock_database"):
             await _provisioner(client=client).provision(_TENANT)
 
     @pytest.mark.asyncio
@@ -153,8 +170,7 @@ class TestLockLocation:
         """Not the tenant's: a collection inside the database a teardown drops goes with the
         drop, so the lock has to be resolved somewhere else even on the onboarding path."""
 
-        client = AsyncMock(name="client")
-        client.find_one.return_value = None
+        client = _healthy_client()
 
         await _provisioner(client=client, lock_database="ops").provision(_TENANT)
 

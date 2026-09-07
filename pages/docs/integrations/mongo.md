@@ -140,10 +140,14 @@ lifecycle = LifecyclePlan.from_steps(
   the transaction; Mongo has nothing that spans a `dropDatabase`, so the exclusion
   is a document in `_forze_tenant_offboarding` — kept in the client's own database
   by default (`lock_database`), because anything inside the tenant's database goes
-  with the drop. Only teardowns take it. Onboarding writes its marker and then
-  *reads* the lock, which is enough to make the pair safe and leaves the frequent
-  operation uncontended; an onboarding that finds a teardown in flight refuses and
-  is retried. Nothing expires the lock: a timeout short enough to be useful could
+  with the drop. Only teardowns take it, which leaves the frequent operation
+  uncontended: onboarding writes its marker and then *reads* twice — the lock, and
+  back the marker it just wrote. Both, because "no lock" has two readings. A
+  teardown that has not started is one; a teardown that already finished is the
+  other, and an onboarding slow enough to write its marker inside a teardown's
+  window and look afterwards passes the lock read having had its marker dropped in
+  between. Either refusal is a failed onboarding, which is retried.
+  Nothing expires the lock: a timeout short enough to be useful could
   fire under a live `dropDatabase` and reopen the race silently, so a teardown
   that dies wedges that one database name until an operator removes the document —
   which every refusal names. A wedged onboarding is recoverable; a destroyed

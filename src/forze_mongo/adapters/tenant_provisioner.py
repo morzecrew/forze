@@ -188,10 +188,11 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
             ],
         )
 
-        # After the write, never before, and that order is the whole protocol: see
-        # :meth:`_offboarding_lock`. A check first would leave the marker landing in the gap
-        # a teardown has already read past.
+        # Both reads come after the write, and that ordering is the whole protocol: see
+        # :meth:`_offboarding_lock`. Checking before writing would leave the marker landing in
+        # a gap the teardown has already read past.
         await self._refuse_an_offboarding_in_flight(name)
+        await self._refuse_an_onboarding_that_lost_its_database(coll, tenant, database=name)
 
     # ....................... #
 
@@ -236,13 +237,20 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         being dropped because anything inside it goes with the drop.
 
         **Not mutual exclusion, and deliberately less.** Only the teardown writes the lock;
-        :meth:`provision` writes its marker and then *reads* it. That is enough, and the
-        argument is short. Suppose a drop destroyed the marker of an onboarding that returned
-        successfully. Returning successfully means the onboarding read no lock, so it read
-        before this one was written; it wrote its marker before that read; and this lock stays
-        written until after the drop. So the marker was there before the lock, and the
-        ownership read — which happens after the lock — must have seen it and refused. No drop
+        :meth:`provision` writes its marker and then reads two things — this lock, and back
+        the marker it just wrote. Suppose a drop destroyed the marker of an onboarding that
+        returned successfully anyway. Reading its marker back and finding it means that read
+        came before the drop, so the lock was still held then, so the onboarding's *earlier*
+        lock read was also before the release. Finding no lock at a moment before the release
+        therefore means before the write, so the marker was in place before the lock, and the
+        ownership read — which follows the lock — must have seen it and refused. No drop
         happened, contradicting the premise.
+
+        Neither read is redundant, and the second is the one an argument gets wrong first.
+        "No lock" has two readings: not started, or already finished. An onboarding that wrote
+        its marker while a teardown sat between its ownership read and its drop passes the
+        lock read on the second reading, having had its marker destroyed in between — which
+        only reading the marker back can catch.
 
         What that buys over locking both sides is that onboarding, the frequent operation,
         never contends: concurrent onboardings of one tenant still converge on the server, and
@@ -345,6 +353,36 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
             f"{lock}, which has to be removed by hand.",
             code="tenant_offboarding_in_flight",
             details={"database": database, "lock": lock},
+        )
+
+    # ....................... #
+
+    async def _refuse_an_onboarding_that_lost_its_database(
+        self,
+        coll: AsyncCollection[JsonDict],
+        tenant: TenantIdentity,
+        *,
+        database: str,
+    ) -> None:
+        """Refuse an onboarding whose marker a finished teardown already took.
+
+        The lock check answers "is a teardown running?", which is not the same question as
+        "did one run?" — an onboarding slow enough to write its marker inside a teardown's
+        window and look at the lock after the release passes that check having written into a
+        database that no longer exists. Reading the marker back is what closes it; see
+        :meth:`_offboarding_lock` for why both are needed.
+        """
+
+        if await self.client.find_one(coll, {"_id": _marker_id(tenant)}) is not None:
+            return
+
+        raise exc.configuration(
+            f"Database {database!r} was dropped while tenant {tenant.tenant_id} was being "
+            "onboarded into it, so this onboarding wrote nothing that still exists. Retry it "
+            "— an offboarding that has finished no longer blocks anything, and the retry "
+            "recreates the database.",
+            code="tenant_onboarding_lost_its_database",
+            details={"database": database},
         )
 
     # ....................... #
