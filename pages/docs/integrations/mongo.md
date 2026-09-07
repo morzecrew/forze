@@ -131,7 +131,8 @@ lifecycle = LifecyclePlan.from_steps(
   default and cannot be turned on for a static database name at all — one name
   for every tenant means offboarding the first destroys the rest. With a
   per-tenant resolver it still refuses, at the moment of the drop, a database
-  carrying another tenant's marker or collections it never registered.
+  carrying another tenant's marker, one whose marker it did not write itself, or
+  collections it never registered.
 - **Rotating credentials use a lease, not a transaction.** The store for
   counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
   across a third-party call, and Mongo offers neither a blocking wait on a document nor

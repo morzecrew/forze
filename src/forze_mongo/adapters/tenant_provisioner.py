@@ -147,9 +147,14 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         await self.client.update_one_upsert(
             coll,
             {"_id": _marker_id(tenant)},
-            # Insert-only: a re-provision must not restamp `provisioned_at`, which is the one
-            # field an operator reads to answer when a tenant was onboarded.
-            {"$setOnInsert": {"tenant_id": str(tenant.tenant_id), "provisioned_at": utcnow()}},
+            {
+                # Written on every pass, not just the first, so a marker whose identity was
+                # damaged is repaired by the re-provision the teardown's refusal asks for.
+                "$set": {"tenant_id": str(tenant.tenant_id)},
+                # Insert-only, because this is the one field an operator reads to answer when
+                # a tenant was onboarded, and a re-run must not move that answer.
+                "$setOnInsert": {"provisioned_at": utcnow()},
+            },
         )
 
     # ....................... #
@@ -169,7 +174,7 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
             return
 
         name = await self._database_for(tenant)
-        await self._refuse_database_shared_with_others(tenant, database=name)
+        await self._refuse_a_database_not_solely_this_tenants(tenant, database=name)
 
         database = await self.client.db(name)
         await database.command("dropDatabase")
@@ -207,7 +212,7 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
 
     # ....................... #
 
-    async def _refuse_database_shared_with_others(
+    async def _refuse_a_database_not_solely_this_tenants(
         self,
         tenant: TenantIdentity,
         *,
@@ -215,14 +220,20 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
     ) -> None:
         """Refuse to drop a database that is not this tenant's alone.
 
-        Two refusals with one read, because both are answers to *whose data is under this
-        name?* and both are wrong to guess at:
+        Three refusals off one read, because all three are answers to *whose data is under
+        this name?* and all three are wrong to guess at:
 
         - **Another tenant's marker is there.** The resolver is constant, or two tenants were
           onboarded onto one name; either way the drop would take a live tenant's data with
           it. This is where a resolver that only looks per-tenant is finally caught, and it is
           caught by the server rather than by inspecting the resolver — which cannot be
           inspected, since the tenant ids do not exist at construction and it may be async.
+        - **A document under this tenant's id that this provisioner did not write.** ``_id``
+          is a name anyone can write, so presence is not recognition: a document missing the
+          identity :meth:`provision` stamps is another program's record or a damaged one, and
+          both readings say the contents are unknown here. Reading it as ownership would be a
+          branch lenient about *missing* state quietly swallowing *corrupt* state, with a
+          ``dropDatabase`` behind it.
         - **No marker at all, but collections exist.** This provisioner never registered the
           database, so nothing here knows what is in it. Dropping on the strength of a name a
           resolver produced is how an unrelated database gets destroyed by a typo.
@@ -244,8 +255,13 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         mine = _marker_id(tenant)
 
         # Two is enough to answer the question: this tenant's marker, plus evidence of one
-        # other. Naming that other one is what makes the refusal actionable.
-        markers = await self.client.find_many(coll, {}, projection={"_id": 1}, limit=2)
+        # thing that is not it. Naming that other thing is what makes the refusal actionable.
+        markers = await self.client.find_many(
+            coll,
+            {},
+            projection={"_id": 1, "tenant_id": 1},
+            limit=2,
+        )
         others = [str(doc["_id"]) for doc in markers if str(doc["_id"]) != mine]
 
         if others:
@@ -260,8 +276,22 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
                 details={"database": database, "also_provisioned_for": others[0]},
             )
 
-        # This tenant's marker and nothing else: the database is theirs, and the drop is what
-        # offboarding asked for.
+        # Reached only with `others` empty, so every marker here is under this tenant's id and
+        # the question left is whether this provisioner is the one that put it there.
+        if any(doc.get("tenant_id") != mine for doc in markers):
+            raise exc.configuration(
+                f"Database {database!r} holds a document under tenant {tenant.tenant_id}'s id "
+                f"in {self.marker_collection!r} that this provisioner did not write — it "
+                "carries no matching tenant_id — so it is another program's record or a "
+                "damaged one, and either way what the database contains is unknown here. "
+                "Look at the document; if the database really is this tenant's, provision() "
+                "restamps the identity and the offboarding then goes through.",
+                code="tenant_marker_unrecognized",
+                details={"database": database, "collection": self.marker_collection},
+            )
+
+        # This tenant's own marker and nothing else: the database is theirs, and the drop is
+        # what offboarding asked for.
         if markers:
             return
 

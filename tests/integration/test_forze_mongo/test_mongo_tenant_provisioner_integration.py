@@ -360,6 +360,65 @@ class TestDeprovision:
         assert await mongo_client.count(coll, {}) == 1
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("planted", [{"tenant_id": "someone-else"}, {}])
+    async def test_a_marker_this_provisioner_did_not_write_is_refused(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+        planted: dict,
+    ) -> None:
+        """The document authorizing the drop has to be recognisable, not merely present.
+
+        ``_id`` alone is a name anyone can write. A document carrying this tenant's id but
+        not this provisioner's fields is either somebody else's record or a corrupted one,
+        and both readings say the same thing: what is in this database is unknown here.
+        Treating an unreadable marker as ownership is how a lenient branch for *missing*
+        state ends up swallowing *corrupt* state — with a ``dropDatabase`` behind it.
+        """
+
+        tenant, name = _tenant(), _database(dropper, "malformed")
+        coll = await mongo_client.collection(_MARKER, db_name=name)
+        await mongo_client.insert_one(coll, {"_id": str(tenant.tenant_id), **planted})
+
+        with pytest.raises(CoreException) as caught:
+            await _provisioner(mongo_client, name, drop_on_deprovision=True).deprovision(tenant)
+
+        assert caught.value.code == "tenant_marker_unrecognized"
+        assert name in await _database_names(mongo_client)
+
+    @pytest.mark.asyncio
+    async def test_a_damaged_marker_is_repaired_by_the_reprovision_the_refusal_asks_for(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The recovery the refusal names has to work, or the refusal strands the database.
+
+        It is not free: ``provision`` writes the identity on every pass rather than only on
+        insert, precisely so a re-run repairs a marker instead of matching it and changing
+        nothing. The onboarding stamp still may not move — that is the other half of the same
+        upsert, and it is checked here too because this is the one call that writes both.
+        """
+
+        tenant, name = _tenant(), _database(dropper, "repair")
+        coll = await mongo_client.collection(_MARKER, db_name=name)
+        await mongo_client.insert_one(
+            coll,
+            {"_id": str(tenant.tenant_id), "tenant_id": "someone-else", "provisioned_at": "old"},
+        )
+
+        provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
+        await provisioner.provision(tenant)
+
+        repaired = (await _markers(mongo_client, name))[0]
+        assert repaired["tenant_id"] == str(tenant.tenant_id)
+        assert repaired["provisioned_at"] == "old"
+
+        await provisioner.deprovision(tenant)
+
+        assert name not in await _database_names(mongo_client)
+
+    @pytest.mark.asyncio
     async def test_the_refused_database_can_be_offboarded_after_provisioning(
         self,
         mongo_client: MongoClient,
