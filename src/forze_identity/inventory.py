@@ -141,7 +141,7 @@ def identity_document_names(
     names: dict[str, None] = {}
 
     for item in known.values() if specs is None else specs:
-        if not isinstance(item, str) and not isinstance(item, DocumentSpec):
+        if not isinstance(item, str) and not isinstance(item, DocumentSpec):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise exc.configuration(
                 f"Expected an identity document spec or name, got {type(item).__name__}; "
                 "unpack groups into the selection (*GROUP_A, *GROUP_B)",

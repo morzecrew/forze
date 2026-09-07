@@ -93,9 +93,7 @@ def assert_pure_module(
     allow = set(allowed)
     forbid = set(forbidden)
 
-    contradictions = sorted(allow & forbid)
-
-    if contradictions:
+    if contradictions := sorted(allow & forbid):
         raise AssertionError(
             f"Purity gate for {mod.__name__!r} allows and forbids the same roots: {contradictions}",
         )
@@ -152,9 +150,11 @@ def _protocol_methods(proto: type) -> list[tuple[str, FunctionType, bool]]:
 
         if isinstance(obj, staticmethod) and inspect.isfunction(obj.__func__):
             members.append((member, obj.__func__, False))
-        elif isinstance(obj, classmethod) and inspect.isfunction(obj.__func__):
+
+        elif isinstance(obj, classmethod) and inspect.isfunction(obj.__func__):  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
             members.append((member, obj.__func__, True))
-        elif inspect.isfunction(obj):
+
+        elif inspect.isfunction(obj):  # pyright: ignore[reportUnknownArgumentType]
             members.append((member, obj, True))
 
     return members
@@ -267,9 +267,7 @@ def assert_scope_first(
                         f"expected {annotation!r}",
                     )
 
-    stale = sorted(excluded - seen_exclusions)
-
-    if stale:
+    if stale := sorted(excluded - seen_exclusions):
         violations.extend(f"exclusion matches no method: {entry!r}" for entry in stale)
 
     if checked == 0 and not violations:
