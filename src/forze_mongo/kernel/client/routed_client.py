@@ -275,7 +275,7 @@ class RoutedMongoClient(DsnRoutedTenantClientBase[MongoClient], MongoClientPort)
         self,
         coll: AsyncCollection[Any],
         flt: Mapping[str, Any],
-        update: Mapping[str, Any],
+        update: MongoUpdate,
     ) -> Any:
         inner = await self._get_client()
         return await inner.update_one_upsert(coll, flt, update)

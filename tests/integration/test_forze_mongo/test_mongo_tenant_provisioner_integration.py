@@ -27,6 +27,7 @@ from testcontainers.mongodb import MongoDbContainer
 
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
+from forze.base.primitives import utcnow
 from forze_mongo.adapters.tenant_provisioner import MongoDatabaseTenantProvisioner
 from forze_mongo.kernel.client.client import MongoClient
 from forze_mongo.kernel.uri import with_mongo_credentials
@@ -360,23 +361,33 @@ class TestDeprovision:
         assert await mongo_client.count(coll, {}) == 1
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("planted", [{"tenant_id": "someone-else"}, {}])
+    @pytest.mark.parametrize("damage", ["foreign_identity", "nothing_but_the_id", "no_stamp"])
     async def test_a_marker_this_provisioner_did_not_write_is_refused(
         self,
         mongo_client: MongoClient,
         dropper: list[str],
-        planted: dict,
+        damage: str,
     ) -> None:
         """The document authorizing the drop has to be recognisable, not merely present.
 
         ``_id`` alone is a name anyone can write. A document carrying this tenant's id but
-        not this provisioner's fields is either somebody else's record or a corrupted one,
-        and both readings say the same thing: what is in this database is unknown here.
+        not the fields ``provision`` writes is either somebody else's record or a corrupted
+        one, and both readings say the same thing: what is in this database is unknown here.
         Treating an unreadable marker as ownership is how a lenient branch for *missing*
         state ends up swallowing *corrupt* state — with a ``dropDatabase`` behind it.
+
+        Every field the marker carries is checked, not the first one: half a marker is not a
+        marker, and a document three-quarters right is likelier to be a collision with
+        something else than a document that shares only its name.
         """
 
         tenant, name = _tenant(), _database(dropper, "malformed")
+        planted: dict[str, object] = {
+            "foreign_identity": {"tenant_id": "someone-else", "provisioned_at": utcnow()},
+            "nothing_but_the_id": {},
+            "no_stamp": {"tenant_id": str(tenant.tenant_id)},
+        }[damage]
+
         coll = await mongo_client.collection(_MARKER, db_name=name)
         await mongo_client.insert_one(coll, {"_id": str(tenant.tenant_id), **planted})
 
@@ -387,24 +398,27 @@ class TestDeprovision:
         assert name in await _database_names(mongo_client)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("stamp", [{"provisioned_at": "old"}, {}])
     async def test_a_damaged_marker_is_repaired_by_the_reprovision_the_refusal_asks_for(
         self,
         mongo_client: MongoClient,
         dropper: list[str],
+        stamp: dict,
     ) -> None:
         """The recovery the refusal names has to work, or the refusal strands the database.
 
-        It is not free: ``provision`` writes the identity on every pass rather than only on
-        insert, precisely so a re-run repairs a marker instead of matching it and changing
-        nothing. The onboarding stamp still may not move — that is the other half of the same
-        upsert, and it is checked here too because this is the one call that writes both.
+        It is what the marker upsert is a pipeline for. The identity is rewritten every pass,
+        so a re-run repairs it rather than matching the document and changing nothing; the
+        onboarding stamp is filled only where it is absent, because a re-run that moved it
+        would erase the answer to when the tenant joined. ``$setOnInsert`` can do the second
+        and not the first, which is why neither field uses it.
         """
 
         tenant, name = _tenant(), _database(dropper, "repair")
         coll = await mongo_client.collection(_MARKER, db_name=name)
         await mongo_client.insert_one(
             coll,
-            {"_id": str(tenant.tenant_id), "tenant_id": "someone-else", "provisioned_at": "old"},
+            {"_id": str(tenant.tenant_id), "tenant_id": "someone-else", **stamp},
         )
 
         provisioner = _provisioner(mongo_client, name, drop_on_deprovision=True)
@@ -412,7 +426,8 @@ class TestDeprovision:
 
         repaired = (await _markers(mongo_client, name))[0]
         assert repaired["tenant_id"] == str(tenant.tenant_id)
-        assert repaired["provisioned_at"] == "old"
+        assert repaired["provisioned_at"] == stamp.get("provisioned_at", repaired["provisioned_at"])
+        assert repaired["provisioned_at"] is not None
 
         await provisioner.deprovision(tenant)
 

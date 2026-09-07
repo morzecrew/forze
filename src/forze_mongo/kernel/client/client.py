@@ -729,7 +729,7 @@ class MongoClient(MongoClientPort):
         self,
         coll: AsyncCollection[Any],
         flt: Mapping[str, Any],
-        update: Mapping[str, Any],
+        update: MongoUpdate,
     ) -> Any:
         """``update_one`` with ``upsert=True``; returns the full driver result (e.g. ``upserted_id``)."""
 

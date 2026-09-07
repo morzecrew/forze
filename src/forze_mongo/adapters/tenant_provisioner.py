@@ -147,14 +147,21 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         await self.client.update_one_upsert(
             coll,
             {"_id": _marker_id(tenant)},
-            {
-                # Written on every pass, not just the first, so a marker whose identity was
-                # damaged is repaired by the re-provision the teardown's refusal asks for.
-                "$set": {"tenant_id": str(tenant.tenant_id)},
-                # Insert-only, because this is the one field an operator reads to answer when
-                # a tenant was onboarded, and a re-run must not move that answer.
-                "$setOnInsert": {"provisioned_at": utcnow()},
-            },
+            # A pipeline rather than `$set` beside `$setOnInsert`, because the two fields want
+            # opposite things and `$setOnInsert` can only express one of them. The identity is
+            # rewritten on every pass, so the re-provision the teardown's refusal asks for
+            # repairs a damaged marker; the onboarding stamp is filled where it is missing and
+            # never moved where it is not, since it is the one field an operator reads to
+            # answer when a tenant joined. On an insert the pipeline runs against no document,
+            # so `$ifNull` yields the stamp below.
+            [
+                {
+                    "$set": {
+                        "tenant_id": str(tenant.tenant_id),
+                        "provisioned_at": {"$ifNull": ["$provisioned_at", utcnow()]},
+                    }
+                }
+            ],
         )
 
     # ....................... #
@@ -229,11 +236,13 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
           caught by the server rather than by inspecting the resolver — which cannot be
           inspected, since the tenant ids do not exist at construction and it may be async.
         - **A document under this tenant's id that this provisioner did not write.** ``_id``
-          is a name anyone can write, so presence is not recognition: a document missing the
-          identity :meth:`provision` stamps is another program's record or a damaged one, and
-          both readings say the contents are unknown here. Reading it as ownership would be a
-          branch lenient about *missing* state quietly swallowing *corrupt* state, with a
-          ``dropDatabase`` behind it.
+          is a name anyone can write, so presence is not recognition: a document missing
+          either field :meth:`provision` writes is another program's record or a damaged one,
+          and both readings say the contents are unknown here. Reading it as ownership would
+          be a branch lenient about *missing* state quietly swallowing *corrupt* state, with a
+          ``dropDatabase`` behind it. Both fields, not the first one — half a marker is not a
+          marker, and a document nearly right is likelier to be a collision than one sharing
+          only its name.
         - **No marker at all, but collections exist.** This provisioner never registered the
           database, so nothing here knows what is in it. Dropping on the strength of a name a
           resolver produced is how an unrelated database gets destroyed by a typo.
@@ -259,7 +268,7 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         markers = await self.client.find_many(
             coll,
             {},
-            projection={"_id": 1, "tenant_id": 1},
+            projection={"_id": 1, "tenant_id": 1, "provisioned_at": 1},
             limit=2,
         )
         others = [str(doc["_id"]) for doc in markers if str(doc["_id"]) != mine]
@@ -278,14 +287,17 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
 
         # Reached only with `others` empty, so every marker here is under this tenant's id and
         # the question left is whether this provisioner is the one that put it there.
-        if any(doc.get("tenant_id") != mine for doc in markers):
+        if any(
+            doc.get("tenant_id") != mine or doc.get("provisioned_at") is None for doc in markers
+        ):
             raise exc.configuration(
                 f"Database {database!r} holds a document under tenant {tenant.tenant_id}'s id "
-                f"in {self.marker_collection!r} that this provisioner did not write — it "
-                "carries no matching tenant_id — so it is another program's record or a "
-                "damaged one, and either way what the database contains is unknown here. "
-                "Look at the document; if the database really is this tenant's, provision() "
-                "restamps the identity and the offboarding then goes through.",
+                f"in {self.marker_collection!r} that this provisioner did not write — it is "
+                "missing the matching tenant_id, the onboarding stamp, or both — so it is "
+                "another program's record or a damaged one, and either way what the database "
+                "contains is unknown here. Look at the document; if the database really is "
+                "this tenant's, provision() completes the marker and the offboarding then "
+                "goes through.",
                 code="tenant_marker_unrecognized",
                 details={"database": database, "collection": self.marker_collection},
             )
