@@ -42,6 +42,7 @@ from contextlib import asynccontextmanager
 from typing import Final, final
 
 import attrs
+from pymongo import ReadPreference
 from pymongo.asynchronous.collection import AsyncCollection
 
 from forze.application.contracts.resolution import (
@@ -52,7 +53,7 @@ from forze.application.contracts.tenancy import TenantIdentity, TenantProvisione
 from forze.application.contracts.tenancy.routed_client_base import RoutedTenantClientBase
 from forze.base.exceptions import exc
 from forze.base.logging import get_logger
-from forze.base.primitives import JsonDict, utcnow
+from forze.base.primitives import JsonDict, utcnow, uuid7
 
 from ..kernel.client import MongoClientPort
 from ..kernel.relation import resolve_mongo_named_resource
@@ -69,6 +70,21 @@ _SYSTEM_DATABASES: Final = frozenset({"admin", "config", "local"})
 """Databases MongoDB owns. Dropping any of them takes the deployment with it."""
 
 log = get_logger(__name__)
+
+
+@final
+@attrs.define(slots=True)
+class _Teardown:
+    """What the teardown tells its lock on the way out.
+
+    Only whether the drop was *reached*, because that is what decides who owns the database's
+    state afterwards. A teardown that failed before issuing the drop knows the database is
+    untouched and can release; one that failed at or after the drop knows nothing — the server
+    may have accepted a command whose answer never came back — and must not hand the next
+    onboarding a database a drop is still working through.
+    """
+
+    drop_attempted: bool = False
 
 
 @final
@@ -155,6 +171,22 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
                 details={"database": repr(self.database)},
             )
 
+        # `None` is how "the client's own database" is spelled; `""` is somebody having tried
+        # to say something and failed. Left alone it reads as the former, quietly putting the
+        # lock somewhere nobody chose — and the driver would do the same with the collection.
+        for field, value in (
+            ("lock_database", self.lock_database),
+            ("lock_collection", self.lock_collection),
+        ):
+            if value is not None and not value.strip():
+                raise exc.configuration(
+                    f"{field} is empty. Leave lock_database unset to keep the offboarding "
+                    "lock in the client's own database, or name one; an empty string is not "
+                    "either of those and would be read as the first.",
+                    code="tenant_lock_location_blank",
+                    details={"field": field},
+                )
+
     # ....................... #
 
     async def provision(self, tenant: TenantIdentity) -> None:
@@ -215,10 +247,11 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
 
         name = await self._database_for(tenant)
 
-        async with self._offboarding_lock(tenant, database=name):
+        async with self._offboarding_lock(tenant, database=name) as teardown:
             await self._refuse_a_database_not_solely_this_tenants(tenant, database=name)
 
             database = await self.client.db(name)
+            teardown.drop_attempted = True
             await database.command("dropDatabase")
 
     # ....................... #
@@ -229,7 +262,7 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         tenant: TenantIdentity,
         *,
         database: str,
-    ) -> AsyncIterator[None]:
+    ) -> AsyncIterator[_Teardown]:
         """Hold a teardown of *database* open, so no onboarding can finish underneath it.
 
         The ownership read that authorises the drop goes stale the instant it returns: an
@@ -273,6 +306,13 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         until an operator removes the document, and every refusal names it. Wedged onboarding
         is recoverable; a destroyed tenant is not.
 
+        Because that recovery is a human deleting a row, the release is fenced on a token
+        minted per acquisition: a holder that was merely slow, declared dead and cleared by
+        hand, comes back to delete nothing rather than to delete its successor's lock. And a
+        teardown that failed at or after the drop keeps its lock rather than releasing it — an
+        ambiguous ``dropDatabase`` may still be running on the server, and handing the name
+        back would let an onboarding write into a database that is still being deleted.
+
         One assumption the argument rests on: these reads see prior writes, which holds for
         the primary and not for a client pointed at secondaries. An admin connection reading
         stale catalogue state would be misreading more than this lock.
@@ -280,13 +320,19 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
 
         coll, lock = await self._lock_target(database)
 
+        # A token per acquisition, because the release is fenced on it. Without one, a holder
+        # that stalled long enough to be declared dead and cleared by hand would come back and
+        # delete whatever lock had replaced it — leaving the window open under a teardown that
+        # did nothing wrong.
+        owner = str(uuid7())
+
         # Insert-only, so the answer is "did it already exist?" rather than "did I win a
         # write?": a matched document is a teardown already in flight. Concurrent claims race
         # on `_id`, which the server resolves — the loser matches and reports 1.
         held = await self.client.update_one(
             coll,
             {"_id": database},
-            {"$setOnInsert": {"tenant_id": str(tenant.tenant_id), "at": utcnow()}},
+            {"$setOnInsert": {"tenant_id": str(tenant.tenant_id), "at": utcnow(), "owner": owner}},
             upsert=True,
         )
 
@@ -299,48 +345,87 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
                 f"An offboarding of database {database!r} is already in flight, so this one "
                 "stops rather than running a second dropDatabase beside it. If no teardown is "
                 "actually running, the previous one died holding the lock: remove "
-                f"{{_id: {database!r}}} from {lock} and offboard "
-                "again. Nothing expires it on its own, because a lock that expired under a "
+                f"{{_id: {database!r}}} from {lock} and offboard again — but check the "
+                "database first, since a teardown that failed at the drop keeps its lock on "
+                "purpose. Nothing expires it on its own, because a lock that expired under a "
                 "live drop would reopen the race it exists to close.",
                 code="tenant_offboarding_in_flight",
                 details={"database": database, "lock": lock},
             )
 
+        teardown = _Teardown()
         failed = False
 
         try:
-            yield
+            yield teardown
 
         except BaseException:
             failed = True
             raise
 
         finally:
-            try:
-                await self.client.delete_one(coll, {"_id": database})
-
-            except Exception as error:
-                # Two different situations, and only one of them may speak. A teardown that
-                # already failed owns the outcome — a release error raised here would replace
-                # the refusal or the storage error the caller needs, and the stuck lock is the
-                # lesser of the two facts. A teardown that succeeded is outranking nothing:
-                # the drop is durable either way, and the caller has to hear that the name is
-                # now wedged, because nothing else will tell them.
-                if not failed:
-                    raise exc.infrastructure(
-                        f"Database {database!r} was dropped, but the offboarding lock could "
-                        f"not be released: {error}. Until {{_id: {database!r}}} is removed "
-                        f"from {lock}, provisioning and offboarding that database both "
-                        "refuse.",
-                        code="tenant_offboarding_lock_stuck",
-                        details={"database": database, "lock": lock},
-                    ) from error
-
+            if failed and teardown.drop_attempted:
+                # The drop was issued and something went wrong, which does not mean it did not
+                # happen — a timeout or a lost response leaves the server dropping while this
+                # side hears nothing. Releasing here would let the next onboarding write into a
+                # database that is still being deleted, so the lock stays and an operator
+                # decides. The teardown's own error is what propagates; this only records why
+                # the name is now held.
                 log.warning(
-                    "could not release a tenant offboarding lock",
+                    "kept a tenant offboarding lock after a drop of unknown outcome",
                     database=database,
-                    error=str(error),
+                    lock=lock,
                 )
+
+            else:
+                await self._release(coll, database=database, owner=owner, failed=failed, lock=lock)
+
+    # ....................... #
+
+    async def _release(
+        self,
+        coll: AsyncCollection[JsonDict],
+        *,
+        database: str,
+        owner: str,
+        failed: bool,
+        lock: str,
+    ) -> None:
+        """Give up the lock this teardown took, and only the one it took."""
+
+        try:
+            # Fenced on the token, so a holder returning from the dead deletes nothing rather
+            # than deleting its successor's lock. Matching nothing is not an error: it means
+            # the lock was cleared and possibly retaken while this teardown was away, and the
+            # drop it was guarding is already over.
+            if not await self.client.delete_one(coll, {"_id": database, "owner": owner}):
+                log.warning(
+                    "tenant offboarding lock was already gone at release",
+                    database=database,
+                    lock=lock,
+                )
+
+        except Exception as error:
+            # Two different situations, and only one of them may speak. A teardown that already
+            # failed owns the outcome — a release error raised here would replace the refusal
+            # or the storage error the caller needs, and the stuck lock is the lesser of the
+            # two facts. A teardown that succeeded is outranking nothing: the drop is durable
+            # either way, and the caller has to hear that the name is now wedged, because
+            # nothing else will tell them.
+            if not failed:
+                raise exc.infrastructure(
+                    f"Database {database!r} was dropped, but the offboarding lock could not be "
+                    f"released: {error}. Until {{_id: {database!r}}} is removed from {lock}, "
+                    "provisioning and offboarding that database both refuse.",
+                    code="tenant_offboarding_lock_stuck",
+                    details={"database": database, "lock": lock},
+                ) from error
+
+            log.warning(
+                "could not release a tenant offboarding lock",
+                database=database,
+                error=str(error),
+            )
 
     # ....................... #
 
@@ -362,7 +447,9 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
             f"Database {database!r} is being offboarded, so this onboarding stops rather than "
             "writing into a database that is about to be dropped. Retry once the offboarding "
             f"has finished; if none is running, it died holding {{_id: {database!r}}} in "
-            f"{lock}, which has to be removed by hand.",
+            f"{lock}. Check the database before removing that document — a teardown that "
+            "failed at the drop keeps its lock deliberately, because the server may still be "
+            "working through a dropDatabase whose answer never came back.",
             code="tenant_offboarding_in_flight",
             details={"database": database, "lock": lock},
         )
@@ -385,7 +472,10 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         :meth:`_offboarding_lock` for why both are needed.
         """
 
-        if await self.client.find_one(coll, {"_id": _marker_id(tenant)}) is not None:
+        if (
+            await self.client.find_one(_from_the_primary(coll), {"_id": _marker_id(tenant)})
+            is not None
+        ):
             return
 
         raise exc.concurrency(
@@ -422,7 +512,7 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
 
         coll = await self.client.collection(self.lock_collection, db_name=name)
 
-        return coll, f"{name}.{self.lock_collection}"
+        return _from_the_primary(coll), f"{name}.{self.lock_collection}"
 
     # ....................... #
 
@@ -515,7 +605,9 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         per-tenant name, under which no other tenant's marker can appear in the first place.
         """
 
-        coll = await self.client.collection(self.marker_collection, db_name=database)
+        coll = _from_the_primary(
+            await self.client.collection(self.marker_collection, db_name=database)
+        )
         mine = _marker_id(tenant)
 
         # Two is enough to answer the question: this tenant's marker, plus evidence of one
@@ -574,6 +666,22 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
                 code="tenant_database_not_provisioned",
                 details={"database": database},
             )
+
+
+# ....................... #
+
+
+def _from_the_primary(coll: AsyncCollection[JsonDict]) -> AsyncCollection[JsonDict]:
+    """*coll*, read from the primary whatever the connection's own preference is.
+
+    Every read in this file is one half of an ordering argument — did a lock exist yet, is a
+    marker still there, whose markers are in this database — and a secondary answers those
+    questions about a past the primary has already moved on from. An admin URI carrying
+    ``readPreference=secondaryPreferred`` is enough to turn each of them into a stale answer
+    that reads as a fresh one, with a ``dropDatabase`` behind it.
+    """
+
+    return coll.with_options(read_preference=ReadPreference.PRIMARY)
 
 
 # ....................... #

@@ -149,6 +149,17 @@ class TestResolvedName:
 
 
 class TestLockLocation:
+    @pytest.mark.parametrize("blank", ["", "   "])
+    @pytest.mark.parametrize("field", ["lock_database", "lock_collection"])
+    def test_a_blank_lock_location_is_refused(self, field: str, blank: str) -> None:
+        """``None`` is how "the client's own database" is spelled. An empty string is somebody
+        having tried to say something and failed, and left alone it reads as the first — the
+        lock would go somewhere nobody chose, which for this particular document is the
+        difference between a boundary and none."""
+
+        with pytest.raises(CoreException, match=field):
+            _provisioner(**{field: blank})
+
     @pytest.mark.asyncio
     async def test_a_client_with_no_database_of_its_own_is_named(self) -> None:
         """The lock defaults to the client's own database, so a client without one has to say

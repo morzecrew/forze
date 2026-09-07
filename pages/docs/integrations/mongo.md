@@ -147,11 +147,16 @@ lifecycle = LifecyclePlan.from_steps(
   other, and an onboarding slow enough to write its marker inside a teardown's
   window and look afterwards passes the lock read having had its marker dropped in
   between. Either refusal is a failed onboarding, which is retried.
+  Every read in the protocol is pinned to the primary, so an admin URI carrying
+  `readPreference` cannot answer these orderings from a lagging secondary.
   Nothing expires the lock: a timeout short enough to be useful could
   fire under a live `dropDatabase` and reopen the race silently, so a teardown
   that dies wedges that one database name until an operator removes the document —
   which every refusal names. A wedged onboarding is recoverable; a destroyed
-  tenant is not.
+  tenant is not. Because that recovery is a person deleting a row, the release is
+  fenced on a per-acquisition token — a holder that was only slow deletes nothing
+  rather than its successor's lock — and a teardown that fails *at* the drop keeps
+  its lock, since an ambiguous `dropDatabase` may still be running on the server.
 - **Rotating credentials use a lease, not a transaction.** The store for
   counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
   across a third-party call, and Mongo offers neither a blocking wait on a document nor

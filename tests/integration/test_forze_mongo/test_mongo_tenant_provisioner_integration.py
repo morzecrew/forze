@@ -26,6 +26,7 @@ import pytest_asyncio
 pytest.importorskip("pymongo")
 pytest.importorskip("testcontainers.mongodb")
 
+from pymongo import ReadPreference
 from testcontainers.mongodb import MongoDbContainer
 
 from forze.application.contracts.tenancy import TenantIdentity
@@ -219,6 +220,42 @@ class _StallsAfterTheFirstRead(_Wraps):
             await self._resume.wait()
 
         return found
+
+
+class _RecordsReadPreferences(_Wraps):
+    """Captures the read preference of every collection the protocol actually reads from."""
+
+    def __init__(self, inner: MongoClient) -> None:
+        super().__init__(inner)
+        self.preferences: list[Any] = []
+
+    async def find_one(self, coll: Any, *args: Any, **kwargs: Any) -> Any:
+        self.preferences.append(coll.read_preference)
+
+        return await self._inner.find_one(coll, *args, **kwargs)
+
+    async def find_many(self, coll: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        self.preferences.append(coll.read_preference)
+
+        return await self._inner.find_many(coll, *args, **kwargs)
+
+
+class _DropFails(_Wraps):
+    """A client whose ``dropDatabase`` raises without saying whether the server took it."""
+
+    async def db(self, name: str | None = None) -> Any:
+        return _RefusesCommands(await self._inner.db(name))
+
+
+class _RefusesCommands:
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+    async def command(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("the drop's answer never came back")
 
 
 class _CannotRelease(_Wraps):
@@ -840,6 +877,127 @@ class TestOffboardingLock:
         assert [doc["_id"] for doc in held] == [name]
         assert held[0]["tenant_id"] == str(tenant.tenant_id)
         assert isinstance(held[0]["at"], datetime)
+
+    @pytest.mark.asyncio
+    async def test_every_read_in_the_protocol_goes_to_the_primary(
+        self,
+        mongo_container: MongoDbContainer,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """Each read here is half of an ordering argument, and a secondary answers about a
+        past the primary has left behind: a lock not yet replicated reads as no lock, a marker
+        not yet replicated reads as dropped. An admin URI with `readPreference` set is all it
+        takes, so the preference is pinned per read rather than inherited.
+        """
+
+        tenant, name = _tenant(), _database(dropper, "readpref")
+        lagging = MongoClient()
+        await lagging.initialize(
+            f"{mongo_container.get_connection_url()}/?readPreference=secondaryPreferred",
+            db_name=(await mongo_client.db()).name,
+        )
+
+        try:
+            # The client really does default to something else — otherwise this asserts nothing.
+            assert (await lagging.collection(_MARKER, db_name=name)).read_preference != (
+                ReadPreference.PRIMARY
+            )
+
+            watched = _RecordsReadPreferences(lagging)
+            provisioner = _provisioner(cast(MongoClient, watched), name, drop_on_deprovision=True)
+
+            await provisioner.provision(tenant)
+            await provisioner.deprovision(tenant)
+
+            assert len(watched.preferences) == 3
+            assert all(pref == ReadPreference.PRIMARY for pref in watched.preferences)
+
+        finally:
+            await lagging.close()
+
+    @pytest.mark.asyncio
+    async def test_a_returning_holder_cannot_release_somebody_else_s_lock(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The recovery for a wedged name is a person deleting a row, which makes an unfenced
+        release dangerous: a holder that was only slow — declared dead, cleared by hand,
+        replaced — would come back and delete its successor's lock, opening the window under a
+        teardown that did nothing wrong."""
+
+        tenant, name = _tenant(), _database(dropper, "fenced")
+        locks = await mongo_client.collection(_LOCK)
+
+        await _provisioner(mongo_client, name).provision(tenant)
+
+        async with _teardown_stalled_after_its_read(mongo_client, tenant, name):
+            # Cleared by hand and retaken while this teardown is away.
+            await mongo_client.delete_one(locks, {"_id": name})
+            await mongo_client.insert_one(
+                locks,
+                {"_id": name, "tenant_id": "someone", "at": utcnow(), "owner": "the-successor"},
+            )
+
+        # The stalled teardown has now finished and released. The successor's lock stands.
+        assert [doc["owner"] for doc in await _locks(mongo_client)] == ["the-successor"]
+
+    @pytest.mark.asyncio
+    async def test_a_drop_of_unknown_outcome_keeps_its_lock(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """A `dropDatabase` that raises has not necessarily not happened — a timeout or a lost
+        response leaves the server working while this side hears nothing. Releasing then would
+        hand the name to an onboarding that writes into a database still being deleted, so the
+        lock stays and a person decides. The teardown's own error is still what propagates."""
+
+        tenant, name = _tenant(), _database(dropper, "unknown")
+
+        await _provisioner(mongo_client, name).provision(tenant)
+
+        broken = _provisioner(
+            cast(MongoClient, _DropFails(mongo_client)),
+            name,
+            drop_on_deprovision=True,
+        )
+
+        with pytest.raises(RuntimeError, match="never came back"):
+            await broken.deprovision(tenant)
+
+        assert [doc["_id"] for doc in await _locks(mongo_client)] == [name]
+
+        # And the name is held against both operations until somebody looks.
+        for call in (broken.provision, broken.deprovision):
+            with pytest.raises(CoreException) as caught:
+                await call(tenant)
+
+            assert caught.value.code == "tenant_offboarding_in_flight"
+
+    @pytest.mark.asyncio
+    async def test_a_teardown_that_refused_before_the_drop_releases_its_lock(
+        self,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The other half of the rule above, and the half that matters more often: a refusal
+        raised before the drop was issued knows the database is untouched, so keeping the lock
+        would wedge the name on the misconfiguration path — every retry refused for a reason
+        that has nothing to do with the one being reported."""
+
+        first, second, name = _tenant(), _tenant(), _database(dropper, "refused")
+        keeper = _provisioner(mongo_client, name)
+
+        await keeper.provision(first)
+        await keeper.provision(second)
+
+        with pytest.raises(CoreException) as caught:
+            await _provisioner(mongo_client, name, drop_on_deprovision=True).deprovision(first)
+
+        assert caught.value.code == "tenant_database_shared_across_tenants"
+        assert await _locks(mongo_client) == []
 
     @pytest.mark.asyncio
     async def test_a_lock_inside_the_database_being_dropped_is_refused(
