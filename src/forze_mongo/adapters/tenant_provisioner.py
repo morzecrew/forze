@@ -654,7 +654,13 @@ class MongoDatabaseTenantProvisioner(TenantProvisionerPort):
         if markers:
             return
 
-        db_handle = await self.client.db(database)
+        # Pinned like the document reads above, and for the same reason: this one decides
+        # whether an unregistered database is empty, and a secondary that has not caught up
+        # reports a database full of somebody's data as absent — which is the one answer that
+        # lets the drop through.
+        db_handle = (await self.client.db(database)).with_options(
+            read_preference=ReadPreference.PRIMARY
+        )
 
         if await db_handle.list_collection_names():
             raise exc.configuration(

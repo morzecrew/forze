@@ -228,6 +228,7 @@ class _RecordsReadPreferences(_Wraps):
     def __init__(self, inner: MongoClient) -> None:
         super().__init__(inner)
         self.preferences: list[Any] = []
+        self.metadata_preferences: list[Any] = []
 
     async def find_one(self, coll: Any, *args: Any, **kwargs: Any) -> Any:
         self.preferences.append(coll.read_preference)
@@ -238,6 +239,33 @@ class _RecordsReadPreferences(_Wraps):
         self.preferences.append(coll.read_preference)
 
         return await self._inner.find_many(coll, *args, **kwargs)
+
+    async def db(self, name: str | None = None) -> Any:
+        return _RecordingDatabase(await self._inner.db(name), self.metadata_preferences)
+
+
+class _RecordingDatabase:
+    """A database handle that records the read preference its metadata read actually ran at.
+
+    ``with_options`` returns another of these rather than the plain handle, because the pin
+    the provisioner applies happens *after* it takes the handle — a recorder that stopped at
+    the first hop would report the connection's preference and call the pin proven.
+    """
+
+    def __init__(self, inner: Any, sink: list[Any]) -> None:
+        self._inner = inner
+        self._sink = sink
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
+
+    def with_options(self, *args: Any, **kwargs: Any) -> _RecordingDatabase:
+        return _RecordingDatabase(self._inner.with_options(*args, **kwargs), self._sink)
+
+    async def list_collection_names(self, *args: Any, **kwargs: Any) -> list[str]:
+        self._sink.append(self._inner.read_preference)
+
+        return await self._inner.list_collection_names(*args, **kwargs)
 
 
 class _DropFails(_Wraps):
@@ -912,6 +940,46 @@ class TestOffboardingLock:
 
             assert len(watched.preferences) == 3
             assert all(pref == ReadPreference.PRIMARY for pref in watched.preferences)
+
+        finally:
+            await lagging.close()
+
+    @pytest.mark.asyncio
+    async def test_the_metadata_read_behind_the_last_refusal_goes_to_the_primary_too(
+        self,
+        mongo_container: MongoDbContainer,
+        mongo_client: MongoClient,
+        dropper: list[str],
+    ) -> None:
+        """The refusal that protects a database this provisioner never registered rests on
+        asking whether it holds anything, and that question is answered by collection metadata
+        rather than by a document. A secondary that has not caught up reports a database full
+        of somebody's data as absent, which is the single answer that lets the drop through.
+        """
+
+        tenant, name = _tenant(), _database(dropper, "metapref")
+        lagging = MongoClient()
+        await lagging.initialize(
+            f"{mongo_container.get_connection_url()}/?readPreference=secondaryPreferred",
+            db_name=(await mongo_client.db()).name,
+        )
+
+        try:
+            coll = await mongo_client.collection("payroll", db_name=name)
+            await mongo_client.insert_one(coll, {"amount": 1})
+
+            watched = _RecordsReadPreferences(lagging)
+            provisioner = _provisioner(cast(MongoClient, watched), name, drop_on_deprovision=True)
+
+            with pytest.raises(CoreException) as caught:
+                await provisioner.deprovision(tenant)
+
+            assert caught.value.code == "tenant_database_not_provisioned"
+
+            # Asserted on its own list rather than folded into the document reads: this is the
+            # read the refusal above actually rests on, and a count over both would pass while
+            # it alone went to a secondary.
+            assert watched.metadata_preferences == [ReadPreference.PRIMARY]
 
         finally:
             await lagging.close()
