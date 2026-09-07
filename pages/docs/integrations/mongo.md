@@ -82,7 +82,9 @@ lifecycle = LifecyclePlan.from_steps(
 ## Notes
 
 - **You own the collections and indexes.** Forze reads existing collections; it
-  doesn't create or index them.
+  doesn't create or index them. The one exception is tenant provisioning below,
+  which writes a marker into a tenant's own database — and even that creates no
+  index, because the field it keys on is `_id`.
 - **Transactions and outbox need a replica set** — a standalone `mongod` can't
   open multi-document transactions. The inbox marks messages without one, but
   the exactly-once guarantee (mark rolls back with the handler) only exists
@@ -117,6 +119,20 @@ lifecycle = LifecyclePlan.from_steps(
   its result are one statement — and they come back on the next scan once the
   lease expires, so size `lease_for` for how long you can wait, not just for how
   long a body runs.
+- **Tenant provisioning writes a marker, because Mongo has no `CREATE SCHEMA`.**
+  A database appears on its first write, so there is nothing an onboarding
+  *has* to run for a tenant's routes to work. `MongoDatabaseTenantProvisioner`
+  writes one document into the tenant's own database anyway, and that buys three
+  things the first request cannot: a connection user missing rights on the
+  tenant's database fails the onboarding rather than a customer's request; the
+  database becomes visible to an operator listing what is onboarded; and the
+  marker records *whose* database it is, which is what lets `deprovision` refuse
+  to `dropDatabase` one holding another tenant's data. Teardown is off by
+  default and cannot be turned on for a static database name at all — one name
+  for every tenant means offboarding the first destroys the rest. With a
+  per-tenant resolver it still refuses, at the moment of the drop, a database
+  carrying another tenant's marker, one whose marker it did not write itself, or
+  collections it never registered.
 - **Rotating credentials use a lease, not a transaction.** The store for
   counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
   across a third-party call, and Mongo offers neither a blocking wait on a document nor

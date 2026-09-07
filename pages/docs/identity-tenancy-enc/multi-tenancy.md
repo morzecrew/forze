@@ -218,5 +218,12 @@ default) and provision out of band. Forze includes
 `PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`) — teardown is
 opt-in wherever it would destroy data.
 
+MongoDB has no schema to create — a database exists once something is written to
+it — so `MongoDatabaseTenantProvisioner` (`forze_mongo`) writes a marker document
+into the tenant's own database instead. The write proves at onboarding that the
+connection can reach the tenant's container, and the marker records who is in
+that container, so an offboarding that drops the database can refuse when the
+name resolves somewhere another tenant lives.
+
 Isolating tenants by data boundary pairs naturally with isolating them by key —
 sealing each tenant's data under its own keys is [Encryption](encryption.md).

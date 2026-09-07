@@ -151,7 +151,7 @@ class MongoClientPort(Protocol):
         self,
         coll: AsyncCollection[Any],
         flt: Mapping[str, Any],
-        update: Mapping[str, Any],
+        update: MongoUpdate,
     ) -> Awaitable[Any]: ...  # pragma: no cover
 
     def update_one(

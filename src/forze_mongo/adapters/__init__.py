@@ -5,12 +5,14 @@ from .search import (
     MongoTextSearchAdapter,
     MongoVectorSearchAdapter,
 )
+from .tenant_provisioner import MongoDatabaseTenantProvisioner
 from .txmanager import MongoTxManagerAdapter, MongoTxScopeKey
 
 # ----------------------- #
 
 __all__ = [
     "MongoAtlasSearchAdapter",
+    "MongoDatabaseTenantProvisioner",
     "MongoDocumentAdapter",
     "MongoRotationTarget",
     "MongoTextSearchAdapter",
