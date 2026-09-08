@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0047**. Before creating an RFC, glance at the table below
+The next free number is **0048**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -73,6 +73,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0044](0044-lancedb-retrieval-integration.md) | LanceDB retrieval integration | 📝 Draft | A `forze_lancedb` adapter for the existing search plane — vector-first, embedded/object-storage LanceDB — adopting an external request while rejecting its parallel retrieval-contracts package. |
 | [0045](0045-idempotency-claim-ownership.md) | Idempotency claim ownership | ✅ Complete | `commit`/`fail` cannot tell a caller's own claim from a duplicate's reclaim of the same key, so a late operation completes another's; adds an invocation-scoped owner to the claim and fences on it. |
 | [0046](0046-durable-store-tenant-resolution.md) | Durable-store tenant resolution | ✅ Complete | The durable stores resolve a tenant twice per operation and can get two answers, and the run store enforces the boundary on its control verbs but not its worker verbs. |
+| [0047](0047-durable-mockstate-persistence-for-the-in-memory-backend.md) | Durable MockState — persistence for the in-memory backend | 📝 Draft | An opt-in snapshot file for `MockState` so an MVP survives a restart without a container, adding durability to the existing backend rather than a SQLite one — no new adapter, no new battery seat. |
 
 ## Status legend
 
