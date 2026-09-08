@@ -133,6 +133,30 @@ lifecycle = LifecyclePlan.from_steps(
   per-tenant resolver it still refuses, at the moment of the drop, a database
   carrying another tenant's marker, one whose marker it did not write itself, or
   collections it never registered.
+- **Offboarding takes a lock, and it lives outside the database it protects.**
+  The read that authorises a drop is stale the moment it returns: an onboarding
+  landing between it and `dropDatabase` loses its marker and its data to a
+  teardown that never saw it. Postgres closes that with an advisory lock held for
+  the transaction; Mongo has nothing that spans a `dropDatabase`, so the exclusion
+  is a document in `_forze_tenant_offboarding` — kept in the client's own database
+  by default (`lock_database`), because anything inside the tenant's database goes
+  with the drop. Only teardowns take it, which leaves the frequent operation
+  uncontended: onboarding writes its marker and then *reads* twice — the lock, and
+  back the marker it just wrote. Both, because "no lock" has two readings. A
+  teardown that has not started is one; a teardown that already finished is the
+  other, and an onboarding slow enough to write its marker inside a teardown's
+  window and look afterwards passes the lock read having had its marker dropped in
+  between. Either refusal is a failed onboarding, which is retried.
+  Every read in the protocol is pinned to the primary, so an admin URI carrying
+  `readPreference` cannot answer these orderings from a lagging secondary.
+  Nothing expires the lock: a timeout short enough to be useful could
+  fire under a live `dropDatabase` and reopen the race silently, so a teardown
+  that dies wedges that one database name until an operator removes the document —
+  which every refusal names. A wedged onboarding is recoverable; a destroyed
+  tenant is not. Because that recovery is a person deleting a row, the release is
+  fenced on a per-acquisition token — a holder that was only slow deletes nothing
+  rather than its successor's lock — and a teardown that fails *at* the drop keeps
+  its lock, since an ambiguous `dropDatabase` may still be running on the server.
 - **Rotating credentials use a lease, not a transaction.** The store for
   counterparty-rotated grants (OAuth refresh tokens) has to exclude a second worker
   across a third-party call, and Mongo offers neither a blocking wait on a document nor
