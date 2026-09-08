@@ -344,12 +344,12 @@ class MockStatePersistence:
 
         with state.lock:
             for name in PERSIST_FIELDS:
-                self._install(state, name, payload[name])
+                self._set_field(state, name, payload[name])
 
             # Not merely "left alone": a reset happens on the *restore*, so a state that was
             # used before loading does not carry its own stale holders past the boundary.
             for name in RESET_FIELDS - _LIVE_FIELDS:
-                self._install(state, name, _fresh_default(state, _FIELDS[name].default))
+                self._set_field(state, name, _fresh_default(state, _FIELDS[name].default))
 
         log.info("restored mock state from a snapshot", path=str(self.path))
 
@@ -417,7 +417,7 @@ class MockStatePersistence:
 
     # ....................... #
 
-    def _install(self, state: MockState, name: str, value: Any) -> None:
+    def _set_field(self, state: MockState, name: str, value: Any) -> None:
         """Put *value* on *state*, refilling the existing container where there is one.
 
         Identity is the point, and it is the same reason :meth:`MockState.clear` works this

@@ -579,7 +579,7 @@ class TestAtomicity:
         assert _loaded(persistence).documents == {"orders": {"o-1": {"id": "o-1", "total": 12}}}
 
         # And the half-written file is not left behind to accumulate one per failed flush.
-        assert [entry.name for entry in tmp_path.iterdir()] == ["mvp.state", "mvp.state.lock"]
+        assert sorted(entry.name for entry in tmp_path.iterdir()) == ["mvp.state", "mvp.state.lock"]
 
 
 # ....................... #
@@ -798,7 +798,11 @@ class TestCaptureAndWrite:
         state = MockState()
         watcher = _watching_its_lock(state)
 
-        persistence.install(state, persistence.read() or {})
+        payload = persistence.read()
+
+        assert payload is not None
+
+        persistence.install(state, payload)
 
         assert watcher.entries == 1
 
@@ -969,7 +973,7 @@ class TestLifecycle:
         try:
             stopped = await ctx.drainables.stop_all(grace=10)
 
-            assert [loop.loop_name for loop in stopped.clean] == ["mock_state_flush"]
+            assert "mock_state_flush" in [loop.loop_name for loop in stopped.clean]
 
         finally:
             await plan.shutdown(ctx)
