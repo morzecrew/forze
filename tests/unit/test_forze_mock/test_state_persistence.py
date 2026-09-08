@@ -470,6 +470,29 @@ class TestFormat:
 
     # ....................... #
 
+    def test_a_payload_that_is_not_this_build_s_field_mapping_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """The header can be right while the payload is not a mapping of these fields at all.
+        Without the shape check the first missing key surfaces as a bare ``KeyError`` out of
+        a lifecycle hook, which says nothing about the file that caused it."""
+
+        state = MockState()
+        persistence = _persistence(tmp_path)
+        _saved(state, persistence)
+
+        magic, _, rest = persistence.path.read_bytes().partition(b"\n")
+        version, _, rest = rest.partition(b"\n")
+        fingerprint, _, _body = rest.partition(b"\n")
+        persistence.path.write_bytes(
+            b"\n".join((magic, version, fingerprint, pickle.dumps({"documents": {}})))
+        )
+
+        with pytest.raises(CoreException, match="cannot read"):
+            _loaded(persistence)
+
+    # ....................... #
+
     def test_a_truncated_payload_is_refused_not_half_restored(self, tmp_path: Path) -> None:
         """A partial read is a refusal, not a state carrying whichever stores made it in."""
 
@@ -637,6 +660,22 @@ class TestSingleWriter:
 
     # ....................... #
 
+    def test_release_does_not_raise_when_the_descriptor_is_already_gone(
+        self, tmp_path: Path
+    ) -> None:
+        """Every caller is a cleanup path. A release that raised would replace the outcome it
+        trails — the write error an operator needs, or the refusal that stopped startup."""
+
+        persistence = _persistence(tmp_path)
+        persistence.acquire()
+
+        descriptor = persistence._MockStatePersistence__lock_fd  # pyright: ignore[reportAttributeAccessIssue]
+        os.close(descriptor)
+
+        persistence.release()
+
+    # ....................... #
+
     def test_release_is_idempotent(self, tmp_path: Path) -> None:
         """Shutdown releases in a ``finally``; a second release must not raise out of a
         lifecycle hook and abort the teardown of every remaining step."""
@@ -645,6 +684,57 @@ class TestSingleWriter:
         persistence.acquire()
         persistence.release()
         persistence.release()
+
+
+# ....................... #
+
+
+class TestCaptureAndWrite:
+    """The two halves of a save, and why they are two.
+
+    A capture deep-copies the live stores; a write serializes a copy nobody else can reach.
+    Only the second is safe to run off the event loop — the mock's own transaction commit and
+    rollback replay mutate `state.documents` without taking `state.lock`
+    ([`_mvcc.py:388-403`](../../../src/forze_mock/adapters/_mvcc.py),
+    [`tx.py:329-340`](../../../src/forze_mock/adapters/tx.py)), so a copy taken in a worker
+    thread races them however carefully it locks.
+    """
+
+    def test_a_capture_is_independent_of_what_happens_next(self, tmp_path: Path) -> None:
+        """It has to be: the write runs later, off the loop, and would otherwise serialize a
+        store still being mutated."""
+
+        state = MockState()
+        state.documents["orders"] = {"o-1": {"id": "o-1", "total": 12}}
+
+        persistence = _persistence(tmp_path)
+        captured = persistence.capture(state)
+
+        state.documents["orders"]["o-2"] = {"id": "o-2"}
+        state.documents["orders"]["o-1"]["total"] = 99
+
+        assert captured["documents"] == {"orders": {"o-1": {"id": "o-1", "total": 12}}}
+
+    # ....................... #
+
+    def test_a_captured_payload_writes_and_reads_back(self, tmp_path: Path) -> None:
+        """The halves compose to what `save` does, which is what the hooks rely on."""
+
+        state = MockState()
+        state.documents["orders"] = {"o-1": {"id": "o-1"}}
+
+        persistence = _persistence(tmp_path)
+        persistence.write(persistence.capture(state))
+
+        assert _loaded(persistence).documents == {"orders": {"o-1": {"id": "o-1"}}}
+
+    # ....................... #
+
+    def test_reading_a_path_with_no_snapshot_yields_nothing(self, tmp_path: Path) -> None:
+        """The startup hook branches on this rather than on the file's existence, so the
+        "no snapshot" answer has to come from the reader itself."""
+
+        assert _persistence(tmp_path).read() is None
 
 
 # ....................... #

@@ -38,6 +38,7 @@ import hashlib
 import os
 import pickle  # nosec B403
 import tempfile
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, final
@@ -151,8 +152,14 @@ DROP_FIELDS: Final = frozenset(
     }
 )
 """Never written. Test observability by their own declaration — a running application does not
-need them across a restart, and ``authn_events`` is the only field holding domain objects, so
-dropping it leaves the file with no coupling to a class definition at all."""
+need them across a restart.
+
+``authn_events`` is the one that had to be decided rather than read off the field: it holds
+:class:`~forze.application.contracts.authn.AuthnEvent` instances, so persisting it would pin a
+disposable file to a contract type. Dropping it does not make the file class-free — a document
+namespace is a ``JournalingStore`` once anything has written to it, and whatever an application
+puts in a mock store is pickled along with it — but it keeps forze's own contract classes out of
+the format, which is the part this side controls."""
 
 
 # ....................... #
@@ -275,22 +282,38 @@ class MockStatePersistence:
     # ....................... #
 
     def release(self) -> None:
-        """Release the single-writer lock. Idempotent."""
+        """Release the single-writer lock. Idempotent, and never raises.
+
+        Every caller is on a cleanup path — the shutdown hook's ``finally``, the startup
+        hook's failure branch — where an exception raised from here would *replace* the
+        outcome it trails: the write error an operator needs to see, or the refusal that
+        explains why startup stopped. Closing the descriptor is what releases the lock, so
+        there is nothing to unlock separately.
+        """
 
         descriptor, self.__lock_fd = self.__lock_fd, None
 
         if descriptor is None:
             return
 
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
+        try:
+            os.close(descriptor)
+
+        except OSError:
+            log.warning(
+                "could not release the mock state snapshot lock",
+                path=str(self.lock_path),
+                exc_info=True,
+            )
 
     # ....................... #
 
-    def load(self, state: MockState) -> bool:
-        """Restore *state* from the snapshot, if one is there.
+    def read(self) -> dict[str, Any] | None:
+        """The snapshot's fields, or ``None`` when there is no snapshot to read.
 
-        :returns: ``True`` when a snapshot was read, ``False`` for a fresh start.
+        Touches nothing shared — a file and a private mapping — so this half is what runs
+        off the event loop.
+
         :raises CoreException: the file exists and is not a snapshot this build can read.
         """
 
@@ -298,9 +321,18 @@ class MockStatePersistence:
             raw = self.path.read_bytes()
 
         except FileNotFoundError:
-            return False
+            return None
 
-        payload = self._decode(raw)
+        return self._decode(raw)
+
+    # ....................... #
+
+    def install(self, state: MockState, payload: Mapping[str, Any]) -> None:
+        """Put a snapshot read by :meth:`read` onto *state*.
+
+        Runs wherever the state's other writers run — see :meth:`capture` for why that is
+        not a detail.
+        """
 
         with state.lock:
             for name in PERSIST_FIELDS:
@@ -313,19 +345,49 @@ class MockStatePersistence:
 
         log.info("restored mock state from a snapshot", path=str(self.path))
 
+    # ....................... #
+
+    def load(self, state: MockState) -> bool:
+        """Restore *state* from the snapshot, if one is there.
+
+        :returns: ``True`` when a snapshot was read, ``False`` for a fresh start.
+        :raises CoreException: the file exists and is not a snapshot this build can read.
+        """
+
+        payload = self.read()
+
+        if payload is None:
+            return False
+
+        self.install(state, payload)
+
         return True
 
     # ....................... #
 
-    def save(self, state: MockState) -> None:
-        """Write *state* to the snapshot, atomically.
+    def capture(self, state: MockState) -> dict[str, Any]:
+        """Deep-copy the persisted fields, under the state's lock.
 
-        The copy is taken under the state's lock and serialized outside it, so a large
-        snapshot does not hold the mutex for the length of the write.
+        **This half cannot be moved off the event loop**, and the reason is not performance.
+        The mock's stores are read and written by adapters that hold ``state.lock`` for the
+        access itself and not for the surrounding work — a document read iterates a live view
+        without it, on the grounds that nothing else on the loop can interleave. That
+        reasoning is sound for the loop and false for a worker thread, so a copy taken in one
+        would race writers this class has no business locking against. Copying here and
+        serializing elsewhere keeps the guarantee the rest of the mock already relies on.
         """
 
         with state.lock:
-            payload = copy.deepcopy({name: getattr(state, name) for name in PERSIST_FIELDS})
+            return copy.deepcopy({name: getattr(state, name) for name in PERSIST_FIELDS})
+
+    # ....................... #
+
+    def write(self, payload: Mapping[str, Any]) -> None:
+        """Serialize a captured *payload* and land it, atomically.
+
+        The counterpart of :meth:`capture`: *payload* is private to the caller, so this is
+        the half that is safe — and worth — running off the event loop.
+        """
 
         self._write(
             b"\n".join(
@@ -333,10 +395,18 @@ class MockStatePersistence:
                     SNAPSHOT_MAGIC,
                     str(SNAPSHOT_VERSION).encode("utf-8"),
                     _FINGERPRINT.encode("utf-8"),
-                    pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL),
+                    pickle.dumps(dict(payload), protocol=pickle.HIGHEST_PROTOCOL),
                 )
             )
         )
+
+    # ....................... #
+
+    def save(self, state: MockState) -> None:
+        """Capture *state* and write it — the two halves, for a caller with no event loop
+        to keep responsive."""
+
+        self.write(self.capture(state))
 
     # ....................... #
 
@@ -384,6 +454,9 @@ class MockStatePersistence:
             # chose. Someone who can write there can write the application, so an
             # untrusted snapshot is not a threat this can be defended from here.
             payload: dict[str, Any] = pickle.loads(body)  # nosec B301
+
+            if not isinstance(payload, dict) or set(payload) != PERSIST_FIELDS:
+                raise TypeError("the payload is not this build's field mapping")
 
         except Exception as error:
             raise exc.configuration(
@@ -467,9 +540,14 @@ class _MockStateStartupHook(LifecycleHook):
         self.persistence.acquire()
 
         try:
-            await asyncio.to_thread(self.persistence.load, self.state)
+            payload = await asyncio.to_thread(self.persistence.read)
+
+            if payload is not None:
+                self.persistence.install(self.state, payload)
 
         except BaseException:
+            # A startup that took the lock and then failed would wedge the path against its
+            # own next attempt, which is a bug that only shows up on the second run.
             self.persistence.release()
 
             raise
@@ -493,7 +571,10 @@ class _MockStateStartupHook(LifecycleHook):
                 return
 
             try:
-                await asyncio.to_thread(self.persistence.save, self.state)
+                await asyncio.to_thread(
+                    self.persistence.write,
+                    self.persistence.capture(self.state),
+                )
 
             except asyncio.CancelledError:
                 raise
@@ -521,11 +602,14 @@ class _MockStateShutdownHook(LifecycleHook):
         await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
         try:
-            await asyncio.to_thread(self.persistence.save, self.state)
+            await asyncio.to_thread(
+                self.persistence.write,
+                self.persistence.capture(self.state),
+            )
 
         finally:
-            # The lock outlives a failed write on purpose only for as long as this frame: a
-            # process that cannot write its snapshot still has no business holding the path.
+            # A process that cannot write its snapshot still has no business holding the
+            # path. `release` is quiet by contract, so it cannot replace the write's error.
             self.persistence.release()
 
 
