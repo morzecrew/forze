@@ -19,6 +19,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -128,6 +129,38 @@ def _dlock(state: MockState) -> MockDistributedLockAdapter:
         state=state,
         namespace="locks",
     )
+
+
+# ....................... #
+
+
+class _CountsEntries:
+    """The state's own re-entrant lock, wrapped so a test can see it being taken.
+
+    A structural assertion, deliberately: what the lock buys is that a copy never observes a
+    store mid-write, and *that* is a race — it shows up only on an interleaving a
+    deterministic test cannot schedule. Asserting the acquisition is the part that can be
+    pinned, and it is the part a refactor would drop.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.entries = 0
+
+    def __enter__(self) -> Any:
+        self.entries += 1
+
+        return self.inner.__enter__()
+
+    def __exit__(self, *exc_info: Any) -> Any:
+        return self.inner.__exit__(*exc_info)
+
+
+def _watching_its_lock(state: MockState) -> _CountsEntries:
+    watcher = _CountsEntries(state.lock)
+    setattr(state, "_MockState__lock", watcher)  # noqa: B010 - the name is mangled
+
+    return watcher
 
 
 # ....................... #
@@ -736,6 +769,39 @@ class TestCaptureAndWrite:
 
         assert _persistence(tmp_path).read() is None
 
+    # ....................... #
+
+    def test_a_capture_is_taken_under_the_state_lock(self, tmp_path: Path) -> None:
+        """Two of the mock's own write paths publish straight into `state.documents` without
+        taking the lock — an MVCC commit and a journal rollback's undo replay — so the lock is
+        not what makes a capture safe against them. What makes it safe is running where they
+        run; the lock is what serializes it against everything that *does* take it, and
+        against a hand-driven `save` from another thread."""
+
+        state = MockState()
+        watcher = _watching_its_lock(state)
+
+        _persistence(tmp_path).capture(state)
+
+        assert watcher.entries == 1
+
+    # ....................... #
+
+    def test_a_restore_is_installed_under_the_state_lock(self, tmp_path: Path) -> None:
+        """Same invariant on the way back in, where it matters more: a restore rewrites every
+        persisted store, and a reader that saw half of them would see a state no process ever
+        had."""
+
+        persistence = _persistence(tmp_path)
+        _saved(MockState(), persistence)
+
+        state = MockState()
+        watcher = _watching_its_lock(state)
+
+        persistence.install(state, persistence.read() or {})
+
+        assert watcher.entries == 1
+
 
 # ....................... #
 
@@ -832,6 +898,78 @@ class TestLifecycle:
                 pytest.fail("the flush loop never wrote a snapshot")
 
             assert _payload(persistence.path)["documents"] == {"orders": {"o-1": {"id": "o-1"}}}
+
+        finally:
+            await plan.shutdown(ctx)
+
+    # ....................... #
+
+    async def test_a_failed_flush_does_not_end_the_loop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A flush that fails is the case the loop exists to survive — a full disk, a store
+        holding something unpicklable. Ending the loop there would leave the process
+        apparently persisting and silently not, until shutdown."""
+
+        state = MockState()
+        ctx = context_from_deps(MockDepsModule(state=state)())
+        persistence = _persistence(tmp_path, flush_every=timedelta(milliseconds=20))
+
+        failures = iter([OSError("no space left on device")])
+        real_write = MockStatePersistence.write
+
+        def _write_once_badly(self: MockStatePersistence, payload: Mapping[str, Any]) -> None:
+            for failure in failures:
+                raise failure
+
+            real_write(self, payload)
+
+        monkeypatch.setattr(MockStatePersistence, "write", _write_once_badly)
+
+        plan = LifecyclePlan.from_steps(
+            mock_state_lifecycle_step(state=state, persistence=persistence)
+        ).freeze()
+
+        await plan.startup(ctx)
+
+        try:
+            state.documents["orders"] = {"o-1": {"id": "o-1"}}
+
+            for _ in range(1000):
+                if persistence.path.exists():
+                    break
+
+                await asyncio.sleep(0.01)
+
+            else:  # pragma: no cover - the loop is what the test is waiting on
+                pytest.fail("the flush loop stopped at the first failure")
+
+            assert next(failures, "spent") == "spent"
+
+        finally:
+            await plan.shutdown(ctx)
+
+    # ....................... #
+
+    async def test_the_flush_loop_is_a_drainable_the_runtime_can_stop(self, tmp_path: Path) -> None:
+        """The loop registers itself so the runtime brings it to rest *before* teardown
+        begins, rather than cancelling it mid-flush. Driving the stop through the registry is
+        what proves the registration is real — the shutdown hook stops the loop directly, so
+        every other test here would pass with nothing registered at all."""
+
+        state = MockState()
+        ctx = context_from_deps(MockDepsModule(state=state)())
+        persistence = _persistence(tmp_path, flush_every=timedelta(milliseconds=20))
+        plan = LifecyclePlan.from_steps(
+            mock_state_lifecycle_step(state=state, persistence=persistence)
+        ).freeze()
+
+        await plan.startup(ctx)
+
+        try:
+            stopped = await ctx.drainables.stop_all(grace=10)
+
+            assert [loop.loop_name for loop in stopped.clean] == ["mock_state_flush"]
 
         finally:
             await plan.shutdown(ctx)

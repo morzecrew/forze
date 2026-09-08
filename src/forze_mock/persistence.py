@@ -67,7 +67,7 @@ SNAPSHOT_MAGIC: Final = b"forze-mock-state"
 
 SNAPSHOT_VERSION: Final = 1
 """Bumped when the header or the payload's shape changes. A mismatch refuses; see
-:meth:`MockStatePersistence.load`."""
+:meth:`MockStatePersistence.read`."""
 
 # ....................... #
 
@@ -204,6 +204,10 @@ _FINGERPRINT: Final = hashlib.blake2b(
 """Digest of the persisted field set. A file written before a field was added or removed is
 refused by this rather than restored into a state whose shape has moved."""
 
+_BUILD_HEADER: Final = (str(SNAPSHOT_VERSION).encode("utf-8"), _FINGERPRINT.encode("utf-8"))
+"""The two header lines a snapshot this build wrote carries, written and compared from here so
+the two halves cannot drift into disagreeing about the same file."""
+
 
 # ....................... #
 
@@ -213,9 +217,13 @@ refused by this rather than restored into a state whose shape has moved."""
 class MockStatePersistence:
     """A snapshot file for one :class:`~forze_mock.state.MockState`.
 
-    Wire it with :func:`mock_state_lifecycle_step`; the hooks call :meth:`acquire`,
-    :meth:`load`, :meth:`save` and :meth:`release` in that order across the process's life.
-    Nothing here runs unless it is wired, so an unconfigured mock behaves exactly as before.
+    Wire it with :func:`mock_state_lifecycle_step`. The hooks take the lock with
+    :meth:`acquire`, restore through :meth:`read` and :meth:`install`, write through
+    :meth:`capture` and :meth:`write`, and give the path back with :meth:`release`; the two
+    pairs are split because only one half of each may leave the event loop — see
+    :meth:`capture`. :meth:`load` and :meth:`save` compose them for a caller with no loop to
+    keep responsive. Nothing here runs unless it is wired, so an unconfigured mock behaves
+    exactly as it did before.
     """
 
     path: Path
@@ -393,8 +401,7 @@ class MockStatePersistence:
             b"\n".join(
                 (
                     SNAPSHOT_MAGIC,
-                    str(SNAPSHOT_VERSION).encode("utf-8"),
-                    _FINGERPRINT.encode("utf-8"),
+                    *_BUILD_HEADER,
                     pickle.dumps(dict(payload), protocol=pickle.HIGHEST_PROTOCOL),
                 )
             )
@@ -439,9 +446,7 @@ class MockStatePersistence:
                 details={"path": str(self.path)},
             )
 
-        if version != str(SNAPSHOT_VERSION).encode("utf-8") or fingerprint != _FINGERPRINT.encode(
-            "utf-8"
-        ):
+        if (version, fingerprint) != _BUILD_HEADER:
             raise exc.configuration(
                 f"{self.path} was written by a different build of MockState and is not "
                 "migrated — development data is disposable by design. Delete it to start fresh.",
@@ -576,9 +581,8 @@ class _MockStateStartupHook(LifecycleHook):
                     self.persistence.capture(self.state),
                 )
 
-            except asyncio.CancelledError:
-                raise
-
+            # A cancellation still ends the loop: `CancelledError` is a `BaseException`, so
+            # the clause below cannot catch it and does not need a guard in front of it.
             except Exception:
                 log.exception("periodic mock state flush failed", path=str(self.persistence.path))
 
