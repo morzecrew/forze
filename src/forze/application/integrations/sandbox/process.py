@@ -898,7 +898,9 @@ def _signal_group(
     """
 
     if _REAPS_DESCENDANTS:
-        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        # Any OSError means the group could not be signalled — gone, or not ours — and
+        # the pid-directed fallback below is the next thing to try.
+        with contextlib.suppress(OSError):
             os.killpg(process.pid, sig)
 
             return

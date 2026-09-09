@@ -47,6 +47,17 @@ class SandboxPort(BaseSandboxPort, Protocol):
     def run_stream(self, request: SandboxRequest) -> AsyncGenerator[SandboxEvent]:
         """Run *request*, yielding output as it arrives and the result last.
 
+        Exactly one ``result`` event, and it is the last: a consumer that keeps the newest
+        one it saw ends with the run's answer whatever came before it.
+
+        **A caller who stops iterating stops the run.** Abandoning the generator — a
+        ``break``, an exception, a cancelled task — closes it, and closing it ends the work
+        and cleans up after it, exactly as :meth:`run` does on every exit path. The
+        guarantee belongs to the contract rather than to one adapter, because a caller
+        writing the ``break`` cannot see which one it is talking to. Wrap the iteration in
+        :func:`contextlib.aclosing` to make that happen at a point you chose rather than
+        whenever the generator is collected.
+
         Backends that cannot serve it refuse up front (``sandbox_feature_unsupported``)
         rather than buffering the whole run and pretending.
         """
