@@ -31,7 +31,9 @@ from forze.application.contracts.authn import (
     AuthnResult,
     AuthnSpec,
 )
+from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
 from forze.application.execution import Deps, ExecutionContext
+from forze.testing import context_from_deps
 from forze.application.integrations.realtime import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
@@ -105,7 +107,6 @@ async def _allow_all(
 
 def _client(**resolver_kwargs: Any) -> TestClient:
     ctx = Deps.plain({AuthnDepKey: _AuthnFactory()})
-    from forze.testing import context_from_deps
 
     resolver_kwargs.setdefault("header_name", "Authorization")
     router = APIRouter()
@@ -300,7 +301,6 @@ class TestClientIdentityOnTheUpgrade:
         seen: list[Any] = []
 
         ctx = Deps.plain({AuthnDepKey: _AuthnFactory()})
-        from forze.testing import context_from_deps
 
         resolver = build_ws_connection_resolver(
             ctx_dep=lambda: context_from_deps(ctx),
@@ -338,6 +338,63 @@ class TestClientIdentityOnTheUpgrade:
         assert seen[0].client is not None
         assert seen[0].client.device_id == "phone-7"
         assert seen[0].expires_at == datetime(2027, 1, 1, tzinfo=UTC)
+
+
+class TestTheTenantIsBound:
+    def test_the_routes_tenancy_resolver_decides_the_connections_tenant(self) -> None:
+        # A tenant-aware adapter fails closed without this, so a connection that
+        # resolves no tenant is a correctly authenticated socket that can read nothing.
+        tenant = UUID("33333333-3333-3333-3333-333333333333")
+        seen: list[Any] = []
+
+        class _Resolver:
+            async def resolve_from_principal(
+                self,
+                principal_id: UUID,
+                *,
+                requested_tenant_id: UUID | None = None,
+            ) -> TenantIdentity:
+                _ = principal_id, requested_tenant_id
+
+                return TenantIdentity(tenant_id=tenant)
+
+        deps = Deps.plain(
+            {
+                AuthnDepKey: _AuthnFactory(),
+                TenantResolverDepKey: lambda _ctx: _Resolver(),
+            }
+        )
+        resolver = build_ws_connection_resolver(
+            ctx_dep=lambda: context_from_deps(deps),
+            authn_spec=_SPEC,
+        )
+        router = APIRouter()
+
+        async def _record(connect: Any) -> Any:
+            outcome = resolver(connect)
+            resolved = await outcome if isawaitable(outcome) else outcome
+            seen.append(resolved)
+
+            return resolved
+
+        attach_realtime_ws_route(
+            router,
+            ctx_dep=lambda: context_from_deps(deps),
+            resolve=_record,
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+            cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+            authorize_topics=_allow_all,
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        with TestClient(app).websocket_connect(
+            "/realtime/ws", headers={"Authorization": f"Bearer {_GOOD}"}
+        ) as ws:
+            assert _is_live(ws)
+
+        assert seen and seen[0] is not None
+        assert seen[0].tenant == tenant
 
 
 class TestAnonymous:

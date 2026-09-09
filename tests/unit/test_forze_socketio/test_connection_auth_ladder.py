@@ -103,12 +103,38 @@ class TestTheEnvironIsReadLikeAnUpgradeRequest:
 
         assert handshake.cookies == {_COOKIE: _GOOD, "other": "x"}
 
-    def test_a_malformed_cookie_header_reads_as_no_cookie(self) -> None:
-        # Client input: it must mean "presented nothing" and let the ladder move on,
-        # never a 500 out of the connect handler.
-        handshake = socketio_handshake(_connect(environ={"HTTP_COOKIE": "=;;;"}))
+    def test_a_cookie_header_the_stdlib_refuses_reads_as_no_cookie(self) -> None:
+        # An illegal key raises `CookieError` out of `SimpleCookie.load` — and it is
+        # client input, so it must mean "presented nothing" and let the ladder move
+        # on, never a 500 out of the connect handler. It takes the whole header down
+        # with it, valid cookies included: a client sending one is not authenticating
+        # by cookie today.
+        handshake = socketio_handshake(
+            _connect(environ={"HTTP_COOKIE": f"{_COOKIE}={_GOOD}; ke(y=value"})
+        )
 
         assert handshake.cookies == {}
+
+    def test_a_cookie_header_the_stdlib_merely_skips_reads_as_no_cookie(self) -> None:
+        assert socketio_handshake(_connect(environ={"HTTP_COOKIE": "=;;;"})).cookies == {}
+
+    @pytest.mark.asyncio
+    async def test_a_refused_cookie_header_falls_to_the_header_source(self) -> None:
+        # Nothing was *presented*, so this is not the no-fallthrough case: the ladder
+        # continues rather than refusing the connection.
+        resolve = _resolver(cookie_name=_COOKIE, origin_allowlist_attested=True)
+
+        connection = await resolve(
+            _connect(
+                environ={
+                    "HTTP_COOKIE": "ke(y=value",
+                    "HTTP_AUTHORIZATION": f"Bearer {_GOOD}",
+                }
+            )
+        )
+
+        assert connection is not None
+        assert connection.authn.principal_id == _PRINCIPAL
 
     def test_wsgi_header_names_become_header_names(self) -> None:
         handshake = socketio_handshake(
@@ -116,6 +142,17 @@ class TestTheEnvironIsReadLikeAnUpgradeRequest:
         )
 
         assert handshake.header("Authorization") == f"Bearer {_GOOD}"
+
+    @pytest.mark.asyncio
+    async def test_a_custom_header_name_survives_the_wsgi_spelling(self) -> None:
+        # `X-Auth-Token` arrives as `HTTP_X_AUTH_TOKEN`; without the underscores turned
+        # back into dashes the ladder looks for a header nothing here is called.
+        connection = await _resolver(header_name="X-Auth-Token")(
+            _connect(environ={"HTTP_X_AUTH_TOKEN": f"Bearer {_GOOD}"})
+        )
+
+        assert connection is not None
+        assert connection.authn.principal_id == _PRINCIPAL
 
     def test_the_query_string_is_parsed(self) -> None:
         handshake = socketio_handshake(_connect(environ={"QUERY_STRING": "token=t&device_id=d"}))
