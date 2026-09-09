@@ -398,6 +398,59 @@ class TestTheTenantIsBound:
         assert seen[0].tenant == tenant
 
 
+    def test_a_plainly_registered_resolver_is_still_found(self) -> None:
+        # Defaulting the route must not cost the other wiring: a routed lookup falls
+        # back to a plain registration, and this is the test that keeps it true.
+        tenant = UUID("55555555-5555-5555-5555-555555555555")
+        seen: list[Any] = []
+
+        class _Resolver:
+            async def resolve_from_principal(
+                self,
+                principal_id: UUID,
+                *,
+                requested_tenant_id: UUID | None = None,
+            ) -> TenantIdentity:
+                _ = principal_id, requested_tenant_id
+
+                return TenantIdentity(tenant_id=tenant)
+
+        deps = Deps.plain(
+            {AuthnDepKey: _AuthnFactory(), TenantResolverDepKey: lambda _ctx: _Resolver()}
+        )
+        resolver = build_ws_connection_resolver(
+            ctx_dep=lambda: context_from_deps(deps),
+            authn_spec=_SPEC,
+        )
+        router = APIRouter()
+
+        async def _record(connect: Any) -> Any:
+            outcome = resolver(connect)
+            resolved = await outcome if isawaitable(outcome) else outcome
+            seen.append(resolved)
+
+            return resolved
+
+        attach_realtime_ws_route(
+            router,
+            ctx_dep=lambda: context_from_deps(deps),
+            resolve=_record,
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+            cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+            authorize_topics=_allow_all,
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        with TestClient(app).websocket_connect(
+            "/realtime/ws", headers={"Authorization": f"Bearer {_GOOD}"}
+        ) as ws:
+            assert _is_live(ws)
+
+        assert seen and seen[0] is not None
+        assert seen[0].tenant == tenant
+
+
 class TestAnonymous:
     def test_an_upgrade_with_no_credential_at_all_is_refused(self) -> None:
         client = _client()
