@@ -37,6 +37,7 @@ import fcntl
 import hashlib
 import os
 import pickle  # nosec B403
+import stat
 import tempfile
 from collections.abc import Mapping
 from datetime import timedelta
@@ -352,20 +353,33 @@ class MockStatePersistence:
         """
 
         try:
-            raw = self.path.read_bytes()
+            descriptor = os.open(self.path, os.O_RDONLY)
 
         except FileNotFoundError:
             return None
 
         except OSError as error:
-            # A directory at the path, a permission the process does not have. Named here
-            # because the alternative is a bare errno surfacing from a lifecycle hook, which
-            # says nothing about which configured path produced it.
+            # A permission the process does not have, a symlink loop. Named here because the
+            # alternative is a bare errno surfacing from a lifecycle hook, which says nothing
+            # about which configured path produced it.
             raise exc.configuration(
                 f"Mock state snapshot {self.path} cannot be read: {error}.",
                 code="mock_state_snapshot_unopenable",
                 details={"path": str(self.path)},
             ) from error
+
+        # Judged on the descriptor already open, not on the path: checking a path and then
+        # opening it leaves a window in which the file that was checked is not the one read.
+        try:
+            self._refuse_a_snapshot_that_is_not_this_user_s_file(os.fstat(descriptor))
+
+        except BaseException:
+            os.close(descriptor)
+
+            raise
+
+        with os.fdopen(descriptor, "rb") as handle:
+            raw = handle.read()
 
         return self._decode(raw)
 
@@ -454,6 +468,51 @@ class MockStatePersistence:
         to keep responsive."""
 
         self.write(self.capture(state))
+
+    # ....................... #
+
+    def _refuse_a_snapshot_that_is_not_this_user_s_file(self, info: os.stat_result) -> None:
+        """Refuse anything at the path that is not exclusively this user's regular file.
+
+        Restoring one runs ``pickle.loads``, which executes what it reads — so whoever can
+        write the file can run code in this process. That cannot be validated away: a payload
+        has to be unpickled before it can be inspected, and there is no allowlist of classes
+        to unpickle *into*, because the mock's stores hold whatever an application put there.
+
+        What can be checked is the premise. A snapshot this process wrote is ``0600`` and
+        owned by this user (:func:`tempfile.mkstemp` makes it so, and :func:`os.replace`
+        keeps it). A file that is group- or world-writable, or that belongs to somebody else,
+        is one another account could have replaced — which is exactly the case where the
+        pickle stops being self-written. Refused rather than trusted, the way an SSH private
+        key is.
+        """
+
+        if not stat.S_ISREG(info.st_mode):
+            raise exc.configuration(
+                f"Mock state snapshot {self.path} is not a file. The snapshot path names the "
+                "file to write, and its parent is created for it — a directory there is a "
+                "configured path with one segment too few.",
+                code="mock_state_snapshot_not_a_file",
+                details={"path": str(self.path)},
+            )
+
+        if info.st_uid != os.geteuid():
+            raise exc.configuration(
+                f"Mock state snapshot {self.path} belongs to uid {info.st_uid}, not to this "
+                "process. Restoring it would run whatever that account put in it. Delete it "
+                "or point the snapshot somewhere this user owns.",
+                code="mock_state_snapshot_foreign_owner",
+                details={"path": str(self.path), "owner": info.st_uid},
+            )
+
+        if writable := stat.S_IMODE(info.st_mode) & (stat.S_IWGRP | stat.S_IWOTH):
+            raise exc.configuration(
+                f"Mock state snapshot {self.path} is writable beyond its owner "
+                f"(mode 0o{stat.S_IMODE(info.st_mode):o}). Restoring it would run whatever "
+                "any account with that access put in it. `chmod 600` it, or delete it.",
+                code="mock_state_snapshot_shared_write",
+                details={"path": str(self.path), "mode": f"0o{writable:o}"},
+            )
 
     # ....................... #
 

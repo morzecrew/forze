@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import pickle
+import stat
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -234,15 +235,89 @@ class TestRefusedWiring:
 
     # ....................... #
 
-    def test_a_snapshot_path_that_cannot_be_opened_is_named(self, tmp_path: Path) -> None:
-        """A directory where a file was configured. Without this the startup hook raises a
-        bare `IsADirectoryError`, which says nothing about which configured path produced it."""
+    def test_a_directory_at_the_snapshot_path_is_refused(self, tmp_path: Path) -> None:
+        """A directory where a file was configured — usually a path with one segment too few,
+        since the parent is created for you. Without this the startup hook raises a bare
+        `IsADirectoryError`, which says nothing about which configured path produced it."""
 
         directory = tmp_path / "not-a-file"
         directory.mkdir()
 
-        with pytest.raises(CoreException, match="cannot be read"):
+        with pytest.raises(CoreException, match="is not a file"):
             MockStatePersistence(path=directory).read()
+
+    # ....................... #
+
+    @pytest.mark.skipif(
+        os.geteuid() == 0,
+        reason="root reads a mode-000 file, so the test would pass vacuously",
+    )
+    def test_a_snapshot_that_cannot_be_opened_is_named(self, tmp_path: Path) -> None:
+        """A permission the process does not have. The errno alone names neither the setting
+        nor the path that produced it."""
+
+        persistence = _persistence(tmp_path)
+        _saved(MockState(), persistence)
+        persistence.path.chmod(0o000)
+
+        with pytest.raises(CoreException, match="cannot be read"):
+            persistence.read()
+
+
+# ....................... #
+
+
+class TestUntrustedSnapshot:
+    """A restore runs `pickle.loads`, which executes what it reads.
+
+    That cannot be validated away — a payload has to be unpickled before it can be inspected,
+    and there is no allowlist of classes to unpickle *into*, because the mock's stores hold
+    whatever an application put there. What can be checked is the premise: a snapshot this
+    process wrote is `0600` and owned by this user, so anything else is a file another account
+    could have replaced.
+    """
+
+    def test_a_snapshot_writable_beyond_its_owner_is_refused(self, tmp_path: Path) -> None:
+        """The realistic shape of the attack: not a stolen file but a writable directory, in
+        which somebody else's file arrives at the configured path."""
+
+        persistence = _persistence(tmp_path)
+        _saved(MockState(), persistence)
+
+        # And the snapshot this process wrote is not one of those.
+        assert stat.S_IMODE(persistence.path.stat().st_mode) == 0o600
+
+        persistence.path.chmod(0o666)
+
+        with pytest.raises(CoreException, match="writable beyond its owner"):
+            persistence.read()
+
+    # ....................... #
+
+    def test_a_snapshot_owned_by_somebody_else_is_refused(self, tmp_path: Path) -> None:
+        """Driven through the guard with a fabricated stat, because a file owned by another
+        uid cannot be created without being root — and a test that needs root is a test that
+        does not run."""
+
+        persistence = _persistence(tmp_path)
+        mine = os.stat(tmp_path)
+        theirs = os.stat_result(
+            (
+                stat.S_IFREG | 0o600,
+                mine.st_ino,
+                mine.st_dev,
+                1,
+                os.geteuid() + 1,
+                mine.st_gid,
+                0,
+                0,
+                0,
+                0,
+            )
+        )
+
+        with pytest.raises(CoreException, match="belongs to uid"):
+            persistence._refuse_a_snapshot_that_is_not_this_user_s_file(theirs)
 
 
 # ....................... #
