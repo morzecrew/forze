@@ -33,6 +33,7 @@ from forze.application.contracts.sandbox import (
     SandboxResult,
     SandboxSpec,
     validate_provenance,
+    validate_resources,
     validate_stream_supported,
 )
 from forze.application.contracts.secrets import SecretRef, SecretsDepKey
@@ -171,8 +172,21 @@ class SubprocessSandbox:
         """Run *request* to completion, or kill it and say so."""
 
         self._refuse_a_request_this_route_cannot_serve(request)
+        validate_resources(SUBPROCESS_CAPABILITIES, request.resources, backend=SUBPROCESS_BACKEND)
 
         started = utcnow()
+        budget = self._budget(request)
+
+        if budget <= 0:
+            # No time left before anything was staged, let alone spawned. Returning the
+            # kill outcome rather than raising keeps the deadline's story in one shape: a
+            # run that ran out of time is a result, whether it ran for a while or not at all.
+            return SandboxResult(
+                outcome="killed_cancel",
+                usage=ResourceUsage(wall_clock=utcnow() - started),
+                detail="the invocation deadline had already passed; nothing was spawned",
+            )
+
         workspace = Path(
             await run_cpu(
                 tempfile.mkdtemp,
@@ -184,7 +198,9 @@ class SubprocessSandbox:
         try:
             await self._stage(request, workspace)
 
-            outcome, exit_code, stdout, stderr, detail = await self._spawn(request, workspace)
+            outcome, exit_code, stdout, stderr, detail = await self._spawn(
+                request, workspace, budget
+            )
             collected = await self._collect(request, workspace) if request.output_globs else {}
 
             return SandboxResult(
@@ -313,6 +329,7 @@ class SubprocessSandbox:
         self,
         request: SandboxRequest,
         workspace: Path,
+        budget: float,
     ) -> tuple[Outcome, int | None, CapturedStream, CapturedStream, str | None]:
         """Start the child, capture it, and end it — one way or another."""
 
@@ -341,7 +358,6 @@ class SubprocessSandbox:
             )
 
         cap = self._output_cap(request)
-        budget = self._budget(request)
         readers = [
             asyncio.create_task(_read_capped(process.stdout, cap)),
             asyncio.create_task(_read_capped(process.stderr, cap)),
@@ -349,19 +365,28 @@ class SubprocessSandbox:
 
         try:
             if request.stdin is not None and process.stdin is not None:
-                process.stdin.write(request.stdin)
-                await process.stdin.drain()
-                process.stdin.close()
+                # A child that never reads its stdin — `echo`, a script that only takes
+                # argv, anything that exits early — closes the pipe under us. That is the
+                # program behaving normally, so the broken pipe is absorbed here rather
+                # than raised at a caller who asked how the run went.
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    process.stdin.write(request.stdin)
+                    await process.stdin.drain()
+
+                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+                    process.stdin.close()
 
             try:
-                await asyncio.wait_for(process.wait(), timeout=budget or None)
+                # `budget` is positive: a run with none left never reaches here, so the
+                # timeout is never the `0 -> None -> unbounded` trap.
+                await asyncio.wait_for(process.wait(), timeout=budget)
 
             except TimeoutError:
                 await self._end(process)
                 stdout, stderr = await _drain(readers)
 
                 return (
-                    "killed_timeout" if budget else "killed_cancel",
+                    "killed_timeout",
                     None,
                     stdout,
                     stderr,
@@ -536,16 +561,22 @@ async def _read_capped(stream: asyncio.StreamReader | None, cap: int) -> Capture
 async def _drain(
     readers: list[asyncio.Task[CapturedStream]],
 ) -> tuple[CapturedStream, CapturedStream]:
-    """Collect both captures, tolerating a reader cancelled by a kill."""
+    """Collect both captures, tolerating a reader the kill cut short.
 
+    ``return_exceptions`` rather than a ``try`` per reader: catching ``CancelledError``
+    here would swallow a cancellation aimed at *this* task, and a capture is bookkeeping —
+    it must never outrank the outcome it accompanies.
+    """
+
+    collected = await asyncio.gather(*readers, return_exceptions=True)
     out: list[CapturedStream] = []
 
-    for reader in readers:
-        try:
-            out.append(await reader)
+    for item in collected:
+        if isinstance(item, CapturedStream):
+            out.append(item)
 
-        except (asyncio.CancelledError, Exception) as error:
-            _logger.warning("sandbox capture ended early", error=str(error))
+        else:
+            _logger.warning("sandbox capture ended early", error=str(item))
             out.append(CapturedStream())
 
     return out[0], out[1]

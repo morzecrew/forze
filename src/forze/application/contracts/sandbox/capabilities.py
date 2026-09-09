@@ -141,6 +141,42 @@ def validate_stream_supported(capabilities: SandboxCapabilities, *, backend: str
         )
 
 
+def validate_resources(
+    capabilities: SandboxCapabilities,
+    resources: object,
+    *,
+    backend: str,
+) -> None:
+    """Refuse a request asking for a ceiling this backend does not impose.
+
+    Fail-closed, the way every capability gate here reads: a caller that asked for a memory
+    ceiling and silently did not get one believes the child is capped. Running it anyway
+    under no limit at all is the degradation this model exists to forbid — the request is
+    refused instead, naming the feature and the backend.
+
+    Wall-clock and output ceilings are excluded: every adapter enforces those (the contract
+    requires both to be bounded), so they are never a capability question.
+    """
+
+    if resources is None:
+        return
+
+    for attribute, flag, feature in (
+        ("memory_bytes", capabilities.enforces_memory, "memory ceiling"),
+        ("cpu_seconds", capabilities.enforces_cpu, "cpu ceiling"),
+        ("max_open_files", capabilities.enforces_open_files, "open-file ceiling"),
+    ):
+        if getattr(resources, attribute, None) is not None and not flag:
+            raise exc.precondition(
+                f"Sandbox backend {backend!r} does not impose a {feature}, so a request "
+                f"setting {attribute} would run with no such limit. Wire an adapter whose "
+                "isolation tier enforces it, or drop the field rather than relying on one "
+                "that is not applied.",
+                code=UNSUPPORTED_SANDBOX_FEATURE_CODE,
+                details={"backend": backend, "feature": attribute},
+            )
+
+
 def validate_provenance(
     *,
     provenance: str,

@@ -32,6 +32,7 @@ from forze.application.contracts.sandbox import (
     SandboxRequest,
     SandboxResult,
     SandboxSpec,
+    validate_resources,
     validate_stream_supported,
 )
 from forze.base.exceptions import exc
@@ -131,6 +132,13 @@ class MockSandbox(SandboxPort):
         """Answer *request* from the registered function for this route."""
 
         route = str(self.spec.name)
+
+        # The mock enforces what it declares, exactly as the real adapters do: a route
+        # standing in for a backend without memory ceilings refuses the request that asks
+        # for one, so the gate fails here where production would rather than only there.
+        validate_resources(
+            self.sandbox_capabilities, request.resources, backend=MOCK_SANDBOX_BACKEND
+        )
         answer = self.registry.run_for(route)
 
         if answer is None:

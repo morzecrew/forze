@@ -121,6 +121,18 @@ class TestWhatComesBack:
         assert result.stdout.text.strip() == "WHISPER"
 
     @pytest.mark.asyncio
+    async def test_a_child_that_ignores_its_stdin_is_not_an_error(self) -> None:
+        # `echo`, a script that only reads argv, a program that exits early: ignoring
+        # stdin is ordinary, and the broken pipe it produces is the plane's problem to
+        # absorb rather than the caller's to catch.
+        result = await _sandbox().run(
+            _python("raise SystemExit(0)", stdin=b"x" * (4 * 1024 * 1024))
+        )
+
+        assert result.outcome == "exited"
+        assert result.exit_code == 0
+
+    @pytest.mark.asyncio
     async def test_a_program_that_cannot_start_is_a_result_too(self) -> None:
         result = await _sandbox().run(SandboxRequest(command=("/nonexistent/forze-sandbox-probe",)))
 
@@ -334,6 +346,69 @@ class TestTheRedButton:
             # A handful of descriptors move around under asyncio; a leak per run would show
             # as ~25 and this bound would not hold.
             assert after - before < 10, f"descriptors grew {before} -> {after}"
+
+
+class TestTheBudgetIsNeverUnbounded:
+    @pytest.mark.asyncio
+    async def test_an_expired_deadline_does_not_become_an_unbounded_run(self) -> None:
+        # The arithmetic trap: `remaining_time()` clamps at 0.0, and a 0.0 timeout passed
+        # through `x or None` becomes *no timeout at all* — the one case that must bound
+        # the child turning into the one case that never does.
+        sandbox = _sandbox()
+        request = _python("import time; time.sleep(30)")
+
+        with sandbox.ctx.inv_ctx.bind_deadline(0.05):
+            await asyncio.sleep(0.15)
+            result = await asyncio.wait_for(sandbox.run(request), timeout=5)
+
+        assert result.outcome == "killed_cancel"
+        assert result.detail is not None
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_that_is_still_open_bounds_the_run(self) -> None:
+        sandbox = _sandbox()
+
+        with sandbox.ctx.inv_ctx.bind_deadline(0.3):
+            result = await asyncio.wait_for(
+                sandbox.run(_python("import time; time.sleep(30)")), timeout=5
+            )
+
+        assert result.outcome == "killed_timeout"
+
+
+class TestUnenforceableRequestsAreRefused:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "resources",
+        [
+            ResourceRequest(memory_bytes=1024),
+            ResourceRequest(cpu_seconds=1),
+            ResourceRequest(max_open_files=8),
+        ],
+    )
+    async def test_asking_for_enforcement_this_adapter_lacks_is_refused(
+        self, resources: ResourceRequest
+    ) -> None:
+        # Fail-closed, the way every other plane's capability gate reads: a caller that
+        # asked for a memory ceiling and silently did not get one believes the child is
+        # capped. Better to refuse the request than to run it under a limit nobody applies.
+        with pytest.raises(CoreException) as caught:
+            await _sandbox().run(_python("pass", resources=resources))
+
+        assert caught.value.code == "sandbox_feature_unsupported"
+
+    @pytest.mark.asyncio
+    async def test_the_ceilings_it_does_enforce_are_accepted(self) -> None:
+        result = await _sandbox().run(
+            _python(
+                "print('ok')",
+                resources=ResourceRequest(
+                    wall_clock=timedelta(seconds=5), max_output_bytes=4096
+                ),
+            )
+        )
+
+        assert result.succeeded
 
 
 class TestBoundedCapture:

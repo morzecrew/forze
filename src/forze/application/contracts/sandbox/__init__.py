@@ -19,6 +19,7 @@ from .capabilities import (
     contains_untrusted,
     isolation_rank,
     validate_provenance,
+    validate_resources,
     validate_stream_supported,
 )
 from .deps import SandboxDepKey, SandboxDepPort, SandboxDeps
@@ -65,5 +66,6 @@ __all__ = [
     "contains_untrusted",
     "isolation_rank",
     "validate_provenance",
+    "validate_resources",
     "validate_stream_supported",
 ]

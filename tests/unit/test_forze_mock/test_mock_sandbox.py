@@ -18,6 +18,7 @@ import pytest
 from forze.application.contracts.sandbox import (
     CapturedStream,
     ProgramPayload,
+    ResourceRequest,
     SandboxCapabilities,
     SandboxRequest,
     SandboxResult,
@@ -151,6 +152,30 @@ class TestBorrowedCapabilities:
         registry.on("jobs", _ok)
 
         assert registry.capabilities_for("jobs") is None
+
+
+    @pytest.mark.asyncio
+    async def test_a_narrow_route_refuses_a_ceiling_its_backend_would_not_impose(self) -> None:
+        # The differential property: a request that would run uncapped in production is
+        # refused here, instead of passing against the oracle and only failing deployed.
+        registry = MockSandboxRegistry().on(
+            "jobs", _ok, capabilities=SandboxCapabilities(enforces_memory=False)
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await _ctx(registry).sandbox.run(_SPEC).run(
+                _request(resources=ResourceRequest(memory_bytes=1024))
+            )
+
+        assert caught.value.code == "sandbox_feature_unsupported"
+
+    @pytest.mark.asyncio
+    async def test_the_full_surface_accepts_what_it_claims_to_enforce(self) -> None:
+        result = await _ctx(MockSandboxRegistry().on("jobs", _ok)).sandbox.run(_SPEC).run(
+            _request(resources=ResourceRequest(memory_bytes=1024))
+        )
+
+        assert result.succeeded
 
 
 class TestStreamedReplay:
