@@ -63,6 +63,7 @@ nav = [
             "data-events/analytics.md",
             "data-events/dynamic-read.md",
             "data-events/inference.md",
+            "data-events/sandbox.md",
             "data-events/caching.md",
             "data-events/events-sagas.md",
             "data-events/messaging-delivery-models.md",

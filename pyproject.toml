@@ -692,6 +692,20 @@ engines = ["postgres", "mongo", "firestore"]
 # is document-plane specific, so whoever provides a document port needs a leg here.
 derive_from = ["document_command", "document_query"]
 
+[tool.conformance_manifest.gaps.sandbox]
+dep_keys = ["sandbox_run"]
+engines = ["mock", "subprocess"]
+reason = """
+Two implementations answer the sandbox port and no shared battery compares them. Most of \
+what they do is meant to differ — the mock enforces nothing and says so through its \
+capabilities, while the subprocess adapter really kills children and cleans workspaces — so \
+the leg has to assert the outcomes that must agree (a non-zero exit is a result, declared \
+outputs travel and undeclared ones do not, a refused route refuses in both) and nothing \
+about isolation, which only the real adapter can be wrong about. Waiting on the container \
+tier: a differential over two engines that cannot both enforce anything measures less than \
+it costs.\
+"""
+
 [tool.conformance_manifest.gaps.kms]
 dep_keys = ["crypto.kms"]
 engines = ["vault"]
