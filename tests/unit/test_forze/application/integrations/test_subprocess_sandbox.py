@@ -1039,6 +1039,24 @@ class TestWhatThisAdapterAdmitsTo:
         assert tiered.enforces_cpu
         assert tiered.enforces_open_files
 
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {},
+            {"memory_ceiling": 1 << 26},
+            {"cpu_ceiling": timedelta(seconds=1)},
+            {"open_files_ceiling": 8},
+            {"run_as_user": "nobody"},
+            {"memory_ceiling": 1 << 26, "run_as_user": "nobody"},
+        ],
+    )
+    def test_every_wiring_of_this_adapter_can_stream(self, overrides: dict[str, Any]) -> None:
+        # `run_stream` asks this adapter's own surface before serving, and no wiring makes
+        # the answer no — so that refusal cannot fire here today. Pinned rather than left
+        # implicit: the guard is kept for the surface narrowing later, and this is what says
+        # so out loud instead of leaving a reader to wonder whether it is dead.
+        assert subprocess_capabilities(_config(**overrides)).supports_stream
+
     def test_no_route_claims_to_recognise_the_ceiling_that_ended_a_run(self) -> None:
         # The claim rlimits cannot support. An RLIMIT_AS breach is the child's own
         # MemoryError and an EMFILE is the child's own OSError — indistinguishable from the
@@ -1313,6 +1331,55 @@ class TestStreaming:
         assert (streamed.outcome, streamed.exit_code) == (buffered.outcome, buffered.exit_code)
         assert streamed.stdout.text == buffered.stdout.text
         assert streamed.stderr.text == buffered.stderr.text
+
+    @pytest.mark.asyncio
+    async def test_a_slow_consumer_actually_slows_the_child(self, tmp_path: Path) -> None:
+        # Backpressure asserted through the child rather than through the queue. It writes
+        # far more than the backlog and the pipe can hold, then leaves a marker; a consumer
+        # that takes two chunks and walks away should find the child was still blocked
+        # writing, so the marker is never reached. With an unbounded queue the reader
+        # absorbs the lot, the child runs to completion, and the marker appears.
+        marker = tmp_path / "the-child-was-never-throttled"
+        chunks_seen = 0
+
+        async with aclosing(
+            _sandbox().run_stream(
+                _python(
+                    "import pathlib, sys\n"
+                    "sys.stdout.write('x' * 4 * 1024 * 1024)\n"
+                    "sys.stdout.flush()\n"
+                    f"pathlib.Path({str(marker)!r}).write_text('unthrottled')\n"
+                )
+            )
+        ) as events:
+            async for event in events:
+                if event.kind != "stdout":
+                    continue
+
+                chunks_seen += 1
+
+                if chunks_seen == 2:
+                    await asyncio.sleep(0.5)
+
+                    break
+
+        assert chunks_seen == 2
+        assert not marker.exists(), "the child wrote everything, so nothing was holding it back"
+
+    @pytest.mark.asyncio
+    async def test_a_streamed_run_leaves_no_task_behind(self) -> None:
+        # The pump races a queue read against the readers finishing, and the loser has to be
+        # cancelled: a pending get per run is a task that never completes and never gets
+        # collected while its queue is alive.
+        before = len(asyncio.all_tasks())
+
+        async with aclosing(_sandbox().run_stream(_python("print('done')"))) as events:
+            async for _ in events:
+                pass
+
+        await asyncio.sleep(0)
+
+        assert len(asyncio.all_tasks()) == before
 
     @pytest.mark.asyncio
     async def test_a_consumer_behind_a_finished_child_still_gets_the_tail(self) -> None:
