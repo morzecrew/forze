@@ -4387,6 +4387,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keep-the-data-across-a-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keep the data across a restart
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6329,6 +6340,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keep-the-data-across-a-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keep the data across a restart
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6726,6 +6748,45 @@ npx<span class="w"> </span>@stoplight/prism-cli<span class="w"> </span>mock<span
 </code></pre></div>
 <p>You lose statefulness and get schema-shaped responses; for a consumer who cannot run your
 app, that is the correct trade.</p>
+<h2 id="keep-the-data-across-a-restart">Keep the data across a restart<a class="headerlink" href="#keep-the-data-across-a-restart" title="Permanent link">&para;</a></h2>
+<p>By default the mock forgets everything on exit. That is right for tests, where fresh state
+per case is the point, and wrong for the other thing this page gets used for: an MVP
+somebody is clicking through. Wire a snapshot file and Tuesday's orders are still there on
+Wednesday.</p>
+<p>Four things it is not, stated before the wiring rather than after it:</p>
+<ul>
+<li><strong>Not crash-durable.</strong> A <code>kill -9</code>, an OOM kill or a power cut discards everything since
+  the last write. This is a snapshot, not a write-ahead log.</li>
+<li><strong>Not multi-process.</strong> One process owns the file; a second is refused, naming the pid of
+  the first.</li>
+<li><strong>Not bounded by the file.</strong> The whole dataset is in RAM, exactly as it was before.</li>
+<li><strong>Not a format you own.</strong> It is a pickle of <code>MockState</code>'s own fields, so upgrading forze
+  invalidates it — and the loader refuses rather than migrating.</li>
+</ul>
+<p>None of that matters for the case this is for, and all of it matters the moment somebody
+mistakes it for a database. The upgrade path is Postgres.</p>
+<div class="highlight"><pre><span></span><code><span class="n">persistence</span> <span class="o">=</span> <span class="n">MockStatePersistence</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">".forze/mvp.state"</span><span class="p">))</span>
+
+<span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span>
+    <span class="n">mock_state_lifecycle_step</span><span class="p">(</span><span class="n">state</span><span class="o">=</span><span class="n">state</span><span class="p">,</span> <span class="n">persistence</span><span class="o">=</span><span class="n">persistence</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><code>state</code> is the same <code>MockState</code> the deps module was built with. Startup loads the file when
+there is one — a missing file is a first run, not an error — and shutdown writes it.</p>
+<p>Every plane the mock implements comes back: documents, counters, outbox and inbox rows,
+stored objects, identity, durable runs. What deliberately does not is anything whose meaning
+is local to the process that wrote it. Held locks and in-flight transactions restore as
+<em>none held, none active</em>, because a lock expiry measured against one process's clock means
+nothing against another's.</p>
+<p>To write periodically as well as at shutdown, set an interval:</p>
+<div class="highlight"><pre><span></span><code><span class="n">MockStatePersistence</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">".forze/mvp.state"</span><span class="p">),</span> <span class="n">flush_every</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">))</span>
+</code></pre></div>
+<p>Off by default: it needs a background task, which a serverless host cannot keep running
+between invocations. Turn it on when losing a session to a crash stops being acceptable —
+for most people, right after the first time it happens.</p>
+<p>One pairing is refused outright. Persistence alongside a per-tenant routed state registry
+would snapshot the unrouted state and silently miss every tenant's data, so it fails at
+startup rather than writing a file that looks fine and is empty.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <p><strong>Never serve this in production.</strong> <code>MockDepsModule</code> keeps everything in memory and
 enforces none of the durability, isolation or capability limits a real backend does. It is

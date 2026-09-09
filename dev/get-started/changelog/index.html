@@ -8390,6 +8390,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The in-memory mock can survive a restart.</strong> <code>MockStatePersistence</code> plus <code>mock_state_lifecycle_step</code> load a snapshot at startup and write one at shutdown, so an MVP on <code>forze_mock</code> keeps its data without a container. Off by default; one process, no crash durability, still all in RAM — a snapshot, not a database.</p>
+</li>
+<li>
 <p><strong>Mongo implements the inbox.</strong> <code>MongoDepsModule(inboxes={...})</code> with <code>MongoInboxConfig</code> registers a consumer-side dedup store: one atomic <code>_id</code> upsert per message, no index migration, riding the ambient transaction so the mark rolls back with the handler (exactly-once effect).</p>
 </li>
 <li>
