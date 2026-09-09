@@ -226,12 +226,19 @@ class SubprocessSandbox:
 
     # ....................... #
 
-    def run_stream(self, request: SandboxRequest) -> AsyncGenerator[SandboxEvent]:
-        """Refused: this adapter buffers, and pretending otherwise would be the lie."""
+    async def run_stream(self, request: SandboxRequest) -> AsyncGenerator[SandboxEvent]:
+        """Refused: this adapter buffers, and pretending otherwise would be the lie.
 
+        An async generator rather than a function that raises when called, so the refusal
+        lands where every other adapter's does — at the first step of the iteration. Two
+        adapters that refuse the same thing at different moments is a difference a caller
+        discovers by having written the wrong `try` block.
+        """
+
+        _ = request
         validate_stream_supported(SUBPROCESS_CAPABILITIES, backend=SUBPROCESS_BACKEND)
 
-        raise AssertionError("unreachable")  # pragma: no cover - the validator always raises
+        yield SandboxEvent(kind="result")  # pragma: no cover - the validator always raises
 
     # ....................... #
 
@@ -311,6 +318,11 @@ class SubprocessSandbox:
 
         Everything else the child wrote goes with the workspace: the output channel carries
         declared artifacts, not whatever happens to be lying around next to them.
+
+        Collection runs after a kill as well as after a clean exit, so a timed-out run
+        still hands back whatever it had written. That is deliberate — a half-written
+        artifact is usually the most useful thing about a run that did not finish — and the
+        outcome beside it says the run was killed, so nothing reads as complete that is not.
         """
 
         storage = self._storage_command()

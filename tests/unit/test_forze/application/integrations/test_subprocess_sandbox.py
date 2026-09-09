@@ -224,6 +224,31 @@ class TestFilesCrossByKey:
         assert not marker.exists()
 
 
+class TestAKilledRunKeepsWhatItWrote:
+    @pytest.mark.asyncio
+    async def test_declared_outputs_survive_a_timeout(self) -> None:
+        # Deliberate: the partial artifact is usually the useful part of a run that did
+        # not finish, and the outcome beside it says the run was killed.
+        ctx = _ctx()
+
+        result = await _sandbox(ctx).run(
+            _python(
+                "import pathlib, time\n"
+                "pathlib.Path('progress.txt').write_text('half')\n"
+                "time.sleep(30)\n",
+                output_globs=("progress.txt",),
+                timeout=timedelta(milliseconds=400),
+            )
+        )
+
+        assert result.outcome == "killed_timeout"
+        assert list(result.output_files) == ["progress.txt"]
+
+        stored = await ctx.storage.query(_BLOBS).download(result.output_files["progress.txt"])
+
+        assert stored.data == b"half"
+
+
 class TestTenancy:
     @pytest.mark.asyncio
     async def test_a_tenant_aware_route_with_no_bound_tenant_refuses_before_spawning(
@@ -724,7 +749,10 @@ class TestWhatThisAdapterAdmitsTo:
 
     @pytest.mark.asyncio
     async def test_streaming_is_refused_rather_than_faked(self) -> None:
+        # Refused at the first step of the iteration, which is where the mock refuses too:
+        # same contract, same moment, whichever adapter a caller wired.
         with pytest.raises(CoreException) as caught:
-            _sandbox().run_stream(_python("pass"))
+            async for _ in _sandbox().run_stream(_python("pass")):
+                pass
 
         assert caught.value.code == "sandbox_feature_unsupported"

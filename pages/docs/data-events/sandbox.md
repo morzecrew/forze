@@ -152,3 +152,7 @@ adapter: the gates then refuse under test exactly where production would.
   adapter claims `enforces_memory` without a test that drives a child into it.
 - **Streaming is refused, not buffered.** `run_stream` is served by adapters
   that declare it; the base adapter says no rather than pretending.
+- **A killed run still hands back what it wrote.** Declared outputs are collected
+  after a kill as well as after a clean exit — a half-written artifact is usually
+  the most useful thing about a run that did not finish, and the `outcome` beside
+  it says plainly that it did not.
