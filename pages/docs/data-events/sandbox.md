@@ -85,7 +85,13 @@ input it could not stage, an output it could not store.
   the child wrote and nobody declared dies with the workspace, so "collect my
   results" is not an exfiltration channel.
 - **Secrets ride the environment.** `env` accepts a `SecretRef`, resolved at
-  spawn. Argv is world-readable on the host; `ps` is not a privilege.
+  spawn. Argv is world-readable on the host; `ps` is not a privilege. A resolved
+  value is masked out of the captured output before the result is returned, so a
+  child that echoes one — or dumps `os.environ` in a traceback — does not put it
+  in a journal.
+- **A symlink is not a declared output.** The collection step skips one whatever
+  it points at: a link the child dropped beside its real output would otherwise
+  send the target out under a workspace-relative name.
 - **The child's environment is what you named.** Plus the route's declared
   passthrough list, which defaults to `("PATH",)`. Inheriting the worker's
   environment would hand every credential in it to the code you are distrusting.
@@ -113,9 +119,10 @@ SubprocessSandboxDepsModule(          # registers SandboxDepKey ("sandbox_run") 
         "recipes": SubprocessSandboxConfig(
             provenance="trusted",
             wall_clock_ceiling=timedelta(seconds=60),   # required; no unbounded default
-            max_output_bytes=1_000_000,                 # required; a chatty child is bounded
+            max_output_bytes=1_000_000,                 # required; per stream, so the run's total is twice it
             acknowledge_network_egress=True,
             storage=RECIPE_FILES,
+            max_artifact_bytes=64 * 1024 * 1024,        # defaulted; declared outputs read into the worker
         ),
     },
 )
