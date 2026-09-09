@@ -18,6 +18,7 @@ import pickle
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,6 +34,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule, MockRoutedStateRegistry
+from forze_mock import persistence as persistence_module
 from forze_mock.adapters.counter import MockCounterAdapter
 from forze_mock.adapters.dlock import MockDistributedLockAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
@@ -161,6 +163,34 @@ def _watching_its_lock(state: MockState) -> _CountsEntries:
     setattr(state, "_MockState__lock", watcher)  # noqa: B010 - the name is mangled
 
     return watcher
+
+
+# ....................... #
+
+
+async def _one_run(plan: Any, ctx: Any, state: MockState, namespace: str) -> None:
+    """One full lifecycle pass that writes *namespace* while the runtime is up.
+
+    After startup, not before: startup restores the snapshot over whatever the state held, so
+    data staged in front of it is what the restore replaces.
+    """
+
+    await plan.startup(ctx)
+    state.documents.clear()
+    state.documents[namespace] = {"o-1": {"id": "o-1"}}
+    await plan.shutdown(ctx)
+
+
+# ....................... #
+
+
+def _state_with(namespace: str) -> MockState:
+    """A state distinguishable from another by which namespace it holds."""
+
+    state = MockState()
+    state.documents[namespace] = {"o-1": {"id": "o-1"}}
+
+    return state
 
 
 # ....................... #
@@ -948,6 +978,156 @@ class TestCaptureAndWrite:
         persistence.install(state, payload)
 
         assert watcher.entries == 1
+
+
+# ....................... #
+
+
+class TestWriteOrdering:
+    """Two writes genuinely overlap, and the older one must not be the one that survives.
+
+    Stopping the flush loop cancels the coroutine awaiting a write, never the worker thread
+    performing one. A flush that outlives the stop grace keeps running while shutdown starts
+    its own, and each `os.replace` is atomic on its own — so whichever lands last wins, and
+    the stale one carries an older capture.
+    """
+
+    def test_a_write_after_the_final_one_is_dropped(self, tmp_path: Path) -> None:
+        """Not "last writer wins": after the final write there is nothing left to correct a
+        rollback, so a straggler is discarded rather than applied."""
+
+        persistence = _persistence(tmp_path)
+        persistence.acquire()
+
+        try:
+            final = persistence.capture(_state_with("final"))
+            stale = persistence.capture(_state_with("stale"))
+
+            persistence.write(final, final=True)
+            persistence.write(stale)
+
+        finally:
+            persistence.release()
+
+        assert set(_loaded(persistence).documents) == {"final"}
+
+    # ....................... #
+
+    # ....................... #
+
+    # ....................... #
+
+    def test_a_second_run_through_the_same_persistence_still_writes(self, tmp_path: Path) -> None:
+        """A stop and a start in one process — what a restart-in-place looks like, and what
+        the simulation substrate already does with its deps modules. The final write closes
+        the file to stragglers, so reacquiring the path has to open it again; otherwise the
+        second run's shutdown is dropped as though it were one."""
+
+        persistence = _persistence(tmp_path)
+
+        for run in ("first", "second"):
+            state = MockState()
+            ctx = context_from_deps(MockDepsModule(state=state)())
+            plan = LifecyclePlan.from_steps(
+                mock_state_lifecycle_step(state=state, persistence=persistence)
+            ).freeze()
+
+            asyncio.run(_one_run(plan, ctx, state, run))
+
+        assert set(_loaded(persistence).documents) == {"second"}
+
+    def test_the_shutdown_write_is_the_one_nothing_may_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The lock alone orders two writes by when they arrive, which is not the same as the
+        final one arriving last: a flush thread already dispatched can take the lock *after*
+        shutdown has landed. Marking shutdown's write is what makes that straggler a no-op, so
+        the wiring is pinned here rather than left to the interleaving a test happens to get."""
+
+        marks: list[bool] = []
+        real_write = MockStatePersistence.write
+
+        def _recorded(
+            self: MockStatePersistence, payload: Mapping[str, Any], *, final: bool = False
+        ) -> None:
+            marks.append(final)
+            real_write(self, payload, final=final)
+
+        monkeypatch.setattr(MockStatePersistence, "write", _recorded)
+
+        state = MockState()
+        ctx = context_from_deps(MockDepsModule(state=state)())
+        persistence = _persistence(tmp_path, flush_every=timedelta(milliseconds=10))
+        plan = LifecyclePlan.from_steps(
+            mock_state_lifecycle_step(state=state, persistence=persistence)
+        ).freeze()
+
+        async def _run() -> None:
+            await plan.startup(ctx)
+
+            for _ in range(1000):
+                if marks:
+                    break
+
+                await asyncio.sleep(0.01)
+
+            else:  # pragma: no cover - the flush loop is what the test is waiting on
+                pytest.fail("the flush loop never wrote")
+
+            await plan.shutdown(ctx)
+
+        asyncio.run(_run())
+
+        assert marks[-1] is True
+        assert marks.count(True) == 1
+
+    def test_a_flush_that_outlived_the_stop_grace_cannot_roll_the_snapshot_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole arc, with the losing interleaving forced: a periodic write slower than
+        the final one, started first and landing second. Before the writes were ordered, this
+        left the snapshot holding the state from before shutdown."""
+
+        monkeypatch.setattr(persistence_module, "DEFAULT_STOP_GRACE_SECONDS", 0.05)
+
+        landed: list[str] = []
+        real_land = MockStatePersistence._land
+
+        def _slowly(self: MockStatePersistence, payload: Mapping[str, Any]) -> None:
+            stale = "final" not in payload["documents"]
+            time.sleep(0.4 if stale else 0.0)
+            real_land(self, payload)
+            landed.append("periodic" if stale else "final")
+
+        monkeypatch.setattr(MockStatePersistence, "_land", _slowly)
+
+        state = _state_with("stale")
+        ctx = context_from_deps(MockDepsModule(state=state)())
+        persistence = _persistence(tmp_path, flush_every=timedelta(milliseconds=10))
+        plan = LifecyclePlan.from_steps(
+            mock_state_lifecycle_step(state=state, persistence=persistence)
+        ).freeze()
+
+        async def _run() -> None:
+            await plan.startup(ctx)
+            await asyncio.sleep(0.1)  # a periodic write is now in flight, and slow
+            state.documents["final"] = {"o-1": {"id": "o-1"}}
+            await plan.shutdown(ctx)
+
+        asyncio.run(_run())
+
+        for _ in range(200):
+            if "final" in landed:
+                break
+
+            time.sleep(0.01)
+
+        else:  # pragma: no cover - the write is what the test is waiting on
+            pytest.fail("the final write never landed")
+
+        monkeypatch.undo()
+
+        assert "final" in _loaded(persistence).documents
 
 
 # ....................... #

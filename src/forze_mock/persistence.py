@@ -38,6 +38,7 @@ import os
 import pickle  # nosec B403
 import stat
 import tempfile
+import threading
 from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
@@ -244,6 +245,12 @@ class MockStatePersistence:
     __lock_fd: int | None = attrs.field(default=None, init=False, repr=False)
     """Descriptor of the held lock file, or ``None`` before :meth:`acquire`."""
 
+    __writes: threading.Lock = attrs.field(factory=threading.Lock, init=False, repr=False)
+    """Serializes :meth:`write` — two of them genuinely overlap, see there."""
+
+    __closed: bool = attrs.field(default=False, init=False, repr=False)
+    """Whether the final write has landed; after it, a write still in flight is dropped."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -326,6 +333,7 @@ class MockStatePersistence:
         os.write(descriptor, str(os.getpid()).encode("utf-8"))
 
         self.__lock_fd = descriptor
+        self.__closed = False
 
     # ....................... #
 
@@ -457,13 +465,39 @@ class MockStatePersistence:
 
     # ....................... #
 
-    def write(self, payload: Mapping[str, Any]) -> None:
+    def write(self, payload: Mapping[str, Any], *, final: bool = False) -> None:
         """Serialize a captured *payload* and land it, atomically.
 
         The counterpart of :meth:`capture`: *payload* is private to the caller, so this is
         the half that is safe — and worth — running off the event loop.
+
+        Writes are serialized against each other, and *final* is what makes that ordering
+        mean something. Stopping the flush loop cancels the coroutine awaiting a write, not
+        the worker thread performing one: a flush that outlives the stop grace keeps running
+        while shutdown starts its own, and whichever :func:`os.replace` happens to land last
+        wins. The stale one carries an older capture, so letting it win silently rolls the
+        snapshot back — the one moment where that is least acceptable, since nothing will
+        write again. Once a *final* write has landed, a write still in flight is dropped.
+
+        :param final: This is the last write; nothing after it may replace it.
         """
 
+        with self.__writes:
+            if self.__closed:
+                log.debug(
+                    "dropped a mock state flush that outlived the final write",
+                    path=str(self.path),
+                )
+
+                return
+
+            self.__closed = final
+
+            self._land(payload)
+
+    # ....................... #
+
+    def _land(self, payload: Mapping[str, Any]) -> None:
         self._write(
             b"\n".join(
                 (
@@ -755,10 +789,9 @@ class _MockStateShutdownHook(LifecycleHook):
         await self.startup.stop(deadline=clock.time() + DEFAULT_STOP_GRACE_SECONDS)
 
         try:
-            await asyncio.to_thread(
-                self.persistence.write,
-                self.persistence.capture(self.state),
-            )
+            payload = self.persistence.capture(self.state)
+
+            await asyncio.to_thread(self.persistence.write, payload, final=True)
 
         finally:
             # A process that cannot write its snapshot still has no business holding the
