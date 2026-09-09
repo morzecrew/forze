@@ -88,8 +88,10 @@ class SubprocessSandboxConfig:
     """The provenance this route is wired for — read by the freeze-time gate.
 
     Declared twice on purpose (the spec declares it too): the spec's copy is what a handler
-    author sees, this one is what the wiring can check before anything runs. A spec that
-    claims more than its route is refused when it resolves."""
+    author sees, this one is what the wiring can check before anything runs. The two are
+    checked against the same thing — the adapter's isolation — at two different moments, so
+    a handler declaring untrusted code against a route wired for its own binaries is refused
+    when the port resolves, not silently served."""
 
     wall_clock_ceiling: timedelta
     """Hard wall-clock ceiling for every run on this route. No default: an unbounded
