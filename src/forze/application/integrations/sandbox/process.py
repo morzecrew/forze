@@ -724,12 +724,44 @@ class SubprocessSandbox:
         after the fork, and the ceilings are in force before the target image loads.
         """
 
-        limits = self.config.rlimits
+        limits = self._rlimits(request)
 
         if not limits:
             return request.argv
 
         return (sys.executable, "-c", _RLIMIT_SHIM, json.dumps(limits), *request.argv)
+
+    # ....................... #
+
+    def _rlimits(self, request: SandboxRequest) -> dict[str, tuple[int, int]]:
+        """The route's ceilings, narrowed by whatever the request asked for less of.
+
+        Never widened, and never ignored. The request's ceilings are already refused when
+        this route does not impose them at all; accepting one and then applying only the
+        route's would be the same silence with an extra step — a caller believing the child
+        is capped at what it asked for while it runs at whatever the route allows.
+        """
+
+        limits = self.config.rlimits
+        asked = request.resources
+
+        if asked is None:
+            return limits
+
+        for name, value in (
+            ("RLIMIT_AS", asked.memory_bytes),
+            ("RLIMIT_NOFILE", asked.max_open_files),
+        ):
+            if value is not None and name in limits:
+                soft, hard = limits[name]
+                limits[name] = (min(soft, value), min(hard, value))
+
+        if asked.cpu_seconds is not None and "RLIMIT_CPU" in limits:
+            soft, hard = limits["RLIMIT_CPU"]
+            narrowed = min(soft, asked.cpu_seconds)
+            limits["RLIMIT_CPU"] = (narrowed, min(hard, narrowed + 1))
+
+        return limits
 
     # ....................... #
 

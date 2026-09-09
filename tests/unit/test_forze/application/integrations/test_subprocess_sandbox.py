@@ -1206,6 +1206,44 @@ class TestCeilingsThatBite:
         assert shimmed.detail is not None and bare.detail is not None
 
     @pytest.mark.asyncio
+    async def test_a_request_narrows_the_ceiling_it_is_allowed_to_ask_for(self) -> None:
+        # Accepting the ask and applying only the route's ceiling is the same silence the
+        # capability gate exists to forbid, with an extra step: the caller believes the
+        # child is capped where it asked, and it runs at whatever the route allows.
+        sandbox = _sandbox(memory_ceiling=1024 * 1024 * 1024)
+        allocate = "x = bytearray(256 * 1024 * 1024); print(len(x))"
+
+        roomy = await sandbox.run(_python(allocate))
+
+        assert roomy.exit_code == 0
+
+        narrowed = await sandbox.run(
+            _python(allocate, resources=ResourceRequest(memory_bytes=64 * 1024 * 1024))
+        )
+
+        assert narrowed.exit_code != 0
+        assert "MemoryError" in narrowed.stderr.text
+
+    def test_a_request_cannot_widen_a_ceiling(self) -> None:
+        sandbox = _sandbox(
+            memory_ceiling=1 << 26, open_files_ceiling=32, cpu_ceiling=timedelta(seconds=4)
+        )
+        widening = SandboxRequest(
+            command=("true",),
+            resources=ResourceRequest(memory_bytes=1 << 40, max_open_files=4096, cpu_seconds=600),
+        )
+
+        assert sandbox._rlimits(widening) == sandbox.config.rlimits  # pyright: ignore[reportPrivateUsage]
+
+    def test_a_narrowed_cpu_ceiling_keeps_its_signal_gap(self) -> None:
+        # Narrowing must not collapse the soft and hard limits onto each other, or the
+        # kernel skips SIGXCPU and the one identifiable over-run stops being identifiable.
+        sandbox = _sandbox(cpu_ceiling=timedelta(seconds=30))
+        asked = SandboxRequest(command=("true",), resources=ResourceRequest(cpu_seconds=2))
+
+        assert sandbox._rlimits(asked)["RLIMIT_CPU"] == (2, 3)  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
     async def test_a_request_may_not_ask_for_a_ceiling_the_route_does_not_set(self) -> None:
         # The capability gate is per route now, so the same request is served by one wiring
         # and refused by another — which is the point of deriving the surface from config.
