@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.sandbox import (
+    CapturedStream,
     ProgramPayload,
     ResourceRequest,
     SandboxRequest,
@@ -31,6 +33,7 @@ from forze.application.contracts.sandbox import (
 )
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.storage import StorageSpec, UploadedObject
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.sandbox import (
     SUBPROCESS_CAPABILITIES,
@@ -39,8 +42,10 @@ from forze.application.integrations.sandbox import (
     SubprocessSandboxConfig,
     SubprocessSandboxDepsModule,
 )
+from forze.application.integrations.sandbox.process import (
+    _drain,  # pyright: ignore[reportPrivateUsage]
+)
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.application.contracts.tenancy import TenantIdentity
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockRouteConfig, MockState
 
@@ -81,6 +86,14 @@ def _python(source: str, **request: Any) -> SandboxRequest:
         program=ProgramPayload(interpreter=(sys.executable, "-u"), source=source),
         **request,
     )
+
+
+def _open_descriptors() -> int | None:
+    """How many descriptors this process holds, where the OS will say (Linux)."""
+
+    fds = Path("/proc/self/fd")
+
+    return len(os.listdir(fds)) if fds.is_dir() else None
 
 
 def _workspaces(root: Path) -> list[Path]:
@@ -191,14 +204,24 @@ class TestFilesCrossByKey:
         assert list(result.output_files) == ["declared.txt"]
 
     @pytest.mark.asyncio
-    async def test_a_route_with_no_storage_refuses_to_stage(self) -> None:
+    async def test_a_route_with_no_storage_refuses_before_running_anything(
+        self, tmp_path: Path
+    ) -> None:
+        # Refusing at collection time would be too late: the program would already have
+        # run, with its effects, and only its outputs lost.
+        marker = tmp_path / "the-child-ran-anyway"
+
         with pytest.raises(CoreException) as caught:
             await _sandbox(storage=None).run(
-                _python("pass", output_globs=("out.txt",)),
+                _python(
+                    f"import pathlib; pathlib.Path({str(marker)!r}).write_text('ran')",
+                    output_globs=("out.txt",),
+                )
             )
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
         assert caught.value.code == "sandbox_storage_unwired"
+        assert not marker.exists()
 
 
 class TestTenancy:
@@ -270,12 +293,18 @@ class TestTenancy:
 class TestTheRedButton:
     @pytest.mark.asyncio
     async def test_a_run_past_its_budget_is_killed_and_says_so(self) -> None:
+        # The elapsed time is the assertion that matters. A run that returns the right
+        # *label* after waiting out the child's own sleep has not killed anything, and an
+        # outcome string cannot tell you which happened.
+        started = time.monotonic()
         result = await _sandbox().run(
             _python("import time; time.sleep(30)", timeout=timedelta(milliseconds=200))
         )
+        elapsed = time.monotonic() - started
 
         assert result.outcome == "killed_timeout"
         assert result.exit_code is None
+        assert elapsed < 5, f"the child outlived its kill: {elapsed:.1f}s"
 
     @pytest.mark.asyncio
     async def test_a_child_that_ignores_sigterm_still_dies(self) -> None:
@@ -287,22 +316,39 @@ class TestTheRedButton:
             "print('armed', flush=True)\n"
             "time.sleep(30)\n"
         )
+        started = time.monotonic()
         result = await _sandbox().run(_python(source, timeout=timedelta(milliseconds=300)))
+        elapsed = time.monotonic() - started
 
         assert result.outcome == "killed_timeout"
+        assert elapsed < 5, f"SIGTERM was ignored and nothing followed it: {elapsed:.1f}s"
 
     @pytest.mark.asyncio
-    async def test_cancellation_kills_the_child_and_propagates(self) -> None:
-        # A cancelled caller cannot receive a result: swallowing the cancellation to return
-        # one would tell the runtime this task was never cancelled at all.
+    async def test_cancellation_kills_the_child_and_propagates(self, tmp_path: Path) -> None:
+        # Two claims, and the second is the one worth testing: the cancellation reaches the
+        # caller, *and* the child is actually dead. The marker is written outside the
+        # workspace, so a surviving child leaves proof behind.
+        marker = tmp_path / "the-child-outlived-its-cancel"
         sandbox = _sandbox()
-        task = asyncio.create_task(sandbox.run(_python("import time; time.sleep(30)")))
+        task = asyncio.create_task(
+            sandbox.run(
+                _python(
+                    "import pathlib, time\n"
+                    "time.sleep(1.0)\n"
+                    f"pathlib.Path({str(marker)!r}).write_text('alive')\n"
+                )
+            )
+        )
 
         await asyncio.sleep(0.3)
         task.cancel()
 
         with pytest.raises(asyncio.CancelledError):
             await task
+
+        await asyncio.sleep(1.5)
+
+        assert not marker.exists(), "the child kept running after its caller was cancelled"
 
     @pytest.mark.asyncio
     async def test_the_workspace_is_gone_on_every_exit_path(self, tmp_path: Path) -> None:
@@ -329,7 +375,7 @@ class TestTheRedButton:
         # The failure that matters at scale: a sandbox that leaks an fd or a zombie per
         # killed run degrades the host long before anyone reads the logs.
         sandbox = _sandbox(workspace_root=tmp_path)
-        before = len(os.listdir("/proc/self/fd")) if Path("/proc/self/fd").exists() else None
+        before = _open_descriptors()
 
         for _ in range(25):
             result = await sandbox.run(
@@ -341,7 +387,7 @@ class TestTheRedButton:
         assert _workspaces(tmp_path) == []
 
         if before is not None:
-            after = len(os.listdir("/proc/self/fd"))
+            after = _open_descriptors() or 0
 
             # A handful of descriptors move around under asyncio; a leak per run would show
             # as ~25 and this bound would not hold.
@@ -422,6 +468,27 @@ class TestBoundedCapture:
         assert result.stdout.truncated
         assert len(result.stdout.text) <= 1024
         assert result.stdout.byte_count > 1024
+
+    @pytest.mark.asyncio
+    async def test_a_request_narrows_the_cap_when_it_asks_for_less(self) -> None:
+        result = await _sandbox(max_output_bytes=100_000).run(
+            _python(
+                "print('n' * 50_000)",
+                resources=ResourceRequest(max_output_bytes=256),
+            )
+        )
+
+        assert result.stdout.truncated
+        assert len(result.stdout.text) <= 256
+
+    @pytest.mark.asyncio
+    async def test_the_capture_stops_at_the_cap_rather_than_growing_past_it(self) -> None:
+        # Bounded means bounded: the kept text is capped whatever the child emits, or a
+        # chatty program buys the worker's memory one chunk at a time.
+        result = await _sandbox(max_output_bytes=2048).run(_python("print('q' * 1_000_000)"))
+
+        assert len(result.stdout.text.encode()) <= 2048
+        assert result.stdout.byte_count > 100_000
 
     @pytest.mark.asyncio
     async def test_a_request_may_narrow_the_cap_but_not_widen_it(self) -> None:
@@ -545,6 +612,104 @@ class TestTheGatesFailTheBoot:
             factory(_ctx(), SandboxSpec(name="jobs", provenance="untrusted"))
 
         assert caught.value.code == "sandbox_untrusted_underisolated"
+
+
+class TestTheSmallPrint:
+    def test_a_negative_kill_grace_is_refused(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            _config(kill_grace=timedelta(seconds=-1))
+
+        assert caught.value.code == "sandbox_ceiling_not_positive"
+
+    def test_the_port_reports_the_adapters_capabilities(self) -> None:
+        # Through the port, not through the module constant: a caller asks the object it
+        # was handed what it confines.
+        assert _sandbox().sandbox_capabilities.isolation == "none"
+
+    def test_a_wired_route_builds_a_sandbox_for_a_spec_it_may_serve(self) -> None:
+        sandbox = ConfigurableSubprocessSandbox(config=_config())(_ctx(), _SPEC)
+
+        assert sandbox.spec is _SPEC
+
+    @pytest.mark.asyncio
+    async def test_a_plain_environment_value_reaches_the_child(self) -> None:
+        result = await _sandbox().run(
+            _python("import os; print(os.environ['PLAIN'])", env={"PLAIN": "literal"})
+        )
+
+        assert result.stdout.text.strip() == "literal"
+
+    @pytest.mark.asyncio
+    async def test_a_glob_matching_a_directory_collects_nothing_from_it(self) -> None:
+        # `out/*` matches the directory too; uploading a directory's bytes is not a thing,
+        # and skipping it silently is the only sensible reading of "declared artifacts".
+        ctx = _ctx()
+
+        result = await _sandbox(ctx).run(
+            _python(
+                "import os, pathlib\n"
+                "os.makedirs('out/nested', exist_ok=True)\n"
+                "pathlib.Path('out/file.txt').write_text('x')\n",
+                output_globs=("out/*",),
+            )
+        )
+
+        assert list(result.output_files) == ["out/file.txt"]
+
+    @pytest.mark.asyncio
+    async def test_ending_a_child_that_already_exited_is_a_no_op(self) -> None:
+        # The race the fast path exists for: a child that dies inside the grace window.
+        process = await asyncio.create_subprocess_exec(sys.executable, "-c", "pass")
+        await process.wait()
+
+        await _sandbox()._end(process)  # pyright: ignore[reportPrivateUsage]
+
+        assert process.returncode == 0
+
+    @pytest.mark.asyncio
+    async def test_a_capture_that_failed_does_not_take_the_result_with_it(self) -> None:
+        # Bookkeeping must never outrank the outcome: a reader that raised leaves an empty
+        # capture behind, not an exception in place of the run's result.
+        async def broken() -> CapturedStream:
+            raise RuntimeError("pipe went away")
+
+        async def fine() -> CapturedStream:
+            return CapturedStream(text="kept")
+
+        stdout, stderr = await _drain(
+            [asyncio.create_task(fine()), asyncio.create_task(broken())]
+        )
+
+        assert stdout.text == "kept"
+        assert stderr.text == ""
+
+
+    @pytest.mark.asyncio
+    async def test_a_zero_grace_route_goes_straight_to_the_kill(self) -> None:
+        # `kill_grace=0` is a legal config: no politeness, just the second signal.
+        started = time.monotonic()
+        result = await _sandbox(kill_grace=timedelta()).run(
+            _python("import time; time.sleep(30)", timeout=timedelta(milliseconds=150))
+        )
+
+        assert result.outcome == "killed_timeout"
+        assert time.monotonic() - started < 5
+
+    @pytest.mark.asyncio
+    async def test_two_secrets_resolve_through_one_port(self) -> None:
+        module = MockDepsModule(state=MockState())
+        module.state.identity["secrets"]["a"] = "first"
+        module.state.identity["secrets"]["b"] = "second"
+        ctx = context_from_modules(module)
+
+        result = await _sandbox(ctx).run(
+            _python(
+                "import os; print(os.environ['A'] + os.environ['B'])",
+                env={"A": SecretRef(path="a"), "B": SecretRef(path="b")},
+            )
+        )
+
+        assert result.stdout.text.strip() == "firstsecond"
 
 
 class TestWhatThisAdapterAdmitsTo:

@@ -74,6 +74,15 @@ class TestWhatARequestMaySay:
 
         assert caught.value.code == "sandbox_program_interpreter_empty"
 
+    @pytest.mark.parametrize("filename", ["../evil.py", "/tmp/evil.py", "~/evil.py"])
+    def test_a_program_filename_that_leaves_the_workspace_is_refused(self, filename: str) -> None:
+        # The program is written before the child starts, so an escaping filename is a
+        # write to wherever the worker can reach — under the caller's own control.
+        with pytest.raises(CoreException) as caught:
+            ProgramPayload(interpreter=("python3",), source="print(1)", filename=filename)
+
+        assert caught.value.code == "sandbox_workspace_name_escapes"
+
     @pytest.mark.parametrize(
         "name",
         ["/etc/passwd", "../escape", "nested/../../escape", "~/.ssh/id_rsa", "", "  padded"],

@@ -198,6 +198,19 @@ class TestStreamedReplay:
         assert events[-1].result.succeeded
 
 
+    @pytest.mark.asyncio
+    async def test_a_silent_run_streams_only_its_result(self) -> None:
+        registry = MockSandboxRegistry().on(
+            "jobs", lambda _r: SandboxResult(outcome="exited", exit_code=0)
+        )
+
+        events = [
+            event async for event in _ctx(registry).sandbox.run(_SPEC).run_stream(_request())
+        ]
+
+        assert [event.kind for event in events] == ["result"]
+
+
 class TestThePlaneIsCommandOnly:
     @pytest.mark.asyncio
     async def test_a_read_only_operation_cannot_acquire_a_sandbox(self) -> None:
@@ -205,8 +218,7 @@ class TestThePlaneIsCommandOnly:
         # QUERY handler cannot get one at all.
         ctx = _ctx(MockSandboxRegistry().on("jobs", _ok))
 
-        with ctx.inv_ctx.bind_read_only():
-            with pytest.raises(CoreException) as caught:
-                ctx.sandbox.run(_SPEC)
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException) as caught:
+            ctx.sandbox.run(_SPEC)
 
         assert caught.value.kind is ExceptionKind.PRECONDITION

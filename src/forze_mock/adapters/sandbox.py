@@ -174,21 +174,3 @@ class MockSandbox(SandboxPort):
             yield SandboxEvent(kind="stderr", text=result.stderr.text)
 
         yield SandboxEvent(kind="result", result=result)
-
-
-# ....................... #
-
-
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class ConfigurableMockSandbox:
-    """Build a :class:`MockSandbox` for a given spec (one factory, every route)."""
-
-    registry: MockSandboxRegistry
-
-    # ....................... #
-
-    def __call__(self, ctx: object, spec: SandboxSpec) -> MockSandbox:
-        _ = ctx
-
-        return MockSandbox(spec=spec, registry=self.registry)
