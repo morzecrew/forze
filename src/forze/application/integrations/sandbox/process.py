@@ -118,6 +118,15 @@ class SubprocessSandboxConfig:
     workspace_root: Path | None = None
     """Parent directory for per-run workspaces; the system temp directory by default."""
 
+    max_artifact_bytes: int = 64 * 1024 * 1024
+    """Total bytes of declared output this route will read into the worker before uploading.
+
+    Captured output is capped per run and artifacts were not, so one child writing one
+    large file matching one declared glob could take the worker's memory — the failure the
+    other ceilings exist to prevent, through the one door that had none. Defaulted rather
+    than required, unlike the wall-clock and output ceilings: those apply to every run,
+    while a route declaring no ``output_globs`` never reaches this one."""
+
     kill_grace: timedelta = timedelta(seconds=5)
     """How long a killed child has between ``SIGTERM`` and ``SIGKILL``."""
 
@@ -140,6 +149,12 @@ class SubprocessSandboxConfig:
         if self.max_output_bytes <= 0:
             raise exc.configuration(
                 "SubprocessSandboxConfig.max_output_bytes must be positive.",
+                code="sandbox_ceiling_not_positive",
+            )
+
+        if self.max_artifact_bytes <= 0:
+            raise exc.configuration(
+                "SubprocessSandboxConfig.max_artifact_bytes must be positive.",
                 code="sandbox_ceiling_not_positive",
             )
 
@@ -216,7 +231,17 @@ class SubprocessSandbox:
             outcome, exit_code, stdout, stderr, detail = await self._spawn(
                 request, workspace, remaining
             )
-            collected = await self._collect(request, workspace) if request.output_globs else {}
+            collected, skipped = (
+                await self._collect(request, workspace) if request.output_globs else ({}, ())
+            )
+
+            if skipped:
+                note = (
+                    f"{len(skipped)} declared artifact(s) exceeded this route's "
+                    f"{self.config.max_artifact_bytes}-byte collection ceiling and were left "
+                    f"behind: {', '.join(skipped)}"
+                )
+                detail = note if detail is None else f"{detail}; {note}"
 
             return SandboxResult(
                 outcome=outcome,
@@ -328,7 +353,9 @@ class SubprocessSandbox:
 
     # ....................... #
 
-    async def _collect(self, request: SandboxRequest, workspace: Path) -> dict[str, str]:
+    async def _collect(
+        self, request: SandboxRequest, workspace: Path
+    ) -> tuple[dict[str, str], tuple[str, ...]]:
         """Upload what the request declared, and only that.
 
         Everything else the child wrote goes with the workspace: the output channel carries
@@ -342,13 +369,15 @@ class SubprocessSandbox:
 
         storage = self._storage_command()
         collected: dict[str, str] = {}
-        artifacts = await run_cpu(_declared_artifacts, workspace, request.output_globs)
+        artifacts, skipped = await run_cpu(
+            _declared_artifacts, workspace, request.output_globs, self.config.max_artifact_bytes
+        )
 
         for name, data in artifacts.items():
             stored = await storage.upload(UploadedObject(filename=name, data=data))
             collected[name] = stored.key
 
-        return collected
+        return collected, skipped
 
     # ....................... #
 
@@ -540,24 +569,47 @@ def _write_input(workspace: Path, name: str, data: bytes) -> None:
     target.write_bytes(data)
 
 
-def _declared_artifacts(workspace: Path, globs: tuple[str, ...]) -> dict[str, bytes]:
-    """Read what the request declared, in one pass off the loop.
+def _declared_artifacts(
+    workspace: Path, globs: tuple[str, ...], cap: int
+) -> tuple[dict[str, bytes], tuple[str, ...]]:
+    """Read what the request declared, in one pass off the loop, up to *cap* bytes.
 
     Sorted, because ``Path.glob`` has no defined order and a caller comparing two runs
     should not see the difference. Everything not matched stays in the workspace and dies
     with it.
+
+    A symlink is not matched either, whatever it points at. ``is_file`` and ``read_bytes``
+    both follow one, so a child that dropped ``out.txt -> /etc/shadow`` beside its real
+    output would have had the target uploaded under a workspace-relative name — a file that
+    never was in the workspace, leaving through the channel that exists for the ones that
+    were.
+
+    Returns what was collected and the names skipped for want of room, which the caller
+    reports rather than silently dropping: an artifact missing from the result and an
+    artifact the child never wrote look identical from the outside.
     """
 
     artifacts: dict[str, bytes] = {}
+    skipped: list[str] = []
+    budget = cap
 
     for pattern in globs:
         for path in sorted(workspace.glob(pattern)):
-            if not path.is_file():
+            name = path.relative_to(workspace).as_posix()
+
+            if name in artifacts or path.is_symlink() or not path.is_file():
                 continue
 
-            artifacts[path.relative_to(workspace).as_posix()] = path.read_bytes()
+            size = path.stat().st_size
 
-    return artifacts
+            if size > budget:
+                skipped.append(name)
+                continue
+
+            artifacts[name] = path.read_bytes()
+            budget -= size
+
+    return artifacts, tuple(skipped)
 
 
 async def _read_capped(stream: asyncio.StreamReader | None, cap: int) -> CapturedStream:

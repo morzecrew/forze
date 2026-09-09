@@ -206,6 +206,52 @@ class TestFilesCrossByKey:
         assert list(result.output_files) == ["declared.txt"]
 
     @pytest.mark.asyncio
+    async def test_a_symlink_does_not_carry_a_host_file_out_as_an_artifact(
+        self, tmp_path: Path
+    ) -> None:
+        # `is_file()` and `read_bytes()` both follow a symlink, so a link dropped beside the
+        # real output would have uploaded the *target* under a workspace-relative name —
+        # a file that was never in the workspace, leaving through the channel meant for the
+        # ones that were.
+        outside = tmp_path / "host-secret.txt"
+        outside.write_text("not the child's to send")
+        ctx = _ctx()
+
+        result = await _sandbox(ctx).run(
+            _python(
+                "import os, pathlib\n"
+                "pathlib.Path('declared.txt').write_text('mine')\n"
+                f"os.symlink({str(outside)!r}, 'stolen.txt')\n",
+                output_globs=("*.txt",),
+            )
+        )
+
+        assert result.outcome == "exited", result.stderr.text
+        assert list(result.output_files) == ["declared.txt"]
+
+    @pytest.mark.asyncio
+    async def test_an_artifact_past_the_route_ceiling_is_left_behind_and_named(self) -> None:
+        # Captured output is capped and artifact collection was not, so one child writing
+        # one large declared file could take the worker's memory. Skipping it silently
+        # would be its own bug: a missing artifact and one the child never wrote look
+        # identical from the outside.
+        ctx = _ctx()
+
+        result = await _sandbox(ctx, max_artifact_bytes=4096).run(
+            _python(
+                "import pathlib\n"
+                "pathlib.Path('small.txt').write_text('ok')\n"
+                "pathlib.Path('huge.txt').write_bytes(b'x' * 100_000)\n",
+                output_globs=("*.txt",),
+            )
+        )
+
+        assert result.outcome == "exited", result.stderr.text
+        assert list(result.output_files) == ["small.txt"]
+        assert result.detail is not None
+        assert "huge.txt" in result.detail
+
+    @pytest.mark.asyncio
     async def test_a_route_with_no_storage_refuses_before_running_anything(
         self, tmp_path: Path
     ) -> None:
