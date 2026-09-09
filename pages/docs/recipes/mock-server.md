@@ -208,6 +208,57 @@ npx @stoplight/prism-cli mock openapi.json      # or MSW, orval, openapi-typescr
 You lose statefulness and get schema-shaped responses; for a consumer who cannot run your
 app, that is the correct trade.
 
+## Keep the data across a restart
+
+By default the mock forgets everything on exit. That is right for tests, where fresh state
+per case is the point, and wrong for the other thing this page gets used for: an MVP
+somebody is clicking through. Wire a snapshot file and Tuesday's orders are still there on
+Wednesday.
+
+Four things it is not, stated before the wiring rather than after it:
+
+- **Not crash-durable.** A `kill -9`, an OOM kill or a power cut discards everything since
+  the last write. This is a snapshot, not a write-ahead log.
+- **Not multi-process.** One process owns the file; a second is refused, naming the pid of
+  the first.
+- **Not bounded by the file.** The whole dataset is in RAM, exactly as it was before.
+- **Not a format you own.** It is a pickle of `MockState`'s own fields, so upgrading forze
+  invalidates it — and the loader refuses rather than migrating.
+
+None of that matters for the case this is for, and all of it matters the moment somebody
+mistakes it for a database. The upgrade path is Postgres.
+
+```python
+persistence = MockStatePersistence(path=Path(".forze/mvp.state"))
+
+lifecycle = LifecyclePlan.from_steps(
+    mock_state_lifecycle_step(state=state, persistence=persistence),
+)
+```
+
+`state` is the same `MockState` the deps module was built with. Startup loads the file when
+there is one — a missing file is a first run, not an error — and shutdown writes it.
+
+Every plane the mock implements comes back: documents, counters, outbox and inbox rows,
+stored objects, identity, durable runs. What deliberately does not is anything whose meaning
+is local to the process that wrote it. Held locks and in-flight transactions restore as
+*none held, none active*, because a lock expiry measured against one process's clock means
+nothing against another's.
+
+To write periodically as well as at shutdown, set an interval:
+
+```python
+MockStatePersistence(path=Path(".forze/mvp.state"), flush_every=timedelta(minutes=5))
+```
+
+Off by default: it needs a background task, which a serverless host cannot keep running
+between invocations. Turn it on when losing a session to a crash stops being acceptable —
+for most people, right after the first time it happens.
+
+One pairing is refused outright. Persistence alongside a per-tenant routed state registry
+would snapshot the unrouted state and silently miss every tenant's data, so it fails at
+startup rather than writing a file that looks fine and is empty.
+
 ## Limits
 
 **Never serve this in production.** `MockDepsModule` keeps everything in memory and

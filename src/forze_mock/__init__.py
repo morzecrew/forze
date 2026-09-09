@@ -68,6 +68,7 @@ from .execution import (
     MockRoutedStateDepKey,
     MockStateDepKey,
 )
+from .persistence import MockStatePersistence, mock_state_lifecycle_step
 from .tenancy import (
     MockRoutedStateRegistry,
     MockTenancyMixin,
@@ -85,6 +86,8 @@ __all__ = [
     "MockRouteConfig",
     "MockDepsModule",
     "MockRoutedStateRegistry",
+    "MockStatePersistence",
+    "mock_state_lifecycle_step",
     "mock_routed_state_lifecycle_step",
     "MockTenancyMixin",
     "partition_namespace",
