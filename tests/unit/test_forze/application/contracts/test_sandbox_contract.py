@@ -13,6 +13,7 @@ middle, a request that carries both a command and a program.
 from __future__ import annotations
 
 from datetime import timedelta
+from types import MappingProxyType
 
 import pytest
 
@@ -98,6 +99,10 @@ class TestWhatARequestMaySay:
             # the join would not.
             "..\\escape",
             "nested\\..\\..\\escape",
+            # A drive letter is an absolute path where it is read as one and a directory
+            # name to `PurePosixPath`, which is the same disagreement as the backslash.
+            "C:/outside",
+            "c:outside",
         ],
     )
     def test_a_staged_name_that_could_leave_the_workspace_is_refused(self, name: str) -> None:
@@ -123,6 +128,16 @@ class TestWhatARequestMaySay:
         staged["../escape"] = "key"
 
         assert "../escape" not in request.input_files
+
+        # And the same again through a mapping proxy. A proxy is read-only from the outside
+        # and says nothing about who still holds the dictionary behind it, so keeping the
+        # caller's proxy would make the field look frozen while its owner kept editing it.
+        backing = {"in.txt": "key"}
+        through_a_proxy = SandboxRequest(command=("echo",), input_files=MappingProxyType(backing))
+
+        backing["../escape"] = "key"
+
+        assert "../escape" not in through_a_proxy.input_files
 
         with pytest.raises(TypeError):
             request.input_files["../escape"] = "key"  # type: ignore[index]

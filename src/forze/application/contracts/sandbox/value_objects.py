@@ -8,7 +8,7 @@ failures — a spawn that never happened, a workspace it could not write — rai
 
 from collections.abc import Mapping
 from datetime import timedelta
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal, final
 
 import attrs
@@ -339,16 +339,18 @@ def _refuse_escaping_name(name: str, *, field: str, glob: bool = False) -> None:
             code="sandbox_workspace_name_invalid",
         )
 
-    if "\\" in name:
-        # `PurePosixPath` reads a backslash as an ordinary character, so `..\\outside` is
-        # one innocent-looking component here and a climb out of the workspace on a
-        # platform that separates paths with it. Refusing the character costs nothing —
-        # a workspace-relative name has no business containing one — and settles the
-        # question without the value object having to know where it will be joined.
+    if "\\" in name or PureWindowsPath(name).drive:
+        # `PurePosixPath` reads a backslash as an ordinary character and `C:` as a directory
+        # name, so `..\\outside` and `C:/outside` are both innocent-looking components here
+        # and both climb out of the workspace on a platform that reads them as a separator
+        # and a drive. Refusing them costs nothing — a workspace-relative name has no
+        # business carrying either — and settles the question without the value object
+        # having to know where it will be joined.
         raise exc.configuration(
-            f"{field}: {name!r} contains a backslash. Workspace {subject}s are POSIX-"
-            "relative; a backslash is a path separator on some platforms and an ordinary "
-            "character here, which is exactly the disagreement a traversal check loses.",
+            f"{field}: {name!r} is not POSIX-relative. A backslash is a path separator on "
+            "some platforms and an ordinary character to this check, and a drive letter is "
+            "an absolute path that `PurePosixPath` reads as a directory name — both are "
+            "disagreements a traversal check loses rather than wins.",
             code="sandbox_workspace_name_escapes",
         )
 

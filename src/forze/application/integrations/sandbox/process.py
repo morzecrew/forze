@@ -131,6 +131,15 @@ class SubprocessSandboxConfig:
     than required, unlike the wall-clock and output ceilings: those apply to every run,
     while a route declaring no ``output_globs`` never reaches this one."""
 
+    max_artifact_count: int = 1024
+    """How many paths one declared glob may match before the whole pattern is abandoned.
+
+    The byte ceiling never fires on files with no bytes, and the match list itself is
+    memory: a child writing a million empty files that match a declared glob spends the
+    worker on paths alone. A pattern over the limit collects nothing rather than its first
+    *N* matches, because ``glob`` has no defined order and "the first N" of one is a
+    different answer every run."""
+
     kill_grace: timedelta = timedelta(seconds=5)
     """How long a killed child has between ``SIGTERM`` and ``SIGKILL``."""
 
@@ -159,6 +168,12 @@ class SubprocessSandboxConfig:
         if self.max_artifact_bytes <= 0:
             raise exc.configuration(
                 "SubprocessSandboxConfig.max_artifact_bytes must be positive.",
+                code="sandbox_ceiling_not_positive",
+            )
+
+        if self.max_artifact_count <= 0:
+            raise exc.configuration(
+                "SubprocessSandboxConfig.max_artifact_count must be positive.",
                 code="sandbox_ceiling_not_positive",
             )
 
@@ -230,14 +245,20 @@ class SubprocessSandbox:
             raise
 
         try:
-            await self._stage(request, workspace)
-            remaining = deadline - monotonic()
+            try:
+                # Staging spends the same budget the child does, and is bounded by it. A
+                # download is storage I/O that takes as long as it takes — with no ceiling
+                # over it, a route's `wall_clock_ceiling` would be exceeded by however long
+                # the inputs took to arrive, and a stalled one would hold the run forever.
+                async with asyncio.timeout(deadline - monotonic()):
+                    await self._stage(request, workspace)
+
+                remaining = deadline - monotonic()
+
+            except TimeoutError:
+                remaining = 0.0
 
             if remaining <= 0:
-                # Staging spends the same budget the child does: downloading declared
-                # inputs is storage I/O that can take as long as it takes, and a budget
-                # that only starts at the spawn is a route ceiling the run can exceed by
-                # however long its inputs took to arrive.
                 return SandboxResult(
                     outcome="killed_timeout",
                     usage=ResourceUsage(wall_clock=utcnow() - started),
@@ -386,7 +407,11 @@ class SubprocessSandbox:
         storage = self._storage_command()
         collected: dict[str, str] = {}
         artifacts, skipped = await run_cpu(
-            _declared_artifacts, workspace, request.output_globs, self.config.max_artifact_bytes
+            _declared_artifacts,
+            workspace,
+            request.output_globs,
+            self.config.max_artifact_bytes,
+            self.config.max_artifact_count,
         )
 
         for name, data in artifacts.items():
@@ -631,44 +656,71 @@ def _write_input(workspace: Path, name: str, data: bytes) -> None:
 
 
 def _declared_artifacts(
-    workspace: Path, globs: tuple[str, ...], cap: int
+    workspace: Path, globs: tuple[str, ...], cap: int, limit: int
 ) -> tuple[dict[str, bytes], tuple[str, ...]]:
-    """Read what the request declared, in one pass off the loop, up to *cap* bytes.
+    """Read what the request declared, off the loop, bounded three ways.
 
     Sorted, because ``Path.glob`` has no defined order and a caller comparing two runs
     should not see the difference. Everything not matched stays in the workspace and dies
     with it.
 
-    A symlink is not matched either, whatever it points at. ``is_file`` and ``read_bytes``
-    both follow one, so a child that dropped ``out.txt -> /etc/shadow`` beside its real
-    output would have had the target uploaded under a workspace-relative name — a file that
-    never was in the workspace, leaving through the channel that exists for the ones that
-    were.
+    **Bounded by count first.** ``glob`` is walked lazily and a pattern matching more than
+    *limit* paths is abandoned whole: a child writing a million empty files would otherwise
+    spend the worker's memory on the match list alone, where a byte ceiling never fires
+    because nothing has any bytes. Abandoning the pattern rather than keeping its first
+    *limit* matches keeps the result deterministic — "the first N" of an undefined order is
+    a different answer every run.
 
-    Returns what was collected and the names skipped for want of room, which the caller
-    reports rather than silently dropping: an artifact missing from the result and an
-    artifact the child never wrote look identical from the outside.
+    **Bounded by bytes.** Each file is read through a descriptor with one bounded read of
+    ``budget + 1`` bytes, rather than ``stat`` then ``read_bytes``: a descendant that
+    survived the kill can grow a file between the two, and this adapter does not reap what
+    its child started.
+
+    **Bounded to the workspace.** A symlink is skipped whatever it points at, and every
+    resolved path must still land inside the resolved workspace — the final-component check
+    alone misses a symlinked *directory* matching a declared glob, which puts a host file
+    under a workspace-relative name just as directly.
+
+    Returns what was collected and what was left behind, which the caller reports rather
+    than dropping silently: an artifact missing from the result and one the child never
+    wrote look identical from the outside.
     """
 
+    root = workspace.resolve()
     artifacts: dict[str, bytes] = {}
     skipped: list[str] = []
     budget = cap
 
     for pattern in globs:
-        for path in sorted(workspace.glob(pattern)):
+        matched: list[Path] = []
+
+        for path in workspace.glob(pattern):
+            matched.append(path)
+
+            if len(matched) > limit:
+                skipped.append(f"{pattern} (over {limit} matches)")
+                matched.clear()
+                break
+
+        for path in sorted(matched):
             name = path.relative_to(workspace).as_posix()
 
             if name in artifacts or path.is_symlink() or not path.is_file():
                 continue
 
-            size = path.stat().st_size
+            if not path.resolve().is_relative_to(root):
+                skipped.append(f"{name} (resolves outside the workspace)")
+                continue
 
-            if size > budget:
+            with path.open("rb") as handle:
+                data = handle.read(budget + 1)
+
+            if len(data) > budget:
                 skipped.append(name)
                 continue
 
-            artifacts[name] = path.read_bytes()
-            budget -= size
+            artifacts[name] = data
+            budget -= len(data)
 
     return artifacts, tuple(skipped)
 

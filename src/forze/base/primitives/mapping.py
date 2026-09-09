@@ -18,8 +18,13 @@ type StrKeyMapping[V: Any] = Mapping[StrKey, V]
 class MappingConverter:
     @staticmethod
     def frozen[K, V](value: Mapping[K, V]) -> Mapping[K, V]:
-        if isinstance(value, MappingProxyType):
-            return value
+        """A read-only view over a private copy of *value*.
+
+        Always copied, including when *value* is already a ``MappingProxyType``. A proxy is
+        read-only from the outside and says nothing about who else holds the dictionary
+        behind it, so returning one unchanged would let its owner keep editing what a frozen
+        object is meant to have settled — the field would look immutable and would not be.
+        """
 
         return MappingProxyType(dict(value))
 

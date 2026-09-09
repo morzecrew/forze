@@ -231,6 +231,77 @@ class TestFilesCrossByKey:
         assert list(result.output_files) == ["declared.txt"]
 
     @pytest.mark.asyncio
+    async def test_a_symlinked_directory_does_not_carry_host_files_out(
+        self, tmp_path: Path
+    ) -> None:
+        # Checking only the final component misses the shape that does the same job: a
+        # symlinked *directory* matching a declared glob puts host files under
+        # workspace-relative names without any of them being a symlink themselves.
+        outside = tmp_path / "host"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("not the child's to send")
+        ctx = _ctx()
+
+        result = await _sandbox(ctx).run(
+            _python(
+                "import os, pathlib\n"
+                "os.makedirs('out', exist_ok=True)\n"
+                "pathlib.Path('out/mine.txt').write_text('fine')\n"
+                f"os.symlink({str(outside)!r}, 'linked')\n",
+                output_globs=("out/*.txt", "linked/*.txt"),
+            )
+        )
+
+        assert result.outcome == "exited", result.stderr.text
+        assert list(result.output_files) == ["out/mine.txt"]
+
+    @pytest.mark.asyncio
+    async def test_a_glob_matching_more_than_the_route_allows_collects_nothing(self) -> None:
+        # The byte ceiling never fires on files with no bytes, so a child writing very many
+        # empty matches spends the worker on the match list alone. The whole pattern is
+        # abandoned rather than truncated: `glob` has no defined order, so keeping its first
+        # N would be a different answer every run.
+        ctx = _ctx()
+
+        result = await _sandbox(ctx, max_artifact_count=8).run(
+            _python(
+                "import pathlib\n"
+                "for i in range(40):\n"
+                "    pathlib.Path(f'f{i}.txt').write_text('')\n"
+                "pathlib.Path('kept.log').write_text('this one is fine')\n",
+                output_globs=("*.txt", "*.log"),
+            )
+        )
+
+        assert result.outcome == "exited", result.stderr.text
+        assert list(result.output_files) == ["kept.log"]
+        assert result.detail is not None
+        assert "*.txt" in result.detail
+
+    @pytest.mark.asyncio
+    async def test_staging_that_never_returns_does_not_hold_the_run(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A download is storage I/O with no ceiling of its own; a stalled one used to hold
+        # `run()` open past every budget the route declares, with nothing to end it.
+        async def never(self: Any, request: SandboxRequest, workspace: Path) -> None:
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(SubprocessSandbox, "_stage", never)
+        sandbox = _sandbox()
+        started = time.monotonic()
+
+        result = await asyncio.wait_for(
+            sandbox.run(_python("print('never runs')", timeout=timedelta(milliseconds=300))),
+            timeout=10,
+        )
+
+        assert result.outcome == "killed_timeout"
+        assert time.monotonic() - started < 5
+        assert result.detail is not None
+        assert "staging" in result.detail
+
+    @pytest.mark.asyncio
     async def test_an_artifact_past_the_route_ceiling_is_left_behind_and_named(self) -> None:
         # Captured output is capped and artifact collection was not, so one child writing
         # one large declared file could take the worker's memory. Skipping it silently

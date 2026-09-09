@@ -89,9 +89,10 @@ input it could not stage, an output it could not store.
   value is masked out of the captured output before the result is returned, so a
   child that echoes one — or dumps `os.environ` in a traceback — does not put it
   in a journal.
-- **A symlink is not a declared output.** The collection step skips one whatever
-  it points at: a link the child dropped beside its real output would otherwise
-  send the target out under a workspace-relative name.
+- **Only files inside the workspace leave.** Collection skips a symlink whatever
+  it points at, and every resolved path must still land inside the workspace, so
+  neither a link nor a linked directory sends a host file out under a
+  workspace-relative name.
 - **The child's environment is what you named.** Plus the route's declared
   passthrough list, which defaults to `("PATH",)`. Inheriting the worker's
   environment would hand every credential in it to the code you are distrusting.
@@ -123,6 +124,7 @@ SubprocessSandboxDepsModule(          # registers SandboxDepKey ("sandbox_run") 
             acknowledge_network_egress=True,
             storage=RECIPE_FILES,
             max_artifact_bytes=64 * 1024 * 1024,        # defaulted; declared outputs read into the worker
+            max_artifact_count=1024,                    # defaulted; a glob over it collects nothing
         ),
     },
 )
