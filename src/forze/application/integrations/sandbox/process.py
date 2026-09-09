@@ -111,6 +111,12 @@ def subprocess_capabilities(config: "SubprocessSandboxConfig") -> SandboxCapabil
 _READ_CHUNK: Final = 64 * 1024
 """Bytes per read from the child's pipes."""
 
+_STREAM_BACKLOG: Final = 8
+"""Chunks a streamed run may hold ahead of its consumer, per run across both pipes.
+
+Small on purpose: the point is that a caller falling behind slows the child down rather
+than filling the worker with what it has not read."""
+
 _NO_CAPTURE: Final = (CapturedStream(), CapturedStream())
 """Both streams empty — what a run that never spawned has to show."""
 
@@ -587,7 +593,13 @@ class SubprocessSandbox:
             return
 
         cap = self._output_cap(request)
-        chunks: asyncio.Queue[tuple[Literal["stdout", "stderr"], str | None]] = asyncio.Queue()
+        # Bounded, so a slow consumer pushes back. Unbounded, the reader drains the pipe as
+        # fast as the child can fill it and parks everything here — the child never blocks,
+        # the caller never catches up, and the output the pipe was regulating ends up in the
+        # worker's memory instead. The bound puts the kernel's backpressure back.
+        chunks: asyncio.Queue[tuple[Literal["stdout", "stderr"], str]] = asyncio.Queue(
+            maxsize=_STREAM_BACKLOG
+        )
         readers = [
             asyncio.create_task(_read_capped(process.stdout, cap, "stdout", chunks)),
             asyncio.create_task(_read_capped(process.stderr, cap, "stderr", chunks)),
@@ -604,18 +616,28 @@ class SubprocessSandbox:
                 # never reads more than a pipe buffer of what it was sent leaves it waiting
                 # forever, with no ceiling applying and no kill running.
                 async with asyncio.timeout(budget):
-                    open_pipes = len(readers)
+                    reading = asyncio.gather(*readers, return_exceptions=True)
 
-                    while open_pipes:
-                        kind, text = await chunks.get()
+                    while True:
+                        getting = asyncio.ensure_future(chunks.get())
+                        racing: set[asyncio.Future[Any]] = {getting, reading}
+                        done, _ = await asyncio.wait(racing, return_when=asyncio.FIRST_COMPLETED)
 
-                        if text is None:
-                            open_pipes -= 1
+                        if getting in done:
+                            kind, text = getting.result()
+
+                            if stream:
+                                yield SandboxEvent(kind=kind, text=text)
 
                             continue
 
-                        if stream:
-                            yield SandboxEvent(kind=kind, text=text)
+                        # Both pipes are at end and their readers have returned, and the
+                        # pending get did not complete — which says the queue is empty,
+                        # since every put happens before a reader returns. Nothing is left
+                        # to hand over and nothing more is coming.
+                        getting.cancel()
+
+                        break
 
                     await process.wait()
 
@@ -1118,7 +1140,7 @@ async def _read_capped(
     stream: asyncio.StreamReader | None,
     cap: int,
     kind: Literal["stdout", "stderr"],
-    chunks: "asyncio.Queue[tuple[Literal['stdout', 'stderr'], str | None]]",
+    chunks: "asyncio.Queue[tuple[Literal['stdout', 'stderr'], str]]",
 ) -> CapturedStream:
     """Read a pipe up to *cap* bytes, then keep draining without keeping anything.
 
@@ -1133,8 +1155,6 @@ async def _read_capped(
     """
 
     if stream is None:  # pragma: no cover - both pipes are always requested
-        await chunks.put((kind, None))
-
         return CapturedStream()
 
     parts: list[bytes] = []
@@ -1143,30 +1163,31 @@ async def _read_capped(
     total = 0
     truncated = False
 
-    try:
-        while True:
-            chunk = await stream.read(_READ_CHUNK)
+    while True:
+        chunk = await stream.read(_READ_CHUNK)
 
-            if not chunk:
-                break
+        if not chunk:
+            break
 
-            total += len(chunk)
+        total += len(chunk)
 
-            if kept < cap:
-                room = cap - kept
-                parts.append(chunk[:room])
-                kept += min(room, len(chunk))
+        if kept < cap:
+            room = cap - kept
+            parts.append(chunk[:room])
+            kept += min(room, len(chunk))
 
-            if total > cap:
-                truncated = True
+        if total > cap:
+            truncated = True
 
-            text = decoder.decode(chunk)
+        text = decoder.decode(chunk)
 
-            if text:
-                await chunks.put((kind, text))
-
-    finally:
-        await chunks.put((kind, None))
+        if text:
+            # Blocks once the consumer is `_STREAM_BACKLOG` chunks behind, which is the
+            # point: the pipe's own backpressure reaches the child instead of the worker
+            # holding what nobody has read. There is no end-of-pipe sentinel to lose here —
+            # the caller watches the reader tasks themselves, so a reader cancelled while
+            # blocked on this put cannot strand anyone waiting for a message it never sent.
+            await chunks.put((kind, text))
 
     return CapturedStream(
         text=b"".join(parts).decode("utf-8", errors="replace"),

@@ -14,6 +14,7 @@ cleaned if the directory is not there.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import sys
@@ -47,6 +48,7 @@ from forze.application.integrations.sandbox import (
 )
 from forze.application.integrations.sandbox.process import (
     _READ_CHUNK,  # pyright: ignore[reportPrivateUsage]
+    _STREAM_BACKLOG,  # pyright: ignore[reportPrivateUsage]
     _drain,  # pyright: ignore[reportPrivateUsage]
     _read_capped,  # pyright: ignore[reportPrivateUsage]
 )
@@ -1313,6 +1315,25 @@ class TestStreaming:
         assert streamed.stderr.text == buffered.stderr.text
 
     @pytest.mark.asyncio
+    async def test_a_consumer_behind_a_finished_child_still_gets_the_tail(self) -> None:
+        # The child writes everything and exits while the consumer is still working through
+        # what it sent. The loop ends on the readers finishing rather than on a message they
+        # send, so a consumer this far behind still receives every chunk before the result.
+        chunks: list[str] = []
+
+        async with aclosing(
+            _sandbox().run_stream(
+                _python("import sys\nfor i in range(5):\n    print('line', i, flush=True)\n")
+            )
+        ) as events:
+            async for event in events:
+                if event.kind == "stdout":
+                    chunks.append(event.text)
+                    await asyncio.sleep(0.05)
+
+        assert "".join(chunks).count("line") == 5
+
+    @pytest.mark.asyncio
     async def test_walking_away_mid_stream_kills_the_child_and_cleans_up(
         self, tmp_path: Path
     ) -> None:
@@ -1486,13 +1507,43 @@ class TestTheSpawnCarriesWhatTheRouteAsked:
 
 class TestTheReaderAtTheByteLevel:
     @pytest.mark.asyncio
+    async def test_the_reader_stops_when_nobody_is_taking_its_chunks(self) -> None:
+        # Backpressure, asserted where it is deterministic. With an unbounded queue the
+        # reader would swallow every read the child could produce and hold it in the
+        # worker — the pipe's own regulation defeated by the thing draining it.
+        reads = 0
+
+        class _EndlessPipe:
+            async def read(self, _size: int) -> bytes:
+                nonlocal reads
+                reads += 1
+
+                return b"chunk"
+
+        chunks: asyncio.Queue[tuple[str, str]] = asyncio.Queue(maxsize=_STREAM_BACKLOG)
+        reading = asyncio.create_task(
+            _read_capped(cast(Any, _EndlessPipe()), 1024, "stdout", chunks)
+        )
+
+        await asyncio.sleep(0.05)
+
+        assert not reading.done()
+        assert chunks.qsize() == _STREAM_BACKLOG
+        assert reads <= _STREAM_BACKLOG + 1, "the reader ran ahead of the consumer"
+
+        reading.cancel()
+
+        with contextlib.suppress(asyncio.CancelledError):
+            await reading
+
+    @pytest.mark.asyncio
     async def test_a_read_carrying_only_half_a_character_yields_no_chunk(self) -> None:
         # Driven at the byte level because a real pipe will not reliably hand over the first
         # byte of a character on its own. Decoding per read without carrying state would
         # turn this into two replacement marks; emitting an empty chunk for the first read
         # would put a meaningless event on a caller's stream.
         reads = [b"\xc3", b"\xa9", b"!", b""]
-        chunks: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
+        chunks: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
         class _HalfCharacterPipe:
             async def read(self, _size: int) -> bytes:
@@ -1502,9 +1553,9 @@ class TestTheReaderAtTheByteLevel:
 
         assert captured.text == "\u00e9!"
 
-        events: list[tuple[str, str | None]] = []
+        events: list[tuple[str, str]] = []
 
         while not chunks.empty():
             events.append(chunks.get_nowait())
 
-        assert events == [("stdout", "\u00e9"), ("stdout", "!"), ("stdout", None)]
+        assert events == [("stdout", "\u00e9"), ("stdout", "!")]
