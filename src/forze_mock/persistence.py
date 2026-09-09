@@ -174,13 +174,27 @@ def _classified() -> dict[str, attrs.Attribute[Any]]:
     """Every :class:`~forze_mock.state.MockState` field, by name, once the buckets agree.
 
     Runs at import, so a substore added to the state without a disposition fails on the
-    import rather than in a snapshot six weeks later that quietly lacks it. Both directions
-    are checked: an unclassified field is the case this exists for, and a classified name
-    that no longer exists is how a rename slips past the first check.
+    import rather than in a snapshot six weeks later that quietly lacks it. Three ways to get
+    it wrong, and the union alone catches only the first: an unclassified field is the case
+    this exists for, a classified name that no longer exists is how a rename slips past, and a
+    field in *two* buckets adds up correctly while behaving as whichever bucket runs last.
     """
 
     fields = {field.name: field for field in attrs.fields(MockState)}
     classified = PERSIST_FIELDS | RESET_FIELDS | DROP_FIELDS
+
+    if overlapping := (
+        (PERSIST_FIELDS & RESET_FIELDS)
+        | (PERSIST_FIELDS & DROP_FIELDS)
+        | (RESET_FIELDS & DROP_FIELDS)
+    ):
+        raise exc.configuration(
+            "MockState fields have more than one persistence disposition: "
+            f"{', '.join(sorted(overlapping))}. A field in two buckets is not a field with two "
+            "opinions — a restore applies the persist pass and then the reset pass, so it comes "
+            "back and is immediately thrown away, and the field-set arithmetic still adds up.",
+            code="mock_state_field_double_classified",
+        )
 
     if unclassified := set(fields) - classified:
         raise exc.configuration(

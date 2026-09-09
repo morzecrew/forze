@@ -384,6 +384,23 @@ class TestClassification:
 
     # ....................... #
 
+    def test_a_field_in_two_buckets_refuses_at_import(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The union still adds up, so the other two checks pass — and a restore applies the
+        persist pass and then the reset pass, so the field comes back and is thrown away in
+        the same call. The disjointness this class asserts belongs at the import too."""
+
+        monkeypatch.setattr(
+            "forze_mock.persistence.RESET_FIELDS",
+            RESET_FIELDS | {"documents"},
+        )
+
+        with pytest.raises(CoreException, match="more than one persistence disposition"):
+            _classified()
+
+    # ....................... #
+
     def test_a_classified_field_that_no_longer_exists_refuses(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
