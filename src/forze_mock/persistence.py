@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import fcntl
 import hashlib
 import os
 import pickle  # nosec B403
@@ -291,6 +290,20 @@ class MockStatePersistence:
         case this guards is exactly the one where the previous process did not exit cleanly.
         """
 
+        try:
+            # Imported here, not at module scope: `forze_mock/__init__` imports this module,
+            # so a top-level POSIX-only import would make `import forze_mock` fail on
+            # Windows with a `ModuleNotFoundError` naming neither this feature nor the reason.
+            import fcntl
+
+        except ModuleNotFoundError as error:  # pragma: no cover - POSIX-only in CI
+            raise exc.configuration(
+                "Mock state persistence needs POSIX advisory locking (`fcntl`), which this "
+                "platform does not have. The rest of the mock is unaffected; leave the "
+                "persistence step unwired.",
+                code="mock_state_locking_unsupported",
+            ) from error
+
         self.path.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o600)
 
@@ -464,8 +477,15 @@ class MockStatePersistence:
     # ....................... #
 
     def save(self, state: MockState) -> None:
-        """Capture *state* and write it — the two halves, for a caller with no event loop
-        to keep responsive."""
+        """Capture *state* and write it, in one call.
+
+        For a caller with no event loop to keep responsive — a script, a test, a shutdown
+        that has already stopped everything. **Not for a worker thread while a loop is
+        driving the mock:** this composes :meth:`capture`, which must run where the state's
+        other writers run, so calling it from elsewhere is the race that method describes.
+        Off the loop, call :meth:`capture` on the loop and hand the result to :meth:`write`,
+        which is what the lifecycle hooks do.
+        """
 
         self.write(self.capture(state))
 
