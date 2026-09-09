@@ -24,6 +24,9 @@ UNSUPPORTED_SANDBOX_FEATURE_CODE = "sandbox_feature_unsupported"
 UNDERISOLATED_CODE = "sandbox_untrusted_underisolated"
 """Error code for untrusted provenance on an adapter that cannot contain it."""
 
+UNKNOWN_PROVENANCE_CODE = "sandbox_provenance_unknown"
+"""Error code for a provenance value outside the declared vocabulary."""
+
 Isolation = Literal["none", "process", "container", "vm"]
 """Increasing containment.
 
@@ -189,9 +192,31 @@ def validate_provenance(
     The plane's single most valuable check. Everything else here is ergonomics; this is the
     line that stops generated code running in something that shares the host's filesystem
     because a container was inconvenient on the afternoon it was wired.
+
+    Only ``trusted`` passes without an isolation question, and anything outside the
+    vocabulary is refused rather than read as trusted — a gate whose default branch is
+    "allow" is a gate that opens for every value its author did not think of.
     """
 
-    if provenance != "untrusted" or contains_untrusted(capabilities.isolation):
+    if provenance == "trusted":
+        return
+
+    if provenance != "untrusted":
+        # Fail closed on a value nobody declared. `Provenance` is a `Literal`, which mypy
+        # checks and the interpreter does not: a spec rebuilt from JSON, a typo, or an
+        # empty string all arrive here as ordinary strings. Reading "not untrusted" as
+        # "trusted" would let `"untrused"` walk generated code past the one gate this
+        # plane exists to hold.
+        raise exc.configuration(
+            f"Sandbox route {route!r} declares provenance {provenance!r}, which is not one "
+            "of 'trusted' or 'untrusted'. The isolation gate cannot decide what a value it "
+            "does not know means, and guessing the permissive reading is how unreviewed "
+            "code ends up in a bare child.",
+            code=UNKNOWN_PROVENANCE_CODE,
+            details={"route": route, "backend": backend, "provenance": provenance},
+        )
+
+    if contains_untrusted(capabilities.isolation):
         return
 
     raise exc.configuration(

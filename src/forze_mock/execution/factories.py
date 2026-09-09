@@ -41,7 +41,11 @@ from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.pubsub import PubSubCommandPort, PubSubSpec
 from forze.application.contracts.queue import QueueCommandPort, QueueSpec
-from forze.application.contracts.sandbox import SandboxSpec
+from forze.application.contracts.sandbox import (
+    FULL_SANDBOX_CAPABILITIES,
+    SandboxSpec,
+    validate_provenance,
+)
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
@@ -85,6 +89,7 @@ from forze.application.integrations.stream import encrypting_stream_command
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze_mock.adapters import (
+    MOCK_SANDBOX_BACKEND,
     MockAckStreamGroupAdapter,
     MockAckStreamGroupAdminAdapter,
     MockAnalyticsAdapter,
@@ -393,10 +398,20 @@ class ConfigurableMockSandbox(_MockFactoryBase):
         spec: SandboxSpec,
     ) -> MockSandbox:
         _ = context
-        return MockSandbox(
-            spec=spec,
-            registry=self.module.sandboxes or MockSandboxRegistry(),
+        registry = self.module.sandboxes or MockSandboxRegistry()
+
+        # The same refusal the real adapters make when the port resolves. A mock that skips
+        # it is laxer than production, so an untrusted spec wired to a route standing in for
+        # a non-isolating backend passes every simulation and fails only once deployed —
+        # the divergence a mock exists to catch, pointed the wrong way.
+        validate_provenance(
+            provenance=spec.provenance,
+            capabilities=registry.capabilities_for(str(spec.name)) or FULL_SANDBOX_CAPABILITIES,
+            backend=MOCK_SANDBOX_BACKEND,
+            route=str(spec.name),
         )
+
+        return MockSandbox(spec=spec, registry=registry)
 
 
 @final

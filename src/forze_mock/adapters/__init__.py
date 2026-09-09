@@ -48,6 +48,7 @@ from forze_mock.adapters.query_params import (
 from forze_mock.adapters.queue import MockQueueAdapter
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
 from forze_mock.adapters.sandbox import (
+    MOCK_SANDBOX_BACKEND,
     MockSandbox,
     MockSandboxRegistry,
     MockSandboxRun,
@@ -98,6 +99,7 @@ __all__ = [
     "MockInferenceAdapter",
     "MockInferencePredict",
     "MockInferenceRegistry",
+    "MOCK_SANDBOX_BACKEND",
     "MockSandbox",
     "MockSandboxRegistry",
     "MockSandboxRun",

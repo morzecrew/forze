@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from forze.application.contracts.sandbox import (
+    UNDERISOLATED_CODE,
     CapturedStream,
     ProgramPayload,
     ResourceRequest,
@@ -153,7 +154,6 @@ class TestBorrowedCapabilities:
 
         assert registry.capabilities_for("jobs") is None
 
-
     @pytest.mark.asyncio
     async def test_a_narrow_route_refuses_a_ceiling_its_backend_would_not_impose(self) -> None:
         # The differential property: a request that would run uncapped in production is
@@ -163,19 +163,51 @@ class TestBorrowedCapabilities:
         )
 
         with pytest.raises(CoreException) as caught:
-            await _ctx(registry).sandbox.run(_SPEC).run(
-                _request(resources=ResourceRequest(memory_bytes=1024))
+            await (
+                _ctx(registry)
+                .sandbox.run(_SPEC)
+                .run(_request(resources=ResourceRequest(memory_bytes=1024)))
             )
 
         assert caught.value.code == "sandbox_feature_unsupported"
 
     @pytest.mark.asyncio
     async def test_the_full_surface_accepts_what_it_claims_to_enforce(self) -> None:
-        result = await _ctx(MockSandboxRegistry().on("jobs", _ok)).sandbox.run(_SPEC).run(
-            _request(resources=ResourceRequest(memory_bytes=1024))
+        result = (
+            await _ctx(MockSandboxRegistry().on("jobs", _ok))
+            .sandbox.run(_SPEC)
+            .run(_request(resources=ResourceRequest(memory_bytes=1024)))
         )
 
         assert result.succeeded
+
+
+class TestTheMockGatesWhatProductionGates:
+    @pytest.mark.asyncio
+    async def test_a_narrow_route_refuses_untrusted_code_the_way_its_backend_would(
+        self,
+    ) -> None:
+        # A mock laxer than production is worse than no mock: the wiring passes every
+        # simulation and fails only once deployed. The real adapters refuse an untrusted
+        # spec when the port resolves, so a route standing in for one refuses it here.
+        registry = MockSandboxRegistry().on(
+            "jobs", _ok, capabilities=SandboxCapabilities(isolation="none")
+        )
+        spec = SandboxSpec(name="jobs", provenance="untrusted")
+
+        with pytest.raises(CoreException) as caught:
+            _ctx(registry).sandbox.run(spec)
+
+        assert caught.value.code == UNDERISOLATED_CODE
+
+    @pytest.mark.asyncio
+    async def test_the_borrowed_full_surface_contains_untrusted_code(self) -> None:
+        # The default surface claims `vm`, so an untrusted route resolves — which is what
+        # lets a simulation exercise the containerized wiring it does not have yet.
+        registry = MockSandboxRegistry().on("jobs", _ok)
+        spec = SandboxSpec(name="jobs", provenance="untrusted")
+
+        assert (await _ctx(registry).sandbox.run(spec).run(_request())).succeeded
 
 
 class TestStreamedReplay:
@@ -197,16 +229,13 @@ class TestStreamedReplay:
         assert events[-1].result is not None
         assert events[-1].result.succeeded
 
-
     @pytest.mark.asyncio
     async def test_a_silent_run_streams_only_its_result(self) -> None:
         registry = MockSandboxRegistry().on(
             "jobs", lambda _r: SandboxResult(outcome="exited", exit_code=0)
         )
 
-        events = [
-            event async for event in _ctx(registry).sandbox.run(_SPEC).run_stream(_request())
-        ]
+        events = [event async for event in _ctx(registry).sandbox.run(_SPEC).run_stream(_request())]
 
         assert [event.kind for event in events] == ["result"]
 

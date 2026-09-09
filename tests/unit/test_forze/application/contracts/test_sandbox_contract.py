@@ -20,6 +20,7 @@ from forze.application.contracts.sandbox import (
     DEFAULT_SANDBOX_CAPABILITIES,
     FULL_SANDBOX_CAPABILITIES,
     MINIMUM_UNTRUSTED_ISOLATION,
+    UNKNOWN_PROVENANCE_CODE,
     CapturedStream,
     ProgramPayload,
     ResourceRequest,
@@ -206,6 +207,26 @@ class TestTheProvenanceGate:
             backend="probe",
             route="jobs",
         )
+
+    @pytest.mark.parametrize(
+        "provenance",
+        ["untrused", "TRUSTED", "", "none", "unknown"],
+    )
+    def test_a_provenance_nobody_declared_is_refused_on_every_tier(self, provenance: str) -> None:
+        # The gate used to read "not untrusted" as trusted, so a typo, an empty string or a
+        # value rebuilt from JSON walked straight past it. `Provenance` is a `Literal`,
+        # which mypy checks and the interpreter does not, so the vocabulary has to be
+        # enforced here or nowhere. Checked against the *strongest* surface, because the
+        # refusal is about the value rather than about the containment.
+        with pytest.raises(CoreException) as caught:
+            validate_provenance(
+                provenance=provenance,
+                capabilities=FULL_SANDBOX_CAPABILITIES,
+                backend="probe",
+                route="jobs",
+            )
+
+        assert caught.value.code == UNKNOWN_PROVENANCE_CODE
 
     def test_provenance_has_no_default_on_the_spec(self) -> None:
         # A plane whose value is a threat declaration cannot let it be forgotten into the
