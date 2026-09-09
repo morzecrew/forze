@@ -68,13 +68,7 @@ from .execution import (
     MockRoutedStateDepKey,
     MockStateDepKey,
 )
-from .persistence import (
-    DROP_FIELDS,
-    PERSIST_FIELDS,
-    RESET_FIELDS,
-    MockStatePersistence,
-    mock_state_lifecycle_step,
-)
+from .persistence import MockStatePersistence, mock_state_lifecycle_step
 from .tenancy import (
     MockRoutedStateRegistry,
     MockTenancyMixin,
@@ -94,9 +88,6 @@ __all__ = [
     "MockRoutedStateRegistry",
     "MockStatePersistence",
     "mock_state_lifecycle_step",
-    "PERSIST_FIELDS",
-    "RESET_FIELDS",
-    "DROP_FIELDS",
     "mock_routed_state_lifecycle_step",
     "MockTenancyMixin",
     "partition_namespace",

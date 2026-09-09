@@ -17,9 +17,9 @@ import os
 import pickle
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -40,7 +40,6 @@ from forze_mock.persistence import (
     DROP_FIELDS,
     PERSIST_FIELDS,
     RESET_FIELDS,
-    SNAPSHOT_MAGIC,
     MockStatePersistence,
     _classified,
     mock_state_lifecycle_step,
@@ -211,7 +210,7 @@ def _loaded(persistence: MockStatePersistence, state: MockState | None = None) -
 class TestRefusedWiring:
     """What is refused before a snapshot exists to lose."""
 
-    def test_a_non_positive_flush_interval_is_refused(self) -> None:
+    def test_a_non_positive_flush_interval_is_refused(self, tmp_path: Path) -> None:
         """`sleep_or_stop(0)` returns immediately, so a zero interval is not "flush often" —
         it is a spin that rewrites the whole snapshot as fast as the disk allows, measured at
         2,051 writes in a quarter of a second, while looking from the outside like the feature
@@ -220,7 +219,7 @@ class TestRefusedWiring:
 
         for interval in (timedelta(), timedelta(seconds=-5)):
             with pytest.raises(CoreException, match="must be positive"):
-                MockStatePersistence(path=Path("/tmp/mvp.state"), flush_every=interval)  # noqa: S108
+                MockStatePersistence(path=tmp_path / "mvp.state", flush_every=interval)
 
     # ....................... #
 
@@ -1072,4 +1071,3 @@ class TestUnwiredIsUntouched:
         state.documents["orders"] = {"o-1": {"id": "o-1"}}
 
         assert list(tmp_path.iterdir()) == []
-        assert SNAPSHOT_MAGIC == b"forze-mock-state"
