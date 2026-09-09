@@ -210,6 +210,26 @@ class TestTheMockGatesWhatProductionGates:
         assert (await _ctx(registry).sandbox.run(spec).run(_request())).succeeded
 
 
+    @pytest.mark.asyncio
+    async def test_a_route_can_stand_in_for_a_tier_that_only_imposes_ceilings(self) -> None:
+        # The subprocess tier applies a memory ceiling and cannot say afterwards that the
+        # ceiling is what ended the run. A simulation that scripts `killed_oom` against a
+        # route standing in for it proves a story production has no way to tell.
+        registry = MockSandboxRegistry().on(
+            "jobs",
+            _ok,
+            capabilities=SandboxCapabilities(enforces_memory=True, reports_resource_kill=False),
+        )
+        port = _ctx(registry).sandbox.run(_SPEC)
+
+        assert port.sandbox_capabilities.enforces_memory
+        assert not port.sandbox_capabilities.reports_resource_kill
+
+        result = await port.run(_request(resources=ResourceRequest(memory_bytes=4096)))
+
+        assert result.succeeded
+
+
 class TestStreamedReplay:
     @pytest.mark.asyncio
     async def test_output_arrives_before_the_result(self) -> None:

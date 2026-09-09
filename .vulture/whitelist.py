@@ -40,7 +40,7 @@ enforces_cpu  # unused variable (src/forze/application/contracts/sandbox/capabil
 enforces_open_files  # unused variable (src/forze/application/contracts/sandbox/capabilities.py:96)
 hard_kill  # unused variable (src/forze/application/contracts/sandbox/capabilities.py:99)
 reaps_descendants  # unused variable (src/forze/application/contracts/sandbox/capabilities.py:104)
-capture_command  # unused variable (src/forze/application/contracts/sandbox/specs.py:40)
+reports_resource_kill  # unused variable (src/forze/application/contracts/sandbox/capabilities.py:108)
 memory_bytes  # unused variable (src/forze/application/contracts/sandbox/value_objects.py:92)
 cpu_seconds  # unused variable (src/forze/application/contracts/sandbox/value_objects.py:95)
 max_open_files  # unused variable (src/forze/application/contracts/sandbox/value_objects.py:104)

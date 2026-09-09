@@ -15,6 +15,11 @@ surface by default — including isolation tiers no in-memory object can provide
 route standing in for a container backend must let the gates behave as they will in
 production. Register the real backend's capabilities (``registry.on(..., capabilities=...)``)
 to make a route refuse exactly where its deployed counterpart would.
+
+That includes ``reports_resource_kill``, which the default surface claims and the subprocess
+tier cannot: a handler is free to return ``killed_oom``, and a route standing in for a
+backend that only *imposes* ceilings should say so, or a simulation proves a story
+production has no way to tell.
 """
 
 from __future__ import annotations

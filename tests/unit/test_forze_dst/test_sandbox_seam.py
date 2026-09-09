@@ -13,6 +13,7 @@ under simulation gets told, in the same breath, that they meant to bind the mock
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 from datetime import timedelta
 
 import pytest
@@ -101,6 +102,33 @@ class TestTheRealAdapterIsOutOfBounds:
             )
 
             await sandbox.run(_request())
+
+        with pytest.raises(RealIOForbidden) as caught:
+            run_simulation(scenario)
+
+        assert "use an in-memory mock adapter" in str(caught.value)
+
+    def test_the_streamed_call_is_refused_on_the_same_ground(self) -> None:
+        # The seam is the port, not one of its two methods. A streamed run is the same
+        # off-loop wall-clock work, so a simulation reaching for it fails loud in the same
+        # place — otherwise `run_stream` would be the way round the cut.
+        async def scenario() -> None:
+            ctx = context_from_modules(MockDepsModule(state=MockState()))
+            sandbox = SubprocessSandbox(
+                spec=_SPEC,
+                config=SubprocessSandboxConfig(
+                    provenance="trusted",
+                    wall_clock_ceiling=timedelta(seconds=1),
+                    max_output_bytes=1024,
+                    acknowledge_network_egress=True,
+                    storage=StorageSpec(name="files"),
+                ),
+                ctx=ctx,
+            )
+
+            async with aclosing(sandbox.run_stream(_request())) as events:
+                async for _ in events:
+                    pass
 
         with pytest.raises(RealIOForbidden) as caught:
             run_simulation(scenario)
