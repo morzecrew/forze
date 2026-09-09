@@ -86,7 +86,19 @@ class TestWhatARequestMaySay:
 
     @pytest.mark.parametrize(
         "name",
-        ["/etc/passwd", "../escape", "nested/../../escape", "~/.ssh/id_rsa", "", "  padded"],
+        [
+            "/etc/passwd",
+            "../escape",
+            "nested/../../escape",
+            "~/.ssh/id_rsa",
+            "",
+            "  padded",
+            # A backslash is one ordinary character to `PurePosixPath` and a path separator
+            # on a platform that uses it, so the traversal check would pass this one and
+            # the join would not.
+            "..\\escape",
+            "nested\\..\\..\\escape",
+        ],
     )
     def test_a_staged_name_that_could_leave_the_workspace_is_refused(self, name: str) -> None:
         # The workspace boundary is not a boundary if the names crossing it can climb out:
@@ -100,6 +112,23 @@ class TestWhatARequestMaySay:
     def test_an_output_glob_that_reaches_outside_is_refused(self, glob: str) -> None:
         with pytest.raises(CoreException):
             SandboxRequest(command=("echo",), output_globs=(glob,))
+
+    def test_the_names_stay_checked_after_the_request_is_built(self) -> None:
+        # `frozen=True` freezes the attribute, not the mapping behind it. A caller keeping
+        # the dict it passed could add an escaping name after the check that would have
+        # refused it, which makes the check a formality rather than a boundary.
+        staged = {"in.txt": "key"}
+        request = SandboxRequest(command=("echo",), input_files=staged)
+
+        staged["../escape"] = "key"
+
+        assert "../escape" not in request.input_files
+
+        with pytest.raises(TypeError):
+            request.input_files["../escape"] = "key"  # type: ignore[index]
+
+        with pytest.raises(TypeError):
+            request.env["INJECTED"] = "value"  # type: ignore[index]
 
     def test_a_nested_workspace_name_is_fine(self) -> None:
         request = SandboxRequest(command=("echo",), input_files={"in/data/x.csv": "key"})

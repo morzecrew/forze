@@ -14,6 +14,7 @@ from typing import Literal, final
 import attrs
 
 from forze.base.exceptions import exc
+from forze.base.primitives import MappingConverter
 
 from ..secrets import SecretRef
 
@@ -143,11 +144,19 @@ class SandboxRequest:
     program: ProgramPayload | None = None
     """Source written to the workspace and invoked by argv, instead of *command*."""
 
-    input_files: Mapping[str, StorageKeyName] = attrs.field(factory=dict)
+    input_files: Mapping[str, StorageKeyName] = attrs.field(
+        factory=dict,
+        converter=MappingConverter.frozen,  # type: ignore[misc]
+    )
     """Workspace-relative name → storage key, staged in before the child starts.
 
     The child sees files; the framework owns the transfer. Nothing crosses as a host path,
-    so a request cannot name a file outside what the route can read."""
+    so a request cannot name a file outside what the route can read.
+
+    Frozen on construction. ``frozen=True`` stops the attribute being rebound and does
+    nothing about the mapping behind it, so a caller holding the dict it passed could add
+    a ``../`` name after the validation that would have refused it — the check has to
+    survive construction to be a check at all."""
 
     output_globs: tuple[str, ...] = ()
     """Workspace-relative globs collected to storage after exit.
@@ -155,7 +164,10 @@ class SandboxRequest:
     Only what is declared here leaves. A file the child wrote and nobody declared goes with
     the workspace — the output channel is not an exfiltration channel."""
 
-    env: Mapping[str, SecretRef | str] = attrs.field(factory=dict)
+    env: Mapping[str, SecretRef | str] = attrs.field(
+        factory=dict,
+        converter=MappingConverter.frozen,  # type: ignore[misc]
+    )
     """Environment for the child; :class:`SecretRef` values are resolved at spawn.
 
     Secrets ride the environment rather than argv because argv is world-readable on the
@@ -320,6 +332,19 @@ def _refuse_escaping_name(name: str, *, field: str, glob: bool = False) -> None:
         raise exc.configuration(
             f"{field}: an empty or space-padded workspace {subject} does not address a file.",
             code="sandbox_workspace_name_invalid",
+        )
+
+    if "\\" in name:
+        # `PurePosixPath` reads a backslash as an ordinary character, so `..\\outside` is
+        # one innocent-looking component here and a climb out of the workspace on a
+        # platform that separates paths with it. Refusing the character costs nothing —
+        # a workspace-relative name has no business containing one — and settles the
+        # question without the value object having to know where it will be joined.
+        raise exc.configuration(
+            f"{field}: {name!r} contains a backslash. Workspace {subject}s are POSIX-"
+            "relative; a backslash is a path separator on some platforms and an ordinary "
+            "character here, which is exactly the disagreement a traversal check loses.",
+            code="sandbox_workspace_name_escapes",
         )
 
     path = PurePosixPath(name)
