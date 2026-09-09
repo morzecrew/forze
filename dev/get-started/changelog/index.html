@@ -2682,6 +2682,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/sandbox/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/caching/" class="md-nav__link">
         
   
@@ -8389,6 +8418,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.6.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Code can run out-of-process under governance.</strong> The sandbox plane ships <code>SandboxSpec</code>/<code>SandboxPort</code>, a <code>SubprocessSandbox</code> that declares no isolation, and a scriptable mock. Any provenance but <code>trusted</code> fails the boot on an adapter that cannot contain it, and resolved secrets are masked out of captured output.</p>
+</li>
 <li>
 <p><strong>Realtime connections have a shipped resolver.</strong> <code>build_ws_connection_resolver</code> and its Socket.IO twin verify one credential ladder — reauth payload, cookie, <code>Authorization</code>, opt-in query — filling principal, tenant, device and <code>expires_at</code>. Cookie mode will not build without attesting the Origin allowlist.</p>
 </li>

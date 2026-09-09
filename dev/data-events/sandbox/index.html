@@ -12,13 +12,13 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/running-in-prod/resilience/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/data-events/sandbox/">
       
       
-        <link rel="prev" href="../deadlines/">
+        <link rel="prev" href="../inference/">
       
       
-        <link rel="next" href="../load-shedding/">
+        <link rel="next" href="../caching/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Resilience - Forze</title>
+        <title>Sandbox - Forze</title>
       
     
     
@@ -94,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#built-in-policies" class="md-skip">
+        <a href="#what-the-plane-actually-buys-you" class="md-skip">
           Skip to content
         </a>
       
@@ -148,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Resilience
+              Sandbox
             
           </span>
         </div>
@@ -1292,6 +1292,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1307,11 +1309,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
         
           
           <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
@@ -1331,7 +1333,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1348,7 +1350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/reading-data/" class="md-nav__link">
+      <a href="../reading-data/" class="md-nav__link">
         
   
   
@@ -1377,7 +1379,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/query-parameters/" class="md-nav__link">
+      <a href="../query-parameters/" class="md-nav__link">
         
   
   
@@ -1406,7 +1408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/procedures/" class="md-nav__link">
+      <a href="../procedures/" class="md-nav__link">
         
   
   
@@ -1435,7 +1437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/analytics/" class="md-nav__link">
+      <a href="../analytics/" class="md-nav__link">
         
   
   
@@ -1464,7 +1466,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/dynamic-read/" class="md-nav__link">
+      <a href="../dynamic-read/" class="md-nav__link">
         
   
   
@@ -1493,7 +1495,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/inference/" class="md-nav__link">
+      <a href="../inference/" class="md-nav__link">
         
   
   
@@ -1519,10 +1521,36 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../data-events/sandbox/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-box" viewBox="0 0 24 24"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Sandbox
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1539,6 +1567,91 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-plane-actually-buys-you" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the plane actually buys you
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-shape-in-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The shape in code
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#four-rules-the-plane-does-not-bend" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Four rules the plane does not bend
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-ships-today" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What ships today
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-against-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Testing against it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Limits
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1551,7 +1664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/caching/" class="md-nav__link">
+      <a href="../caching/" class="md-nav__link">
         
   
   
@@ -1580,7 +1693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/events-sagas/" class="md-nav__link">
+      <a href="../events-sagas/" class="md-nav__link">
         
   
   
@@ -1609,7 +1722,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/messaging-delivery-models/" class="md-nav__link">
+      <a href="../messaging-delivery-models/" class="md-nav__link">
         
   
   
@@ -1638,7 +1751,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/realtime/" class="md-nav__link">
+      <a href="../realtime/" class="md-nav__link">
         
   
   
@@ -1667,7 +1780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../data-events/durable-execution/" class="md-nav__link">
+      <a href="../durable-execution/" class="md-nav__link">
         
   
   
@@ -1878,8 +1991,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1895,11 +2006,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
           <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
@@ -1919,7 +2030,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1936,7 +2047,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../deadlines/" class="md-nav__link">
+      <a href="../../running-in-prod/deadlines/" class="md-nav__link">
         
   
   
@@ -1962,36 +2073,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-  Resilience
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../running-in-prod/resilience/" class="md-nav__link">
         
   
   
@@ -2008,124 +2093,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#built-in-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Built-in policies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#applying-a-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Applying a policy
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        A policy is composed strategies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#rate-limiting" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Rate limiting
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#bulkheads" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Bulkheads
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#hedging-the-tail" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Hedging the tail
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#shedding-for-a-degraded-downstream" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Shedding for a degraded downstream
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#port-level-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Port-level policies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fleet-wide-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fleet-wide state
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2138,7 +2105,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../load-shedding/" class="md-nav__link">
+      <a href="../../running-in-prod/load-shedding/" class="md-nav__link">
         
   
   
@@ -2167,7 +2134,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../shutdown-and-fleets/" class="md-nav__link">
+      <a href="../../running-in-prod/shutdown-and-fleets/" class="md-nav__link">
         
   
   
@@ -2196,7 +2163,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../credential-rotation/" class="md-nav__link">
+      <a href="../../running-in-prod/credential-rotation/" class="md-nav__link">
         
   
   
@@ -2225,7 +2192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../portability/" class="md-nav__link">
+      <a href="../../running-in-prod/portability/" class="md-nav__link">
         
   
   
@@ -2254,7 +2221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../operation-progress/" class="md-nav__link">
+      <a href="../../running-in-prod/operation-progress/" class="md-nav__link">
         
   
   
@@ -2283,7 +2250,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/" class="md-nav__link">
+      <a href="../../running-in-prod/observability/" class="md-nav__link">
         
   
   
@@ -2312,7 +2279,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../grafana-stack/" class="md-nav__link">
+      <a href="../../running-in-prod/grafana-stack/" class="md-nav__link">
         
   
   
@@ -6209,10 +6176,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#built-in-policies" class="md-nav__link">
+  <a href="#what-the-plane-actually-buys-you" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Built-in policies
+        What the plane actually buys you
       </span>
     </span>
   </a>
@@ -6220,10 +6187,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#applying-a-policy" class="md-nav__link">
+  <a href="#the-shape-in-code" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Applying a policy
+        The shape in code
       </span>
     </span>
   </a>
@@ -6231,10 +6198,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#a-policy-is-composed-strategies" class="md-nav__link">
+  <a href="#four-rules-the-plane-does-not-bend" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        A policy is composed strategies
+        Four rules the plane does not bend
       </span>
     </span>
   </a>
@@ -6242,10 +6209,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#rate-limiting" class="md-nav__link">
+  <a href="#what-ships-today" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Rate limiting
+        What ships today
       </span>
     </span>
   </a>
@@ -6253,10 +6220,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bulkheads" class="md-nav__link">
+  <a href="#testing-against-it" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Bulkheads
+        Testing against it
       </span>
     </span>
   </a>
@@ -6264,43 +6231,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#hedging-the-tail" class="md-nav__link">
+  <a href="#limits" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Hedging the tail
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#shedding-for-a-degraded-downstream" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Shedding for a degraded downstream
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#port-level-policies" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Port-level policies
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fleet-wide-state" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Fleet-wide state
+        Limits
       </span>
     </span>
   </a>
@@ -6387,11 +6321,11 @@
     
     
       <li class="md-path__item">
-        <a href="../deadlines/" class="md-path__link">
+        <a href="../reading-data/" class="md-path__link">
           
   
   <span class="md-ellipsis">
-    Running in production
+    Data & events
   </span>
 
         </a>
@@ -6411,240 +6345,171 @@
   
 
 
-  <h1 id="__skip">Resilience</h1>
+  <h1 id="__skip">Sandbox</h1>
 
-<p>Calls to other systems fail transiently. A <strong>resilience policy</strong> wraps an
-operation (or a single call) with rate limits, retries, timeouts, and circuit
-breakers — declaratively, by name — so fault tolerance lives in the wiring, not
-scattered through handlers.</p>
-<p><a class="glightbox" data-gallery="light" data-title="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" data-type="image" href="../../_diagrams/light/resilience-stack.svg#only-light"><img alt="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" src="../../_diagrams/light/resilience-stack.svg#only-light" /></a>
-<a class="glightbox" data-gallery="dark" data-title="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" data-type="image" href="../../_diagrams/dark/resilience-stack.svg#only-dark"><img alt="A resilience policy is an ordered stack — rate limit, bulkhead, circuit breaker, retry, timeout — wrapping the dependency call, with the invocation deadline gating the whole chain" src="../../_diagrams/dark/resilience-stack.svg#only-dark" /></a></p>
-<h2 id="built-in-policies">Built-in policies<a class="headerlink" href="#built-in-policies" title="Permanent link">&para;</a></h2>
-<p>Two ship ready to use, no <code>ResilienceSpec</code> required:</p>
-<ul>
-<li><strong><code>occ</code></strong> — retry on <code>concurrency</code> (optimistic-concurrency contention).</li>
-<li><strong><code>transient</code></strong> — retry on <code>infrastructure</code>, with a 30 s per-attempt timeout.</li>
-</ul>
-<h2 id="applying-a-policy">Applying a policy<a class="headerlink" href="#applying-a-policy" title="Permanent link">&para;</a></h2>
-<p>Declaratively, wrap an operation on its registry with a named policy:</p>
-<div class="highlight"><pre><span></span><code><span class="n">ResilienceWrap</span><span class="p">(</span><span class="n">policy</span><span class="o">=</span><span class="s2">"transient"</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">()</span>
+<p>Some products have to run a program they did not write when they were built: a
+recipe an operator saved, a script an agent generated, a validation step that
+must not be able to take the worker down with it. That work belongs outside the
+process — and the moment it leaves, four things need answers. What contains it.
+What happens when it will not stop. What it may read, and what may leave with
+it. And what a test is supposed to do about any of it.</p>
+<p>The <strong>sandbox</strong> plane answers those four, and is honest about the one it cannot:
+a Python library cannot provide isolation. Real confinement is a container
+runtime, a gVisor-class supervisor, a microVM or a remote execution service —
+none of which ship inside <code>forze</code>.</p>
+<h2 id="what-the-plane-actually-buys-you">What the plane actually buys you<a class="headerlink" href="#what-the-plane-actually-buys-you" title="Permanent link">&para;</a></h2>
+<p><strong>A gate that fails closed.</strong> A route declares whose code it runs. An adapter
+declares what it confines. Untrusted code on an adapter that confines nothing
+fails the boot, not the request:</p>
+<div class="highlight"><pre><span></span><code>Sandbox route 'recipes' runs untrusted code on backend 'subprocess', whose
+isolation is 'none'. Untrusted provenance requires 'container' or stronger …
 </code></pre></div>
-<p>Or imperatively, around a specific call:</p>
-<div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">resilience</span><span class="p">()</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="k">lambda</span><span class="p">:</span> <span class="n">charge_card</span><span class="p">(</span><span class="n">payment</span><span class="p">),</span>
-    <span class="n">policy</span><span class="o">=</span><span class="s2">"transient"</span><span class="p">,</span>
-    <span class="n">route</span><span class="o">=</span><span class="s2">"payments"</span><span class="p">,</span>   <span class="c1"># keys breaker/bulkhead state per dependency</span>
+<p>That refusal is the plane's single most valuable line. Every application that
+runs generated code eventually runs it in something that is not a sandbox — the
+bare adapter wired during a rushed local setup, a mock left in the wrong
+profile. Declaring the threat once turns that into a failed boot.</p>
+<p><strong>A red button that is real.</strong> A deadline kills the child: <code>SIGTERM</code>, a grace
+period, then <code>SIGKILL</code>, with the workspace cleaned on every exit path including
+the killed one. This is the thing <a href="../../recipes/offload-cpu-work/"><code>run_cpu</code></a>
+structurally cannot do — an uncheckpointed thread can only be abandoned.</p>
+<p><strong>A seam a simulation can cut.</strong> Out-of-process work is real wall-clock work off
+the loop, which the deterministic simulator refuses outright. Under simulation
+the port is answered by a function you register, so <code>killed_oom</code>,
+<code>killed_timeout</code> and <code>spawn_failed</code> arrive on the call you choose instead of on
+a bad day in production.</p>
+<h2 id="the-shape-in-code">The shape in code<a class="headerlink" href="#the-shape-in-code" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.sandbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">SandboxSpec</span><span class="p">,</span> <span class="n">SandboxRequest</span><span class="p">,</span> <span class="n">ProgramPayload</span>
+
+<span class="n">RECIPES</span> <span class="o">=</span> <span class="n">SandboxSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"recipes"</span><span class="p">,</span> <span class="n">provenance</span><span class="o">=</span><span class="s2">"trusted"</span><span class="p">)</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">RECIPES</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="n">SandboxRequest</span><span class="p">(</span>
+        <span class="n">program</span><span class="o">=</span><span class="n">ProgramPayload</span><span class="p">(</span><span class="n">interpreter</span><span class="o">=</span><span class="p">(</span><span class="s2">"python3"</span><span class="p">,),</span> <span class="n">source</span><span class="o">=</span><span class="n">recipe_source</span><span class="p">),</span>
+        <span class="n">input_files</span><span class="o">=</span><span class="p">{</span><span class="s2">"data.csv"</span><span class="p">:</span> <span class="n">dataset_key</span><span class="p">},</span>     <span class="c1"># staged from storage by key</span>
+        <span class="n">output_globs</span><span class="o">=</span><span class="p">(</span><span class="s2">"out/*.parquet"</span><span class="p">,),</span>           <span class="c1"># only these leave</span>
+        <span class="n">timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
+    <span class="p">)</span>
 <span class="p">)</span>
+
+<span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">outcome</span> <span class="o">==</span> <span class="s2">"exited"</span> <span class="ow">and</span> <span class="n">result</span><span class="o">.</span><span class="n">exit_code</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">publish</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">output_files</span><span class="p">[</span><span class="s2">"out/summary.parquet"</span><span class="p">])</span>
 </code></pre></div>
-<div class="admonition warning">
-<p class="admonition-title">A retry re-runs the whole operation</p>
-<p>Each attempt opens a <strong>fresh transaction</strong>, so a failed attempt's writes roll
-back before the next one — retries never leave half-applied state. It also
-means retried work must be safe to repeat.</p>
-</div>
-<h2 id="a-policy-is-composed-strategies">A policy is composed strategies<a class="headerlink" href="#a-policy-is-composed-strategies" title="Permanent link">&para;</a></h2>
-<p>When the built-ins aren't enough, compose your own. A <code>ResiliencePolicy</code> is an
-ordered stack of strategy objects (outer → inner: rate limit → bulkhead →
-circuit breaker → retry → timeout), plus optional fallback and hedge:</p>
+<p><code>provenance</code> has no default: there is no honest one. Guessing <code>trusted</code> runs
+generated code in a bare child; guessing <code>untrusted</code> fails the boot of every app
+that only runs its own binaries.</p>
+<p><strong>A failed run is a result, not an exception.</strong> A non-zero exit, an OOM kill, a
+deadline — each comes back as a <code>SandboxResult</code> with an <code>outcome</code>, because for a
+generated program a non-zero exit is frequently the answer rather than an error.
+Only the framework's own failures raise: a workspace it could not create, an
+input it could not stage, an output it could not store.</p>
+<h2 id="four-rules-the-plane-does-not-bend">Four rules the plane does not bend<a class="headerlink" href="#four-rules-the-plane-does-not-bend" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Programs, never callables.</strong> <code>command</code> is argv; there is no shell string and
+  no pickled callable. Shipping a Python function across the boundary means
+  unpickling it on the far side, which is the trust boundary this plane exists
+  to draw. <code>ProgramPayload</code> writes your source into the workspace and runs the
+  interpreter on it — explicit, inspectable, loggable.</li>
+<li><strong>Files cross by key, never by path.</strong> Inputs are staged from the storage
+  plane into the workspace; declared outputs are collected back to it. Whatever
+  the child wrote and nobody declared dies with the workspace, so "collect my
+  results" is not an exfiltration channel.</li>
+<li><strong>Secrets ride the environment.</strong> <code>env</code> accepts a <code>SecretRef</code>, resolved at
+  spawn. Argv is world-readable on the host; <code>ps</code> is not a privilege. A resolved
+  value is masked out of the captured output before the result is returned, so a
+  child that echoes one — or dumps <code>os.environ</code> in a traceback — does not put it
+  in a journal.</li>
+<li><strong>Only files inside the workspace leave.</strong> Collection skips a symlink whatever
+  it points at, and every resolved path must still land inside the workspace, so
+  neither a link nor a linked directory sends a host file out under a
+  workspace-relative name.</li>
+<li><strong>The child's environment is what you named.</strong> Plus the route's declared
+  passthrough list, which defaults to <code>("PATH",)</code>. Inheriting the worker's
+  environment would hand every credential in it to the code you are distrusting.</li>
+</ul>
+<h2 id="what-ships-today">What ships today<a class="headerlink" href="#what-ships-today" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Strategy</th>
-<th>What it does</th>
+<th>Tier</th>
+<th>Adapter</th>
+<th>Isolation</th>
+<th>Runs</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Rate limit</strong></td>
-<td>token bucket — sustained <code>permits/per</code>, capacity <code>burst or permits</code>; an empty bucket <strong>rejects immediately</strong> with <code>throttled</code></td>
+<td>Base</td>
+<td><code>SubprocessSandbox</code></td>
+<td><code>none</code></td>
+<td>trusted code only — the gate refuses it anything else</td>
 </tr>
 <tr>
-<td><strong>Retry</strong></td>
-<td>re-run on a <a href="../../writing-operation/errors/">retryable</a> failure — <code>max_attempts</code>, <code>backoff</code> (base, max, multiplier, jitter)</td>
+<td>Container</td>
+<td>recorded</td>
+<td><code>container</code></td>
+<td>untrusted code, against a consumer's own container infra</td>
 </tr>
 <tr>
-<td><strong>Timeout</strong></td>
-<td>a per-attempt timeout</td>
-</tr>
-<tr>
-<td><strong>Circuit breaker</strong></td>
-<td>stop calling a failing dependency once a failure ratio trips, for a cool-off window</td>
-</tr>
-<tr>
-<td><strong>Adaptive throttle</strong></td>
-<td><a href="#shedding-for-a-degraded-downstream">shed proportionally</a> when the downstream stops accepting — the breaker's sibling for degraded-but-alive dependencies</td>
-</tr>
-<tr>
-<td><strong>Bulkhead</strong></td>
-<td>cap concurrent calls — fixed, or <a href="#bulkheads">adaptive / delay-based</a> — with an optional managed queue</td>
-</tr>
-<tr>
-<td><strong>Fallback / Hedge</strong></td>
-<td>a fallback value on failure; or race staggered attempts</td>
+<td>Remote</td>
+<td>recorded</td>
+<td><code>container</code> / <code>vm</code></td>
+<td>managed sandboxing services</td>
 </tr>
 </tbody>
 </table>
-<p>Retry only fires on kinds that declare themselves <strong>retryable</strong> —
-<code>concurrency</code>, <code>infrastructure</code>, and <code>throttled</code> (see
-<a href="../../writing-operation/errors/">Errors &amp; failures</a>). You can't retry a <code>validation</code> or <code>domain</code>
-failure, by design.</p>
-<p>When the invocation carries a <a href="../deadlines/">deadline</a>, it gates the whole
-strategy chain from the outside — and a retry abandons a backoff sleep that
-would outlive the budget, surfacing the real error instead of a pointless
-wait.</p>
-<h2 id="rate-limiting">Rate limiting<a class="headerlink" href="#rate-limiting" title="Permanent link">&para;</a></h2>
-<p><code>RateLimitStrategy(permits=10, per=timedelta(seconds=1))</code> is a token bucket:
-<code>permits/per</code> is the sustained rate, <code>burst or permits</code> the capacity, refilled
-continuously from the monotonic clock. State is keyed <code>(policy, route)</code> like
-the breaker's, so distinct backends under one policy get distinct buckets.</p>
-<p>There is <strong>no queuing</strong>: a call that finds the bucket empty raises
-<code>exc.throttled(code="rate_limited")</code> right away, before it can occupy a
-bulkhead slot or count against the breaker.</p>
-<p>To <strong>wait</strong> instead of failing fast, lean on the taxonomy: <code>throttled</code> is
-retryable, so a retry-with-backoff policy <em>around</em> the rate-limited call turns
-rejection into waiting:</p>
-<div class="highlight"><pre><span></span><code><span class="n">patient</span> <span class="o">=</span> <span class="n">ResiliencePolicy</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">"patient"</span><span class="p">,</span>
-    <span class="n">strategies</span><span class="o">=</span><span class="p">(</span>
-        <span class="n">RetryStrategy</span><span class="p">(</span>
-            <span class="n">max_attempts</span><span class="o">=</span><span class="mi">4</span><span class="p">,</span>
-            <span class="n">backoff</span><span class="o">=</span><span class="n">BackoffStrategy</span><span class="p">(</span>
-                <span class="n">base</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">milliseconds</span><span class="o">=</span><span class="mi">100</span><span class="p">),</span>
-                <span class="nb">max</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
-            <span class="p">),</span>
-            <span class="n">retry_on</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="n">ExceptionKind</span><span class="o">.</span><span class="n">THROTTLED</span><span class="p">}),</span>
+<p>The base adapter shares this host's kernel, filesystem, network and user with
+the child. It declares exactly that, which is why wiring it also costs an
+explicit <code>acknowledge_network_egress=True</code>: it cannot close the network, so it
+does not claim to.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.integrations.sandbox</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">SubprocessSandboxConfig</span><span class="p">,</span> <span class="n">SubprocessSandboxDepsModule</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">SubprocessSandboxDepsModule</span><span class="p">(</span>          <span class="c1"># registers SandboxDepKey ("sandbox_run") per route</span>
+    <span class="n">routes</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"recipes"</span><span class="p">:</span> <span class="n">SubprocessSandboxConfig</span><span class="p">(</span>
+            <span class="n">provenance</span><span class="o">=</span><span class="s2">"trusted"</span><span class="p">,</span>
+            <span class="n">wall_clock_ceiling</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">60</span><span class="p">),</span>   <span class="c1"># required; no unbounded default</span>
+            <span class="n">max_output_bytes</span><span class="o">=</span><span class="mi">1_000_000</span><span class="p">,</span>                 <span class="c1"># required; per stream, so the run's total is twice it</span>
+            <span class="n">acknowledge_network_egress</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">storage</span><span class="o">=</span><span class="n">RECIPE_FILES</span><span class="p">,</span>
+            <span class="n">max_artifact_bytes</span><span class="o">=</span><span class="mi">64</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>        <span class="c1"># defaulted; declared outputs read into the worker</span>
+            <span class="n">max_artifact_count</span><span class="o">=</span><span class="mi">1024</span><span class="p">,</span>                    <span class="c1"># defaulted; a glob over it collects nothing</span>
         <span class="p">),</span>
-    <span class="p">),</span>
+    <span class="p">},</span>
 <span class="p">)</span>
+</code></pre></div>
+<p>Its hard kill is as complete as its tier: it kills the process it started, and a
+child that forked its own children can orphan them. Only the container and vm
+tiers guarantee that killing the sandbox reaps everything it spawned.</p>
+<h2 id="testing-against-it">Testing against it<a class="headerlink" href="#testing-against-it" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockSandboxRegistry</span>
 
-<span class="c1"># vendor calls run under a rate-limit policy; the call site waits it out.</span>
-<span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">resilience</span><span class="p">()</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
-    <span class="k">lambda</span><span class="p">:</span> <span class="n">vendor</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="n">order_id</span><span class="p">),</span>
-    <span class="n">policy</span><span class="o">=</span><span class="s2">"patient"</span><span class="p">,</span>
+<span class="n">registry</span> <span class="o">=</span> <span class="n">MockSandboxRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">on</span><span class="p">(</span>
+    <span class="s2">"recipes"</span><span class="p">,</span>
+    <span class="k">lambda</span> <span class="n">request</span><span class="p">:</span> <span class="n">SandboxResult</span><span class="p">(</span><span class="n">outcome</span><span class="o">=</span><span class="s2">"killed_oom"</span><span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>The same <code>retry_on</code> also waits out backend-raised throttles (an upstream 429
-mapped to <code>throttled</code>) — your limiter and the backend reject the same way. At
-the FastAPI edge, an uncaught <code>throttled</code> becomes a <strong>429</strong>.</p>
-<h2 id="bulkheads">Bulkheads<a class="headerlink" href="#bulkheads" title="Permanent link">&para;</a></h2>
-<p>A bulkhead caps how many calls may be in flight at once, so one slow
-dependency can't absorb every task in the process. The fixed form is one
-number — <code>BulkheadStrategy(max_concurrency=8, max_queue=4)</code>: eight in flight,
-four waiting, the rest rejected immediately.</p>
-<p>A fixed cap has to be guessed, and the right number moves with downstream
-health. <strong><code>AdaptiveBulkheadStrategy</code></strong> lets latency set it instead:</p>
-<div class="highlight"><pre><span></span><code><span class="n">AdaptiveBulkheadStrategy</span><span class="p">(</span>
-    <span class="n">latency_threshold</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">milliseconds</span><span class="o">=</span><span class="mi">300</span><span class="p">),</span>
-    <span class="n">max_concurrency</span><span class="o">=</span><span class="mi">16</span><span class="p">,</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>It starts at <code>max_concurrency</code> and backs the limit off when a completion exceeds
-the threshold, recovering it as calls return in budget — AIMD, the TCP-congestion
-algorithm, so uncoordinated replicas sharing one downstream converge with no shared
-state. A <strong><code>GradientBulkheadStrategy</code></strong> goes one further and needs no threshold at
-all: it learns the no-load latency baseline and tracks the gradient between it and
-recent latency, finding the load/latency knee on its own.</p>
-<p>Both feed <em>only</em> on latency — errors are the circuit breaker's signal, and a
-fast-failing downstream must not crater concurrency when failures are cheap — and
-shrinking only gates admission, never evicting in-flight work. The three kinds are
-mutually exclusive within a policy.</p>
-<p>A queued bulkhead can additionally bound waiting by <em>time</em> (CoDel) and shed by
-<a href="../load-shedding/">criticality</a> rather than length. Every parameter — the AIMD and Gradient2
-mechanics, the distributional <code>latency_quantile</code> signal, and the CoDel /
-adaptive-LIFO / prioritized queue controls — is in
-<a href="../../reference/resilience-tuning/#bulkheads">resilience tuning</a>.</p>
-<h2 id="hedging-the-tail">Hedging the tail<a class="headerlink" href="#hedging-the-tail" title="Permanent link">&para;</a></h2>
-<p>Even a healthy downstream has a slow tail. A <strong>hedge</strong> races it: if the
-primary attempt hasn't completed after <code>delay</code>, fire a concurrent copy and
-take whichever finishes first (losers are cancelled). Only safe on idempotent
-reads — and <code>budget</code> caps the extra load it may add.</p>
-<p>A fixed delay is always either too eager (wasted duplicate load) or too late (no
-tail rescue) as the downstream's distribution moves. Set <code>adaptive_delay_quantile</code>
-and the hedge fires after the <em>observed</em> p95 of recent primary latencies instead,
-tracking the downstream as it shifts. The parameters and the streaming estimator
-are in <a href="../../reference/resilience-tuning/#hedge">resilience tuning</a>; the effective
-delay shows up as the <code>forze.resilience.hedge.delay</code> gauge once
-<a href="../observability/#resilience-metrics"><code>instrument_resilience</code></a> is attached.</p>
-<h2 id="shedding-for-a-degraded-downstream">Shedding for a degraded downstream<a class="headerlink" href="#shedding-for-a-degraded-downstream" title="Permanent link">&para;</a></h2>
-<p>The circuit breaker is <strong>binary</strong>: full traffic, or a half-open trickle. At
-50% downstream failure both answers are wrong — the right one is to send roughly
-the traffic the downstream is still absorbing. That's the <strong>adaptive client
-throttle</strong> (<code>AdaptiveThrottleStrategy</code>, Google's SRE book): it sheds
-<em>proportionally</em> to the observed accept ratio, rising as the downstream degrades
-and decaying to zero on its own as it recovers — a continuous probe with no
-half-open ceremony. Shed calls fail with a retryable <code>throttled</code>
-(<code>code="adaptive_throttle"</code>, 429 at the edge).</p>
-<p>The throttle and the breaker are <strong>mutually exclusive in one policy</strong> (composed,
-the throttle would read the breaker's own local rejections as overload). Pick per
-dependency: the throttle for downstreams that degrade, the breaker for ones that
-die outright. The shedding formula and its self-limiting steady state are in
-<a href="../../reference/resilience-tuning/#adaptive-throttle">resilience tuning</a>.</p>
-<h2 id="port-level-policies">Port-level policies<a class="headerlink" href="#port-level-policies" title="Permanent link">&para;</a></h2>
-<p>Instead of wrapping individual calls, bind a policy to a <strong>dependency key</strong> —
-every resolved port for that key gets its public coroutine methods run under
-the policy, transparently:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.http</span><span class="w"> </span><span class="kn">import</span> <span class="n">HttpServiceDepKey</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.queue</span><span class="w"> </span><span class="kn">import</span> <span class="n">QueueCommandDepKey</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">PortPolicy</span>
-
-<span class="n">ResilienceDepsModule</span><span class="p">(</span>
-    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>  <span class="c1"># defines "vendor_rl"</span>
-    <span class="n">port_policies</span><span class="o">=</span><span class="p">(</span>
-        <span class="c1"># every HTTP service method runs under "vendor_rl"</span>
-        <span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">HttpServiceDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">"vendor_rl"</span><span class="p">),</span>
-        <span class="c1"># only enqueues, under one shared bucket across queues</span>
-        <span class="n">PortPolicy</span><span class="p">(</span>
-            <span class="n">key</span><span class="o">=</span><span class="n">QueueCommandDepKey</span><span class="p">,</span>
-            <span class="n">policy</span><span class="o">=</span><span class="s2">"vendor_rl"</span><span class="p">,</span>
-            <span class="n">route</span><span class="o">=</span><span class="s2">"all-queues"</span><span class="p">,</span>
-            <span class="n">methods</span><span class="o">=</span><span class="p">(</span><span class="s2">"enqueue"</span><span class="p">,</span> <span class="s2">"enqueue_many"</span><span class="p">),</span>
-        <span class="p">),</span>
-    <span class="p">),</span>
-<span class="p">)</span>
-</code></pre></div>
-<p><code>route</code> defaults to the route the port resolved under (its <code>spec.name</code>), so
-each backend keys its own breaker/bucket state; set it explicitly to share.
-<code>methods=None</code> wraps every public coroutine method. Async-generator methods
-(<code>consume</code>, <code>tail</code>, <code>subscribe</code>-style streams) get the <strong>circuit breaker
-only</strong>: opening a stream is rejected while the breaker is open, and a
-mid-stream infrastructure failure counts as a breaker failure for the port's
-unary methods too (clean completion — or the consumer closing early — counts
-as success). Retry, hedging, timeout, bulkhead, and rate-limit strategies
-never apply to a stream: a partially consumed stream can't be replayed, and a
-long-lived stream must not be timed out or hold a concurrency slot.</p>
-<h2 id="fleet-wide-state">Fleet-wide state<a class="headerlink" href="#fleet-wide-state" title="Permanent link">&para;</a></h2>
-<p>Breaker and rate-limit state is per-process by default — which means N
-replicas each enforce <code>permits/per</code> independently (a fleet-effective rate of
-<code>permits × replicas</code>), and a circuit opened on one replica protects only that
-replica. <code>forze[redis]</code> makes both <strong>shared</strong>:</p>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">redis_circuit_breaker_store</span><span class="p">,</span>
-    <span class="n">redis_latency_digest_store</span><span class="p">,</span>
-    <span class="n">redis_rate_limit_store</span><span class="p">,</span>
-<span class="p">)</span>
-
-<span class="n">ResilienceDepsModule</span><span class="p">(</span>
-    <span class="n">spec</span><span class="o">=</span><span class="n">my_policies</span><span class="p">,</span>
-    <span class="n">breaker_store</span><span class="o">=</span><span class="n">redis_circuit_breaker_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>
-    <span class="n">rate_limit_store</span><span class="o">=</span><span class="n">redis_rate_limit_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>
-    <span class="n">latency_digest_store</span><span class="o">=</span><span class="n">redis_latency_digest_store</span><span class="p">(</span><span class="n">redis</span><span class="p">),</span>  <span class="c1"># see below</span>
-<span class="p">)</span>
-</code></pre></div>
-<p>The shared rate limiter keeps its token bucket in Redis, mutated atomically on
-the server's clock — the declared rate becomes the <em>fleet's</em> rate. The shared
-breaker store does the same for circuit state, so one replica tripping opens
-the circuit for all. Both <strong>fail open</strong>: on a Redis error they fall back to
-the process-local implementation (emitting a <code>*_store_degraded</code> trace event),
-so a coordination-store hiccup degrades to per-replica behavior instead of
-failing calls.</p>
-<p>Bulkhead <em>capacity</em> stays process-local by design — fleet capacity is
-<code>max_concurrency × replicas</code>, and the <a href="#bulkheads">adaptive bulkhead</a> converges
-across uncoordinated replicas like N TCP flows. Its congestion <em>signal</em> can be
-shared, though: for a <code>latency_quantile</code> policy, <code>latency_digest_store</code> keeps
-the latency sketch in Redis (a mergeable DDSketch), so every replica's adaptive
-limit reacts to the <em>fleet's</em> p95 instead of its own — same fail-open posture
-as the other two stores. The rest of the fleet story — drain, readiness,
-singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &amp; fleets</a>.</p>
+<p>The mock executes nothing — that is the point of the seam — so every route needs
+a registered answer, and an unprogrammed one refuses rather than inventing a
+result. Register the real backend's capabilities alongside it
+(<code>registry.on(..., capabilities=...)</code>) when a route stands in for a specific
+adapter: the gates then refuse under test exactly where production would.</p>
+<h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>No isolation ships in the box.</strong> The base adapter is process management with
+  governance around it. If you need containment, the container tier is where it
+  lives, and it lands with the infrastructure it wraps.</li>
+<li><strong><code>process</code>-tier enforcement is not here yet.</strong> Memory and CPU ceilings, uid
+  drop and process-group kill arrive with the tier that declares them — no
+  adapter claims <code>enforces_memory</code> without a test that drives a child into it.</li>
+<li><strong>Streaming is refused, not buffered.</strong> <code>run_stream</code> is served by adapters
+  that declare it; the base adapter says no rather than pretending.</li>
+<li><strong>A killed run still hands back what it wrote.</strong> Declared outputs are collected
+  after a kill as well as after a clean exit — a half-written artifact is usually
+  the most useful thing about a run that did not finish, and the <code>outcome</code> beside
+  it says plainly that it did not.</li>
+</ul>
 
 
 
@@ -6685,7 +6550,7 @@ singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &am
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../deadlines/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Deadlines">
+          <a href="../inference/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Inference">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -6695,20 +6560,20 @@ singleton startup steps — is in <a href="../shutdown-and-fleets/">Shutdown &am
                 Previous
               </span>
               <div class="md-ellipsis">
-                Deadlines
+                Inference
               </div>
             </div>
           </a>
         
         
           
-          <a href="../load-shedding/" class="md-footer__link md-footer__link--next" aria-label="Next: Load shedding under overload">
+          <a href="../caching/" class="md-footer__link md-footer__link--next" aria-label="Next: Caching reads">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Load shedding under overload
+                Caching reads
               </div>
             </div>
             <div class="md-footer__button md-icon">
