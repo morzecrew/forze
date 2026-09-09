@@ -220,6 +220,7 @@ class AuthnOrchestrator(AuthnPort):
         return AuthnResult(
             identity=identity,
             issuer_tenant_hint=assertion.issuer_tenant_hint,
+            expires_at=assertion.expires_at,
         )
 
     # ....................... #
@@ -250,6 +251,7 @@ class AuthnOrchestrator(AuthnPort):
         return AuthnResult(
             identity=identity,
             issuer_tenant_hint=assertion.issuer_tenant_hint,
+            expires_at=assertion.expires_at,
         )
 
     # ....................... #
@@ -334,4 +336,5 @@ class AuthnOrchestrator(AuthnPort):
         return AuthnResult(
             identity=identity,
             issuer_tenant_hint=assertion.issuer_tenant_hint,
+            expires_at=assertion.expires_at,
         )

@@ -7,6 +7,7 @@ broadcast stream tail for the live leg — and serves it as ``text/event-stream`
 with the same versioned ``{id, data}`` envelope.
 """
 
+from .auth import build_ws_connection_resolver, ws_handshake
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .lifecycle import (
     realtime_sse_presence_heartbeat_lifecycle_step,
@@ -40,6 +41,8 @@ __all__ = [
     "refresh_sse_presence",
     "attach_realtime_sse_route",
     "attach_realtime_ws_route",
+    "build_ws_connection_resolver",
+    "ws_handshake",
     "WsConnect",
     "WsConnection",
     "WsConnectionResolver",
