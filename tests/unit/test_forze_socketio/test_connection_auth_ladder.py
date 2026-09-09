@@ -24,6 +24,7 @@ from forze.application.contracts.authn import (
     AuthnSpec,
 )
 from forze.application.contracts.authn import ClientIdentity as _ClientIdentity
+from forze.application.contracts.tenancy import TenantIdentity, TenantResolverDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.testing import context_from_deps
@@ -167,9 +168,7 @@ class TestTheEnvironIsReadLikeAnUpgradeRequest:
 class TestTheSameLadderDecisions:
     @pytest.mark.asyncio
     async def test_the_header_authenticates_and_carries_the_expiry(self) -> None:
-        connection = await _resolver()(
-            _connect(environ={"HTTP_AUTHORIZATION": f"Bearer {_GOOD}"})
-        )
+        connection = await _resolver()(_connect(environ={"HTTP_AUTHORIZATION": f"Bearer {_GOOD}"}))
 
         assert connection is not None
         assert connection.authn.principal_id == _PRINCIPAL
@@ -209,6 +208,39 @@ class TestTheSameLadderDecisions:
     @pytest.mark.asyncio
     async def test_an_anonymous_handshake_resolves_none(self) -> None:
         assert await _resolver()(_connect()) is None
+
+
+class TestTheTenantIsBound:
+    @pytest.mark.asyncio
+    async def test_the_resolver_is_looked_up_on_the_specs_own_route(self) -> None:
+        # `TenancyDepsModule` registers it routed; a route-less lookup finds nothing
+        # and the connection binds no tenant on a credential that authenticated fine.
+        tenant = UUID("44444444-4444-4444-4444-444444444444")
+
+        class _Resolver:
+            async def resolve_from_principal(
+                self,
+                principal_id: UUID,
+                *,
+                requested_tenant_id: UUID | None = None,
+            ) -> TenantIdentity:
+                _ = principal_id, requested_tenant_id
+
+                return TenantIdentity(tenant_id=tenant)
+
+        deps = (
+            Deps.plain({AuthnDepKey: _AuthnFactory()}),
+            Deps.routed({TenantResolverDepKey: {str(_SPEC.name): lambda _ctx: _Resolver()}}),
+        )
+        resolve = build_socketio_connection_resolver(
+            ctx_dep=lambda: context_from_deps(*deps),
+            authn_spec=_SPEC,
+        )
+
+        connection = await resolve(_connect(environ={"HTTP_AUTHORIZATION": f"Bearer {_GOOD}"}))
+
+        assert connection is not None
+        assert connection.tenant == tenant
 
 
 class TestCookieAttestation:

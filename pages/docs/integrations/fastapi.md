@@ -326,9 +326,10 @@ Four things to know before you wire it:
 - **`expires_at` comes from the verified credential**, and the route enforces it
   continuously — the socket closes once past it, and a `realtime.reauth` frame swaps
   in a fresh one without reconnecting.
-- **The tenant is the resolver's binding**, falling back to the issuer's own claim; the
-  `X-Tenant-Id` header is *not* honored here, because an upgrade's headers are set by
-  the client being authenticated.
+- **The tenant is the resolver's binding**, looked up on the authn spec's own route
+  (the shipped tenancy module registers it there), falling back to the issuer's own
+  claim; the `X-Tenant-Id` header is *not* honored here, because an upgrade's headers
+  are set by the client being authenticated.
 
 `forze_socketio.build_socketio_connection_resolver` is the same ladder over a
 Socket.IO handshake, so a deployment serving both transports authenticates by one set

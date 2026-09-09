@@ -358,14 +358,15 @@ class TestTheTenantIsBound:
 
                 return TenantIdentity(tenant_id=tenant)
 
-        deps = Deps.plain(
-            {
-                AuthnDepKey: _AuthnFactory(),
-                TenantResolverDepKey: lambda _ctx: _Resolver(),
-            }
+        # Registered **routed**, the shape `TenancyDepsModule` actually emits: a
+        # route-less lookup finds nothing there, and the socket would bind no tenant
+        # on a credential that authenticated perfectly.
+        deps = (
+            Deps.plain({AuthnDepKey: _AuthnFactory()}),
+            Deps.routed({TenantResolverDepKey: {str(_SPEC.name): lambda _ctx: _Resolver()}}),
         )
         resolver = build_ws_connection_resolver(
-            ctx_dep=lambda: context_from_deps(deps),
+            ctx_dep=lambda: context_from_deps(*deps),
             authn_spec=_SPEC,
         )
         router = APIRouter()
@@ -379,7 +380,7 @@ class TestTheTenantIsBound:
 
         attach_realtime_ws_route(
             router,
-            ctx_dep=lambda: context_from_deps(deps),
+            ctx_dep=lambda: context_from_deps(*deps),
             resolve=_record,
             mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
             cursors_factory=lambda _ctx: InMemoryMailboxCursors(),

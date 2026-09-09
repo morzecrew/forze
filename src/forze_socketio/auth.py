@@ -115,7 +115,10 @@ def build_socketio_connection_resolver(
         disables it — query strings land in access and proxy logs.
     :param origin_allowlist_attested: Your attestation that the server restricts
         ``cors_allowed_origins``; required for cookie mode.
-    :param tenancy_route: Tenancy route whose resolver binds the principal's tenant.
+    :param tenancy_route: Tenancy route whose resolver binds the principal's tenant;
+        defaults to the authn spec's own name, which is how the shipped tenancy module
+        registers it and how the HTTP boundary looks it up. A route-less lookup finds
+        nothing there, and the connection would silently bind no tenant.
     :param device_id_key: Query / payload key carrying the client's device id.
     :param session_id_key: Query / payload key carrying the client's session id.
     :returns: A resolver to pass as ``attach_realtime_connection(resolve=...)``.
@@ -130,6 +133,13 @@ def build_socketio_connection_resolver(
         alternative="authenticate from the Authorization header instead",
     )
 
+    # `TenancyDepsModule` registers the resolver **routed**, so a route-less lookup
+    # finds nothing and the connection binds no tenant on a credential that
+    # authenticated perfectly. A credential's tenancy belongs to the profile it
+    # authenticated against, which is what the HTTP boundary uses too; a routed lookup
+    # falls back to a plain registration, so this is right for both wirings.
+    route = tenancy_route or str(authn_spec.name)
+
     sources = RealtimeCredentialSources(
         cookie_name=cookie_name,
         header_name=header_name,
@@ -143,7 +153,7 @@ def build_socketio_connection_resolver(
             authn=ctx.authn.authn(authn_spec),
             sources=sources,
             handshake=socketio_handshake(connect),
-            tenants=ctx.tenancy.resolver(tenancy_route),
+            tenants=ctx.tenancy.resolver(route),
             device_id_key=device_id_key,
             session_id_key=session_id_key,
         )

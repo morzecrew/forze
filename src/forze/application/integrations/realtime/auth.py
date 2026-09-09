@@ -188,11 +188,13 @@ off to the verifier, which would refuse it and, under the no-fallthrough rule, t
 the rest of the ladder down with it."""
 
 
-def _split_bearer(raw: str) -> tuple[str, str] | None:
+def _split_authorization(raw: str) -> tuple[str, str] | None:
     """``(scheme, token)`` from an ``Authorization`` value, or ``None`` for no credential.
 
-    A bare token with no scheme is accepted and labeled ``Bearer``: the WS upgrade is
-    the one place clients most often set the header by hand.
+    Named for the HTTP ingress's ``_split_authorization``, which splits the same header
+    the same way: any scheme, not only ``Bearer``. A bare token with no scheme at all is
+    accepted and labeled ``Bearer`` — the upgrade request is the one place clients most
+    often set this header by hand.
     """
 
     parts = raw.strip().split(maxsplit=1)
@@ -242,7 +244,7 @@ def present_credential(
         raw = handshake.header(sources.header_name)
 
         if raw is not None and raw.strip():
-            split = _split_bearer(raw)
+            split = _split_authorization(raw)
 
             if split is not None:
                 scheme, token = split
