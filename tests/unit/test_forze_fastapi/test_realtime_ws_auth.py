@@ -280,6 +280,25 @@ class TestReauth:
             assert "same principal" in frame["error"]["detail"]
             assert _is_live(ws)  # refused, not closed
 
+    @pytest.mark.parametrize("payload", ["boom", ["boom"], 7])
+    def test_a_reauth_whose_auth_is_not_an_object_is_refused_not_crashed(
+        self, payload: object
+    ) -> None:
+        # `auth` is whatever JSON the client put in the frame; the route passes it
+        # through verbatim. Anything but an object must read as "no payload" — the
+        # ladder then re-checks the credential the connection already has.
+        client = _client()
+
+        with client.websocket_connect(
+            "/realtime/ws", headers={"Authorization": f"Bearer {_GOOD}"}
+        ) as ws:
+            ws.send_text(json.dumps({"type": "realtime.reauth", "auth": payload}))
+            frame = ws.receive_json()
+
+            assert frame["type"] == "ack"
+            assert "error" not in frame  # the header credential still answers for it
+            assert _is_live(ws)
+
     def test_a_revoked_reauth_token_is_refused(self) -> None:
         client = _client()
 

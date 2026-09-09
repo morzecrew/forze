@@ -37,6 +37,7 @@ __all__ = [
     "RealtimeHandshake",
     "RealtimeIdentity",
     "PresentedCredential",
+    "auth_payload",
     "client_identity",
     "present_credential",
     "require_origin_attestation",
@@ -141,6 +142,22 @@ class RealtimeHandshake:
                 return value
 
         return None
+
+
+# ....................... #
+
+
+def auth_payload(value: Any) -> Mapping[str, Any] | None:
+    """The connect / reauth ``auth`` as a mapping, or ``None`` when it is not one.
+
+    Both transports hand this field through verbatim from client JSON — a reauth
+    frame's ``auth`` is whatever the peer put there — so a string, a list or a number
+    reaches the ladder as easily as an object does. Anything but a mapping presents
+    nothing, which leaves the handshake's own sources to answer; the alternative is an
+    ``AttributeError`` raised out of a connect handler by a one-line frame.
+    """
+
+    return value if isinstance(value, Mapping) else None
 
 
 # ....................... #

@@ -7,7 +7,6 @@ connect handler a WSGI-style ``environ`` where the raw-WebSocket route has a
 starlette socket.
 """
 
-from collections.abc import Mapping
 from http.cookies import CookieError, SimpleCookie
 from urllib.parse import parse_qsl
 
@@ -16,6 +15,7 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime.auth import (
     RealtimeCredentialSources,
     RealtimeHandshake,
+    auth_payload,
     require_origin_attestation,
     resolve_realtime_identity,
 )
@@ -70,7 +70,7 @@ def socketio_handshake(connect: SocketIOConnect) -> RealtimeHandshake:
         if key.startswith(_HEADER_PREFIX) and isinstance(value, str)
     }
     query_string = environ.get("QUERY_STRING")
-    auth = connect.auth if isinstance(connect.auth, Mapping) else None
+    auth = auth_payload(connect.auth)
 
     return RealtimeHandshake(
         cookies=_cookies(headers.get("COOKIE")),

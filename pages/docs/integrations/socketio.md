@@ -253,7 +253,7 @@ URL from a `RedisSettings.dsn`; this package cannot import `forze_redis` itself.
 | `PubSubSignalSource` + `realtime_pubsub_spec` + `RealtimePubSubPublisher` | egress: broadcast pubsub live lane (at-most-once, every node sees every signal); durables keep riding outbox → stream → mailbox |
 | `realtime_tenant_relay_lifecycle_step` | egress: per-tenant durable relay for a partitioned (tenant-aware) outbox |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
-| `build_socketio_connection_resolver` | the shipped connection resolver: cookie-first credential ladder shared with the WebSocket route |
+| `build_socketio_connection_resolver` | the shipped connection resolver: connect/reauth payload, then cookie, header and opt-in query — the WebSocket route's ladder |
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
 | `realtime_identity_expiry_lifecycle_step` | drop connections whose credential (`expires_at`) has lapsed |

@@ -8,7 +8,6 @@ interaction. This builds the resolver instead, over the transport-neutral ladder
 authenticates by the same rules.
 """
 
-from collections.abc import Mapping
 from typing import Any
 
 from starlette.websockets import WebSocket
@@ -18,6 +17,7 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime.auth import (
     RealtimeCredentialSources,
     RealtimeHandshake,
+    auth_payload,
     require_origin_attestation,
     resolve_realtime_identity,
 )
@@ -30,14 +30,19 @@ from .ws import WsConnect, WsConnection, WsConnectionResolver
 __all__ = ["build_ws_connection_resolver", "ws_handshake"]
 
 
-def ws_handshake(websocket: WebSocket, auth: Mapping[str, Any] | None) -> RealtimeHandshake:
-    """The upgrade request as the ladder reads it — cookies, headers, query, payload."""
+def ws_handshake(websocket: WebSocket, auth: Any) -> RealtimeHandshake:
+    """The upgrade request as the ladder reads it — cookies, headers, query, payload.
+
+    *auth* is a ``realtime.reauth`` frame's payload, which is client JSON of any shape
+    despite what ``WsConnect.auth`` is annotated as; :func:`auth_payload` is what makes
+    a frame carrying ``"auth": "boom"`` a refusal rather than an internal error.
+    """
 
     return RealtimeHandshake(
         cookies=websocket.cookies,
         headers=dict(websocket.headers),
         query=dict(websocket.query_params),
-        auth=auth,
+        auth=auth_payload(auth),
     )
 
 
