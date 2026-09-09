@@ -206,13 +206,25 @@ class SubprocessSandbox:
             )
 
         deadline = monotonic() + budget
-        workspace = Path(
-            await run_cpu(
+        making = asyncio.ensure_future(
+            run_cpu(
                 tempfile.mkdtemp,
                 prefix="forze-sandbox-",
                 dir=str(self.config.workspace_root) if self.config.workspace_root else None,
             )
         )
+
+        try:
+            # Shielded, and cleaned by a callback if the shield's caller is cancelled. The
+            # directory is made off the loop, so a cancellation landing during that await
+            # leaves the thread to finish and create it anyway — with the path discarded
+            # and the `finally` below never reached, which is a workspace leaked per
+            # cancelled run on the path that already had nothing else to show for it.
+            workspace = Path(await asyncio.shield(making))
+
+        except asyncio.CancelledError:
+            making.add_done_callback(_discard_workspace)
+            raise
 
         try:
             await self._stage(request, workspace)
@@ -539,6 +551,15 @@ def _require_storage(config: SubprocessSandboxConfig, spec: SandboxSpec) -> Stor
         )
 
     return config.storage
+
+
+def _discard_workspace(making: "asyncio.Future[str]") -> None:
+    """Remove a workspace whose creator outlived the run that asked for it."""
+
+    if making.cancelled() or making.exception() is not None:
+        return
+
+    shutil.rmtree(making.result(), ignore_errors=True)
 
 
 def _mask(

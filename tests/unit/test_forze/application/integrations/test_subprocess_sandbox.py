@@ -469,6 +469,32 @@ class TestTheRedButton:
             # as ~25 and this bound would not hold.
             assert after - before < 10, f"descriptors grew {before} -> {after}"
 
+    @pytest.mark.asyncio
+    async def test_a_cancel_during_workspace_creation_leaves_nothing_behind(
+        self, tmp_path: Path
+    ) -> None:
+        # The directory is made off the loop, so a cancellation landing inside that await
+        # leaves the thread to create it anyway — with the path discarded and the cleanup
+        # `finally` never entered. One leaked directory per cancelled run, on the path that
+        # already had nothing to show for itself.
+        sandbox = _sandbox(workspace_root=tmp_path)
+        task = asyncio.create_task(sandbox.run(_python("print('never gets here')")))
+
+        # Cancel on the first suspension, which is the workspace creation itself.
+        await asyncio.sleep(0)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        for _ in range(50):
+            if not _workspaces(tmp_path):
+                break
+
+            await asyncio.sleep(0.02)
+
+        assert _workspaces(tmp_path) == []
+
 
 class TestTheBudgetIsNeverUnbounded:
     @pytest.mark.asyncio
