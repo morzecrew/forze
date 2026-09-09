@@ -21,6 +21,7 @@ from forze.application.integrations.realtime.auth import (
     require_origin_attestation,
     resolve_realtime_identity,
 )
+from forze.base.exceptions import exc
 
 from .ws import WsConnect, WsConnection, WsConnectionResolver
 
@@ -112,6 +113,18 @@ def build_ws_connection_resolver(
         header_name=header_name,
         query_param=query_param,
     )
+
+    # `WsConnect.auth` is None at connect — the route fills it only for a
+    # `realtime.reauth` frame — so a ladder that reads nothing off the upgrade request
+    # could never authenticate a connection here. (Socket.IO's connect *does* carry a
+    # payload, which is why this refusal is the transport's and not the ladder's.)
+    if not sources.reads_the_request:
+        raise exc.configuration(
+            "A WebSocket resolver with every request source disabled could only authenticate "
+            "a realtime.reauth payload, and a connection has to exist before it can reauth. "
+            "Enable at least one of cookie_name / header_name / query_param.",
+            code="realtime_auth_no_sources",
+        )
 
     async def resolve(connect: WsConnect) -> WsConnection | None:
         ctx = ctx_dep()

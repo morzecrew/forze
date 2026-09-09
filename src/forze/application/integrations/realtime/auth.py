@@ -64,6 +64,10 @@ class RealtimeCredentialSources:
     **The query parameter is off by default.** Query strings land in access logs,
     proxy logs and anything that reads a URL, so enabling it is a decision: pair it
     with short-lived tokens and check what your ingress logs.
+
+    Every request source disabled leaves the payload rung alone, which is a real
+    Socket.IO wiring and no wiring at all on a raw WebSocket — see
+    :attr:`reads_the_request`.
     """
 
     cookie_name: str | None = None
@@ -85,14 +89,20 @@ class RealtimeCredentialSources:
 
     # ....................... #
 
-    def __attrs_post_init__(self) -> None:
-        if self.cookie_name is None and self.header_name is None and self.query_param is None:
-            raise exc.configuration(
-                "A realtime credential ladder with every request source disabled can only "
-                "authenticate a reauth payload, so no connection could ever be established. "
-                "Enable at least one of cookie_name / header_name / query_param.",
-                code="realtime_auth_no_sources",
-            )
+    @property
+    def reads_the_request(self) -> bool:
+        """Whether any *request* source is enabled — cookie, header or query.
+
+        ``False`` means the ladder can only answer an auth payload, which is a whole
+        wiring on Socket.IO (the client sends its token in the connect handshake) and
+        an impossible one on a raw WebSocket upgrade, whose connect carries no payload.
+        Which of those a resolver is depends on the transport, so the refusal lives
+        there rather than here.
+        """
+
+        return not (
+            self.cookie_name is None and self.header_name is None and self.query_param is None
+        )
 
 
 # ....................... #

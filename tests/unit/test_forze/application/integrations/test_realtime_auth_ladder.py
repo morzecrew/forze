@@ -257,12 +257,25 @@ class TestSourceOrder:
 
         assert presented is None
 
-    def test_every_request_source_disabled_is_refused_at_construction(self) -> None:
-        with pytest.raises(CoreException) as caught:
-            RealtimeCredentialSources(cookie_name=None, header_name=None, query_param=None)
+    def test_a_ladder_with_every_request_source_disabled_says_so(self) -> None:
+        # Payload-only is a real Socket.IO wiring and an impossible WebSocket one, so
+        # the ladder reports the shape and each transport decides what it means.
+        payload_only = RealtimeCredentialSources(
+            cookie_name=None, header_name=None, query_param=None
+        )
 
-        assert caught.value.kind is ExceptionKind.CONFIGURATION
-        assert caught.value.code == "realtime_auth_no_sources"
+        assert not payload_only.reads_the_request
+        assert RealtimeCredentialSources().reads_the_request
+
+    @pytest.mark.asyncio
+    async def test_a_payload_only_ladder_authenticates_from_the_payload(self) -> None:
+        identity = await _resolve(
+            RealtimeCredentialSources(cookie_name=None, header_name=None, query_param=None),
+            _handshake(headers={"Authorization": "Bearer ignored"}, auth={"token": "tok"}),
+        )
+
+        assert identity is not None
+        assert identity.authn.principal_id == _PRINCIPAL
 
 
 class TestNoFallthrough:

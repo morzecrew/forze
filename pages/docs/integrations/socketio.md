@@ -130,7 +130,9 @@ expiry sweep enforces. It is the same ladder
 [`build_ws_connection_resolver`](fastapi.md#authenticate-the-connection) uses, so both
 transports authenticate by one set of rules — including its rule that cookie mode
 requires a restricted `cors_allowed_origins`, attested with
-`origin_allowlist_attested=True`.
+`origin_allowlist_attested=True`. Socket.IO can also authenticate from the connect
+`auth` payload alone (`header_name=None`), which the raw-WebSocket route cannot: its
+upgrade carries no payload, and only a `realtime.reauth` frame does.
 
 ### The delivery envelope (client contract)
 

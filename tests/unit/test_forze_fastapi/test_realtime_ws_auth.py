@@ -185,6 +185,22 @@ class TestCookieMode:
         )
 
 
+class TestSourcesTheUpgradeCanActuallyCarry:
+    def test_a_resolver_with_every_request_source_disabled_is_refused(self) -> None:
+        # `WsConnect.auth` is None at connect — the route fills it only for a
+        # `realtime.reauth` frame — so a payload-only resolver could never
+        # authenticate a connection here, however well it works over Socket.IO.
+        with pytest.raises(CoreException) as caught:
+            build_ws_connection_resolver(
+                ctx_dep=lambda: None,  # pyright: ignore[reportArgumentType]
+                authn_spec=_SPEC,
+                header_name=None,
+            )
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "realtime_auth_no_sources"
+
+
 class TestLadderOnALiveUpgrade:
     def test_the_cookie_outranks_the_header(self) -> None:
         client = _client(cookie_name=_COOKIE, origin_allowlist_attested=True)

@@ -243,6 +243,33 @@ class TestTheTenantIsBound:
         assert connection.tenant == tenant
 
 
+class TestPayloadOnly:
+    """The idiomatic Socket.IO wiring: the client sends its token in the connect `auth`.
+
+    `on_connect` hands that payload straight to the resolver, so a namespace can
+    authenticate with every *request* source disabled — which the raw-WebSocket route
+    cannot, since its connect carries no payload at all.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_payload_only_resolver_builds_and_authenticates(self) -> None:
+        resolve = _resolver(header_name=None)
+
+        connection = await resolve(_connect(auth={"token": _GOOD}))
+
+        assert connection is not None
+        assert connection.authn.principal_id == _PRINCIPAL
+
+    @pytest.mark.asyncio
+    async def test_a_payload_only_resolver_still_refuses_a_bad_token(self) -> None:
+        resolve = _resolver(header_name=None)
+
+        with pytest.raises(CoreException) as caught:
+            await resolve(_connect(auth={"token": _REVOKED}))
+
+        assert caught.value.kind is ExceptionKind.AUTHENTICATION
+
+
 class TestCookieAttestation:
     def test_cookie_mode_without_it_is_refused_at_construction(self) -> None:
         with pytest.raises(CoreException) as caught:
