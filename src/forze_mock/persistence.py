@@ -53,7 +53,11 @@ from forze.application.execution.background.loop import (
 from forze.base.exceptions import exc
 from forze.base.logging import get_logger
 from forze_mock.execution.keys import MockRoutedStateDepKey
-from forze_mock.state import MockState, _emptied_in_place, _fresh_default
+from forze_mock.state import (
+    MockState,
+    _emptied_in_place,  # pyright: ignore[reportPrivateUsage]
+    _fresh_default,  # pyright: ignore[reportPrivateUsage]
+)
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -492,7 +496,7 @@ class MockStatePersistence:
             # untrusted snapshot is not a threat this can be defended from here.
             payload: dict[str, Any] = pickle.loads(body)  # nosec B301
 
-            if not isinstance(payload, dict) or set(payload) != PERSIST_FIELDS:
+            if not isinstance(payload, dict) or set(payload) != PERSIST_FIELDS:  # pyright: ignore[reportUnnecessaryComparison, reportUnnecessaryIsInstance]
                 raise TypeError("the payload is not this build's field mapping")
 
         except Exception as error:
