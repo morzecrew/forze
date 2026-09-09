@@ -22,10 +22,10 @@ code reaching an adapter that cannot contain it."""
 class SandboxSpec(BaseSpec):
     """One logical out-of-process execution route.
 
-    The spec carries only the *portable* declaration — what the code is and whether its
-    argv may be recorded. Everything deployment-shaped (image, resource ceilings, network
-    policy, mounts, which storage bucket stages the files) lives on the route's wiring
-    config, where the backend enforces it and where a boot-time gate can read it.
+    The spec carries only the *portable* declaration — what the code is. Everything
+    deployment-shaped (image, resource ceilings, network policy, mounts, which storage
+    bucket stages the files) lives on the route's wiring config, where the backend enforces
+    it and where a boot-time gate can read it.
 
     :attr:`provenance` has no default on purpose. A plane whose whole value is a
     fail-closed threat gate cannot let the threat declaration be forgotten into the safe
@@ -36,13 +36,6 @@ class SandboxSpec(BaseSpec):
 
     provenance: Provenance
     """Who wrote the code — the threat declaration the wiring gate reads."""
-
-    capture_command: bool = False
-    """Allow simulation value capture to record ``command`` and the program source verbatim.
-
-    Off by default: argv for a generated program is the generated program, and a DST bundle
-    is an artifact that gets stored and shared. Environment values are never captured under
-    either setting — those are secret-resolved at spawn and masked everywhere."""
 
     description: str | None = None
     """Optional human-readable description for documentation."""

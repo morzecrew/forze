@@ -41,6 +41,7 @@ from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import monotonic, run_cpu, utcnow
+from forze.base.scrubbing import SECRET_PLACEHOLDER
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -389,7 +390,7 @@ class SubprocessSandbox:
     ) -> tuple[Outcome, int | None, CapturedStream, CapturedStream, str | None]:
         """Start the child, capture it, and end it — one way or another."""
 
-        env = await self._environment(request)
+        env, secrets = await self._environment(request)
         argv = request.argv
 
         try:
@@ -432,7 +433,7 @@ class SubprocessSandbox:
 
             except TimeoutError:
                 await self._end(process)
-                stdout, stderr = await _drain(readers)
+                stdout, stderr = _mask(await _drain(readers), secrets)
 
                 return (
                     "killed_timeout",
@@ -442,7 +443,7 @@ class SubprocessSandbox:
                     f"exceeded its {budget:.3f}s budget",
                 )
 
-            stdout, stderr = await _drain(readers)
+            stdout, stderr = _mask(await _drain(readers), secrets)
 
             return ("exited", process.returncode, stdout, stderr, None)
 
@@ -492,11 +493,18 @@ class SubprocessSandbox:
 
     # ....................... #
 
-    async def _environment(self, request: SandboxRequest) -> dict[str, str]:
-        """Exactly what the request named, plus the route's declared passthrough."""
+    async def _environment(self, request: SandboxRequest) -> tuple[dict[str, str], tuple[str, ...]]:
+        """Exactly what the request named, plus the route's declared passthrough.
+
+        Returns the environment and the resolved secret values in it, which the caller masks
+        out of the capture. A child can print what it was given — deliberately, or in a
+        traceback that dumps ``os.environ`` — and a ``SandboxResult`` is journaled verbatim
+        by a durable step, so a secret that reaches the capture reaches storage.
+        """
 
         env = {name: os.environ[name] for name in self.config.env_passthrough if name in os.environ}
         secrets: Any = None
+        resolved: list[str] = []
 
         for name, value in request.env.items():
             if isinstance(value, SecretRef):
@@ -504,11 +512,12 @@ class SubprocessSandbox:
                     secrets = self.ctx.deps.provide(SecretsDepKey)
 
                 env[name] = await secrets.resolve_str(value)
+                resolved.append(env[name])
 
             else:
                 env[name] = value
 
-        return env
+        return env, tuple(sorted({value for value in resolved if value}, key=len, reverse=True))
 
     # ....................... #
 
@@ -530,6 +539,34 @@ def _require_storage(config: SubprocessSandboxConfig, spec: SandboxSpec) -> Stor
         )
 
     return config.storage
+
+
+def _mask(
+    captured: tuple[CapturedStream, CapturedStream], secrets: tuple[str, ...]
+) -> tuple[CapturedStream, CapturedStream]:
+    """Replace every resolved secret value in the captures with the scrubber's placeholder.
+
+    Longest first, so a secret that contains another is not half-replaced into a fragment
+    of the one still readable. The byte count and the truncation flag are untouched: they
+    describe what the child wrote, and rewriting them to match the masked text would make
+    the capture lie about the run instead of about the secret.
+    """
+
+    if not secrets:
+        return captured
+
+    def scrub(stream: CapturedStream) -> CapturedStream:
+        text = stream.text
+
+        for secret in secrets:
+            text = text.replace(secret, SECRET_PLACEHOLDER)
+
+        if text == stream.text:
+            return stream
+
+        return attrs.evolve(stream, text=text)
+
+    return scrub(captured[0]), scrub(captured[1])
 
 
 async def _feed_and_wait(process: asyncio.subprocess.Process, stdin: bytes | None) -> None:

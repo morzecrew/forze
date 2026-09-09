@@ -46,6 +46,7 @@ from forze.application.integrations.sandbox.process import (
     _drain,  # pyright: ignore[reportPrivateUsage]
 )
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockRouteConfig, MockState
 
@@ -673,14 +674,65 @@ class TestTheChildsEnvironment:
         ctx = context_from_modules(module)
 
         request = _python(
-            "import os; print(os.environ['TOKEN'])",
+            "import os; print(os.environ['TOKEN']); print(len(os.environ['TOKEN']))",
             env={"TOKEN": SecretRef(path="sandbox/token")},
         )
         result = await _sandbox(ctx).run(request)
 
-        assert result.stdout.text.strip() == "s3cret-value"
+        # The child got the real value — the length says so — and the capture did not keep
+        # it. A `SandboxResult` is journaled verbatim by a durable step, so a secret the
+        # child echoes (deliberately, or in a traceback that dumps `os.environ`) would
+        # otherwise reach storage under whatever retention that journal has.
+        assert result.stdout.text.splitlines() == [SECRET_PLACEHOLDER, str(len("s3cret-value"))]
         assert all("s3cret-value" not in part for part in request.argv)
         assert "s3cret-value" not in repr(request)
+
+    @pytest.mark.asyncio
+    async def test_a_secret_a_child_prints_does_not_reach_the_capture(self) -> None:
+        # The capture is what a durable step journals, so a masked secret is the difference
+        # between "the child saw it" and "the value is in storage". The overlapping pair is
+        # the case that decides the order: masking the short one first would leave a
+        # readable fragment of the long one behind.
+        module = MockDepsModule(state=MockState())
+        module.state.identity["secrets"]["short"] = "abc123"
+        module.state.identity["secrets"]["long"] = "abc123456789"
+        ctx = context_from_modules(module)
+
+        result = await _sandbox(ctx).run(
+            _python(
+                "import os, sys\n"
+                "print(os.environ['LONG'])\n"
+                "print(os.environ['SHORT'], file=sys.stderr)\n"
+                "raise SystemExit(0 if os.environ['LONG'] == 'abc123456789' else 1)\n",
+                env={"LONG": SecretRef(path="long"), "SHORT": SecretRef(path="short")},
+            )
+        )
+
+        assert result.exit_code == 0
+        assert result.stdout.text.strip() == SECRET_PLACEHOLDER
+        assert result.stderr.text.strip() == SECRET_PLACEHOLDER
+        assert "abc123" not in result.stdout.text
+        assert "456789" not in result.stdout.text
+
+    @pytest.mark.asyncio
+    async def test_a_killed_run_masks_what_it_captured_before_the_kill(self) -> None:
+        # The timeout path builds its own captures; a mask applied on only the happy path
+        # would leak exactly on the runs nobody planned for.
+        module = MockDepsModule(state=MockState())
+        module.state.identity["secrets"]["token"] = "leaked-on-timeout"
+        ctx = context_from_modules(module)
+
+        result = await _sandbox(ctx).run(
+            _python(
+                "import os, time; print(os.environ['TOKEN'], flush=True); time.sleep(30)",
+                env={"TOKEN": SecretRef(path="token")},
+                timeout=timedelta(milliseconds=300),
+            )
+        )
+
+        assert result.outcome == "killed_timeout"
+        assert "leaked-on-timeout" not in result.stdout.text
+        assert SECRET_PLACEHOLDER in result.stdout.text
 
 
 class TestTheGatesFailTheBoot:
@@ -821,12 +873,12 @@ class TestTheSmallPrint:
 
         result = await _sandbox(ctx).run(
             _python(
-                "import os; print(os.environ['A'] + os.environ['B'])",
+                "import os; print(os.environ['A'] + '|' + os.environ['B'])",
                 env={"A": SecretRef(path="a"), "B": SecretRef(path="b")},
             )
         )
 
-        assert result.stdout.text.strip() == "firstsecond"
+        assert result.stdout.text.strip() == f"{SECRET_PLACEHOLDER}|{SECRET_PLACEHOLDER}"
 
 
 class TestWhatThisAdapterAdmitsTo:
