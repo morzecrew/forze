@@ -6,6 +6,7 @@ a failure is a failed boot rather than a failed request — which is the whole p
 declaring provenance in the first place.
 """
 
+import os
 from typing import final
 
 import attrs
@@ -17,9 +18,9 @@ from forze.base.primitives import MappingConverter, StrKeyMapping
 
 from .process import (
     SUBPROCESS_BACKEND,
-    SUBPROCESS_CAPABILITIES,
     ConfigurableSubprocessSandbox,
     SubprocessSandboxConfig,
+    subprocess_capabilities,
 )
 
 # ----------------------- #
@@ -42,10 +43,21 @@ def validate_subprocess_route(*, route: str, config: SubprocessSandboxConfig) ->
 
     validate_provenance(
         provenance=config.provenance,
-        capabilities=SUBPROCESS_CAPABILITIES,
+        capabilities=subprocess_capabilities(config),
         backend=SUBPROCESS_BACKEND,
         route=route,
     )
+
+    if config.drops_privileges and os.geteuid() != 0:
+        raise exc.configuration(
+            f"Sandbox route {route!r} asks to run its children as another user, which "
+            "requires this worker to be root, and it is not. A route that cannot honour "
+            "what it declares does not boot: refusing here rather than at the first call "
+            "means the wiring is wrong once, at startup, instead of every request. Drop "
+            "run_as_user / run_as_group, or run the worker somewhere it can set them.",
+            code="sandbox_privilege_drop_unavailable",
+            details={"route": route, "euid": os.geteuid()},
+        )
 
     if not config.acknowledge_network_egress:
         raise exc.configuration(

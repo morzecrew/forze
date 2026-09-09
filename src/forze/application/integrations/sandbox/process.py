@@ -11,14 +11,19 @@ program; it can make sure nobody runs one here by accident.
 """
 
 import asyncio
+import codecs
 import contextlib
+import json
 import os
 import shutil
+import signal
+import sys
 import tempfile
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, final
+from typing import TYPE_CHECKING, Any, Final, Literal, final
 
 import attrs
 
@@ -53,25 +58,96 @@ _logger = Logger("integrations.sandbox")
 SUBPROCESS_BACKEND: Final = "subprocess"
 """Backend label carried into refusals."""
 
+_REAPS_DESCENDANTS: Final = hasattr(os, "killpg")
+"""Whether this platform can kill a process group, which is how the whole tree goes.
+
+Every child is spawned into its own session, so the group is the run and killing it takes
+the grandchildren with it. Where ``killpg`` does not exist the kill reaches only the child
+and the adapter says so rather than assuming."""
+
 SUBPROCESS_CAPABILITIES: Final = SandboxCapabilities(
     isolation="none",
     network="egress",
-    enforces_memory=False,
-    enforces_cpu=False,
-    enforces_open_files=False,
     hard_kill=True,
-    reaps_descendants=False,
-    supports_stream=False,
+    reaps_descendants=_REAPS_DESCENDANTS,
+    supports_stream=True,
 )
-"""What a bare child really is.
+"""What a bare child really is: a route that imposes no ceilings and drops no privileges.
 
 ``network="egress"`` is not a feature here, it is a confession: this adapter cannot stop
 the child reaching the network, so it declares what is true and lets the route's
-acknowledgment gate make the operator say it out loud. ``reaps_descendants=False`` for the
-same reason — killing the child does not kill what the child started."""
+acknowledgment gate make the operator say it out loud.
+
+A route that sets a ceiling or a user gets more than this — see
+:func:`subprocess_capabilities`, which is what the gates actually read. This constant is
+the floor, and the value for a route that asks for nothing."""
+
+
+def subprocess_capabilities(config: "SubprocessSandboxConfig") -> SandboxCapabilities:
+    """What *this route* can serve, which is not a property of the adapter alone.
+
+    §5's matrix puts one adapter across two tiers, and the difference is entirely in the
+    wiring: a route with rlimits and a dropped uid confines resources and faults, and a
+    route with neither is a bare child. Deriving the surface from the config rather than
+    fixing it per module is what lets the gates read one honest answer for each route.
+
+    ``reports_resource_kill`` stays false whatever the route sets. The CPU ceiling's breach
+    *is* identifiable — ``SIGXCPU`` arrives from nowhere else — and the memory and
+    open-file ceilings' are not, since the child raises ``MemoryError`` or sees ``EMFILE``
+    exactly as it would have without them. A capability is a promise a caller can rely on
+    across the board, so the flag reads false and the adapter reports the CPU case anyway:
+    doing better than the promise is fine, promising more than you deliver is not.
+    """
+
+    return attrs.evolve(
+        SUBPROCESS_CAPABILITIES,
+        isolation="process" if config.rlimits or config.drops_privileges else "none",
+        enforces_memory=config.memory_ceiling is not None,
+        enforces_cpu=config.cpu_ceiling is not None,
+        enforces_open_files=config.open_files_ceiling is not None,
+    )
+
 
 _READ_CHUNK: Final = 64 * 1024
 """Bytes per read from the child's pipes."""
+
+_NO_CAPTURE: Final = (CapturedStream(), CapturedStream())
+"""Both streams empty — what a run that never spawned has to show."""
+
+_SIGXCPU: Final = int(getattr(signal, "SIGXCPU", -1))
+"""The CPU rlimit's signal, or an impossible value where the platform has none."""
+
+_RLIMIT_SHIM: Final = """
+import json, os, resource, sys
+
+for name, (soft, hard) in json.loads(sys.argv[1]).items():
+    what = getattr(resource, name)
+    ceiling = resource.getrlimit(what)[1]
+
+    if ceiling != resource.RLIM_INFINITY:
+        soft, hard = min(soft, ceiling), min(hard, ceiling)
+
+    resource.setrlimit(what, (soft, hard))
+
+try:
+    os.execvp(sys.argv[2], sys.argv[2:])
+except OSError as error:
+    print("forze-sandbox-exec-failed:", error, file=sys.stderr)
+    raise SystemExit(127)
+"""
+"""Sets this route's rlimits, then becomes the requested program.
+
+Its own process, so nothing runs between the fork and the exec in the *worker*. An exec
+failure exits 127 behind a marker line, because from outside the shim a missing program and
+a program that ran and exited 127 are otherwise the same event — the shim started fine
+either way — and a shimmed route would report ``exited`` where a bare one reports
+``spawn_failed`` for the same argv."""
+
+_SHIM_EXEC_FAILED: Final = 127
+"""Exit status the shim uses when it could not become the requested program."""
+
+_SHIM_MARKER: Final = "forze-sandbox-exec-failed: "
+"""Prefix the shim writes to stderr before that exit, so the status is not read alone."""
 
 
 @final
@@ -131,6 +207,39 @@ class SubprocessSandboxConfig:
     than required, unlike the wall-clock and output ceilings: those apply to every run,
     while a route declaring no ``output_globs`` never reaches this one."""
 
+    memory_ceiling: int | None = None
+    """Address-space ceiling in bytes for every child on this route, or ``None`` for no
+    ceiling. Setting it moves the route to the ``process`` isolation tier.
+
+    Applied as ``RLIMIT_AS``, which is honest but blunt: the allocation fails and the child
+    raises ``MemoryError`` like any other program that ran out of room. The route bounds
+    what the child can take from the host; it cannot tell you afterwards that the ceiling
+    is what ended the run, which is why this tier declares no
+    :attr:`SandboxCapabilities.reports_resource_kill`."""
+
+    cpu_ceiling: timedelta | None = None
+    """CPU-time ceiling for every child on this route, applied as ``RLIMIT_CPU``.
+
+    Distinct from :attr:`wall_clock_ceiling`: a child asleep on a socket spends wall clock
+    and no CPU, and a child in a tight loop spends both. The soft limit is one second under
+    the hard one so the kernel delivers ``SIGXCPU`` before ``SIGKILL``, which is the one
+    ceiling on this tier whose breach is identifiable afterwards."""
+
+    open_files_ceiling: int | None = None
+    """File-descriptor ceiling for every child on this route, applied as ``RLIMIT_NOFILE``.
+
+    Blunt in the same way as the memory ceiling: the child gets ``EMFILE`` and fails as it
+    would have on a busy host."""
+
+    run_as_user: str | int | None = None
+    """User the child runs as. Requires the worker to be root, checked at freeze.
+
+    The drop happens in the spawn itself rather than in a fork-time callback, so nothing
+    runs between fork and exec that could deadlock against a lock another thread holds."""
+
+    run_as_group: str | int | None = None
+    """Group the child runs as. Requires the worker to be root, checked at freeze."""
+
     max_artifact_count: int = 1024
     """How many paths one declared glob may match before the whole pattern is abandoned.
 
@@ -177,11 +286,56 @@ class SubprocessSandboxConfig:
                 code="sandbox_ceiling_not_positive",
             )
 
+        for name in ("memory_ceiling", "open_files_ceiling"):
+            value = getattr(self, name)
+
+            if value is not None and value <= 0:
+                raise exc.configuration(
+                    f"SubprocessSandboxConfig.{name} must be positive when set; leave it "
+                    "None to impose no ceiling rather than asking for one of zero.",
+                    code="sandbox_ceiling_not_positive",
+                )
+
+        if self.cpu_ceiling is not None and self.cpu_ceiling <= timedelta():
+            raise exc.configuration(
+                "SubprocessSandboxConfig.cpu_ceiling must be positive when set.",
+                code="sandbox_ceiling_not_positive",
+            )
+
         if self.kill_grace < timedelta():
             raise exc.configuration(
                 "SubprocessSandboxConfig.kill_grace cannot be negative.",
                 code="sandbox_ceiling_not_positive",
             )
+
+    # ....................... #
+
+    @property
+    def rlimits(self) -> dict[str, tuple[int, int]]:
+        """Route ceilings as ``resource`` limit names to ``(soft, hard)`` pairs.
+
+        The CPU pair is deliberately uneven — one second of headroom between soft and hard
+        — because the kernel sends ``SIGXCPU`` at the soft limit and ``SIGKILL`` at the
+        hard one. Equal values skip straight to the signal that says nothing.
+        """
+
+        limits: dict[str, tuple[int, int]] = {}
+
+        if self.memory_ceiling is not None:
+            limits["RLIMIT_AS"] = (self.memory_ceiling, self.memory_ceiling)
+
+        if self.cpu_ceiling is not None:
+            seconds = max(int(self.cpu_ceiling.total_seconds()), 1)
+            limits["RLIMIT_CPU"] = (seconds, seconds + 1)
+
+        if self.open_files_ceiling is not None:
+            limits["RLIMIT_NOFILE"] = (self.open_files_ceiling, self.open_files_ceiling)
+
+        return limits
+
+    @property
+    def drops_privileges(self) -> bool:
+        return self.run_as_user is not None or self.run_as_group is not None
 
 
 # ....................... #
@@ -200,15 +354,63 @@ class SubprocessSandbox:
 
     @property
     def sandbox_capabilities(self) -> SandboxCapabilities:
-        return SUBPROCESS_CAPABILITIES
+        return subprocess_capabilities(self.config)
 
     # ....................... #
 
     async def run(self, request: SandboxRequest) -> SandboxResult:
         """Run *request* to completion, or kill it and say so."""
 
+        # The buffered call is the streamed one with nobody watching the chunks. One
+        # implementation rather than two means the paths cannot answer differently about
+        # the same run — which is the divergence a caller finds by switching between them.
+        result: SandboxResult | None = None
+
+        async with aclosing(self._execute(request, stream=False)) as events:
+            async for event in events:
+                if event.result is not None:
+                    result = event.result
+
+        if result is None:  # pragma: no cover - the generator always ends with a result
+            raise exc.internal(
+                "The sandbox run produced no result event.", code="sandbox_no_result"
+            )
+
+        return result
+
+    # ....................... #
+
+    async def run_stream(self, request: SandboxRequest) -> AsyncGenerator[SandboxEvent]:
+        """Stream the child's output as it arrives, then the result.
+
+        **A caller who stops iterating stops the child.** Abandoning the generator — a
+        ``break``, an exception, a cancelled task — closes it, and closing it kills the
+        child's process group, drains its pipes and removes its workspace, exactly as the
+        buffered call does on every exit path. Wrap the iteration in
+        :func:`contextlib.aclosing` to make that happen at a point you chose rather than
+        whenever the generator is collected.
+
+        The streamed chunks carry everything the child wrote; the result's captured streams
+        are capped, as they are for :meth:`run`. That is not a contradiction — the cap
+        exists because the result is held in memory and journaled, and a chunk handed
+        straight to a caller is neither.
+        """
+
+        validate_stream_supported(self.sandbox_capabilities, backend=SUBPROCESS_BACKEND)
+
+        async with aclosing(self._execute(request, stream=True)) as events:
+            async for event in events:
+                yield event
+
+    # ....................... #
+
+    async def _execute(
+        self, request: SandboxRequest, *, stream: bool
+    ) -> AsyncGenerator[SandboxEvent]:
+        """The whole run, as events: output while it happens, then exactly one result."""
+
         self._refuse_a_request_this_route_cannot_serve(request)
-        validate_resources(SUBPROCESS_CAPABILITIES, request.resources, backend=SUBPROCESS_BACKEND)
+        validate_resources(self.sandbox_capabilities, request.resources, backend=SUBPROCESS_BACKEND)
 
         started = utcnow()
         budget = self._budget(request)
@@ -217,11 +419,16 @@ class SubprocessSandbox:
             # No time left before anything was staged, let alone spawned. Returning the
             # kill outcome rather than raising keeps the deadline's story in one shape: a
             # run that ran out of time is a result, whether it ran for a while or not at all.
-            return SandboxResult(
-                outcome="killed_cancel",
-                usage=ResourceUsage(wall_clock=utcnow() - started),
-                detail="the invocation deadline had already passed; nothing was spawned",
+            yield SandboxEvent(
+                kind="result",
+                result=SandboxResult(
+                    outcome="killed_cancel",
+                    usage=ResourceUsage(wall_clock=utcnow() - started),
+                    detail="the invocation deadline had already passed; nothing was spawned",
+                ),
             )
+
+            return
 
         deadline = monotonic() + budget
         making = asyncio.ensure_future(
@@ -259,41 +466,62 @@ class SubprocessSandbox:
                 remaining = 0.0
 
             if remaining <= 0:
-                return SandboxResult(
-                    outcome="killed_timeout",
-                    usage=ResourceUsage(wall_clock=utcnow() - started),
-                    detail=f"the {budget:.3f}s budget was spent staging; nothing was spawned",
+                yield SandboxEvent(
+                    kind="result",
+                    result=SandboxResult(
+                        outcome="killed_timeout",
+                        usage=ResourceUsage(wall_clock=utcnow() - started),
+                        detail=(f"the {budget:.3f}s budget was spent staging; nothing was spawned"),
+                    ),
                 )
 
-            outcome, exit_code, stdout, stderr, detail = await self._spawn(
-                request, workspace, remaining
-            )
+                return
+
+            outcome: Outcome = "spawn_failed"
+            exit_code: int | None = None
+            stdout, stderr = _NO_CAPTURE
+            detail: str | None = None
+
+            async with aclosing(self._pump(request, workspace, remaining, stream=stream)) as pump:
+                async for event in pump:
+                    if event.result is None:
+                        yield event
+
+                        continue
+
+                    ended = event.result
+                    outcome, exit_code = ended.outcome, ended.exit_code
+                    stdout, stderr, detail = ended.stdout, ended.stderr, ended.detail
+
             collected, skipped = (
                 await self._collect(request, workspace) if request.output_globs else ({}, ())
             )
 
             if skipped:
                 note = (
-                    f"{len(skipped)} declared artifact(s) exceeded this route's "
-                    f"{self.config.max_artifact_bytes}-byte collection ceiling and were left "
-                    f"behind: {', '.join(skipped)}"
+                    f"{len(skipped)} declared artifact(s) exceeded this route's collection "
+                    f"ceilings and were left behind: {', '.join(skipped)}"
                 )
                 detail = note if detail is None else f"{detail}; {note}"
 
-            return SandboxResult(
-                outcome=outcome,
-                exit_code=exit_code,
-                stdout=stdout,
-                stderr=stderr,
-                output_files=collected,
-                usage=ResourceUsage(wall_clock=utcnow() - started),
-                detail=detail,
+            yield SandboxEvent(
+                kind="result",
+                result=SandboxResult(
+                    outcome=outcome,
+                    exit_code=exit_code,
+                    stdout=stdout,
+                    stderr=stderr,
+                    output_files=collected,
+                    usage=ResourceUsage(wall_clock=utcnow() - started),
+                    detail=detail,
+                ),
             )
 
         finally:
             # Every exit path: success, non-zero, kill, cancellation, a staging failure that
-            # never spawned anything. A sandbox that leaks a workspace per killed run
-            # degrades the host, which is the failure that matters once it is busy.
+            # never spawned anything, a streamed caller who walked away mid-run. A sandbox
+            # that leaks a workspace per killed run degrades the host, which is the failure
+            # that matters once it is busy.
             #
             # Deliberately synchronous: awaiting anything here would raise immediately in a
             # cancelled task, and a cleanup that skips itself exactly when the run was killed
@@ -303,19 +531,144 @@ class SubprocessSandbox:
 
     # ....................... #
 
-    async def run_stream(self, request: SandboxRequest) -> AsyncGenerator[SandboxEvent]:
-        """Refused: this adapter buffers, and pretending otherwise would be the lie.
+    async def _pump(
+        self,
+        request: SandboxRequest,
+        workspace: Path,
+        budget: float,
+        *,
+        stream: bool,
+    ) -> AsyncGenerator[SandboxEvent]:
+        """Start the child, carry its output, and end it — one way or another.
 
-        An async generator rather than a function that raises when called, so the refusal
-        lands where every other adapter's does — at the first step of the iteration. Two
-        adapters that refuse the same thing at different moments is a difference a caller
-        discovers by having written the wrong `try` block.
+        Yields chunk events while the child runs (when *stream*), then one result event
+        carrying everything but the collected files, which the caller adds.
         """
 
-        _ = request
-        validate_stream_supported(SUBPROCESS_CAPABILITIES, backend=SUBPROCESS_BACKEND)
+        env, secrets = await self._environment(request)
+        argv = self._argv(request)
+        privileges: dict[str, Any] = {}
 
-        yield SandboxEvent(kind="result")  # pragma: no cover - the validator always raises
+        if self.config.run_as_user is not None:
+            privileges["user"] = self.config.run_as_user
+
+        if self.config.run_as_group is not None:
+            privileges["group"] = self.config.run_as_group
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=str(workspace),
+                env=env,
+                stdin=asyncio.subprocess.PIPE if request.stdin is not None else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                # Its own session, so the child leads a process group of its own and the
+                # kill can take the group rather than the one process. A child that forks
+                # its own children otherwise orphans them onto the host, which is the leak
+                # that matters once a worker has done this a few thousand times.
+                start_new_session=True,
+                **privileges,
+            )
+
+        except (OSError, ValueError) as error:
+            # The child that never started: a missing interpreter, a workspace that vanished.
+            # A result, not an exception — the caller asked whether the program ran.
+            yield SandboxEvent(
+                kind="result",
+                result=SandboxResult(
+                    outcome="spawn_failed", detail=f"{type(error).__name__}: {error}"
+                ),
+            )
+
+            return
+
+        cap = self._output_cap(request)
+        chunks: asyncio.Queue[tuple[Literal["stdout", "stderr"], str | None]] = asyncio.Queue()
+        readers = [
+            asyncio.create_task(_read_capped(process.stdout, cap, "stdout", chunks)),
+            asyncio.create_task(_read_capped(process.stderr, cap, "stderr", chunks)),
+        ]
+        feeding = asyncio.create_task(_feed(process, request.stdin))
+        outcome: Outcome = "exited"
+        detail: str | None = None
+
+        try:
+            try:
+                # `budget` is positive: a run with none left never reaches here, so the
+                # timeout is never the `0 -> None -> unbounded` trap. The stdin write is
+                # inside it too — `drain()` has no timeout of its own, and a child that
+                # never reads more than a pipe buffer of what it was sent leaves it waiting
+                # forever, with no ceiling applying and no kill running.
+                async with asyncio.timeout(budget):
+                    open_pipes = len(readers)
+
+                    while open_pipes:
+                        kind, text = await chunks.get()
+
+                        if text is None:
+                            open_pipes -= 1
+
+                            continue
+
+                        if stream:
+                            yield SandboxEvent(kind=kind, text=text)
+
+                    await process.wait()
+
+            except TimeoutError:
+                await self._end(process)
+                outcome, detail = "killed_timeout", f"exceeded its {budget:.3f}s budget"
+
+            else:
+                outcome, detail = _ended_by(process.returncode, self.config)
+
+        except asyncio.CancelledError:
+            # Kill and clean, then let the cancellation through: a cancelled caller cannot
+            # receive a result, and swallowing this would tell the runtime the task was
+            # never cancelled at all. A streamed caller who stopped iterating arrives here
+            # too — closing the generator throws in at the yield above.
+            await self._end(process)
+            raise
+
+        finally:
+            feeding.cancel()
+
+            # The child dies here whatever ended the run, including a streamed caller who
+            # stopped iterating: closing an async generator throws `GeneratorExit` at the
+            # yield above, which is not `CancelledError` and so reaches no except clause.
+            # Without this the caller walks away and the child keeps running.
+            if process.returncode is None:
+                await self._end(process)
+
+            for reader in readers:
+                reader.cancel()
+
+        captured = _mask(await _drain(readers), secrets)
+
+        if (
+            outcome == "exited"
+            and self.config.rlimits
+            and process.returncode == _SHIM_EXEC_FAILED
+            and captured[1].text.startswith(_SHIM_MARKER)
+        ):
+            # The shim started, so the spawn "succeeded" and the failure to become the
+            # requested program landed inside it. Without this a route with ceilings would
+            # answer `exited` where the same argv on a route without them answers
+            # `spawn_failed` — one adapter giving two answers about one mistake.
+            outcome = "spawn_failed"
+            detail = captured[1].text.strip()
+
+        yield SandboxEvent(
+            kind="result",
+            result=SandboxResult(
+                outcome=outcome,
+                exit_code=process.returncode if outcome == "exited" else None,
+                stdout=captured[0],
+                stderr=captured[1],
+                detail=detail,
+            ),
+        )
 
     # ....................... #
 
@@ -354,6 +707,26 @@ class SubprocessSandbox:
             seconds = min(seconds, remaining)
 
         return max(seconds, 0.0)
+
+    # ....................... #
+
+    def _argv(self, request: SandboxRequest) -> tuple[str, ...]:
+        """The request's argv, behind the rlimit shim when this route sets ceilings.
+
+        The shim is a re-exec rather than a fork-time callback. ``preexec_fn`` is the only
+        in-process way to call ``setrlimit`` between fork and exec, and CPython documents it
+        as unsafe in a multithreaded program — which this worker is, since the runtime binds
+        a thread pool for offloaded work. Running the limits in a child that then ``execv``s
+        the real program has no callback at all: nothing of the parent's runtime is touched
+        after the fork, and the ceilings are in force before the target image loads.
+        """
+
+        limits = self.config.rlimits
+
+        if not limits:
+            return request.argv
+
+        return (sys.executable, "-c", _RLIMIT_SHIM, json.dumps(limits), *request.argv)
 
     # ....................... #
 
@@ -422,99 +795,24 @@ class SubprocessSandbox:
 
     # ....................... #
 
-    async def _spawn(
-        self,
-        request: SandboxRequest,
-        workspace: Path,
-        budget: float,
-    ) -> tuple[Outcome, int | None, CapturedStream, CapturedStream, str | None]:
-        """Start the child, capture it, and end it — one way or another."""
-
-        env, secrets = await self._environment(request)
-        argv = request.argv
-
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=str(workspace),
-                env=env,
-                stdin=asyncio.subprocess.PIPE if request.stdin is not None else None,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-
-        except (OSError, ValueError) as error:
-            # The child that never started: a missing interpreter, a workspace that vanished.
-            # A result, not an exception — the caller asked whether the program ran.
-            return (
-                "spawn_failed",
-                None,
-                CapturedStream(),
-                CapturedStream(),
-                f"{type(error).__name__}: {error}",
-            )
-
-        cap = self._output_cap(request)
-        readers = [
-            asyncio.create_task(_read_capped(process.stdout, cap)),
-            asyncio.create_task(_read_capped(process.stderr, cap)),
-        ]
-
-        try:
-            try:
-                # `budget` is positive: a run with none left never reaches here, so the
-                # timeout is never the `0 -> None -> unbounded` trap.
-                #
-                # The stdin write is inside the budget, not before it. `drain()` has no
-                # timeout of its own, and a child that never reads more than a pipe buffer
-                # of what it was sent leaves it waiting forever — with no ceiling applying,
-                # no kill running, and a live child on a worker task that never returns.
-                await asyncio.wait_for(_feed_and_wait(process, request.stdin), timeout=budget)
-
-            except TimeoutError:
-                await self._end(process)
-                stdout, stderr = _mask(await _drain(readers), secrets)
-
-                return (
-                    "killed_timeout",
-                    None,
-                    stdout,
-                    stderr,
-                    f"exceeded its {budget:.3f}s budget",
-                )
-
-            stdout, stderr = _mask(await _drain(readers), secrets)
-
-            return ("exited", process.returncode, stdout, stderr, None)
-
-        except asyncio.CancelledError:
-            # Kill and clean, then let the cancellation through: a cancelled caller cannot
-            # receive a result, and swallowing this would tell the runtime the task was
-            # never cancelled at all.
-            await self._end(process)
-            await _drain(readers)
-
-            raise
-
-        finally:
-            for reader in readers:
-                reader.cancel()
-
-    # ....................... #
-
     async def _end(self, process: asyncio.subprocess.Process) -> None:
-        """SIGTERM, a grace period, then SIGKILL — and always reap.
+        """SIGTERM the group, a grace period, then SIGKILL the group — and always reap.
 
-        The kill is real because the work is out-of-process, and it is only as complete as
-        this tier: a child that forked its own children can orphan them. That caveat is the
-        adapter's, not the contract's — the container tier reaps the whole tree.
+        The kill is real because the work is out-of-process, and it goes to the **process
+        group** rather than the one pid. Every child is spawned into its own session, so the
+        group is exactly this run and nothing else: a child that forked its own children has
+        them in it, and they go too. Signalling only the child would leave those on the host
+        with their parent gone — the leak that decides whether a worker survives a few
+        thousand kills.
+
+        Where the platform has no ``killpg`` the signal reaches the child alone, which is
+        what :attr:`SandboxCapabilities.reaps_descendants` reports rather than assumes.
         """
 
         if process.returncode is not None:
             return
 
-        with contextlib.suppress(ProcessLookupError):
-            process.terminate()
+        _signal_group(process, signal.SIGTERM)
 
         grace = self.config.kill_grace.total_seconds()
 
@@ -523,8 +821,12 @@ class SubprocessSandbox:
                 await asyncio.wait_for(asyncio.shield(process.wait()), timeout=grace)
 
         if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
+            _signal_group(process, signal.SIGKILL)
+
+        else:
+            # The leader is gone and its group may not be: a grandchild outliving its
+            # parent keeps the group alive, and nobody is left to reap it.
+            _signal_group(process, signal.SIGKILL, leader_only=False)
 
         # Reap unconditionally: an unwaited child stays a zombie for the worker's lifetime,
         # and a sandbox that leaks one per kill is a sandbox that runs out of pids.
@@ -581,6 +883,30 @@ def _require_storage(config: SubprocessSandboxConfig, spec: SandboxSpec) -> Stor
     return config.storage
 
 
+def _signal_group(
+    process: asyncio.subprocess.Process, sig: int, *, leader_only: bool = True
+) -> None:
+    """Signal the child's whole process group, falling back to the child alone.
+
+    Spawned with ``start_new_session``, the child leads a group whose id is its own pid, so
+    no lookup is needed and none can race a reap into signalling the *worker's* group by
+    mistake. ``leader_only=False`` means the leader has already exited and only its
+    descendants can still be there, so the pid-directed fallback has nothing to reach.
+    """
+
+    if _REAPS_DESCENDANTS:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, sig)
+
+            return
+
+    if not leader_only:
+        return
+
+    with contextlib.suppress(ProcessLookupError):
+        process.send_signal(sig)
+
+
 def _discard_workspace(making: "asyncio.Future[str]") -> None:
     """Remove a workspace whose creator outlived the run that asked for it."""
 
@@ -618,25 +944,51 @@ def _mask(
     return scrub(captured[0]), scrub(captured[1])
 
 
-async def _feed_and_wait(process: asyncio.subprocess.Process, stdin: bytes | None) -> None:
-    """Send the child its stdin, then wait for it — both under the caller's one timeout.
+async def _feed(process: asyncio.subprocess.Process, stdin: bytes | None) -> None:
+    """Send the child its stdin and close the pipe, or give up quietly.
 
     A child that never reads its stdin — ``echo``, a script that only takes argv, anything
     that exits early — closes the pipe under us. That is the program behaving normally, so
     the broken pipe is absorbed here rather than raised at a caller who asked how the run
-    went. A child that simply *stops* reading is the other case, and the reason this is
-    inside the budget: nothing else would ever end the wait.
+    went. A child that simply *stops* reading blocks this forever, which is why it runs as
+    its own task inside the run's budget rather than ahead of it.
     """
 
-    if stdin is not None and process.stdin is not None:
-        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-            process.stdin.write(stdin)
-            await process.stdin.drain()
+    if stdin is None or process.stdin is None:
+        return
 
-        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-            process.stdin.close()
+    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+        process.stdin.write(stdin)
+        await process.stdin.drain()
 
-    await process.wait()
+    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+        process.stdin.close()
+
+
+def _ended_by(
+    returncode: int | None, config: SubprocessSandboxConfig
+) -> tuple[Outcome, str | None]:
+    """Read the child's exit status for a ceiling this route can actually recognise.
+
+    Only one of them is recognisable. ``SIGXCPU`` comes from nowhere but the CPU rlimit, so
+    a child carrying it hit the ceiling and the outcome says so. A memory or open-file
+    over-run arrives as the child's own ``MemoryError`` or ``EMFILE`` and is indistinguishable
+    from the same program failing without any limit — which is why this tier declares no
+    :attr:`SandboxCapabilities.reports_resource_kill` and why the limits in force are named
+    in the detail instead, so a reader of an exit 1 can at least see what was bounding it.
+    """
+
+    if returncode == -_SIGXCPU:
+        return "killed_resource", f"exceeded its {config.cpu_ceiling} cpu ceiling"
+
+    limits = config.rlimits
+
+    if returncode not in (0, None) and limits:
+        return "exited", "limits in force: " + ", ".join(
+            f"{name}={soft}" for name, (soft, _) in sorted(limits.items())
+        )
+
+    return "exited", None
 
 
 def _write_program(program: ProgramPayload, workspace: Path) -> None:
@@ -725,40 +1077,62 @@ def _declared_artifacts(
     return artifacts, tuple(skipped)
 
 
-async def _read_capped(stream: asyncio.StreamReader | None, cap: int) -> CapturedStream:
+async def _read_capped(
+    stream: asyncio.StreamReader | None,
+    cap: int,
+    kind: Literal["stdout", "stderr"],
+    chunks: "asyncio.Queue[tuple[Literal['stdout', 'stderr'], str | None]]",
+) -> CapturedStream:
     """Read a pipe up to *cap* bytes, then keep draining without keeping anything.
 
     Draining past the cap matters: a child writing to a full pipe blocks forever, and a
     sandbox whose timeout only fires because the reader stopped reading is a sandbox that
     reports the wrong thing about the program it ran.
+
+    Every chunk also goes to *chunks* as text, decoded incrementally so a character split
+    across two reads is not two replacement marks, with ``None`` at end of pipe. What is
+    *kept* is capped; what is *handed on* is not, because a chunk given to a caller is not
+    a chunk held in memory.
     """
 
     if stream is None:  # pragma: no cover - both pipes are always requested
+        await chunks.put((kind, None))
+
         return CapturedStream()
 
-    chunks: list[bytes] = []
+    parts: list[bytes] = []
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     kept = 0
     total = 0
     truncated = False
 
-    while True:
-        chunk = await stream.read(_READ_CHUNK)
+    try:
+        while True:
+            chunk = await stream.read(_READ_CHUNK)
 
-        if not chunk:
-            break
+            if not chunk:
+                break
 
-        total += len(chunk)
+            total += len(chunk)
 
-        if kept < cap:
-            room = cap - kept
-            chunks.append(chunk[:room])
-            kept += min(room, len(chunk))
+            if kept < cap:
+                room = cap - kept
+                parts.append(chunk[:room])
+                kept += min(room, len(chunk))
 
-        if total > cap:
-            truncated = True
+            if total > cap:
+                truncated = True
+
+            text = decoder.decode(chunk)
+
+            if text:
+                await chunks.put((kind, text))
+
+    finally:
+        await chunks.put((kind, None))
 
     return CapturedStream(
-        text=b"".join(chunks).decode("utf-8", errors="replace"),
+        text=b"".join(parts).decode("utf-8", errors="replace"),
         byte_count=total,
         truncated=truncated,
     )
@@ -806,7 +1180,7 @@ class ConfigurableSubprocessSandbox:
         # same refusal, because both end with unreviewed code in a bare child.
         validate_provenance(
             provenance=spec.provenance,
-            capabilities=SUBPROCESS_CAPABILITIES,
+            capabilities=subprocess_capabilities(self.config),
             backend=SUBPROCESS_BACKEND,
             route=str(spec.name),
         )

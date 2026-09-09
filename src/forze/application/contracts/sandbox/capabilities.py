@@ -90,14 +90,29 @@ class SandboxCapabilities:
     for generated code, so a route enabling it must acknowledge that explicitly."""
 
     enforces_memory: bool = False
-    """Whether a memory ceiling is imposed on the child (and an over-run surfaces as
-    ``killed_oom`` rather than as a dead worker)."""
+    """Whether a memory ceiling is **imposed** on the child.
+
+    Imposed, not identifiable — see :attr:`reports_resource_kill` for the other half. An
+    ``RLIMIT_AS`` ceiling really does stop the allocation and is indistinguishable from the
+    program failing on its own: the child raises ``MemoryError`` and exits 1, exactly as it
+    would have without the limit. A tier that can say *which* ceiling ended a run says so
+    separately, because a caller that needs to tell "it ran out of memory" from "it had a
+    bug" needs a different tier, not a more optimistic reading of this flag."""
 
     enforces_cpu: bool = False
     """Whether a CPU-time ceiling is imposed on the child."""
 
     enforces_open_files: bool = False
     """Whether a file-descriptor ceiling is imposed on the child."""
+
+    reports_resource_kill: bool = False
+    """Whether an over-run is **identifiable** as one, rather than only prevented.
+
+    Split from the ``enforces_*`` flags because rlimits enforce without reporting: the
+    ceiling bites, and what comes back is the child's own failure. Only a tier that watches
+    the ceiling from outside the child — a container's OOM notifier, a supervisor — can turn
+    an over-run into ``killed_oom`` or ``killed_resource``. Declaring this without one is
+    the claim the honesty rule exists to catch."""
 
     hard_kill: bool = True
     """Whether the adapter can actually kill a running child. Out-of-process work is the
@@ -123,6 +138,7 @@ FULL_SANDBOX_CAPABILITIES: Final = SandboxCapabilities(
     enforces_memory=True,
     enforces_cpu=True,
     enforces_open_files=True,
+    reports_resource_kill=True,
     hard_kill=True,
     reaps_descendants=True,
     supports_stream=True,

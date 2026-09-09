@@ -17,6 +17,7 @@ import asyncio
 import os
 import sys
 import time
+from contextlib import aclosing
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from forze.application.contracts.sandbox import (
     ProgramPayload,
     ResourceRequest,
     SandboxRequest,
+    SandboxResult,
     SandboxSpec,
 )
 from forze.application.contracts.secrets import SecretRef
@@ -36,11 +38,11 @@ from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.sandbox import (
-    SUBPROCESS_CAPABILITIES,
     ConfigurableSubprocessSandbox,
     SubprocessSandbox,
     SubprocessSandboxConfig,
     SubprocessSandboxDepsModule,
+    subprocess_capabilities,
 )
 from forze.application.integrations.sandbox.process import (
     _drain,  # pyright: ignore[reportPrivateUsage]
@@ -1005,21 +1007,293 @@ class TestTheSmallPrint:
 
 
 class TestWhatThisAdapterAdmitsTo:
-    def test_it_declares_no_isolation_and_no_network_confinement(self) -> None:
-        # The honesty rule, pinned: this adapter confines nothing, so it says so — and the
-        # gates above are what that declaration buys.
-        assert SUBPROCESS_CAPABILITIES.isolation == "none"
-        assert SUBPROCESS_CAPABILITIES.network == "egress"
-        assert not SUBPROCESS_CAPABILITIES.reaps_descendants
-        assert not SUBPROCESS_CAPABILITIES.enforces_memory
-        assert SUBPROCESS_CAPABILITIES.hard_kill
+    def test_a_route_that_asks_for_nothing_confines_nothing(self) -> None:
+        # The honesty rule, pinned: a route with no ceilings and no dropped user confines
+        # nothing, so it says so — and the gates are what that declaration buys.
+        bare = subprocess_capabilities(_config())
+
+        assert bare.isolation == "none"
+        assert bare.network == "egress"
+        assert not bare.enforces_memory
+        assert not bare.enforces_cpu
+        assert bare.hard_kill
+
+    def test_a_route_with_ceilings_is_the_process_tier(self) -> None:
+        # One adapter across two tiers, and the difference is entirely in the wiring — so
+        # the surface is derived from the config rather than fixed per module.
+        tiered = subprocess_capabilities(
+            _config(
+                memory_ceiling=64 * 1024 * 1024,
+                cpu_ceiling=timedelta(seconds=2),
+                open_files_ceiling=64,
+            )
+        )
+
+        assert tiered.isolation == "process"
+        assert tiered.enforces_memory
+        assert tiered.enforces_cpu
+        assert tiered.enforces_open_files
+
+    def test_no_route_claims_to_recognise_the_ceiling_that_ended_a_run(self) -> None:
+        # The claim rlimits cannot support. An RLIMIT_AS breach is the child's own
+        # MemoryError and an EMFILE is the child's own OSError — indistinguishable from the
+        # same program failing with no limit at all. Only the CPU ceiling is identifiable,
+        # and one flag covering three ceilings has to read false for all of them.
+        for config in (_config(), _config(memory_ceiling=1 << 26, cpu_ceiling=timedelta(seconds=1))):
+            assert not subprocess_capabilities(config).reports_resource_kill
+
+    def test_process_isolation_is_still_not_a_security_boundary(self) -> None:
+        # Ceilings bound accidents. The gate that matters is unmoved: untrusted code needs
+        # containment, and the process tier is not it.
+        with pytest.raises(CoreException) as caught:
+            SubprocessSandboxDepsModule(
+                routes={
+                    "jobs": _config(provenance="untrusted", memory_ceiling=1 << 26),
+                }
+            )()
+
+        assert caught.value.code == "sandbox_untrusted_underisolated"
+
+
+class TestTheGroupGoesWithIt:
+    """Battery item 5: a child that spawns grandchildren."""
 
     @pytest.mark.asyncio
-    async def test_streaming_is_refused_rather_than_faked(self) -> None:
-        # Refused at the first step of the iteration, which is where the mock refuses too:
-        # same contract, same moment, whichever adapter a caller wired.
+    async def test_a_timeout_takes_the_grandchild_too(self, tmp_path: Path) -> None:
+        # Signalling the child alone leaves what the child started running on the host with
+        # its parent gone. The grandchild writes a marker outside the workspace after the
+        # run should be over, so a survivor leaves proof rather than an empty assertion.
+        marker = tmp_path / "the-grandchild-outlived-the-kill"
+        sandbox = _sandbox()
+        started = time.monotonic()
+
+        grandchild = (
+            "import pathlib, time\n"
+            "time.sleep(1.0)\n"
+            f"pathlib.Path({str(marker)!r}).write_text('alive')\n"
+        )
+        result = await sandbox.run(
+            _python(
+                "import subprocess, sys, time\n"
+                f"subprocess.Popen([sys.executable, '-c', {grandchild!r}])\n"
+                "time.sleep(30)\n",
+                timeout=timedelta(milliseconds=400),
+            )
+        )
+
+        assert result.outcome == "killed_timeout"
+        assert time.monotonic() - started < 5
+
+        await asyncio.sleep(1.5)
+
+        assert not marker.exists(), "the grandchild kept running after the group was killed"
+
+    @pytest.mark.asyncio
+    async def test_the_child_leads_its_own_group_and_not_the_workers(self) -> None:
+        # The kill goes to the child's pid *as a group id*, which is only safe because the
+        # spawn puts it in a session of its own. If that ever stopped happening the signal
+        # would go to the worker's own group — this is the assertion that would notice.
+        result = await _sandbox().run(_python("import os; print(os.getpid(), os.getpgid(0))"))
+
+        pid, pgid = (int(part) for part in result.stdout.text.split())
+
+        assert pid == pgid
+        assert pgid != os.getpgid(0)
+
+    def test_the_adapter_says_whether_it_can_reap_a_group(self) -> None:
+        assert subprocess_capabilities(_config()).reaps_descendants is hasattr(os, "killpg")
+
+
+class TestCeilingsThatBite:
+    """Battery item 7: the process tier, driven into each limit it declares."""
+
+    @pytest.mark.asyncio
+    async def test_a_memory_ceiling_stops_the_allocation_and_the_worker_survives(self) -> None:
+        result = await _sandbox(memory_ceiling=64 * 1024 * 1024).run(
+            _python("x = bytearray(512 * 1024 * 1024); print(len(x))")
+        )
+
+        assert result.outcome == "exited"
+        assert result.exit_code != 0
+        assert "MemoryError" in result.stderr.text
+        # Not identifiable as an over-run — that is the whole reason the tier declares no
+        # `reports_resource_kill` — so the detail names what was bounding it instead.
+        assert result.detail is not None
+        assert "RLIMIT_AS" in result.detail
+
+    @pytest.mark.asyncio
+    async def test_the_same_program_succeeds_when_the_ceiling_allows_it(self) -> None:
+        # Without this the memory test proves only that the program fails, which it would
+        # do against a route that set no limit at all if the allocation were big enough.
+        result = await _sandbox(memory_ceiling=1024 * 1024 * 1024).run(
+            _python("x = bytearray(64 * 1024 * 1024); print(len(x))")
+        )
+
+        assert result.outcome == "exited"
+        assert result.exit_code == 0
+        assert result.stdout.text.strip() == str(64 * 1024 * 1024)
+
+    @pytest.mark.asyncio
+    async def test_a_cpu_ceiling_is_the_one_over_run_this_tier_can_name(self) -> None:
+        # SIGXCPU comes from nowhere else, so unlike the other two ceilings this one is
+        # identifiable after the fact — hence the soft limit sitting under the hard one.
+        started = time.monotonic()
+        result = await _sandbox(cpu_ceiling=timedelta(seconds=1)).run(
+            _python("while True: pass", timeout=timedelta(seconds=20))
+        )
+
+        assert result.outcome == "killed_resource"
+        assert time.monotonic() - started < 15
+        assert result.detail is not None and "cpu ceiling" in result.detail
+
+    @pytest.mark.asyncio
+    async def test_an_open_file_ceiling_reaches_the_child(self) -> None:
+        result = await _sandbox(open_files_ceiling=24).run(
+            _python("fs = [open('/dev/null') for _ in range(256)]")
+        )
+
+        assert result.outcome == "exited"
+        assert result.exit_code != 0
+        assert "Too many open files" in result.stderr.text
+
+    @pytest.mark.asyncio
+    async def test_a_route_with_ceilings_still_reports_a_missing_program_as_a_spawn_failure(
+        self,
+    ) -> None:
+        # The shim starts fine whatever argv it is handed, so without the marker check a
+        # route with ceilings would answer `exited` where a route without them answers
+        # `spawn_failed` — one adapter, two stories about the same mistake.
+        missing = SandboxRequest(command=("/nonexistent/forze-sandbox-probe",))
+
+        shimmed = await _sandbox(memory_ceiling=1 << 28).run(missing)
+        bare = await _sandbox().run(missing)
+
+        assert shimmed.outcome == bare.outcome == "spawn_failed"
+        assert shimmed.detail is not None and bare.detail is not None
+
+    @pytest.mark.asyncio
+    async def test_a_request_may_not_ask_for_a_ceiling_the_route_does_not_set(self) -> None:
+        # The capability gate is per route now, so the same request is served by one wiring
+        # and refused by another — which is the point of deriving the surface from config.
+        asking = _python("pass", resources=ResourceRequest(memory_bytes=1024))
+
+        assert (await _sandbox(memory_ceiling=1 << 28).run(asking)).outcome == "exited"
+
         with pytest.raises(CoreException) as caught:
-            async for _ in _sandbox().run_stream(_python("pass")):
-                pass
+            await _sandbox().run(asking)
 
         assert caught.value.code == "sandbox_feature_unsupported"
+
+
+class TestStreaming:
+    @pytest.mark.asyncio
+    async def test_output_arrives_before_the_run_is_over(self) -> None:
+        # The property that makes streaming worth having: a chunk reaches the caller while
+        # the child is still running, rather than all of it at the end.
+        seen: list[tuple[str, str]] = []
+        sandbox = _sandbox()
+
+        async with aclosing(
+            sandbox.run_stream(
+                _python(
+                    "import sys, time\n"
+                    "print('first', flush=True)\n"
+                    "time.sleep(0.4)\n"
+                    "print('second', flush=True)\n"
+                    "print('problem', file=sys.stderr, flush=True)\n"
+                )
+            )
+        ) as events:
+            async for event in events:
+                if event.kind == "result":
+                    assert event.result is not None
+                    assert event.result.succeeded
+
+                    break
+
+                seen.append((event.kind, event.text))
+
+        assert "first" in "".join(text for kind, text in seen if kind == "stdout")
+        assert "second" in "".join(text for kind, text in seen if kind == "stdout")
+        assert "problem" in "".join(text for kind, text in seen if kind == "stderr")
+
+    @pytest.mark.asyncio
+    async def test_the_streamed_and_buffered_calls_answer_the_same(self) -> None:
+        # One implementation under both, so this pins that it stays one: the divergence a
+        # caller would otherwise find by switching between them.
+        request = _python("import sys; print('out'); print('err', file=sys.stderr); raise SystemExit(3)")
+        buffered = await _sandbox().run(request)
+        streamed: SandboxResult | None = None
+
+        async with aclosing(_sandbox().run_stream(request)) as events:
+            async for event in events:
+                streamed = event.result or streamed
+
+        assert streamed is not None
+        assert (streamed.outcome, streamed.exit_code) == (buffered.outcome, buffered.exit_code)
+        assert streamed.stdout.text == buffered.stdout.text
+        assert streamed.stderr.text == buffered.stderr.text
+
+    @pytest.mark.asyncio
+    async def test_walking_away_mid_stream_kills_the_child_and_cleans_up(
+        self, tmp_path: Path
+    ) -> None:
+        # Abandonment is cancellation. A caller who breaks out of the loop stops the child;
+        # the marker is written outside the workspace after the break, so a survivor leaves
+        # proof, and the workspace root is checked because the `finally` runs on this path
+        # or on none.
+        marker = tmp_path / "the-child-outlived-the-break"
+        sandbox = _sandbox(workspace_root=tmp_path)
+
+        async with aclosing(
+            sandbox.run_stream(
+                _python(
+                    "import pathlib, time\n"
+                    "print('running', flush=True)\n"
+                    "time.sleep(1.0)\n"
+                    f"pathlib.Path({str(marker)!r}).write_text('alive')\n"
+                )
+            )
+        ) as events:
+            async for event in events:
+                if event.kind == "stdout":
+                    break
+
+        await asyncio.sleep(1.5)
+
+        assert not marker.exists(), "the child kept running after the caller walked away"
+        assert _workspaces(tmp_path) == []
+
+    @pytest.mark.asyncio
+    async def test_a_character_split_across_two_reads_is_not_two_replacement_marks(
+        self,
+    ) -> None:
+        # A chunk boundary can land inside a multi-byte character, and decoding each chunk
+        # on its own would hand the caller mojibake for output the buffered call renders
+        # correctly.
+        result_text = ""
+        source = "import sys\nsys.stdout.buffer.write(('\u00e9' * 40000).encode())\n"
+
+        async with aclosing(_sandbox(max_output_bytes=1024).run_stream(_python(source))) as events:
+            async for event in events:
+                if event.kind == "stdout":
+                    result_text += event.text
+
+        assert "\ufffd" not in result_text
+        assert result_text == "\u00e9" * 40000
+
+
+class TestPrivilegeDrop:
+    def test_a_route_that_cannot_drop_privileges_does_not_boot(self) -> None:
+        # Refused at freeze rather than at the first call: a route that cannot honour what
+        # it declares should be wrong once, at startup, not on every request.
+        if os.geteuid() == 0:  # pragma: no cover - CI does not run as root
+            pytest.skip("running as root, so the drop is available")
+
+        with pytest.raises(CoreException) as caught:
+            SubprocessSandboxDepsModule(routes={"jobs": _config(run_as_user="nobody")})()
+
+        assert caught.value.code == "sandbox_privilege_drop_unavailable"
+
+    def test_dropping_privileges_is_what_makes_a_route_the_process_tier(self) -> None:
+        assert subprocess_capabilities(_config(run_as_user="nobody")).isolation == "process"

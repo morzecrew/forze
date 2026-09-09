@@ -15,6 +15,7 @@ from .process import (
     ConfigurableSubprocessSandbox,
     SubprocessSandbox,
     SubprocessSandboxConfig,
+    subprocess_capabilities,
 )
 
 # ----------------------- #
@@ -22,6 +23,7 @@ from .process import (
 __all__ = [
     "SUBPROCESS_BACKEND",
     "SUBPROCESS_CAPABILITIES",
+    "subprocess_capabilities",
     "ConfigurableSubprocessSandbox",
     "SubprocessSandbox",
     "SubprocessSandboxConfig",
