@@ -106,7 +106,9 @@ def _workspaces(root: Path) -> list[Path]:
 class TestWhatComesBack:
     @pytest.mark.asyncio
     async def test_a_command_runs_and_its_output_is_captured(self) -> None:
-        result = await _sandbox().run(_python("print('hello'); print('bad', file=__import__('sys').stderr)"))
+        result = await _sandbox().run(
+            _python("print('hello'); print('bad', file=__import__('sys').stderr)")
+        )
 
         assert result.outcome == "exited"
         assert result.exit_code == 0
@@ -381,7 +383,9 @@ class TestTheRedButton:
 
         await sandbox.run(_python("print('ok')"))
         await sandbox.run(_python("raise SystemExit(2)"))
-        await sandbox.run(_python("import time; time.sleep(30)", timeout=timedelta(milliseconds=200)))
+        await sandbox.run(
+            _python("import time; time.sleep(30)", timeout=timedelta(milliseconds=200))
+        )
         await sandbox.run(SandboxRequest(command=("/nonexistent/forze-sandbox-probe",)))
 
         task = asyncio.create_task(sandbox.run(_python("import time; time.sleep(30)")))
@@ -446,6 +450,55 @@ class TestTheBudgetIsNeverUnbounded:
 
         assert result.outcome == "killed_timeout"
 
+    @pytest.mark.asyncio
+    async def test_a_child_that_stops_reading_stdin_does_not_hold_the_worker(self) -> None:
+        # `drain()` has no timeout of its own. Sent more than a pipe buffer, a child that
+        # never reads leaves the write waiting forever — and the write used to run *before*
+        # the budgeted wait, so no ceiling applied, no kill ran, and the worker task held a
+        # live child indefinitely. The elapsed bound is the assertion: the outcome label
+        # alone would be produced by a run that simply took the long way round.
+        sandbox = _sandbox()
+        started = time.monotonic()
+
+        result = await asyncio.wait_for(
+            sandbox.run(
+                _python(
+                    "import time; time.sleep(30)",
+                    stdin=b"x" * (4 * 1024 * 1024),
+                    timeout=timedelta(milliseconds=300),
+                )
+            ),
+            timeout=15,
+        )
+
+        assert result.outcome == "killed_timeout"
+        assert time.monotonic() - started < 5
+
+    @pytest.mark.asyncio
+    async def test_time_spent_staging_comes_out_of_the_same_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Downloading declared inputs is storage I/O that takes as long as it takes. A
+        # budget that only starts counting at the spawn is a route ceiling the run exceeds
+        # by however long its inputs took to arrive.
+        staged = SubprocessSandbox._stage  # pyright: ignore[reportPrivateUsage]
+
+        async def slow(self: Any, request: SandboxRequest, workspace: Path) -> None:
+            await staged(self, request, workspace)
+            await asyncio.sleep(0.4)
+
+        monkeypatch.setattr(SubprocessSandbox, "_stage", slow)
+        sandbox = _sandbox()
+
+        with sandbox.ctx.inv_ctx.bind_deadline(0.2):
+            result = await asyncio.wait_for(
+                sandbox.run(_python("import time; time.sleep(30)")), timeout=5
+            )
+
+        assert result.outcome == "killed_timeout"
+        assert result.detail is not None
+        assert "staging" in result.detail
+
 
 class TestUnenforceableRequestsAreRefused:
     @pytest.mark.asyncio
@@ -473,9 +526,7 @@ class TestUnenforceableRequestsAreRefused:
         result = await _sandbox().run(
             _python(
                 "print('ok')",
-                resources=ResourceRequest(
-                    wall_clock=timedelta(seconds=5), max_output_bytes=4096
-                ),
+                resources=ResourceRequest(wall_clock=timedelta(seconds=5), max_output_bytes=4096),
             )
         )
 
@@ -485,9 +536,7 @@ class TestUnenforceableRequestsAreRefused:
 class TestBoundedCapture:
     @pytest.mark.asyncio
     async def test_a_chatty_child_is_truncated_rather_than_buffered_whole(self) -> None:
-        result = await _sandbox(max_output_bytes=1024).run(
-            _python("print('x' * 200_000)")
-        )
+        result = await _sandbox(max_output_bytes=1024).run(_python("print('x' * 200_000)"))
 
         assert result.outcome == "exited"
         assert result.stdout.truncated
@@ -701,13 +750,10 @@ class TestTheSmallPrint:
         async def fine() -> CapturedStream:
             return CapturedStream(text="kept")
 
-        stdout, stderr = await _drain(
-            [asyncio.create_task(fine()), asyncio.create_task(broken())]
-        )
+        stdout, stderr = await _drain([asyncio.create_task(fine()), asyncio.create_task(broken())])
 
         assert stdout.text == "kept"
         assert stderr.text == ""
-
 
     @pytest.mark.asyncio
     async def test_a_zero_grace_route_goes_straight_to_the_kill(self) -> None:

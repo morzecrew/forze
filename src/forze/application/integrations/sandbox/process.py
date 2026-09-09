@@ -40,7 +40,7 @@ from forze.application.contracts.secrets import SecretRef, SecretsDepKey
 from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
-from forze.base.primitives import run_cpu, utcnow
+from forze.base.primitives import monotonic, run_cpu, utcnow
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -189,6 +189,7 @@ class SubprocessSandbox:
                 detail="the invocation deadline had already passed; nothing was spawned",
             )
 
+        deadline = monotonic() + budget
         workspace = Path(
             await run_cpu(
                 tempfile.mkdtemp,
@@ -199,9 +200,21 @@ class SubprocessSandbox:
 
         try:
             await self._stage(request, workspace)
+            remaining = deadline - monotonic()
+
+            if remaining <= 0:
+                # Staging spends the same budget the child does: downloading declared
+                # inputs is storage I/O that can take as long as it takes, and a budget
+                # that only starts at the spawn is a route ceiling the run can exceed by
+                # however long its inputs took to arrive.
+                return SandboxResult(
+                    outcome="killed_timeout",
+                    usage=ResourceUsage(wall_clock=utcnow() - started),
+                    detail=f"the {budget:.3f}s budget was spent staging; nothing was spawned",
+                )
 
             outcome, exit_code, stdout, stderr, detail = await self._spawn(
-                request, workspace, budget
+                request, workspace, remaining
             )
             collected = await self._collect(request, workspace) if request.output_globs else {}
 
@@ -378,22 +391,15 @@ class SubprocessSandbox:
         ]
 
         try:
-            if request.stdin is not None and process.stdin is not None:
-                # A child that never reads its stdin — `echo`, a script that only takes
-                # argv, anything that exits early — closes the pipe under us. That is the
-                # program behaving normally, so the broken pipe is absorbed here rather
-                # than raised at a caller who asked how the run went.
-                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                    process.stdin.write(request.stdin)
-                    await process.stdin.drain()
-
-                with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                    process.stdin.close()
-
             try:
                 # `budget` is positive: a run with none left never reaches here, so the
                 # timeout is never the `0 -> None -> unbounded` trap.
-                await asyncio.wait_for(process.wait(), timeout=budget)
+                #
+                # The stdin write is inside the budget, not before it. `drain()` has no
+                # timeout of its own, and a child that never reads more than a pipe buffer
+                # of what it was sent leaves it waiting forever — with no ceiling applying,
+                # no kill running, and a live child on a worker task that never returns.
+                await asyncio.wait_for(_feed_and_wait(process, request.stdin), timeout=budget)
 
             except TimeoutError:
                 await self._end(process)
@@ -495,6 +501,27 @@ def _require_storage(config: SubprocessSandboxConfig, spec: SandboxSpec) -> Stor
         )
 
     return config.storage
+
+
+async def _feed_and_wait(process: asyncio.subprocess.Process, stdin: bytes | None) -> None:
+    """Send the child its stdin, then wait for it — both under the caller's one timeout.
+
+    A child that never reads its stdin — ``echo``, a script that only takes argv, anything
+    that exits early — closes the pipe under us. That is the program behaving normally, so
+    the broken pipe is absorbed here rather than raised at a caller who asked how the run
+    went. A child that simply *stops* reading is the other case, and the reason this is
+    inside the budget: nothing else would ever end the wait.
+    """
+
+    if stdin is not None and process.stdin is not None:
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            process.stdin.write(stdin)
+            await process.stdin.drain()
+
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            process.stdin.close()
+
+    await process.wait()
 
 
 def _write_program(program: ProgramPayload, workspace: Path) -> None:
