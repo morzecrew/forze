@@ -1262,11 +1262,16 @@ class TestLifecycle:
         failures = iter([OSError("no space left on device")])
         real_write = MockStatePersistence.write
 
-        def _write_once_badly(self: MockStatePersistence, payload: Mapping[str, Any]) -> None:
+        def _write_once_badly(
+            self: MockStatePersistence, payload: Mapping[str, Any], *, final: bool = False
+        ) -> None:
+            # The whole signature, `final` included: a double that drops a keyword makes the
+            # call raise, the lifecycle runner logs and swallows it, and the shutdown this
+            # test tears down with silently stops happening.
             for failure in failures:
                 raise failure
 
-            real_write(self, payload)
+            real_write(self, payload, final=final)
 
         monkeypatch.setattr(MockStatePersistence, "write", _write_once_badly)
 
@@ -1290,8 +1295,15 @@ class TestLifecycle:
 
             assert next(failures, "spent") == "spent"
 
+            state.documents["at-shutdown"] = {"o-2": {"id": "o-2"}}
+
         finally:
             await plan.shutdown(ctx)
+
+        # And the teardown wrote: a double that rejected a keyword would have raised into the
+        # runner, which logs and swallows, leaving this test green over a shutdown that did not
+        # happen.
+        assert "at-shutdown" in _loaded(persistence).documents
 
     # ....................... #
 
