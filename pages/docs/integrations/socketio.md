@@ -122,6 +122,16 @@ auto-joins the principal room, so do not also give `ForzeSocketIOAdapter` an
 `identity_resolver` on the same namespace. The publish-side `Audience.principal(id)` must
 use the same id the gateway joins with (`str(authn.principal_id)`).
 
+`build_socketio_connection_resolver` builds `resolve_connection` for you: a fixed
+credential ladder (connect/reauth `auth` payload, then the cookie, then
+`Authorization: Bearer`, then an opt-in query parameter) verified through the wired
+authn plane, filling the principal, tenant, device and credential `expires_at` the
+expiry sweep enforces. It is the same ladder
+[`build_ws_connection_resolver`](fastapi.md#authenticate-the-connection) uses, so both
+transports authenticate by one set of rules — including its rule that cookie mode
+requires a restricted `cors_allowed_origins`, attested with
+`origin_allowlist_attested=True`.
+
 ### The delivery envelope (client contract)
 
 Every frame is a uniform envelope — `{ "id": <id|null>, "data": <payload> }`. Durable
@@ -241,6 +251,7 @@ URL from a `RedisSettings.dsn`; this package cannot import `forze_redis` itself.
 | `PubSubSignalSource` + `realtime_pubsub_spec` + `RealtimePubSubPublisher` | egress: broadcast pubsub live lane (at-most-once, every node sees every signal); durables keep riding outbox → stream → mailbox |
 | `realtime_tenant_relay_lifecycle_step` | egress: per-tenant durable relay for a partitioned (tenant-aware) outbox |
 | `attach_realtime_connection` | auto-join principal rooms + presence on connect; offline replay + ack |
+| `build_socketio_connection_resolver` | the shipped connection resolver: cookie-first credential ladder shared with the WebSocket route |
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
 | `realtime_identity_expiry_lifecycle_step` | drop connections whose credential (`expires_at`) has lapsed |

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Realtime connections have a shipped resolver.** `build_ws_connection_resolver` and its Socket.IO twin verify one credential ladder — reauth payload, cookie, `Authorization`, opt-in query — filling principal, tenant, device and `expires_at`. Cookie mode will not build without attesting the Origin allowlist.
+
 - **The in-memory mock can survive a restart.** `MockStatePersistence` plus `mock_state_lifecycle_step` load a snapshot at startup and write one at shutdown, so an MVP on `forze_mock` keeps its data without a container. Off by default; one process, no crash durability, still all in RAM — a snapshot, not a database.
 
 - **Mongo implements the inbox.** `MongoDepsModule(inboxes={...})` with `MongoInboxConfig` registers a consumer-side dedup store: one atomic `_id` upsert per message, no index migration, riding the ambient transaction so the mark rolls back with the handler (exactly-once effect).

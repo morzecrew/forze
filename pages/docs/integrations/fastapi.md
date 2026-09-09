@@ -287,6 +287,53 @@ by in-flight and frame-size limits. The full framing is normative in the
 [realtime wire protocol](../reference/realtime-protocol.md); `asyncapi_document`
 documents WS commands via its `commands=` parameter.
 
+### Authenticate the connection
+
+`build_ws_connection_resolver` is the shipped resolver, so the ~30 lines every app
+writes by hand — pick a credential, verify it, carry the expiry, handle the reauth —
+exist once. The ladder is fixed: a `realtime.reauth` payload, then the cookie, then
+`Authorization: Bearer`, then the query parameter, each source enabled by naming it.
+The first source that *presents* a credential is the one used; an invalid one refuses
+the connection rather than falling through to the next.
+
+```python
+from forze_fastapi.realtime import attach_realtime_ws_route, build_ws_connection_resolver
+
+attach_realtime_ws_route(
+    router,
+    ctx_dep=ctx_dep,
+    resolve=build_ws_connection_resolver(
+        ctx_dep=ctx_dep,
+        authn_spec=spec,                     # verified through the wired authn plane
+        cookie_name="forze_access",          # the browser path — pair it with the allowlist below
+        origin_allowlist_attested=True,      # your statement that the pairing is there
+    ),
+    allowed_origins=["https://app.example.com"],  # the entire cross-site perimeter
+    mailbox_factory=..., cursors_factory=...,
+)
+```
+
+Four things to know before you wire it:
+
+- **Cookie mode requires `allowed_origins`.** A browser attaches the cookie to a
+  cross-site upgrade by itself and the handshake has no CORS preflight, so the
+  server-side Origin check is the whole defense. The factory cannot see the attach
+  call's argument, so it asks you to attest it — building cookie mode without
+  `origin_allowlist_attested=True` is a configuration error.
+- **The query-parameter source is off by default.** Query strings land in access logs,
+  proxy logs and anything that reads a URL. Enable `query_param="token"` only for
+  clients that can set neither cookie nor header, with short-lived tokens.
+- **`expires_at` comes from the verified credential**, and the route enforces it
+  continuously — the socket closes once past it, and a `realtime.reauth` frame swaps
+  in a fresh one without reconnecting.
+- **The tenant is the resolver's binding**, falling back to the issuer's own claim; the
+  `X-Tenant-Id` header is *not* honored here, because an upgrade's headers are set by
+  the client being authenticated.
+
+`forze_socketio.build_socketio_connection_resolver` is the same ladder over a
+Socket.IO handshake, so a deployment serving both transports authenticates by one set
+of rules.
+
 ## What it provides
 
 Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
@@ -304,6 +351,7 @@ runs them. The surface, at a glance:
 | `realtime_sse_sharded_tail_lifecycle_step` | namespace-tier SSE: per-tenant tail loops, tenant trusted from the stream |
 | `realtime_sse_presence_heartbeat_lifecycle_step` | SSE streams report into the shared presence store (TTL heartbeat) |
 | `attach_realtime_ws_route` | duplex realtime over raw WebSocket: replay + live egress, inline ack/reauth, governed `cmd` dispatch |
+| `build_ws_connection_resolver` | the shipped connection resolver: cookie-first credential ladder, credential expiry, reauth |
 | `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |
 | `apply_openapi_security` | declare the auth scheme in the generated OpenAPI |
 
