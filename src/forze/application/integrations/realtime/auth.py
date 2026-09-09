@@ -39,6 +39,7 @@ __all__ = [
     "PresentedCredential",
     "client_identity",
     "present_credential",
+    "require_origin_attestation",
     "resolve_realtime_identity",
 ]
 
@@ -180,8 +181,15 @@ class RealtimeIdentity:
 # ----------------------- #
 
 
-def _split_bearer(raw: str) -> tuple[str, str]:
-    """``("Bearer", token)`` from an ``Authorization`` value, or ``("Bearer", raw)``.
+_SCHEMES_WITHOUT_A_TOKEN = frozenset({"bearer", "token"})
+"""Words that are a scheme label rather than a credential, when a header carries
+nothing else. Such a header presents *nothing* — it must not send the literal word
+off to the verifier, which would refuse it and, under the no-fallthrough rule, take
+the rest of the ladder down with it."""
+
+
+def _split_bearer(raw: str) -> tuple[str, str] | None:
+    """``(scheme, token)`` from an ``Authorization`` value, or ``None`` for no credential.
 
     A bare token with no scheme is accepted and labeled ``Bearer``: the WS upgrade is
     the one place clients most often set the header by hand.
@@ -190,9 +198,14 @@ def _split_bearer(raw: str) -> tuple[str, str]:
     parts = raw.strip().split(maxsplit=1)
 
     if len(parts) == 2:
+        # `split(maxsplit=1)` yields a second part that begins with a non-space, so
+        # the token here is never empty — a scheme with nothing after it is a
+        # one-part split, handled below.
         return parts[0], parts[1].strip()
 
-    return "Bearer", raw.strip()
+    single = raw.strip()
+
+    return None if single.lower() in _SCHEMES_WITHOUT_A_TOKEN else ("Bearer", single)
 
 
 # ....................... #
@@ -229,9 +242,11 @@ def present_credential(
         raw = handshake.header(sources.header_name)
 
         if raw is not None and raw.strip():
-            scheme, token = _split_bearer(raw)
+            split = _split_bearer(raw)
 
-            if token:
+            if split is not None:
+                scheme, token = split
+
                 return PresentedCredential(token=token, source="header", scheme=scheme)
 
     if sources.query_param is not None:
@@ -241,6 +256,41 @@ def present_credential(
             return PresentedCredential(token=raw.strip(), source="query")
 
     return None
+
+
+# ....................... #
+
+
+def require_origin_attestation(
+    *,
+    cookie_name: str | None,
+    attested: bool,
+    perimeter: str,
+    alternative: str,
+) -> None:
+    """Refuse a cookie-source resolver that has not attested its Origin perimeter.
+
+    A browser attaches the cookie to a cross-site handshake by itself and neither
+    handshake has a CORS preflight, so the server-side origin check is the whole
+    cross-site defense. A resolver factory cannot see it — it is configured where the
+    transport is attached — so the attestation is what stands between a shipped
+    cookie-mode resolver and a framework-packaged CSRF hole.
+
+    *perimeter* names the argument that carries the allowlist on this transport, and
+    *alternative* the thing to do instead; the rest of the refusal is shared, because
+    two copies of a security message are two messages that drift.
+    """
+
+    if cookie_name is None or attested:
+        return
+
+    raise exc.configuration(
+        f"A cookie-source realtime resolver requires an origin allowlist: the browser attaches "
+        f"the cookie to a cross-site handshake by itself and the handshake has no CORS preflight, "
+        f"so {perimeter} is the whole cross-site perimeter. Pass origin_allowlist_attested=True "
+        f"once it is there, or {alternative}.",
+        code="realtime_cookie_origin_unattested",
+    )
 
 
 # ....................... #

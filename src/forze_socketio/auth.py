@@ -16,9 +16,9 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime.auth import (
     RealtimeCredentialSources,
     RealtimeHandshake,
+    require_origin_attestation,
     resolve_realtime_identity,
 )
-from forze.base.exceptions import exc
 
 from .connection import ConnectionResolver, RealtimeConnection
 from .routing import SocketIOConnect
@@ -123,15 +123,12 @@ def build_socketio_connection_resolver(
         origin-allowlist attestation.
     """
 
-    if cookie_name is not None and not origin_allowlist_attested:
-        raise exc.configuration(
-            "A cookie-source Socket.IO resolver requires an origin allowlist: the browser "
-            "attaches the cookie to a cross-site handshake by itself, so the server's "
-            "cors_allowed_origins is the whole cross-site perimeter. Pass "
-            "origin_allowlist_attested=True once it is restricted, or authenticate from the "
-            "Authorization header instead.",
-            code="realtime_cookie_origin_unattested",
-        )
+    require_origin_attestation(
+        cookie_name=cookie_name,
+        attested=origin_allowlist_attested,
+        perimeter="the server's cors_allowed_origins",
+        alternative="authenticate from the Authorization header instead",
+    )
 
     sources = RealtimeCredentialSources(
         cookie_name=cookie_name,

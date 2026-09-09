@@ -163,6 +163,18 @@ class TestSourceOrder:
 
         assert presented is None
 
+    def test_a_disabled_header_source_leaves_the_query_to_answer(self) -> None:
+        presented = present_credential(
+            RealtimeCredentialSources(header_name=None, query_param="token"),
+            _handshake(
+                headers={"Authorization": "Bearer header-token"},
+                query={"token": "query-token"},
+            ),
+        )
+
+        assert presented is not None
+        assert (presented.token, presented.source) == ("query-token", "query")
+
     def test_the_query_source_is_off_by_default(self) -> None:
         presented = present_credential(
             RealtimeCredentialSources(),
@@ -193,6 +205,57 @@ class TestSourceOrder:
 
         assert presented is not None
         assert presented.source == "header"
+
+    def test_a_header_carrying_only_a_scheme_presents_nothing(self) -> None:
+        # "Authorization: Bearer" with no token would otherwise send the literal word
+        # "Bearer" to the verifier — refused, and under the no-fallthrough rule that
+        # refusal would take the rest of the ladder down with it.
+        presented = present_credential(
+            RealtimeCredentialSources(query_param="token"),
+            _handshake(headers={"Authorization": "Bearer"}, query={"token": "query-token"}),
+        )
+
+        assert presented is not None
+        assert (presented.token, presented.source) == ("query-token", "query")
+
+    @pytest.mark.parametrize("header", ["Bearer", "bearer", "Bearer   ", "  Bearer"])
+    def test_a_scheme_and_nothing_else_presents_nothing(self, header: str) -> None:
+        presented = present_credential(
+            RealtimeCredentialSources(query_param="token"),
+            _handshake(headers={"Authorization": header}, query={"token": "query-token"}),
+        )
+
+        assert presented is not None
+        assert presented.source == "query"
+
+    def test_a_payload_that_carries_no_token_falls_through_to_the_request(self) -> None:
+        # A Socket.IO connect sends `{"protocol": 1}` with the credential in a cookie;
+        # a reauth sends the token. Both are the same payload field, so a payload
+        # without a token must not shadow the request's own sources.
+        presented = present_credential(
+            RealtimeCredentialSources(cookie_name="c"),
+            _handshake(cookies={"c": "cookie-token"}, auth={"protocol": 1}),
+        )
+
+        assert presented is not None
+        assert presented.source == "cookie"
+
+    def test_a_blank_header_falls_through_to_the_query(self) -> None:
+        presented = present_credential(
+            RealtimeCredentialSources(query_param="token"),
+            _handshake(headers={"Authorization": "   "}, query={"token": "query-token"}),
+        )
+
+        assert presented is not None
+        assert presented.source == "query"
+
+    def test_a_blank_query_parameter_presents_nothing(self) -> None:
+        presented = present_credential(
+            RealtimeCredentialSources(query_param="token"),
+            _handshake(query={"token": "  "}),
+        )
+
+        assert presented is None
 
     def test_every_request_source_disabled_is_refused_at_construction(self) -> None:
         with pytest.raises(CoreException) as caught:

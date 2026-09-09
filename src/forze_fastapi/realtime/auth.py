@@ -18,9 +18,9 @@ from forze.application.execution.context import ExecutionContextFactory
 from forze.application.integrations.realtime.auth import (
     RealtimeCredentialSources,
     RealtimeHandshake,
+    require_origin_attestation,
     resolve_realtime_identity,
 )
-from forze.base.exceptions import exc
 
 from .ws import WsConnect, WsConnection, WsConnectionResolver
 
@@ -90,15 +90,12 @@ def build_ws_connection_resolver(
         Origin-allowlist attestation.
     """
 
-    if cookie_name is not None and not origin_allowlist_attested:
-        raise exc.configuration(
-            "A cookie-source WebSocket resolver requires the route's Origin allowlist: the "
-            "browser attaches the cookie to a cross-site upgrade by itself and the handshake "
-            "has no CORS preflight, so attach_realtime_ws_route(allowed_origins=[...]) is the "
-            "whole cross-site perimeter. Pass origin_allowlist_attested=True once it is there, "
-            "or authenticate from the Authorization header instead.",
-            code="realtime_cookie_origin_unattested",
-        )
+    require_origin_attestation(
+        cookie_name=cookie_name,
+        attested=origin_allowlist_attested,
+        perimeter="attach_realtime_ws_route(allowed_origins=[...])",
+        alternative="authenticate from the Authorization header instead",
+    )
 
     sources = RealtimeCredentialSources(
         cookie_name=cookie_name,

@@ -16,6 +16,7 @@ from .auth import (
     RealtimeIdentity,
     client_identity,
     present_credential,
+    require_origin_attestation,
     resolve_realtime_identity,
 )
 from .commands import RealtimeCommandRoute
@@ -55,6 +56,7 @@ __all__ = [
     "PresentedCredential",
     "client_identity",
     "present_credential",
+    "require_origin_attestation",
     "resolve_realtime_identity",
     "MailboxEntry",
     "RealtimeMailbox",
