@@ -208,6 +208,47 @@ def _loaded(persistence: MockStatePersistence, state: MockState | None = None) -
 # ....................... #
 
 
+class TestRefusedWiring:
+    """What is refused before a snapshot exists to lose."""
+
+    def test_a_non_positive_flush_interval_is_refused(self) -> None:
+        """`sleep_or_stop(0)` returns immediately, so a zero interval is not "flush often" —
+        it is a spin that rewrites the whole snapshot as fast as the disk allows, measured at
+        2,051 writes in a quarter of a second, while looking from the outside like the feature
+        working. The framework's own periodic step refuses this at wiring for the same reason;
+        this reuses its loop primitive and owes the same guard."""
+
+        for interval in (timedelta(), timedelta(seconds=-5)):
+            with pytest.raises(CoreException, match="must be positive"):
+                MockStatePersistence(path=Path("/tmp/mvp.state"), flush_every=interval)  # noqa: S108
+
+    # ....................... #
+
+    def test_a_path_naming_no_file_is_refused(self) -> None:
+        """The lock is a sibling under the same name, so a path with no filename has nothing
+        for it to be a sibling of — left alone it surfaces as `ValueError: PosixPath('.') has
+        an empty name` out of a startup hook, naming neither the setting nor the value."""
+
+        for nameless in (Path(""), Path("."), Path("/")):
+            with pytest.raises(CoreException, match="names no file"):
+                MockStatePersistence(path=nameless)
+
+    # ....................... #
+
+    def test_a_snapshot_path_that_cannot_be_opened_is_named(self, tmp_path: Path) -> None:
+        """A directory where a file was configured. Without this the startup hook raises a
+        bare `IsADirectoryError`, which says nothing about which configured path produced it."""
+
+        directory = tmp_path / "not-a-file"
+        directory.mkdir()
+
+        with pytest.raises(CoreException, match="cannot be read"):
+            MockStatePersistence(path=directory).read()
+
+
+# ....................... #
+
+
 class TestClassification:
     def test_every_field_lands_in_exactly_one_bucket(self) -> None:
         """The check that catches the next substore someone adds — which is the failure mode

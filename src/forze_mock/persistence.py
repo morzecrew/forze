@@ -242,6 +242,28 @@ class MockStatePersistence:
 
     # ....................... #
 
+    def __attrs_post_init__(self) -> None:
+        if not self.path.name:
+            raise exc.configuration(
+                f"Mock state persistence needs a file to write and {self.path} names no file. "
+                "Give the path a filename — the lock lives beside it under the same name, so "
+                "there is nothing for it to be a sibling of.",
+                code="mock_state_snapshot_path_nameless",
+                details={"path": str(self.path)},
+            )
+
+        if self.flush_every is not None and self.flush_every.total_seconds() <= 0:
+            raise exc.configuration(
+                "Mock state flush_every must be positive. A non-positive interval turns the "
+                "flush loop into a spin that rewrites the whole snapshot as fast as the disk "
+                "allows, which looks from the outside like the feature working. Leave it unset "
+                "for shutdown-only.",
+                code="mock_state_flush_interval_not_positive",
+                details={"flush_every": str(self.flush_every)},
+            )
+
+    # ....................... #
+
     @property
     def lock_path(self) -> Path:
         """The advisory lock's own file, a sibling of the snapshot.
@@ -330,6 +352,16 @@ class MockStatePersistence:
 
         except FileNotFoundError:
             return None
+
+        except OSError as error:
+            # A directory at the path, a permission the process does not have. Named here
+            # because the alternative is a bare errno surfacing from a lifecycle hook, which
+            # says nothing about which configured path produced it.
+            raise exc.configuration(
+                f"Mock state snapshot {self.path} cannot be read: {error}.",
+                code="mock_state_snapshot_unopenable",
+                details={"path": str(self.path)},
+            ) from error
 
         return self._decode(raw)
 
