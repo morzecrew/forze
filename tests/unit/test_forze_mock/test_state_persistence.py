@@ -566,6 +566,34 @@ class TestFormat:
 
     # ....................... #
 
+    def test_a_field_whose_value_is_not_the_state_s_shape_is_refused(self, tmp_path: Path) -> None:
+        """The header pins the field *set* and nothing more — the fingerprint digests names,
+        so a build where a store's type changed but its name did not still matches, and a
+        hand-edited file matches by construction. Refused before anything is written, because
+        a refusal halfway through leaves a state no process ever had."""
+
+        persistence = _persistence(tmp_path)
+        _saved(MockState(), persistence)
+
+        magic, _, rest = persistence.path.read_bytes().partition(b"\n")
+        version, _, rest = rest.partition(b"\n")
+        fingerprint, _, body = rest.partition(b"\n")
+        payload = pickle.loads(body)
+        payload["documents"] = 42
+        persistence.path.write_bytes(
+            b"\n".join((magic, version, fingerprint, pickle.dumps(payload)))
+        )
+
+        state = MockState()
+        state.documents["kept"] = {"o-1": {"id": "o-1"}}
+
+        with pytest.raises(CoreException, match="holds a int for documents"):
+            _loaded(persistence, state)
+
+        assert state.documents == {"kept": {"o-1": {"id": "o-1"}}}
+
+    # ....................... #
+
     def test_a_truncated_payload_is_refused_not_half_restored(self, tmp_path: Path) -> None:
         """A partial read is a refusal, not a state carrying whichever stores made it in."""
 

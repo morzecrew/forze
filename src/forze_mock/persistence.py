@@ -376,7 +376,11 @@ class MockStatePersistence:
 
         Runs wherever the state's other writers run — see :meth:`capture` for why that is
         not a detail.
+
+        :raises CoreException: a field's value is not the shape that field holds.
         """
+
+        self._refuse_values_the_state_cannot_hold(state, payload)
 
         with state.lock:
             for name in PERSIST_FIELDS:
@@ -450,6 +454,36 @@ class MockStatePersistence:
         to keep responsive."""
 
         self.write(self.capture(state))
+
+    # ....................... #
+
+    def _refuse_values_the_state_cannot_hold(
+        self, state: MockState, payload: Mapping[str, Any]
+    ) -> None:
+        """Check every field's value against the shape that field holds, before writing any.
+
+        The header pins the field *set* and nothing more: the fingerprint digests names, so a
+        build where a store's type changed but its name did not still matches, and a
+        hand-edited file matches by construction. Without this, ``documents = 42`` installs
+        and the failure arrives later, from an adapter, naming neither the field nor the file.
+
+        Before any of them, because a refusal halfway through a restore leaves the state
+        holding a mixture no process ever had.
+        """
+
+        for name in sorted(PERSIST_FIELDS):
+            expected = type(_fresh_default(state, _FIELDS[name].default))
+
+            # ``isinstance`` rather than an exact type: a document namespace is a
+            # ``JournalingStore`` once anything has written to it, which is a ``dict``.
+            if not isinstance(payload[name], expected):
+                raise exc.configuration(
+                    f"Mock state snapshot {self.path} holds a {type(payload[name]).__name__} "
+                    f"for {name}, which is a {expected.__name__}. The file is not one this "
+                    "build wrote; delete it to start fresh.",
+                    code="mock_state_snapshot_field_type",
+                    details={"path": str(self.path), "field": name},
+                )
 
     # ....................... #
 
