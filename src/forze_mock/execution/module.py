@@ -101,6 +101,7 @@ from forze.application.contracts.queue import (
     QueueQueryDepKey,
 )
 from forze.application.contracts.resilience import ResilienceExecutorDepKey
+from forze.application.contracts.sandbox import SandboxDepKey
 from forze.application.contracts.search import (
     FederatedSearchQueryDepKey,
     HubSearchQueryDepKey,
@@ -158,6 +159,7 @@ from forze_mock.adapters import (
     MockKeyManagement,
     MockProcedureRegistry,
     MockQueryParamsRegistry,
+    MockSandboxRegistry,
     MockState,
 )
 from forze_mock.adapters.events import RecordingAuthnEventSink
@@ -223,6 +225,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockProcedure,
     ConfigurableMockPubSub,
     ConfigurableMockQueue,
+    ConfigurableMockSandbox,
     ConfigurableMockSearch,
     ConfigurableMockSearchCommand,
     ConfigurableMockSearchManagement,
@@ -284,6 +287,15 @@ class MockDepsModule(DepsModule):
     ``None`` registers the port but leaves every route unprogrammed (any call raises
     ``code="mock.inference.unprogrammed"``); pass a :class:`MockInferenceRegistry` with a
     deterministic function per route — purity keeps simulation replays exact."""
+
+    sandboxes: MockSandboxRegistry | None = attrs.field(default=None)
+    """Programmable pure answers for ``SandboxPort`` routes (out-of-process execution).
+
+    ``None`` registers the port but leaves every route unprogrammed (any call raises
+    ``code="mock.sandbox.unprogrammed"``); pass a :class:`MockSandboxRegistry` with a
+    function per route. The mock executes nothing — that is the seam a simulation cuts —
+    so the function is where ``killed_oom``, ``killed_timeout`` and ``spawn_failed`` come
+    from on demand rather than on a bad day."""
 
     procedures: MockProcedureRegistry | None = attrs.field(default=None)
     """Programmable in-memory handlers for the ``ProcedurePort`` (governed parametrized
@@ -417,6 +429,7 @@ class MockDepsModule(DepsModule):
             ProcedureCommandDepKey: ConfigurableMockProcedure(module=self),
             DynamicReadDepKey: ConfigurableMockDynamicRead(module=self),
             InferenceDepKey: ConfigurableMockInference(module=self),
+            SandboxDepKey: ConfigurableMockSandbox(module=self),
             CounterDepKey: ConfigurableMockCounter(module=self),
             CounterAdminDepKey: ConfigurableMockCounterAdmin(module=self),
             CacheDepKey: ConfigurableMockCache(module=self),

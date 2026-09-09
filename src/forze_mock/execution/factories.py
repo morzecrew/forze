@@ -41,6 +41,7 @@ from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.procedure import ProcedureSpec
 from forze.application.contracts.pubsub import PubSubCommandPort, PubSubSpec
 from forze.application.contracts.queue import QueueCommandPort, QueueSpec
+from forze.application.contracts.sandbox import SandboxSpec
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
@@ -119,6 +120,8 @@ from forze_mock.adapters import (
     MockProcedureRegistry,
     MockPubSubAdapter,
     MockQueueAdapter,
+    MockSandbox,
+    MockSandboxRegistry,
     MockSearchAdapter,
     MockSearchCommandAdapter,
     MockSearchManagementAdapter,
@@ -378,6 +381,21 @@ class ConfigurableMockInference(_MockFactoryBase):
         return MockInferenceAdapter(
             spec=spec,
             registry=self.module.inference or MockInferenceRegistry(),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockSandbox(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: SandboxSpec,
+    ) -> MockSandbox:
+        _ = context
+        return MockSandbox(
+            spec=spec,
+            registry=self.module.sandboxes or MockSandboxRegistry(),
         )
 
 
