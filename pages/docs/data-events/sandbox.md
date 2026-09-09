@@ -101,14 +101,46 @@ input it could not stage, an output it could not store.
 
 | Tier | Adapter | Isolation | Runs |
 | --- | --- | --- | --- |
-| Base | `SubprocessSandbox` | `none` | trusted code only — the gate refuses it anything else |
+| Base | `SubprocessSandbox`, no ceilings | `none` | trusted code only — the gate refuses it anything else |
+| Process | `SubprocessSandbox` with ceilings or a dropped user | `process` | trusted code, bounded against accidents |
 | Container | recorded | `container` | untrusted code, against a consumer's own container infra |
 | Remote | recorded | `container` / `vm` | managed sandboxing services |
 
-The base adapter shares this host's kernel, filesystem, network and user with
-the child. It declares exactly that, which is why wiring it also costs an
-explicit `acknowledge_network_egress=True`: it cannot close the network, so it
-does not claim to.
+The first two rows are one adapter. Which tier a route gets is decided entirely
+by its wiring: set a ceiling or a user and it is `process`, set neither and it is
+`none`. **Neither is a security boundary** — the child still shares this host's
+kernel, filesystem, network and `/proc`, so the provenance gate refuses both of
+them untrusted code. Ceilings bound accidents, not adversaries.
+
+Wiring either also costs an explicit `acknowledge_network_egress=True`: the
+adapter cannot close the network, so it does not claim to.
+
+### Ceilings, and what they can tell you afterwards
+
+```python
+SubprocessSandboxConfig(
+    ...,
+    memory_ceiling=512 * 1024 * 1024,      # RLIMIT_AS
+    cpu_ceiling=timedelta(seconds=30),     # RLIMIT_CPU
+    open_files_ceiling=256,                # RLIMIT_NOFILE
+    run_as_user="sandbox",                 # needs a root worker; refused at freeze otherwise
+)
+```
+
+They are applied by re-execing through a small shim, so nothing runs in the
+worker between the fork and the exec.
+
+**A ceiling that bites is not a ceiling that reports.** An `RLIMIT_AS` breach is
+the child's own `MemoryError` and an `EMFILE` is its own `OSError` — identical to
+the same program failing with no limit at all. So the capability model splits the
+two claims: `enforces_memory` means the ceiling is *imposed*, and
+`reports_resource_kill` means an over-run is *identifiable*. This tier declares
+the first and not the second, and names the limits that were in force in
+`SandboxResult.detail` so a reader of an exit 1 can see what was bounding it.
+
+The exception is CPU: `SIGXCPU` comes from nowhere else, so a run over that
+ceiling comes back as `killed_resource`. If you need that for memory, you need a
+tier that watches the ceiling from outside the child.
 
 ```python
 from forze.application.integrations.sandbox import (
@@ -130,9 +162,37 @@ SubprocessSandboxDepsModule(          # registers SandboxDepKey ("sandbox_run") 
 )
 ```
 
-Its hard kill is as complete as its tier: it kills the process it started, and a
-child that forked its own children can orphan them. Only the container and vm
-tiers guarantee that killing the sandbox reaps everything it spawned.
+### The kill takes the group
+
+Every child is spawned into a session of its own, so the kill goes to its process
+group: a child that forked its own children takes them with it. Where the
+platform has no process groups the signal reaches the child alone, and
+`reaps_descendants` says which you have rather than assuming.
+
+That is still not the container tier's guarantee. A descendant that escapes the
+group — one that called `setsid` itself — outlives the run, and only namespaced
+pids close that off for good.
+
+### Streaming
+
+`run_stream` yields the child's output as it arrives, then one final `result`
+event carrying everything `run` would have returned. `run` is the same code with
+nobody watching the chunks, so the two cannot answer differently about one run.
+
+**A caller who stops iterating stops the child.** Abandoning the generator kills
+its process group, drains its pipes and removes its workspace. Use
+`contextlib.aclosing` so that happens where you chose:
+
+```python
+async with aclosing(ctx.sandbox.run(RECIPES).run_stream(request)) as events:
+    async for event in events:
+        if event.kind == "result":
+            outcome = event.result
+```
+
+The streamed chunks carry everything the child wrote; the result's captured
+streams are capped as they are for `run`. The cap exists because the result is
+held in memory and journaled, and a chunk handed straight to a caller is neither.
 
 ## Testing against it
 

@@ -368,8 +368,9 @@ class SubprocessSandbox:
 
         async with aclosing(self._execute(request, stream=False)) as events:
             async for event in events:
-                if event.result is not None:
-                    result = event.result
+                # The result event is always the last one, so the assignment needs no guard:
+                # whatever came before it, this is what the run ended as.
+                result = event.result
 
         if result is None:  # pragma: no cover - the generator always ends with a result
             raise exc.internal(
@@ -571,9 +572,11 @@ class SubprocessSandbox:
                 **privileges,
             )
 
-        except (OSError, ValueError) as error:
-            # The child that never started: a missing interpreter, a workspace that vanished.
-            # A result, not an exception — the caller asked whether the program ran.
+        except (OSError, ValueError, KeyError) as error:
+            # The child that never started: a missing interpreter, a workspace that vanished,
+            # a `run_as_user` no such host has — `getpwnam` raises `KeyError` from inside the
+            # spawn, before any fork. A result, not an exception: the caller asked whether
+            # the program ran, and "it could not be started" is an answer to that.
             yield SandboxEvent(
                 kind="result",
                 result=SandboxResult(

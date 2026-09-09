@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 import time
 from contextlib import aclosing
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -45,7 +46,9 @@ from forze.application.integrations.sandbox import (
     subprocess_capabilities,
 )
 from forze.application.integrations.sandbox.process import (
+    _READ_CHUNK,  # pyright: ignore[reportPrivateUsage]
     _drain,  # pyright: ignore[reportPrivateUsage]
+    _read_capped,  # pyright: ignore[reportPrivateUsage]
 )
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.scrubbing import SECRET_PLACEHOLDER
@@ -1039,7 +1042,10 @@ class TestWhatThisAdapterAdmitsTo:
         # MemoryError and an EMFILE is the child's own OSError — indistinguishable from the
         # same program failing with no limit at all. Only the CPU ceiling is identifiable,
         # and one flag covering three ceilings has to read false for all of them.
-        for config in (_config(), _config(memory_ceiling=1 << 26, cpu_ceiling=timedelta(seconds=1))):
+        for config in (
+            _config(),
+            _config(memory_ceiling=1 << 26, cpu_ceiling=timedelta(seconds=1)),
+        ):
             assert not subprocess_capabilities(config).reports_resource_kill
 
     def test_process_isolation_is_still_not_a_security_boundary(self) -> None:
@@ -1087,6 +1093,34 @@ class TestTheGroupGoesWithIt:
         await asyncio.sleep(1.5)
 
         assert not marker.exists(), "the grandchild kept running after the group was killed"
+
+    @pytest.mark.asyncio
+    async def test_a_descendant_that_ignores_sigterm_still_goes(self, tmp_path: Path) -> None:
+        # The path the grandchild test above does not reach: SIGTERM ends the leader inside
+        # the grace window, so the SIGKILL branch that follows a *live* leader never runs —
+        # and a descendant that ignored the SIGTERM is still there with nobody left to
+        # signal it. The kill has to go to the group again after the leader is gone.
+        marker = tmp_path / "the-stubborn-descendant-outlived-the-kill"
+        stubborn = (
+            "import pathlib, signal, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(1.0)\n"
+            f"pathlib.Path({str(marker)!r}).write_text('alive')\n"
+        )
+        result = await _sandbox().run(
+            _python(
+                "import subprocess, sys, time\n"
+                f"subprocess.Popen([sys.executable, '-c', {stubborn!r}])\n"
+                "time.sleep(30)\n",
+                timeout=timedelta(milliseconds=400),
+            )
+        )
+
+        assert result.outcome == "killed_timeout"
+
+        await asyncio.sleep(1.6)
+
+        assert not marker.exists(), "a descendant that ignored SIGTERM was never SIGKILLed"
 
     @pytest.mark.asyncio
     async def test_the_child_leads_its_own_group_and_not_the_workers(self) -> None:
@@ -1221,15 +1255,21 @@ class TestStreaming:
     async def test_the_streamed_and_buffered_calls_answer_the_same(self) -> None:
         # One implementation under both, so this pins that it stays one: the divergence a
         # caller would otherwise find by switching between them.
-        request = _python("import sys; print('out'); print('err', file=sys.stderr); raise SystemExit(3)")
+        request = _python(
+            "import sys; print('out'); print('err', file=sys.stderr); raise SystemExit(3)"
+        )
         buffered = await _sandbox().run(request)
         streamed: SandboxResult | None = None
+        results = 0
 
         async with aclosing(_sandbox().run_stream(request)) as events:
             async for event in events:
-                streamed = event.result or streamed
+                if event.result is not None:
+                    results += 1
+                    streamed = event.result
 
         assert streamed is not None
+        assert results == 1, "a run reports its result once, so the last one is the only one"
         assert (streamed.outcome, streamed.exit_code) == (buffered.outcome, buffered.exit_code)
         assert streamed.stdout.text == buffered.stdout.text
         assert streamed.stderr.text == buffered.stderr.text
@@ -1270,9 +1310,13 @@ class TestStreaming:
     ) -> None:
         # A chunk boundary can land inside a multi-byte character, and decoding each chunk
         # on its own would hand the caller mojibake for output the buffered call renders
-        # correctly.
+        # correctly. The single-byte prefix is what makes this a test: `é` is two bytes and
+        # the read is 64 KiB, so without it every boundary falls neatly between characters
+        # and a per-chunk decoder passes.
+        assert (_READ_CHUNK - 1) % 2 == 1, "the prefix must put the read boundary mid-character"
+
         result_text = ""
-        source = "import sys\nsys.stdout.buffer.write(('\u00e9' * 40000).encode())\n"
+        source = "import sys\nsys.stdout.buffer.write(b'x' + ('\u00e9' * 40000).encode())\n"
 
         async with aclosing(_sandbox(max_output_bytes=1024).run_stream(_python(source))) as events:
             async for event in events:
@@ -1280,7 +1324,7 @@ class TestStreaming:
                     result_text += event.text
 
         assert "\ufffd" not in result_text
-        assert result_text == "\u00e9" * 40000
+        assert result_text == "x" + "\u00e9" * 40000
 
 
 class TestPrivilegeDrop:
@@ -1297,3 +1341,132 @@ class TestPrivilegeDrop:
 
     def test_dropping_privileges_is_what_makes_a_route_the_process_tier(self) -> None:
         assert subprocess_capabilities(_config(run_as_user="nobody")).isolation == "process"
+
+
+class TestTheRouteRefusesCeilingsItCannotMean:
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"memory_ceiling": 0},
+            {"memory_ceiling": -1},
+            {"open_files_ceiling": 0},
+            {"cpu_ceiling": timedelta()},
+            {"cpu_ceiling": timedelta(seconds=-1)},
+            {"max_artifact_bytes": 0},
+            {"max_artifact_count": 0},
+        ],
+    )
+    def test_a_ceiling_of_zero_is_refused_rather_than_read_as_unlimited(
+        self, overrides: dict[str, Any]
+    ) -> None:
+        # Zero reads as "no limit" on some backends and "refuse everything" on others, so a
+        # route says None when it means no ceiling and a number when it means one.
+        with pytest.raises(CoreException) as caught:
+            _config(**overrides)
+
+        assert caught.value.code == "sandbox_ceiling_not_positive"
+
+    def test_a_cpu_ceiling_under_a_second_still_gets_one(self) -> None:
+        # RLIMIT_CPU counts whole seconds, so a sub-second ceiling would floor to zero and
+        # kill the child before it started.
+        limits = _config(cpu_ceiling=timedelta(milliseconds=200)).rlimits
+
+        assert limits["RLIMIT_CPU"] == (1, 2)
+
+
+class TestTheSpawnCarriesWhatTheRouteAsked:
+    @pytest.mark.asyncio
+    async def test_a_user_the_worker_cannot_become_fails_the_spawn_not_the_worker(self) -> None:
+        # The deps module refuses this route at freeze, so this reaches the adapter only by
+        # constructing it directly — which is the point: it pins that the user really is
+        # handed to the spawn rather than quietly dropped, and that being refused it is a
+        # result rather than an exception escaping into the caller.
+        if os.geteuid() == 0:  # pragma: no cover - CI does not run as root
+            pytest.skip("running as root, so the drop would succeed")
+
+        refused = await _sandbox(run_as_user="nobody", run_as_group="nobody").run(
+            _python("print('never runs')")
+        )
+
+        assert refused.outcome == "spawn_failed"
+        assert refused.detail is not None
+
+        # And a user no such host has: `getpwnam` raises `KeyError` from inside the spawn,
+        # which is neither an OSError nor a ValueError and would otherwise escape into the
+        # caller as a bare KeyError rather than as the run's answer.
+        unknown = await _sandbox(run_as_user="forze-no-such-user").run(
+            _python("print('never runs')")
+        )
+
+        assert unknown.outcome == "spawn_failed"
+        assert unknown.detail is not None and "KeyError" in unknown.detail
+
+    def test_the_group_signal_falls_back_where_the_platform_has_no_process_groups(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `reaps_descendants` reports this rather than assuming it, so the fallback has to
+        # work: the signal reaches the child alone instead of raising.
+        from forze.application.integrations.sandbox import process as adapter
+
+        monkeypatch.setattr(adapter, "_REAPS_DESCENDANTS", False)
+        signalled: list[int] = []
+
+        class _Stub:
+            pid = 4242
+
+            def send_signal(self, sig: int) -> None:
+                signalled.append(sig)
+
+        adapter._signal_group(cast(Any, _Stub()), signal.SIGTERM)  # pyright: ignore[reportPrivateUsage]
+
+        assert signalled == [signal.SIGTERM]
+
+        # With the leader already gone there is nothing a pid-directed signal can reach, so
+        # the fallback does nothing rather than signalling a pid that may have been reused.
+        adapter._signal_group(  # pyright: ignore[reportPrivateUsage]
+            cast(Any, _Stub()), signal.SIGKILL, leader_only=False
+        )
+
+        assert signalled == [signal.SIGTERM]
+
+    @pytest.mark.asyncio
+    async def test_a_workspace_whose_creator_failed_is_not_chased(self) -> None:
+        # The cleanup callback runs on a future that may have been cancelled or raised;
+        # reading its result then would replace one failure with another.
+        from forze.application.integrations.sandbox import process as adapter
+
+        cancelled: asyncio.Future[str] = asyncio.Future()
+        cancelled.cancel()
+        adapter._discard_workspace(cancelled)  # pyright: ignore[reportPrivateUsage]
+
+        failed: asyncio.Future[str] = asyncio.Future()
+        failed.set_exception(RuntimeError("no workspace"))
+        adapter._discard_workspace(failed)  # pyright: ignore[reportPrivateUsage]
+
+        assert failed.exception() is not None
+
+
+class TestTheReaderAtTheByteLevel:
+    @pytest.mark.asyncio
+    async def test_a_read_carrying_only_half_a_character_yields_no_chunk(self) -> None:
+        # Driven at the byte level because a real pipe will not reliably hand over the first
+        # byte of a character on its own. Decoding per read without carrying state would
+        # turn this into two replacement marks; emitting an empty chunk for the first read
+        # would put a meaningless event on a caller's stream.
+        reads = [b"\xc3", b"\xa9", b"!", b""]
+        chunks: asyncio.Queue[tuple[str, str | None]] = asyncio.Queue()
+
+        class _HalfCharacterPipe:
+            async def read(self, _size: int) -> bytes:
+                return reads.pop(0)
+
+        captured = await _read_capped(cast(Any, _HalfCharacterPipe()), 64, "stdout", chunks)
+
+        assert captured.text == "\u00e9!"
+
+        events: list[tuple[str, str | None]] = []
+
+        while not chunks.empty():
+            events.append(chunks.get_nowait())
+
+        assert events == [("stdout", "\u00e9"), ("stdout", "!"), ("stdout", None)]

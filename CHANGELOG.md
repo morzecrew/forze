@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sandbox routes can bound the child.** Memory, CPU and open-file ceilings plus a dropped user move a `SubprocessSandbox` route to the `process` isolation tier; the kill takes the child's process group, and `run_stream` yields output as it arrives.
+
 - **Code can run out-of-process under governance.** The sandbox plane ships `SandboxSpec`/`SandboxPort`, a `SubprocessSandbox` that declares no isolation, and a scriptable mock. Any provenance but `trusted` fails the boot on an adapter that cannot contain it, and resolved secrets are masked out of captured output.
 
 - **Realtime connections have a shipped resolver.** `build_ws_connection_resolver` and its Socket.IO twin verify one credential ladder — reauth payload, cookie, `Authorization`, opt-in query — filling principal, tenant, device and `expires_at`. Cookie mode will not build without attesting the Origin allowlist.
