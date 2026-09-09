@@ -13,8 +13,10 @@ program; it can make sure nobody runs one here by accident.
 import asyncio
 import codecs
 import contextlib
+import grp
 import json
 import os
+import pwd
 import shutil
 import signal
 import sys
@@ -111,6 +113,9 @@ def subprocess_capabilities(config: "SubprocessSandboxConfig") -> SandboxCapabil
 _READ_CHUNK: Final = 64 * 1024
 """Bytes per read from the child's pipes."""
 
+_SETTLE_SECONDS: Final = 2.0
+"""How long the readers get to reach end of pipe once the child is gone."""
+
 _STREAM_BACKLOG: Final = 8
 """Chunks a streamed run may hold ahead of its consumer, per run across both pipes.
 
@@ -119,6 +124,9 @@ than filling the worker with what it has not read."""
 
 _NO_CAPTURE: Final = (CapturedStream(), CapturedStream())
 """Both streams empty — what a run that never spawned has to show."""
+
+_SIGKILL: Final = int(signal.SIGKILL)
+"""The kernel's last word, and a CPU ceiling's hard limit."""
 
 _SIGXCPU: Final = int(getattr(signal, "SIGXCPU", -1))
 """The CPU rlimit's signal, or an impossible value where the platform has none."""
@@ -390,12 +398,11 @@ class SubprocessSandbox:
     async def run_stream(self, request: SandboxRequest) -> AsyncGenerator[SandboxEvent]:
         """Stream the child's output as it arrives, then the result.
 
-        **A caller who stops iterating stops the child.** Abandoning the generator — a
-        ``break``, an exception, a cancelled task — closes it, and closing it kills the
-        child's process group, drains its pipes and removes its workspace, exactly as the
-        buffered call does on every exit path. Wrap the iteration in
-        :func:`contextlib.aclosing` to make that happen at a point you chose rather than
-        whenever the generator is collected.
+        **Closing the generator kills the child's process group**, drains its pipes and
+        removes its workspace, exactly as the buffered call does on every exit path. A bare
+        ``break`` is not a close — see :meth:`SandboxPort.run_stream` for what Python does
+        instead, and why :func:`contextlib.aclosing` is the difference between promptly and
+        certainly.
 
         The streamed chunks carry everything the child wrote; the result's captured streams
         are capped, as they are for :meth:`run`. That is not a contradiction — the cap
@@ -459,6 +466,13 @@ class SubprocessSandbox:
             raise
 
         try:
+            if self.config.drops_privileges:
+                # `mkdtemp` makes the directory 0700 and owned by the worker, so a child
+                # running as anyone else cannot even `chdir` into it — the spawn fails
+                # before the program starts. Handing the workspace over is what makes the
+                # drop usable rather than a feature that refuses every run it is wired for.
+                await run_cpu(_hand_over_workspace, workspace, self.config)
+
             try:
                 # Staging spends the same budget the child does, and is bounded by it. A
                 # download is storage I/O that takes as long as it takes — with no ceiling
@@ -610,36 +624,51 @@ class SubprocessSandbox:
 
         try:
             try:
-                # `budget` is positive: a run with none left never reaches here, so the
-                # timeout is never the `0 -> None -> unbounded` trap. The stdin write is
-                # inside it too — `drain()` has no timeout of its own, and a child that
-                # never reads more than a pipe buffer of what it was sent leaves it waiting
-                # forever, with no ceiling applying and no kill running.
-                async with asyncio.timeout(budget):
-                    reading = asyncio.gather(*readers, return_exceptions=True)
+                # The deadline is enforced per wait rather than with `asyncio.timeout`
+                # around the loop, because this loop *yields*. A timeout scope spanning a
+                # yield stays armed while the generator is suspended in the consumer's
+                # task, so when it fires it cancels the caller rather than ending the run:
+                # a streamed run over its budget would raise `CancelledError` at whoever
+                # was iterating instead of coming back as `killed_timeout`.
+                #
+                # `budget` is positive, so no wait is ever the `0 -> None -> unbounded`
+                # trap. The stdin write is inside it too — `drain()` has no timeout of its
+                # own, and a child that never reads more than a pipe buffer of what it was
+                # sent leaves it waiting forever, with no ceiling applying and no kill.
+                deadline = monotonic() + budget
+                reading = asyncio.gather(*readers, return_exceptions=True)
 
-                    while True:
-                        getting = asyncio.ensure_future(chunks.get())
-                        racing: set[asyncio.Future[Any]] = {getting, reading}
-                        done, _ = await asyncio.wait(racing, return_when=asyncio.FIRST_COMPLETED)
+                while True:
+                    remaining = deadline - monotonic()
 
-                        if getting in done:
-                            kind, text = getting.result()
+                    if remaining <= 0:
+                        raise TimeoutError
 
-                            if stream:
-                                yield SandboxEvent(kind=kind, text=text)
+                    getting = asyncio.ensure_future(chunks.get())
+                    racing: set[asyncio.Future[Any]] = {getting, reading}
+                    done, _ = await asyncio.wait(
+                        racing, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                    )
 
-                            continue
+                    if getting in done:
+                        kind, text = getting.result()
 
-                        # Both pipes are at end and their readers have returned, and the
-                        # pending get did not complete — which says the queue is empty,
-                        # since every put happens before a reader returns. Nothing is left
-                        # to hand over and nothing more is coming.
-                        getting.cancel()
+                        if stream:
+                            yield SandboxEvent(kind=kind, text=text)
 
-                        break
+                        continue
 
-                    await process.wait()
+                    getting.cancel()
+
+                    if not done:
+                        raise TimeoutError
+
+                    # Both pipes are at end and their readers have returned, and the
+                    # pending get did not complete — which says the queue is empty, since
+                    # every put happens before a reader returns.
+                    break
+
+                await asyncio.wait_for(process.wait(), timeout=max(deadline - monotonic(), 0.0))
 
             except TimeoutError:
                 await self._end(process)
@@ -647,7 +676,6 @@ class SubprocessSandbox:
 
             else:
                 outcome, detail = _ended_by(process.returncode, self.config)
-
         except asyncio.CancelledError:
             # Kill and clean, then let the cancellation through: a cancelled caller cannot
             # receive a result, and swallowing this would tell the runtime the task was
@@ -665,6 +693,13 @@ class SubprocessSandbox:
             # Without this the caller walks away and the child keeps running.
             if process.returncode is None:
                 await self._end(process)
+
+            # And the readers get a moment to finish, with the queue still being emptied.
+            # A run that ends early leaves them blocked on a full queue that nobody is
+            # taking from any more; cancelling them there throws away what they had already
+            # read, so a timed-out run would come back with no output at all — the one case
+            # where the captured output is what the caller most wants to see.
+            await _settle(readers, chunks)
 
             for reader in readers:
                 reader.cancel()
@@ -776,14 +811,18 @@ class SubprocessSandbox:
         ):
             if value is not None and name in limits:
                 soft, hard = limits[name]
-                limits[name] = (min(soft, value), min(hard, value))
+                limits[name] = (min(soft, int(value)), min(hard, int(value)))
 
         if asked.cpu_seconds is not None and "RLIMIT_CPU" in limits:
             soft, hard = limits["RLIMIT_CPU"]
-            narrowed = min(soft, asked.cpu_seconds)
+            narrowed = min(soft, int(asked.cpu_seconds))
             limits["RLIMIT_CPU"] = (narrowed, min(hard, narrowed + 1))
 
-        return limits
+        # Coerced, because `setrlimit` takes integers and the annotation is not a runtime
+        # check: a float survives the request's own validation and `json.dumps`, and then
+        # kills the shim with a `TypeError` before it can become the program — a ceiling
+        # written as `1.5e9` failing as if the program had.
+        return {name: (int(soft), int(hard)) for name, (soft, hard) in limits.items()}
 
     # ....................... #
 
@@ -966,6 +1005,51 @@ def _signal_group(
         process.send_signal(sig)
 
 
+def _hand_over_workspace(workspace: Path, config: "SubprocessSandboxConfig") -> None:
+    """Give the workspace to the user the child will run as, keeping it private to them.
+
+    Only reachable on a route that drops privileges, which the freeze gate has already
+    established this worker can do. Staged inputs land inside afterwards and are written by
+    the worker, so the directory's ownership is what lets the child read them.
+    """
+
+    try:
+        os.chown(workspace, _as_uid(config.run_as_user), _as_gid(config.run_as_group))
+
+    except (OSError, KeyError) as error:
+        # The workspace is the framework's own to prepare, so failing to prepare it raises
+        # rather than coming back as a run that did not happen. The freeze gate normally
+        # catches this route long before here; reaching it means the adapter was built
+        # around that gate.
+        raise exc.configuration(
+            f"Sandbox route {config.provenance!r} could not hand its workspace to the user "
+            f"it runs children as: {error}. The route was wired to drop privileges on a "
+            "worker that cannot give the directory away, which the freeze-time gate refuses "
+            "for exactly this reason.",
+            code="sandbox_workspace_handover_failed",
+        ) from error
+
+    os.chmod(workspace, 0o700)
+
+
+def _as_uid(user: str | int | None) -> int:
+    """Numeric uid for a name or a number, or ``-1`` for "leave it alone"."""
+
+    if user is None:
+        return -1
+
+    return user if isinstance(user, int) else pwd.getpwnam(user).pw_uid
+
+
+def _as_gid(group: str | int | None) -> int:
+    """Numeric gid for a name or a number, or ``-1`` for "leave it alone"."""
+
+    if group is None:
+        return -1
+
+    return group if isinstance(group, int) else grp.getgrnam(group).gr_gid
+
+
 def _discard_workspace(making: "asyncio.Future[str]") -> None:
     """Remove a workspace whose creator outlived the run that asked for it."""
 
@@ -1001,6 +1085,35 @@ def _mask(
         return attrs.evolve(stream, text=text)
 
     return scrub(captured[0]), scrub(captured[1])
+
+
+async def _settle(
+    readers: list["asyncio.Task[CapturedStream]"],
+    chunks: "asyncio.Queue[tuple[Literal['stdout', 'stderr'], str]]",
+) -> None:
+    """Let the readers reach end of pipe, taking what they queue so they never block.
+
+    Bounded: the child is already dead by the time this runs, so the pipes are at end and
+    the readers have only their tails to hand over. The grace is there so a reader that was
+    parked on a full queue is not cancelled holding the output it had already read.
+    """
+
+    async def emptying() -> None:
+        while True:
+            await chunks.get()
+
+    taking = asyncio.ensure_future(emptying())
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*readers, return_exceptions=True), timeout=_SETTLE_SECONDS
+        )
+
+    except TimeoutError:  # pragma: no cover - the pipes are at end by the time this runs
+        pass
+
+    finally:
+        taking.cancel()
 
 
 async def _feed(process: asyncio.subprocess.Process, stdin: bytes | None) -> None:
@@ -1039,6 +1152,17 @@ def _ended_by(
 
     if returncode == -_SIGXCPU:
         return "killed_resource", f"exceeded its {config.cpu_ceiling} cpu ceiling"
+
+    if returncode == -_SIGKILL and config.cpu_ceiling is not None:
+        # `SIGXCPU` is only the *soft* limit's warning, and a child may catch it and carry
+        # on; the kernel then sends `SIGKILL` at the hard limit one second later. Reporting
+        # that as an ordinary exit would hide the ceiling from exactly the caller who set
+        # it. The adapter's own kills never reach here — those paths name their outcome
+        # before this is consulted — so with a CPU ceiling in force this is the ceiling.
+        return "killed_resource", (
+            f"killed at the hard edge of its {config.cpu_ceiling} cpu ceiling, having "
+            "survived the SIGXCPU at the soft one"
+        )
 
     limits = config.rlimits
 

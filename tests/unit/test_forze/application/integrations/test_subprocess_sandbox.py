@@ -1502,30 +1502,42 @@ class TestTheRouteRefusesCeilingsItCannotMean:
 
 class TestTheSpawnCarriesWhatTheRouteAsked:
     @pytest.mark.asyncio
-    async def test_a_user_the_worker_cannot_become_fails_the_spawn_not_the_worker(self) -> None:
-        # The deps module refuses this route at freeze, so this reaches the adapter only by
-        # constructing it directly — which is the point: it pins that the user really is
-        # handed to the spawn rather than quietly dropped, and that being refused it is a
-        # result rather than an exception escaping into the caller.
+    async def test_dropping_to_the_identity_the_worker_already_has_runs(self) -> None:
+        # The case a test can actually exercise: `setuid` to your own uid needs no
+        # privileges. It drives the whole path — the workspace handover, the spawn's own
+        # user/group parameters, the child running under them — which would otherwise be
+        # code nobody ran until it was deployed on a root worker.
+        result = await _sandbox(run_as_user=os.getuid(), run_as_group=os.getgid()).run(
+            _python("import os; print(os.getuid(), os.getgid())")
+        )
+
+        assert result.outcome == "exited", result.stderr.text
+        assert result.stdout.text.split() == [str(os.getuid()), str(os.getgid())]
+
+    @pytest.mark.asyncio
+    async def test_a_workspace_it_cannot_hand_over_raises_rather_than_running(self) -> None:
+        # `mkdtemp` makes the directory 0700 and owned by the worker, so a child running as
+        # anyone else cannot chdir into it. Preparing the workspace is the framework's own
+        # job, so failing at it raises — and the freeze gate refuses this route long before
+        # here, which is why reaching it means the adapter was built around that gate.
         if os.geteuid() == 0:  # pragma: no cover - CI does not run as root
-            pytest.skip("running as root, so the drop would succeed")
+            pytest.skip("running as root, so the handover succeeds")
 
-        refused = await _sandbox(run_as_user="nobody", run_as_group="nobody").run(
-            _python("print('never runs')")
-        )
+        with pytest.raises(CoreException) as caught:
+            await _sandbox(run_as_user="nobody").run(_python("print('never runs')"))
 
-        assert refused.outcome == "spawn_failed"
-        assert refused.detail is not None
+        assert caught.value.code == "sandbox_workspace_handover_failed"
 
-        # And a user no such host has: `getpwnam` raises `KeyError` from inside the spawn,
-        # which is neither an OSError nor a ValueError and would otherwise escape into the
-        # caller as a bare KeyError rather than as the run's answer.
-        unknown = await _sandbox(run_as_user="forze-no-such-user").run(
-            _python("print('never runs')")
-        )
+    @pytest.mark.asyncio
+    async def test_a_user_no_such_host_has_is_refused_at_freeze(self) -> None:
+        # `getpwnam` raises `KeyError`, which is neither an OSError nor a ValueError and
+        # would otherwise escape as a bare KeyError from wiring.
+        with pytest.raises(CoreException) as caught:
+            SubprocessSandboxDepsModule(
+                routes={"jobs": _config(run_as_user="forze-no-such-user")}
+            )()
 
-        assert unknown.outcome == "spawn_failed"
-        assert unknown.detail is not None and "KeyError" in unknown.detail
+        assert caught.value.code == "sandbox_privilege_drop_unknown_identity"
 
     def test_the_group_signal_falls_back_where_the_platform_has_no_process_groups(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1626,3 +1638,147 @@ class TestTheReaderAtTheByteLevel:
             events.append(chunks.get_nowait())
 
         assert events == [("stdout", "\u00e9"), ("stdout", "!")]
+
+
+class TestWhatTheRoundOneReviewFound:
+    @pytest.mark.asyncio
+    async def test_a_retained_generator_keeps_the_child_alive_until_it_is_closed(
+        self, tmp_path: Path
+    ) -> None:
+        # The honest half of the streaming contract. A `break` on a generator held in a
+        # variable does not close it, so the child keeps running — the docs say `aclosing`
+        # for this reason, and this is what makes that sentence checkable rather than a
+        # promise nobody tested.
+        marker = tmp_path / "the-retained-child-kept-running"
+        sandbox = _sandbox(workspace_root=tmp_path)
+        events = sandbox.run_stream(
+            _python(
+                "import pathlib, time\n"
+                "print('running', flush=True)\n"
+                "time.sleep(0.8)\n"
+                f"pathlib.Path({str(marker)!r}).write_text('alive')\n"
+            )
+        )
+
+        async for event in events:
+            if event.kind == "stdout":
+                break
+
+        await asyncio.sleep(0.3)
+
+        assert _workspaces(tmp_path), "the run was cleaned up without anyone closing it"
+
+        await events.aclose()
+        await asyncio.sleep(1.0)
+
+        assert not marker.exists(), "closing the generator did not stop the child"
+        assert _workspaces(tmp_path) == []
+
+    @pytest.mark.asyncio
+    async def test_a_child_that_survives_sigxcpu_still_reports_the_ceiling(self) -> None:
+        # SIGXCPU is only the soft limit's warning and a child may catch it; the kernel
+        # sends SIGKILL a second later at the hard limit. Reporting that as an ordinary exit
+        # would hide the ceiling from the caller who set it.
+        result = await _sandbox(cpu_ceiling=timedelta(seconds=1)).run(
+            _python(
+                "import signal\nsignal.signal(signal.SIGXCPU, lambda *a: None)\nwhile True: pass\n",
+                timeout=timedelta(seconds=20),
+            )
+        )
+
+        assert result.outcome == "killed_resource"
+        assert result.detail is not None and "cpu ceiling" in result.detail
+
+    @pytest.mark.asyncio
+    async def test_a_fractional_ceiling_does_not_break_the_shim(self) -> None:
+        # `ResourceRequest` annotates these as integers and nothing enforces that at
+        # runtime, so a float reaches `setrlimit` and kills the shim with a TypeError before
+        # it can become the program — a ceiling written as `1.5e9` failing as if the program
+        # had.
+        result = await _sandbox(memory_ceiling=1 << 30).run(
+            _python(
+                "print('ran')",
+                resources=ResourceRequest(memory_bytes=cast(Any, 512.5 * 1024 * 1024)),
+            )
+        )
+
+        assert result.outcome == "exited", result.stderr.text
+        assert result.stdout.text.strip() == "ran"
+
+    @pytest.mark.asyncio
+    async def test_a_ceiling_too_low_for_an_interpreter_says_what_was_in_force(self) -> None:
+        # The ceiling bounds the whole address space, the interpreter and its shared
+        # libraries included, so a low one stops a Python child before its first line. That
+        # is the ceiling working; what makes it usable is the result naming it, since the
+        # failure itself says nothing about memory.
+        result = await _sandbox(memory_ceiling=16 * 1024 * 1024).run(_python("print('never')"))
+
+        assert result.outcome in ("exited", "spawn_failed")
+        assert result.detail is not None
+        assert "RLIMIT_AS" in result.detail or "exec" in result.detail
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_stream_keeps_what_its_reader_had_already_captured(
+        self,
+    ) -> None:
+        # Streamed, with a consumer slow enough that the reader is parked on a full queue
+        # when the budget runs out — the buffered call drains too fast to ever get there.
+        # Cancelling a reader in that state throws away everything it had read, leaving a
+        # `killed_timeout` with no output at all, which is the one case where the captured
+        # output is what the caller most wants to see.
+        result: SandboxResult | None = None
+
+        async with aclosing(
+            _sandbox(max_output_bytes=1 << 20).run_stream(
+                _python(
+                    "import sys, time\n"
+                    "sys.stdout.write('y' * 900_000)\n"
+                    "sys.stdout.flush()\n"
+                    "time.sleep(30)\n",
+                    timeout=timedelta(milliseconds=700),
+                )
+            )
+        ) as events:
+            async for event in events:
+                result = event.result or result
+
+                if event.kind == "stdout":
+                    await asyncio.sleep(0.15)
+
+        assert result is not None
+        assert result.outcome == "killed_timeout"
+        assert len(result.stdout.text) > 100_000, "the capture was thrown away with the reader"
+
+    def test_a_platform_without_process_identity_refuses_the_drop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `os.geteuid` is Unix-only, so asking for it unguarded turns a configuration
+        # question into an AttributeError from inside wiring.
+        monkeypatch.delattr(os, "geteuid", raising=False)
+
+        with pytest.raises(CoreException) as caught:
+            SubprocessSandboxDepsModule(routes={"jobs": _config(run_as_user="nobody")})()
+
+        assert caught.value.code == "sandbox_privilege_drop_unavailable"
+
+    def test_a_route_naming_only_a_group_leaves_the_user_alone(self) -> None:
+        # `-1` is the "leave it alone" value both `chown` and the spawn understand, so a
+        # route may change one without naming the other. Without this the `None` arm of the
+        # resolvers is a branch nobody has taken.
+        from forze.application.integrations.sandbox import process as adapter
+
+        assert adapter._as_uid(None) == -1  # pyright: ignore[reportPrivateUsage]
+        assert adapter._as_gid(None) == -1  # pyright: ignore[reportPrivateUsage]
+
+        deps = SubprocessSandboxDepsModule(routes={"jobs": _config(run_as_group=os.getgid())})()
+
+        assert deps.routed_deps
+
+    def test_naming_the_identity_the_worker_already_has_is_not_a_drop(self) -> None:
+        # It needs no privileges, so refusing it would leave the whole path unexercised
+        # while claiming to guard it.
+        deps = SubprocessSandboxDepsModule(
+            routes={"jobs": _config(run_as_user=os.getuid(), run_as_group=os.getgid())}
+        )()
+
+        assert deps.routed_deps

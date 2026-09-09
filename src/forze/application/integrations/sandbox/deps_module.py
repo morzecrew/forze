@@ -7,6 +7,7 @@ declaring provenance in the first place.
 """
 
 import os
+import sys
 from typing import final
 
 import attrs
@@ -20,10 +21,58 @@ from .process import (
     SUBPROCESS_BACKEND,
     ConfigurableSubprocessSandbox,
     SubprocessSandboxConfig,
+    _as_gid,
+    _as_uid,
     subprocess_capabilities,
 )
 
 # ----------------------- #
+
+
+def _refuse_a_drop_this_worker_cannot_make(*, route: str, config: SubprocessSandboxConfig) -> None:
+    """Refuse a privilege drop at freeze when this worker could not make it.
+
+    Refused here rather than at the first call, matching every other gate: a route that
+    cannot honour what it declares should be wrong once, at startup, instead of on every
+    request.
+
+    Dropping to the identity the worker already has is not a drop and needs no privileges,
+    so it is allowed — that is the case a test can actually exercise, and refusing it would
+    leave the whole path unexercised while claiming to guard it.
+    """
+
+    if not hasattr(os, "geteuid"):
+        raise exc.configuration(
+            f"Sandbox route {route!r} asks to run its children as another user, and this "
+            "platform has no process identity to change. Drop run_as_user / run_as_group, "
+            "or wire this route where the child can be given one.",
+            code="sandbox_privilege_drop_unavailable",
+            details={"route": route, "platform": sys.platform},
+        )
+
+    try:
+        wanted = (_as_uid(config.run_as_user), _as_gid(config.run_as_group))
+
+    except KeyError as error:
+        raise exc.configuration(
+            f"Sandbox route {route!r} names a user or group this host does not have: "
+            f"{error}. A route cannot become somebody who is not there.",
+            code="sandbox_privilege_drop_unknown_identity",
+            details={"route": route},
+        ) from error
+
+    unchanged = wanted[0] in (-1, os.getuid()) and wanted[1] in (-1, os.getgid())
+
+    if unchanged or os.geteuid() == 0:
+        return
+
+    raise exc.configuration(
+        f"Sandbox route {route!r} asks to run its children as another user, which requires "
+        "this worker to be root, and it is not. Drop run_as_user / run_as_group, name the "
+        "identity the worker already has, or run the worker somewhere it can set them.",
+        code="sandbox_privilege_drop_unavailable",
+        details={"route": route, "euid": os.geteuid(), "wanted": list(wanted)},
+    )
 
 
 def validate_subprocess_route(*, route: str, config: SubprocessSandboxConfig) -> None:
@@ -48,16 +97,8 @@ def validate_subprocess_route(*, route: str, config: SubprocessSandboxConfig) ->
         route=route,
     )
 
-    if config.drops_privileges and os.geteuid() != 0:
-        raise exc.configuration(
-            f"Sandbox route {route!r} asks to run its children as another user, which "
-            "requires this worker to be root, and it is not. A route that cannot honour "
-            "what it declares does not boot: refusing here rather than at the first call "
-            "means the wiring is wrong once, at startup, instead of every request. Drop "
-            "run_as_user / run_as_group, or run the worker somewhere it can set them.",
-            code="sandbox_privilege_drop_unavailable",
-            details={"route": route, "euid": os.geteuid()},
-        )
+    if config.drops_privileges:
+        _refuse_a_drop_this_worker_cannot_make(route=route, config=config)
 
     if not config.acknowledge_network_egress:
         raise exc.configuration(

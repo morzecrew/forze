@@ -128,7 +128,15 @@ SubprocessSandboxConfig(
 ```
 
 They are applied by re-execing through a small shim, so nothing runs in the
-worker between the fork and the exec.
+worker between the fork and the exec. `run_as_user` needs a root worker unless
+it names the identity the worker already has, and the workspace is handed to
+that user before the child starts — `mkdtemp` would otherwise leave a directory
+the child cannot enter.
+
+A memory ceiling bounds the program's whole address space, interpreter and
+shared libraries included, so one under about 64 MiB stops a Python child before
+its first line. That comes back as a failed start rather than as anything about
+memory, which is why the limits in force are named in `SandboxResult.detail`.
 
 **A ceiling that bites is not a ceiling that reports.** An `RLIMIT_AS` breach is
 the child's own `MemoryError` and an `EMFILE` is its own `OSError` — identical to
@@ -179,9 +187,11 @@ pids close that off for good.
 event carrying everything `run` would have returned. `run` is the same code with
 nobody watching the chunks, so the two cannot answer differently about one run.
 
-**A caller who stops iterating stops the child.** Abandoning the generator kills
-its process group, drains its pipes and removes its workspace. Use
-`contextlib.aclosing` so that happens where you chose:
+**Closing the generator kills the child's process group**, drains its pipes and
+removes its workspace. A bare `break` is not a close — Python finalizes an
+abandoned generator when the last reference goes, which under asyncio lands a
+turn or so later, and a caller holding the generator in a variable keeps the
+child alive until it lets go. Use `contextlib.aclosing` and the moment is yours:
 
 ```python
 async with aclosing(ctx.sandbox.run(RECIPES).run_stream(request)) as events:
