@@ -8419,6 +8419,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Sandbox routes can bound the child.</strong> Memory, CPU and open-file ceilings plus a dropped user move a <code>SubprocessSandbox</code> route to the <code>process</code> isolation tier; the kill takes the child's process group, and <code>run_stream</code> yields output as it arrives.</p>
+</li>
+<li>
 <p><strong>Code can run out-of-process under governance.</strong> The sandbox plane ships <code>SandboxSpec</code>/<code>SandboxPort</code>, a <code>SubprocessSandbox</code> that declares no isolation, and a scriptable mock. Any provenance but <code>trusted</code> fails the boot on an adapter that cannot contain it, and resolved secrets are masked out of captured output.</p>
 </li>
 <li>

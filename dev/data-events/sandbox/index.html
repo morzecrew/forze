@@ -1624,6 +1624,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="What ships today">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ceilings-and-what-they-can-tell-you-afterwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ceilings, and what they can tell you afterwards
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-kill-takes-the-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The kill takes the group
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6217,6 +6256,45 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="What ships today">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ceilings-and-what-they-can-tell-you-afterwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ceilings, and what they can tell you afterwards
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-kill-takes-the-group" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The kill takes the group
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Streaming
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6439,9 +6517,15 @@ input it could not stage, an output it could not store.</p>
 <tbody>
 <tr>
 <td>Base</td>
-<td><code>SubprocessSandbox</code></td>
+<td><code>SubprocessSandbox</code>, no ceilings</td>
 <td><code>none</code></td>
 <td>trusted code only — the gate refuses it anything else</td>
+</tr>
+<tr>
+<td>Process</td>
+<td><code>SubprocessSandbox</code> with ceilings or a dropped user</td>
+<td><code>process</code></td>
+<td>trusted code, bounded against accidents</td>
 </tr>
 <tr>
 <td>Container</td>
@@ -6457,10 +6541,41 @@ input it could not stage, an output it could not store.</p>
 </tr>
 </tbody>
 </table>
-<p>The base adapter shares this host's kernel, filesystem, network and user with
-the child. It declares exactly that, which is why wiring it also costs an
-explicit <code>acknowledge_network_egress=True</code>: it cannot close the network, so it
-does not claim to.</p>
+<p>The first two rows are one adapter. Which tier a route gets is decided entirely
+by its wiring: set a ceiling or a user and it is <code>process</code>, set neither and it is
+<code>none</code>. <strong>Neither is a security boundary</strong> — the child still shares this host's
+kernel, filesystem, network and <code>/proc</code>, so the provenance gate refuses both of
+them untrusted code. Ceilings bound accidents, not adversaries.</p>
+<p>Wiring either also costs an explicit <code>acknowledge_network_egress=True</code>: the
+adapter cannot close the network, so it does not claim to.</p>
+<h3 id="ceilings-and-what-they-can-tell-you-afterwards">Ceilings, and what they can tell you afterwards<a class="headerlink" href="#ceilings-and-what-they-can-tell-you-afterwards" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="n">SubprocessSandboxConfig</span><span class="p">(</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">memory_ceiling</span><span class="o">=</span><span class="mi">512</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>      <span class="c1"># RLIMIT_AS</span>
+    <span class="n">cpu_ceiling</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>     <span class="c1"># RLIMIT_CPU</span>
+    <span class="n">open_files_ceiling</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span>                <span class="c1"># RLIMIT_NOFILE</span>
+    <span class="n">run_as_user</span><span class="o">=</span><span class="s2">"sandbox"</span><span class="p">,</span>                 <span class="c1"># needs a root worker; refused at freeze otherwise</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>They are applied by re-execing through a small shim, so nothing runs in the
+worker between the fork and the exec. <code>run_as_user</code> needs a root worker unless
+it names the identity the worker already has, and the workspace is handed to
+that user before the child starts — <code>mkdtemp</code> would otherwise leave a directory
+the child cannot enter.</p>
+<p>A memory ceiling bounds the program's whole address space, interpreter and
+shared libraries included, so one under about 64 MiB stops a Python child before
+its first line. That comes back as a failed start rather than as anything about
+memory, which is why the limits in force are named in <code>SandboxResult.detail</code>.</p>
+<p><strong>A ceiling that bites is not a ceiling that reports.</strong> An <code>RLIMIT_AS</code> breach is
+the child's own <code>MemoryError</code> and an <code>EMFILE</code> is its own <code>OSError</code> — identical to
+the same program failing with no limit at all. So the capability model splits the
+two claims: <code>enforces_memory</code> means the ceiling is <em>imposed</em>, and
+<code>reports_resource_kill</code> means an over-run is <em>identifiable</em>. This tier declares
+the first and not the second, and names the limits that were in force in
+<code>SandboxResult.detail</code> so a reader of an exit 1 can see what was bounding it.</p>
+<p>The exception is CPU: <code>SIGXCPU</code> comes from nowhere else, so a run over that
+ceiling comes back as <code>killed_resource</code>. If you need that for memory, you need a
+tier that watches the ceiling from outside the child.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.integrations.sandbox</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">SubprocessSandboxConfig</span><span class="p">,</span> <span class="n">SubprocessSandboxDepsModule</span><span class="p">,</span>
 <span class="p">)</span>
@@ -6479,9 +6594,31 @@ does not claim to.</p>
     <span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>Its hard kill is as complete as its tier: it kills the process it started, and a
-child that forked its own children can orphan them. Only the container and vm
-tiers guarantee that killing the sandbox reaps everything it spawned.</p>
+<h3 id="the-kill-takes-the-group">The kill takes the group<a class="headerlink" href="#the-kill-takes-the-group" title="Permanent link">&para;</a></h3>
+<p>Every child is spawned into a session of its own, so the kill goes to its process
+group: a child that forked its own children takes them with it. Where the
+platform has no process groups the signal reaches the child alone, and
+<code>reaps_descendants</code> says which you have rather than assuming.</p>
+<p>That is still not the container tier's guarantee. A descendant that escapes the
+group — one that called <code>setsid</code> itself — outlives the run, and only namespaced
+pids close that off for good.</p>
+<h3 id="streaming">Streaming<a class="headerlink" href="#streaming" title="Permanent link">&para;</a></h3>
+<p><code>run_stream</code> yields the child's output as it arrives, then one final <code>result</code>
+event carrying everything <code>run</code> would have returned. <code>run</code> is the same code with
+nobody watching the chunks, so the two cannot answer differently about one run.</p>
+<p><strong>Closing the generator kills the child's process group</strong>, drains its pipes and
+removes its workspace. A bare <code>break</code> is not a close — Python finalizes an
+abandoned generator when the last reference goes, which under asyncio lands a
+turn or so later, and a caller holding the generator in a variable keeps the
+child alive until it lets go. Use <code>contextlib.aclosing</code> and the moment is yours:</p>
+<div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">aclosing</span><span class="p">(</span><span class="n">ctx</span><span class="o">.</span><span class="n">sandbox</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">RECIPES</span><span class="p">)</span><span class="o">.</span><span class="n">run_stream</span><span class="p">(</span><span class="n">request</span><span class="p">))</span> <span class="k">as</span> <span class="n">events</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">events</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="s2">"result"</span><span class="p">:</span>
+            <span class="n">outcome</span> <span class="o">=</span> <span class="n">event</span><span class="o">.</span><span class="n">result</span>
+</code></pre></div>
+<p>The streamed chunks carry everything the child wrote; the result's captured
+streams are capped as they are for <code>run</code>. The cap exists because the result is
+held in memory and journaled, and a chunk handed straight to a caller is neither.</p>
 <h2 id="testing-against-it">Testing against it<a class="headerlink" href="#testing-against-it" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockSandboxRegistry</span>
 
