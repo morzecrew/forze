@@ -77,6 +77,7 @@ require_socketio()
 from forze.application.contracts.realtime import RealtimeShard
 
 from .asyncapi import ACK_EVENT, asyncapi_document
+from .auth import build_socketio_connection_resolver, socketio_handshake
 from .connection import (
     CONNECTION_SESSION_KEY,
     InMemoryRealtimePresence,
@@ -184,6 +185,8 @@ __all__ = [
     "realtime_backplane_heartbeat_lifecycle_step",
     "realtime_presence_heartbeat_lifecycle_step",
     "RealtimeConnection",
+    "build_socketio_connection_resolver",
+    "socketio_handshake",
     "RealtimePresence",
     "InMemoryRealtimePresence",
     "CONNECTION_SESSION_KEY",
