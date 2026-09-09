@@ -1749,6 +1749,33 @@ class TestWhatTheRoundOneReviewFound:
         assert result.outcome == "killed_timeout"
         assert len(result.stdout.text) > 100_000, "the capture was thrown away with the reader"
 
+    @pytest.mark.asyncio
+    async def test_the_detail_names_the_ceiling_that_actually_applied(self) -> None:
+        # A request may narrow the route's ceiling, and reporting the route's number would
+        # tell the caller something other than what bound its child.
+        result = await _sandbox(memory_ceiling=1 << 30).run(
+            _python(
+                "x = bytearray(256 * 1024 * 1024)",
+                resources=ResourceRequest(memory_bytes=64 * 1024 * 1024),
+            )
+        )
+
+        assert result.exit_code != 0
+        assert result.detail is not None
+        assert f"RLIMIT_AS={64 * 1024 * 1024}" in result.detail
+
+    @pytest.mark.asyncio
+    async def test_a_route_with_no_cpu_ceiling_does_not_blame_one(self) -> None:
+        # `SIGXCPU` means the CPU rlimit only where one was applied. A child raising it on
+        # a bare route is doing it to itself, and reporting `killed_resource` there would
+        # invent a ceiling — with a detail naming `None` as its value.
+        result = await _sandbox().run(
+            _python("import os, signal; os.kill(os.getpid(), signal.SIGXCPU)")
+        )
+
+        assert result.outcome == "exited"
+        assert result.detail is None
+
     def test_a_platform_without_process_identity_refuses_the_drop(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

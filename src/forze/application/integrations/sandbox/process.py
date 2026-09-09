@@ -567,7 +567,8 @@ class SubprocessSandbox:
         """
 
         env, secrets = await self._environment(request)
-        argv = self._argv(request)
+        limits = self._rlimits(request)
+        argv = self._argv(request, limits)
         privileges: dict[str, Any] = {}
 
         if self.config.run_as_user is not None:
@@ -675,7 +676,7 @@ class SubprocessSandbox:
                 outcome, detail = "killed_timeout", f"exceeded its {budget:.3f}s budget"
 
             else:
-                outcome, detail = _ended_by(process.returncode, self.config)
+                outcome, detail = _ended_by(process.returncode, self.config, limits)
         except asyncio.CancelledError:
             # Kill and clean, then let the cancellation through: a cancelled caller cannot
             # receive a result, and swallowing this would tell the runtime the task was
@@ -770,7 +771,7 @@ class SubprocessSandbox:
 
     # ....................... #
 
-    def _argv(self, request: SandboxRequest) -> tuple[str, ...]:
+    def _argv(self, request: SandboxRequest, limits: dict[str, tuple[int, int]]) -> tuple[str, ...]:
         """The request's argv, behind the rlimit shim when this route sets ceilings.
 
         The shim is a re-exec rather than a fork-time callback. ``preexec_fn`` is the only
@@ -780,8 +781,6 @@ class SubprocessSandbox:
         the real program has no callback at all: nothing of the parent's runtime is touched
         after the fork, and the ceilings are in force before the target image loads.
         """
-
-        limits = self._rlimits(request)
 
         if not limits:
             return request.argv
@@ -1138,33 +1137,39 @@ async def _feed(process: asyncio.subprocess.Process, stdin: bytes | None) -> Non
 
 
 def _ended_by(
-    returncode: int | None, config: SubprocessSandboxConfig
+    returncode: int | None,
+    config: SubprocessSandboxConfig,
+    limits: dict[str, tuple[int, int]],
 ) -> tuple[Outcome, str | None]:
     """Read the child's exit status for a ceiling this route can actually recognise.
 
-    Only one of them is recognisable. ``SIGXCPU`` comes from nowhere but the CPU rlimit, so
-    a child carrying it hit the ceiling and the outcome says so. A memory or open-file
+    Reads *limits*, the ceilings actually applied to this run, rather than the route's own:
+    a request may narrow them, and naming the route's number in the detail would tell the
+    caller something other than what bound its child.
+
+    Only one of them is recognisable. ``SIGXCPU`` comes from nowhere but the CPU rlimit —
+    when there *is* one. On a route that sets no CPU ceiling the same signal is the child's
+    own doing and says nothing about a limit, so the check asks whether one was applied
+    rather than trusting the signal alone. A memory or open-file
     over-run arrives as the child's own ``MemoryError`` or ``EMFILE`` and is indistinguishable
     from the same program failing without any limit — which is why this tier declares no
     :attr:`SandboxCapabilities.reports_resource_kill` and why the limits in force are named
     in the detail instead, so a reader of an exit 1 can at least see what was bounding it.
     """
 
-    if returncode == -_SIGXCPU:
-        return "killed_resource", f"exceeded its {config.cpu_ceiling} cpu ceiling"
+    if returncode == -_SIGXCPU and "RLIMIT_CPU" in limits:
+        return "killed_resource", f"exceeded its {limits['RLIMIT_CPU'][0]}s cpu ceiling"
 
-    if returncode == -_SIGKILL and config.cpu_ceiling is not None:
+    if returncode == -_SIGKILL and "RLIMIT_CPU" in limits:
         # `SIGXCPU` is only the *soft* limit's warning, and a child may catch it and carry
         # on; the kernel then sends `SIGKILL` at the hard limit one second later. Reporting
         # that as an ordinary exit would hide the ceiling from exactly the caller who set
         # it. The adapter's own kills never reach here — those paths name their outcome
         # before this is consulted — so with a CPU ceiling in force this is the ceiling.
         return "killed_resource", (
-            f"killed at the hard edge of its {config.cpu_ceiling} cpu ceiling, having "
+            f"killed at the hard edge of its {limits['RLIMIT_CPU'][0]}s cpu ceiling, having "
             "survived the SIGXCPU at the soft one"
         )
-
-    limits = config.rlimits
 
     if returncode not in (0, None) and limits:
         return "exited", "limits in force: " + ", ".join(
