@@ -100,7 +100,12 @@ class ResourceRequest:
     """Wall-clock ceiling; narrows the route's ceiling and the request's own timeout."""
 
     max_output_bytes: int | None = None
-    """Cap on captured stdout+stderr; past it the capture truncates and flags itself."""
+    """Cap on captured output **per stream**; past it the capture truncates and flags itself.
+
+    Per stream rather than shared between them, so a chatty stdout cannot spend the budget
+    that stderr needs — a traceback truncated away because the program was also verbose is
+    the capture failing at the one moment it is read. A run's total captured output is
+    therefore bounded by twice this number."""
 
     max_open_files: int | None = None
     """File-descriptor ceiling for the child, when the adapter enforces it."""

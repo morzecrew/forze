@@ -99,8 +99,11 @@ class SubprocessSandboxConfig:
     sandbox is a way to lose a worker to a program that never returns."""
 
     max_output_bytes: int
-    """Cap on captured stdout+stderr per run. No default, for the same reason: a chatty
-    child would otherwise buy the worker's memory."""
+    """Cap on captured output per stream, per run. No default, for the same reason: a chatty
+    child would otherwise buy the worker's memory.
+
+    Per stream, so a run's total capture is bounded by twice this — stdout spending the
+    budget stderr needs would truncate away the traceback that explains the run."""
 
     acknowledge_network_egress: bool = False
     """Your acknowledgment that this route's children can reach the network.

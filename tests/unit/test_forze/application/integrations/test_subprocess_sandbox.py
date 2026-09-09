@@ -403,18 +403,30 @@ class TestTheRedButton:
         # caller, *and* the child is actually dead. The marker is written outside the
         # workspace, so a surviving child leaves proof behind.
         marker = tmp_path / "the-child-outlived-its-cancel"
+        running = tmp_path / "the-child-started"
         sandbox = _sandbox()
         task = asyncio.create_task(
             sandbox.run(
                 _python(
                     "import pathlib, time\n"
+                    f"pathlib.Path({str(running)!r}).write_text('here')\n"
                     "time.sleep(1.0)\n"
                     f"pathlib.Path({str(marker)!r}).write_text('alive')\n"
                 )
             )
         )
 
-        await asyncio.sleep(0.3)
+        # Wait for the child to say it is running before cancelling. Cancelling on a timer
+        # alone would pass on a loaded machine where nothing had been spawned yet: no child,
+        # no marker, and a test that proves the kill works by never asking for one.
+        for _ in range(200):
+            if running.exists():
+                break
+
+            await asyncio.sleep(0.02)
+
+        assert running.exists(), "the child never started, so this proves nothing about the kill"
+
         task.cancel()
 
         with pytest.raises(asyncio.CancelledError):
@@ -648,6 +660,20 @@ class TestBoundedCapture:
 
         assert result.stdout.truncated
         assert len(result.stdout.text) <= 1024
+
+    @pytest.mark.asyncio
+    async def test_each_stream_gets_the_whole_cap_rather_than_a_share_of_it(self) -> None:
+        # A shared budget would let a chatty stdout spend what stderr needs, truncating away
+        # the traceback that explains the run — so the cap is per stream, the total is twice
+        # it, and both docstrings say so rather than leaving a caller to measure.
+        result = await _sandbox(max_output_bytes=1024).run(
+            _python("import sys\nprint('o' * 50_000)\nprint('e' * 50_000, file=sys.stderr)\n")
+        )
+
+        assert result.outcome == "exited"
+        assert result.stdout.truncated and result.stderr.truncated
+        assert 512 < len(result.stdout.text.encode()) <= 1024
+        assert 512 < len(result.stderr.text.encode()) <= 1024
 
     @pytest.mark.asyncio
     async def test_output_past_the_cap_does_not_wedge_the_child(self) -> None:
