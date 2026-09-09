@@ -8,6 +8,16 @@ consume this kernel — neither may import the other, and adding a transport mus
 never add a delivery contract.
 """
 
+from .auth import (
+    REALTIME_AUTH_TOKEN_KEY,
+    PresentedCredential,
+    RealtimeCredentialSources,
+    RealtimeHandshake,
+    RealtimeIdentity,
+    client_identity,
+    present_credential,
+    resolve_realtime_identity,
+)
 from .commands import RealtimeCommandRoute
 from .frames import FRAME_UNSERIALIZABLE_CODE, encode_frame, jsonable_frame
 from .mailbox import (
@@ -38,6 +48,14 @@ from .rooms import room_for
 # ----------------------- #
 
 __all__ = [
+    "REALTIME_AUTH_TOKEN_KEY",
+    "RealtimeCredentialSources",
+    "RealtimeHandshake",
+    "RealtimeIdentity",
+    "PresentedCredential",
+    "client_identity",
+    "present_credential",
+    "resolve_realtime_identity",
     "MailboxEntry",
     "RealtimeMailbox",
     "MailboxCursors",
