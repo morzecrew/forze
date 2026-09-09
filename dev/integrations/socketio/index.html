@@ -6546,6 +6546,17 @@ delivery:</p>
 auto-joins the principal room, so do not also give <code>ForzeSocketIOAdapter</code> an
 <code>identity_resolver</code> on the same namespace. The publish-side <code>Audience.principal(id)</code> must
 use the same id the gateway joins with (<code>str(authn.principal_id)</code>).</p>
+<p><code>build_socketio_connection_resolver</code> builds <code>resolve_connection</code> for you: a fixed
+credential ladder (connect/reauth <code>auth</code> payload, then the cookie, then
+<code>Authorization: Bearer</code>, then an opt-in query parameter) verified through the wired
+authn plane, filling the principal, tenant, device and credential <code>expires_at</code> the
+expiry sweep enforces. It is the same ladder
+<a href="../fastapi/#authenticate-the-connection"><code>build_ws_connection_resolver</code></a> uses, so both
+transports authenticate by one set of rules — including its rule that cookie mode
+requires a restricted <code>cors_allowed_origins</code>, attested with
+<code>origin_allowlist_attested=True</code>. Socket.IO can also authenticate from the connect
+<code>auth</code> payload alone (<code>header_name=None</code>), which the raw-WebSocket route cannot: its
+upgrade carries no payload, and only a <code>realtime.reauth</code> frame does.</p>
 <h3 id="the-delivery-envelope-client-contract">The delivery envelope (client contract)<a class="headerlink" href="#the-delivery-envelope-client-contract" title="Permanent link">&para;</a></h3>
 <p>Every frame is a uniform envelope — <code>{ "id": &lt;id|null&gt;, "data": &lt;payload&gt; }</code>. Durable
 frames carry the stable event id (dedup on it); ephemeral frames carry <code>null</code>. The
@@ -6678,6 +6689,10 @@ URL from a <code>RedisSettings.dsn</code>; this package cannot import <code>forz
 <tr>
 <td><code>attach_realtime_connection</code></td>
 <td>auto-join principal rooms + presence on connect; offline replay + ack</td>
+</tr>
+<tr>
+<td><code>build_socketio_connection_resolver</code></td>
+<td>the shipped connection resolver: connect/reauth payload, then cookie, header and opt-in query — the WebSocket route's ladder</td>
 </tr>
 <tr>
 <td><code>DocumentRealtimeMailbox</code> + <code>DocumentMailboxCursors</code></td>

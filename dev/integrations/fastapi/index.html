@@ -3650,6 +3650,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Realtime over raw WebSocket">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#authenticate-the-connection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authenticate the connection
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6299,6 +6316,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Realtime over raw WebSocket">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#authenticate-the-connection" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Authenticate the connection
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6650,6 +6684,49 @@ governed operation path as HTTP, error-acked with the shared envelope and bounde
 by in-flight and frame-size limits. The full framing is normative in the
 <a href="../../reference/realtime-protocol/">realtime wire protocol</a>; <code>asyncapi_document</code>
 documents WS commands via its <code>commands=</code> parameter.</p>
+<h3 id="authenticate-the-connection">Authenticate the connection<a class="headerlink" href="#authenticate-the-connection" title="Permanent link">&para;</a></h3>
+<p><code>build_ws_connection_resolver</code> is the shipped resolver, so the ~30 lines every app
+writes by hand — pick a credential, verify it, carry the expiry, handle the reauth —
+exist once. The ladder is fixed: a <code>realtime.reauth</code> payload, then the cookie, then
+<code>Authorization: Bearer</code>, then the query parameter, each source enabled by naming it.
+The first source that <em>presents</em> a credential is the one used; an invalid one refuses
+the connection rather than falling through to the next.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_realtime_ws_route</span><span class="p">,</span> <span class="n">build_ws_connection_resolver</span>
+
+<span class="n">attach_realtime_ws_route</span><span class="p">(</span>
+    <span class="n">router</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span>
+    <span class="n">resolve</span><span class="o">=</span><span class="n">build_ws_connection_resolver</span><span class="p">(</span>
+        <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span>
+        <span class="n">authn_spec</span><span class="o">=</span><span class="n">spec</span><span class="p">,</span>                     <span class="c1"># verified through the wired authn plane</span>
+        <span class="n">cookie_name</span><span class="o">=</span><span class="s2">"forze_access"</span><span class="p">,</span>          <span class="c1"># the browser path — pair it with the allowlist below</span>
+        <span class="n">origin_allowlist_attested</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>      <span class="c1"># your statement that the pairing is there</span>
+    <span class="p">),</span>
+    <span class="n">allowed_origins</span><span class="o">=</span><span class="p">[</span><span class="s2">"https://app.example.com"</span><span class="p">],</span>  <span class="c1"># the entire cross-site perimeter</span>
+    <span class="n">mailbox_factory</span><span class="o">=...</span><span class="p">,</span> <span class="n">cursors_factory</span><span class="o">=...</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Four things to know before you wire it:</p>
+<ul>
+<li><strong>Cookie mode requires <code>allowed_origins</code>.</strong> A browser attaches the cookie to a
+  cross-site upgrade by itself and the handshake has no CORS preflight, so the
+  server-side Origin check is the whole defense. The factory cannot see the attach
+  call's argument, so it asks you to attest it — building cookie mode without
+  <code>origin_allowlist_attested=True</code> is a configuration error.</li>
+<li><strong>The query-parameter source is off by default.</strong> Query strings land in access logs,
+  proxy logs and anything that reads a URL. Enable <code>query_param="token"</code> only for
+  clients that can set neither cookie nor header, with short-lived tokens.</li>
+<li><strong><code>expires_at</code> comes from the verified credential</strong>, and the route enforces it
+  continuously — the socket closes once past it, and a <code>realtime.reauth</code> frame swaps
+  in a fresh one without reconnecting.</li>
+<li><strong>The tenant is the resolver's binding</strong>, looked up on the authn spec's own route
+  (the shipped tenancy module registers it there), falling back to the issuer's own
+  claim; the <code>X-Tenant-Id</code> header is <em>not</em> honored here, because an upgrade's headers
+  are set by the client being authenticated.</li>
+</ul>
+<p><code>forze_socketio.build_socketio_connection_resolver</code> is the same ladder over a
+Socket.IO handshake, so a deployment serving both transports authenticates by one set
+of rules.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <p>Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
 runs them. The surface, at a glance:</p>
@@ -6700,6 +6777,10 @@ runs them. The surface, at a glance:</p>
 <tr>
 <td><code>attach_realtime_ws_route</code></td>
 <td>duplex realtime over raw WebSocket: replay + live egress, inline ack/reauth, governed <code>cmd</code> dispatch</td>
+</tr>
+<tr>
+<td><code>build_ws_connection_resolver</code></td>
+<td>the shipped connection resolver: reauth payload, then cookie, header and opt-in query; credential expiry</td>
 </tr>
 <tr>
 <td><code>attach_asyncapi_route</code></td>
