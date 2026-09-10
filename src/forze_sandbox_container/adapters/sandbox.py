@@ -189,15 +189,13 @@ class ContainerSandbox:
                     name=f"{CONTAINER_NAME_PREFIX}{uuid4().hex}",
                 )
                 await engine.put_archive(container, "/", payload)
-                await engine.start(container)
-
                 if request.stdin is not None:
-                    # After the start, not before it. The daemon holds the write end of an
-                    # `OpenStdin` pipe until an attach session ends, so a child reading
-                    # stdin blocks until this lands however slow it is to arrive — where an
-                    # attach sent to a container that has not started yet is delivered to
-                    # nothing, and the child reads end of input it was never given.
+                    # Before the start, as the `docker` client does it: the bytes are in the
+                    # daemon's hands before the child can read, so there is no window in
+                    # which it sees an end of input it was never given.
                     await engine.attach_stdin(container, request.stdin)
+
+                await engine.start(container)
 
             except ContainerNotCreated as refusal:
                 yield SandboxEvent(

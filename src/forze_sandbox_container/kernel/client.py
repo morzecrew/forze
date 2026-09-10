@@ -12,12 +12,16 @@ one for the stream it came from, three unused, four for the payload length, big-
 A reader that assumes a frame arrives whole loses output the moment a chunk is split across
 two reads, so :meth:`ContainerEngine.follow` reassembles from a running buffer.
 
-**Attach as the way in for stdin.** The daemon answers ``/attach`` with a protocol upgrade,
-which no ordinary HTTP client can then read from. It does not need to: the contract's stdin
-is a fixed string of bytes rather than an interactive session, so the bytes go up as the
-request body and the connection closing is what the child sees as end of input.
+**Attach is the one call that leaves the HTTP client.** The daemon answers ``/attach`` with
+a protocol upgrade, and an ordinary client has already sent the request body by then — which
+the daemon discards, measurably and silently, leaving the child with an empty standard
+input and the run with a wrong answer nobody is told about. So that one call is made over a
+connection this module owns, writing the bytes after the upgrade and half-closing to end
+them, which is what the ``docker`` client does.
 """
 
+import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from typing import IO, Any, Final, Literal, final
@@ -97,6 +101,32 @@ def endpoint(docker_host: str) -> tuple[httpx.AsyncBaseTransport, str]:
 # ....................... #
 
 
+async def _upgraded(reader: asyncio.StreamReader) -> None:
+    """Read the daemon's answer to an upgrade request, and refuse anything but one.
+
+    The status line and the headers have to come off the connection before the stream is
+    the container's: leaving them there would put the daemon's own reply into the child's
+    standard input.
+    """
+
+    status = (await reader.readline()).decode(errors="replace").strip()
+    code = status.split(" ")[1] if len(status.split(" ")) > 1 else ""
+
+    while True:
+        line = await reader.readline()
+
+        if line in (b"\r\n", b"\n", b""):
+            break
+
+    if code not in ("101", "200"):
+        raise exc.infrastructure(
+            f"The container daemon would not hand over the connection for standard input: "
+            f"{status!r}.",
+            code=DAEMON_ERROR_CODE,
+            details={"status": status},
+        )
+
+
 def demultiplex(buffer: bytes) -> tuple[list[tuple[Literal["stdout", "stderr"], bytes]], bytes]:
     """Whole frames in *buffer*, and the bytes of the one still arriving.
 
@@ -144,6 +174,7 @@ class ContainerEngine:
     def __init__(self, docker_host: str, *, timeout: float) -> None:
         transport, base_url = endpoint(docker_host)
         self._docker_host = docker_host
+        self._timeout = timeout
         self._client = httpx.AsyncClient(
             transport=transport,
             base_url=base_url,
@@ -185,25 +216,64 @@ class ContainerEngine:
         self._expect(response, "stage the workspace", (200,))
 
     async def attach_stdin(self, container: str, data: bytes) -> None:
-        """Hand the container its standard input, then close it.
+        """Hand the container its standard input over the hijacked connection, then end it.
 
-        The response is a protocol upgrade this client never reads: the bytes have already
-        gone up as the request body by the time the daemon answers, and closing the
-        connection is what the child observes as end of input.
+        The one call that cannot go through the HTTP client, and the reason is measured
+        rather than assumed: an ordinary client sends the request body **before** the
+        protocol upgrade completes, and the daemon discards what arrives that early. The
+        loss is silent — the child reads an empty stdin and the run succeeds with the wrong
+        answer — which is the worst shape a failure can take on this plane. Over a raw
+        connection the bytes go up *after* the upgrade, which is what the ``docker`` client
+        itself does.
+
+        Half-closed rather than closed: the daemon reads that as end of input and closes the
+        container's stdin, which is what the child is waiting for.
         """
 
-        async with self._client.stream(
-            "POST",
-            f"/containers/{container}/attach",
-            params={"stream": "1", "stdin": "1", "stdout": "0", "stderr": "0"},
-            content=data,
-            headers={"Connection": "Upgrade", "Upgrade": "tcp"},
-        ) as response:
-            if response.status_code not in (101, 200):
-                # A container that ignored its stdin and exited first is not an error: the
-                # bytes had nowhere to go and the run already happened.
-                await response.aread()
-                self._expect(response, "attach to the container", (101, 200, 400, 404, 409))
+        reader, writer = await asyncio.wait_for(self._hijack(), timeout=self._timeout)
+
+        try:
+            writer.write(
+                (
+                    f"POST /containers/{container}/attach"
+                    "?stream=1&stdin=1&stdout=0&stderr=0 HTTP/1.1\r\n"
+                    "Host: daemon\r\n"
+                    "Connection: Upgrade\r\n"
+                    "Upgrade: tcp\r\n"
+                    "Content-Length: 0\r\n\r\n"
+                ).encode()
+            )
+            await writer.drain()
+            await asyncio.wait_for(_upgraded(reader), timeout=self._timeout)
+            writer.write(data)
+            await writer.drain()
+            writer.write_eof()
+
+        finally:
+            writer.close()
+
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+    async def _hijack(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+        """A connection this client owns outright, for the one call that needs one."""
+
+        if self._docker_host.startswith("unix://"):
+            return await asyncio.open_unix_connection(self._docker_host.removeprefix("unix://"))
+
+        if self._docker_host.startswith(("tcp://", "http://")):
+            rest = self._docker_host.split("://", 1)[1].rstrip("/")
+            host, _, port = rest.partition(":")
+
+            return await asyncio.open_connection(host, int(port or 80))
+
+        raise exc.configuration(
+            f"Sandbox container route names its daemon at {self._docker_host!r}, and a "
+            "request carrying stdin needs a connection this adapter can take over. Drop the "
+            "request's stdin, or name the daemon over a unix socket or plain tcp.",
+            code="sandbox_container_stdin_unavailable",
+            details={"docker_host": self._docker_host},
+        )
 
     async def start(self, container: str) -> None:
         """Start a created container."""

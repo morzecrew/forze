@@ -279,6 +279,10 @@ adapter: the gates then refuse under test exactly where production would.
   microVM or gVisor-class supervisor and a topology of its own.
 - **Streaming is refused, not buffered.** `run_stream` is served by adapters
   that declare it; one that cannot says no rather than pretending.
+- **Standard input needs a daemon this adapter can take over.** It is delivered
+  over a connection of its own, so a route naming an `https://` endpoint refuses
+  a request carrying `stdin` rather than dropping it. A unix socket or plain
+  `tcp://` — the ordinary shapes — are unaffected.
 - **The wall-clock ceiling bounds the run, not the daemon.** It is enforced
   around the child's own execution; a container daemon that stops answering
   will hold the calls that follow — waiting on the exit status, reading the

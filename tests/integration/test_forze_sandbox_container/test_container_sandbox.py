@@ -633,13 +633,32 @@ class TestTheDaemonSurfaceItself:
         assert result.stdout.text == "ab" * (size // 2)
         assert not result.stdout.truncated
 
-    async def test_attaching_to_a_container_that_is_gone_is_not_an_error(
+    async def test_a_daemon_that_will_not_hand_over_the_connection_says_so(
         self, ctx: ExecutionContext
     ) -> None:
+        # Standard input is delivered before the container starts, so a container the daemon
+        # does not know is a real failure rather than bytes that arrived too late.
         engine = ContainerEngine(DEFAULT_DOCKER_HOST, timeout=5.0)
 
         try:
-            await engine.attach_stdin("forze-sandbox-no-such-container", b"payload")
+            with pytest.raises(CoreException) as raised:
+                await engine.attach_stdin("forze-sandbox-no-such-container", b"payload")
+
+            assert raised.value.code == "sandbox_container_daemon_error"
+
+        finally:
+            await engine.aclose()
+
+    async def test_a_daemon_this_adapter_cannot_take_over_refuses_stdin(
+        self, ctx: ExecutionContext
+    ) -> None:
+        engine = ContainerEngine("https://dockerd.example:2376", timeout=5.0)
+
+        try:
+            with pytest.raises(CoreException) as raised:
+                await engine.attach_stdin("whatever", b"payload")
+
+            assert raised.value.code == "sandbox_container_stdin_unavailable"
 
         finally:
             await engine.aclose()

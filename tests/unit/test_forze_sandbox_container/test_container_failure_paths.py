@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
 
+import forze_sandbox_container.adapters.sandbox as sandbox_adapter
 from forze.application.contracts.sandbox import ResourceRequest, SandboxRequest, SandboxSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -131,12 +133,33 @@ class TestCleanupUnderCancellation:
 
 
 class TestReportingACaptureThatEndedEarly:
-    async def test_a_reader_that_failed_is_reported(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    """Asserted at the logger rather than at its output.
+
+    ``configure_logging`` is global state another test may already have pointed somewhere
+    else, so reading stdout makes the result depend on what ran first. What this is actually
+    about is whether the failure is reported at all rather than swallowed, and the call is
+    where that is decided.
+    """
+
+    @staticmethod
+    def _recorded(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
+        said: list[tuple[str, dict[str, Any]]] = []
+        monkeypatch.setattr(
+            sandbox_adapter,
+            "_logger",
+            SimpleNamespace(
+                warning=lambda event, **fields: said.append((event, fields)),
+            ),
+        )
+
+        return said
+
+    async def test_a_reader_that_failed_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Losing the log stream does not fail the run — the status is read from the daemon
         # either way — but a result whose output stops halfway otherwise looks like a
         # program that stopped halfway.
+        said = self._recorded(monkeypatch)
+
         async def failing() -> None:
             raise RuntimeError("stream closed by peer")
 
@@ -145,11 +168,14 @@ class TestReportingACaptureThatEndedEarly:
 
         _report_a_reader_that_stopped_early(reader)
 
-        assert "stream closed by peer" in capsys.readouterr().out
+        assert len(said) == 1
+        assert said[0][1]["error"] == "stream closed by peer"
 
     async def test_a_reader_this_run_cancelled_is_not_reported(
-        self, capsys: pytest.CaptureFixture[str]
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        said = self._recorded(monkeypatch)
+
         async def waiting() -> None:
             await asyncio.sleep(60)
 
@@ -160,7 +186,7 @@ class TestReportingACaptureThatEndedEarly:
 
         _report_a_reader_that_stopped_early(reader)
 
-        assert "capture ended early" not in capsys.readouterr().out
+        assert said == []
 
 
 class TestCeilingsARequestLeftAlone:
@@ -224,3 +250,98 @@ class TestReassemblingTheMultiplexedStream:
 
         assert frames == [("stderr", b"err")]
         assert rest == b""
+
+
+class TestHandingOverStandardInput:
+    """The one call that leaves the HTTP client, against a server standing in for a daemon.
+
+    An ordinary client sends the request body before the protocol upgrade completes and the
+    daemon drops what arrives that early — silently, which is why this path exists at all.
+    A listener of our own is enough to prove the half that is this adapter's: the endpoint it
+    dials, the upgrade it waits for, and the bytes it writes afterwards.
+    """
+
+    @staticmethod
+    async def _daemon(answer: bytes) -> tuple[asyncio.Server, int, list[bytes]]:
+        received: list[bytes] = []
+
+        async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            head = await reader.readuntil(b"\r\n\r\n")
+            received.append(head)
+            writer.write(answer)
+            await writer.drain()
+            received.append(await reader.read())
+            writer.close()
+
+        server = await asyncio.start_server(serve, "127.0.0.1", 0)
+
+        return server, server.sockets[0].getsockname()[1], received
+
+    async def test_a_tcp_daemon_is_dialled_and_written_to_after_the_upgrade(self) -> None:
+        server, port, received = await self._daemon(
+            b"HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n"
+        )
+
+        async with server:
+            engine = ContainerEngine(f"tcp://127.0.0.1:{port}", timeout=5.0)
+
+            try:
+                await engine.attach_stdin("abc123", b"payload\n")
+
+            finally:
+                await engine.aclose()
+
+        assert b"/containers/abc123/attach" in received[0]
+        assert b"Upgrade: tcp" in received[0]
+        # The bytes went up *after* the upgrade, which is the whole point: a body sent with
+        # the request is what the daemon discards.
+        assert received[1] == b"payload\n"
+
+    async def test_a_daemon_that_refuses_the_upgrade_is_not_written_to(self) -> None:
+        server, port, received = await self._daemon(
+            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
+        )
+
+        async with server:
+            engine = ContainerEngine(f"tcp://127.0.0.1:{port}", timeout=5.0)
+
+            try:
+                with pytest.raises(CoreException) as raised:
+                    await engine.attach_stdin("abc123", b"payload\n")
+
+            finally:
+                await engine.aclose()
+
+        assert raised.value.code == "sandbox_container_daemon_error"
+        assert received[1] == b""
+
+    async def test_an_endpoint_written_with_a_trailing_slash_is_still_dialled(self) -> None:
+        # The route's `docker_host` is a string somebody typed, and a trailing slash read as
+        # part of the port is a connection refused for a reason nobody can see.
+        server, port, received = await self._daemon(
+            b"HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n"
+        )
+
+        async with server:
+            engine = ContainerEngine(f"http://127.0.0.1:{port}/", timeout=5.0)
+
+            try:
+                await engine.attach_stdin("abc123", b"payload\n")
+
+            finally:
+                await engine.aclose()
+
+        assert received[1] == b"payload\n"
+
+    @pytest.mark.parametrize("docker_host", ["https://dockerd:2376", "ssh://host"])
+    async def test_a_daemon_this_adapter_cannot_take_over_refuses_rather_than_dropping(
+        self, docker_host: str
+    ) -> None:
+        engine = ContainerEngine.__new__(ContainerEngine)
+        engine._docker_host = docker_host  # pyright: ignore[reportPrivateUsage]
+        engine._timeout = 1.0  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(CoreException) as raised:
+            await engine.attach_stdin("abc123", b"payload\n")
+
+        assert raised.value.code == "sandbox_container_stdin_unavailable"
