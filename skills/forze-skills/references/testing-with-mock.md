@@ -50,12 +50,16 @@ An MVP running on the mock can keep its data across restarts without a container
 `MockStatePersistence` snapshots the whole `MockState` at shutdown and loads it at startup:
 
 ```python
+from datetime import timedelta
 from pathlib import Path
 
 from forze.application.execution import LifecyclePlan
 from forze_mock import MockStatePersistence, mock_state_lifecycle_step
 
-persistence = MockStatePersistence(path=Path(".forze/mvp.state"))
+persistence = MockStatePersistence(
+    path=Path(".forze/mvp.state"),
+    flush_every=timedelta(minutes=5),  # optional; shutdown-only without it
+)
 
 lifecycle = LifecyclePlan.from_steps(
     mock_state_lifecycle_step(state=state, persistence=persistence),
@@ -63,8 +67,8 @@ lifecycle = LifecyclePlan.from_steps(
 ```
 
 `state` is the same `MockState` the deps module was built with. A missing file is a first
-run, not an error. Pass `flush_every=timedelta(minutes=5)` to write periodically as well —
-off by default, since it needs a background task.
+run, not an error. Periodic flushing is off by default, since it needs a background task
+a serverless host cannot keep running between invocations.
 
 Everything the mock implements comes back: documents, counters, outbox and inbox rows,
 stored objects, identity, durable runs. What does not is anything whose meaning is local to
