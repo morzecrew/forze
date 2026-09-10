@@ -113,7 +113,13 @@ For per-tenant base URLs / credentials, use `RoutedHttpClient` and set `tenant_a
 
 ```python
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+from forze_http import RoutedHttpClient
 
+client = RoutedHttpClient(
+    secrets=secrets,                                   # SecretsPort
+    secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/http"),
+    tenant_provider=current_tenant,
+)
 steps = [routed_client_lifecycle_step("routed_http_client", client=client)]
 ```
 
