@@ -435,6 +435,17 @@ class TestWhenTheRunNeverStarts:
         assert result.outcome == "spawn_failed"
         assert result.detail is not None and "forze/definitely-absent" in result.detail
 
+    async def test_a_program_the_image_does_not_have_is_a_result_not_an_exception(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The same mistake the process tier answers with `spawn_failed`. One adapter giving
+        # two accounts of one mistake, decided by wiring the caller cannot see, is what the
+        # shim's exec marker exists to prevent on the tier below.
+        result = await container_sandbox(ctx).run(SandboxRequest(command=("/no/such/program",)))
+
+        assert result.outcome == "spawn_failed"
+        assert result.detail is not None and "no such file" in result.detail.lower()
+
     async def test_a_daemon_that_is_not_there_is_the_framework_s_own_failure(
         self, ctx: ExecutionContext
     ) -> None:

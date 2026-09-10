@@ -174,10 +174,14 @@ class ContainerSandboxConfig:
                 code="sandbox_container_root_user",
             )
 
-        if not PurePosixPath(self.workspace).is_absolute():
+        workspace = PurePosixPath(self.workspace)
+
+        if not workspace.is_absolute() or workspace.parent == workspace:
             raise exc.configuration(
-                f"ContainerSandboxConfig.workspace is {self.workspace!r}, which is not an "
-                "absolute path inside the container.",
+                f"ContainerSandboxConfig.workspace is {self.workspace!r}, which is not a "
+                "directory inside the container. It must be an absolute path, and it cannot "
+                "be the root: 'only declared outputs leave the workspace' says nothing when "
+                "the workspace is the whole filesystem.",
                 code="sandbox_container_workspace_invalid",
             )
 

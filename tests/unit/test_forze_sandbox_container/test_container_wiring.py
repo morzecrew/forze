@@ -101,6 +101,14 @@ class TestCeilingsAndPaths:
 
         assert raised.value.code == "sandbox_container_image_missing"
 
+    def test_the_container_root_is_not_a_workspace(self) -> None:
+        # "Only declared outputs leave the workspace" cannot hold when the workspace is the
+        # whole filesystem, and staging into it would put the request's files at the root.
+        with pytest.raises(CoreException) as raised:
+            _config(workspace="/")
+
+        assert raised.value.code == "sandbox_container_workspace_invalid"
+
     def test_a_relative_workspace_is_refused(self) -> None:
         with pytest.raises(CoreException) as raised:
             _config(workspace="work")

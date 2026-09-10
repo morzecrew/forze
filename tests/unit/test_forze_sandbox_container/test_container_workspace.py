@@ -310,7 +310,7 @@ class TestReadingHowARunEnded:
     def test_the_deadline_outranks_whatever_the_container_reported(self) -> None:
         box = _sandbox(memory_ceiling=1024)
         outcome, detail = box._ended_by(  # pyright: ignore[reportPrivateUsage]
-            137, {"OOMKilled": True}, "timeout", SandboxRequest(command=("true",)), 5.0
+            137, {"OOMKilled": True}, "timeout", SandboxRequest(command=("true",)), 5.0, ""
         )
 
         assert outcome == "killed_timeout"
@@ -319,7 +319,7 @@ class TestReadingHowARunEnded:
     def test_the_daemon_s_own_oom_flag_names_the_ceiling(self) -> None:
         box = _sandbox(memory_ceiling=1024)
         outcome, _ = box._ended_by(  # pyright: ignore[reportPrivateUsage]
-            137, {"OOMKilled": True}, None, SandboxRequest(command=("true",)), 5.0
+            137, {"OOMKilled": True}, None, SandboxRequest(command=("true",)), 5.0, ""
         )
 
         assert outcome == "killed_oom"
@@ -330,7 +330,7 @@ class TestReadingHowARunEnded:
         # kernel then sends `SIGKILL` at the hard limit one second later.
         box = _sandbox(cpu_ceiling=timedelta(seconds=2))
         outcome, detail = box._ended_by(  # pyright: ignore[reportPrivateUsage]
-            status, {}, None, SandboxRequest(command=("true",)), 5.0
+            status, {}, None, SandboxRequest(command=("true",)), 5.0, ""
         )
 
         assert outcome == "killed_resource"
@@ -339,7 +339,7 @@ class TestReadingHowARunEnded:
     def test_the_same_status_says_nothing_on_a_route_with_no_cpu_ceiling(self) -> None:
         box = _sandbox()
         outcome, detail = box._ended_by(  # pyright: ignore[reportPrivateUsage]
-            152, {}, None, SandboxRequest(command=("true",)), 5.0
+            152, {}, None, SandboxRequest(command=("true",)), 5.0, ""
         )
 
         assert outcome == "exited"
@@ -348,16 +348,49 @@ class TestReadingHowARunEnded:
     def test_a_non_zero_exit_names_what_was_bounding_it(self) -> None:
         box = _sandbox(memory_ceiling=4096, open_files_ceiling=32)
         outcome, detail = box._ended_by(  # pyright: ignore[reportPrivateUsage]
-            1, {}, None, SandboxRequest(command=("true",)), 5.0
+            1, {}, None, SandboxRequest(command=("true",)), 5.0, ""
         )
 
         assert outcome == "exited"
         assert detail == "limits in force: memory=4096, nofile=32"
 
+    def test_an_init_that_could_not_exec_is_a_spawn_failure(self) -> None:
+        # The init process always starts, so 127 alone says nothing: without the marker a
+        # program the image does not have would answer `exited` here and `spawn_failed` on
+        # the tier below, from one plane.
+        box = _sandbox()
+        outcome, detail = box._ended_by(  # pyright: ignore[reportPrivateUsage]
+            127,
+            {},
+            None,
+            SandboxRequest(command=("true",)),
+            5.0,
+            "[FATAL tini (7)] exec /no/such failed: No such file or directory\n",
+        )
+
+        assert outcome == "spawn_failed"
+        assert detail == "[FATAL tini (7)] exec /no/such failed: No such file or directory"
+
+    def test_a_program_that_exits_127_on_its_own_is_not_a_spawn_failure(self) -> None:
+        box = _sandbox()
+        outcome, _ = box._ended_by(  # pyright: ignore[reportPrivateUsage]
+            127, {}, None, SandboxRequest(command=("true",)), 5.0, "command not found\n"
+        )
+
+        assert outcome == "exited"
+
+    def test_a_kill_outranks_the_exec_marker(self) -> None:
+        box = _sandbox()
+        outcome, _ = box._ended_by(  # pyright: ignore[reportPrivateUsage]
+            127, {}, "timeout", SandboxRequest(command=("true",)), 5.0, "[FATAL tini (7)] x"
+        )
+
+        assert outcome == "killed_timeout"
+
     def test_a_clean_exit_needs_no_explanation(self) -> None:
         box = _sandbox(memory_ceiling=4096)
         outcome, detail = box._ended_by(  # pyright: ignore[reportPrivateUsage]
-            0, {}, None, SandboxRequest(command=("true",)), 5.0
+            0, {}, None, SandboxRequest(command=("true",)), 5.0, ""
         )
 
         assert outcome == "exited"

@@ -84,6 +84,12 @@ _SIGKILL_STATUS: Final = 128 + int(signal.SIGKILL)
 _STAGE_MODE: Final = 0o755
 """Mode for staged directories; files land one bit less permissive."""
 
+_EXEC_FAILED: Final = 127
+"""Status the init process exits with when it could not exec the request's program."""
+
+_INIT_MARKER: Final = "[FATAL tini"
+"""How that init process says so, which is what tells 127 from a program's own 127."""
+
 
 # ....................... #
 
@@ -258,9 +264,12 @@ class ContainerSandbox:
                     getter.cancel()
 
                 reader.cancel()
-
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await reader
+                # `asyncio.wait` never re-raises the task's own outcome, so the reader's
+                # cancellation cannot be mistaken here for a cancellation of this run — a
+                # `suppress` around `await reader` swallows both, and the second one is the
+                # caller's, which would come back as a result to somebody who cancelled.
+                await asyncio.wait({reader})
+                _report_a_reader_that_stopped_early(reader)
 
             while not chunks.empty():
                 kind, text = chunks.get_nowait()
@@ -273,7 +282,9 @@ class ContainerSandbox:
 
             status = await engine.wait(container)
             state = await engine.inspect(container)
-            outcome, detail = self._ended_by(status, state, killed, request, budget)
+            outcome, detail = self._ended_by(
+                status, state, killed, request, budget, captured["stderr"].peek()
+            )
             collected, skipped = await self._collect(engine, container, request)
 
             if skipped:
@@ -393,6 +404,7 @@ class ContainerSandbox:
         killed: str | None,
         request: SandboxRequest,
         budget: float,
+        stderr: str,
     ) -> tuple[Outcome, str | None]:
         """How the run ended, reading what the daemon saw from outside the child.
 
@@ -400,7 +412,17 @@ class ContainerSandbox:
         bare process is the child raising ``MemoryError`` and exiting 1, indistinguishable
         from the same program failing on its own; here the daemon marks the container
         ``OOMKilled`` and the caller is told which ceiling ended the run.
+
+        The exec failure is read the way the process tier reads its shim's: status **and**
+        marker together. The init process always starts, so without the marker a program the
+        image does not have would answer ``exited`` here and ``spawn_failed`` on the tier
+        below — one plane giving two accounts of one mistake, decided by wiring the caller
+        cannot see. Reading 127 alone would misclassify a program that legitimately exits
+        with it.
         """
+
+        if killed is None and status == _EXEC_FAILED and stderr.startswith(_INIT_MARKER):
+            return "spawn_failed", stderr.strip().splitlines()[0]
 
         if killed == "timeout":
             return "killed_timeout", f"exceeded its {budget:.1f}s wall-clock budget"
@@ -538,6 +560,11 @@ class _Capture:
 
         return self._decoder.decode(chunk)
 
+    def peek(self) -> str:
+        """What has been kept so far, for a decision that has to read the output itself."""
+
+        return b"".join(self._parts).decode("utf-8", errors="replace")
+
     def finish(self) -> CapturedStream:
         return CapturedStream(
             text=b"".join(self._parts).decode("utf-8", errors="replace"),
@@ -597,6 +624,24 @@ async def _finish(work: Coroutine[Any, Any, None]) -> None:
 
         except Exception:  # pragma: no cover - `_removal` logs rather than raising
             return
+
+
+def _report_a_reader_that_stopped_early(reader: "asyncio.Task[None]") -> None:
+    """Say when the output stream died on its own, rather than dropping it silently.
+
+    Losing the log stream does not fail the run — the container's status is read from the
+    daemon either way, and a partial capture beside a real outcome is worth more than an
+    error about the capture. It is worth saying out loud, because a result whose output
+    stops halfway otherwise looks like a program that stopped halfway.
+    """
+
+    if reader.cancelled():
+        return
+
+    error = reader.exception()
+
+    if error is not None:
+        _logger.warning("sandbox container capture ended early", error=str(error))
 
 
 async def _removal(engine: ContainerEngine, container: str) -> None:
