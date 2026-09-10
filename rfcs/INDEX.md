@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0048**. Before creating an RFC, glance at the table below
+The next free number is **0051**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -74,6 +74,9 @@ only in the code, which is the failure this log exists to prevent.
 | [0045](0045-idempotency-claim-ownership.md) | Idempotency claim ownership | ✅ Complete | `commit`/`fail` cannot tell a caller's own claim from a duplicate's reclaim of the same key, so a late operation completes another's; adds an invocation-scoped owner to the claim and fences on it. |
 | [0046](0046-durable-store-tenant-resolution.md) | Durable-store tenant resolution | ✅ Complete | The durable stores resolve a tenant twice per operation and can get two answers, and the run store enforces the boundary on its control verbs but not its worker verbs. |
 | [0047](0047-durable-mockstate-persistence-for-the-in-memory-backend.md) | Durable MockState — persistence for the in-memory backend | ✅ Complete | An opt-in snapshot file for `MockState` so an MVP survives a restart without a container, adding durability to the existing backend rather than a SQLite one — no new adapter, no new battery seat. |
+| [0048](0048-derived-read-fields.md) | Read fields no write produces | 📝 Draft | A `DocumentSpec` may declare read fields the backend derives from another relation, so the mock can perform the join instead of refusing the row. Leniency covers only defaulted fields, which leaves view-backed aggregates unreachable from `forze_mock` and `forze_dst` |
+| [0049](0049-plane-scoped-spec-contributions.md) | Plane-scoped identity spec contributions | 📝 Draft | `forze_identity.spec_contributions()` gains a plane selection. It catalogues all three planes unconditionally today, so an application wiring authn alone fails runtime reconciliation on documents nothing binds |
+| [0050](0050-child-collection-reconciliation.md) | Child collection reconciliation | 📝 Draft | A `forze_kits` component that diffs a parent's child collection against an incoming list over the existing bulk ports. Not execution-ready: child identity, the position rule, and which pipeline stage it belongs to are open |
 
 ## Status legend
 
