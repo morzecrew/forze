@@ -1660,6 +1660,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-container-tier" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The container tier
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6292,6 +6303,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-container-tier" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The container tier
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6529,9 +6551,9 @@ input it could not stage, an output it could not store.</p>
 </tr>
 <tr>
 <td>Container</td>
-<td>recorded</td>
+<td><code>ContainerSandbox</code> (<code>forze_sandbox.container</code>)</td>
 <td><code>container</code></td>
-<td>untrusted code, against a consumer's own container infra</td>
+<td>untrusted code — the first tier the gate lets through</td>
 </tr>
 <tr>
 <td>Remote</td>
@@ -6547,7 +6569,8 @@ by its wiring: set a ceiling or a user and it is <code>process</code>, set neith
 kernel, filesystem, network and <code>/proc</code>, so the provenance gate refuses both of
 them untrusted code. Ceilings bound accidents, not adversaries.</p>
 <p>Wiring either also costs an explicit <code>acknowledge_network_egress=True</code>: the
-adapter cannot close the network, so it does not claim to.</p>
+adapter cannot close the network, so it does not claim to. The container tier
+can, so it owes that acknowledgment only when a route opens it.</p>
 <h3 id="ceilings-and-what-they-can-tell-you-afterwards">Ceilings, and what they can tell you afterwards<a class="headerlink" href="#ceilings-and-what-they-can-tell-you-afterwards" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><span class="n">SubprocessSandboxConfig</span><span class="p">(</span>
     <span class="o">...</span><span class="p">,</span>
@@ -6616,9 +6639,51 @@ child alive until it lets go. Use <code>contextlib.aclosing</code> and the momen
         <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">kind</span> <span class="o">==</span> <span class="s2">"result"</span><span class="p">:</span>
             <span class="n">outcome</span> <span class="o">=</span> <span class="n">event</span><span class="o">.</span><span class="n">result</span>
 </code></pre></div>
-<p>The streamed chunks carry everything the child wrote; the result's captured
-streams are capped as they are for <code>run</code>. The cap exists because the result is
+<p>The streamed chunks carry everything the child wrote, with resolved secrets
+masked out of each one as they are out of the final capture; the result's
+captured streams are capped as they are for <code>run</code>. The cap exists because the result is
 held in memory and journaled, and a chunk handed straight to a caller is neither.</p>
+<h3 id="the-container-tier">The container tier<a class="headerlink" href="#the-container-tier" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_sandbox.container</span><span class="w"> </span><span class="kn">import</span> <span class="n">ContainerSandboxConfig</span><span class="p">,</span> <span class="n">ContainerSandboxDepsModule</span>
+
+<span class="n">sandboxes</span> <span class="o">=</span> <span class="n">ContainerSandboxDepsModule</span><span class="p">(</span>
+    <span class="n">routes</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"recipes"</span><span class="p">:</span> <span class="n">ContainerSandboxConfig</span><span class="p">(</span>
+            <span class="n">provenance</span><span class="o">=</span><span class="s2">"untrusted"</span><span class="p">,</span>
+            <span class="n">image</span><span class="o">=</span><span class="s2">"my-registry/recipe-runner:2026.09"</span><span class="p">,</span>
+            <span class="n">wall_clock_ceiling</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
+            <span class="n">max_output_bytes</span><span class="o">=</span><span class="mi">256</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>
+            <span class="n">storage</span><span class="o">=</span><span class="n">blobs_spec</span><span class="p">,</span>
+            <span class="n">memory_ceiling</span><span class="o">=</span><span class="mi">512</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>
+            <span class="n">cpu_ceiling</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
+        <span class="p">)</span>
+    <span class="p">}</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>This is the tier <code>provenance="untrusted"</code> exists for. The adapter speaks the
+Docker Engine API over a socket — Podman's is the same API, so <code>docker_host</code>
+names an endpoint rather than a vendor — and every container it creates has no
+network, no capabilities, no new privileges, a pid ceiling and a non-root user.
+None of those are settings, because a route that could turn one off is a route
+that could undo the tier.</p>
+<p>Three things differ from the tiers below it, and each one is why the tier exists:</p>
+<ul>
+<li><strong>A ceiling that bites is named.</strong> The daemon watches from outside the child,
+  so a memory over-run comes back as <code>killed_oom</code> and a CPU over-run as
+  <code>killed_resource</code> — where <code>RLIMIT_AS</code> in a bare child produces the child's own
+  <code>MemoryError</code> and tells you nothing. This is the tier that declares
+  <code>reports_resource_kill</code>.</li>
+<li><strong>The kill takes everything.</strong> A pid namespace has no orphans to leave behind:
+  removing the container reaps whatever it started, so <code>reaps_descendants</code> is a
+  guarantee here rather than a platform-dependent best effort.</li>
+<li><strong>The workspace is inside.</strong> Staged inputs go in as a tar and declared outputs
+  come back as one, rather than through a directory on the host. A bind mount
+  would be less code and would hand a host path to the code this tier distrusts —
+  and would write outputs back as whatever uid the container ran as.</li>
+</ul>
+<p>The image must already be on the daemon. Nothing pulls at request time: what runs
+is what an operator put there, and a route naming an absent image gets a
+<code>spawn_failed</code> result saying so.</p>
 <h2 id="testing-against-it">Testing against it<a class="headerlink" href="#testing-against-it" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_mock</span><span class="w"> </span><span class="kn">import</span> <span class="n">MockSandboxRegistry</span>
 
@@ -6634,14 +6699,25 @@ result. Register the real backend's capabilities alongside it
 adapter: the gates then refuse under test exactly where production would.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>No isolation ships in the box.</strong> The base adapter is process management with
-  governance around it. If you need containment, the container tier is where it
-  lives, and it lands with the infrastructure it wraps.</li>
-<li><strong><code>process</code>-tier enforcement is not here yet.</strong> Memory and CPU ceilings, uid
-  drop and process-group kill arrive with the tier that declares them — no
-  adapter claims <code>enforces_memory</code> without a test that drives a child into it.</li>
+<li><strong>Isolation is infrastructure you own.</strong> The container tier is a thin,
+  governed client for a daemon you run; the framework contributes the gate, the
+  contract and the cleanup, not the containment itself. Above it, a managed
+  sandboxing service is a recorded workstream.</li>
+<li><strong>A container is not a VM.</strong> The <code>container</code> tier confines a program nobody
+  reviewed. Actively hostile code — an end-user code console — wants a
+  microVM or gVisor-class supervisor and a topology of its own.</li>
 <li><strong>Streaming is refused, not buffered.</strong> <code>run_stream</code> is served by adapters
-  that declare it; the base adapter says no rather than pretending.</li>
+  that declare it; one that cannot says no rather than pretending.</li>
+<li><strong>A remote daemon must be reached over TLS.</strong> Every command and every staged
+  input crosses that connection, and the environment those inputs run under
+  carries whatever secrets the request resolved, so cleartext to another host is
+  refused. <code>unix://</code>, loopback <code>tcp://</code>, and <code>https://</code> all work, standard input
+  included.</li>
+<li><strong>The wall-clock ceiling bounds the run, not the daemon.</strong> It is enforced
+  around the child's own execution; a container daemon that stops answering
+  will hold the calls that follow — waiting on the exit status, reading the
+  workspace back — past it. <code>POST /wait</code> blocks for the life of the container
+  by design, so there is no read timeout to give it.</li>
 <li><strong>A killed run still hands back what it wrote.</strong> Declared outputs are collected
   after a kill as well as after a clean exit — a half-written artifact is usually
   the most useful thing about a run that did not finish, and the <code>outcome</code> beside

@@ -8419,6 +8419,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Untrusted code finally has a tier that can hold it.</strong> <code>forze_sandbox.container</code> runs a sandbox route in a container with no network, no capabilities and a non-root user; the workspace crosses as tar, a memory over-run comes back as <code>killed_oom</code>, and killing a run reaps everything it started.</p>
+</li>
+<li>
 <p><strong>Sandbox routes can bound the child.</strong> Memory, CPU and open-file ceilings plus a dropped user move a <code>SubprocessSandbox</code> route to the <code>process</code> isolation tier; the kill takes the child's process group, and <code>run_stream</code> yields output as it arrives.</p>
 </li>
 <li>
