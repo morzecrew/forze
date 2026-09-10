@@ -21,7 +21,7 @@ import os
 import signal
 import tarfile
 import tempfile
-from collections.abc import AsyncGenerator, Coroutine, Iterable
+from collections.abc import AsyncGenerator, Coroutine, Iterable, Mapping
 from contextlib import aclosing
 from pathlib import PurePosixPath
 from typing import IO, TYPE_CHECKING, Any, Final, Literal, final
@@ -398,7 +398,7 @@ class ContainerSandbox:
     def _ended_by(
         self,
         status: int,
-        state: dict[str, Any],
+        state: Mapping[str, object],
         killed: str | None,
         request: SandboxRequest,
         budget: float,

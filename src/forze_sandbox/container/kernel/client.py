@@ -23,8 +23,8 @@ them, which is what the ``docker`` client does.
 import asyncio
 import contextlib
 import json
-from collections.abc import AsyncIterator
-from typing import IO, Any, Final, Literal, final
+from collections.abc import AsyncIterator, Mapping
+from typing import IO, Any, Final, Literal, cast, final
 
 import httpx
 
@@ -311,14 +311,14 @@ class ContainerEngine:
 
         return int(response.json()["StatusCode"])
 
-    async def inspect(self, container: str) -> dict[str, Any]:
+    async def inspect(self, container: str) -> Mapping[str, object]:
         """The container's state, which is where the daemon says what ended it."""
 
         response = await self._call("GET", f"/containers/{container}/json")
         self._expect(response, "inspect the container", (200,))
-        state = response.json().get("State")
+        payload = _object(response.json())
 
-        return state if isinstance(state, dict) else {}
+        return _object(payload.get("State")) or {} if payload is not None else {}
 
     async def signal(self, container: str, name: str) -> None:
         """Send one signal, tolerating a container that has already gone.
@@ -398,16 +398,32 @@ class ContainerEngine:
 # ----------------------- #
 
 
+def _object(value: object) -> Mapping[str, object] | None:
+    """*value* as a JSON object, or nothing when it is not one.
+
+    The one place this module narrows what the daemon sent. ``httpx`` types ``json()`` as
+    ``Any``, which would otherwise spread untyped through every reader of a reply; here it
+    becomes a mapping of strings to values each caller has to narrow for itself. The cast is
+    what a JSON object *is* — decoded keys are strings — rather than a claim about the
+    values, which stay ``object``.
+    """
+
+    return cast("Mapping[str, object]", value) if isinstance(value, dict) else None
+
+
 def _message(response: httpx.Response) -> str:
     """The daemon's own explanation, or its body when it did not give one."""
 
     try:
-        payload = response.json()
+        payload = _object(response.json())
 
     except (json.JSONDecodeError, ValueError):
         return response.text.strip()[:500]
 
-    if isinstance(payload, dict) and isinstance(payload.get("message"), str):
-        return str(payload["message"])
+    if payload is not None:
+        said = payload.get("message")
+
+        if isinstance(said, str):
+            return said
 
     return response.text.strip()[:500]
