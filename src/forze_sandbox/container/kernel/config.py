@@ -30,8 +30,64 @@ CONTAINER_BACKEND: Final = "container"
 CEILING_CODE: Final = "sandbox_ceiling_not_positive"
 """Error code for a ceiling asked for as zero or less."""
 
-_ROOT_IDENTITIES: Final = frozenset({"0", "root", "0:0", "root:root"})
-"""Spellings of the identity this tier will not run a child as."""
+_ROOT_NAMES: Final = frozenset({"root", "toor"})
+"""Names for uid 0. Checked beside the number, because a route may spell it either way."""
+
+NETWORK_MODES: Final = frozenset({"none", "egress"})
+"""Every network value this adapter knows. Anything else is refused rather than read as
+the permissive one — the adapter maps a single value to a closed network and everything
+else to an open one, so a typo would open it for the code this tier exists to distrust."""
+
+IDENTITY_INVALID_CODE: Final = "sandbox_container_identity_invalid"
+"""Error code for a ``run_as`` this worker cannot turn into a uid and a gid."""
+
+ROOT_USER_CODE: Final = "sandbox_container_root_user"
+"""Error code for a ``run_as`` that resolves to uid 0."""
+
+NETWORK_UNKNOWN_CODE: Final = "sandbox_container_network_unknown"
+"""Error code for a network value outside :data:`NETWORK_MODES`."""
+
+
+def parse_identity(run_as: str) -> tuple[int, int]:
+    """The uid and gid *run_as* names, or the refusal that says why it names neither.
+
+    Numeric because the workspace tar is written by the worker, which cannot read the
+    image's ``/etc/passwd`` to turn a name into an id — so a name here is not an identity,
+    it is a failure discovered at staging time instead of at the boot.
+
+    Root is refused by the **number**, not by the spelling. ``"0:65534"`` is not in any list
+    of root's names and is uid 0 all the same, which is the whole of the tier's containment
+    claim undone by a config nobody would look at twice.
+    """
+
+    parts = run_as.strip().split(":")
+    user = parts[0]
+
+    if user.lower() in _ROOT_NAMES or (user.isdigit() and int(user) == 0):
+        raise exc.configuration(
+            f"ContainerSandboxConfig.run_as is {run_as!r}, which runs the child as root, "
+            "and this adapter does not. A namespace does not stop uid 0 doing what uid 0 "
+            "can still reach, and this tier's whole claim is that unreviewed code cannot. "
+            f"Name an unprivileged identity — {DEFAULT_RUN_AS!r} is the default — or wire "
+            "an adapter that does not promise containment.",
+            code=ROOT_USER_CODE,
+            details={"run_as": run_as},
+        )
+
+    if len(parts) > 2 or not all(part.isdigit() for part in parts):
+        raise exc.configuration(
+            f"ContainerSandboxConfig.run_as is {run_as!r}, which is not a uid or a "
+            "uid:gid. It has to be numeric: the workspace tar is written by this worker, "
+            "which cannot read your image's /etc/passwd to find out what a name means, so "
+            "a name would stage files the child then cannot open.",
+            code=IDENTITY_INVALID_CODE,
+            details={"run_as": run_as},
+        )
+
+    uid = int(parts[0])
+
+    return uid, int(parts[1]) if len(parts) == 2 else uid
+
 
 DEFAULT_RUN_AS: Final = "65534:65534"
 """``nobody``, by the id every distribution agrees on rather than by a name only some
@@ -164,14 +220,17 @@ class ContainerSandboxConfig:
                 code="sandbox_container_image_missing",
             )
 
-        if self.run_as.strip() in _ROOT_IDENTITIES:
+        parse_identity(self.run_as)
+
+        if self.network not in NETWORK_MODES:
             raise exc.configuration(
-                f"ContainerSandboxConfig.run_as is {self.run_as!r}, and this adapter does "
-                "not run children as root. A namespace does not stop uid 0 doing what uid 0 "
-                "can still reach, and this tier's whole claim is that unreviewed code "
-                f"cannot. Name an unprivileged identity — {DEFAULT_RUN_AS!r} is the default "
-                "— or wire an adapter that does not promise containment.",
-                code="sandbox_container_root_user",
+                f"ContainerSandboxConfig.network is {self.network!r}, which is not one of "
+                f"{sorted(NETWORK_MODES)}. The annotation is checked by a type checker and "
+                "not by the interpreter, so a config rebuilt from JSON or a typo arrives "
+                "here as an ordinary string — and every value but 'none' opens the network "
+                "for the code this tier exists to distrust.",
+                code=NETWORK_UNKNOWN_CODE,
+                details={"network": self.network},
             )
 
         workspace = PurePosixPath(self.workspace)
@@ -233,6 +292,12 @@ class ContainerSandboxConfig:
                 )
 
     # ....................... #
+
+    @property
+    def identity(self) -> tuple[int, int]:
+        """The uid and gid the child runs as, and the staged files belong to."""
+
+        return parse_identity(self.run_as)
 
     @property
     def ulimits(self) -> list[dict[str, int | str]]:

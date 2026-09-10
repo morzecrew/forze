@@ -32,7 +32,6 @@ from forze_sandbox.container.adapters.sandbox import (
     _build_archive,  # pyright: ignore[reportPrivateUsage]
     _Capture,  # pyright: ignore[reportPrivateUsage]
     _declared_from_archive,  # pyright: ignore[reportPrivateUsage]
-    _identity,  # pyright: ignore[reportPrivateUsage]
     _workspace_relative,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -138,7 +137,7 @@ class TestStagingIntoTheWorkspace:
         [("65534", (65534, 65534)), ("1000:2000", (1000, 2000))],
     )
     def test_the_identity_a_staged_file_belongs_to(self, run_as: str, expected: Any) -> None:
-        assert _identity(run_as) == expected
+        assert _config(run_as=run_as).identity == expected
 
 
 class TestCollectingWhatWasDeclared:

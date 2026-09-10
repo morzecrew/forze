@@ -479,7 +479,7 @@ class ContainerSandbox:
             self.config.workspace,
             request.program,
             inputs,
-            _identity(self.config.run_as),
+            self.config.identity,
         )
 
     async def _collect(
@@ -664,20 +664,6 @@ def _names(memory: int | None, ulimits: list[dict[str, int | str]]) -> list[str]
 
 def _by_name(limit: dict[str, int | str]) -> str:
     return str(limit["Name"])
-
-
-def _identity(run_as: str) -> tuple[int, int]:
-    """The numeric uid and gid a staged file must belong to.
-
-    Numeric because the worker writes the tar and cannot read the image's ``/etc/passwd`` to
-    turn a name into an id — which is why the config refuses a name outright rather than
-    staging files the child then cannot open.
-    """
-
-    user, _, group = run_as.partition(":")
-    uid = int(user)
-
-    return uid, int(group) if group else uid
 
 
 def _build_archive(

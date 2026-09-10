@@ -56,7 +56,10 @@ def _config(**overrides: Any) -> ContainerSandboxConfig:
 class TestTheIdentityAChildRunsAs:
     """The one config refusal that is containment rather than hygiene."""
 
-    @pytest.mark.parametrize("identity", ["0", "root", "0:0", "root:root", " root "])
+    @pytest.mark.parametrize(
+        "identity",
+        ["0", "root", "ROOT", "0:0", "root:root", " root ", "0:65534", "00", "0:0:0"],
+    )
     def test_a_root_identity_is_refused_however_it_is_spelled(self, identity: str) -> None:
         with pytest.raises(CoreException) as raised:
             _config(run_as=identity)
@@ -69,6 +72,20 @@ class TestTheIdentityAChildRunsAs:
 
     def test_an_unprivileged_identity_is_accepted(self) -> None:
         assert _config(run_as="1000:1000").run_as == "1000:1000"
+
+    @pytest.mark.parametrize(
+        "identity", ["nobody", "1000:staff", "", "  ", "1000:", ":1000", "+0", "1000:1000:1000"]
+    )
+    def test_an_identity_this_worker_cannot_resolve_is_refused_at_construction(
+        self, identity: str
+    ) -> None:
+        # The workspace tar is written by the worker, which cannot read the image's
+        # /etc/passwd — so a name is not an identity here, and one that is only discovered
+        # at staging time fails the run rather than the boot.
+        with pytest.raises(CoreException) as raised:
+            _config(run_as=identity)
+
+        assert raised.value.code == "sandbox_container_identity_invalid"
 
 
 class TestCeilingsAndPaths:
@@ -201,6 +218,16 @@ class TestTheFreezeTimeGates:
             module()
 
         assert raised.value.code == "sandbox_provenance_unknown"
+
+    @pytest.mark.parametrize("value", ["egres", "bridge", "host", "", "NONE"])
+    def test_a_network_value_outside_the_vocabulary_is_refused(self, value: str) -> None:
+        # `Literal` is checked by a type checker and not by the interpreter, so a config
+        # rebuilt from JSON or a typo arrives here as an ordinary string — and every value
+        # but "none" opened the network for code this tier exists to distrust.
+        with pytest.raises(CoreException) as raised:
+            _config(network=cast("Any", value))
+
+        assert raised.value.code == "sandbox_container_network_unknown"
 
     def test_opening_the_network_without_saying_so_fails_the_boot(self) -> None:
         module = ContainerSandboxDepsModule(routes={"jobs": _config(network="egress")})
