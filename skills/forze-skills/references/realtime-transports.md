@@ -104,6 +104,49 @@ domain state, not in a mailbox.
 Topic broadcasts are never mailboxed — there is no fixed membership to store them
 for.
 
+## Authenticating the connection
+
+Do not hand-write the credential ladder. `build_ws_connection_resolver` (and
+`forze_socketio.build_socketio_connection_resolver`, the same ladder over a Socket.IO
+handshake) verifies through the wired authn plane and fills principal, tenant, device and
+credential `expires_at`:
+
+```python
+from forze_fastapi.realtime import attach_realtime_ws_route, build_ws_connection_resolver
+
+attach_realtime_ws_route(
+    router,
+    ctx_dep=ctx_dep,
+    resolve=build_ws_connection_resolver(
+        ctx_dep=ctx_dep,
+        authn_spec=spec,
+        cookie_name="forze_access",      # the browser path
+        origin_allowlist_attested=True,  # your statement that allowed_origins is set
+    ),
+    allowed_origins=["https://app.example.com"],
+    mailbox_factory=..., cursors_factory=...,
+)
+```
+
+The ladder is fixed — a `realtime.reauth` payload, then the cookie, then
+`Authorization: Bearer`, then an opt-in query parameter — and each source is enabled by
+naming it. The first source that *presents* a credential is the one used; an invalid one
+refuses the connection rather than falling through.
+
+- **Cookie mode will not build without `origin_allowlist_attested=True`.** The browser
+  attaches the cookie to a cross-site upgrade by itself and the handshake has no CORS
+  preflight, so the server-side Origin check is the whole defense. The factory cannot see
+  the attach call's `allowed_origins`, so it asks you to attest the pairing.
+- **The query-parameter source is off by default** — query strings land in access and
+  proxy logs. Enable `query_param="token"` only for clients that can set neither cookie
+  nor header, with short-lived tokens.
+- **`expires_at` comes from the verified credential** and the route enforces it
+  continuously: the socket closes once past it, and a `realtime.reauth` frame swaps in a
+  fresh one without reconnecting.
+- **The tenant is the resolver's binding**, looked up on the authn spec's own route and
+  falling back to the issuer's claim. `X-Tenant-Id` is not honored on an upgrade, whose
+  headers are set by the client being authenticated.
+
 ## Wiring notes that bite
 
 - Raw WebSocket scopes are **refused** by `SecurityContextMiddleware` and

@@ -146,7 +146,7 @@ way the contracts actually expect rather than inventing a plausible shape.
 npx skills add morzecrew/forze
 ```
 
-One skill, `forze-skills`: a routing index plus 43 reference files it reads only when a task
+One skill, `forze-skills`: a routing index plus 45 reference files it reads only when a task
 needs them. The index is keyed by task and names every reference a task needs, because these are
 procedures rather than independent rules — an aggregate declared without its backend config is an
 app that does not start.

@@ -34,7 +34,7 @@ reaches for the wrong things. Start from the table below and read the whole row.
 
 | I want to… | Read, in order |
 |---|---|
-| Bootstrap a new service | `architecture` → `spec-naming-and-routes` → `deps-resolution` → `runtime-lifecycle` |
+| Bootstrap a new service | `architecture` → `spec-naming-and-routes` → `deps-resolution` → `runtime-lifecycle` → `connection-settings` |
 | Add a governed aggregate | `aggregate-models` → `document-spec` → `aggregate-kit` → `spec-to-backend-config` → `testing-with-mock` |
 | Write a custom handler | `execution-context` → `handlers` → `query-dsl` |
 | Expose it over HTTP | `fastapi-setup` → `fastapi-generated-routes` → `fastapi-identity` |
@@ -63,6 +63,7 @@ a row first.
 | [deps-resolution](references/deps-resolution.md) | Plain vs routed deps, how handlers resolve ports, merge conflicts |
 | [deps-custom-module](references/deps-custom-module.md) | Writing your own `DepsModule` and `DepKey` for a private integration |
 | [runtime-lifecycle](references/runtime-lifecycle.md) | `build_runtime`, lifecycle steps, the spec inventory |
+| [connection-settings](references/connection-settings.md) | `<Backend>Settings` models — endpoints, credentials and client knobs from the environment |
 | [operation-composition](references/operation-composition.md) | Operation registries, pipeline stages, hooks, mapping steps |
 | [testing-with-mock](references/testing-with-mock.md) | `forze_mock` in tests — every port in memory, no containers |
 | [sandbox-execution](references/sandbox-execution.md) | Running a program out of process — provenance, isolation tiers, ceilings, streaming |

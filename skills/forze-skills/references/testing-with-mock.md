@@ -44,6 +44,38 @@ mock_app = MockApp(build_app=build_app, deps=(), seed=seed_plan)
 
 `seed` is applied once the runtime scope opens and re-applied by `POST /_mock/reset`, which is what lets a consumer's suite start each run from the same fixtures. Declare it: an unseeded plane still answers every read — successfully, with nothing in it — so a caller can pass against a backend that holds no data at all.
 
+## Surviving a restart
+
+An MVP running on the mock can keep its data across restarts without a container.
+`MockStatePersistence` snapshots the whole `MockState` at shutdown and loads it at startup:
+
+```python
+from pathlib import Path
+
+from forze.application.execution import LifecyclePlan
+from forze_mock import MockStatePersistence, mock_state_lifecycle_step
+
+persistence = MockStatePersistence(path=Path(".forze/mvp.state"))
+
+lifecycle = LifecyclePlan.from_steps(
+    mock_state_lifecycle_step(state=state, persistence=persistence),
+)
+```
+
+`state` is the same `MockState` the deps module was built with. A missing file is a first
+run, not an error. Pass `flush_every=timedelta(minutes=5)` to write periodically as well —
+off by default, since it needs a background task.
+
+Everything the mock implements comes back: documents, counters, outbox and inbox rows,
+stored objects, identity, durable runs. What does not is anything whose meaning is local to
+the process that wrote it — held locks and in-flight transactions restore as none held,
+none active, because a lock expiry measured against one process's clock means nothing
+against another's. Persistence alongside a per-tenant routed state registry is refused at
+startup rather than writing a snapshot that would silently miss every tenant's data.
+
+It is a snapshot, not a database: one process, all in RAM, no crash durability between
+flushes.
+
 ## Reference
 
 - [Mock integration](https://morzecrew.github.io/forze/latest/integrations/)

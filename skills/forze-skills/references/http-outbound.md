@@ -79,7 +79,7 @@ from forze.application.execution import LifecyclePlan
 from forze_http import http_lifecycle_step
 
 lifecycle = LifecyclePlan.from_steps(
-    http_lifecycle_step(),  # or routed_http_lifecycle_step() for tenant-routed clients
+    http_lifecycle_step(),
 )
 ```
 
@@ -109,7 +109,15 @@ class ListOrders(Handler[ListOrdersCmd, OrdersListResponse]):
 
 ## Tenant-routed services
 
-For per-tenant base URLs / credentials, use `RoutedHttpClient` with `routed_http_lifecycle_step()` and set `tenant_aware=True` on the service config. The client resolves each tenant's `HttpRoutingCredentials` (base URL, headers, bearer token) from a `SecretRef` per tenant, so the adapter never needs a `tenant_provider`. Bind `TenantIdentity` at the boundary before the handler runs.
+For per-tenant base URLs / credentials, use `RoutedHttpClient` and set `tenant_aware=True` on the service config. It opens in `routed_client_lifecycle_step`, which takes the step name explicitly:
+
+```python
+from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
+
+steps = [routed_client_lifecycle_step("routed_http_client", client=client)]
+```
+
+The client resolves each tenant's `HttpRoutingCredentials` (base URL, headers, bearer token) from a `SecretRef` per tenant, so the adapter never needs a `tenant_provider`. Bind `TenantIdentity` at the boundary before the handler runs.
 
 ## Deadline propagation
 
@@ -121,7 +129,7 @@ Inject a stub `HttpServicePort` (any object with a `spec` attribute and an async
 
 ## Logging
 
-HTTP client/adapter/execution loggers are named under `FORZE_HTTP_LOGGER_NAMES`; route them through your Forze logging configuration rather than the root logger.
+The client, adapter and execution loggers all sit under the `forze_http` package root; name that root in your Forze logging configuration and the stdlib hierarchy reaches every logger beneath it.
 
 ## Anti-patterns
 
