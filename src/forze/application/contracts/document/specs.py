@@ -1,5 +1,6 @@
 """Specifications for document models and storage layout."""
 
+from collections.abc import Mapping
 from typing import Any, Generic, TypeVar, final
 
 import attrs
@@ -13,8 +14,10 @@ from forze.domain.models import BaseDTO, Document
 from ..base import BaseSpec
 from ..cache import CacheSpec
 from ..conformity import (
+    DerivedReadField,
     ReadConformity,
     derive_lenient_read_fields,
+    validate_derived_read_fields,
     validate_lenient_read_fields,
     validate_materialized_computed,
 )
@@ -113,6 +116,33 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     Use it for a domain field computed or stored elsewhere (not on this table).
     Empty by default."""
 
+    derived_read_fields: Mapping[str, DerivedReadField] = attrs.field(
+        factory=dict,
+        converter=dict,
+    )
+    """Read-model field names the **backend produces from another relation**.
+
+    A view that joins a supplier and projects its name delivers a read field no
+    write of this aggregate produces. Declaring it says where the value comes from:
+    the name of the source spec, the field on this model carrying its primary key,
+    and the field to read from it.
+
+    Unlike :attr:`lenient_read_fields` a derived field **needs no default** and may
+    be required — a joined display name usually is. That is the distinction between
+    the two: leniency reconstructs from the model, derivation reads another row. A
+    field cannot be both, nor also :attr:`materialized` or
+    :attr:`write_omit_fields`.
+
+    Real backends are unaffected at runtime — the view already produces the column,
+    so it is read from storage as before, and startup schema validation stops
+    requiring a *write* column for it. An adapter with no view (``forze_mock``)
+    performs the join itself, which is what makes a view-backed aggregate reachable
+    in tests at all.
+
+    Derived fields are removed from the filter/sort/aggregate allow-sets and cannot
+    be sealed at rest, for the same reason a lenient field cannot: there is no
+    column of this aggregate's own to query or to encrypt. Empty by default."""
+
     sensitive: bool = False
     """Read model carries credential/secret material (password hashes, token digests);
     generated external surfaces (HTTP route generators, MCP tools/resources) must refuse
@@ -199,6 +229,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if self.write_omit_fields:
             self._validate_write_omit_fields()
 
+        if self.derived_read_fields:
+            self._validate_derived_read_fields()
+
         read_fields = self._read_query_fields()
 
         if self.default_sort is not None:
@@ -223,9 +256,12 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             )
 
         if self.encryption is not None:
-            # Lenient fields are not stored, so they cannot be sealed at rest.
+            # Lenient and derived fields are not stored here, so neither can be
+            # sealed at rest: there is no column of this aggregate's own to encrypt.
             self.encryption.validate_fields_exist(
-                stored_field_names_for(self.read) - self.resolved_lenient_read_fields,
+                stored_field_names_for(self.read)
+                - self.resolved_lenient_read_fields
+                - frozenset(self.derived_read_fields),
                 spec_name=self.name,
             )
 
@@ -249,8 +285,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         """
 
         return (
-            read_fields_for_model(self.read) | self.materialized
-        ) - self.resolved_lenient_read_fields
+            (read_fields_for_model(self.read) | self.materialized)
+            - self.resolved_lenient_read_fields
+            - frozenset(self.derived_read_fields)
+        )
 
     # ....................... #
 
@@ -270,6 +308,54 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         )
 
     # ....................... #
+
+    def _validate_derived_read_fields(self) -> None:
+        """Validate derived read fields name real sources and claim no stored field."""
+
+        names = frozenset(self.derived_read_fields)
+
+        # Each collision is named separately: "cannot be both" is only useful when the
+        # reader is told which other mechanism already claims the field.
+        if overlap := names & self.resolved_lenient_read_fields:
+            raise exc.configuration(
+                f"Field(s) {sorted(overlap)} cannot be both derived (read from another "
+                f"relation) and lenient (rehydrated from the model default) "
+                f"(spec {self.name!r}).",
+            )
+
+        if overlap := names & self.materialized:
+            raise exc.configuration(
+                f"Field(s) {sorted(overlap)} cannot be both derived (not stored here) "
+                f"and materialized (stored here) (spec {self.name!r}).",
+            )
+
+        if overlap := names & self.write_omit_fields:
+            raise exc.configuration(
+                f"Field(s) {sorted(overlap)} cannot be both derived and write-omitted; "
+                f"a derived field is never written in the first place "
+                f"(spec {self.name!r}).",
+            )
+
+        if self.write is not None:
+            # A field this aggregate persists is not derived from anywhere — it is
+            # either an ordinary stored field or `materialized`. Left unchecked, the
+            # Postgres write-schema validator would demand a column for it and fail
+            # the boot with a message about the write relation, which describes the
+            # symptom and not this declaration.
+            domain = stored_field_names_for(self.write["domain"])
+
+            if overlap := names & domain:
+                raise exc.configuration(
+                    f"Field(s) {sorted(overlap)} are derived but are also stored "
+                    f"fields on the domain model; a field this aggregate writes is "
+                    f"not derived from another relation (spec {self.name!r}).",
+                )
+
+        validate_derived_read_fields(
+            model_type=self.read,
+            derived=self.derived_read_fields,
+            spec_name=self.name,
+        )
 
     def _validate_write_omit_fields(self) -> None:
         """Validate write-omit fields against the domain model and warn (silent drop)."""

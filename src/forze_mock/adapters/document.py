@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from typing import (
     Any,
     Literal,
@@ -57,6 +57,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
+from forze_mock.adapters._derived import ResolvedDerivedRead, hydrate_derived
 from forze_mock.adapters._journal import JournalingStore
 from forze_mock.adapters._mvcc import current_mvcc_tx
 from forze_mock.adapters.query_params import MockQueryParamsSource
@@ -112,6 +113,11 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     )
     bound_params: BaseModel | None = None
     query_params_source: MockQueryParamsSource | None = None
+    derived: Mapping[str, ResolvedDerivedRead] = attrs.field(factory=dict)
+    """Derived read fields with their sources located at wiring time.
+
+    Empty for every spec that declares none, which is the overwhelming majority —
+    :meth:`_hydrate` returns the document untouched in that case."""
 
     # ....................... #
 
@@ -196,7 +202,19 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     def _store(self) -> dict[UUID, JsonDict]:
-        ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+        return self._store_for(partition_namespace(self.require_tenant_if_aware(), self.namespace))
+
+    # ....................... #
+
+    def _store_for(self, ns: str) -> dict[UUID, JsonDict]:
+        """The rows in *ns*, through the active transaction's view where there is one.
+
+        Split from :meth:`_store` so a derived read observes the same snapshot the
+        reading document does: a source row joined outside the overlay would let a
+        transaction see a sibling write it is not supposed to, which is the opposite
+        of what the overlay exists for.
+        """
+
         with self.state.lock:
             store = self.state.documents.get(ns)
             if not isinstance(store, JournalingStore):
@@ -309,8 +327,31 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     def _read_codec(self) -> ModelCodec[R, Any]:
         return self.codecs.read
 
+    def _hydrate(self, doc: JsonDict) -> JsonDict:
+        """Resolve this spec's derived read fields on *doc*.
+
+        The single point every decode routes through. Placing it per read method is the
+        way this feature ends up working on ``get`` and silently missing under cursor
+        paging — so it lives here and in the projection branch of
+        :meth:`_to_read_or_projection`, which is the only decode that does not come
+        back through :meth:`_to_read`.
+        """
+
+        if not self.derived:
+            return doc
+
+        return hydrate_derived(
+            doc,
+            derived=self.derived,
+            store_for=self._store_for,
+            tenant_id=self.require_tenant_if_aware(),
+            spec_name=self.spec.name,
+        )
+
+    # ....................... #
+
     def _to_read(self, doc: JsonDict) -> R:
-        return self._read_codec().decode_mapping(dict(doc))
+        return self._read_codec().decode_mapping(self._hydrate(dict(doc)))
 
     # ....................... #
 
@@ -410,7 +451,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # read codec). No-op for plain codecs. Synchronous: the mock keyring cache
             # is seeded at encrypt time / via warm(), so no async pre-pass is needed.
             decrypt = getattr(self._read_codec(), "decrypt_mapping", None)
-            source = decrypt(dict(doc)) if decrypt is not None else doc
+            hydrated = self._hydrate(dict(doc))
+            source = decrypt(hydrated) if decrypt is not None else hydrated
             return _project(source, return_fields)
         return self._to_read(doc)
 

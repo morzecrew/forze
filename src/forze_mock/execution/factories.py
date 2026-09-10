@@ -137,6 +137,7 @@ from forze_mock.adapters import (
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
 )
+from forze_mock.adapters._derived import ResolvedDerivedRead
 from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.identity import (
     MockPasswordLifecyclePort,
@@ -263,6 +264,52 @@ class _MockFactoryBase:
             cipher_tenant=context.inv_ctx.get_tenant,
         )
 
+    def _derived_for(
+        self,
+        ctx: ExecutionContext,
+        spec: DocSpec,
+    ) -> dict[str, ResolvedDerivedRead]:
+        """Locate each derived field's source, using the module's own route table.
+
+        Resolution happens here rather than in the adapter because this is where the
+        routes live: the source's namespace and its tenant-awareness are wiring facts,
+        and an adapter re-deriving them per read would be guessing at what freezing
+        already settled.
+        """
+
+        reader_cfg = self._route(spec.name)
+        reader_tenant_aware = reader_cfg.tenant_aware if reader_cfg else False
+        resolved: dict[str, ResolvedDerivedRead] = {}
+
+        for name, declared in spec.derived_read_fields.items():
+            source = str(declared.source)
+            source_cfg = self._route(source)
+            source_tenant_aware = source_cfg.tenant_aware if source_cfg else False
+
+            if source_tenant_aware and not reader_tenant_aware:
+                # The reading adapter has no bound tenant to partition the source's
+                # namespace with, so the join would reach the unpartitioned namespace —
+                # finding nothing, or another tenant's row. Refused rather than resolved:
+                # either outcome is a cross-tenant read wearing a missing-data symptom.
+                raise exc.configuration(
+                    f"Derived read field {name!r} on spec {str(spec.name)!r} reads "
+                    f"tenant-aware source {source!r}, but {str(spec.name)!r} is not "
+                    f"tenant-aware, so no tenant is bound to resolve the source with.",
+                    code="mock.document.derived_tenant_mismatch",
+                )
+
+            resolved[name] = ResolvedDerivedRead(
+                namespace=self._namespace_for(ctx, source, default=source),
+                via=declared.via,
+                field=declared.field,
+                optional=declared.optional,
+                tenant_scoped=source_tenant_aware,
+            )
+
+        return resolved
+
+    # ....................... #
+
     def _namespace_for(
         self,
         ctx: ExecutionContext,
@@ -329,6 +376,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
             query_params_source=query_params_source,
+            derived=self._derived_for(context, spec),
         )
 
 
