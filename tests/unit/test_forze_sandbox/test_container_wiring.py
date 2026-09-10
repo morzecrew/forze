@@ -280,7 +280,7 @@ class TestTheDaemonEndpoint:
             ("unix:///var/run/docker.sock", "http://daemon"),
             ("tcp://127.0.0.1:2375", "http://127.0.0.1:2375"),
             ("tcp://127.0.0.1:2375/", "http://127.0.0.1:2375"),
-            ("http://dockerd:2375", "http://dockerd:2375"),
+            ("http://localhost:2375", "http://localhost:2375"),
             ("https://dockerd:2376/", "https://dockerd:2376"),
         ],
     )

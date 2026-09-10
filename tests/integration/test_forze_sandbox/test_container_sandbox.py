@@ -737,20 +737,6 @@ class TestTheDaemonSurfaceItself:
         finally:
             await engine.aclose()
 
-    async def test_a_daemon_this_adapter_cannot_take_over_refuses_stdin(
-        self, ctx: ExecutionContext
-    ) -> None:
-        engine = ContainerEngine("https://dockerd.example:2376", timeout=5.0)
-
-        try:
-            with pytest.raises(CoreException) as raised:
-                await engine.attach_stdin("whatever", b"payload")
-
-            assert raised.value.code == "sandbox_container_stdin_unavailable"
-
-        finally:
-            await engine.aclose()
-
     @pytest.mark.parametrize("call", ["follow", "download"])
     async def test_reading_from_a_container_that_is_gone_is_the_daemon_saying_no(
         self, ctx: ExecutionContext, call: str

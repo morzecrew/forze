@@ -23,6 +23,7 @@ them, which is what the ``docker`` client does.
 import asyncio
 import contextlib
 import json
+import ssl
 from collections.abc import AsyncIterator, Mapping
 from typing import IO, Any, Final, Literal, cast, final
 
@@ -46,6 +47,12 @@ _FRAME_HEADER: Final = 8
 
 _FRAME_KIND: Final[dict[int, Literal["stdout", "stderr"]]] = {1: "stdout", 2: "stderr"}
 """Frame's first byte to the stream it came from. Zero is stdin, which never comes back."""
+
+CLEARTEXT_CODE: Final = "sandbox_container_endpoint_cleartext"
+"""Error code for an unencrypted daemon connection leaving this machine."""
+
+_LOOPBACK: Final = frozenset({"localhost", "127.0.0.1", "::1", ""})
+"""Hosts that are this machine, where cleartext never leaves it."""
 
 _DOWNLOAD_CHUNK: Final = 256 * 1024
 """Bytes per read while draining an archive to disk."""
@@ -77,17 +84,25 @@ def endpoint(docker_host: str) -> tuple[httpx.AsyncBaseTransport, str]:
     ``unix://`` is the ordinary case and the only one that needs a transport of its own; the
     host part of the URL is then a formality the daemon never reads, so it is a fixed
     placeholder rather than something a route could get subtly wrong.
+
+    Cleartext to a daemon that is not on this machine is refused. Every command and every
+    staged input crosses that connection, and the environment those inputs run under carries
+    whatever secrets the request resolved — so an unencrypted hop to another host is the
+    exfiltration path this plane spends the rest of its effort closing. Loopback is the
+    local socket in another spelling and stays; anything further wants ``https://``.
     """
 
     if docker_host.startswith("unix://"):
         return httpx.AsyncHTTPTransport(uds=docker_host.removeprefix("unix://")), "http://daemon"
 
-    if docker_host.startswith("tcp://"):
-        return httpx.AsyncHTTPTransport(), "http://" + docker_host.removeprefix("tcp://").rstrip(
-            "/"
-        )
+    for scheme in ("tcp://", "http://"):
+        if docker_host.startswith(scheme):
+            authority = docker_host.removeprefix(scheme).rstrip("/")
+            _refuse_cleartext_to_another_host(docker_host, authority)
 
-    if docker_host.startswith(("http://", "https://")):
+            return httpx.AsyncHTTPTransport(), "http://" + authority
+
+    if docker_host.startswith("https://"):
         return httpx.AsyncHTTPTransport(), docker_host.rstrip("/")
 
     raise exc.configuration(
@@ -95,6 +110,37 @@ def endpoint(docker_host: str) -> tuple[httpx.AsyncBaseTransport, str]:
         "unix://, tcp://, http:// or https:// endpoint.",
         code="sandbox_container_endpoint_invalid",
         details={"docker_host": docker_host},
+    )
+
+
+def split_authority(authority: str, default_port: int) -> tuple[str, int]:
+    """``host`` and ``port`` from an authority, bracketed IPv6 included."""
+
+    if authority.startswith("["):
+        host, _, rest = authority.partition("]")
+
+        return host.removeprefix("["), int(rest.removeprefix(":") or default_port)
+
+    host, _, port = authority.partition(":")
+
+    return host, int(port or default_port)
+
+
+def _refuse_cleartext_to_another_host(docker_host: str, authority: str) -> None:
+    """Refuse an unencrypted connection to a daemon that is not on this machine."""
+
+    host, _ = split_authority(authority, 2375)
+
+    if host in _LOOPBACK:
+        return
+
+    raise exc.configuration(
+        f"Sandbox container route names a daemon at {docker_host!r}: an unencrypted "
+        "connection to another host. Every command and every staged input crosses it, and "
+        "the environment those inputs run under carries whatever secrets the request "
+        "resolved. Name the daemon over https://, or over a unix socket if it is local.",
+        code=CLEARTEXT_CODE,
+        details={"docker_host": docker_host, "host": host},
     )
 
 
@@ -256,21 +302,40 @@ class ContainerEngine:
                 await writer.wait_closed()
 
     async def _hijack(self) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
-        """A connection this client owns outright, for the one call that needs one."""
+        """A connection this client owns outright, for the one call that needs one.
+
+        Every scheme :func:`endpoint` accepts is dialled here too. They disagreed once —
+        ``https://`` was good enough for the other eight calls and not for this one — so a
+        route configured that way booted clean and failed the first request that carried
+        standard input.
+        """
 
         if self._docker_host.startswith("unix://"):
             return await asyncio.open_unix_connection(self._docker_host.removeprefix("unix://"))
 
-        if self._docker_host.startswith(("tcp://", "http://")):
-            rest = self._docker_host.split("://", 1)[1].rstrip("/")
-            host, _, port = rest.partition(":")
+        for scheme, default, tls in (
+            ("tcp://", 2375, False),
+            ("http://", 2375, False),
+            ("https://", 443, True),
+        ):
+            if self._docker_host.startswith(scheme):
+                host, port = split_authority(
+                    self._docker_host.removeprefix(scheme).rstrip("/"), default
+                )
 
-            return await asyncio.open_connection(host, int(port or 80))
+                if not tls:
+                    return await asyncio.open_connection(host, port)
+
+                # The hostname travels with the dial or the certificate is verified against
+                # nothing, which is the whole of what TLS was for here.
+                return await asyncio.open_connection(
+                    host, port, ssl=ssl.create_default_context(), server_hostname=host
+                )
 
         raise exc.configuration(
             f"Sandbox container route names its daemon at {self._docker_host!r}, and a "
             "request carrying stdin needs a connection this adapter can take over. Drop the "
-            "request's stdin, or name the daemon over a unix socket or plain tcp.",
+            "request's stdin, or name the daemon over a unix socket, tcp or https.",
             code="sandbox_container_stdin_unavailable",
             details={"docker_host": self._docker_host},
         )

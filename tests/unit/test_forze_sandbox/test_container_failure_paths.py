@@ -12,14 +12,16 @@ and each of these is a detection branch, which is exactly the code that must not
 from __future__ import annotations
 
 import asyncio
+import ssl
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 
 import forze_sandbox.container.adapters.sandbox as sandbox_adapter
+import forze_sandbox.container.kernel.client as client_module
 from forze.application.contracts.sandbox import ResourceRequest, SandboxRequest, SandboxSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -34,6 +36,7 @@ from forze_sandbox.container.kernel.client import (
     ContainerEngine,
     _message,  # pyright: ignore[reportPrivateUsage]
     demultiplex,
+    endpoint,
 )
 
 # ----------------------- #
@@ -333,7 +336,58 @@ class TestHandingOverStandardInput:
 
         assert received[1] == b"payload\n"
 
-    @pytest.mark.parametrize("docker_host", ["https://dockerd:2376", "ssh://host"])
+    @pytest.mark.parametrize(
+        ("docker_host", "host", "port"),
+        [("https://dockerd:2376", "dockerd", 2376), ("https://dockerd", "dockerd", 443)],
+    )
+    async def test_a_tls_daemon_is_dialled_with_tls_and_its_own_hostname(
+        self, monkeypatch: pytest.MonkeyPatch, docker_host: str, host: str, port: int
+    ) -> None:
+        # `endpoint` accepted https:// for every other call and `_hijack` refused it, so a
+        # route configured that way booted clean and failed the first request carrying
+        # stdin. What the dial has to carry is the hostname, or the certificate is verified
+        # against nothing.
+        dialled: dict[str, object] = {}
+
+        async def fake_open_connection(*args: object, **kwargs: object) -> tuple[object, object]:
+            dialled["args"] = args
+            dialled["kwargs"] = kwargs
+
+            raise ConnectionRefusedError("nothing is listening; the dial is what matters")
+
+        monkeypatch.setattr(client_module.asyncio, "open_connection", fake_open_connection)
+        engine = ContainerEngine(docker_host, timeout=1.0)
+
+        try:
+            with pytest.raises(ConnectionRefusedError):
+                await engine.attach_stdin("abc123", b"payload\n")
+
+        finally:
+            await engine.aclose()
+
+        assert dialled["args"] == (host, port)
+        kwargs = cast("dict[str, Any]", dialled["kwargs"])
+
+        assert isinstance(kwargs["ssl"], ssl.SSLContext)
+        assert kwargs["server_hostname"] == host
+
+    @pytest.mark.parametrize("docker_host", ["tcp://10.0.0.5:2375", "http://dockerd.internal:2375"])
+    def test_a_remote_daemon_in_cleartext_is_refused(self, docker_host: str) -> None:
+        # Commands and staged inputs — which carry resolved secrets in the environment —
+        # cross the network to a remote daemon. Loopback is the local socket in another
+        # spelling and stays; anything further wants TLS.
+        with pytest.raises(CoreException) as raised:
+            endpoint(docker_host)
+
+        assert raised.value.code == "sandbox_container_endpoint_cleartext"
+
+    @pytest.mark.parametrize(
+        "docker_host", ["tcp://127.0.0.1:2375", "http://localhost:2375", "tcp://[::1]:2375"]
+    )
+    def test_a_loopback_daemon_in_cleartext_is_fine(self, docker_host: str) -> None:
+        assert endpoint(docker_host)[1].startswith("http://")
+
+    @pytest.mark.parametrize("docker_host", ["ssh://host", "unix"])
     async def test_a_daemon_this_adapter_cannot_take_over_refuses_rather_than_dropping(
         self, docker_host: str
     ) -> None:
