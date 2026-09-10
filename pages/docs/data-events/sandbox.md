@@ -103,7 +103,7 @@ input it could not stage, an output it could not store.
 | --- | --- | --- | --- |
 | Base | `SubprocessSandbox`, no ceilings | `none` | trusted code only — the gate refuses it anything else |
 | Process | `SubprocessSandbox` with ceilings or a dropped user | `process` | trusted code, bounded against accidents |
-| Container | `ContainerSandbox` (`forze_sandbox_container`) | `container` | untrusted code — the first tier the gate lets through |
+| Container | `ContainerSandbox` (`forze_sandbox.container`) | `container` | untrusted code — the first tier the gate lets through |
 | Remote | recorded | `container` / `vm` | managed sandboxing services |
 
 The first two rows are one adapter. Which tier a route gets is decided entirely
@@ -208,7 +208,7 @@ held in memory and journaled, and a chunk handed straight to a caller is neither
 ### The container tier
 
 ```python
-from forze_sandbox_container import ContainerSandboxConfig, ContainerSandboxDepsModule
+from forze_sandbox.container import ContainerSandboxConfig, ContainerSandboxDepsModule
 
 sandboxes = ContainerSandboxDepsModule(
     routes={

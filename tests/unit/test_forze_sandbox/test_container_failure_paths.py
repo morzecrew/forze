@@ -1,8 +1,8 @@
 """The branches that only run when something has already gone wrong.
 
-# covers: forze_sandbox_container.kernel.client (unexpected daemon answers, the daemon's
+# covers: forze_sandbox.container.kernel.client (unexpected daemon answers, the daemon's
 #         own explanation and the fallbacks when it does not give one)
-# covers: forze_sandbox_container.adapters.sandbox (cleanup under repeated cancellation,
+# covers: forze_sandbox.container.adapters.sandbox (cleanup under repeated cancellation,
 #         reporting a capture that ended early, a ceiling the request left alone)
 
 Failure paths only run when things go wrong, so they are where untested behaviour hides —
@@ -19,18 +19,18 @@ from typing import Any
 import httpx
 import pytest
 
-import forze_sandbox_container.adapters.sandbox as sandbox_adapter
+import forze_sandbox.container.adapters.sandbox as sandbox_adapter
 from forze.application.contracts.sandbox import ResourceRequest, SandboxRequest, SandboxSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockState
-from forze_sandbox_container import ContainerSandbox, ContainerSandboxConfig
-from forze_sandbox_container.adapters.sandbox import (
+from forze_sandbox.container import ContainerSandbox, ContainerSandboxConfig
+from forze_sandbox.container.adapters.sandbox import (
     _finish,  # pyright: ignore[reportPrivateUsage]
     _report_a_reader_that_stopped_early,  # pyright: ignore[reportPrivateUsage]
 )
-from forze_sandbox_container.kernel.client import (
+from forze_sandbox.container.kernel.client import (
     ContainerEngine,
     _message,  # pyright: ignore[reportPrivateUsage]
     demultiplex,

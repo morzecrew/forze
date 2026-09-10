@@ -1,9 +1,9 @@
 """What a container route may be wired as, and what it declares once it is.
 
-# covers: forze_sandbox_container.kernel.config (ceilings, the identity refusal, the
+# covers: forze_sandbox.container.kernel.config (ceilings, the identity refusal, the
 #         derived capability surface, ulimit narrowing)
-# covers: forze_sandbox_container.execution.deps.module (the freeze-time gates)
-# covers: forze_sandbox_container.kernel.client (endpoint parsing)
+# covers: forze_sandbox.container.execution.deps.module (the freeze-time gates)
+# covers: forze_sandbox.container.kernel.client (endpoint parsing)
 
 None of this needs a daemon: every refusal here happens before anything is created, which
 is the point of putting them at freeze. What the containment is actually worth is the
@@ -22,13 +22,13 @@ from forze.application.contracts.storage import StorageSpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockState
-from forze_sandbox_container import (
+from forze_sandbox.container import (
     ConfigurableContainerSandbox,
     ContainerSandboxConfig,
     ContainerSandboxDepsModule,
     container_capabilities,
 )
-from forze_sandbox_container.kernel.client import endpoint
+from forze_sandbox.container.kernel.client import endpoint
 
 # ----------------------- #
 

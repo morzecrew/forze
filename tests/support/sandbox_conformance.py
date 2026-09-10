@@ -23,7 +23,7 @@ it against a handler this file wrote. That is a test of the battery, not of the 
 Used by:
 
 - ``tests/unit/test_forze_mock/test_mock_sandbox_conformance.py`` (the oracle)
-- ``tests/integration/test_forze_sandbox_container/test_container_sandbox_conformance.py``
+- ``tests/integration/test_forze_sandbox/test_container_sandbox_conformance.py``
 """
 
 from __future__ import annotations

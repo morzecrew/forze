@@ -6,7 +6,7 @@ unchanged; what it needs from either is an image that is already there, because 
 pulls one at the moment of a request.
 """
 
-from forze_sandbox_container._compat import require_sandbox_container
+from forze_sandbox.container._compat import require_sandbox_container
 
 require_sandbox_container()
 

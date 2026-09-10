@@ -19,8 +19,8 @@ from forze.application.contracts.sandbox import (
     SandboxSpec,
 )
 from forze.application.execution import ExecutionContext
-from forze_sandbox_container import ConfigurableContainerSandbox, container_capabilities
-from tests.integration.test_forze_sandbox_container.conftest import container_config
+from forze_sandbox.container import ConfigurableContainerSandbox, container_capabilities
+from tests.integration.test_forze_sandbox.conftest import container_config
 from tests.support.sandbox_conformance import (
     SANDBOX_BATTERY,
     Check,
@@ -74,7 +74,7 @@ def harness(ctx: ExecutionContext) -> SandboxHarness:
     )
 
 
-@pytest.mark.conformance(plane="sandbox", engine="sandbox_container")
+@pytest.mark.conformance(plane="sandbox", engine="container")
 @pytest.mark.parametrize("check", SANDBOX_BATTERY, ids=lambda check: check.__name__)
 async def test_sandbox_battery(check: Check, harness: SandboxHarness) -> None:
     await check(harness)

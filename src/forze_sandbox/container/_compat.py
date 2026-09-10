@@ -8,5 +8,5 @@ def require_sandbox_container() -> None:
         import httpx  # pyright: ignore[reportUnusedImport]  # noqa: F401
     except ImportError as e:
         raise RuntimeError(
-            "forze_sandbox_container requires 'forze[sandbox-container]' extra"
+            "forze_sandbox.container requires 'forze[sandbox-container]' extra"
         ) from e

@@ -57,7 +57,7 @@ A bare child shares the host's filesystem, network and `/proc`. The ceilings bou
 ```python
 from datetime import timedelta
 
-from forze_sandbox_container import ContainerSandboxConfig, ContainerSandboxDepsModule
+from forze_sandbox.container import ContainerSandboxConfig, ContainerSandboxDepsModule
 
 sandboxes = ContainerSandboxDepsModule(
     routes={

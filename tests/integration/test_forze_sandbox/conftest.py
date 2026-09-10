@@ -19,7 +19,7 @@ from forze.application.contracts.storage import StorageSpec
 from forze.application.execution import ExecutionContext
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockState
-from forze_sandbox_container import ContainerSandbox, ContainerSandboxConfig
+from forze_sandbox.container import ContainerSandbox, ContainerSandboxConfig
 
 # ----------------------- #
 

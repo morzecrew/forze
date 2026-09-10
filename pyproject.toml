@@ -253,7 +253,7 @@ packages = [
     "src/forze_inference",
     "src/forze_neo4j",
     "src/forze_mcp",
-    "src/forze_sandbox_container",
+    "src/forze_sandbox",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -522,6 +522,7 @@ divergence_catalog = "forze_dst.conformance.catalog:PLANE_DIVERGENCES"
 mock = { package = "forze_mock" }
 local = { package = "forze" }
 subprocess = { package = "forze" }
+container = { package = "forze_sandbox" }
 kserve_v2 = { package = "forze_inference" }
 mlflow = { package = "forze_inference" }
 
@@ -642,7 +643,7 @@ engines = ["postgres"]
 [tool.conformance_manifest.planes.sandbox]
 scenario = "tests.support.sandbox_conformance:SANDBOX_BATTERY"
 dep_keys = ["sandbox_run"]
-engines = ["mock", "subprocess", "sandbox_container"]
+engines = ["mock", "subprocess", "container"]
 
 # ....................... #
 # Declared gaps: planes with real providers and no leg yet. Listed so "not covered"
@@ -940,7 +941,7 @@ root_packages = [
     "forze_inference",
     "forze_neo4j",
     "forze_mcp",
-    "forze_sandbox_container",
+    "forze_sandbox",
 ]
 exclude_type_checking_imports = true
 
@@ -1062,7 +1063,7 @@ protected_modules = [
     "forze_inference",
     "forze_neo4j",
     "forze_mcp",
-    "forze_sandbox_container",
+    "forze_sandbox",
 ]
 allowed_importers = ["forze_cli"]
 as_packages = true
@@ -1077,7 +1078,7 @@ forbidden_modules = [
     "forze_kits",
     "forze_dst",
     "forze_mcp",
-    "forze_sandbox_container",
+    "forze_sandbox",
 ]
 # The mock is a leaf provider: every consumer of it depends on that. A submodule reaching
 # for a transport's route attachers or the identity plane's verifiers would invert the
@@ -1119,7 +1120,7 @@ paths = [
     "src/forze_inference",
     "src/forze_neo4j",
     "src/forze_mcp",
-    "src/forze_sandbox_container",
+    "src/forze_sandbox",
 ]
 sort_by_size = true
 min_confidence = 60
@@ -1166,7 +1167,7 @@ known_first_party = [
     "forze_inference",
     "forze_neo4j",
     "forze_mcp",
-    "forze_sandbox_container",
+    "forze_sandbox",
 ]
 ignore_notebooks = true
 

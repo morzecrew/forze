@@ -1,8 +1,8 @@
 """The container adapter, driven against a real daemon.
 
-# covers: forze_sandbox_container.adapters.sandbox (containment, ceilings, kills,
+# covers: forze_sandbox.container.adapters.sandbox (containment, ceilings, kills,
 #         staging and collection, streaming, cleanup)
-# covers: forze_sandbox_container.kernel.client (create, archive, attach, follow, wait,
+# covers: forze_sandbox.container.kernel.client (create, archive, attach, follow, wait,
 #         inspect, signal, remove)
 
 RFC 0021's battery says it plainly: kill, isolation and cleanup logic is exactly where
@@ -35,12 +35,12 @@ from forze.base.exceptions import CoreException
 from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockState
-from forze_sandbox_container.kernel.client import (
+from forze_sandbox.container.kernel.client import (
     CONTAINER_NAME_PREFIX,
     DEFAULT_DOCKER_HOST,
     ContainerEngine,
 )
-from tests.integration.test_forze_sandbox_container.conftest import (
+from tests.integration.test_forze_sandbox.conftest import (
     BLOBS,
     container_sandbox,
 )

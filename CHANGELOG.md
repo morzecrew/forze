@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Untrusted code finally has a tier that can hold it.** `forze_sandbox_container` runs a sandbox route in a container with no network, no capabilities and a non-root user; the workspace crosses as tar, a memory over-run comes back as `killed_oom`, and killing a run reaps everything it started.
+- **Untrusted code finally has a tier that can hold it.** `forze_sandbox.container` runs a sandbox route in a container with no network, no capabilities and a non-root user; the workspace crosses as tar, a memory over-run comes back as `killed_oom`, and killing a run reaps everything it started.
 
 - **Sandbox routes can bound the child.** Memory, CPU and open-file ceilings plus a dropped user move a `SubprocessSandbox` route to the `process` isolation tier; the kill takes the child's process group, and `run_stream` yields output as it arrives.
 

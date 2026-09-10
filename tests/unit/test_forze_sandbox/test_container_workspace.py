@@ -1,6 +1,6 @@
 """What crosses the container boundary, in both directions, with no daemon in the way.
 
-# covers: forze_sandbox_container.adapters.sandbox (workspace staging, declared-artifact
+# covers: forze_sandbox.container.adapters.sandbox (workspace staging, declared-artifact
 #         filtering, ceiling narrowing, reading how a run ended, bounded capture)
 
 The tar is the boundary. Everything a request stages goes in through it and everything the
@@ -27,8 +27,8 @@ from forze.application.contracts.sandbox import (
 from forze.application.contracts.storage import StorageSpec
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockState
-from forze_sandbox_container import ContainerSandbox, ContainerSandboxConfig
-from forze_sandbox_container.adapters.sandbox import (
+from forze_sandbox.container import ContainerSandbox, ContainerSandboxConfig
+from forze_sandbox.container.adapters.sandbox import (
     _build_archive,  # pyright: ignore[reportPrivateUsage]
     _Capture,  # pyright: ignore[reportPrivateUsage]
     _declared_from_archive,  # pyright: ignore[reportPrivateUsage]
