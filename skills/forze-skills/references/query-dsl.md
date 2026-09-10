@@ -58,9 +58,14 @@ exists" from "rows exist but you may not see them" without a second, ungated que
 It is a result, not an error. Adapters that cannot tell the causes apart leave it `None`,
 and a page carrying hits never carries a reason (hits beside a reason, or an unknown
 reason, are refused). On governed list operations, `AuthzDocumentScopeWrap(explain_empty=True)`
-sets it for you: no policy restriction makes an empty page `no_match`, otherwise one
-single-row probe of the caller's own filters decides `not_permitted` versus `no_match`.
-The probe's rows never reach the caller, and it is off by default.
+can set it for you: no policy restriction makes an empty page `no_match`, otherwise one
+probe re-runs the read with the policy filters dropped and only the caller's own kept,
+clamped to a single first-page row — rows there mean `not_permitted`, none mean `no_match`.
+
+The probe's rows never reach the caller, and it is off by default. Because it re-invokes
+the handler, it runs only under a read-only `QUERY` invocation; on any other operation,
+where the args carry no `size` field to clamp, or when the probe itself raises, the page
+comes back with no reason rather than a guessed one.
 
 ## Anti-patterns
 
