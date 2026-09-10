@@ -54,6 +54,9 @@ CLEARTEXT_CODE: Final = "sandbox_container_endpoint_cleartext"
 _LOOPBACK: Final = frozenset({"localhost", "127.0.0.1", "::1", ""})
 """Hosts that are this machine, where cleartext never leaves it."""
 
+_UPLOAD_CHUNK: Final = 256 * 1024
+"""Bytes per read while streaming the staging archive to the daemon."""
+
 _DOWNLOAD_CHUNK: Final = 256 * 1024
 """Bytes per read while draining an archive to disk."""
 
@@ -253,11 +256,19 @@ class ContainerEngine:
 
         return str(response.json()["Id"])
 
-    async def put_archive(self, container: str, path: str, data: bytes) -> None:
-        """Extract *data*, a tar stream, into the container's filesystem at *path*."""
+    async def put_archive(self, container: str, path: str, tar: IO[bytes]) -> None:
+        """Extract *tar*, a positioned tar stream, into the container's filesystem at *path*.
+
+        Streamed rather than handed over whole: the archive carries every staged input, and
+        reading it back to send it would put in the worker exactly what spooling it to disk
+        kept out.
+        """
 
         response = await self._call(
-            "PUT", f"/containers/{container}/archive", params={"path": path}, content=data
+            "PUT",
+            f"/containers/{container}/archive",
+            params={"path": path},
+            content=_blocks(tar),
         )
         self._expect(response, "stage the workspace", (200,))
 
@@ -461,6 +472,13 @@ class ContainerEngine:
 
 
 # ----------------------- #
+
+
+async def _blocks(tar: IO[bytes]) -> AsyncIterator[bytes]:
+    """The archive, a block at a time, for a body that is never assembled in memory."""
+
+    while block := tar.read(_UPLOAD_CHUNK):
+        yield block
 
 
 def _object(value: object) -> Mapping[str, object] | None:

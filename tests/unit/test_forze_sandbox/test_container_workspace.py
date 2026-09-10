@@ -19,7 +19,6 @@ from typing import Any
 import pytest
 
 from forze.application.contracts.sandbox import (
-    ProgramPayload,
     ResourceRequest,
     SandboxRequest,
     SandboxSpec,
@@ -29,9 +28,9 @@ from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockState
 from forze_sandbox.container import ContainerSandbox, ContainerSandboxConfig
 from forze_sandbox.container.adapters.sandbox import (
-    _build_archive,  # pyright: ignore[reportPrivateUsage]
     _Capture,  # pyright: ignore[reportPrivateUsage]
     _declared_from_archive,  # pyright: ignore[reportPrivateUsage]
+    _Staging,  # pyright: ignore[reportPrivateUsage]
     _workspace_relative,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -64,8 +63,23 @@ def _sandbox(**overrides: Any) -> ContainerSandbox:
     )
 
 
-def _members(archive: bytes) -> dict[str, tarfile.TarInfo]:
-    with tarfile.open(fileobj=io.BytesIO(archive)) as opened:
+def _staged(
+    workspace: str, identity: tuple[int, int], files: dict[str, bytes] | None = None
+) -> dict[str, tarfile.TarInfo]:
+    """The members `_Staging` writes for a workspace and the files staged into it."""
+
+    buffer = io.BytesIO()
+
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        staging = _Staging(archive, workspace, identity)
+        staging.open_workspace()
+
+        for name, data in (files or {}).items():
+            staging.add(name, data)
+
+    buffer.seek(0)
+
+    with tarfile.open(fileobj=buffer) as opened:
         return {member.name: member for member in opened.getmembers()}
 
 
@@ -96,15 +110,16 @@ class TestStagingIntoTheWorkspace:
     def test_the_workspace_itself_is_staged_owned_by_the_run(self) -> None:
         # The daemon creates a missing directory root-owned, and the child is not root, so
         # without this member every run that writes anything fails on permissions.
-        members = _members(_build_archive("/workspace", None, {}, (65534, 65533)))
+        members = _staged("/workspace", (65534, 65533))
 
         assert members["workspace"].isdir()
         assert (members["workspace"].uid, members["workspace"].gid) == (65534, 65533)
 
     def test_the_program_and_its_inputs_land_under_the_workspace(self) -> None:
-        program = ProgramPayload(interpreter=("python",), source="print(1)\n")
-        members = _members(
-            _build_archive("/workspace", program, {"data.csv": b"a,b\n"}, (1000, 1000))
+        members = _staged(
+            "/workspace",
+            (1000, 1000),
+            {"program": b"print(1)\n", "data.csv": b"a,b\n"},
         )
 
         assert members["workspace/program"].size == len("print(1)\n")
@@ -114,21 +129,21 @@ class TestStagingIntoTheWorkspace:
     def test_a_nested_input_gets_the_directories_it_needs(self) -> None:
         # A tar member whose parent is absent extracts to nothing useful, and the child then
         # fails to open an input the request staged.
-        members = _members(_build_archive("/workspace", None, {"in/deep/x.bin": b"z"}, (0, 0)))
+        members = _staged("/workspace", (0, 0), {"in/deep/x.bin": b"z"})
 
         assert members["workspace/in"].isdir()
         assert members["workspace/in/deep"].isdir()
         assert members["workspace/in/deep/x.bin"].size == 1
 
     def test_a_deep_workspace_path_is_created_a_level_at_a_time(self) -> None:
-        members = _members(_build_archive("/srv/run/box", None, {}, (1, 1)))
+        members = _staged("/srv/run/box", (1, 1))
 
         assert members["srv"].isdir()
         assert members["srv/run"].isdir()
         assert members["srv/run/box"].isdir()
 
     def test_staged_files_are_not_executable(self) -> None:
-        members = _members(_build_archive("/workspace", None, {"x": b"1"}, (1, 1)))
+        members = _staged("/workspace", (1, 1), {"x": b"1"})
 
         assert members["workspace/x"].mode & 0o111 == 0
 

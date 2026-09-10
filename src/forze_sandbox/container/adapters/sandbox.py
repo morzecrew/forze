@@ -30,7 +30,6 @@ import attrs
 from forze.application.contracts.sandbox import (
     CapturedStream,
     Outcome,
-    ProgramPayload,
     ResourceUsage,
     SandboxCapabilities,
     SandboxEvent,
@@ -214,7 +213,11 @@ class ContainerSandbox:
                     self._creation(request, env),
                     name=f"{CONTAINER_NAME_PREFIX}{uuid4().hex}",
                 )
-                await engine.put_archive(container, "/", payload)
+                try:
+                    await engine.put_archive(container, "/", payload)
+
+                finally:
+                    payload.close()
                 if request.stdin is not None:
                     # Before the start, as the `docker` client does it: the bytes are in the
                     # daemon's hands before the child can read, so there is no window in
@@ -523,24 +526,47 @@ class ContainerSandbox:
 
     # ....................... #
 
-    async def _staged_archive(self, request: SandboxRequest) -> bytes:
-        """Everything that crosses into the workspace, as one tar."""
+    async def _staged_archive(self, request: SandboxRequest) -> IO[bytes]:
+        """Everything that crosses into the workspace, as one tar on a spooled file.
 
-        inputs: dict[str, bytes] = {}
+        Written as the inputs arrive rather than gathered and then written: an input is in
+        the worker for as long as it takes to copy it into the archive, and the archive
+        spills to disk past :data:`_SPOOL_BYTES` instead of growing beside them. Staging a
+        few large objects otherwise held every one of them plus a second copy in the tar,
+        which is the worker's memory spent on files that were only passing through.
+        """
 
-        if request.input_files:
-            storage = self.ctx.storage.query(self._storage())
+        # Outlives this function on purpose: the caller streams it to the daemon and closes
+        # it, which is what keeps the archive out of the worker's memory.
+        spool: IO[bytes] = tempfile.SpooledTemporaryFile(max_size=_SPOOL_BYTES)  # noqa: SIM115
 
-            for name, key in request.input_files.items():
-                inputs[name] = (await storage.download(key)).data
+        try:
+            with tarfile.open(fileobj=spool, mode="w") as archive:
+                staging = _Staging(archive, self.config.workspace, self.config.identity)
+                await run_cpu(staging.open_workspace)
 
-        return await run_cpu(
-            _build_archive,
-            self.config.workspace,
-            request.program,
-            inputs,
-            self.config.identity,
-        )
+                if request.program is not None:
+                    await run_cpu(
+                        staging.add,
+                        request.program.filename,
+                        request.program.source.encode("utf-8"),
+                    )
+
+                if request.input_files:
+                    storage = self.ctx.storage.query(self._storage())
+
+                    for name, key in request.input_files.items():
+                        staged = await storage.download(key)
+                        await run_cpu(staging.add, name, staged.data)
+
+        except BaseException:
+            spool.close()
+
+            raise
+
+        spool.seek(0)
+
+        return spool
 
     async def _collect(
         self, engine: ContainerEngine, container: str, request: SandboxRequest
@@ -726,60 +752,53 @@ def _by_name(limit: dict[str, int | str]) -> str:
     return str(limit["Name"])
 
 
-def _build_archive(
-    workspace: str,
-    program: ProgramPayload | None,
-    inputs: dict[str, bytes],
-    identity: tuple[int, int],
-) -> bytes:
-    """One tar carrying the workspace and everything staged into it.
+class _Staging:
+    """Writes the workspace and everything staged into it, one member at a time.
 
-    Extracted at the container's root, so the workspace directory itself is a member — and
-    owned by the run's identity, because the daemon creates it root-owned otherwise and the
-    child cannot write the outputs it was asked to produce.
+    A member at a time rather than an archive at a time, because the alternative holds every
+    staged input in the worker at once. Extracted at the container's root, so the workspace
+    directory itself is a member — and owned by the run's identity, because the daemon
+    creates it root-owned otherwise and the child cannot write the outputs it was asked to
+    produce.
     """
 
-    uid, gid = identity
-    root = PurePosixPath(workspace)
-    buffer = io.BytesIO()
-    written: set[str] = set()
+    def __init__(self, archive: tarfile.TarFile, workspace: str, identity: tuple[int, int]) -> None:
+        self._archive = archive
+        self._root = PurePosixPath(workspace)
+        self._uid, self._gid = identity
+        self._written: set[str] = set()
 
-    with tarfile.open(fileobj=buffer, mode="w") as archive:
+    def open_workspace(self) -> None:
+        """Write the workspace directory and every parent it needs."""
 
-        def directory(path: PurePosixPath) -> None:
-            name = str(path).lstrip("/")
+        self._directory(self._root)
 
-            if not name or name in written:
-                return
+    def add(self, relative: str, data: bytes) -> None:
+        """Write one staged file under its workspace-relative name."""
 
-            if path.parent != path:
-                directory(path.parent)
+        target = self._root / relative
+        self._directory(target.parent)
+        entry = tarfile.TarInfo(str(target).lstrip("/"))
+        entry.size = len(data)
+        entry.mode = _STAGE_MODE & ~0o111
+        entry.uid, entry.gid = self._uid, self._gid
+        self._archive.addfile(entry, io.BytesIO(data))
 
-            written.add(name)
-            entry = tarfile.TarInfo(name)
-            entry.type = tarfile.DIRTYPE
-            entry.mode = _STAGE_MODE
-            entry.uid, entry.gid = uid, gid
-            archive.addfile(entry)
+    def _directory(self, path: PurePosixPath) -> None:
+        name = str(path).lstrip("/")
 
-        def file(relative: str, data: bytes) -> None:
-            target = root / relative
-            directory(target.parent)
-            entry = tarfile.TarInfo(str(target).lstrip("/"))
-            entry.size = len(data)
-            entry.mode = _STAGE_MODE & ~0o111
-            entry.uid, entry.gid = uid, gid
-            archive.addfile(entry, io.BytesIO(data))
+        if not name or name in self._written:
+            return
 
-        directory(root)
+        if path.parent != path:
+            self._directory(path.parent)
 
-        if program is not None:
-            file(program.filename, program.source.encode("utf-8"))
-
-        for name, data in inputs.items():
-            file(name, data)
-
-    return buffer.getvalue()
+        self._written.add(name)
+        entry = tarfile.TarInfo(name)
+        entry.type = tarfile.DIRTYPE
+        entry.mode = _STAGE_MODE
+        entry.uid, entry.gid = self._uid, self._gid
+        self._archive.addfile(entry)
 
 
 def _declared_from_archive(
