@@ -147,6 +147,10 @@ refuses the connection rather than falling through.
   falling back to the issuer's claim. `X-Tenant-Id` is not honored on an upgrade, whose
   headers are set by the client being authenticated.
 
+The route itself still needs its exact mounted path in both middlewares'
+`allowed_websocket_paths`, or the scope is refused before the resolver runs — see the
+wiring notes below.
+
 ## Wiring notes that bite
 
 - Raw WebSocket scopes are **refused** by `SecurityContextMiddleware` and
