@@ -23,7 +23,10 @@ async def test_create_user():
     assert user.id is not None
 ```
 
-Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there. (`command(...)` is the write side — `create` / `update`; `query(...)` is the read side — `get` / `find`.)
+Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state.
+
+One thing to know before you rely on that: the mock stores what was written and reads it back through the read model, so an aggregate whose read model requires a field **no write produces** cannot round-trip through it. That is the ordinary shape of a read model assembled by a SQL view. Declare those fields with [`derived_read_fields`](../data-events/reading-data.md#read-fields-storage-doesnt-hold) and the mock performs the join itself; without the declaration, the read fails validation rather than returning something incomplete.
+ Write a user in one test, query it in the same test, and the data is there. (`command(...)` is the write side — `create` / `update`; `query(...)` is the read side — `get` / `find`.)
 
 ## Transaction rollback in tests
 

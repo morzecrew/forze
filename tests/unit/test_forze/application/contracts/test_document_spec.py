@@ -7,7 +7,10 @@ import pytest
 import structlog
 from pydantic import BaseModel, Field, computed_field
 
-from forze.application.contracts.conformity import DerivedReadField
+from forze.application.contracts.conformity import (
+    DerivedReadField,
+    validate_derived_read_fields,
+)
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import (
     DocumentSpec,
@@ -683,4 +686,93 @@ def test_derived_field_is_not_sealable() -> None:
             read=_DerivedRead,
             derived_read_fields=_derived(),
             encryption=FieldEncryption(encrypted=frozenset({"supplier"})),
+        )
+
+
+def test_derived_nullable_key_requires_optional() -> None:
+    """A key that may be unset cannot yield a required value."""
+
+    class _NullableKeyRead(ReadDocument):
+        supplier_id: UUID | None = None
+        supplier: str
+
+    with pytest.raises(CoreException, match="which is nullable"):
+        DocumentSpec(
+            name="orders",
+            read=_NullableKeyRead,
+            derived_read_fields={
+                "supplier": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+    # Declared optional, the same shape is accepted.
+    class _OptionalRead(ReadDocument):
+        supplier_id: UUID | None = None
+        supplier: str | None = None
+
+    spec = DocumentSpec(
+        name="orders",
+        read=_OptionalRead,
+        derived_read_fields={
+            "supplier": DerivedReadField(
+                source="suppliers", via="supplier_id", field="name", optional=True
+            )
+        },
+    )
+    assert sorted(spec.derived_read_fields) == ["supplier"]
+
+
+def test_validate_derived_read_fields_accepts_nothing() -> None:
+    """The empty case is decided explicitly, matching the leniency sibling."""
+
+    assert (
+        validate_derived_read_fields(model_type=_Read, derived={}, spec_name="doc") is None
+    )
+
+
+def test_derived_none_annotated_key_requires_optional() -> None:
+    """A key that can only ever be None is nullable, however it is spelled."""
+
+    class _NoneKeyRead(ReadDocument):
+        supplier_id: None = None
+        supplier: str
+
+    with pytest.raises(CoreException, match="which is nullable"):
+        DocumentSpec(
+            name="orders",
+            read=_NoneKeyRead,
+            derived_read_fields={
+                "supplier": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+
+def test_derived_field_may_not_be_settable_on_a_command() -> None:
+    """A value the backend produces is not one a caller sets — as with `materialized`."""
+
+    class _JoinRead(ReadDocument):
+        supplier_id: UUID
+        supplier: str
+
+    class _JoinDomain(Document):
+        supplier_id: UUID
+
+    class _JoinCreate(CreateDocumentCmd):
+        supplier_id: UUID
+        supplier: str  # the caller must not be able to set a joined value
+
+    with pytest.raises(CoreException, match="cannot be settable"):
+        DocumentSpec(
+            name="orders",
+            read=_JoinRead,
+            write=DocumentWriteTypes(domain=_JoinDomain, create_cmd=_JoinCreate),
+            derived_read_fields={
+                "supplier": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
         )

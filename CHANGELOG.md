@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A read model may declare the fields its backend derives.** `DocumentSpec.derived_read_fields` names a source spec, the key field and the field to read, so an aggregate whose read model is a SQL view is reachable from `forze_mock`, which performs the join itself. Leniency covers only defaulted fields.
 
 ### Changed
 

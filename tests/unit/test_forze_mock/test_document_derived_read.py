@@ -9,6 +9,8 @@ through the mock. Every case here fails without
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,8 +20,15 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mock import MockDepsModule
 from forze_mock.adapters import MockDocumentAdapter, MockState
+from forze_mock.execution.configs import MockRouteConfig
+from forze_mock.execution.factories import ConfigurableMockDocument
 from forze_mock.adapters._derived import ResolvedDerivedRead
+from forze_mock.adapters._mvcc import (  # pyright: ignore[reportPrivateUsage]
+    MvccTx,
+    _mvcc_tx,
+)
 
 # ----------------------- #
 # The source aggregate — an ordinary one
@@ -284,3 +293,116 @@ class TestTenancy:
 
         with pytest.raises(CoreException):
             await orders.get(created.id)
+
+
+class TestTransactionView:
+    """A derived read must observe the same snapshot the reading document does.
+
+    Joining the live store beneath the overlay would let a snapshot transaction see a
+    sibling write it is not supposed to — the opposite of what the overlay is for. The
+    routing is a one-line choice in :meth:`_hydrate`, so it needs a test that fails when
+    the line reads the raw store instead.
+    """
+
+    async def test_a_snapshot_transaction_sees_the_source_as_of_begin(self) -> None:
+        state = MockState()
+        suppliers = _suppliers(state)
+        supplier = await suppliers.create(SupplierCreate(name="Before"))
+        orders = _orders(state)
+        created = await orders.create(OrderCreate(supplier_id=supplier.id))
+
+        tx = MvccTx(begin_version=state.mvcc_version, serializable=False)
+        token = _mvcc_tx.set(tx)
+
+        try:
+            # Freeze the source's as-of-begin view, then commit a rename outside the
+            # transaction, straight into the live store.
+            # `view` falls back to a frozen as-of-begin snapshot per namespace, seeded
+            # here for both the reading document and its source.
+            for ns in ("orders", "suppliers"):
+                tx.snapshots[ns] = {
+                    key: dict(row) for key, row in state.documents[ns].items()
+                }
+            live = state.documents["suppliers"]
+            live[supplier.id] = {**live[supplier.id], "name": "After"}
+            state.mvcc_version += 1
+
+            assert (await orders.get(created.id)).supplier == "Before"
+        finally:
+            _mvcc_tx.reset(token)
+
+        # Outside the transaction the same read sees the committed value.
+        assert (await orders.get(created.id)).supplier == "After"
+
+
+class TestWiringRefusal:
+    """The one pairing that cannot be resolved is refused at wiring, not at read time.
+
+    A tenant-aware source read by a non-tenant-aware reader has no bound tenant to
+    partition the source's namespace with, so the join would reach the unpartitioned
+    namespace: nothing, or another tenant's row. Both are wrong, and the second is a
+    cross-tenant read that presents as missing data — which is why this is a refusal
+    rather than a resolution.
+    """
+
+    def _factory(self, *, source_tenant_aware: bool, reader_tenant_aware: bool):
+        module = MockDepsModule(
+            state=MockState(),
+            routes={
+                "orders": MockRouteConfig(tenant_aware=reader_tenant_aware),
+                "suppliers": MockRouteConfig(tenant_aware=source_tenant_aware),
+            },
+        )
+        return ConfigurableMockDocument(module=module)
+
+    def _ctx(self, tenant: TenantIdentity | None):
+        inv = SimpleNamespace(get_tenant=lambda: tenant)
+        return cast("Any", SimpleNamespace(inv_ctx=inv))
+
+    def test_tenant_aware_source_under_untenanted_reader_is_refused(self) -> None:
+        factory = self._factory(source_tenant_aware=True, reader_tenant_aware=False)
+
+        with pytest.raises(CoreException, match="derived_tenant_mismatch"):
+            factory._derived_for(self._ctx(None), ORDERS)  # pyright: ignore[reportPrivateUsage]
+
+    def test_both_tenant_aware_resolves(self) -> None:
+        factory = self._factory(source_tenant_aware=True, reader_tenant_aware=True)
+        tenant = TenantIdentity(tenant_id=uuid4())
+
+        resolved = factory._derived_for(self._ctx(tenant), ORDERS)  # pyright: ignore[reportPrivateUsage]
+
+        assert resolved["supplier"].tenant_scoped is True
+        assert resolved["supplier"].via == "supplier_id"
+
+    def test_neither_tenant_aware_resolves_unscoped(self) -> None:
+        factory = self._factory(source_tenant_aware=False, reader_tenant_aware=False)
+
+        resolved = factory._derived_for(self._ctx(None), ORDERS)  # pyright: ignore[reportPrivateUsage]
+
+        assert resolved["supplier"].tenant_scoped is False
+        assert resolved["supplier"].namespace == "suppliers"
+
+    def test_a_tenanted_reader_over_an_unscoped_source_is_allowed(self) -> None:
+        """The safe direction: a shared lookup table read by a per-tenant aggregate."""
+
+        factory = self._factory(source_tenant_aware=False, reader_tenant_aware=True)
+        tenant = TenantIdentity(tenant_id=uuid4())
+
+        resolved = factory._derived_for(self._ctx(tenant), ORDERS)  # pyright: ignore[reportPrivateUsage]
+
+        assert resolved["supplier"].tenant_scoped is False
+
+
+class TestMalformedData:
+    async def test_a_join_key_that_is_not_a_primary_key_is_refused(self) -> None:
+        """Probed rather than assumed reachable: a stored row can hold anything."""
+
+        state = MockState()
+        orders = _orders(state)
+        pk = uuid4()
+        row = _row(pk, supplier_id=None)
+        row["supplier_id"] = "not-a-uuid"
+        state.documents["orders"] = {pk: row}
+
+        with pytest.raises(CoreException, match="is not a primary key"):
+            await orders.get(pk)

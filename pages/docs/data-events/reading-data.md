@@ -70,6 +70,42 @@ never carries one. On governed list operations, `AuthzDocumentScopeWrap`'s
 opt-in `explain_empty` sets the reason for you (see the
 [authz recipe](../recipes/authn-authz-tenancy-fastapi.md)).
 
+## Read fields storage doesn't hold
+
+Three knobs decide what a read model may carry beyond its own stored columns, and
+picking the wrong one is the usual mistake — they answer different questions:
+
+| Knob | The field is… | Where its value comes from |
+|---|---|---|
+| `lenient_read_fields` | absent from storage | the model's own default |
+| `materialized` | stored here, derived from this row | a `@computed_field`, persisted |
+| `derived_read_fields` | produced by another relation | a source row, joined |
+
+Leniency needs a default, so it refuses a required field — which a joined display
+name usually is. That is what `derived_read_fields` is for:
+
+```python
+ORDERS = DocumentSpec(
+    name="orders",
+    read=OrderRead,  # carries `supplier: str`, which no write produces
+    derived_read_fields={
+        "supplier": DerivedReadField(
+            source="suppliers", via="supplier_id", field="name"
+        ),
+    },
+)
+```
+
+On a real backend the declaration changes nothing at runtime: the view already
+joins the column, so it is read from storage as before. It matters to an adapter
+with no view — `forze_mock` performs the join itself, which is what makes a
+view-backed aggregate testable in memory at all.
+
+The join is one hop by primary key. A derived field is not filterable, sortable or
+sealable, because this aggregate has no column of its own for it; declare
+`optional=True` when the join key is nullable, and a key that resolves to no row
+is refused rather than quietly `None`.
+
 ## Searching
 
 Full-text and vector search are a parallel surface, through the **search query

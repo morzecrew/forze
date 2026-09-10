@@ -351,6 +351,27 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                     f"not derived from another relation (spec {self.name!r}).",
                 )
 
+            settable = stored_field_names_for(
+                self.write["create_cmd"],
+                include_computed=False,
+            )
+
+            if "update_cmd" in self.write:
+                settable |= stored_field_names_for(
+                    self.write["update_cmd"],
+                    include_computed=False,
+                )
+
+            # The same rule `materialized` carries, for the same reason: a value the
+            # backend produces is not one a caller sets. Without this, the command
+            # would carry a field no write path can store.
+            if collision := names & settable:
+                raise exc.configuration(
+                    f"Field(s) {sorted(collision)} are derived and cannot be settable "
+                    f"on a create/update command (spec {self.name!r}); the value comes "
+                    f"from another relation, not from the caller.",
+                )
+
         validate_derived_read_fields(
             model_type=self.read,
             derived=self.derived_read_fields,

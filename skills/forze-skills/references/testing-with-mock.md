@@ -44,6 +44,34 @@ mock_app = MockApp(build_app=build_app, deps=(), seed=seed_plan)
 
 `seed` is applied once the runtime scope opens and re-applied by `POST /_mock/reset`, which is what lets a consumer's suite start each run from the same fixtures. Declare it: an unseeded plane still answers every read — successfully, with nothing in it — so a caller can pass against a backend that holds no data at all.
 
+## The one shape the mock cannot hold
+
+The mock stores what was written and reads it back through the read model, so an
+aggregate whose read model **requires a field no write produces** cannot round-trip
+through it — the ordinary shape of a read model assembled by a SQL view.
+`lenient_read_fields` does not help: it rehydrates from the model default and so refuses a
+required field.
+
+Declare those fields instead, and the mock performs the join:
+
+```python
+from forze.application.contracts.conformity import DerivedReadField
+from forze.application.contracts.document import DocumentSpec
+
+ORDERS = DocumentSpec(
+    name="orders",
+    read=OrderRead,  # carries `supplier: str`; no write produces it
+    derived_read_fields={
+        "supplier": DerivedReadField(source="suppliers", via="supplier_id", field="name"),
+    },
+)
+```
+
+One hop, by primary key. A derived field is not filterable, sortable or sealable — this
+aggregate holds no column for it — and a key resolving to no row is refused rather than
+silently `None`, because in a store that holds every row that is a seeding bug. Real
+backends read the view's column as before.
+
 ## Surviving a restart
 
 An MVP running on the mock can keep its data across restarts without a container.

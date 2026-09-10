@@ -62,7 +62,8 @@ def hydrate_derived(
 
     Idempotent: a document already carrying resolved values is hydrated to the same
     result, which is what lets the single hydration point sit on a path that is
-    sometimes reached twice.
+    sometimes reached twice. An empty *derived* returns a copy — callers guard on the
+    spec having any, so this is not the path a read without derived fields takes.
 
     *store_for* takes a namespace and returns the rows in it — the adapter's own
     accessor, so a derived read observes the same transaction snapshot the reading
@@ -72,9 +73,6 @@ def hydrate_derived(
         declared ``optional``. In a store that holds every row, a dangling key is a
         seeding bug, and silence would surface it as a confusing assertion later.
     """
-
-    if not derived:
-        return doc
 
     out = dict(doc)
 

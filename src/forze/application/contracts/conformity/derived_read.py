@@ -11,8 +11,10 @@ field. Derivation says *comes from that relation*, so it needs no default and a
 required field is the ordinary case — a joined display name is rarely optional.
 """
 
+import types
 from collections.abc import Mapping
 from enum import StrEnum
+from typing import Union, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -89,6 +91,7 @@ def validate_derived_read_fields(
         )
 
     read_fields = read_fields_for_model(model_type)
+    fields = model_type.model_fields
 
     if missing := names - read_fields:
         raise exc.configuration(
@@ -118,6 +121,15 @@ def validate_derived_read_fields(
                 f"(spec {spec_name!r}).",
             )
 
+        if not spec.optional and _admits_none(fields[spec.via].annotation):
+            # A nullable key cannot produce a non-optional value: the first row with it
+            # unset refuses at read time, which is a worse place to learn this than here.
+            raise exc.configuration(
+                f"Derived read field {name!r} joins on {spec.via!r}, which is nullable, "
+                f"but is not declared optional (spec {spec_name!r}); a key that may be "
+                f"unset cannot yield a required value.",
+            )
+
         if spec.via in names:
             # A key that is itself derived cannot be read before the join it depends on,
             # and a declaration order that decides it would be a resolution order nobody
@@ -126,3 +138,24 @@ def validate_derived_read_fields(
                 f"Derived read field {name!r} joins on {spec.via!r}, which is itself "
                 f"derived (spec {spec_name!r}); the join key must be a stored field.",
             )
+
+
+# ....................... #
+
+
+def _admits_none(annotation: object) -> bool:
+    """Whether *annotation* accepts ``None``.
+
+    Deliberately not ``FieldInfo.is_required()``: a field with a default is not the
+    same as a field that may hold ``None``. ``note: str = ""`` is a perfectly good join
+    key, and treating it as nullable refused a legitimate shape — caught by the
+    itself-derived guardrail's own test, which uses exactly that field.
+    """
+
+    if annotation is type(None):
+        return True
+
+    if get_origin(annotation) in (Union, types.UnionType):
+        return type(None) in get_args(annotation)
+
+    return False
