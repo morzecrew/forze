@@ -50,7 +50,9 @@ class _MemoryCounter(CounterPort):
         return value
 
 
-def _guard(threshold: int = 3, window: timedelta = WINDOW) -> tuple[LoginLockoutGuard, _MemoryCounter]:
+def _guard(
+    threshold: int = 3, window: timedelta = WINDOW
+) -> tuple[LoginLockoutGuard, _MemoryCounter]:
     counter = _MemoryCounter()
     guard = LoginLockoutGuard(
         counter=counter,

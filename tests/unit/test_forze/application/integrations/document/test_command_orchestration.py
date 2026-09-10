@@ -130,9 +130,7 @@ class FakeWriteGateway:
         self.calls.append("ensure")
         return self._ensure_result
 
-    async def ensure_many(
-        self, ids: Any, payloads: Any, *, batch_size: int
-    ) -> Sequence[Any]:
+    async def ensure_many(self, ids: Any, payloads: Any, *, batch_size: int) -> Sequence[Any]:
         self.calls.append("ensure_many")
         return self._ensure_many_result
 
@@ -1134,9 +1132,7 @@ async def test_find_stream_yields_chunks() -> None:
     gw = FakeFindGateway(cursor_results=[[_Row(id="a"), _Row(id="b")]])
     harness = QueryHarness(gw)
 
-    chunks = await _drain(
-        harness.find_stream({"k": "v"}, sorts={"id": "asc"}, chunk_size=2)
-    )
+    chunks = await _drain(harness.find_stream({"k": "v"}, sorts={"id": "asc"}, chunk_size=2))
 
     assert [r.id for r in chunks[0]] == ["a", "b"]
 

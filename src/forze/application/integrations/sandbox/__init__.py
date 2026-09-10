@@ -20,6 +20,7 @@ from .process import (
 from .shared import (
     budget_seconds,
     mask_secrets,
+    mask_text,
     output_cap,
     refuse_unwired_storage,
     require_storage,
@@ -38,6 +39,7 @@ __all__ = [
     "SubprocessSandboxDepsModule",
     "budget_seconds",
     "mask_secrets",
+    "mask_text",
     "output_cap",
     "refuse_unwired_storage",
     "require_storage",

@@ -46,6 +46,7 @@ from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.integrations.sandbox import (
     budget_seconds,
     mask_secrets,
+    mask_text,
     output_cap,
     refuse_unwired_storage,
     require_storage,
@@ -243,7 +244,7 @@ class ContainerSandbox:
                         getter = None
 
                         if stream:
-                            yield SandboxEvent(kind=kind, text=text)
+                            yield SandboxEvent(kind=kind, text=mask_text(text, secrets))
 
                         continue
 
@@ -273,7 +274,7 @@ class ContainerSandbox:
                 kind, text = chunks.get_nowait()
 
                 if stream:
-                    yield SandboxEvent(kind=kind, text=text)
+                    yield SandboxEvent(kind=kind, text=mask_text(text, secrets))
 
             if killed is not None:
                 await self._settle(engine, container)

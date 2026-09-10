@@ -201,8 +201,9 @@ async with aclosing(ctx.sandbox.run(RECIPES).run_stream(request)) as events:
             outcome = event.result
 ```
 
-The streamed chunks carry everything the child wrote; the result's captured
-streams are capped as they are for `run`. The cap exists because the result is
+The streamed chunks carry everything the child wrote, with resolved secrets
+masked out of each one as they are out of the final capture; the result's
+captured streams are capped as they are for `run`. The cap exists because the result is
 held in memory and journaled, and a chunk handed straight to a caller is neither.
 
 ### The container tier

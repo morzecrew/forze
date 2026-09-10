@@ -139,9 +139,7 @@ class TestBackgroundRefresh:
             await gate.wait()
             return _FRESH
 
-        leader = asyncio.create_task(
-            coord._inflight.run(str(_PK), leader_load)
-        )
+        leader = asyncio.create_task(coord._inflight.run(str(_PK), leader_load))
         await asyncio.sleep(0)  # let the leader register in flight
         assert str(_PK) in coord._inflight
 

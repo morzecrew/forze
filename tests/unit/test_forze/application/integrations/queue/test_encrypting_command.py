@@ -48,9 +48,7 @@ class _SpyQueueCommand:
         message_headers: Sequence[Mapping[str, str]] | None = None,
         **kw: Any,
     ) -> list[str]:
-        self.many_calls.append(
-            {"payloads": list(payloads), "message_headers": message_headers}
-        )
+        self.many_calls.append({"payloads": list(payloads), "message_headers": message_headers})
         return [f"id-{i}" for i in range(len(payloads))]
 
 
@@ -64,9 +62,7 @@ def _keyring() -> Keyring:
 
 def _wrap(inner: _SpyQueueCommand):
     spec = QueueSpec(name="jobs", codec=PydanticModelCodec(_Job), encryption="end_to_end")  # type: ignore[arg-type]
-    return encrypting_queue_command(
-        inner, spec, cipher=_keyring(), tenant_provider=lambda: None
-    )
+    return encrypting_queue_command(inner, spec, cipher=_keyring(), tenant_provider=lambda: None)
 
 
 # ....................... #
@@ -106,9 +102,7 @@ async def test_mismatched_message_headers_raise_clean_precondition() -> None:
     spy = _SpyQueueCommand()
 
     with pytest.raises(CoreException) as ei:
-        await _wrap(spy).enqueue_many(
-            "jobs", [_Job(n=1), _Job(n=2)], message_headers=[{"h": "1"}]
-        )
+        await _wrap(spy).enqueue_many("jobs", [_Job(n=1), _Job(n=2)], message_headers=[{"h": "1"}])
 
     assert ei.value.kind is ExceptionKind.PRECONDITION
     assert spy.many_calls == []  # nothing published on a bad call

@@ -501,6 +501,30 @@ class TestCaptureAndSecrets:
         assert result.stdout.text.splitlines() == [SECRET_PLACEHOLDER, str(len("s3cr3t-value"))]
         assert all("s3cr3t-value" not in part for part in request.argv)
 
+    async def test_a_streamed_chunk_is_masked_before_the_caller_sees_it(self) -> None:
+        # The final capture was masked and the chunks were not, so a caller who logged what
+        # it streamed wrote the secret down — the run's own output is the leak channel the
+        # masking exists to close, whichever way the caller reads it.
+        module = MockDepsModule(state=MockState())
+        module.state.identity["secrets"]["sandbox/token"] = "s3cr3t-value"
+        seeded = context_from_modules(module)
+        streamed: list[str] = []
+
+        async with aclosing(
+            container_sandbox(seeded).run_stream(
+                _program(
+                    "import os; print(os.environ['TOKEN'], flush=True)",
+                    env={"TOKEN": SecretRef(path="sandbox/token")},
+                )
+            )
+        ) as events:
+            async for event in events:
+                if event.kind == "stdout":
+                    streamed.append(event.text)
+
+        assert "s3cr3t-value" not in "".join(streamed)
+        assert SECRET_PLACEHOLDER in "".join(streamed)
+
     async def test_a_plain_environment_value_reaches_the_child(self, ctx: ExecutionContext) -> None:
         result = await container_sandbox(ctx).run(
             _program("import os; print(os.environ['MODE'])", env={"MODE": "batch"})

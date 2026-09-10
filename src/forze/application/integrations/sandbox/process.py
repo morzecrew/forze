@@ -51,6 +51,7 @@ from forze.base.primitives import monotonic, run_cpu, utcnow
 from .shared import (
     budget_seconds,
     mask_secrets,
+    mask_text,
     output_cap,
     refuse_unwired_storage,
     require_storage,
@@ -669,7 +670,7 @@ class SubprocessSandbox:
                         kind, text = getting.result()
 
                         if stream:
-                            yield SandboxEvent(kind=kind, text=text)
+                            yield SandboxEvent(kind=kind, text=mask_text(text, secrets))
 
                         continue
 

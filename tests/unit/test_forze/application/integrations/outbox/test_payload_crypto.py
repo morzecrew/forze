@@ -39,16 +39,12 @@ async def test_encrypt_then_decrypt_round_trip() -> None:
     event_id = uuid4()
     payload = {"n": 7, "msg": "hello"}
 
-    enc = await encrypt_outbox_payload(
-        ring, payload, tenant_id=None, event_id=event_id
-    )
+    enc = await encrypt_outbox_payload(ring, payload, tenant_id=None, event_id=event_id)
 
     assert is_encrypted_payload(enc)
     assert "n" not in enc  # ciphertext only
 
-    back = await decrypt_outbox_payload(
-        ring, enc, tenant_id=None, event_id=event_id
-    )
+    back = await decrypt_outbox_payload(ring, enc, tenant_id=None, event_id=event_id)
     assert back == payload
 
 
@@ -58,22 +54,16 @@ async def test_decrypt_passes_legacy_plaintext_through() -> None:
 
     assert not is_encrypted_payload(plain)
 
-    out = await decrypt_outbox_payload(
-        ring, plain, tenant_id=None, event_id=uuid4()
-    )
+    out = await decrypt_outbox_payload(ring, plain, tenant_id=None, event_id=uuid4())
     assert out == plain
 
 
 async def test_decrypt_encrypted_without_keyring_fails_loud() -> None:
     ring = _keyring()
-    enc = await encrypt_outbox_payload(
-        ring, {"n": 1}, tenant_id=None, event_id=uuid4()
-    )
+    enc = await encrypt_outbox_payload(ring, {"n": 1}, tenant_id=None, event_id=uuid4())
 
     with pytest.raises(CoreException) as ei:
-        await decrypt_outbox_payload(
-            None, enc, tenant_id=None, event_id=uuid4()
-        )
+        await decrypt_outbox_payload(None, enc, tenant_id=None, event_id=uuid4())
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
 
@@ -149,23 +139,17 @@ async def test_aad_binds_tenant_and_event() -> None:
 
     ring = _keyring()
     tenant_id, event_id = _uuid4(), uuid4()
-    enc = await encrypt_outbox_payload(
-        ring, {"n": 1}, tenant_id=tenant_id, event_id=event_id
-    )
+    enc = await encrypt_outbox_payload(ring, {"n": 1}, tenant_id=tenant_id, event_id=event_id)
 
     # Same (tenant, event) → succeeds.
-    assert await decrypt_outbox_payload(
-        ring, enc, tenant_id=tenant_id, event_id=event_id
-    ) == {"n": 1}
+    assert await decrypt_outbox_payload(ring, enc, tenant_id=tenant_id, event_id=event_id) == {
+        "n": 1
+    }
 
     # Wrong event id → fails.
     with pytest.raises(CoreException):
-        await decrypt_outbox_payload(
-            ring, enc, tenant_id=tenant_id, event_id=uuid4()
-        )
+        await decrypt_outbox_payload(ring, enc, tenant_id=tenant_id, event_id=uuid4())
 
     # Wrong tenant → fails.
     with pytest.raises(CoreException):
-        await decrypt_outbox_payload(
-            ring, enc, tenant_id=uuid4(), event_id=event_id
-        )
+        await decrypt_outbox_payload(ring, enc, tenant_id=uuid4(), event_id=event_id)

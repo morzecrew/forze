@@ -152,9 +152,7 @@ async def test_frozen_codec_is_decrypt_only() -> None:
     import pytest
 
     with pytest.raises(CoreException):
-        frozen.encode_persistence_mapping(
-            _Profile(id="9", name="z", email="z@x.com")
-        )
+        frozen.encode_persistence_mapping(_Profile(id="9", name="z", email="z@x.com"))
 
 
 def test_freeze_returns_none_without_snapshot_support() -> None:
@@ -165,6 +163,7 @@ def test_freeze_returns_none_without_snapshot_support() -> None:
         async def ensure_unwrapped(self, envelopes) -> None: ...
         def encrypt_sync(self, plaintext, *, tenant, aad=b"") -> bytes:
             return plaintext
+
         def decrypt_sync(self, blob, *, aad=b"") -> bytes:
             return blob
 

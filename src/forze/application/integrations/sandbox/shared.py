@@ -115,6 +115,25 @@ async def resolve_environment(
 # ....................... #
 
 
+def mask_text(text: str, secrets: tuple[str, ...]) -> str:
+    """Replace every resolved secret value in *text* with the scrubber's placeholder.
+
+    Used on a streamed chunk as well as on a finished capture, because a caller that logs
+    what it streams writes the value down just as surely as a journalled result does — and
+    the stream is how a long-running job is read.
+
+    A chunk is what one read produced, so a value straddling two of them is masked in the
+    capture (which is assembled whole) and not in the pair of chunks that carried it. The
+    boundary is the transport's, not the caller's, so this is best effort on the way past
+    and exact on the way out.
+    """
+
+    for secret in secrets:
+        text = text.replace(secret, SECRET_PLACEHOLDER)
+
+    return text
+
+
 def mask_secrets(
     captured: tuple[CapturedStream, CapturedStream], secrets: tuple[str, ...]
 ) -> tuple[CapturedStream, CapturedStream]:
@@ -130,10 +149,7 @@ def mask_secrets(
         return captured
 
     def scrub(stream: CapturedStream) -> CapturedStream:
-        text = stream.text
-
-        for secret in secrets:
-            text = text.replace(secret, SECRET_PLACEHOLDER)
+        text = mask_text(stream.text, secrets)
 
         if text == stream.text:
             return stream

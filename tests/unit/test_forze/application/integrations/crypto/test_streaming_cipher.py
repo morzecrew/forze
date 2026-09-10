@@ -45,9 +45,7 @@ async def _collect(source: AsyncIterator[bytes]) -> bytes:
 
 async def _seal(ring: Keyring, data: bytes, *, tenant=None, aad=b"", chunk_size=16) -> bytes:
     return await _collect(
-        ring.encrypt_stream(
-            _aiter(data), tenant=tenant, aad=aad, chunk_size=chunk_size
-        )
+        ring.encrypt_stream(_aiter(data), tenant=tenant, aad=aad, chunk_size=chunk_size)
     )
 
 

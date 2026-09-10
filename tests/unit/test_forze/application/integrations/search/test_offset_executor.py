@@ -30,8 +30,7 @@ class _Hit(BaseModel):
 
 def _make_rows(n: int) -> list[dict[str, Any]]:
     return [
-        {"id": f"00000000-0000-0000-0000-{i:012d}", "label": f"row-{i}"}
-        for i in range(1, n + 1)
+        {"id": f"00000000-0000-0000-0000-{i:012d}", "label": f"row-{i}"} for i in range(1, n + 1)
     ]
 
 
@@ -63,9 +62,9 @@ class _WindowedHooks:
         return OffsetRowsResult(rows=self._rows[window.fetch_offset : end])
 
 
-def _snapshot_over_mock(chunk_size: int = 2, max_ids: int = 50_000) -> tuple[
-    SearchResultSnapshot, SearchResultSnapshotSpec
-]:
+def _snapshot_over_mock(
+    chunk_size: int = 2, max_ids: int = 50_000
+) -> tuple[SearchResultSnapshot, SearchResultSnapshotSpec]:
     rs_spec = SearchResultSnapshotSpec(
         name="snap", enabled=True, chunk_size=chunk_size, max_ids=max_ids
     )
@@ -213,7 +212,9 @@ async def test_execute_simple_offset_search_with_nonzero_offset() -> None:
         assert window.page_offset == 1
         assert window.page_limit == 1
         _ = want_snap
-        return OffsetRowsResult(rows=rows[window.page_offset : window.page_offset + window.page_limit])
+        return OffsetRowsResult(
+            rows=rows[window.page_offset : window.page_offset + window.page_limit]
+        )
 
     hooks.fetch_rows = fetch_rows  # type: ignore[method-assign]
 
@@ -248,9 +249,7 @@ async def test_execute_simple_offset_search_with_nonzero_offset() -> None:
 async def test_no_limit_request_is_capped_by_spec_max_results() -> None:
     """An unbounded (no-``limit``) request fetches at most ``spec.max_results`` rows."""
 
-    spec = SearchSpec(
-        name="t", model_type=_Hit, fields=["id", "label"], max_results=3
-    )
+    spec = SearchSpec(name="t", model_type=_Hit, fields=["id", "label"], max_results=3)
     hooks = _WindowedHooks(_make_rows(10))
 
     page = await _run_offset(
@@ -268,9 +267,7 @@ async def test_no_limit_request_is_capped_by_spec_max_results() -> None:
 async def test_explicit_limit_is_not_raised_by_max_results() -> None:
     """An explicit caller limit below the cap is honoured, never raised to it."""
 
-    spec = SearchSpec(
-        name="t", model_type=_Hit, fields=["id", "label"], max_results=3
-    )
+    spec = SearchSpec(name="t", model_type=_Hit, fields=["id", "label"], max_results=3)
     hooks = _WindowedHooks(_make_rows(10))
 
     page = await _run_offset(
@@ -324,10 +321,7 @@ async def test_streaming_snapshot_writes_full_pool_and_replays(pool_size: int) -
         handle.id, 0, pool_size + 5, expected_fingerprint=handle.fingerprint
     )
     assert stored is not None
-    expected = [
-        SearchResultSnapshot.result_record_key_string(_Hit.model_validate(r))
-        for r in rows
-    ]
+    expected = [SearchResultSnapshot.result_record_key_string(_Hit.model_validate(r)) for r in rows]
     assert stored == expected
 
     # Replaying the snapshot (second request carrying the handle) serves the same order.
@@ -349,9 +343,7 @@ async def test_streaming_snapshot_caps_at_max_ids() -> None:
         name="t",
         model_type=_Hit,
         fields=["id", "label"],
-        snapshot=SearchResultSnapshotSpec(
-            name="snap", enabled=True, chunk_size=2, max_ids=3
-        ),
+        snapshot=SearchResultSnapshotSpec(name="snap", enabled=True, chunk_size=2, max_ids=3),
     )
     rows = _make_rows(10)
     result_snapshot, _ = _snapshot_over_mock(chunk_size=2, max_ids=3)
