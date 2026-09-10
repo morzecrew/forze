@@ -160,6 +160,7 @@ jobs:
           - { name: rabbitmq, path: tests/integration/test_forze_rabbitmq }
           - { name: redis, path: tests/integration/test_forze_redis }
           - { name: s3, path: tests/integration/test_forze_s3 }
+          - { name: sandbox-container, path: tests/integration/test_forze_sandbox_container }
           - { name: sqs, path: tests/integration/test_forze_sqs }
           - { name: temporal, path: tests/integration/test_forze_temporal_integration }
           - { name: vault, path: tests/integration/test_forze_vault }

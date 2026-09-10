@@ -65,6 +65,7 @@ a row first.
 | [runtime-lifecycle](references/runtime-lifecycle.md) | `build_runtime`, lifecycle steps, the spec inventory |
 | [operation-composition](references/operation-composition.md) | Operation registries, pipeline stages, hooks, mapping steps |
 | [testing-with-mock](references/testing-with-mock.md) | `forze_mock` in tests — every port in memory, no containers |
+| [sandbox-execution](references/sandbox-execution.md) | Running a program out of process — provenance, isolation tiers, ceilings, streaming |
 
 ### Domain
 
