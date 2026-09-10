@@ -15,7 +15,6 @@ back as whatever uid the container ran as.
 
 import asyncio
 import codecs
-import contextlib
 import io
 import os
 import signal
@@ -72,6 +71,10 @@ _logger = Logger("sandbox_container")
 
 _STREAM_BACKLOG: Final = 8
 """Chunks the pump holds before the reader waits for a consumer to take one."""
+
+_SETTLE_SECONDS: Final = 2.0
+"""Floor for a wait that is only bookkeeping: the container is already dead or dying, and
+the daemon still has to say so."""
 
 _SPOOL_BYTES: Final = 8 * 1024 * 1024
 """Workspace archive kept in memory before it spills to a temporary file."""
@@ -181,8 +184,30 @@ class ContainerSandbox:
         def _elapsed() -> ResourceUsage:
             return ResourceUsage(wall_clock=utcnow() - started)
 
+        if budget <= 0:
+            # Nothing has been created yet, so there is nothing to kill: the run is over
+            # before it began. Reported the way the process tier reports it, because one
+            # plane telling two stories about a spent deadline is the divergence a caller
+            # cannot see coming.
+            yield SandboxEvent(
+                kind="result",
+                result=SandboxResult(
+                    outcome="killed_cancel",
+                    usage=_elapsed(),
+                    detail="the invocation deadline had already passed; nothing was started",
+                ),
+            )
+
+            return
+
+        deadline = began + budget
+
         try:
-            payload = await self._staged_archive(request)
+            # Staging is the run's time too — a stalled download or a large archive spends
+            # the same budget the child does, and unbounded here is a ceiling that only
+            # applies once the container is already up.
+            async with asyncio.timeout(deadline - monotonic()):
+                payload = await self._staged_archive(request)
 
             try:
                 container = await engine.create(
@@ -216,18 +241,34 @@ class ContainerSandbox:
             reader = asyncio.ensure_future(_follow_into(engine, container, chunks, captured))
             getter: asyncio.Future[tuple[Literal["stdout", "stderr"], str]] | None = None
 
+            grace_until: float | None = None
+
             try:
                 while True:
                     # The deadline is checked per wait rather than held open around the
                     # loop: an `asyncio.timeout` scope stays armed while a generator is
                     # suspended in its consumer's task, so a streamed run over budget would
                     # raise at whoever was iterating instead of coming back as a result.
-                    remaining = began + budget - monotonic()
+                    if grace_until is None:
+                        remaining = deadline - monotonic()
 
-                    if remaining <= 0:
-                        killed = "timeout"
+                        if remaining <= 0:
+                            # The signal goes now and the reading carries on: what a program
+                            # says on its way out is the part a reader of a killed run
+                            # wants, and cancelling the reader first said it to nobody.
+                            killed = "timeout"
+                            await engine.signal(container, "SIGTERM")
+                            grace_until = monotonic() + self.config.kill_grace.total_seconds()
 
-                        break
+                            continue
+
+                    else:
+                        remaining = grace_until - monotonic()
+
+                        if remaining <= 0:
+                            await engine.signal(container, "SIGKILL")
+
+                            break
 
                     if getter is None:
                         getter = asyncio.ensure_future(chunks.get())
@@ -254,10 +295,6 @@ class ContainerSandbox:
                         # drained below.
                         break
 
-                    killed = "timeout"
-
-                    break
-
             finally:
                 if getter is not None:
                     getter.cancel()
@@ -276,10 +313,7 @@ class ContainerSandbox:
                 if stream:
                     yield SandboxEvent(kind=kind, text=mask_text(text, secrets))
 
-            if killed is not None:
-                await self._settle(engine, container)
-
-            status = await engine.wait(container)
+            status, killed = await self._status_of(engine, container, killed, deadline)
             state = await engine.inspect(container)
             outcome, detail = self._ended_by(
                 status, state, killed, request, budget, captured["stderr"].peek()
@@ -445,17 +479,42 @@ class ContainerSandbox:
 
     # ....................... #
 
-    async def _settle(self, engine: ContainerEngine, container: str) -> None:
-        """SIGTERM, a grace period, then let the removal's SIGKILL finish the job."""
+    async def _status_of(
+        self,
+        engine: ContainerEngine,
+        container: str,
+        killed: Literal["timeout"] | None,
+        deadline: float,
+    ) -> tuple[int, Literal["timeout"] | None]:
+        """What the container exited with, without waiting past the run's own budget for it.
 
-        await engine.signal(container, "SIGTERM")
-        grace = self.config.kill_grace.total_seconds()
+        The pump loop also ends when the **reader** does, and a follow stream can end on its
+        own — which is why this adapter has something to say about a capture that stopped
+        early. An unbounded wait here then holds the worker until the container decides to
+        finish: the wall-clock ceiling silently not enforced, no kill sent, and the whole
+        point of a ceiling gone. So the wait is bounded, and its expiry is the kill the loop
+        would have sent had it still been watching.
+        """
 
-        if grace > 0:
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(asyncio.shield(engine.wait(container)), timeout=grace)
+        settle = max(self.config.kill_grace.total_seconds(), _SETTLE_SECONDS)
+        waiting = deadline - monotonic() if killed is None else settle
 
-        await engine.signal(container, "SIGKILL")
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(engine.wait(container)), timeout=max(waiting, _SETTLE_SECONDS)
+            ), killed
+
+        except TimeoutError:
+            await engine.signal(container, "SIGKILL")
+
+        try:
+            return await asyncio.wait_for(engine.wait(container), timeout=settle), "timeout"
+
+        except TimeoutError:
+            # The daemon took the signal and will not say what happened. The container is
+            # removed either way by the cleanup below; what the caller gets is the outcome
+            # rather than an error about the bookkeeping behind it.
+            return _SIGKILL_STATUS, "timeout"
 
     # ....................... #
 

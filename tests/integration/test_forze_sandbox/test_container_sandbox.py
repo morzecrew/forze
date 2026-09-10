@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import pytest
 
+import forze_sandbox.container.adapters.sandbox as sandbox_adapter
 from forze.application.contracts.sandbox import (
     ProgramPayload,
     ResourceRequest,
@@ -408,16 +409,79 @@ class TestKillsAndWhatSurvivesThem:
         assert result.outcome == "killed_timeout"
         assert elapsed < 5, "the run waited out its grace, so SIGTERM reached nobody"
 
-    async def test_a_budget_already_spent_kills_without_waiting_for_anything(
+    async def test_an_expired_deadline_starts_nothing_at_all(self, ctx: ExecutionContext) -> None:
+        # The same answer the process tier gives to the same question: a run whose deadline
+        # was gone before it began is `killed_cancel` with nothing started, rather than a
+        # container created and killed a moment later. `remaining_time()` clamps at 0.0, and
+        # a 0.0 budget must bound the run rather than read as no bound at all.
+        box = container_sandbox(ctx)
+        before = _containers()
+
+        with box.ctx.inv_ctx.bind_deadline(0.05):
+            await asyncio.sleep(0.15)
+            result = await asyncio.wait_for(
+                box.run(_program("import time; time.sleep(60)")), timeout=10
+            )
+
+        assert result.outcome == "killed_cancel"
+        assert result.detail is not None and "nothing was started" in result.detail
+        assert _containers() == before
+
+    async def test_a_deadline_that_is_still_open_bounds_the_run(
         self, ctx: ExecutionContext
     ) -> None:
-        # The deadline is checked before each wait, so a run whose budget was gone before it
-        # started is killed at the first check rather than running once "for free".
-        result = await container_sandbox(ctx).run(
-            _program("import time; time.sleep(60)", timeout=timedelta(milliseconds=1))
-        )
+        box = container_sandbox(ctx)
+
+        with box.ctx.inv_ctx.bind_deadline(1.0):
+            result = await asyncio.wait_for(
+                box.run(_program("import time; time.sleep(60)")), timeout=20
+            )
 
         assert result.outcome == "killed_timeout"
+
+    async def test_output_written_during_the_kill_grace_is_still_captured(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The reader was cancelled before the kill, so a program that says something on its
+        # way out said it to nobody — and what it says on the way out is usually the part
+        # a reader of a timed-out run wants.
+        result = await container_sandbox(ctx, kill_grace=timedelta(seconds=5)).run(
+            _program(
+                "import signal, sys, time\n"
+                "def bye(*_):\n"
+                "    print('cleaning up', flush=True)\n"
+                "    sys.exit(0)\n"
+                "signal.signal(signal.SIGTERM, bye)\n"
+                "print('ready', flush=True)\n"
+                "time.sleep(60)\n",
+                timeout=timedelta(seconds=2),
+            )
+        )
+
+        assert "ready" in result.stdout.text
+        assert "cleaning up" in result.stdout.text
+
+    async def test_a_follow_stream_that_dies_does_not_hold_the_worker(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The loop also breaks when the reader ends on its own, which is why the adapter has
+        # something to say about a capture that stopped early. Without a bound on the wait
+        # that follows, one dropped log stream holds the worker until the container decides
+        # to exit — the wall-clock ceiling silently not enforced, and no kill sent.
+        class Broken(ContainerEngine):
+            async def follow(self, container: str):  # type: ignore[no-untyped-def]
+                raise RuntimeError("stream closed by peer")
+                yield  # pragma: no cover - unreachable, present to keep this a generator
+
+        monkeypatch.setattr(sandbox_adapter, "ContainerEngine", Broken)
+        began = asyncio.get_running_loop().time()
+        result = await container_sandbox(ctx).run(
+            _program("import time; time.sleep(60)", timeout=timedelta(seconds=2))
+        )
+        elapsed = asyncio.get_running_loop().time() - began
+
+        assert result.outcome == "killed_timeout"
+        assert elapsed < 20, "the run waited for a container nobody was going to kill"
 
     async def test_a_cancelled_caller_gets_its_cancellation_and_no_result(
         self, ctx: ExecutionContext
