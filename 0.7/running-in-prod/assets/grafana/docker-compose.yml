@@ -1,0 +1,91 @@
+# The Grafana stack, complete, for a Forze application.
+#
+#   docker compose up -d
+#   open http://localhost:3000        (anonymous admin; local only)
+#
+# Your application joins this network and needs exactly two things:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318   (traces + metrics, OTLP http/protobuf)
+#   its logs on stdout as JSON                       (bootstrap_logging(render_mode="json"))
+#
+# Alloy is the only component the application talks to. Prometheus, Loki and Tempo never
+# see the app directly — which is what lets you swap any of them without touching a
+# service. Node exporter is deliberately absent: host metrics are infrastructure, and the
+# framework has nothing to do with them.
+
+name: forze-observability
+
+services:
+  alloy:
+    image: grafana/alloy:v1.10.0
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "4318:4318"   # OTLP http/protobuf — what bootstrap_telemetry exports to
+      - "12345:12345" # Alloy's own UI, useful when a pipeline is silently dropping data
+    volumes:
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      # Tailing container stdout is what turns your JSON log lines into Loki streams.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data
+    depends_on:
+      - loki
+      - tempo
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    command:
+      # remote-write receiver is what Alloy pushes into. Without it the pipeline is silent
+      # and nothing tells you why.
+      - --web.enable-remote-write-receiver
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+
+  loki:
+    image: grafana/loki:3.5.0
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+
+  tempo:
+    image: grafana/tempo:2.8.0
+    command: -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ./tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      # Local development only. Never carry these two lines into a deployed stack.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+
+volumes:
+  alloy-data:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:
