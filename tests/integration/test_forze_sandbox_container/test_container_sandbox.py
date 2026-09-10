@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import subprocess
+import tempfile
 from contextlib import aclosing
 from datetime import timedelta
 from uuid import uuid4
@@ -34,7 +35,11 @@ from forze.base.exceptions import CoreException
 from forze.base.scrubbing import SECRET_PLACEHOLDER
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule, MockState
-from forze_sandbox_container.kernel.client import CONTAINER_NAME_PREFIX
+from forze_sandbox_container.kernel.client import (
+    CONTAINER_NAME_PREFIX,
+    DEFAULT_DOCKER_HOST,
+    ContainerEngine,
+)
 from tests.integration.test_forze_sandbox_container.conftest import (
     BLOBS,
     container_sandbox,
@@ -88,16 +93,26 @@ class TestWhatTheContainerCanReach:
         assert result.succeeded, result.stderr.text
         assert result.stdout.text.strip() != "0"
 
-    async def test_the_child_holds_no_capabilities(self, ctx: ExecutionContext) -> None:
+    async def test_the_child_holds_no_capabilities_and_can_gain_none(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The *bounding* set is what `CapDrop` shrinks, and it is the only one that says so:
+        # a non-root uid empties the effective set on its own, so a test reading `CapEff`
+        # passes with every capability still available to be regained.
         result = await container_sandbox(ctx).run(
             _program(
-                "line = next(l for l in open('/proc/self/status') if l.startswith('CapEff'))\n"
-                "print(line.split()[1])\n"
+                "fields = dict(\n"
+                "    line.split(':', 1) for line in open('/proc/self/status') if ':' in line\n"
+                ")\n"
+                "print(fields['CapEff'].strip(), fields['CapBnd'].strip())\n"
             )
         )
 
         assert result.succeeded, result.stderr.text
-        assert int(result.stdout.text.strip(), 16) == 0
+        effective, bounding = result.stdout.text.split()
+
+        assert int(effective, 16) == 0
+        assert int(bounding, 16) == 0
 
     async def test_the_child_cannot_reach_the_network(self, ctx: ExecutionContext) -> None:
         result = await container_sandbox(ctx).run(
@@ -186,12 +201,89 @@ class TestStagingAndCollecting:
         assert result.outcome == "killed_timeout"
         assert set(result.output_files) == {"partial.txt"}
 
+    async def test_a_run_that_stages_nothing_still_gets_a_workspace_it_can_write(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # A request carrying neither a program nor inputs puts no file in the staging
+        # archive, so the workspace directory is the only thing in it — and without that
+        # entry the daemon creates the working directory root-owned and the child, which is
+        # not root, cannot write the outputs it was asked to produce.
+        result = await container_sandbox(ctx).run(
+            SandboxRequest(
+                command=("python", "-c", "open('made.txt', 'w').write('x')"),
+                output_globs=("*.txt",),
+            )
+        )
+
+        assert result.succeeded, result.stderr.text
+        assert set(result.output_files) == {"made.txt"}
+
     async def test_stdin_reaches_the_child_and_then_ends(self, ctx: ExecutionContext) -> None:
         result = await container_sandbox(ctx).run(
             _program("import sys; print('got', sys.stdin.read().strip())", stdin=b"payload\n")
         )
 
         assert result.stdout.text.strip() == "got payload"
+
+    async def test_an_artifact_over_the_budget_is_named_rather_than_dropped_silently(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # An artifact missing from the result and one the child never wrote look identical
+        # from the outside, so what was left behind is reported.
+        result = await container_sandbox(ctx, max_artifact_bytes=16).run(
+            _program(
+                "open('big.txt','w').write('x' * 4096)",
+                output_globs=("*.txt",),
+            )
+        )
+
+        assert result.output_files == {}
+        assert result.detail is not None and "big.txt" in result.detail
+
+    async def test_a_workspace_larger_than_the_route_drains_collects_nothing_and_says_so(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The archive is the whole workspace, declared and undeclared alike: an undeclared
+        # file the caller never asked for would otherwise spend the worker's disk on its way
+        # to being discarded.
+        result = await container_sandbox(ctx, max_workspace_bytes=4096).run(
+            _program(
+                "open('wanted.txt','w').write('small')\n"
+                "open('ballast.bin','wb').write(b'x' * (2 * 1024 * 1024))\n",
+                output_globs=("*.txt",),
+            )
+        )
+
+        assert result.succeeded, result.stderr.text
+        assert result.output_files == {}
+        assert result.detail is not None and "4096 bytes" in result.detail
+
+    async def test_a_declared_glob_that_matched_nothing_is_not_a_failure(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # A program that cleans up after itself, or one whose work produced no artifact: the
+        # run stands, and the caller reads the empty mapping rather than an error.
+        result = await container_sandbox(ctx).run(
+            _program(
+                "import os\nopen('scratch.txt', 'w').write('x')\nos.remove('scratch.txt')\n",
+                output_globs=("*.txt",),
+            )
+        )
+
+        assert result.succeeded, result.stderr.text
+        assert result.output_files == {}
+
+    async def test_stdin_offered_to_a_program_that_never_reads_it(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The attach lands on a container that may already be gone, which is not an error:
+        # the bytes had nowhere to go and the run already happened.
+        result = await container_sandbox(ctx).run(
+            _program("print('ignored stdin')", stdin=b"never read\n")
+        )
+
+        assert result.succeeded, result.stderr.text
+        assert result.stdout.text.strip() == "ignored stdin"
 
     async def test_a_route_with_no_storage_refuses_a_request_that_needs_it(
         self, ctx: ExecutionContext
@@ -241,6 +333,27 @@ class TestCeilingsTheDaemonWatches:
         assert "stopped at" in result.stdout.text
         assert int(result.stdout.text.split()[2]) < 64
 
+    async def test_the_cpu_ceiling_arrives_as_a_signal_the_child_can_see(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The ulimit pair is deliberately uneven, and this is what the gap is for: the kernel
+        # sends `SIGXCPU` at the soft limit and `SIGKILL` a second later at the hard one, so
+        # a program that wants to stop cleanly on its own budget gets the chance.
+        result = await container_sandbox(ctx, cpu_ceiling=timedelta(seconds=1)).run(
+            _program(
+                "import signal, sys\n"
+                "def caught(*_):\n"
+                "    print('SIGXCPU', flush=True)\n"
+                "    sys.exit(0)\n"
+                "signal.signal(signal.SIGXCPU, caught)\n"
+                "while True:\n"
+                "    pass\n"
+            )
+        )
+
+        assert result.outcome == "exited", result.detail
+        assert result.stdout.text.strip() == "SIGXCPU"
+
     async def test_a_request_narrows_the_route_s_ceiling(self, ctx: ExecutionContext) -> None:
         result = await container_sandbox(ctx, memory_ceiling=512 * 1024 * 1024).run(
             _program(
@@ -276,6 +389,35 @@ class TestKillsAndWhatSurvivesThem:
 
         assert result.outcome == "killed_timeout"
         assert elapsed < 20
+
+    async def test_the_graceful_signal_reaches_a_program_that_installed_no_handler(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # This is what `HostConfig.Init` buys. The request's process would otherwise be pid
+        # 1 of the namespace, where the kernel discards a signal whose disposition is
+        # default — so `SIGTERM` would do nothing at all, every kill would spend the whole
+        # grace waiting for a program that never received it, and only the `SIGKILL` after
+        # it would land. Measured as elapsed time, because the outcome is the same either
+        # way and only the clock says which signal did the work.
+        began = asyncio.get_running_loop().time()
+        result = await container_sandbox(ctx, kill_grace=timedelta(seconds=6)).run(
+            _program("import time; time.sleep(60)", timeout=timedelta(seconds=1))
+        )
+        elapsed = asyncio.get_running_loop().time() - began
+
+        assert result.outcome == "killed_timeout"
+        assert elapsed < 5, "the run waited out its grace, so SIGTERM reached nobody"
+
+    async def test_a_budget_already_spent_kills_without_waiting_for_anything(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The deadline is checked before each wait, so a run whose budget was gone before it
+        # started is killed at the first check rather than running once "for free".
+        result = await container_sandbox(ctx).run(
+            _program("import time; time.sleep(60)", timeout=timedelta(milliseconds=1))
+        )
+
+        assert result.outcome == "killed_timeout"
 
     async def test_a_cancelled_caller_gets_its_cancellation_and_no_result(
         self, ctx: ExecutionContext
@@ -392,6 +534,55 @@ class TestStreaming:
         # the first and the last is what says the output was streamed.
         assert seen[-1][0] - seen[0][0] > 0.2
 
+    async def test_a_burst_the_consumer_never_caught_up_with_still_arrives(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The reader can finish with chunks still queued behind it, and those are the run's
+        # output too — dropping them would lose the tail of every program that writes faster
+        # than its consumer reads.
+        lines = 200
+        seen: list[str] = []
+
+        async with aclosing(
+            container_sandbox(ctx).run_stream(
+                _program(f"for index in range({lines}):\n    print(index)\n")
+            )
+        ) as events:
+            async for event in events:
+                if event.kind == "stdout":
+                    seen.append(event.text)
+
+        assert f"{lines - 1}" in "".join(seen).split()
+
+    async def test_a_consumer_left_behind_by_a_kill_still_gets_what_was_queued(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The queue holds what the consumer has not taken yet, and a deadline can fall while
+        # it is full. Those chunks are output the run produced; dropping them would end a
+        # killed run's stream wherever the consumer happened to be.
+        seen: list[str] = []
+
+        async with aclosing(
+            container_sandbox(ctx).run_stream(
+                _program(
+                    "import time\n"
+                    "for index in range(10_000):\n"
+                    "    print(index)\n"
+                    "    time.sleep(0.01)\n",
+                    timeout=timedelta(seconds=2),
+                )
+            )
+        ) as events:
+            async for event in events:
+                if event.kind == "stdout":
+                    seen.append(event.text)
+                    # Fall behind on purpose: the pump blocks at the backlog, so the queue
+                    # is full when the deadline arrives.
+                    await asyncio.sleep(0.25)
+
+        # Roughly eight in the two seconds it had, plus the backlog handed over afterwards.
+        assert len(seen) > 9
+
     async def test_abandoning_the_stream_ends_the_run(self, ctx: ExecutionContext) -> None:
         before = _containers()
 
@@ -422,6 +613,61 @@ class TestStreaming:
         assert streamed is not None
         assert (streamed.outcome, streamed.exit_code) == (buffered.outcome, buffered.exit_code)
         assert streamed.stdout.text == buffered.stdout.text
+
+
+class TestTheDaemonSurfaceItself:
+    """The client's own error handling, against the daemon rather than against a fake."""
+
+    async def test_output_larger_than_one_read_is_reassembled_exactly(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The daemon frames every chunk with an eight-byte header, and a reader that assumes
+        # a frame arrives whole loses output the moment one is split across two reads. A
+        # single large write is what splits them.
+        size = 300_000
+        result = await container_sandbox(ctx, max_output_bytes=2 * size).run(
+            _program(f"import sys; sys.stdout.write('ab' * {size // 2})")
+        )
+
+        assert result.succeeded, result.stderr.text
+        assert result.stdout.text == "ab" * (size // 2)
+        assert not result.stdout.truncated
+
+    async def test_attaching_to_a_container_that_is_gone_is_not_an_error(
+        self, ctx: ExecutionContext
+    ) -> None:
+        engine = ContainerEngine(DEFAULT_DOCKER_HOST, timeout=5.0)
+
+        try:
+            await engine.attach_stdin("forze-sandbox-no-such-container", b"payload")
+
+        finally:
+            await engine.aclose()
+
+    @pytest.mark.parametrize("call", ["follow", "download"])
+    async def test_reading_from_a_container_that_is_gone_is_the_daemon_saying_no(
+        self, ctx: ExecutionContext, call: str
+    ) -> None:
+        # Distinct from the attach above: the bytes for an attach had nowhere to go and
+        # nothing was lost, where output this adapter cannot read is a run it cannot report.
+        engine = ContainerEngine(DEFAULT_DOCKER_HOST, timeout=5.0)
+
+        try:
+            with pytest.raises(CoreException) as raised:
+                if call == "follow":
+                    async for _ in engine.follow("forze-sandbox-no-such-container"):
+                        pass
+
+                else:
+                    with tempfile.TemporaryFile() as sink:
+                        await engine.download(
+                            "forze-sandbox-no-such-container", "/workspace", sink, 1024
+                        )
+
+            assert raised.value.code == "sandbox_container_daemon_error"
+
+        finally:
+            await engine.aclose()
 
 
 class TestWhenTheRunNeverStarts:

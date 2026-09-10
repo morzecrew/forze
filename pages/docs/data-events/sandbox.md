@@ -279,6 +279,11 @@ adapter: the gates then refuse under test exactly where production would.
   microVM or gVisor-class supervisor and a topology of its own.
 - **Streaming is refused, not buffered.** `run_stream` is served by adapters
   that declare it; one that cannot says no rather than pretending.
+- **The wall-clock ceiling bounds the run, not the daemon.** It is enforced
+  around the child's own execution; a container daemon that stops answering
+  will hold the calls that follow — waiting on the exit status, reading the
+  workspace back — past it. `POST /wait` blocks for the life of the container
+  by design, so there is no read timeout to give it.
 - **A killed run still hands back what it wrote.** Declared outputs are collected
   after a kill as well as after a clean exit — a half-written artifact is usually
   the most useful thing about a run that did not finish, and the `outcome` beside

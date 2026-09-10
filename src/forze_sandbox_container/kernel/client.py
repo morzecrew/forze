@@ -97,6 +97,39 @@ def endpoint(docker_host: str) -> tuple[httpx.AsyncBaseTransport, str]:
 # ....................... #
 
 
+def demultiplex(buffer: bytes) -> tuple[list[tuple[Literal["stdout", "stderr"], bytes]], bytes]:
+    """Whole frames in *buffer*, and the bytes of the one still arriving.
+
+    Split out of the read loop because it is the client's most delicate logic and the only
+    part of it a daemon quirk decides: a frame is split across two reads whenever the writes
+    line up that way, which is often enough to matter and rare enough that no test reliably
+    produces one. As a function it can simply be handed the split.
+
+    A frame this reader did not ask for — stream 0 is stdin — is consumed and dropped rather
+    than yielded, because skipping the payload is what keeps the next header aligned.
+    """
+
+    frames: list[tuple[Literal["stdout", "stderr"], bytes]] = []
+
+    while len(buffer) >= _FRAME_HEADER:
+        size = int.from_bytes(buffer[4:_FRAME_HEADER], "big")
+
+        if len(buffer) < _FRAME_HEADER + size:
+            break
+
+        kind = _FRAME_KIND.get(buffer[0])
+        payload = buffer[_FRAME_HEADER : _FRAME_HEADER + size]
+        buffer = buffer[_FRAME_HEADER + size :]
+
+        if kind is not None:
+            frames.append((kind, payload))
+
+    return frames, buffer
+
+
+# ....................... #
+
+
 @final
 class ContainerEngine:
     """One connection to a container daemon, for the length of one run.
@@ -149,10 +182,6 @@ class ContainerEngine:
         response = await self._call(
             "PUT", f"/containers/{container}/archive", params={"path": path}, content=data
         )
-
-        if response.status_code in (400, 403):
-            raise ContainerNotCreated(f"staging the workspace: {_message(response)}")
-
         self._expect(response, "stage the workspace", (200,))
 
     async def attach_stdin(self, container: str, data: bytes) -> None:
@@ -199,20 +228,10 @@ class ContainerEngine:
             buffer = b""
 
             async for chunk in response.aiter_bytes():
-                buffer += chunk
+                complete, buffer = demultiplex(buffer + chunk)
 
-                while len(buffer) >= _FRAME_HEADER:
-                    size = int.from_bytes(buffer[4:_FRAME_HEADER], "big")
-
-                    if len(buffer) < _FRAME_HEADER + size:
-                        break
-
-                    kind = _FRAME_KIND.get(buffer[0])
-                    payload = buffer[_FRAME_HEADER : _FRAME_HEADER + size]
-                    buffer = buffer[_FRAME_HEADER + size :]
-
-                    if kind is not None:
-                        yield kind, payload
+                for frame in complete:
+                    yield frame
 
     async def wait(self, container: str) -> int:
         """Block until the container exits and return its status."""
@@ -266,13 +285,6 @@ class ContainerEngine:
         async with self._client.stream(
             "GET", f"/containers/{container}/archive", params={"path": path}
         ) as response:
-            if response.status_code == 404:
-                # The workspace is gone, which is what a container that never started looks
-                # like from here. Nothing was collected and nothing was lost.
-                await response.aread()
-
-                return True
-
             if response.status_code != 200:
                 await response.aread()
                 self._expect(response, "collect the workspace", (200,))

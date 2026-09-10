@@ -42,7 +42,7 @@ from forze.application.contracts.sandbox import (
     validate_resources,
     validate_stream_supported,
 )
-from forze.application.contracts.storage import UploadedObject
+from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.application.integrations.sandbox import (
     budget_seconds,
     mask_secrets,
@@ -460,15 +460,18 @@ class ContainerSandbox:
 
     # ....................... #
 
+    def _storage(self) -> StorageSpec:
+        return require_storage(self.config.storage, route=str(self.spec.name))
+
+    # ....................... #
+
     async def _staged_archive(self, request: SandboxRequest) -> bytes:
         """Everything that crosses into the workspace, as one tar."""
 
         inputs: dict[str, bytes] = {}
 
         if request.input_files:
-            storage = self.ctx.storage.query(
-                require_storage(self.config.storage, route=str(self.spec.name))
-            )
+            storage = self.ctx.storage.query(self._storage())
 
             for name, key in request.input_files.items():
                 inputs[name] = (await storage.download(key)).data
@@ -494,9 +497,7 @@ class ContainerSandbox:
         if not request.output_globs:
             return {}, ()
 
-        storage = self.ctx.storage.command(
-            require_storage(self.config.storage, route=str(self.spec.name))
-        )
+        storage = self.ctx.storage.command(self._storage())
 
         with tempfile.SpooledTemporaryFile(max_size=_SPOOL_BYTES) as spool:
             whole = await engine.download(

@@ -4,6 +4,7 @@ from .client import (
     DEFAULT_DOCKER_HOST,
     ContainerEngine,
     ContainerNotCreated,
+    demultiplex,
     endpoint,
 )
 from .config import (
@@ -23,5 +24,6 @@ __all__ = [
     "ContainerNotCreated",
     "ContainerSandboxConfig",
     "container_capabilities",
+    "demultiplex",
     "endpoint",
 ]
