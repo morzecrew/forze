@@ -109,6 +109,7 @@ is the deployment's uvicorn or transport concern, not the integration's.
 Everything else has one, including the ones that are barely a connection at all: `duckdb`
 is in-process, so `DuckDbSettings` carries the database path and the two resource limits
 that decide whether a query is slow or the container is killed; `SocketIOSettings` carries
-only the Redis backplane URL (build it from a `RedisSettings.dsn`, since integration
-packages do not import each other); `GcpKmsSettings` is one emulator endpoint and one
+the Redis backplane — the URL, the channel, and whether this process publishes without
+subscribing (build the URL from a `RedisSettings.dsn`, since integration packages do not
+import each other); `GcpKmsSettings` is one emulator endpoint and one
 timeout, because Google's credentials come from the ambient environment.
