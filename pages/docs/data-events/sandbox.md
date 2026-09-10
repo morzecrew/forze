@@ -103,7 +103,7 @@ input it could not stage, an output it could not store.
 | --- | --- | --- | --- |
 | Base | `SubprocessSandbox`, no ceilings | `none` | trusted code only — the gate refuses it anything else |
 | Process | `SubprocessSandbox` with ceilings or a dropped user | `process` | trusted code, bounded against accidents |
-| Container | recorded | `container` | untrusted code, against a consumer's own container infra |
+| Container | `ContainerSandbox` (`forze_sandbox_container`) | `container` | untrusted code — the first tier the gate lets through |
 | Remote | recorded | `container` / `vm` | managed sandboxing services |
 
 The first two rows are one adapter. Which tier a route gets is decided entirely
@@ -113,7 +113,8 @@ kernel, filesystem, network and `/proc`, so the provenance gate refuses both of
 them untrusted code. Ceilings bound accidents, not adversaries.
 
 Wiring either also costs an explicit `acknowledge_network_egress=True`: the
-adapter cannot close the network, so it does not claim to.
+adapter cannot close the network, so it does not claim to. The container tier
+can, so it owes that acknowledgment only when a route opens it.
 
 ### Ceilings, and what they can tell you afterwards
 
@@ -204,6 +205,52 @@ The streamed chunks carry everything the child wrote; the result's captured
 streams are capped as they are for `run`. The cap exists because the result is
 held in memory and journaled, and a chunk handed straight to a caller is neither.
 
+### The container tier
+
+```python
+from forze_sandbox_container import ContainerSandboxConfig, ContainerSandboxDepsModule
+
+sandboxes = ContainerSandboxDepsModule(
+    routes={
+        "recipes": ContainerSandboxConfig(
+            provenance="untrusted",
+            image="my-registry/recipe-runner:2026.09",
+            wall_clock_ceiling=timedelta(minutes=2),
+            max_output_bytes=256 * 1024,
+            storage=blobs_spec,
+            memory_ceiling=512 * 1024 * 1024,
+            cpu_ceiling=timedelta(seconds=30),
+        )
+    }
+)
+```
+
+This is the tier `provenance="untrusted"` exists for. The adapter speaks the
+Docker Engine API over a socket — Podman's is the same API, so `docker_host`
+names an endpoint rather than a vendor — and every container it creates has no
+network, no capabilities, no new privileges, a pid ceiling and a non-root user.
+None of those are settings, because a route that could turn one off is a route
+that could undo the tier.
+
+Three things differ from the tiers below it, and each one is why the tier exists:
+
+- **A ceiling that bites is named.** The daemon watches from outside the child,
+  so a memory over-run comes back as `killed_oom` and a CPU over-run as
+  `killed_resource` — where `RLIMIT_AS` in a bare child produces the child's own
+  `MemoryError` and tells you nothing. This is the tier that declares
+  `reports_resource_kill`.
+- **The kill takes everything.** A pid namespace has no orphans to leave behind:
+  removing the container reaps whatever it started, so `reaps_descendants` is a
+  guarantee here rather than a platform-dependent best effort.
+- **The workspace is inside.** Staged inputs go in as a tar and declared outputs
+  come back as one, rather than through a directory on the host. A bind mount
+  would be less code and would hand a host path to the code this tier distrusts —
+  and would write outputs back as whatever uid the container ran as.
+
+The image must already be on the daemon. Nothing pulls at request time: what runs
+is what an operator put there, and a route naming an absent image gets a
+`spawn_failed` result saying so.
+
 ## Testing against it
 
 ```python
@@ -223,14 +270,15 @@ adapter: the gates then refuse under test exactly where production would.
 
 ## Limits
 
-- **No isolation ships in the box.** The base adapter is process management with
-  governance around it. If you need containment, the container tier is where it
-  lives, and it lands with the infrastructure it wraps.
-- **`process`-tier enforcement is not here yet.** Memory and CPU ceilings, uid
-  drop and process-group kill arrive with the tier that declares them — no
-  adapter claims `enforces_memory` without a test that drives a child into it.
+- **Isolation is infrastructure you own.** The container tier is a thin,
+  governed client for a daemon you run; the framework contributes the gate, the
+  contract and the cleanup, not the containment itself. Above it, a managed
+  sandboxing service is a recorded workstream.
+- **A container is not a VM.** The `container` tier confines a program nobody
+  reviewed. Actively hostile code — an end-user code console — wants a
+  microVM or gVisor-class supervisor and a topology of its own.
 - **Streaming is refused, not buffered.** `run_stream` is served by adapters
-  that declare it; the base adapter says no rather than pretending.
+  that declare it; one that cannot says no rather than pretending.
 - **A killed run still hands back what it wrote.** Declared outputs are collected
   after a kill as well as after a clean exit — a half-written artifact is usually
   the most useful thing about a run that did not finish, and the `outcome` beside
