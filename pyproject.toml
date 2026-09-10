@@ -165,6 +165,7 @@ vault = [
 inngest = ["inngest>=0.5.18"]
 meilisearch = ["meilisearch-python-sdk>=7.2.1"]
 http = ["httpx>=0.28.0"]
+sandbox-container = ["httpx>=0.28.0"]
 inference-http = ["httpx>=0.28.0"]
 inference-sagemaker = [
     "aioboto3>=13.0.0",
@@ -252,6 +253,7 @@ packages = [
     "src/forze_inference",
     "src/forze_neo4j",
     "src/forze_mcp",
+    "src/forze_sandbox",
 ]
 
 [tool.hatch.build.hooks.vcs]
@@ -519,6 +521,8 @@ divergence_catalog = "forze_dst.conformance.catalog:PLANE_DIVERGENCES"
 [tool.conformance_manifest.engines]
 mock = { package = "forze_mock" }
 local = { package = "forze" }
+subprocess = { package = "forze" }
+container = { package = "forze_sandbox" }
 kserve_v2 = { package = "forze_inference" }
 mlflow = { package = "forze_inference" }
 
@@ -636,6 +640,11 @@ scenario = "forze_dst.conformance.transfer:run_transfer"
 dep_keys = []
 engines = ["postgres"]
 
+[tool.conformance_manifest.planes.sandbox]
+scenario = "tests.support.sandbox_conformance:SANDBOX_BATTERY"
+dep_keys = ["sandbox_run"]
+engines = ["mock", "subprocess", "container"]
+
 # ....................... #
 # Declared gaps: planes with real providers and no leg yet. Listed so "not covered"
 # is data a reviewer sees, never an absence they have to notice.
@@ -691,20 +700,6 @@ engines = ["postgres", "mongo", "firestore"]
 # and require nothing. The document ports answer the same question exactly: this battery
 # is document-plane specific, so whoever provides a document port needs a leg here.
 derive_from = ["document_command", "document_query"]
-
-[tool.conformance_manifest.gaps.sandbox]
-dep_keys = ["sandbox_run"]
-engines = ["mock", "subprocess"]
-reason = """
-Two implementations answer the sandbox port and no shared battery compares them. Most of \
-what they do is meant to differ — the mock enforces nothing and says so through its \
-capabilities, while the subprocess adapter really kills children and cleans workspaces — so \
-the leg has to assert the outcomes that must agree (a non-zero exit is a result, declared \
-outputs travel and undeclared ones do not, a refused route refuses in both) and nothing \
-about isolation, which only the real adapter can be wrong about. Waiting on the container \
-tier: a differential over two engines that cannot both enforce anything measures less than \
-it costs.\
-"""
 
 [tool.conformance_manifest.gaps.kms]
 dep_keys = ["crypto.kms"]
@@ -946,6 +941,7 @@ root_packages = [
     "forze_inference",
     "forze_neo4j",
     "forze_mcp",
+    "forze_sandbox",
 ]
 exclude_type_checking_imports = true
 
@@ -1067,6 +1063,7 @@ protected_modules = [
     "forze_inference",
     "forze_neo4j",
     "forze_mcp",
+    "forze_sandbox",
 ]
 allowed_importers = ["forze_cli"]
 as_packages = true
@@ -1081,6 +1078,7 @@ forbidden_modules = [
     "forze_kits",
     "forze_dst",
     "forze_mcp",
+    "forze_sandbox",
 ]
 # The mock is a leaf provider: every consumer of it depends on that. A submodule reaching
 # for a transport's route attachers or the identity plane's verifiers would invert the
@@ -1122,6 +1120,7 @@ paths = [
     "src/forze_inference",
     "src/forze_neo4j",
     "src/forze_mcp",
+    "src/forze_sandbox",
 ]
 sort_by_size = true
 min_confidence = 60
@@ -1168,6 +1167,7 @@ known_first_party = [
     "forze_inference",
     "forze_neo4j",
     "forze_mcp",
+    "forze_sandbox",
 ]
 ignore_notebooks = true
 

@@ -46,9 +46,7 @@ def _keyring() -> Keyring:
 def _module(node_encryption: FieldEncryption | None) -> GraphModuleSpec:
     return GraphModuleSpec(
         name="people",
-        nodes=(
-            GraphNodeSpec(name="Person", read=_Person, encryption=node_encryption),
-        ),
+        nodes=(GraphNodeSpec(name="Person", read=_Person, encryption=node_encryption),),
         edges=(),
     )
 
@@ -90,9 +88,7 @@ def test_binds_record_id_without_key_field_rejected() -> None:
                 identity="endpoints",
                 endpoints=(GraphEdgeEndpoint(from_kind="Person", to_kind="Person"),),
                 directionality=GraphEdgeDirectionality.SYMMETRIC,
-                encryption=FieldEncryption(
-                    encrypted=frozenset({"ssn"}), binds_record_id=True
-                ),
+                encryption=FieldEncryption(encrypted=frozenset({"ssn"}), binds_record_id=True),
             ),
         ),
     )
@@ -119,9 +115,7 @@ def test_binds_record_id_on_endpoint_edge_with_key_field_rejected() -> None:
                 key_field="id",
                 endpoints=(GraphEdgeEndpoint(from_kind="Person", to_kind="Person"),),
                 directionality=GraphEdgeDirectionality.SYMMETRIC,
-                encryption=FieldEncryption(
-                    encrypted=frozenset({"ssn"}), binds_record_id=True
-                ),
+                encryption=FieldEncryption(encrypted=frozenset({"ssn"}), binds_record_id=True),
             ),
         ),
     )
@@ -136,14 +130,10 @@ def test_binds_record_id_on_endpoint_edge_with_key_field_rejected() -> None:
 
 @pytest.mark.asyncio
 async def test_seal_on_write_then_decrypt_on_read() -> None:
-    codecs = _resolve(
-        FieldEncryption(encrypted=frozenset({"ssn"})), keyring=_keyring()
-    )
+    codecs = _resolve(FieldEncryption(encrypted=frozenset({"ssn"})), keyring=_keyring())
     cipher = codecs.node("Person")
 
-    sealed = await cipher.seal(
-        {"id": "1", "name": "Ann", "ssn": "123-45-6789"}, record_id=None
-    )
+    sealed = await cipher.seal({"id": "1", "name": "Ann", "ssn": "123-45-6789"}, record_id=None)
     assert is_envelope(base64.b64decode(sealed["ssn"]))  # confidential, sealed
     assert sealed["name"] == "Ann"  # plaintext property stays queryable
 

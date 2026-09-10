@@ -63,9 +63,7 @@ def test_construction_without_cipher_for_encrypting_spec_fails_closed() -> None:
         return 0  # never reached — construction raises first
 
     ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
-    spec = OutboxSpec(
-        name="events", codec=PydanticModelCodec(_Payload), encryption="at_rest"
-    )
+    spec = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload), encryption="at_rest")
 
     with pytest.raises(CoreException) as ei:
         OutboxStaging(
@@ -366,9 +364,7 @@ class TestRequireTransactionGuard:
     async def test_flush_outside_transaction_is_refused_when_required(self) -> None:
         ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
         flushed: list[StagedOutboxEntry] = []
-        coord = self._staging(
-            ctx, flushed, require_transaction=True, tx_depth=lambda: 0
-        )
+        coord = self._staging(ctx, flushed, require_transaction=True, tx_depth=lambda: 0)
 
         await coord.stage("demo.created", _Payload(value="a"))
 
@@ -383,9 +379,7 @@ class TestRequireTransactionGuard:
     async def test_flush_inside_transaction_is_allowed_when_required(self) -> None:
         ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
         flushed: list[StagedOutboxEntry] = []
-        coord = self._staging(
-            ctx, flushed, require_transaction=True, tx_depth=lambda: 1
-        )
+        coord = self._staging(ctx, flushed, require_transaction=True, tx_depth=lambda: 1)
 
         await coord.stage("demo.created", _Payload(value="a"))
 
@@ -397,9 +391,7 @@ class TestRequireTransactionGuard:
         # Opt-in: the default must not break the standalone / stage-then-relay pattern.
         ctx = ExecutionContext(deps=DepsRegistry().freeze().resolve())
         flushed: list[StagedOutboxEntry] = []
-        coord = self._staging(
-            ctx, flushed, require_transaction=False, tx_depth=lambda: 0
-        )
+        coord = self._staging(ctx, flushed, require_transaction=False, tx_depth=lambda: 0)
 
         await coord.stage("demo.created", _Payload(value="a"))
 

@@ -43,12 +43,20 @@ from forze.application.contracts.sandbox import (
     validate_resources,
     validate_stream_supported,
 )
-from forze.application.contracts.secrets import SecretRef, SecretsDepKey
 from forze.application.contracts.storage import StorageSpec, UploadedObject
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import monotonic, run_cpu, utcnow
-from forze.base.scrubbing import SECRET_PLACEHOLDER
+
+from .shared import (
+    budget_seconds,
+    mask_secrets,
+    mask_text,
+    output_cap,
+    refuse_unwired_storage,
+    require_storage,
+    resolve_environment,
+)
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -423,11 +431,13 @@ class SubprocessSandbox:
     ) -> AsyncGenerator[SandboxEvent]:
         """The whole run, as events: output while it happens, then exactly one result."""
 
-        self._refuse_a_request_this_route_cannot_serve(request)
+        refuse_unwired_storage(request, self.config.storage, route=str(self.spec.name))
         validate_resources(self.sandbox_capabilities, request.resources, backend=SUBPROCESS_BACKEND)
 
         started = utcnow()
-        budget = self._budget(request)
+        budget = budget_seconds(
+            self.config.wall_clock_ceiling, request, self.ctx.inv_ctx.remaining_time()
+        )
 
         if budget <= 0:
             # No time left before anything was staged, let alone spawned. Returning the
@@ -566,7 +576,12 @@ class SubprocessSandbox:
         carrying everything but the collected files, which the caller adds.
         """
 
-        env, secrets = await self._environment(request)
+        env, secrets = await resolve_environment(
+            self.ctx,
+            self.config.env_passthrough,
+            request,
+            host_environment=dict(os.environ),
+        )
         limits = self._rlimits(request)
         argv = self._argv(request, limits)
         privileges: dict[str, Any] = {}
@@ -607,7 +622,7 @@ class SubprocessSandbox:
 
             return
 
-        cap = self._output_cap(request)
+        cap = output_cap(self.config.max_output_bytes, request)
         # Bounded, so a slow consumer pushes back. Unbounded, the reader drains the pipe as
         # fast as the child can fill it and parks everything here — the child never blocks,
         # the caller never catches up, and the output the pipe was regulating ends up in the
@@ -655,7 +670,7 @@ class SubprocessSandbox:
                         kind, text = getting.result()
 
                         if stream:
-                            yield SandboxEvent(kind=kind, text=text)
+                            yield SandboxEvent(kind=kind, text=mask_text(text, secrets))
 
                         continue
 
@@ -705,7 +720,7 @@ class SubprocessSandbox:
             for reader in readers:
                 reader.cancel()
 
-        captured = _mask(await _drain(readers), secrets)
+        captured = mask_secrets(await _drain(readers), secrets)
 
         if (
             outcome == "exited"
@@ -730,44 +745,6 @@ class SubprocessSandbox:
                 detail=detail,
             ),
         )
-
-    # ....................... #
-
-    def _refuse_a_request_this_route_cannot_serve(self, request: SandboxRequest) -> None:
-        """Refuse before spawning what could only half-work."""
-
-        if (request.input_files or request.output_globs) and self.config.storage is None:
-            raise exc.configuration(
-                f"Sandbox route {self.spec.name!r} stages or collects files but is wired with "
-                "no storage spec. Running the command anyway would start it without its "
-                "inputs, or discard the outputs it was asked to produce.",
-                code="sandbox_storage_unwired",
-                details={"route": str(self.spec.name)},
-            )
-
-    # ....................... #
-
-    def _budget(self, request: SandboxRequest) -> float:
-        """Seconds this run gets: the route's ceiling, narrowed by whoever asks for less.
-
-        Never widened. The request narrows its own budget, the invocation deadline narrows
-        it again, and the route's ceiling is the roof over both.
-        """
-
-        seconds = self.config.wall_clock_ceiling.total_seconds()
-
-        if request.timeout is not None:
-            seconds = min(seconds, request.timeout.total_seconds())
-
-        if request.resources is not None and request.resources.wall_clock is not None:
-            seconds = min(seconds, request.resources.wall_clock.total_seconds())
-
-        remaining = self.ctx.inv_ctx.remaining_time()
-
-        if remaining is not None:
-            seconds = min(seconds, remaining)
-
-        return max(seconds, 0.0)
 
     # ....................... #
 
@@ -822,16 +799,6 @@ class SubprocessSandbox:
         # kills the shim with a `TypeError` before it can become the program — a ceiling
         # written as `1.5e9` failing as if the program had.
         return {name: (int(soft), int(hard)) for name, (soft, hard) in limits.items()}
-
-    # ....................... #
-
-    def _output_cap(self, request: SandboxRequest) -> int:
-        cap = self.config.max_output_bytes
-
-        if request.resources is not None and request.resources.max_output_bytes is not None:
-            cap = min(cap, request.resources.max_output_bytes)
-
-        return cap
 
     # ....................... #
 
@@ -930,52 +897,17 @@ class SubprocessSandbox:
 
     # ....................... #
 
-    async def _environment(self, request: SandboxRequest) -> tuple[dict[str, str], tuple[str, ...]]:
-        """Exactly what the request named, plus the route's declared passthrough.
-
-        Returns the environment and the resolved secret values in it, which the caller masks
-        out of the capture. A child can print what it was given — deliberately, or in a
-        traceback that dumps ``os.environ`` — and a ``SandboxResult`` is journaled verbatim
-        by a durable step, so a secret that reaches the capture reaches storage.
-        """
-
-        env = {name: os.environ[name] for name in self.config.env_passthrough if name in os.environ}
-        secrets: Any = None
-        resolved: list[str] = []
-
-        for name, value in request.env.items():
-            if isinstance(value, SecretRef):
-                if secrets is None:
-                    secrets = self.ctx.deps.provide(SecretsDepKey)
-
-                env[name] = await secrets.resolve_str(value)
-                resolved.append(env[name])
-
-            else:
-                env[name] = value
-
-        return env, tuple(sorted({value for value in resolved if value}, key=len, reverse=True))
-
-    # ....................... #
+    def _storage(self) -> StorageSpec:
+        return require_storage(self.config.storage, route=str(self.spec.name))
 
     def _storage_query(self) -> Any:
-        return self.ctx.storage.query(_require_storage(self.config, self.spec))
+        return self.ctx.storage.query(self._storage())
 
     def _storage_command(self) -> Any:
-        return self.ctx.storage.command(_require_storage(self.config, self.spec))
+        return self.ctx.storage.command(self._storage())
 
 
 # ----------------------- #
-
-
-def _require_storage(config: SubprocessSandboxConfig, spec: SandboxSpec) -> StorageSpec:
-    if config.storage is None:  # pragma: no cover - guarded before any staging runs
-        raise exc.configuration(
-            f"Sandbox route {spec.name!r} has no storage spec wired.",
-            code="sandbox_storage_unwired",
-        )
-
-    return config.storage
 
 
 def _signal_group(
@@ -1056,34 +988,6 @@ def _discard_workspace(making: "asyncio.Future[str]") -> None:
         return
 
     shutil.rmtree(making.result(), ignore_errors=True)
-
-
-def _mask(
-    captured: tuple[CapturedStream, CapturedStream], secrets: tuple[str, ...]
-) -> tuple[CapturedStream, CapturedStream]:
-    """Replace every resolved secret value in the captures with the scrubber's placeholder.
-
-    Longest first, so a secret that contains another is not half-replaced into a fragment
-    of the one still readable. The byte count and the truncation flag are untouched: they
-    describe what the child wrote, and rewriting them to match the masked text would make
-    the capture lie about the run instead of about the secret.
-    """
-
-    if not secrets:
-        return captured
-
-    def scrub(stream: CapturedStream) -> CapturedStream:
-        text = stream.text
-
-        for secret in secrets:
-            text = text.replace(secret, SECRET_PLACEHOLDER)
-
-        if text == stream.text:
-            return stream
-
-        return attrs.evolve(stream, text=text)
-
-    return scrub(captured[0]), scrub(captured[1])
 
 
 async def _settle(

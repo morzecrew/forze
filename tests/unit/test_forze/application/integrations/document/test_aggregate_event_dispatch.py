@@ -56,9 +56,7 @@ class OrderRead(ReadDocument):
 _ORDER_SPEC: DocumentSpec[OrderRead, Order, OrderCreate, OrderUpdate] = DocumentSpec(
     name="orders",
     read=OrderRead,
-    write=DocumentWriteTypes(
-        domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate
-    ),
+    write=DocumentWriteTypes(domain=Order, create_cmd=OrderCreate, update_cmd=OrderUpdate),
 )
 
 
@@ -81,9 +79,7 @@ class PlainRead(ReadDocument):
 _PLAIN_SPEC: DocumentSpec[PlainRead, Plain, PlainCreate, PlainUpdate] = DocumentSpec(
     name="plain",
     read=PlainRead,
-    write=DocumentWriteTypes(
-        domain=Plain, create_cmd=PlainCreate, update_cmd=PlainUpdate
-    ),
+    write=DocumentWriteTypes(domain=Plain, create_cmd=PlainCreate, update_cmd=PlainUpdate),
 )
 
 
@@ -103,9 +99,7 @@ def _capturing_registry(seen: list[DomainEvent]) -> DomainEventRegistry:
 class TestAggregateEventDispatch:
     async def test_update_dispatches_emitter_event_in_command_flow(self) -> None:
         seen: list[DomainEvent] = []
-        ctx = context_from_deps(
-            MockDepsModule(domain_events=_capturing_registry(seen))()
-        )
+        ctx = context_from_deps(MockDepsModule(domain_events=_capturing_registry(seen))())
         cmd = ctx.document.command(_ORDER_SPEC)
 
         created = await cmd.create(OrderCreate())
@@ -119,9 +113,7 @@ class TestAggregateEventDispatch:
 
     async def test_non_aggregate_document_dispatches_nothing(self) -> None:
         seen: list[DomainEvent] = []
-        ctx = context_from_deps(
-            MockDepsModule(domain_events=_capturing_registry(seen))()
-        )
+        ctx = context_from_deps(MockDepsModule(domain_events=_capturing_registry(seen))())
         cmd = ctx.document.command(_PLAIN_SPEC)
 
         created = await cmd.create(PlainCreate())
@@ -146,8 +138,6 @@ class TestAggregateEventDispatch:
         created = await adapter.create(OrderCreate())
 
         with pytest.raises(CoreException) as ei:
-            await adapter.update(
-                created.id, created.rev, OrderUpdate(status="confirmed")
-            )
+            await adapter.update(created.id, created.rev, OrderUpdate(status="confirmed"))
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION

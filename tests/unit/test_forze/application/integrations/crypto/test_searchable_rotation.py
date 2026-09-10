@@ -123,9 +123,7 @@ def test_overlap_neq_widens_to_nin() -> None:
 def test_overlap_in_expands_per_value() -> None:
     codec = _codec(DeterministicFieldCipher(root=_NEW, previous_root=_OLD))
 
-    rewritten = codec.rewrite_filter(
-        QueryField("email", "$in", ("a@x.com", "b@x.com"))
-    )
+    rewritten = codec.rewrite_filter(QueryField("email", "$in", ("a@x.com", "b@x.com")))
 
     assert rewritten.op == "$in"
     assert len(rewritten.value) == 4  # two values × two keys

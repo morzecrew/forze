@@ -209,9 +209,7 @@ class TestNoOverlapByDefault:
                 _ = tenant
                 return KeyRef(key_id=_NEW)
 
-            async def resolve_previous(
-                self, tenant: TenantIdentity | None
-            ) -> KeyRef | None:
+            async def resolve_previous(self, tenant: TenantIdentity | None) -> KeyRef | None:
                 _ = tenant
                 return self.previous
 
@@ -248,6 +246,4 @@ class TestNoOverlapByDefault:
 
         # previous_key_ref defaults to None — the guard is unchanged.
         with pytest.raises(CoreException):
-            await _keyring(StaticKeyDirectory(KeyRef(key_id=_NEW))).decrypt(
-                written, tenant=tenant
-            )
+            await _keyring(StaticKeyDirectory(KeyRef(key_id=_NEW))).decrypt(written, tenant=tenant)

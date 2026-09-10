@@ -34,9 +34,7 @@ class _FakeStore(IdempotencyPort):
 
     records: dict[tuple[str, str | None], IdempotencyRecord] = attrs.field(factory=dict)
 
-    async def begin(
-        self, op: str, key: str | None, payload_hash: str
-    ) -> IdempotencyRecord | None:
+    async def begin(self, op: str, key: str | None, payload_hash: str) -> IdempotencyRecord | None:
         return self.records.get((op, key))
 
     async def commit(
@@ -57,9 +55,7 @@ def _keyring() -> Keyring:
 
 
 def _wrapped(store: _FakeStore) -> EncryptingIdempotencyPort:
-    return EncryptingIdempotencyPort(
-        inner=store, cipher=_keyring(), tenant_provider=lambda: None
-    )
+    return EncryptingIdempotencyPort(inner=store, cipher=_keyring(), tenant_provider=lambda: None)
 
 
 # ....................... #

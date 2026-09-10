@@ -51,6 +51,7 @@
 "kms-gcp" = "forze_kms.gcp"
 "kms-yc" = "forze_kms.yc"
 "mock-server" = "forze_mock.server"
+"sandbox-container" = "forze_sandbox.container"
 
 # The extra installs a whole package, which is already a unit on its own. Listed rather
 # than derived so that rule 1 has something to check for every extra.
@@ -154,5 +155,7 @@ names = ["observability", "zstd"]
 "forze_kms.gcp" = { doctrine = "D2" }
 "forze_kms.yc" = { doctrine = "D2" }
 "forze_mock.server" = { doctrine = "D2" }
+"forze_sandbox" = { doctrine = "D1" }
+"forze_sandbox.container" = { doctrine = "D1" }
 
 "forze_cli" = { doctrine = "D3", rationale = "Maintainer tooling. Skills target engineers building applications on Forze; nothing here is reached from an application." }

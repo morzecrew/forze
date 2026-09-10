@@ -168,9 +168,7 @@ async def test_streaming_sink_seals_per_chunk_and_round_trips() -> None:
     # — identical at-rest protection to the one-shot ``put_simple_ordered_hits`` path.
     rs_spec = SearchResultSnapshotSpec(name="snap", enabled=True, chunk_size=2)
     store = MockSearchResultSnapshotAdapter(state=MockState(), spec=rs_spec)
-    snap = SearchResultSnapshot(
-        store=store, cipher=_keyring(), cipher_tenant=lambda: None
-    )
+    snap = SearchResultSnapshot(store=store, cipher=_keyring(), cipher_tenant=lambda: None)
     keys = [
         SearchResultSnapshot.result_record_key_string(_Hit(id=str(i), ssn=f"secret-{i}"))
         for i in range(5)

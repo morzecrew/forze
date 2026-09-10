@@ -171,9 +171,7 @@ class TestAgeProportionalTtl:
         await coord.set_many(docs)
 
         assert cache.set_many_versioned.await_count == 2
-        batch_ttls = {
-            call.kwargs["ttl"] for call in cache.set_many_versioned.await_args_list
-        }
+        batch_ttls = {call.kwargs["ttl"] for call in cache.set_many_versioned.await_args_list}
         assert timedelta(hours=1) in batch_ttls  # the cap bucket
 
     async def test_envelope_carries_entry_ttl_for_xfetch(self) -> None:
@@ -183,6 +181,4 @@ class TestAgeProportionalTtl:
         await coord.set_one(_doc(age=timedelta(hours=5)), delta=0.5)
 
         ((_, _, payload), kwargs) = cache.set_versioned.await_args
-        assert payload["_xf"]["ttl"] == pytest.approx(
-            kwargs["ttl"].total_seconds()
-        )
+        assert payload["_xf"]["ttl"] == pytest.approx(kwargs["ttl"].total_seconds())

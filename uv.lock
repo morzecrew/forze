@@ -1337,6 +1337,9 @@ s3 = [
     { name = "types-aioboto3", extra = ["s3"] },
     { name = "types-aiobotocore" },
 ]
+sandbox-container = [
+    { name = "httpx" },
+]
 socketio = [
     { name = "python-socketio" },
     { name = "python-socketio-stubs" },
@@ -1436,6 +1439,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'http'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'inference-http'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'oidc'", specifier = ">=0.28.0" },
+    { name = "httpx", marker = "extra == 'sandbox-container'", specifier = ">=0.28.0" },
     { name = "hvac", extras = ["parser"], marker = "extra == 'vault'", specifier = ">=2.4.0" },
     { name = "hypothesis", marker = "extra == 'dst'", specifier = ">=6.153.0" },
     { name = "inngest", marker = "extra == 'inngest'", specifier = ">=0.5.18" },
@@ -1486,7 +1490,7 @@ requires-dist = [
     { name = "yarl", marker = "extra == 'rabbitmq'", specifier = ">=1.24.5" },
     { name = "zstandard", marker = "extra == 'zstd'", specifier = ">=0.23.0" },
 ]
-provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inference-http", "inference-sagemaker", "inngest", "kafka", "kms-aws", "kms-gcp", "kms-yc", "mcp", "meilisearch", "mock-server", "mongo", "neo4j", "observability", "oidc", "postgres", "rabbitmq", "redis", "s3", "socketio", "sqs", "temporal", "vault", "zstd"]
+provides-extras = ["authn", "bigquery", "cli", "clickhouse", "dst", "duckdb", "fastapi", "firestore", "gcs", "http", "inference-http", "inference-sagemaker", "inngest", "kafka", "kms-aws", "kms-gcp", "kms-yc", "mcp", "meilisearch", "mock-server", "mongo", "neo4j", "observability", "oidc", "postgres", "rabbitmq", "redis", "s3", "sandbox-container", "socketio", "sqs", "temporal", "vault", "zstd"]
 
 [package.metadata.requires-dev]
 dev = [

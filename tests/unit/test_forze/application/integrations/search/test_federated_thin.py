@@ -124,14 +124,10 @@ def test_eligibility_gates() -> None:
 
     assert federated_thin_eligible(thin_merge=True, **base)
     assert not federated_thin_eligible(thin_merge=False, **base)
-    assert not federated_thin_eligible(
-        thin_merge=True, **{**base, "wants_highlights": True}
-    )
+    assert not federated_thin_eligible(thin_merge=True, **{**base, "wants_highlights": True})
     # A top-level sort field present on every member is thin-eligible (projected
     # alongside ``id`` and applied as a tie-break under the RRF score).
-    assert federated_thin_eligible(
-        thin_merge=True, **{**base, "sorts": {"title": "asc"}}
-    )
+    assert federated_thin_eligible(thin_merge=True, **{**base, "sorts": {"title": "asc"}})
     # A dotted key whose ROOT field exists on every member is eligible too — both paths
     # resolve nested paths the same way (projected dict vs. ``model_dump`` + ``path_get``).
     nested_members = [
@@ -145,12 +141,8 @@ def test_eligibility_gates() -> None:
         sorts={"meta.rank": "asc"},
     )
     # A key whose root is absent on a member falls back to the full-fetch path.
-    assert not federated_thin_eligible(
-        thin_merge=True, **{**base, "sorts": {"meta.rank": "asc"}}
-    )
-    assert not federated_thin_eligible(
-        thin_merge=True, **{**base, "sorts": {"absent": "asc"}}
-    )
+    assert not federated_thin_eligible(thin_merge=True, **{**base, "sorts": {"meta.rank": "asc"}})
+    assert not federated_thin_eligible(thin_merge=True, **{**base, "sorts": {"absent": "asc"}})
 
     no_id = [
         SearchSpec(
@@ -261,9 +253,7 @@ async def test_thin_executor_matches_full_merge_with_sorts(direction: str) -> No
         federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
         legs=ports,
     )
-    full_page = await full.search_page(
-        "alpha", pagination={"limit": 10}, sorts=sorts
-    )
+    full_page = await full.search_page("alpha", pagination={"limit": 10}, sorts=sorts)
 
     active = [("a", ports[0][1], 1.0), ("b", ports[1][1], 1.0)]
     thin_page = await execute_federated_thin_offset(
@@ -310,9 +300,7 @@ async def test_thin_executor_matches_full_merge_with_nested_sort(
         federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
         legs=ports,
     )
-    full_page = await full.search_page(
-        "alpha", pagination={"limit": 10}, sorts=sorts
-    )
+    full_page = await full.search_page("alpha", pagination={"limit": 10}, sorts=sorts)
 
     active = [("a", ports[0][1], 1.0), ("b", ports[1][1], 1.0)]
     thin_page = await execute_federated_thin_offset(
@@ -332,9 +320,7 @@ async def test_thin_executor_matches_full_merge_with_nested_sort(
     # Dotted sort resolves identically thin (projected nested dict) vs. full (model_dump +
     # path_get). One rank-1 hit per leg → equal RRF score → nested rank decides the order.
     assert _ordered(thin_page) == _ordered(full_page)
-    expected = (
-        [("b", "2"), ("a", "1")] if direction == "asc" else [("a", "1"), ("b", "2")]
-    )
+    expected = [("b", "2"), ("a", "1")] if direction == "asc" else [("a", "1"), ("b", "2")]
     assert _ordered(thin_page) == expected
 
 
@@ -410,9 +396,7 @@ async def test_thin_snapshot_write_and_replay_round_trip() -> None:
         pagination={"limit": 10},
         return_type=None,
         return_count=True,
-        rehydrate=federated_snapshot_rehydrator(
-            ports=ports, leg_opts=None, run_legs=_gather
-        ),
+        rehydrate=federated_snapshot_rehydrator(ports=ports, leg_opts=None, run_legs=_gather),
     )
 
     assert replay is not None

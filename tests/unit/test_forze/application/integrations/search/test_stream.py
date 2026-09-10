@@ -23,9 +23,7 @@ class _Doc(BaseModel):
     id: str
 
 
-def _page(
-    hits: Sequence[Any], *, next_cursor: str | None, has_more: bool
-) -> SearchCursorPage[Any]:
+def _page(hits: Sequence[Any], *, next_cursor: str | None, has_more: bool) -> SearchCursorPage[Any]:
     return SearchCursorPage(
         hits=list(hits), next_cursor=next_cursor, prev_cursor=None, has_more=has_more
     )
@@ -131,18 +129,12 @@ class TestMixinStream:
         assert [d.id for d in got] == [str(i) for i in range(7)]
 
         proj = [
-            r
-            async for c in adapter.project_search_stream(["id"], "q", chunk_size=3)
-            for r in c
+            r async for c in adapter.project_search_stream(["id"], "q", chunk_size=3) for r in c
         ]
         assert len(proj) == 7
         assert all(set(r.keys()) == {"id"} for r in proj)
 
-        sel = [
-            r
-            async for c in adapter.select_search_stream(_Doc, "q", chunk_size=3)
-            for r in c
-        ]
+        sel = [r async for c in adapter.select_search_stream(_Doc, "q", chunk_size=3) for r in c]
         assert len(sel) == 7
         assert all(isinstance(r, _Doc) for r in sel)
 

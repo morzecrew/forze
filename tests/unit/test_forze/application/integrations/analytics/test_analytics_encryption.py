@@ -94,11 +94,7 @@ def test_without_keyring_fails_closed() -> None:
 def test_binds_record_id_rejected_at_construction() -> None:
     # Caught when the spec is built, not deferred to wiring — analytics rows have no id.
     with pytest.raises(CoreException) as ei:
-        _spec(
-            encryption=FieldEncryption(
-                encrypted=frozenset({"email"}), binds_record_id=True
-            )
-        )
+        _spec(encryption=FieldEncryption(encrypted=frozenset({"email"}), binds_record_id=True))
 
     assert ei.value.kind is ExceptionKind.CONFIGURATION
     assert "binds_record_id" in str(ei.value)
@@ -124,9 +120,7 @@ async def test_ingest_seals_then_every_read_path_decrypts() -> None:
     assert ingest_codec is not None
 
     # Ingest seals the encrypted column at rest; the dimension stays plaintext.
-    sealed = await encode_ingest_payloads(
-        ingest_codec, [_Row(id="1", region="eu", email="a@b.co")]
-    )
+    sealed = await encode_ingest_payloads(ingest_codec, [_Row(id="1", region="eu", email="a@b.co")])
     row = sealed[0]
     assert is_envelope(base64.b64decode(row["email"]))  # sealed
     assert row["region"] == "eu"  # plaintext dimension
@@ -137,19 +131,28 @@ async def test_ingest_seals_then_every_read_path_decrypts() -> None:
         email: str
 
     models = await decrypt_and_shape_rows(
-        [dict(row)], read_codec=ingest_codec, read_type=_Row, return_type=None,
+        [dict(row)],
+        read_codec=ingest_codec,
+        read_type=_Row,
+        return_type=None,
         return_fields=None,
     )
     assert models[0] == _Row(id="1", region="eu", email="a@b.co")
 
     typed = await decrypt_and_shape_rows(
-        [dict(row)], read_codec=ingest_codec, read_type=_Row, return_type=_Proj,
+        [dict(row)],
+        read_codec=ingest_codec,
+        read_type=_Row,
+        return_type=_Proj,
         return_fields=None,
     )
     assert typed[0].email == "a@b.co"
 
     projected = await decrypt_and_shape_rows(
-        [dict(row)], read_codec=ingest_codec, read_type=_Row, return_type=None,
+        [dict(row)],
+        read_codec=ingest_codec,
+        read_type=_Row,
+        return_type=None,
         return_fields=["email", "region"],
     )
     assert projected[0] == {"email": "a@b.co", "region": "eu"}
@@ -161,7 +164,10 @@ async def test_decrypt_and_shape_is_noop_for_plain_spec() -> None:
     row = {"id": "1", "region": "eu", "email": "a@b.co"}
 
     out = await decrypt_and_shape_rows(
-        [row], read_codec=spec.resolved_read_codec, read_type=_Row, return_type=None,
+        [row],
+        read_codec=spec.resolved_read_codec,
+        read_type=_Row,
+        return_type=None,
         return_fields=None,
     )
 

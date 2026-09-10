@@ -17,6 +17,15 @@ from .process import (
     SubprocessSandboxConfig,
     subprocess_capabilities,
 )
+from .shared import (
+    budget_seconds,
+    mask_secrets,
+    mask_text,
+    output_cap,
+    refuse_unwired_storage,
+    require_storage,
+    resolve_environment,
+)
 
 # ----------------------- #
 
@@ -28,4 +37,11 @@ __all__ = [
     "SubprocessSandbox",
     "SubprocessSandboxConfig",
     "SubprocessSandboxDepsModule",
+    "budget_seconds",
+    "mask_secrets",
+    "mask_text",
+    "output_cap",
+    "refuse_unwired_storage",
+    "require_storage",
+    "resolve_environment",
 ]

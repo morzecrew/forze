@@ -146,17 +146,17 @@ def test_snapshot_pagination() -> None:
         0,
         20,
     )
-    assert SearchResultSnapshot.snapshot_pagination(
-        True, 500, {"limit": 3}
-    ) == (500, 0, 3)
+    assert SearchResultSnapshot.snapshot_pagination(True, 500, {"limit": 3}) == (500, 0, 3)
     assert SearchResultSnapshot.snapshot_pagination(False, 0, None) == (
         None,
         0,
         20,
     )
-    assert SearchResultSnapshot.snapshot_pagination(
-        False, 0, {"limit": 7, "offset": 2}
-    ) == (7, 2, 7)
+    assert SearchResultSnapshot.snapshot_pagination(False, 0, {"limit": 7, "offset": 2}) == (
+        7,
+        2,
+        7,
+    )
 
 
 @pytest.mark.asyncio
@@ -357,9 +357,7 @@ async def test_put_ordered_snapshot_keys_streams_caps_and_round_trips() -> None:
     from forze_mock.state import MockState
 
     # max_ids=5, chunk_size=2: a lazy generator of 8 keys is sealed in blocks and capped.
-    rs_spec = SearchResultSnapshotSpec(
-        name="snap", enabled=True, max_ids=5, chunk_size=2
-    )
+    rs_spec = SearchResultSnapshotSpec(name="snap", enabled=True, max_ids=5, chunk_size=2)
     store = MockSearchResultSnapshotAdapter(state=MockState(), spec=rs_spec)
     coord = SearchResultSnapshot(store=store)
     keys = [f"key-{i}" for i in range(8)]
@@ -392,9 +390,7 @@ async def test_put_ordered_snapshot_keys_streams_caps_and_round_trips() -> None:
 
 
 def test_federated_fingerprint_list_query_differs() -> None:
-    f1 = SearchResultSnapshot.federated_fingerprint(
-        "one", None, None, spec_name="s", rrf_k=10
-    )
+    f1 = SearchResultSnapshot.federated_fingerprint("one", None, None, spec_name="s", rrf_k=10)
     f2 = SearchResultSnapshot.federated_fingerprint(
         ["one", "two"], None, None, spec_name="s", rrf_k=10
     )
@@ -435,31 +431,16 @@ def test_effective_snapshot_overrides() -> None:
         chunk_size=3,
     )
 
-    assert (
-        SearchResultSnapshot.effective_snapshot_max_ids({"max_ids": 2}, base)
-        == 2
+    assert SearchResultSnapshot.effective_snapshot_max_ids({"max_ids": 2}, base) == 2
+    assert SearchResultSnapshot.effective_snapshot_chunk_size({"chunk_size": 1}, base) == 1
+    assert SearchResultSnapshot.effective_snapshot_ttl({"ttl_seconds": 30}, base) == timedelta(
+        seconds=30
     )
-    assert (
-        SearchResultSnapshot.effective_snapshot_chunk_size(
-            {"chunk_size": 1}, base
-        )
-        == 1
-    )
-    assert SearchResultSnapshot.effective_snapshot_ttl(
-        {"ttl_seconds": 30}, base
-    ) == timedelta(seconds=30)
 
     assert SearchResultSnapshot.effective_snapshot_max_ids(None, base) == 7
-    assert SearchResultSnapshot.effective_snapshot_max_ids(
-        {"other": 1}, None
-    ) == (50_000)
-    assert (
-        SearchResultSnapshot.effective_snapshot_chunk_size(None, None)
-        == 5_000
-    )
-    assert SearchResultSnapshot.effective_snapshot_ttl(
-        None, None
-    ) == timedelta(minutes=5)
+    assert SearchResultSnapshot.effective_snapshot_max_ids({"other": 1}, None) == (50_000)
+    assert SearchResultSnapshot.effective_snapshot_chunk_size(None, None) == 5_000
+    assert SearchResultSnapshot.effective_snapshot_ttl(None, None) == timedelta(minutes=5)
 
 
 def test_hydrate_federated_record_key_ok() -> None:
@@ -473,9 +454,7 @@ def test_hydrate_federated_record_key_ok() -> None:
 
 def test_hydrate_federated_record_key_errors() -> None:
     with pytest.raises(CoreException, match="partition"):
-        SearchResultSnapshot.hydrate_federated_record_key(
-            "no-null-byte", _fed()
-        )
+        SearchResultSnapshot.hydrate_federated_record_key("no-null-byte", _fed())
 
     with pytest.raises(CoreException, match="Unknown federated member"):
         SearchResultSnapshot.hydrate_federated_record_key(

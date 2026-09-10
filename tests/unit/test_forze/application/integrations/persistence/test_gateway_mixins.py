@@ -343,8 +343,6 @@ class TestHistoryOccMixin:
         gw = _OccGateway(_FakeHistoryGw([hist]))  # type: ignore[list-item]
 
         with pytest.raises(CoreException) as exc_info:
-            await gw._validate_history(
-                (current, 2, {"due": datetime(2028, 3, 3, tzinfo=UTC)})
-            )
+            await gw._validate_history((current, 2, {"due": datetime(2028, 3, 3, tzinfo=UTC)}))
 
         assert exc_info.value.code == "historical_consistency_violation"

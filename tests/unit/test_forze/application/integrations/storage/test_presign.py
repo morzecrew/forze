@@ -100,9 +100,7 @@ class TestPresignExpirySeconds:
         assert presign_expiry_seconds(PRESIGN_MAX_EXPIRY) == 7 * 24 * 3600
 
     def test_cap_can_be_disabled(self) -> None:
-        assert presign_expiry_seconds(timedelta(days=30), max_expiry=None) == (
-            30 * 24 * 3600
-        )
+        assert presign_expiry_seconds(timedelta(days=30), max_expiry=None) == (30 * 24 * 3600)
 
 
 # ----------------------- #

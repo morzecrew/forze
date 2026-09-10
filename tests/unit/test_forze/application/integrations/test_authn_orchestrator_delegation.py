@@ -104,9 +104,7 @@ class TestTokenPathStaysOptIn:
             token_verifier=_StubTokenVerifier(),
         )
 
-        result = await orchestrator.authenticate_with_token(
-            AccessTokenCredentials(token="t")
-        )
+        result = await orchestrator.authenticate_with_token(AccessTokenCredentials(token="t"))
 
         assert result.identity.actor is None
 
@@ -120,9 +118,7 @@ class TestTokenPathStaysOptIn:
             actor_claim=ACT_CLAIM,
         )
 
-        result = await orchestrator.authenticate_with_token(
-            AccessTokenCredentials(token="t")
-        )
+        result = await orchestrator.authenticate_with_token(AccessTokenCredentials(token="t"))
 
         assert result.identity.actor is not None
         assert result.identity.actor.principal_id == _AGENT

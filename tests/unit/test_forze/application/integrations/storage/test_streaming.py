@@ -145,9 +145,7 @@ class _FakeClient:
         blob = b"".join(deposited[n] for n in sorted(deposited))
         self.objects[key] = blob
 
-    async def abort_multipart_upload(
-        self, bucket: str, key: str, *, upload_id: str
-    ) -> None:
+    async def abort_multipart_upload(self, bucket: str, key: str, *, upload_id: str) -> None:
         self.aborted.append(upload_id)
         self.sessions.pop(upload_id, None)
 
@@ -298,9 +296,7 @@ async def test_stream_tenant_isolation_on_download_key() -> None:
 
     client = _FakeClient()
     tenant = TenantIdentity(tenant_id=uuid4())
-    adapter = _adapter(
-        client, tenant_aware=True, tenant_provider=lambda: tenant
-    )
+    adapter = _adapter(client, tenant_aware=True, tenant_provider=lambda: tenant)
 
     stored = await adapter.upload_stream(_aiter(b"z" * 200), filename="f.bin")
     assert stored.key.startswith(f"tenant_{tenant.tenant_id}/")
@@ -397,9 +393,7 @@ async def test_ranged_read_refuses_whole_payload_encrypted() -> None:
 
     client = _FakeClient()
     adapter = _adapter(client, cipher=_keyring())
-    stored = await adapter.upload(
-        UploadedObject(filename="a.bin", data=b"whole payload secret")
-    )
+    stored = await adapter.upload(UploadedObject(filename="a.bin", data=b"whole payload secret"))
 
     with pytest.raises(CoreException) as ei:
         await adapter.download_range(stored.key, start=0, end=3)

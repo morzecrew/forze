@@ -72,9 +72,7 @@ def test_apply_limit_offset_tolerates_inner_limit() -> None:
 
 def test_apply_limit_offset_preserves_inner_order_by() -> None:
     sql = apply_limit_offset("SELECT v FROM t ORDER BY v DESC", limit=2)
-    assert sql == (
-        "SELECT * FROM (SELECT v FROM t ORDER BY v DESC) AS forze_page_subq LIMIT 2"
-    )
+    assert sql == ("SELECT * FROM (SELECT v FROM t ORDER BY v DESC) AS forze_page_subq LIMIT 2")
 
 
 @pytest.mark.parametrize("window", [{"limit": -1}, {"offset": -1}])

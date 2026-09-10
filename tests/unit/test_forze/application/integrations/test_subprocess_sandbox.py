@@ -818,6 +818,31 @@ class TestTheChildsEnvironment:
         assert "s3cret-value" not in repr(request)
 
     @pytest.mark.asyncio
+    async def test_a_secret_a_child_prints_does_not_reach_a_streamed_chunk(self) -> None:
+        # The same promise as the capture below, on the other way out. A caller that logs
+        # what it streams writes the secret down otherwise, and the stream is the path a
+        # long-running job is read through.
+        module = MockDepsModule(state=MockState())
+        module.state.identity["secrets"]["sandbox/token"] = "s3cret-value"
+        ctx = context_from_modules(module)
+        streamed: list[str] = []
+
+        async with aclosing(
+            _sandbox(ctx).run_stream(
+                _python(
+                    "import os; print(os.environ['TOKEN'], flush=True)",
+                    env={"TOKEN": SecretRef(path="sandbox/token")},
+                )
+            )
+        ) as events:
+            async for event in events:
+                if event.kind == "stdout":
+                    streamed.append(event.text)
+
+        assert "s3cret-value" not in "".join(streamed)
+        assert SECRET_PLACEHOLDER in "".join(streamed)
+
+    @pytest.mark.asyncio
     async def test_a_secret_a_child_prints_does_not_reach_the_capture(self) -> None:
         # The capture is what a durable step journals, so a masked secret is the difference
         # between "the child saw it" and "the value is in storage". The overlapping pair is

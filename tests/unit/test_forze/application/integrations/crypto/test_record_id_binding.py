@@ -159,9 +159,10 @@ async def test_encode_patch_binds_threaded_record_id() -> None:
     )
 
     # Decrypts only when the row carries the threaded id...
-    assert read_codec.decode_mapping(
-        {"id": "rec-a", "name": "x", **patch}
-    ).email == "patched@example.com"
+    assert (
+        read_codec.decode_mapping({"id": "rec-a", "name": "x", **patch}).email
+        == "patched@example.com"
+    )
     # ...and is rejected under any other id.
     with pytest.raises(CoreException):
         read_codec.decode_mapping({"id": "rec-b", "name": "x", **patch})

@@ -41,9 +41,7 @@ class _Head:
 class _InMemoryStorageClient:
     """Minimal in-memory object-storage client for adapter-level tests."""
 
-    objects: dict[tuple[str, str], tuple[bytes, dict[str, str], str]] = attrs.field(
-        factory=dict
-    )
+    objects: dict[tuple[str, str], tuple[bytes, dict[str, str], str]] = attrs.field(factory=dict)
 
     @contextlib.asynccontextmanager
     async def client(self) -> AsyncIterator[_InMemoryStorageClient]:

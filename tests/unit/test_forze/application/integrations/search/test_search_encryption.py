@@ -157,15 +157,9 @@ def test_spec_reject_plaintext_reaches_search_codec() -> None:
     silently passed through as legacy plaintext."""
 
     spec = resolve_search_read_codec_spec(
-        _spec(
-            encryption=FieldEncryption(
-                searchable=frozenset({"secret"}), reject_plaintext=True
-            )
-        ),
+        _spec(encryption=FieldEncryption(searchable=frozenset({"secret"}), reject_plaintext=True)),
         keyring=_keyring(),
-        deterministic=DeterministicFieldCipher(
-            root=b"a-stable-root-secret-32-bytes!!!"
-        ),
+        deterministic=DeterministicFieldCipher(root=b"a-stable-root-secret-32-bytes!!!"),
         tenant_provider=lambda: None,
     )
     codec = spec.resolved_read_codec

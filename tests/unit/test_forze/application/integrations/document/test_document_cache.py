@@ -59,9 +59,7 @@ async def test_after_commit_or_now_without_cache_skips_fn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_after_commit_or_now_with_cache_awakens_fn_immediately_without_port() -> (
-    None
-):
+async def test_after_commit_or_now_with_cache_awakens_fn_immediately_without_port() -> None:
     cache = AsyncMock()
     fn = AsyncMock()
 
