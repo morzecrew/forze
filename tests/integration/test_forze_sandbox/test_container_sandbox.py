@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 from contextlib import aclosing
 from datetime import timedelta
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -218,6 +219,31 @@ class TestStagingAndCollecting:
 
         assert result.succeeded, result.stderr.text
         assert set(result.output_files) == {"made.txt"}
+
+    async def test_staging_that_fails_takes_its_spooled_archive_with_it(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The archive spills to disk, so a staging failure that walked away from it would
+        # leave the file behind for the process's lifetime — a leak per failed run.
+        spools: list[Any] = []
+        real = sandbox_adapter.tempfile.SpooledTemporaryFile
+
+        def recording(**kwargs: Any) -> Any:
+            spool = real(**kwargs)
+            spools.append(spool)
+
+            return spool
+
+        def refuse(*_: object, **__: object) -> None:
+            raise RuntimeError("the input could not be staged")
+
+        monkeypatch.setattr(sandbox_adapter.tempfile, "SpooledTemporaryFile", recording)
+        monkeypatch.setattr(sandbox_adapter._Staging, "add", refuse)
+
+        with pytest.raises(RuntimeError, match="could not be staged"):
+            await container_sandbox(ctx).run(_program("print('never runs')"))
+
+        assert spools and all(spool.closed for spool in spools)
 
     async def test_stdin_reaches_the_child_and_then_ends(self, ctx: ExecutionContext) -> None:
         result = await container_sandbox(ctx).run(
@@ -521,6 +547,28 @@ class TestKillsAndWhatSurvivesThem:
         await asyncio.sleep(0.5)
 
         assert _host_processes_matching(marker) == 0
+
+    async def test_a_daemon_that_will_not_say_what_happened_still_ends_the_run(
+        self, ctx: ExecutionContext, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The signal was taken and the status never came back. The run is over either way —
+        # the container is removed by the cleanup — so what the caller gets is the outcome
+        # rather than a `TimeoutError` about the bookkeeping behind it.
+        class Silent(ContainerEngine):
+            async def wait(self, container: str) -> int:
+                await asyncio.sleep(60)
+
+                raise AssertionError("unreachable")  # pragma: no cover
+
+        monkeypatch.setattr(sandbox_adapter, "ContainerEngine", Silent)
+        began = asyncio.get_running_loop().time()
+        result = await container_sandbox(ctx).run(
+            _program("import time; time.sleep(60)", timeout=timedelta(seconds=2))
+        )
+        elapsed = asyncio.get_running_loop().time() - began
+
+        assert result.outcome == "killed_timeout"
+        assert elapsed < 30
 
     async def test_no_container_outlives_a_run_however_it_ended(
         self, ctx: ExecutionContext
