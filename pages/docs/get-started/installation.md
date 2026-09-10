@@ -12,7 +12,7 @@ the core (it runs fully in-memory, no Docker), then add integrations as you grow
 
 Forze requires:
 
-- Python 3.13 or newer
+- Python 3.13 or 3.14
 - [uv](https://docs.astral.sh/uv/){:target="_blank"} or another PEP 517-compatible package manager
 
 ## Install core

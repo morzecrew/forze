@@ -49,6 +49,24 @@ page = await doc_q.find_page(
 rows, total = page.hits, page.count
 ```
 
+## An empty page can say why
+
+Every page value object and kits response DTO carries an optional `abstention` reason —
+`no_match`, `ambiguous` or `not_permitted` — so a permission-gated read can tell "nothing
+exists" from "rows exist but you may not see them" without a second, ungated query.
+
+It is a result, not an error. Adapters that cannot tell the causes apart leave it `None`,
+and a page carrying hits never carries a reason (hits beside a reason, or an unknown
+reason, are refused). On governed list operations, `AuthzDocumentScopeWrap(explain_empty=True)`
+can set it for you: no policy restriction makes an empty page `no_match`, otherwise one
+probe re-runs the read with the policy filters dropped and only the caller's own kept,
+clamped to a single first-page row — rows there mean `not_permitted`, none mean `no_match`.
+
+The probe's rows never reach the caller, and it is off by default. Because it re-invokes
+the handler it runs only under a read-only `QUERY` invocation, and three cases leave the
+page with no reason at all rather than a guessed one: any operation that is not
+`QUERY`-classified, args carrying no `size` field to clamp, and a probe that raises.
+
 ## Anti-patterns
 
 - **Sorting cursor pages without stable key fields** — include a deterministic sort key, usually `id`.

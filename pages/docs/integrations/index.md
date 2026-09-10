@@ -33,8 +33,11 @@ on each integration's page. Two key backends need no extra at all: the
 
 The remaining extras are not backend integrations: `dst` and `cli` are tooling
 ([deterministic simulation testing](../dst/overview.md) and the `forze`
-command-line tool), and `zstd` adds the zstd codec for
-[portable archives](../running-in-prod/portability.md).
+command-line tool), `mock-server` serves the in-memory mock over HTTP,
+`sandbox-container` is the container tier of the
+[sandbox execution plane](../data-events/sandbox.md), `observability` adds the OTLP
+exporter for [telemetry](../running-in-prod/observability.md), and `zstd` adds the zstd
+codec for [portable archives](../running-in-prod/portability.md).
 
 Install one or several at once — `uv add 'forze[fastapi,postgres,redis]'`.
 
@@ -106,6 +109,7 @@ is the deployment's uvicorn or transport concern, not the integration's.
 Everything else has one, including the ones that are barely a connection at all: `duckdb`
 is in-process, so `DuckDbSettings` carries the database path and the two resource limits
 that decide whether a query is slow or the container is killed; `SocketIOSettings` carries
-only the Redis backplane URL (build it from a `RedisSettings.dsn`, since integration
-packages do not import each other); `GcpKmsSettings` is one emulator endpoint and one
-timeout, because Google's credentials come from the ambient environment.
+the Redis backplane — the URL, the channel, and whether this process publishes without
+subscribing (build the URL from a `RedisSettings.dsn`, since integration packages do not
+import each other); `GcpKmsSettings` is one emulator endpoint and one timeout, because
+Google's credentials come from the ambient environment.

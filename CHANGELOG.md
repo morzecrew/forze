@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.7.0] - 2026-09-10
+
+### Added
+
 - **Untrusted code finally has a tier that can hold it.** `forze_sandbox.container` runs a sandbox route in a container with no network, no capabilities and a non-root user; the workspace crosses as tar, a memory over-run comes back as `killed_oom`, and killing a run reaps everything it started.
 
 - **Sandbox routes can bound the child.** Memory, CPU and open-file ceilings plus a dropped user move a `SubprocessSandbox` route to the `process` isolation tier; the kill takes the child's process group, and `run_stream` yields output as it arrives.
@@ -21,13 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Mongo implements the inbox.** `MongoDepsModule(inboxes={...})` with `MongoInboxConfig` registers a consumer-side dedup store: one atomic `_id` upsert per message, no index migration, riding the ambient transaction so the mark rolls back with the handler (exactly-once effect).
 
-- **Mongo tenant offboarding holds a lock.** The read authorising a `dropDatabase` went stale before the drop, so an onboarding landing in between lost its marker and its data to a teardown that never saw it. `MongoDatabaseTenantProvisioner` now takes a document lock keyed by the database name, kept outside the database being dropped (`lock_collection` / `lock_database`, defaulting to the client's own). Only teardowns write it, which leaves onboarding uncontended: onboarding writes its marker and then reads both the lock (`tenant_offboarding_in_flight`) and back the marker it just wrote (`tenant_onboarding_lost_its_database`), the second because "no lock" also describes a teardown that has already finished with the marker in it. Both refusals are `concurrency`, so a retry strategy treats them as what they usually are — a teardown that will be over shortly. A lock in the database being dropped is refused (`tenant_lock_inside_target_database`), and a release that fails after a successful drop is reported (`tenant_offboarding_lock_stuck`) rather than left for the next onboarding to discover. Nothing expires the lock, so a teardown that dies wedges that database name until the named document is removed — and because that recovery is a person deleting a row, the release is fenced on a per-acquisition token, so a holder that was merely slow deletes nothing rather than its successor's lock. A teardown that fails *at* the drop keeps its lock instead of releasing it, since an ambiguous `dropDatabase` may still be running on the server; one that refuses before issuing the drop releases normally. Every read in the protocol is pinned to the primary, so an admin URI carrying `readPreference` cannot answer these orderings from a lagging secondary, and a blank `lock_database` or `lock_collection` is refused rather than read as unset (`tenant_lock_location_blank`).
+- **Mongo tenant offboarding holds a lock.** A `dropDatabase` authorised by a stale read could destroy a tenant onboarded in between, so teardown now takes a document lock kept outside the database it drops, and onboarding reads back its own marker. Both refusals are `concurrency`, so a retry treats them as transient.
 
-- **Mongo implements tenant provisioning.** `MongoDatabaseTenantProvisioner` is the namespace-tier provisioner for MongoDB, where there is no `CREATE SCHEMA` to mirror — a database exists once something is written to it. Onboarding writes a marker document into the tenant's own database: a connection missing rights there fails the onboarding rather than a customer's first request, the container becomes visible to an operator, and the marker records whose database it is. Teardown is opt-in and refuses a static database name at construction (`tenant_database_shared_across_tenants`), a routed client (`tenant_provisioner_routed_client`), a system database (`tenant_database_is_system`), and — read off the server, where a constant resolver is finally caught — a database holding another tenant's marker, one whose marker is missing either field `provision` writes (`tenant_marker_unrecognized` — presence of an `_id` is not recognition, and reading half a marker as ownership would put a `dropDatabase` behind a corrupt document), or one holding collections it never registered (`tenant_database_not_provisioned`).
+- **Mongo implements tenant provisioning.** `MongoDatabaseTenantProvisioner` onboards by writing a marker document into the tenant's own database, so a connection missing rights there fails the onboarding rather than a customer's first request. Teardown is opt-in and refuses a shared, system or unmarked database.
 
-- **Mongo implements the rotating-credential store.** `MongoDepsModule(rotating_credentials=MongoRotatingCredentialsConfig(...))` registers the store and its control-plane scan for grants a counterparty rotates on use (OAuth refresh tokens). Mongo has no blocking wait on a document and caps a transaction's lifetime, so the exclusion is a lease on the credential's own document rather than a row lock — which means the plane needs no replica set. A lease can expire where a row lock cannot, so each document records whether its token was already presented: a worker inheriting an expired lease re-exchanges only when the previous holder demonstrably never called the provider, and otherwise marks the grant for re-authorization rather than risking reuse detection. Payloads are sealed at rest by default; the idleness scan wants a `{tenant_id: 1, updated_us: 1}` index — that clock is stored as microseconds rather than a BSON date, whose milliseconds are too coarse to order a batch of grants stored back to back. The shared conformance battery now runs against mock, Postgres and Mongo, with a new check that the scan orders by idleness rather than by the order rows were written.
+- **Mongo implements the rotating-credential store.** Mongo cannot block on a document, so exclusion is a lease rather than a row lock and the plane needs no replica set. A worker inheriting an expired lease re-exchanges only where the previous holder demonstrably never reached the provider.
 
-- **Mongo implements the HLC checkpoint.** `MongoDepsModule(hlc_checkpoint=MongoHlcCheckpointConfig(...))` persists the runtime's clock high-water mark so a restart resumes above its prior emissions. One `$max` upsert keyed on `_id`, riding the ambient session so it commits with the rows it stamps; no index to migrate. The plane now has a shared battery across mock, Postgres and Mongo.
+- **Mongo implements the HLC checkpoint.** One `$max` upsert persists the runtime's clock high-water mark, riding the ambient session so it commits with the rows it stamps. No index to migrate.
 
 - **Mongo implements durable execution.** `MongoDepsModule(durable_step=…, durable_run=…, durable_schedule=…)` registers the step-memo journal, the run store (claims, leases, fences, run control) and the cron schedule store. The run collection needs a partial unique index on `idempotency_key`.
 
@@ -41,23 +55,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`AuthzDocumentScopeWrap` can explain empty pages** (`explain_empty=True`): no policy restriction makes an empty page `no_match`; otherwise one single-row probe of the caller's own filters decides `not_permitted` vs `no_match`. The probe's rows never reach the caller; off by default.
 
-- **`bypass_paths` on `InvocationMetadataMiddleware` and `SecurityContextMiddleware`** — exact HTTP paths neither middleware runs for. Both resolve the execution context on every request, so in front of a probe path they answered 500 while the runtime scope was not yet open, which is the window a liveness probe exists to observe. Pass `bypass_paths=DEFAULT_HEALTH_PATHS` (already exported from `forze.base.logging`). Exact full mounted paths, never prefixes; the default (empty) changes nothing. `check_bypass_paths` (run by `runtime_lifespan`) fails the boot on a bypassed path that serves a generated operation route, on the two middlewares carrying different sets, and on a set matching no route at all.
+- **`bypass_paths` on `InvocationMetadataMiddleware` and `SecurityContextMiddleware`** — exact mounted paths neither middleware runs for, so a liveness probe is answered before the runtime scope opens instead of returning 500. Pass `DEFAULT_HEALTH_PATHS`; the empty default changes nothing.
 
-- **`attach_readiness_route` can probe the dependencies, not just the drain gate.** `probes={"postgres": PostgresClientDepKey, ...}` resolves each client and asks the `health()` every forze client port already declares, adding a per-dependency `checks` breakdown and a `degraded` 503 when one is unreachable — an un-drained process whose database is gone used to answer `ready`. `probe_timeout` (default 2s) budgets **each** probe, so a hanging dependency is one named failed check rather than an empty breakdown. No `probes` keeps today's behaviour.
+- **`attach_readiness_route` can probe the dependencies, not just the drain gate.** Naming client dep keys in `probes` adds a per-dependency breakdown and a `degraded` 503 when one is unreachable — an un-drained process whose database is gone used to answer `ready`. `probe_timeout` budgets each probe.
 
-- **Settings models for the three things every deploying application re-declares.** `forze_postgres.PostgresSettings` and `forze_redis.RedisSettings` hold the endpoint parts and build the DSN from them — percent-encoding credentials, bracketing an IPv6 host, selecting `rediss://`, appending `sslmode=require` — plus a `config` property carrying the pool knobs that were call-site arguments. `forze.base.settings.RuntimeSettings` holds the argument lists of `bootstrap_logging` and `bootstrap_telemetry` (`log_level`, `log_render`, `access_log`, `telemetry`, `version`/`build_id`/`git_sha`, computed `full_version`), and defaults `log_render` to `json` — unlike `bootstrap_logging` itself, since a settings object exists because something is being deployed. All three are plain `BaseModel`s: the environment prefix, delimiter and extra-key policy stay with the application's own `BaseSettings` root.
+- **`RuntimeSettings` holds the argument lists of `bootstrap_logging` and `bootstrap_telemetry`** — log level, render mode, the telemetry exporter and the version parts behind a computed `full_version`. It defaults the render mode to JSON, because a settings object exists where something is being deployed.
 
-- **Every integration now ships a `<Backend>Settings` model** — Mongo, RabbitMQ, Neo4j, Kafka, ClickHouse, Temporal, Vault, Meilisearch, S3, SQS, HTTP, GCS, BigQuery, Firestore, Inngest, DuckDB, Socket.IO, the three cloud KMS packages and both inference adapters join Postgres and Redis. Each holds the endpoint, credentials and client knobs a deployment sets, exposes the connection string its lifecycle step takes (`.dsn` / `.uri` / `.url` / `.address` / `.servers`) and the backend's own config object (`.config`), refuses a missing endpoint by name when it is read, and types every secret as `SecretStr`. The Redis model carries an ACL `username` and a logical `db`; Yandex KMS carries a `service_account_key`; `VaultSettings` refuses a non-loopback `http://` address. `ssl=True` means a *verified* connection everywhere — `sslmode=verify-full`, `neo4j+s://`, `rediss://` — and the assembled value is a plain property, so `model_dump()` works on a root that mounts a backend it has not configured and no DSN lands in a dump. Plain pydantic `BaseModel`s: mount them on your own `BaseSettings` root, which keeps the prefix, delimiter and extra-key policy. Only `fastapi` and `mcp` ship none: they are inbound, and where they bind is the deployment's concern. See [Integrations → Connection settings](https://morzecrew.github.io/forze/integrations/).
+- **Every integration now ships a `<Backend>Settings` model** holding the endpoint, credentials and client knobs a deployment sets, and exposing both the connection string its lifecycle step takes and the backend's own config object. A missing endpoint is refused by name when read, and `ssl=True` verifies.
 
-- **`forze.base.settings.EndpointSettings`** — the `host`/`port` pair and the URL-authority grammar that applies to every scheme built from it: IPv6 bracketing, port joining, blank-host refusal. Subclassed by the URL-building integration settings; the scheme and query parameters stay per-package. `configured_fields` and `require` are the two helpers beside it.
+- **`forze.base.settings.EndpointSettings`** — the `host`/`port` pair and the URL-authority grammar every scheme built from it needs: IPv6 bracketing, port joining, blank-host refusal. Subclassed by the URL-building integration settings, which keep their own scheme and query parameters.
 
-- **`MIN_SECRET_BYTES` is exported from `forze_identity`** — the 32-byte floor `AuthnKernelConfig`, `Hs256Signer` and the peppered-HMAC services already enforced, now readable by an application that validates its own settings so a short secret fails at boot naming the environment variable. `RenderMode` is exported from `forze.base.logging`, which had `LogLevel` but not the type beside it in every signature.
+- **`MIN_SECRET_BYTES` is exported from `forze_identity`** — the 32-byte floor the authn kernel and signers already enforced, now readable by an application validating its own settings, so a short secret fails at boot naming the variable. `RenderMode` joins `LogLevel` in `forze.base.logging`.
 
 - Four helpers each integration package used to carry its own copy of are now core and exported: `log_server_error`, `drain_domain_events`, `resolve_result_snapshot`, `domains_from_create_payloads`.
 
 - **Empty pages can say why they are empty.** Every page value object and kits response DTO carries an optional `abstention` — `no_match`, `ambiguous` or `not_permitted` — so a gated read can tell "nothing matches" from "rows you may not see". No reason by default; hits beside a reason, or an unknown one, refused.
 
-- **Every backend the published skill described now has code you can run.** Mongo, Firestore, Meilisearch, Neo4j, Socket.IO, Kafka, MCP, SageMaker, DuckDB, GCP and Yandex KMS, authz and the mock server were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.
+- **Every backend the published skill described now has code you can run.** Thirteen backends were named in prose and imported nowhere; each now carries a wiring block the corpus gate resolves against the installed packages.
 
 ### Changed
 
@@ -65,8 +79,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`forze[fastapi]` now needs `fastapi>=0.138.0`** (was `>=0.137.0`). The startup checks walk the app's real routes through `fastapi.routing.iter_route_contexts`, which 0.137.0 does not export — importing `forze_fastapi.middlewares` raised `ImportError` there before the app ever started.
 
-- **BREAKING — `forze[mcp]` moves to FastMCP 4 and MCP SDK v2** (`fastmcp>=4.0.0b3`, `mcp>=2.0.0`). `build_mcp_server`, `register_tools` and the auth/identity classes are unchanged; the SDK's protocol fields are snake_case now, so client code reading `tool.inputSchema` / `template.uriTemplate` wants `input_schema` / `uri_template` — `fastmcp.settings.mcp_camelcase_compat = False` finds the reads that still rely on the old spellings. **Migration:** FastMCP 4 is a pre-release; pin `fastmcp<4` to stay on the 3.x line.
-- **BREAKING — the 21 published Agent Skills are merged into one, `forze-skills`.** `npx skills add morzecrew/forze` now installs a routing index over 43 lazily-read reference files instead of 21 top-level skills. Per-skill install (`@forze-wiring`) is removed: it left every cross-link dangling. Adds a reference pair for `forze_dst`, which had no skill. **Migration:** re-run `npx skills add morzecrew/forze`, then delete the stale directories by hand — `rm -rf .claude/skills/forze-*` — since the installer cannot prune a directory it is not overwriting.
+- **BREAKING — `forze[mcp]` moves to FastMCP 4 and MCP SDK v2.** `build_mcp_server`, `register_tools` and the auth classes are unchanged, but the SDK's protocol fields are snake_case now, so client code reading `tool.inputSchema` wants `input_schema`. Pin `fastmcp<4` to stay on the 3.x line.
+
+- **BREAKING — the 21 published Agent Skills are merged into one, `forze-skills`.** Installing now brings a routing index over 45 lazily-read reference files; per-skill install is gone, because it left every cross-link dangling. Re-run the installer, then delete the stale directories by hand.
 
 ### Removed
 
@@ -1747,7 +1762,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.6.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/morzecrew/forze/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/morzecrew/forze/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/morzecrew/forze/compare/v0.4.1...v0.5.0
