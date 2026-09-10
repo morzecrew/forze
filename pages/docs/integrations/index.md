@@ -111,5 +111,5 @@ is in-process, so `DuckDbSettings` carries the database path and the two resourc
 that decide whether a query is slow or the container is killed; `SocketIOSettings` carries
 the Redis backplane — the URL, the channel, and whether this process publishes without
 subscribing (build the URL from a `RedisSettings.dsn`, since integration packages do not
-import each other); `GcpKmsSettings` is one emulator endpoint and one
-timeout, because Google's credentials come from the ambient environment.
+import each other); `GcpKmsSettings` is one emulator endpoint and one timeout, because
+Google's credentials come from the ambient environment.

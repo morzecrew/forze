@@ -63,9 +63,9 @@ probe re-runs the read with the policy filters dropped and only the caller's own
 clamped to a single first-page row — rows there mean `not_permitted`, none mean `no_match`.
 
 The probe's rows never reach the caller, and it is off by default. Because it re-invokes
-the handler, it runs only under a read-only `QUERY` invocation; on any other operation,
-where the args carry no `size` field to clamp, or when the probe itself raises, the page
-comes back with no reason rather than a guessed one.
+the handler it runs only under a read-only `QUERY` invocation, and three cases leave the
+page with no reason at all rather than a guessed one: any operation that is not
+`QUERY`-classified, args carrying no `size` field to clamp, and a probe that raises.
 
 ## Anti-patterns
 

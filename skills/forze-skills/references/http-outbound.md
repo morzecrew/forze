@@ -112,6 +112,7 @@ class ListOrders(Handler[ListOrdersCmd, OrdersListResponse]):
 For per-tenant base URLs / credentials, use `RoutedHttpClient` and set `tenant_aware=True` on the service config. It opens in `routed_client_lifecycle_step`, which takes the step name explicitly:
 
 ```python
+from forze.application.contracts.secrets import SecretRef
 from forze.application.execution.lifecycle.builtin import routed_client_lifecycle_step
 from forze_http import RoutedHttpClient
 

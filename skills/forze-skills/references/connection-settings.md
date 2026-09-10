@@ -93,11 +93,11 @@ and where they bind is the deployment's uvicorn or transport concern.
 
 The ones that are barely a connection still have one — `DuckDbSettings` carries the
 database path and the two resource limits that decide whether a query is slow or the
-container is killed; `SocketIOSettings` carries the Redis backplane — the URL, the channel, and whether
-this process publishes without subscribing (build the URL from a `RedisSettings.dsn`,
-since integration packages never import each other);
-`GcpKmsSettings` is an emulator endpoint and a timeout, because Google's credentials come
-from the ambient environment.
+container is killed; `SocketIOSettings` carries the Redis backplane — the URL, the
+channel, and whether this process publishes without subscribing (build the URL from a
+`RedisSettings.dsn`, since integration packages never import each other); `GcpKmsSettings`
+is an emulator endpoint and a timeout, because Google's credentials come from the ambient
+environment.
 
 ## Anti-patterns
 
