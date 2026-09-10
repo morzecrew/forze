@@ -21,8 +21,8 @@ from .process import (
     SUBPROCESS_BACKEND,
     ConfigurableSubprocessSandbox,
     SubprocessSandboxConfig,
-    _as_gid,
-    _as_uid,
+    _as_gid,  # pyright: ignore[reportPrivateUsage]
+    _as_uid,  # pyright: ignore[reportPrivateUsage]
     subprocess_capabilities,
 )
 

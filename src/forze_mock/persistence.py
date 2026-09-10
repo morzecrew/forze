@@ -599,7 +599,7 @@ class MockStatePersistence:
         """
 
         for name in sorted(PERSIST_FIELDS):
-            expected = type(_fresh_default(state, _FIELDS[name].default))
+            expected = type(_fresh_default(state, _FIELDS[name].default))  # pyright: ignore[reportUnknownVariableType]
 
             # ``isinstance`` rather than an exact type: a document namespace is a
             # ``JournalingStore`` once anything has written to it, which is a ``dict``.

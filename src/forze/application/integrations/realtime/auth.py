@@ -137,11 +137,10 @@ class RealtimeHandshake:
 
         wanted = name.lower()
 
-        for key, value in self.headers.items():
-            if key.lower() == wanted:
-                return value
-
-        return None
+        return next(
+            (value for key, value in self.headers.items() if key.lower() == wanted),
+            None,
+        )
 
 
 # ....................... #
@@ -157,7 +156,7 @@ def auth_payload(value: Any) -> Mapping[str, Any] | None:
     ``AttributeError`` raised out of a connect handler by a one-line frame.
     """
 
-    return value if isinstance(value, Mapping) else None
+    return value if isinstance(value, Mapping) else None  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #

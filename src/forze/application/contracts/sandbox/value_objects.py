@@ -40,6 +40,8 @@ reporting an error through its exit code ran exactly as asked. The ``killed_*`` 
 name who pulled the trigger, which is the difference between a program that took too long
 and one the caller abandoned. ``spawn_failed`` is the child that never started."""
 
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -150,7 +152,7 @@ class SandboxRequest:
     """Source written to the workspace and invoked by argv, instead of *command*."""
 
     input_files: Mapping[str, StorageKeyName] = attrs.field(
-        factory=dict,
+        factory=dict[str, StorageKeyName],
         converter=MappingConverter.frozen,  # type: ignore[misc]
     )
     """Workspace-relative name → storage key, staged in before the child starts.
@@ -170,7 +172,7 @@ class SandboxRequest:
     the workspace — the output channel is not an exfiltration channel."""
 
     env: Mapping[str, SecretRef | str] = attrs.field(
-        factory=dict,
+        factory=dict[str, SecretRef | str],
         converter=MappingConverter.frozen,  # type: ignore[misc]
     )
     """Environment for the child; :class:`SecretRef` values are resolved at spawn.
@@ -283,7 +285,7 @@ class SandboxResult:
     stderr: CapturedStream = attrs.field(factory=CapturedStream)
     """Captured stderr, bounded."""
 
-    output_files: Mapping[str, StorageKeyName] = attrs.field(factory=dict)
+    output_files: Mapping[str, StorageKeyName] = attrs.field(factory=dict[str, StorageKeyName])
     """Declared artifacts that were collected: workspace-relative name → storage key."""
 
     usage: ResourceUsage = attrs.field(factory=ResourceUsage)
