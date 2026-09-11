@@ -33,6 +33,7 @@ from forze_mock.adapters._derived import (  # pyright: ignore[reportPrivateUsage
     ResolvedDerivedRead,
     staged_derived,
 )
+from forze_mock.adapters._journal import JournalingStore  # pyright: ignore[reportPrivateUsage]
 from forze_mock.seeding import SeedPlan, SpecSeed
 from forze_mock.seeding.apply import (  # pyright: ignore[reportPrivateUsage]
     _mock_adapter,
@@ -811,6 +812,41 @@ class TestARegisteredSource:
 
         with pytest.raises(CoreException, match="derived_unsupplied"):
             await self._adapter(state, None).get(pk)
+
+
+class TestTheSeededWriteIsSerialized:
+    """The derived write is a read-modify-write over a namespace store.
+
+    Every other mutation of one holds `MockState.lock`; this one did not, so a concurrent
+    writer's row could be overwritten by the value read before it landed. Asserted on the
+    lock at the moment of the write rather than by racing two writers, which would pin a
+    schedule instead of the property.
+    """
+
+    async def test_the_lock_is_held_while_the_row_is_rewritten(self) -> None:
+        state = MockState()
+        held: list[bool] = []
+
+        class _Recording(JournalingStore):
+            def __setitem__(self, key: UUID, value: Any) -> None:
+                if "supplier" in value:
+                    held.append(state.lock._is_owned())
+
+                super().__setitem__(key, value)
+
+        # Pre-installed as a `JournalingStore` subclass: the adapter coerces a plain dict
+        # into one, replacing whatever was there.
+        state.documents["orders"] = _Recording({})
+
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_modules(MockDepsModule(state=state)).freeze()
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await apply_seed(ctx, _plan(count=1))
+
+        assert held == [True]
 
 
 class TestTheSeederFindsTheAdapterBehindAWrap:

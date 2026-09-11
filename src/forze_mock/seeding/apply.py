@@ -115,13 +115,18 @@ def _write_derived(ctx: ExecutionContext, seed: SpecSeed, pk: UUID) -> None:
     """
 
     port = _mock_adapter(ctx.doc.query(seed.spec), str(seed.spec.name))
-    store = port._store()
-    row = store.get(pk)
 
-    if row is None:  # pragma: no cover — the port created it one statement ago
-        raise exc.internal(f"Seeded document {pk} for '{seed.spec.name}' is not in the store")
+    # Under the same lock every other mutation of a namespace store takes: this is a
+    # read-modify-write, so holding it is what keeps a concurrent writer's row from being
+    # overwritten by the value read before it landed.
+    with port.state.lock:
+        store = port._store()
+        row = store.get(pk)
 
-    store[pk] = {**row, **seed.derived}
+        if row is None:  # pragma: no cover — the port created it one statement ago
+            raise exc.internal(f"Seeded document {pk} for '{seed.spec.name}' is not in the store")
+
+        store[pk] = {**row, **seed.derived}
 
 
 # ....................... #
