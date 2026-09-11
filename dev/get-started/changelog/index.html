@@ -8518,7 +8518,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.7.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>A read model may declare the fields its backend produces.</strong> Mapping a name to <code>None</code> in <code>DocumentSpec.derived_read_fields</code> marks it derived whatever its shape — a joined column, a nested reference, an aggregate — and <code>SpecSeed(derived=...)</code> supplies it, so a view-backed aggregate is readable from <code>forze_mock</code>.</li>
+<li>
+<p><strong>A read model may declare the fields its backend produces.</strong> Mapping a name to <code>None</code> in <code>DocumentSpec.derived_read_fields</code> marks it derived whatever its shape — a joined column, a nested reference, an aggregate — and <code>SpecSeed(derived=...)</code> supplies it, so a view-backed aggregate is readable from <code>forze_mock</code>.</p>
+</li>
+<li>
+<p><strong>A view-backed aggregate can be simulated.</strong> <code>MockDepsModule(derived_values=MockDerivedRegistry().on(spec, source))</code> supplies a marked derived field per row, including rows a workload creates after any seed ran, so an invariant runs over such an aggregate under <code>forze_dst</code>. Registering nothing keeps the refusal.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
