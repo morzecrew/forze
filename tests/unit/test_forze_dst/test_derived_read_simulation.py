@@ -260,6 +260,36 @@ class TestWithASource:
         assert first, "the workload should have read rows back"
 
 
+class TestTheRegistryIsPerSpec:
+    def test_a_source_registered_for_another_spec_does_not_serve_this_one(self) -> None:
+        """Fail-closed per spec: the refusal is what an unregistered spec keeps.
+
+        A registry keyed loosely would serve one spec's stand-in to another, which is a
+        wrong value rather than a missing one — the failure that does not announce itself.
+        """
+
+        seen: list[str] = []
+
+        def deps() -> Sequence[DepsModule]:
+            return [
+                MockDepsModule(
+                    state=MockState(),
+                    derived_values=MockDerivedRegistry().on("invoices", _view),
+                )
+            ]
+
+        sim = Simulation(
+            operations=_registry(seen),
+            deps=deps,
+            invariants=[inv.no_unexpected_error(), inv.operation_succeeds("place_order")],
+        )
+        report = _run(sim, "place_order")
+
+        assert report is not None, "the orders spec registered nothing, so the read must fail"
+        assert [v.invariant for v in report.violations] == ["operation_succeeds"]
+        assert seen == []
+
+
 class TestSeededBaseline:
     def test_a_setup_seed_serves_the_baseline_rows(self) -> None:
         """`apply_seed` from a `setup` hook, which is how a scenario starts from real rows.

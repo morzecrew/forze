@@ -721,19 +721,50 @@ class TestARegisteredSource:
 
         assert row.supplier.name == "Acme"
 
-    async def test_an_undeclared_key_is_ignored(self) -> None:
-        """A source cannot put a field on the read that the spec never declared derived."""
+    async def test_it_cannot_fill_a_field_the_spec_did_not_declare_derived(self) -> None:
+        """A source is a stand-in for the relation, not a hook that rewrites the row.
 
+        The read model's own defaults are the case that bites: an undeclared name absent
+        from the stored row would otherwise take the source's value silently, so a typo in
+        a source would read as data. Extra keys pydantic simply drops prove nothing here —
+        it drops them with or without the scoping.
+        """
+
+        class _WithDefault(ReadDocument):
+            supplier_id: UUID
+            supplier: _SupplierRef
+            stock_quantity: float
+            note: str = "from the model"
+
+        spec = DocumentSpec(
+            name="orders",
+            read=_WithDefault,
+            write=DocumentWriteTypes(domain=_Order, create_cmd=_OrderCreate),
+            derived_read_fields={"supplier": None, "stock_quantity": None},
+        )
         state = MockState()
         pk = uuid4()
         state.documents["orders"] = {pk: self._row(pk)}
 
         def noisy(row: JsonDict) -> dict[str, Any]:
-            return {**self._view(row), "not_declared": "leaked"}
+            return {**self._view(row), "note": "from the source"}
 
-        row = await self._adapter(state, noisy).get(pk)
+        adapter = MockDocumentAdapter(
+            spec=spec,
+            state=state,
+            namespace="orders",
+            read_model=_WithDefault,
+            domain_model=_Order,
+            derived_marked=frozenset({"supplier", "stock_quantity"}),
+            derived_source=noisy,
+        )
 
-        assert not hasattr(row, "not_declared")
+        row = await adapter.get(pk)
+
+        assert row.note == "from the model"
+        # And the declared ones still arrive, so this is scoping rather than a source
+        # that was ignored wholesale.
+        assert row.stock_quantity == 1.0
 
     async def test_a_partial_source_still_refuses_the_rest(self) -> None:
         """Supplying one of two required marked fields is not supplying them."""
@@ -747,6 +778,29 @@ class TestARegisteredSource:
 
         with pytest.raises(CoreException, match="derived_unsupplied"):
             await self._adapter(state, half).get(pk)
+
+    async def test_a_projection_hands_the_source_the_whole_row(self) -> None:
+        """A source reads the fields it joins on, and a narrow projection must not hide them.
+
+        The projection is applied *after* hydration, so the source sees the stored row
+        rather than the caller's field list. Pinned because the reverse order would break
+        every source that reads a join key the caller did not ask for — silently, and only
+        on the projection path.
+        """
+
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk)}
+        seen: list[frozenset[str]] = []
+
+        def watching(row: JsonDict) -> dict[str, Any]:
+            seen.append(frozenset(row))
+            return self._view(row)
+
+        page = await self._adapter(state, watching).project_many(["id", "supplier"])
+
+        assert seen and "supplier_id" in seen[0]
+        assert dict(page.hits[0])["supplier"]["name"].startswith("from-view-")
 
     async def test_no_source_keeps_the_refusal(self) -> None:
         """The default posture: an unsupplied value stays discoverable."""
