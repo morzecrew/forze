@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A read model may declare the fields its backend produces.** Mapping a name to `None` in `DocumentSpec.derived_read_fields` marks it derived whatever its shape — a joined column, a nested reference, an aggregate — and `SpecSeed(derived=...)` supplies it, so a view-backed aggregate is readable from `forze_mock`.
 
 ### Changed
 

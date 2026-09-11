@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from typing import (
     Any,
     Literal,
@@ -40,10 +40,12 @@ from forze.application.contracts.querying import (
     assert_cursor_projection_includes_sort_keys,
     build_cursor_binding,
     coerce_query_ord_operands,
+    collect_aggregate_filter_expressions,
     cursor_protection_active,
     normalize_sorts_for_keyset,
     read_fields_for_model,
     resolve_effective_sorts,
+    validate_aggregatable_fields,
     validate_query_field_types,
     validate_runtime_filter_fields,
     validate_runtime_sort_fields,
@@ -57,6 +59,12 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
+from forze_mock.adapters._derived import (
+    ResolvedDerivedRead,
+    hydrate_derived,
+    require_marked,
+    staged_for,
+)
 from forze_mock.adapters._journal import JournalingStore
 from forze_mock.adapters._mvcc import current_mvcc_tx
 from forze_mock.adapters.query_params import MockQueryParamsSource
@@ -112,6 +120,14 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     )
     bound_params: BaseModel | None = None
     query_params_source: MockQueryParamsSource | None = None
+    derived_marked: frozenset[str] = attrs.field(factory=frozenset)
+    """Derived fields declared with no join: their value comes from the stored row."""
+
+    derived: Mapping[str, ResolvedDerivedRead] = attrs.field(factory=dict)
+    """Derived read fields with their sources located at wiring time.
+
+    Empty for every spec that declares none, which is the overwhelming majority —
+    :meth:`_hydrate` returns the document untouched in that case."""
 
     # ....................... #
 
@@ -196,7 +212,19 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     # ....................... #
 
     def _store(self) -> dict[UUID, JsonDict]:
-        ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+        return self._store_for(partition_namespace(self.require_tenant_if_aware(), self.namespace))
+
+    # ....................... #
+
+    def _store_for(self, ns: str) -> dict[UUID, JsonDict]:
+        """The rows in *ns*, through the active transaction's view where there is one.
+
+        Split from :meth:`_store` so a derived read observes the same snapshot the
+        reading document does: a source row joined outside the overlay would let a
+        transaction see a sibling write it is not supposed to, which is the opposite
+        of what the overlay exists for.
+        """
+
         with self.state.lock:
             store = self.state.documents.get(ns)
             if not isinstance(store, JournalingStore):
@@ -309,8 +337,96 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     def _read_codec(self) -> ModelCodec[R, Any]:
         return self.codecs.read
 
+    def _validate_aggregate_fields(self, aggregates: AggregatesExpression) -> None:
+        """Refuse an aggregate that groups, measures or filters on an unqueryable field.
+
+        The same basis the filter and sort validators use — read fields plus
+        ``materialized``, less :meth:`_unqueryable` — rather than
+        ``aggregatable_fields()``, whose query policy is a governed-path concern that a
+        direct adapter call does not otherwise apply.
+        """
+
+        allowed = (
+            read_fields_for_model(self.read_model) | self.spec.materialized
+        ) - self._unqueryable()
+
+        validate_aggregatable_fields(
+            aggregates,
+            allowed=allowed,
+            spec_name=str(self.spec.name),
+        )
+
+        for expression in collect_aggregate_filter_expressions(aggregates):
+            # A per-metric filter is an ordinary filter and gets the ordinary check.
+            validate_runtime_filter_fields(
+                expression,
+                model=self.read_model,
+                materialized=self.spec.materialized,
+                lenient=self._unqueryable(),
+                encrypted=(self.spec.encryption.encrypted if self.spec.encryption else frozenset()),
+            )
+
+    # ....................... #
+
+    def _unqueryable(self) -> frozenset[str]:
+        """Read fields with no column of this aggregate's own to query.
+
+        Lenient fields are absent from storage; derived fields are produced by the
+        relation. `DocumentSpec.filterable_fields()` and its siblings already exclude
+        both, and the runtime validators have to agree — otherwise a direct filter on a
+        derived field is accepted here and refused by the governed path, and a resolved
+        one matches nothing at all, because the value exists only after hydration.
+        """
+
+        return self.spec.resolved_lenient_read_fields | frozenset(self.spec.derived_read_fields)
+
+    # ....................... #
+
+    def _hydrate(self, doc: JsonDict, fields: Sequence[str] | None = None) -> JsonDict:
+        """Resolve this spec's derived read fields on *doc*.
+
+        The single point every decode routes through. Placing it per read method is the
+        way this feature ends up working on ``get`` and silently missing under cursor
+        paging — so it lives here and in the projection branch of
+        :meth:`_to_read_or_projection`, which is the only decode that does not come
+        back through :meth:`_to_read`.
+
+        *fields* is the projection the caller asked for, when it asked for one. A
+        projection that excludes a marked field must not be refused for it: the caller
+        is not reading it, so an unsupplied value cannot reach them.
+        """
+
+        if self.derived_marked:
+            # A value staged for this row reads as though it were already on it, which
+            # is what keeps a create's own event handlers from observing a marked field
+            # as missing (see `staged_derived`). The row wins where it has a value:
+            # staging covers a window, it does not override what was persisted.
+            if staged := staged_for(self.spec.name, doc.get("id")):
+                doc = {**staged, **doc}
+
+            require_marked(
+                doc,
+                marked=self.derived_marked,
+                read_model=self.read_model,
+                spec_name=self.spec.name,
+                requested=fields,
+            )
+
+        if not self.derived:
+            return doc
+
+        return hydrate_derived(
+            doc,
+            derived=self.derived,
+            store_for=self._store_for,
+            tenant_id=self.require_tenant_if_aware(),
+            spec_name=self.spec.name,
+        )
+
+    # ....................... #
+
     def _to_read(self, doc: JsonDict) -> R:
-        return self._read_codec().decode_mapping(dict(doc))
+        return self._read_codec().decode_mapping(self._hydrate(dict(doc)))
 
     # ....................... #
 
@@ -410,7 +526,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # read codec). No-op for plain codecs. Synchronous: the mock keyring cache
             # is seeded at encrypt time / via warm(), so no async pre-pass is needed.
             decrypt = getattr(self._read_codec(), "decrypt_mapping", None)
-            source = decrypt(dict(doc)) if decrypt is not None else doc
+            hydrated = self._hydrate(dict(doc), return_fields)
+            source = decrypt(hydrated) if decrypt is not None else hydrated
             return _project(source, return_fields)
         return self._to_read(doc)
 
@@ -497,7 +614,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             filters,
             model=self.read_model,
             materialized=self.spec.materialized,
-            lenient=self.spec.resolved_lenient_read_fields,
+            lenient=self._unqueryable(),
             # The mock stores plaintext (it is a dict, not a disk), so nothing here would stop a
             # filter on a sealed field from matching — while the same query against a real backend
             # cannot match its ciphertext. Passing the declaration keeps the *policy* identical on
@@ -749,6 +866,13 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         rows: list[Any]
 
         if aggregates is not None:
+            # The aggregate branch runs before hydration and skips the sort/filter
+            # validation in the `else` arm, so without this a group key or a metric
+            # source could name a derived field: a marked one groups by whatever the row
+            # happens to carry, and a resolved one groups every document under `None`,
+            # because its value does not exist until the read. Both disagree with
+            # `aggregatable_fields()`, and the second is silently wrong.
+            self._validate_aggregate_fields(aggregates)
             aggregate_rows = _aggregate_docs(filtered, aggregates)
             total = len(aggregate_rows)
             page_rows = _page_window(_sort_docs(aggregate_rows, sorts))
@@ -763,7 +887,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 model=self.read_model,
                 backend="mock",
                 materialized=self.spec.materialized,
-                lenient=self.spec.resolved_lenient_read_fields,
+                lenient=self._unqueryable(),
                 sealed=self._sealed_fields(),
             )
             total = len(filtered)
@@ -1195,7 +1319,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # cursor from the last returned row.
         self._validate_filter_types(filters)
 
-        read_fields = read_fields_for_model(self.read_model) | self.spec.materialized
+        read_fields = (
+            read_fields_for_model(self.read_model) | self.spec.materialized
+        ) - self._unqueryable()
         effective = resolve_effective_sorts(
             sorts=sorts,
             default_sort=self.spec.default_sort,

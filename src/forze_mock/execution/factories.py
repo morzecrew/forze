@@ -137,6 +137,7 @@ from forze_mock.adapters import (
     MockStrictTxManagerAdapter,
     MockTxManagerAdapter,
 )
+from forze_mock.adapters._derived import ResolvedDerivedRead
 from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.identity import (
     MockPasswordLifecyclePort,
@@ -184,6 +185,23 @@ def mock_strict_txmanager(context: ExecutionContext) -> TransactionManagerPort:
 
 def mock_journal_txmanager(context: ExecutionContext) -> TransactionManagerPort:
     return MockJournalTxManagerAdapter(state=context.deps.provide(MockStateDepKey))
+
+
+# ....................... #
+
+
+def _statically_namespaced(cfg: MockRouteConfig) -> bool:
+    """Whether a route's namespace resolves without an await.
+
+    Mirrors what :func:`resolve_mock_namespace_sync` can actually answer: a relation
+    pair or a plain string. Anything else is a resolver it silently replaces with the
+    default.
+    """
+
+    if cfg.relation is not None:
+        return isinstance(cfg.relation, tuple | str)
+
+    return cfg.namespace is None or isinstance(cfg.namespace, str)
 
 
 # ....................... #
@@ -263,6 +281,70 @@ class _MockFactoryBase:
             cipher_tenant=context.inv_ctx.get_tenant,
         )
 
+    def _derived_for(
+        self,
+        ctx: ExecutionContext,
+        spec: DocSpec,
+    ) -> dict[str, ResolvedDerivedRead]:
+        """Locate each derived field's source, using the module's own route table.
+
+        Resolution happens here rather than in the adapter because this is where the
+        routes live: the source's namespace and its tenant-awareness are wiring facts,
+        and an adapter re-deriving them per read would be guessing at what freezing
+        already settled.
+        """
+
+        reader_cfg = self._route(spec.name)
+        reader_tenant_aware = reader_cfg.tenant_aware if reader_cfg else False
+        resolved: dict[str, ResolvedDerivedRead] = {}
+
+        for name, declared in spec.derived_read_fields.items():
+            if not declared.resolved:
+                # Marked only: the relation produces it, and in the mock that means the
+                # stored row carries it. Nothing to locate, so nothing is passed on.
+                continue
+
+            source = str(declared.source)
+            source_cfg = self._route(source)
+            source_tenant_aware = source_cfg.tenant_aware if source_cfg else False
+
+            if source_tenant_aware and not reader_tenant_aware:
+                # The reading adapter has no bound tenant to partition the source's
+                # namespace with, so the join would reach the unpartitioned namespace —
+                # finding nothing, or another tenant's row. Refused rather than resolved:
+                # either outcome is a cross-tenant read wearing a missing-data symptom.
+                raise exc.configuration(
+                    f"Derived read field {name!r} on spec {str(spec.name)!r} reads "
+                    f"tenant-aware source {source!r}, but {str(spec.name)!r} is not "
+                    f"tenant-aware, so no tenant is bound to resolve the source with.",
+                    code="mock.document.derived_tenant_mismatch",
+                )
+
+            if source_cfg is not None and not _statically_namespaced(source_cfg):
+                # `_namespace_for` resolves synchronously and falls through to the
+                # default for a dynamic namespace or relation resolver, so the join
+                # would silently read the fallback namespace — the wrong rows, or
+                # none. Refused for the same reason as the tenancy mismatch below:
+                # the failure would present as missing data.
+                raise exc.configuration(
+                    f"Derived read field {name!r} on spec {str(spec.name)!r} reads "
+                    f"source {source!r}, whose route resolves its namespace "
+                    f"dynamically; a derived join needs a statically named source.",
+                    code="mock.document.derived_dynamic_source",
+                )
+
+            resolved[name] = ResolvedDerivedRead(
+                namespace=self._namespace_for(ctx, source, default=source),
+                via=str(declared.via),
+                field=str(declared.field),
+                optional=declared.optional,
+                tenant_scoped=source_tenant_aware,
+            )
+
+        return resolved
+
+    # ....................... #
+
     def _namespace_for(
         self,
         ctx: ExecutionContext,
@@ -329,6 +411,10 @@ class ConfigurableMockDocument(_MockFactoryBase):
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
             query_params_source=query_params_source,
+            derived=self._derived_for(context, spec),
+            derived_marked=frozenset(
+                name for name, declared in spec.derived_read_fields.items() if not declared.resolved
+            ),
         )
 
 

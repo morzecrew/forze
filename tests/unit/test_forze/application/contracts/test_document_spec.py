@@ -1,11 +1,17 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
 from datetime import datetime
+from uuid import UUID
 
 import pytest
 import structlog
 from pydantic import BaseModel, Field, computed_field
 
+from forze.application.contracts.conformity import (
+    DerivedReadField,
+    validate_derived_read_fields,
+)
+from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
@@ -515,3 +521,282 @@ def test_validate_query_parameters_valid() -> None:
     spec = DocumentSpec(name="sales", read=_Read, query_params=_Window)
     p = _Window()
     assert validate_query_parameters(spec, p) is p
+
+
+# ----------------------- #
+# Derived read fields — the sibling of leniency, and deliberately not the same knob
+
+
+class _DerivedRead(ReadDocument):
+    supplier_id: UUID
+    supplier: str
+    """Required and joined: exactly the shape leniency refuses."""
+
+    note: str = ""
+
+
+def _derived(**over: object) -> dict[str, DerivedReadField]:
+    base = {"source": "suppliers", "via": "supplier_id", "field": "name"}
+    return {"supplier": DerivedReadField(**{**base, **over})}  # type: ignore[arg-type]
+
+
+def test_derived_required_field_accepted() -> None:
+    """The one case leniency cannot serve, sitting next to its refusal on purpose."""
+
+    with pytest.raises(CoreException, match="has no default"):
+        DocumentSpec(name="orders", read=_DerivedRead, lenient_read_fields={"supplier"})
+
+    spec = DocumentSpec(
+        name="orders", read=_DerivedRead, derived_read_fields=_derived()
+    )
+    assert sorted(spec.derived_read_fields) == ["supplier"]
+
+
+def test_derived_field_dropped_from_query_axes() -> None:
+    spec = DocumentSpec(
+        name="orders", read=_DerivedRead, derived_read_fields=_derived()
+    )
+
+    for axis in (
+        spec.filterable_fields(),
+        spec.sortable_fields(),
+        spec.aggregatable_fields(),
+    ):
+        assert "supplier" not in axis
+        # The join key is stored here, so it stays queryable.
+        assert "supplier_id" in axis
+
+
+def test_derived_identity_field_rejected() -> None:
+    with pytest.raises(CoreException, match="identity/audit fields"):
+        DocumentSpec(
+            name="orders",
+            read=_DerivedRead,
+            derived_read_fields={
+                "id": DerivedReadField(source="suppliers", via="supplier_id", field="name")
+            },
+        )
+
+
+def test_derived_unknown_field_rejected() -> None:
+    with pytest.raises(CoreException, match="not non-computed fields"):
+        DocumentSpec(
+            name="orders",
+            read=_DerivedRead,
+            derived_read_fields={
+                "ghost": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+
+def test_derived_unknown_join_key_rejected() -> None:
+    with pytest.raises(CoreException, match="which is not a non-computed field"):
+        DocumentSpec(
+            name="orders", read=_DerivedRead, derived_read_fields=_derived(via="nope")
+        )
+
+
+def test_derived_blank_source_rejected() -> None:
+    with pytest.raises(CoreException, match="blank source"):
+        DocumentSpec(
+            name="orders", read=_DerivedRead, derived_read_fields=_derived(source="  ")
+        )
+
+    with pytest.raises(CoreException, match="blank source field"):
+        DocumentSpec(
+            name="orders", read=_DerivedRead, derived_read_fields=_derived(field="")
+        )
+
+
+def test_derived_join_key_may_not_itself_be_derived() -> None:
+    with pytest.raises(CoreException, match="which is itself derived"):
+        DocumentSpec(
+            name="orders",
+            read=_DerivedRead,
+            derived_read_fields={
+                "supplier": DerivedReadField(
+                    source="suppliers", via="note", field="name"
+                ),
+                "note": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="code"
+                ),
+            },
+        )
+
+
+def test_derived_lenient_overlap_rejected() -> None:
+    with pytest.raises(CoreException, match="cannot be both derived"):
+        DocumentSpec(
+            name="orders",
+            read=_DerivedRead,
+            lenient_read_fields={"note"},
+            derived_read_fields={
+                "note": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+
+def test_derived_materialized_overlap_rejected() -> None:
+    with pytest.raises(CoreException, match="and materialized"):
+        DocumentSpec(
+            name="orders",
+            read=_PricedRead,
+            write=_priced_write(),
+            materialized={"total"},
+            derived_read_fields={
+                "total": DerivedReadField(
+                    source="suppliers", via="id", field="total"
+                )
+            },
+        )
+
+
+def test_derived_field_may_not_be_a_stored_domain_field() -> None:
+    """Otherwise the boot fails about the write relation instead of this declaration."""
+
+    with pytest.raises(CoreException, match="also stored fields on the domain model"):
+        DocumentSpec(
+            name="orders",
+            read=_PricedRead,
+            write=_priced_write(),
+            derived_read_fields={
+                "qty": DerivedReadField(source="suppliers", via="id", field="qty")
+            },
+        )
+
+
+def test_derived_field_is_not_sealable() -> None:
+    """A derived field has no column here, so encryption must not demand one."""
+
+    spec = DocumentSpec(
+        name="orders",
+        read=_DerivedRead,
+        derived_read_fields=_derived(),
+        encryption=FieldEncryption(encrypted=frozenset({"note"})),
+    )
+    assert sorted(spec.derived_read_fields) == ["supplier"]
+
+    with pytest.raises(CoreException):
+        DocumentSpec(
+            name="orders",
+            read=_DerivedRead,
+            derived_read_fields=_derived(),
+            encryption=FieldEncryption(encrypted=frozenset({"supplier"})),
+        )
+
+
+def test_derived_nullable_key_requires_optional() -> None:
+    """A key that may be unset cannot yield a required value."""
+
+    class _NullableKeyRead(ReadDocument):
+        supplier_id: UUID | None = None
+        supplier: str
+
+    with pytest.raises(CoreException, match="which is nullable"):
+        DocumentSpec(
+            name="orders",
+            read=_NullableKeyRead,
+            derived_read_fields={
+                "supplier": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+    # Declared optional, the same shape is accepted.
+    class _OptionalRead(ReadDocument):
+        supplier_id: UUID | None = None
+        supplier: str | None = None
+
+    spec = DocumentSpec(
+        name="orders",
+        read=_OptionalRead,
+        derived_read_fields={
+            "supplier": DerivedReadField(
+                source="suppliers", via="supplier_id", field="name", optional=True
+            )
+        },
+    )
+    assert sorted(spec.derived_read_fields) == ["supplier"]
+
+
+def test_validate_derived_read_fields_accepts_nothing() -> None:
+    """The empty case is decided explicitly, matching the leniency sibling."""
+
+    assert (
+        validate_derived_read_fields(model_type=_Read, derived={}, spec_name="doc") is None
+    )
+
+
+def test_derived_none_annotated_key_requires_optional() -> None:
+    """A key that can only ever be None is nullable, however it is spelled."""
+
+    class _NoneKeyRead(ReadDocument):
+        supplier_id: None = None
+        supplier: str
+
+    with pytest.raises(CoreException, match="which is nullable"):
+        DocumentSpec(
+            name="orders",
+            read=_NoneKeyRead,
+            derived_read_fields={
+                "supplier": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+
+def test_derived_field_may_not_be_settable_on_a_command() -> None:
+    """A value the backend produces is not one a caller sets — as with `materialized`."""
+
+    class _JoinRead(ReadDocument):
+        supplier_id: UUID
+        supplier: str
+
+    class _JoinDomain(Document):
+        supplier_id: UUID
+
+    class _JoinCreate(CreateDocumentCmd):
+        supplier_id: UUID
+        supplier: str  # the caller must not be able to set a joined value
+
+    with pytest.raises(CoreException, match="cannot be settable"):
+        DocumentSpec(
+            name="orders",
+            read=_JoinRead,
+            write=DocumentWriteTypes(domain=_JoinDomain, create_cmd=_JoinCreate),
+            derived_read_fields={
+                "supplier": DerivedReadField(
+                    source="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+
+def test_derived_write_omit_overlap_rejected() -> None:
+    """A derived field is never written, so write-omitting it claims two things at once."""
+
+    class _OmitRead(ReadDocument):
+        supplier_id: UUID
+        note: str = ""
+
+    class _OmitDomain(Document):
+        supplier_id: UUID
+        note: str = ""
+
+    class _OmitCreate(CreateDocumentCmd):
+        supplier_id: UUID
+
+    with pytest.raises(CoreException, match="cannot be both derived and write-omitted"):
+        DocumentSpec(
+            name="orders",
+            read=_OmitRead,
+            write=DocumentWriteTypes(domain=_OmitDomain, create_cmd=_OmitCreate),
+            write_omit_fields={"note"},
+            derived_read_fields={"note": None},
+        )

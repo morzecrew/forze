@@ -80,6 +80,19 @@ class SpecSeed:
     overrides: Mapping[str, Any] = attrs.field(factory=dict[str, Any])
     """Field values forced on every row of this spec, fixtures included."""
 
+    derived: Mapping[str, Any] = attrs.field(factory=dict[str, Any])
+    """Values for the spec's ``derived_read_fields``, written after the row is created.
+
+    A derived field is one the backend produces and this aggregate never writes, so it
+    cannot travel through the create command — the spec refuses it there. Seeding it is
+    how a view-backed aggregate becomes readable in memory: supply the shape the view
+    would have produced (a nested reference object, an aggregate total) and the read
+    round-trips.
+
+    The value is fixture data, not a derivation. Nothing recomputes it when the source
+    changes, because nothing here implements the view.
+    """
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -90,6 +103,13 @@ class SpecSeed:
             )
 
         _require_countable(self.count, self.spec.name)
+
+        if undeclared := sorted(set(self.derived) - set(self.spec.derived_read_fields)):
+            raise exc.configuration(
+                f"Seed for '{self.spec.name}' supplies derived value(s) {undeclared} the "
+                "spec does not declare in derived_read_fields; a value nothing reads is a "
+                "typo, not a fixture"
+            )
 
     # ....................... #
 

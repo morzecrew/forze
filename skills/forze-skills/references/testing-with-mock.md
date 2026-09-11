@@ -44,6 +44,50 @@ mock_app = MockApp(build_app=build_app, deps=(), seed=seed_plan)
 
 `seed` is applied once the runtime scope opens and re-applied by `POST /_mock/reset`, which is what lets a consumer's suite start each run from the same fixtures. Declare it: an unseeded plane still answers every read — successfully, with nothing in it — so a caller can pass against a backend that holds no data at all.
 
+## The one shape the mock cannot hold
+
+The mock stores what was written and reads it back through the read model, so an
+aggregate whose read model **requires a field no write produces** cannot round-trip
+through it — the ordinary shape of a read model assembled by a SQL view.
+`lenient_read_fields` does not help: it rehydrates from the model default and so refuses a
+required field.
+
+Mark those fields and seed their values:
+
+```python
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze_mock.seeding import SeedPlan, SpecSeed
+
+ORDERS = DocumentSpec(
+    name="orders",
+    read=OrderRead,  # `supplier: SupplierRef`, `stock_quantity: float` — no write makes them
+    write=DocumentWriteTypes(domain=Order, create_cmd=OrderCreate),
+    derived_read_fields={"supplier": None, "stock_quantity": None},
+)
+
+plan = SeedPlan(
+    specs=(
+        SpecSeed(
+            spec=ORDERS,
+            count=20,
+            derived={"supplier": {"id": sid, "rev": 1, "name": "Acme", "number_id": 7},
+                     "stock_quantity": 12.5},
+        ),
+    ),
+)
+```
+
+Marking covers every shape — a joined column, a nested reference, a `COALESCE` over
+sibling rows, a `CASE` expression — because none of them is computed by this aggregate.
+The seeded value is fixture data: nothing recomputes it, so what the test exercises is
+your handler around the read. The derivation belongs to the database and to an
+integration test against the real view.
+
+Where the value is one field of one row reached by one key, `DerivedReadField(source=…,
+via=…, field=…)` makes the mock perform the join instead. One hop, primary key only.
+Either way the field is not filterable, sortable or sealable, and a required marked field
+left unsupplied is refused by name rather than as a pydantic error.
+
 ## Surviving a restart
 
 An MVP running on the mock can keep its data across restarts without a container.

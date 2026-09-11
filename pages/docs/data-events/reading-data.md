@@ -70,6 +70,58 @@ never carries one. On governed list operations, `AuthzDocumentScopeWrap`'s
 opt-in `explain_empty` sets the reason for you (see the
 [authz recipe](../recipes/authn-authz-tenancy-fastapi.md)).
 
+## Read fields storage doesn't hold
+
+Three knobs decide what a read model may carry beyond its own stored columns, and
+picking the wrong one is the usual mistake — they answer different questions:
+
+| Knob | The field is… | Where its value comes from |
+|---|---|---|
+| `lenient_read_fields` | absent from storage | the model's own default |
+| `materialized` | stored here, derived from this row | a `@computed_field`, persisted |
+| `derived_read_fields` | produced by another relation | a source row, joined |
+
+Leniency needs a default, so it refuses a required field — which a joined display
+name usually is. That is what `derived_read_fields` is for. Map a field to `None`
+to **mark** it derived and nothing more:
+
+```python
+ORDERS = DocumentSpec(
+    name="orders",
+    read=OrderRead,  # carries `supplier: SupplierRef` and `stock_quantity: float`
+    derived_read_fields={"supplier": None, "stock_quantity": None},
+)
+```
+
+Marking is shape-independent, and that is the point: a joined column, a nested
+reference object, a `COALESCE` over sibling rows and a `CASE` expression are all
+the same declaration, because none of them is computed by this aggregate. On a real
+backend the declaration changes nothing at runtime — the view already produces the
+column — while the write-column, sealing and settable-command guards all follow from
+it.
+
+In `forze_mock` a marked field's value comes from the stored row, which is where
+[`SpecSeed(derived={...})`](../testing/overview.md) puts it — seeding goes through the
+spec's create command, so a spec you intend to seed needs its `write` types. That value is fixture
+data, not a derivation: nothing recomputes it, because nothing here implements the
+view. For testing the handler around the read — which is what these aggregates need
+— that is the whole requirement, and a mock that evaluated view expressions would be
+a second query engine with divergences of its own.
+
+Where the value genuinely is one field of one row reached by one key, it can be
+**resolved** instead, and the mock performs the join:
+
+```python
+derived_read_fields={
+    "catalog_code": DerivedReadField(source="catalogs", via="catalog_id", field="code"),
+}
+```
+
+One hop, by primary key, no predicates and no ordering. Declare `optional=True` when
+the join key is nullable; a key that resolves to no row is refused rather than
+quietly `None`. A derived field is not filterable, sortable or sealable either way,
+because this aggregate holds no column of its own for it.
+
 ## Searching
 
 Full-text and vector search are a parallel surface, through the **search query
