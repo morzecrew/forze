@@ -198,3 +198,51 @@ async def test_a_missing_source_diverges_and_both_refuse_to_invent(
 
     with pytest.raises(CoreException, match="holds no such row"):
         await _mock(state).get(order_id)
+
+
+# ----------------------- #
+
+
+class _MarkedOrderRead(ReadDocument):
+    supplier_id: UUID
+    supplier: str
+    """Marked derived, no join declared. Postgres still reads it off the view."""
+
+
+MARKED = DocumentSpec(
+    name="orders",
+    read=_MarkedOrderRead,
+    derived_read_fields={"supplier": None},
+)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_marked_field_is_read_from_the_view_unchanged(
+    pg_client: PostgresClient,
+) -> None:
+    """The branch's headline claim about real backends, for the marker specifically.
+
+    "Real backends are unaffected at runtime" was proven for the *resolved* form by the
+    differential above. A marked field declares even less — no source, no key — so the
+    claim is easy to believe and was equally untested. Here the view produces `supplier`,
+    the spec marks it, and the gateway reads it as it always did: nothing about the
+    declaration reaches Postgres.
+    """
+
+    view, _suppliers, order_id, supplier_id, _stamp = await _build_view(pg_client)
+
+    read = read_gw(
+        gateway_context(pg_client),
+        read_type=_MarkedOrderRead,
+        read_relation=("public", view),
+        tenant_aware=False,
+    )
+    fetched = await read.get(order_id)
+
+    assert fetched.supplier == "Acme"
+    assert fetched.supplier_id == supplier_id
+
+    # And the marking is what keeps it out of the query axes, on both backends alike.
+    assert "supplier" not in MARKED.filterable_fields()
+    assert "supplier_id" in MARKED.filterable_fields()
