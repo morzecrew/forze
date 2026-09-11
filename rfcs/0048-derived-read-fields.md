@@ -305,6 +305,8 @@ production also reads. Kept in §8 as the escape hatch, unbuilt.
 | 6 | `ASSUMED` | Derived fields are excluded from the filter/sort/aggregate sets, reusing the existing `_read_query_fields()` subtraction. §10 may overturn this row on evidence from the origin application. |
 | 7 | `OPEN` | **How the mock reads the source row** — through the same `MockState` document store the source spec's own adapter uses, or through a lower-level index. Execution decides. What settles it: whether a tenanted source spec's row is reachable without re-entering the adapter's tenancy resolution, since a derived read must not cross a tenant boundary the source adapter would have refused. |
 | 8 | `OPEN` | Whether `optional=False` plus a nullable `via` field is refused at definition time (§5.1's proposal) or only warned. Execution decides on how many legitimate shapes the refusal breaks. |
+| 9 | `LOCKED` | **A derived field carries one scalar value, and that shape serves the scalar case only.** §10's first unresolved question is answered against the origin schema: `catalog_code` is exactly `c.code` off a joined row, so the design is not wrong — but 27 of that application's derived fields are nested reference *objects* projecting a field subset of the source row, 12 of them required, spread across all 14 view-backed aggregates. P1 therefore unblocks the scalar case, not the motivation's "14 of 25". Consequence: the §2 reach claim is not what P1 delivers, and §12 gains a phase before it does. Added by execution 2026-09-11 — see logs/T-0048.md (§10(b), attempt 1). |
+| 10 | `LOCKED` | **A source relation may itself be derived**, so a faithful join can be two hops deep in derived data (`v_supply_order_items.detail` joins `v_details`). The primary-key bound of row 4 is unchanged and the mock reads a source row straight from its namespace without hydrating that row's own derived fields. Recorded as a known limit: resolving them is the recursion §4's non-goals rule out. Added by execution 2026-09-11 — see logs/T-0048.md (D-4, attempt 1). |
 
 ## 12. Phasing
 
@@ -315,5 +317,9 @@ production also reads. Kept in §8 as the escape hatch, unbuilt.
 - **P2 — DST reach.** Confirm an invariant over a view-backed aggregate runs, and fix what
   it turns out to need. Gated on P1, and scoped to *finding out* rather than to a promised
   outcome (§9).
+- **P2a — projected field sets.** `field` becomes a field *set* producing a nested
+  object, which is what the six `*_json(...)` view helpers already build. This is the
+  phase that reaches the aggregates §2 counts; decision row 9 is why it is a phase rather
+  than part of P1.
 - **P3 — search parity.** `SearchSpec.derived_read_fields`, **demand-gated** on a second
   application asking for it (§8).
