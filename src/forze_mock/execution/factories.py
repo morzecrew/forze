@@ -190,6 +190,23 @@ def mock_journal_txmanager(context: ExecutionContext) -> TransactionManagerPort:
 # ....................... #
 
 
+def _statically_namespaced(cfg: MockRouteConfig) -> bool:
+    """Whether a route's namespace resolves without an await.
+
+    Mirrors what :func:`resolve_mock_namespace_sync` can actually answer: a relation
+    pair or a plain string. Anything else is a resolver it silently replaces with the
+    default.
+    """
+
+    if cfg.relation is not None:
+        return isinstance(cfg.relation, tuple | str)
+
+    return cfg.namespace is None or isinstance(cfg.namespace, str)
+
+
+# ....................... #
+
+
 def _tenant_provider(ctx: ExecutionContext) -> TenantProviderPort:
     return ctx.inv_ctx.get_tenant
 
@@ -301,6 +318,19 @@ class _MockFactoryBase:
                     f"tenant-aware source {source!r}, but {str(spec.name)!r} is not "
                     f"tenant-aware, so no tenant is bound to resolve the source with.",
                     code="mock.document.derived_tenant_mismatch",
+                )
+
+            if source_cfg is not None and not _statically_namespaced(source_cfg):
+                # `_namespace_for` resolves synchronously and falls through to the
+                # default for a dynamic namespace or relation resolver, so the join
+                # would silently read the fallback namespace — the wrong rows, or
+                # none. Refused for the same reason as the tenancy mismatch below:
+                # the failure would present as missing data.
+                raise exc.configuration(
+                    f"Derived read field {name!r} on spec {str(spec.name)!r} reads "
+                    f"source {source!r}, whose route resolves its namespace "
+                    f"dynamically; a derived join needs a statically named source.",
+                    code="mock.document.derived_dynamic_source",
                 )
 
             resolved[name] = ResolvedDerivedRead(
