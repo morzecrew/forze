@@ -15,7 +15,9 @@ from forze.base.primitives import (
     SeededEntropySource,
     bind_entropy_source,
     bind_time_source,
+    uuid4,
 )
+from forze_mock.adapters.document import MockDocumentAdapter
 
 from .links import plan_links
 from .plan import SeedPlan, SeedResult, SpecSeed
@@ -79,6 +81,34 @@ def _linked(
 # ....................... #
 
 
+def _write_derived(ctx: ExecutionContext, seed: SpecSeed, pk: UUID) -> None:
+    """Write one row's derived values onto the document the port just created.
+
+    Straight onto the stored mapping, because there is no command that accepts these
+    fields — see the carve-out in :func:`apply_seed`. Scoped to the spec's declared
+    ``derived_read_fields``, which :class:`SpecSeed` has already checked the keys against.
+    """
+
+    port = ctx.doc.query(seed.spec)
+
+    if not isinstance(port, MockDocumentAdapter):  # pragma: no cover — mock-only seeder
+        raise exc.configuration(
+            f"Seeding derived values for '{seed.spec.name}' needs the mock document "
+            f"adapter; got {type(port).__name__}",
+        )
+
+    store = port._store()
+    row = store.get(pk)
+
+    if row is None:  # pragma: no cover — the port created it one statement ago
+        raise exc.internal(f"Seeded document {pk} for '{seed.spec.name}' is not in the store")
+
+    store[pk] = {**row, **seed.derived}
+
+
+# ....................... #
+
+
 async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
     """Create every document *plan* describes, and return what was created.
 
@@ -87,6 +117,12 @@ async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
     ``rev``, timestamps, materialized computed fields and field encryption are produced by
     the same code path that serves the reads, so a seeded row is indistinguishable from one
     the app wrote.
+
+    ``SpecSeed.derived`` is the one carve-out, and a principled one: a derived read field
+    is produced by the relation and refused on a create command, so no port path to it
+    exists. The invariant above is about fields the write path produces; a derived field is
+    definitionally not one of those, so there is nothing for it to be indistinguishable
+    from. Those values are written onto the stored row after the port has created it.
 
     Determinism is end-to-end. Values come from ``plan.rng_seed``; ids and timestamps come
     from the write path, so unless the clock is pinned too they differ on every run — hence
@@ -123,8 +159,25 @@ async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
                 explicit_id, payload = split_row_id(row)
                 linked = _linked(payload, seed=seed, targets=targets, created=created, rng=rng)
                 created_cmd = seed.create_cmd(**linked)
-                document = await command.create(created_cmd, id=explicit_id, return_new=True)
-                ids.append(document.id)
+                if seed.derived:
+                    # `create(return_new=True)` reads the row back through the read model,
+                    # which needs the derived fields that do not exist until the next
+                    # statement. So the id is minted here, the read-back is skipped, and
+                    # the values are written before anything reads the row.
+                    #
+                    # Minting here is as deterministic as the rest of the plan and no
+                    # more: the id comes from the seeded entropy source bound above,
+                    # which `plan.instant=None` deliberately opts out of along with the
+                    # pinned clock. Under the default instant two runs of one plan mint
+                    # the same ids; on the wall clock they differ, exactly as the
+                    # write-path ids already did.
+                    pk = explicit_id if explicit_id is not None else uuid4()
+                    await command.create(created_cmd, id=pk, return_new=False)
+                    _write_derived(ctx, seed, pk)
+                    ids.append(pk)
+                else:
+                    document = await command.create(created_cmd, id=explicit_id, return_new=True)
+                    ids.append(document.id)
                 # The *validated command*, not the row it came from: the row still carries the
                 # reserved `id` key the create command never sees, and its reference fields are
                 # the generated ones, from before linking resolved them.

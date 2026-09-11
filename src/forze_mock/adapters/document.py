@@ -57,7 +57,11 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze.domain.constants import ID_FIELD
-from forze_mock.adapters._derived import ResolvedDerivedRead, hydrate_derived
+from forze_mock.adapters._derived import (
+    ResolvedDerivedRead,
+    hydrate_derived,
+    require_marked,
+)
 from forze_mock.adapters._journal import JournalingStore
 from forze_mock.adapters._mvcc import current_mvcc_tx
 from forze_mock.adapters.query_params import MockQueryParamsSource
@@ -113,6 +117,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     )
     bound_params: BaseModel | None = None
     query_params_source: MockQueryParamsSource | None = None
+    derived_marked: frozenset[str] = attrs.field(factory=frozenset)
+    """Derived fields declared with no join: their value comes from the stored row."""
+
     derived: Mapping[str, ResolvedDerivedRead] = attrs.field(factory=dict)
     """Derived read fields with their sources located at wiring time.
 
@@ -336,6 +343,14 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         :meth:`_to_read_or_projection`, which is the only decode that does not come
         back through :meth:`_to_read`.
         """
+
+        if self.derived_marked:
+            require_marked(
+                doc,
+                marked=self.derived_marked,
+                read_model=self.read_model,
+                spec_name=self.spec.name,
+            )
 
         if not self.derived:
             return doc

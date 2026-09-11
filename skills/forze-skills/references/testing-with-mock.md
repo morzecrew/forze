@@ -52,25 +52,40 @@ through it — the ordinary shape of a read model assembled by a SQL view.
 `lenient_read_fields` does not help: it rehydrates from the model default and so refuses a
 required field.
 
-Declare those fields instead, and the mock performs the join:
+Mark those fields and seed their values:
 
 ```python
-from forze.application.contracts.conformity import DerivedReadField
 from forze.application.contracts.document import DocumentSpec
+from forze_mock.seeding import SeedPlan, SpecSeed
 
 ORDERS = DocumentSpec(
     name="orders",
-    read=OrderRead,  # carries `supplier: str`; no write produces it
-    derived_read_fields={
-        "supplier": DerivedReadField(source="suppliers", via="supplier_id", field="name"),
-    },
+    read=OrderRead,  # `supplier: SupplierRef`, `stock_quantity: float` — no write makes them
+    derived_read_fields={"supplier": None, "stock_quantity": None},
+)
+
+plan = SeedPlan(
+    specs=(
+        SpecSeed(
+            spec=ORDERS,
+            count=20,
+            derived={"supplier": {"id": sid, "rev": 1, "name": "Acme", "number_id": 7},
+                     "stock_quantity": 12.5},
+        ),
+    ),
 )
 ```
 
-One hop, by primary key. A derived field is not filterable, sortable or sealable — this
-aggregate holds no column for it — and a key resolving to no row is refused rather than
-silently `None`, because in a store that holds every row that is a seeding bug. Real
-backends read the view's column as before.
+Marking covers every shape — a joined column, a nested reference, a `COALESCE` over
+sibling rows, a `CASE` expression — because none of them is computed by this aggregate.
+The seeded value is fixture data: nothing recomputes it, so what the test exercises is
+your handler around the read. The derivation belongs to the database and to an
+integration test against the real view.
+
+Where the value is one field of one row reached by one key, `DerivedReadField(source=…,
+via=…, field=…)` makes the mock perform the join instead. One hop, primary key only.
+Either way the field is not filterable, sortable or sealable, and a required marked field
+left unsupplied is refused by name rather than as a pydantic error.
 
 ## Surviving a restart
 

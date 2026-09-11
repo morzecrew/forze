@@ -1,7 +1,7 @@
 """Specifications for document models and storage layout."""
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar, final
+from typing import Any, Generic, TypeVar
 
 import attrs
 from pydantic import BaseModel
@@ -40,7 +40,20 @@ U = TypeVar("U", bound=BaseDTO, default=Any)
 # ....................... #
 
 
-@final
+def _normalize_derived(
+    value: Mapping[str, DerivedReadField | None],
+) -> Mapping[str, DerivedReadField]:
+    """``None`` is the marker spelling: a field derived with no join to resolve it."""
+
+    return {
+        name: declared if declared is not None else DerivedReadField()
+        for name, declared in dict(value).items()
+    }
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     """Declarative specification for a document aggregate."""
@@ -118,14 +131,21 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     derived_read_fields: Mapping[str, DerivedReadField] = attrs.field(
         factory=dict,
-        converter=dict,
+        converter=_normalize_derived,
     )
-    """Read-model field names the **backend produces from another relation**.
+    """Read-model field names the **backend produces**, not this aggregate's writes.
 
-    A view that joins a supplier and projects its name delivers a read field no
-    write of this aggregate produces. Declaring it says where the value comes from:
-    the name of the source spec, the field on this model carrying its primary key,
-    and the field to read from it.
+    A view that joins a supplier, projects a nested reference object, or sums sibling
+    rows delivers read fields no write of this aggregate produces. Map each to ``None``
+    to mark it derived and leave its value to the relation, or to a
+    :class:`~forze.application.contracts.conformity.DerivedReadField` naming a source
+    spec, the key field and the field to read, which the mock will join itself.
+
+    **Marking is the floor and covers every shape** — a joined column, a nested object,
+    a ``COALESCE`` aggregate, a ``CASE`` expression. Resolving is available only for the
+    narrow case of one field of one row reached by one key; there is deliberately no
+    expression language, because evaluating one would make the mock a second query
+    engine with divergences of its own.
 
     Unlike :attr:`lenient_read_fields` a derived field **needs no default** and may
     be required — a joined display name usually is. That is the distinction between
@@ -133,11 +153,12 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     field cannot be both, nor also :attr:`materialized` or
     :attr:`write_omit_fields`.
 
-    Real backends are unaffected at runtime — the view already produces the column,
-    so it is read from storage as before, and startup schema validation stops
-    requiring a *write* column for it. An adapter with no view (``forze_mock``)
-    performs the join itself, which is what makes a view-backed aggregate reachable
-    in tests at all.
+    Real backends are unaffected at runtime — the view already produces the column, so
+    it is read from storage as before, and startup schema validation stops requiring a
+    *write* column for it. In ``forze_mock`` a resolved field is joined on read, and a
+    marked field is read from the stored row, which is where a seed
+    (:class:`~forze_mock.seeding.SpecSeed`) or a test puts it. Either way a view-backed
+    aggregate becomes reachable in tests, which it is not otherwise.
 
     Derived fields are removed from the filter/sort/aggregate allow-sets and cannot
     be sealed at rest, for the same reason a lenient field cannot: there is no

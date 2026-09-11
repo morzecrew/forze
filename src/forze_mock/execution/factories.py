@@ -282,6 +282,11 @@ class _MockFactoryBase:
         resolved: dict[str, ResolvedDerivedRead] = {}
 
         for name, declared in spec.derived_read_fields.items():
+            if not declared.resolved:
+                # Marked only: the relation produces it, and in the mock that means the
+                # stored row carries it. Nothing to locate, so nothing is passed on.
+                continue
+
             source = str(declared.source)
             source_cfg = self._route(source)
             source_tenant_aware = source_cfg.tenant_aware if source_cfg else False
@@ -300,8 +305,8 @@ class _MockFactoryBase:
 
             resolved[name] = ResolvedDerivedRead(
                 namespace=self._namespace_for(ctx, source, default=source),
-                via=declared.via,
-                field=declared.field,
+                via=str(declared.via),
+                field=str(declared.field),
                 optional=declared.optional,
                 tenant_scoped=source_tenant_aware,
             )
@@ -377,6 +382,9 @@ class ConfigurableMockDocument(_MockFactoryBase):
             tenant_provider=_tenant_provider(context),
             query_params_source=query_params_source,
             derived=self._derived_for(context, spec),
+            derived_marked=frozenset(
+                name for name, declared in spec.derived_read_fields.items() if not declared.resolved
+            ),
         )
 
 

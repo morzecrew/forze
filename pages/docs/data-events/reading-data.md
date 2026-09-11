@@ -82,29 +82,44 @@ picking the wrong one is the usual mistake — they answer different questions:
 | `derived_read_fields` | produced by another relation | a source row, joined |
 
 Leniency needs a default, so it refuses a required field — which a joined display
-name usually is. That is what `derived_read_fields` is for:
+name usually is. That is what `derived_read_fields` is for. Map a field to `None`
+to **mark** it derived and nothing more:
 
 ```python
 ORDERS = DocumentSpec(
     name="orders",
-    read=OrderRead,  # carries `supplier: str`, which no write produces
-    derived_read_fields={
-        "supplier": DerivedReadField(
-            source="suppliers", via="supplier_id", field="name"
-        ),
-    },
+    read=OrderRead,  # carries `supplier: SupplierRef` and `stock_quantity: float`
+    derived_read_fields={"supplier": None, "stock_quantity": None},
 )
 ```
 
-On a real backend the declaration changes nothing at runtime: the view already
-joins the column, so it is read from storage as before. It matters to an adapter
-with no view — `forze_mock` performs the join itself, which is what makes a
-view-backed aggregate testable in memory at all.
+Marking is shape-independent, and that is the point: a joined column, a nested
+reference object, a `COALESCE` over sibling rows and a `CASE` expression are all
+the same declaration, because none of them is computed by this aggregate. On a real
+backend the declaration changes nothing at runtime — the view already produces the
+column — while the write-column, sealing and settable-command guards all follow from
+it.
 
-The join is one hop by primary key. A derived field is not filterable, sortable or
-sealable, because this aggregate has no column of its own for it; declare
-`optional=True` when the join key is nullable, and a key that resolves to no row
-is refused rather than quietly `None`.
+In `forze_mock` a marked field's value comes from the stored row, which is where
+[`SpecSeed(derived={...})`](../testing/overview.md) puts it. That value is fixture
+data, not a derivation: nothing recomputes it, because nothing here implements the
+view. For testing the handler around the read — which is what these aggregates need
+— that is the whole requirement, and a mock that evaluated view expressions would be
+a second query engine with divergences of its own.
+
+Where the value genuinely is one field of one row reached by one key, it can be
+**resolved** instead, and the mock performs the join:
+
+```python
+derived_read_fields={
+    "catalog_code": DerivedReadField(source="catalogs", via="catalog_id", field="code"),
+}
+```
+
+One hop, by primary key, no predicates and no ordering. Declare `optional=True` when
+the join key is nullable; a key that resolves to no row is refused rather than
+quietly `None`. A derived field is not filterable, sortable or sealable either way,
+because this aggregate holds no column of its own for it.
 
 ## Searching
 

@@ -297,7 +297,7 @@ production also reads. Kept in §8 as the escape hatch, unbuilt.
 
 | # | Grade | Decision |
 | --- | --- | --- |
-| 1 | `LOCKED` | Derivation is a **separate declaration** from `lenient_read_fields`, and the required-field refusal in `validate_lenient_read_fields` stays exactly as it is. Leniency's source of truth is the model default; derivation's is another row. Merging them would give one knob two incompatible meanings, and the error message that currently explains the refusal would have to stop being true. |
+| 1 | `LOCKED` | **Superseded by row 11.** Derivation is a **separate declaration** from `lenient_read_fields`, and the required-field refusal in `validate_lenient_read_fields` stays exactly as it is. Leniency's source of truth is the model default; derivation's is another row. Merging them would give one knob two incompatible meanings, and the error message that currently explains the refusal would have to stop being true. |
 | 2 | `LOCKED` | A derived field **may be required**. This is the entire capability — every field in the motivating application is required — and a design that still demanded a default would restate the problem as its solution. |
 | 3 | `LOCKED` | **Real backends are unchanged at runtime.** No gateway threading, no laxer read projection. The declaration is documentation to Postgres, Mongo and Firestore, and an instruction only to the mock. Consequence: an application whose view does *not* produce the column still fails against the real backend, which is correct and must stay correct. |
 | 4 | `LOCKED` | The mock's join is **primary-key only** — no predicates, ordering or aggregation. Locks the mock out of expressing a filtered or ordered derivation; changing it later means re-arguing §5.3's divergence bound, not just adding a parameter. |
@@ -307,6 +307,9 @@ production also reads. Kept in §8 as the escape hatch, unbuilt.
 | 8 | `OPEN` | Whether `optional=False` plus a nullable `via` field is refused at definition time (§5.1's proposal) or only warned. Execution decides on how many legitimate shapes the refusal breaks. |
 | 9 | `LOCKED` | **A derived field carries one scalar value, and that shape serves the scalar case only.** §10's first unresolved question is answered against the origin schema: `catalog_code` is exactly `c.code` off a joined row, so the design is not wrong — but 27 of that application's derived fields are nested reference *objects* projecting a field subset of the source row, 12 of them required, spread across all 14 view-backed aggregates. P1 therefore unblocks the scalar case, not the motivation's "14 of 25". Consequence: the §2 reach claim is not what P1 delivers, and §12 gains a phase before it does. Added by execution 2026-09-11 — see logs/T-0048.md (§10(b), attempt 1). |
 | 10 | `LOCKED` | **A source relation may itself be derived**, so a faithful join can be two hops deep in derived data (`v_supply_order_items.detail` joins `v_details`). The primary-key bound of row 4 is unchanged and the mock reads a source row straight from its namespace without hydrating that row's own derived fields. Recorded as a known limit: resolving them is the recursion §4's non-goals rule out. Added by execution 2026-09-11 — see logs/T-0048.md (D-4, attempt 1). |
+| 11 | `LOCKED` | **Marking and resolving are separate, and marking is the floor.** Supersedes row 1's shape (not its separation from leniency, which stands). A field mapped to `None` is declared produced-by-the-relation and nothing more: real backends are unchanged, every not-stored-here guard applies, and in the mock the value comes from the stored row. Marking is shape-independent, so a nested reference, a `COALESCE` aggregate and a `CASE` expression are one declaration; resolving stays available for the one-field-one-row-one-key case. Consequence: the framework never evaluates a view expression, and the pressure to grow the declaration toward SQL is answered with "seed it" instead. Added by execution 2026-09-11 — see logs/T-0048.md (D-1, attempt 2). |
+| 12 | `ASSUMED` | **A marked field's value is seeded, through a stated carve-out in the seed applier.** `SpecSeed.derived` writes onto the stored row after the command port has created it, because a derived field is refused on a create command and so has no port path. The applier's "never into `MockState` directly" rationale is about fields the write path produces, which a derived field definitionally is not. Consequence: the seeder mints the id for such a spec (deterministically, under the bound entropy source) because `create(return_new=True)` would read the row back before the values exist. Added by execution 2026-09-11 — see logs/T-0048.md (unlisted, attempt 1). |
+| 13 | `ASSUMED` | **A required marked field left unsupplied is refused by name** (`mock.document.derived_unsupplied`), not left to surface as a pydantic missing-key error. The declaration is what put the field beyond the write path, so the declaration is what the message should name. Optional fields are untouched — absence is what `None` is for. Added by execution 2026-09-11 — see logs/T-0048.md (A-6). |
 
 ## 12. Phasing
 
@@ -317,9 +320,13 @@ production also reads. Kept in §8 as the escape hatch, unbuilt.
 - **P2 — DST reach.** Confirm an invariant over a view-backed aggregate runs, and fix what
   it turns out to need. Gated on P1, and scoped to *finding out* rather than to a promised
   outcome (§9).
-- **P2a — projected field sets.** `field` becomes a field *set* producing a nested
-  object, which is what the six `*_json(...)` view helpers already build. This is the
-  phase that reaches the aggregates §2 counts; decision row 9 is why it is a phase rather
-  than part of P1.
+- **P1a — the marker and its seed (shipped 2026-09-11).** The floor of row 11: `None`
+  marks a field derived, `SpecSeed.derived` supplies it, and the refusal in row 13 makes
+  an unsupplied one discoverable. This is what actually reaches the aggregates §2 counts,
+  and it reaches the aggregate and `CASE` tail too, which no resolver would.
+- **P2a — projected field sets.** Superseded in priority by P1a and kept as a
+  convenience: `field` as a field *set* would let the six `*_json(...)` shapes be joined
+  rather than seeded. Demand-gated now rather than required, since the marker already
+  unblocks them.
 - **P3 — search parity.** `SearchSpec.derived_read_fields`, **demand-gated** on a second
   application asking for it (§8).

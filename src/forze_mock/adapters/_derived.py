@@ -8,12 +8,17 @@ reachable in tests at all.
 Resolution is deliberately narrow: one hop, by primary key, no predicates and no
 ordering. That bound is what keeps the mock's answer comparable to the real one
 rather than turning it into a small ORM whose divergences are its own.
+
+A *marked* derived field never reaches here. Its value is whatever the stored row
+carries, so the marker needs no adapter code at all — the deps factory resolves only
+the fields that declare a join.
 """
 
 from collections.abc import Callable, Mapping
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -134,3 +139,40 @@ def _namespaced(spec: ResolvedDerivedRead, tenant_id: UUID | None) -> str:
         return spec.namespace
 
     return partition_namespace(tenant_id, spec.namespace)
+
+
+# ....................... #
+
+
+def require_marked(
+    doc: JsonDict,
+    *,
+    marked: frozenset[str],
+    read_model: type[BaseModel],
+    spec_name: object,
+) -> None:
+    """Refuse a row missing a *required* marked derived field, naming how to supply it.
+
+    A marked field's value comes from the stored row, so an unsupplied one reaches pydantic
+    as a missing required field and escapes as a raw ``ValidationError`` — which says
+    nothing about the declaration that put it there. Refusing here turns a pydantic
+    traceback into the one sentence a reader needs.
+
+    Optional fields are left alone: absence is what ``None`` is for.
+
+    :raises exc.configuration: when a required marked field is absent from the row.
+    """
+
+    fields = read_model.model_fields
+    missing = sorted(
+        name for name in marked if name not in doc and name in fields and fields[name].is_required()
+    )
+
+    if missing:
+        raise exc.configuration(
+            f"Spec {spec_name!r} declares {missing} derived, and the stored row carries "
+            "no value for them. A marked derived field is produced by the relation, so "
+            "in the mock it has to be supplied — seed it with SpecSeed(derived={...}) — "
+            "or give it a join to resolve, or make it optional on the read model.",
+            code="mock.document.derived_unsupplied",
+        )

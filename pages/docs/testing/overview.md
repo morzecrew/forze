@@ -25,7 +25,19 @@ async def test_create_user():
 
 Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state.
 
-One thing to know before you rely on that: the mock stores what was written and reads it back through the read model, so an aggregate whose read model requires a field **no write produces** cannot round-trip through it. That is the ordinary shape of a read model assembled by a SQL view. Declare those fields with [`derived_read_fields`](../data-events/reading-data.md#read-fields-storage-doesnt-hold) and the mock performs the join itself; without the declaration, the read fails validation rather than returning something incomplete.
+One thing to know before you rely on that: the mock stores what was written and reads it back through the read model, so an aggregate whose read model requires a field **no write produces** cannot round-trip through it. That is the ordinary shape of a read model assembled by a SQL view — a joined reference, an aggregate total, a computed flag.
+
+Declare those fields on the spec (`derived_read_fields={"supplier": None}`) and supply their values with the seed:
+
+```python
+SpecSeed(
+    spec=ORDERS,
+    count=20,
+    derived={"supplier": {"id": ..., "rev": 1, "name": "Acme", "number_id": 7}},
+)
+```
+
+The values are fixture data — nothing recomputes them when a source row changes, because the mock does not implement the view. What the test then exercises is your handler around the read, which is what a unit test is for; the derivation itself is the database's, and belongs in an integration test against the real view. A required field declared derived and left unsupplied is refused by name, rather than surfacing as a pydantic error about a missing key.
  Write a user in one test, query it in the same test, and the data is there. (`command(...)` is the write side — `create` / `update`; `query(...)` is the read side — `get` / `find`.)
 
 ## Transaction rollback in tests
