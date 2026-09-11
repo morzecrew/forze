@@ -776,3 +776,27 @@ def test_derived_field_may_not_be_settable_on_a_command() -> None:
                 )
             },
         )
+
+
+def test_derived_write_omit_overlap_rejected() -> None:
+    """A derived field is never written, so write-omitting it claims two things at once."""
+
+    class _OmitRead(ReadDocument):
+        supplier_id: UUID
+        note: str = ""
+
+    class _OmitDomain(Document):
+        supplier_id: UUID
+        note: str = ""
+
+    class _OmitCreate(CreateDocumentCmd):
+        supplier_id: UUID
+
+    with pytest.raises(CoreException, match="cannot be both derived and write-omitted"):
+        DocumentSpec(
+            name="orders",
+            read=_OmitRead,
+            write=DocumentWriteTypes(domain=_OmitDomain, create_cmd=_OmitCreate),
+            write_omit_fields={"note"},
+            derived_read_fields={"note": None},
+        )
