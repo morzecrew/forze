@@ -382,6 +382,28 @@ class TestWiringRefusal:
         assert resolved["supplier"].tenant_scoped is False
         assert resolved["supplier"].namespace == "suppliers"
 
+    def test_a_dynamically_namespaced_source_is_refused(self) -> None:
+        """`_namespace_for` resolves synchronously and cannot answer a resolver.
+
+        It falls through to the default, so the join would read the fallback namespace —
+        the wrong rows, or none. Refused for the same reason as the tenancy mismatch:
+        the failure would present as missing data rather than as a wiring error.
+        """
+
+        module = MockDepsModule(
+            state=MockState(),
+            routes={
+                "orders": MockRouteConfig(),
+                # Anything but a plain string is a resolver as far as the sync path is
+                # concerned, and the sync path is what the factory has.
+                "suppliers": MockRouteConfig(namespace=lambda _tenant: "suppliers"),
+            },
+        )
+        factory = ConfigurableMockDocument(module=module)
+
+        with pytest.raises(CoreException, match="derived_dynamic_source"):
+            factory._derived_for(self._ctx(None), ORDERS)  # pyright: ignore[reportPrivateUsage]
+
     def test_a_tenanted_reader_over_an_unscoped_source_is_allowed(self) -> None:
         """The safe direction: a shared lookup table read by a per-tenant aggregate."""
 

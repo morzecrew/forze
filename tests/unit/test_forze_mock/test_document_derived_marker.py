@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -26,6 +26,10 @@ from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule
+from forze_mock.adapters import MockDocumentAdapter, MockState
+from forze_mock.adapters._derived import (  # pyright: ignore[reportPrivateUsage]
+    staged_derived,
+)
 from forze_mock.seeding import SeedPlan, SpecSeed
 from forze_mock.seeding.apply import apply_seed
 
@@ -231,3 +235,164 @@ class TestDeclaration:
         assert "supplier" not in ORDERS.filterable_fields()
         assert "stock_quantity" not in ORDERS.sortable_fields()
         assert "supplier_id" in ORDERS.filterable_fields()
+
+
+# ----------------------- #
+# Round-1 review findings
+
+
+class TestProjectionScope:
+    """A projection that does not name a marked field must not be refused for it."""
+
+    async def test_a_projection_excluding_the_marked_field_is_served(self) -> None:
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {
+            pk: {
+                "id": str(pk),
+                "rev": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_update_at": "2026-01-01T00:00:00Z",
+                "supplier_id": str(SUPPLIER_ID),
+            }
+        }
+        adapter = MockDocumentAdapter(
+            spec=ORDERS,
+            state=state,
+            namespace="orders",
+            read_model=_OrderRead,
+            domain_model=_Order,
+            derived_marked=frozenset({"supplier", "stock_quantity"}),
+        )
+
+        page = await adapter.project_many(["id", "supplier_id"])
+        assert [row["supplier_id"] for row in page.hits] == [str(SUPPLIER_ID)]
+
+        # Naming it back brings the refusal back — the scope is the projection, not a
+        # blanket relaxation.
+        with pytest.raises(CoreException, match="derived_unsupplied"):
+            await adapter.project_many(["id", "supplier"])
+
+
+class TestLenientComposition:
+    """`read_conformity="lenient"` must not auto-derive a field that is declared derived."""
+
+    def test_a_defaulted_derived_field_under_lenient_conformity_builds(self) -> None:
+        class _LenientRead(ReadDocument):
+            supplier_id: UUID
+            total: int = 0
+
+        spec = DocumentSpec(
+            name="orders",
+            read=_LenientRead,
+            read_conformity="lenient",
+            derived_read_fields={"total": None},
+        )
+
+        assert "total" not in spec.resolved_lenient_read_fields
+        assert sorted(spec.derived_read_fields) == ["total"]
+
+    def test_an_explicit_lenient_overlap_is_still_refused(self) -> None:
+        class _LenientRead(ReadDocument):
+            supplier_id: UUID
+            total: int = 0
+
+        with pytest.raises(CoreException, match="cannot be both derived"):
+            DocumentSpec(
+                name="orders",
+                read=_LenientRead,
+                lenient_read_fields={"total"},
+                derived_read_fields={"total": None},
+            )
+
+
+class TestStagedValues:
+    """The window `create` opens by draining events before it returns.
+
+    `create` stores the row, awaits `drain_domain_events`, and only then returns — so a
+    handler reading the new aggregate runs before the seeder can write its derived
+    values, and would see a required marked field as missing. Staging makes those values
+    read as though they were already on the row for the duration of the create.
+
+    Tested at the mechanism rather than by wiring a dispatcher: what has to hold is that
+    a staged value satisfies the read and an unstaged one does not.
+    """
+
+    def _adapter(self, state: MockState) -> MockDocumentAdapter:
+        return MockDocumentAdapter(
+            spec=ORDERS,
+            state=state,
+            namespace="orders",
+            read_model=_OrderRead,
+            domain_model=_Order,
+            derived_marked=frozenset({"supplier", "stock_quantity"}),
+        )
+
+    def _bare_row(self, pk: UUID) -> dict[str, object]:
+        return {
+            "id": str(pk),
+            "rev": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "last_update_at": "2026-01-01T00:00:00Z",
+            "supplier_id": str(SUPPLIER_ID),
+        }
+
+    async def test_a_staged_value_satisfies_the_read(self) -> None:
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._bare_row(pk)}
+        adapter = self._adapter(state)
+
+        # Unstaged: the row carries nothing, so the read refuses.
+        with pytest.raises(CoreException, match="derived_unsupplied"):
+            await adapter.get(pk)
+
+        with staged_derived({("orders", pk): dict(DERIVED)}):
+            row = await adapter.get(pk)
+            assert row.supplier.name == "Acme"
+            assert row.stock_quantity == 12.5
+
+        # And the staging is scoped: outside it the row is bare again.
+        with pytest.raises(CoreException, match="derived_unsupplied"):
+            await adapter.get(pk)
+
+    async def test_a_stored_value_wins_over_a_staged_one(self) -> None:
+        """Staging covers a window; it does not override what was persisted."""
+
+        state = MockState()
+        pk = uuid4()
+        stored = {**self._bare_row(pk), **DERIVED}
+        stored["stock_quantity"] = 99.0
+        state.documents["orders"] = {pk: stored}
+        adapter = self._adapter(state)
+
+        with staged_derived({("orders", pk): {"stock_quantity": 12.5}}):
+            assert (await adapter.get(pk)).stock_quantity == 99.0
+
+    async def test_a_malformed_id_on_the_row_does_not_match_staging(self) -> None:
+        """Probed rather than assumed reachable: a stored row can hold anything."""
+
+        state = MockState()
+        pk = uuid4()
+        row = self._bare_row(pk)
+        row["id"] = "not-a-uuid"
+        state.documents["orders"] = {pk: row}
+        adapter = self._adapter(state)
+
+        with (
+            staged_derived({("orders", pk): dict(DERIVED)}),
+            pytest.raises(CoreException, match="derived_unsupplied"),
+        ):
+            await adapter.get(pk)
+
+    async def test_staging_another_row_does_not_satisfy_this_one(self) -> None:
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._bare_row(pk)}
+        adapter = self._adapter(state)
+
+        with (
+            staged_derived({("orders", uuid4()): dict(DERIVED)}),
+            pytest.raises(CoreException, match="derived_unsupplied"),
+        ):
+            await adapter.get(pk)
