@@ -232,8 +232,13 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         and query-axis consumer reads."""
 
         if self.read_conformity == "lenient":
+            # Derived names are excluded from the auto-derivation, not just checked
+            # against it: a derived field with a static default (`total: int = 0`) would
+            # otherwise be auto-derived as lenient and then refused for overlapping with
+            # its own declaration, making the spec unconstructible.
             return self.lenient_read_fields | derive_lenient_read_fields(
-                self.read, exclude=self.materialized
+                self.read,
+                exclude=self.materialized | frozenset(self.derived_read_fields),
             )
 
         return self.lenient_read_fields
@@ -336,8 +341,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         names = frozenset(self.derived_read_fields)
 
         # Each collision is named separately: "cannot be both" is only useful when the
-        # reader is told which other mechanism already claims the field.
-        if overlap := names & self.resolved_lenient_read_fields:
+        # reader is told which other mechanism already claims the field. Only the
+        # *explicit* lenient set collides — the auto-derived one excludes these names.
+        if overlap := names & self.lenient_read_fields:
             raise exc.configuration(
                 f"Field(s) {sorted(overlap)} cannot be both derived (read from another "
                 f"relation) and lenient (rehydrated from the model default) "
