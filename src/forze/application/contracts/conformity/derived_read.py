@@ -14,7 +14,7 @@ required field is the ordinary case — a joined display name is rarely optional
 import types
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Union, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -110,6 +110,67 @@ class DerivedReadField:
 # ....................... #
 
 
+def _validate_join(
+    spec: DerivedReadField,
+    *,
+    name: str,
+    names: frozenset[str],
+    read_fields: frozenset[str],
+    fields: Mapping[str, Any],
+    spec_name: object,
+) -> None:
+    """Validate one declaration's join, or return where it declares none."""
+
+    source, via, field = spec.source, spec.via, spec.field
+
+    if source is None or via is None or field is None:
+        # A marked field declares only that the relation produces it. There is no source
+        # to reach, no key to join on and no nullability to reconcile, so every check
+        # below is about a join this declaration does not make. The three are
+        # all-or-nothing (`__attrs_post_init__`), so this narrows them together rather
+        # than asserting the invariant three times.
+        return
+
+    if not str(source).strip():
+        raise exc.configuration(
+            f"Derived read field {name!r} has a blank source (spec {spec_name!r}); "
+            "name the spec the value is joined from.",
+        )
+
+    if not field.strip():
+        raise exc.configuration(
+            f"Derived read field {name!r} has a blank source field "
+            f"(spec {spec_name!r}); name the field on {str(source)!r} to read.",
+        )
+
+    if via not in read_fields:
+        raise exc.configuration(
+            f"Derived read field {name!r} joins on {via!r}, which is not a "
+            f"non-computed field on the read model (spec {spec_name!r}).",
+        )
+
+    if not spec.optional and _admits_none(fields[via].annotation):
+        # A nullable key cannot produce a non-optional value: the first row with it
+        # unset refuses at read time, which is a worse place to learn this than here.
+        raise exc.configuration(
+            f"Derived read field {name!r} joins on {via!r}, which is nullable, but is "
+            f"not declared optional (spec {spec_name!r}); a key that may be unset "
+            "cannot yield a required value.",
+        )
+
+    if via in names:
+        # A key that is itself derived cannot be read before the join it depends on, and
+        # a declaration order that decides it would be a resolution order nobody
+        # declared. One hop means the key is stored.
+        raise exc.configuration(
+            f"Derived read field {name!r} joins on {via!r}, which is itself derived "
+            f"(spec {spec_name!r}); the join key must be a stored field.",
+        )
+
+
+# ....................... #
+
+
 def validate_derived_read_fields(
     *,
     model_type: type[BaseModel],
@@ -119,15 +180,16 @@ def validate_derived_read_fields(
     """Validate that *derived* names real, non-operative read fields with usable sources.
 
     Each key must be a non-computed field on *model_type* that is not an identity/audit
-    field, and each declaration's ``via`` must be a non-computed field on the same model.
-    A derived field **may be required** — that is the whole distinction from leniency.
+    field. A derived field **may be required** — that is the whole distinction from
+    leniency — and a marked one is checked no further, since every remaining rule is
+    about a join it does not declare.
 
     Overlaps with the caller's other conformity sets (``lenient_read_fields``,
     ``materialized``, ``write_omit_fields``) are checked by the caller, which knows them
     and can name each collision precisely.
 
-    :raises exc.configuration: when a name is unknown, is an identity/audit field, names
-        itself as its own key, or carries a blank ``source``/``field``.
+    :raises exc.configuration: when a name is unknown, is an identity/audit field, or
+        carries a join this model cannot support.
     """
 
     if not derived:
@@ -142,7 +204,6 @@ def validate_derived_read_fields(
         )
 
     read_fields = read_fields_for_model(model_type)
-    fields = model_type.model_fields
 
     if missing := names - read_fields:
         raise exc.configuration(
@@ -151,54 +212,14 @@ def validate_derived_read_fields(
         )
 
     for name in sorted(derived):
-        spec = derived[name]
-
-        source, via, field = spec.source, spec.via, spec.field
-
-        if source is None or via is None or field is None:
-            # A marked field declares only that the relation produces it. There is no
-            # source to reach, no key to join on and no nullability to reconcile, so
-            # every check below is about a join this declaration does not make. The
-            # three are all-or-nothing (`__attrs_post_init__`), so this narrows them
-            # together rather than asserting the invariant three times.
-            continue
-
-        if not str(source).strip():
-            raise exc.configuration(
-                f"Derived read field {name!r} has a blank source (spec {spec_name!r}); "
-                "name the spec the value is joined from.",
-            )
-
-        if not field.strip():
-            raise exc.configuration(
-                f"Derived read field {name!r} has a blank source field "
-                f"(spec {spec_name!r}); name the field on {str(source)!r} to read.",
-            )
-
-        if via not in read_fields:
-            raise exc.configuration(
-                f"Derived read field {name!r} joins on {via!r}, which is not a "
-                f"non-computed field on the read model {model_type.__name__} "
-                f"(spec {spec_name!r}).",
-            )
-
-        if not spec.optional and _admits_none(fields[via].annotation):
-            # A nullable key cannot produce a non-optional value: the first row with it
-            # unset refuses at read time, which is a worse place to learn this than here.
-            raise exc.configuration(
-                f"Derived read field {name!r} joins on {via!r}, which is nullable, "
-                f"but is not declared optional (spec {spec_name!r}); a key that may be "
-                f"unset cannot yield a required value.",
-            )
-
-        if via in names:
-            # A key that is itself derived cannot be read before the join it depends on,
-            # and a declaration order that decides it would be a resolution order nobody
-            # declared. One hop means the key is stored.
-            raise exc.configuration(
-                f"Derived read field {name!r} joins on {via!r}, which is itself "
-                f"derived (spec {spec_name!r}); the join key must be a stored field.",
-            )
+        _validate_join(
+            derived[name],
+            name=name,
+            names=names,
+            read_fields=read_fields,
+            fields=model_type.model_fields,
+            spec_name=spec_name,
+        )
 
 
 # ....................... #

@@ -404,6 +404,37 @@ class TestWiringRefusal:
         with pytest.raises(CoreException, match="derived_dynamic_source"):
             factory._derived_for(self._ctx(None), ORDERS)  # pyright: ignore[reportPrivateUsage]
 
+    def test_a_relation_pair_source_resolves(self) -> None:
+        """A relation is the other shape the sync resolver can answer."""
+
+        module = MockDepsModule(
+            state=MockState(),
+            routes={
+                "orders": MockRouteConfig(),
+                "suppliers": MockRouteConfig(relation=("erp", "suppliers")),
+            },
+        )
+        resolved = ConfigurableMockDocument(module=module)._derived_for(  # pyright: ignore[reportPrivateUsage]
+            self._ctx(None), ORDERS
+        )
+
+        assert resolved["supplier"].namespace == "erp/suppliers"
+
+    def test_a_dynamically_resolved_relation_is_refused(self) -> None:
+        """And a relation resolver is as unanswerable as a namespace resolver."""
+
+        module = MockDepsModule(
+            state=MockState(),
+            routes={
+                "orders": MockRouteConfig(),
+                "suppliers": MockRouteConfig(relation=lambda _tenant: ("erp", "suppliers")),
+            },
+        )
+        factory = ConfigurableMockDocument(module=module)
+
+        with pytest.raises(CoreException, match="derived_dynamic_source"):
+            factory._derived_for(self._ctx(None), ORDERS)  # pyright: ignore[reportPrivateUsage]
+
     def test_a_tenanted_reader_over_an_unscoped_source_is_allowed(self) -> None:
         """The safe direction: a shared lookup table read by a per-tenant aggregate."""
 
