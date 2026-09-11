@@ -23,7 +23,9 @@ from pydantic import BaseModel
 from forze.application.contracts.conformity import DerivedReadField
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution import DepsRegistry, ExecutionRuntime
+from forze.application.execution.port_proxy_base import PortProxy
 from forze.base.exceptions import CoreException
+from forze.base.primitives import JsonDict
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockDocumentAdapter, MockState
@@ -31,8 +33,12 @@ from forze_mock.adapters._derived import (  # pyright: ignore[reportPrivateUsage
     ResolvedDerivedRead,
     staged_derived,
 )
+from forze_mock.adapters._journal import JournalingStore  # pyright: ignore[reportPrivateUsage]
 from forze_mock.seeding import SeedPlan, SpecSeed
-from forze_mock.seeding.apply import apply_seed
+from forze_mock.seeding.apply import (  # pyright: ignore[reportPrivateUsage]
+    _mock_adapter,
+    apply_seed,
+)
 
 # ----------------------- #
 # The origin application's real shape: a nested reference and an aggregate total.
@@ -68,6 +74,7 @@ ORDERS = DocumentSpec(
     write=DocumentWriteTypes(domain=_Order, create_cmd=_OrderCreate),
     derived_read_fields={"supplier": None, "stock_quantity": None},
 )
+
 
 class _AggRead(ReadDocument):
     supplier_id: UUID
@@ -469,9 +476,7 @@ class TestQueryAxesAgreeWithTheSpec:
         # The value is right there on the stored row, which is exactly why this has to
         # be a policy refusal rather than a lookup that happens to miss.
         with pytest.raises(CoreException, match="field_not_on_read_model"):
-            await self._adapter(state).find_many(
-                filters={"$values": {"supplier": {"$eq": "Acme"}}}
-            )
+            await self._adapter(state).find_many(filters={"$values": {"supplier": {"$eq": "Acme"}}})
 
     async def test_a_sort_on_a_derived_field_is_refused(self) -> None:
         state, _pk = self._seeded_state()
@@ -621,3 +626,252 @@ class TestAggregatesAgreeWithTheSpec:
         )
 
         assert [dict(row)["total"] for row in page.hits] == [3]
+
+
+class TestARegisteredSource:
+    """A stand-in for the relation, consulted for every row rather than written onto one.
+
+    What seeding cannot do: a row created after the seed ran — every row under simulation —
+    has no seeded value, and a marked field travels through no command. The source is the
+    only thing that can serve those, and its precedence is what keeps a deliberately
+    written value authoritative.
+    """
+
+    def _adapter(
+        self,
+        state: MockState,
+        source: Any,
+    ) -> MockDocumentAdapter:
+        return MockDocumentAdapter(
+            spec=ORDERS,
+            state=state,
+            namespace="orders",
+            read_model=_OrderRead,
+            domain_model=_Order,
+            derived_marked=frozenset({"supplier", "stock_quantity"}),
+            derived_source=source,
+        )
+
+    def _row(self, pk: UUID, **extra: object) -> dict[str, object]:
+        return {
+            "id": str(pk),
+            "rev": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "last_update_at": "2026-01-01T00:00:00Z",
+            "supplier_id": str(SUPPLIER_ID),
+            **extra,
+        }
+
+    def _view(self, row: JsonDict) -> dict[str, Any]:
+        return {
+            "supplier": {
+                "id": str(SUPPLIER_ID),
+                "rev": 1,
+                "name": f"from-view-{str(row['id'])[:4]}",
+                "number_id": 1,
+            },
+            "stock_quantity": 1.0,
+        }
+
+    async def test_a_source_serves_a_row_nothing_seeded(self) -> None:
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk)}
+
+        row = await self._adapter(state, self._view).get(pk)
+
+        assert row.supplier.name.startswith("from-view-")
+        assert row.stock_quantity == 1.0
+
+    async def test_it_is_per_row(self) -> None:
+        """The distinction from `SpecSeed.derived`, which is one value for every row."""
+
+        state = MockState()
+        first, second = uuid4(), uuid4()
+        state.documents["orders"] = {
+            first: self._row(first),
+            second: self._row(second),
+        }
+
+        page = await self._adapter(state, self._view).find_many()
+
+        assert len({row.supplier.name for row in page.hits}) == 2
+
+    async def test_the_stored_row_outranks_the_source(self) -> None:
+        """A seeded or persisted value is what somebody wrote on purpose."""
+
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk, **DERIVED)}
+
+        row = await self._adapter(state, self._view).get(pk)
+
+        assert row.supplier.name == "Acme"
+        assert row.stock_quantity == 12.5
+
+    async def test_a_staged_value_outranks_the_source_too(self) -> None:
+        """Staging covers the create window, and a source must not reopen it."""
+
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk)}
+        adapter = self._adapter(state, self._view)
+
+        with staged_derived({("orders", pk): dict(DERIVED)}):
+            row = await adapter.get(pk)
+
+        assert row.supplier.name == "Acme"
+
+    async def test_it_cannot_fill_a_field_the_spec_did_not_declare_derived(self) -> None:
+        """A source is a stand-in for the relation, not a hook that rewrites the row.
+
+        The read model's own defaults are the case that bites: an undeclared name absent
+        from the stored row would otherwise take the source's value silently, so a typo in
+        a source would read as data. Extra keys pydantic simply drops prove nothing here —
+        it drops them with or without the scoping.
+        """
+
+        class _WithDefault(ReadDocument):
+            supplier_id: UUID
+            supplier: _SupplierRef
+            stock_quantity: float
+            note: str = "from the model"
+
+        spec = DocumentSpec(
+            name="orders",
+            read=_WithDefault,
+            write=DocumentWriteTypes(domain=_Order, create_cmd=_OrderCreate),
+            derived_read_fields={"supplier": None, "stock_quantity": None},
+        )
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk)}
+
+        def noisy(row: JsonDict) -> dict[str, Any]:
+            return {**self._view(row), "note": "from the source"}
+
+        adapter = MockDocumentAdapter(
+            spec=spec,
+            state=state,
+            namespace="orders",
+            read_model=_WithDefault,
+            domain_model=_Order,
+            derived_marked=frozenset({"supplier", "stock_quantity"}),
+            derived_source=noisy,
+        )
+
+        row = await adapter.get(pk)
+
+        assert row.note == "from the model"
+        # And the declared ones still arrive, so this is scoping rather than a source
+        # that was ignored wholesale.
+        assert row.stock_quantity == 1.0
+
+    async def test_a_partial_source_still_refuses_the_rest(self) -> None:
+        """Supplying one of two required marked fields is not supplying them."""
+
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk)}
+
+        def half(row: JsonDict) -> dict[str, Any]:
+            return {"supplier": self._view(row)["supplier"]}
+
+        with pytest.raises(CoreException, match="derived_unsupplied"):
+            await self._adapter(state, half).get(pk)
+
+    async def test_a_projection_hands_the_source_the_whole_row(self) -> None:
+        """A source reads the fields it joins on, and a narrow projection must not hide them.
+
+        The projection is applied *after* hydration, so the source sees the stored row
+        rather than the caller's field list. Pinned because the reverse order would break
+        every source that reads a join key the caller did not ask for — silently, and only
+        on the projection path.
+        """
+
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk)}
+        seen: list[frozenset[str]] = []
+
+        def watching(row: JsonDict) -> dict[str, Any]:
+            seen.append(frozenset(row))
+            return self._view(row)
+
+        page = await self._adapter(state, watching).project_many(["id", "supplier"])
+
+        assert seen and "supplier_id" in seen[0]
+        assert dict(page.hits[0])["supplier"]["name"].startswith("from-view-")
+
+    async def test_no_source_keeps_the_refusal(self) -> None:
+        """The default posture: an unsupplied value stays discoverable."""
+
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {pk: self._row(pk)}
+
+        with pytest.raises(CoreException, match="derived_unsupplied"):
+            await self._adapter(state, None).get(pk)
+
+
+class TestTheSeededWriteIsSerialized:
+    """The derived write is a read-modify-write over a namespace store.
+
+    Every other mutation of one holds `MockState.lock`; this one did not, so a concurrent
+    writer's row could be overwritten by the value read before it landed. Asserted on the
+    lock at the moment of the write rather than by racing two writers, which would pin a
+    schedule instead of the property.
+    """
+
+    async def test_the_lock_is_held_while_the_row_is_rewritten(self) -> None:
+        state = MockState()
+        held: list[bool] = []
+
+        class _Recording(JournalingStore):
+            def __setitem__(self, key: UUID, value: Any) -> None:
+                if "supplier" in value:
+                    held.append(state.lock._is_owned())
+
+                super().__setitem__(key, value)
+
+        # Pre-installed as a `JournalingStore` subclass: the adapter coerces a plain dict
+        # into one, replacing whatever was there.
+        state.documents["orders"] = _Recording({})
+
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_modules(MockDepsModule(state=state)).freeze()
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await apply_seed(ctx, _plan(count=1))
+
+        assert held == [True]
+
+
+class TestTheSeederFindsTheAdapterBehindAWrap:
+    """`SpecSeed.derived` writes through a port the runtime has wrapped.
+
+    A handler never holds the adapter itself — tracing, resilience and a simulation's fault
+    interceptors each wrap it — so the seeder's narrowing has to look behind the chain. The
+    end-to-end case is under simulation, where the wrap is the real one; these pin the
+    lookup itself, including what it still refuses.
+    """
+
+    def test_it_unwraps_a_proxy(self) -> None:
+        adapter = MockDocumentAdapter(
+            spec=ORDERS,
+            state=MockState(),
+            namespace="orders",
+            read_model=_OrderRead,
+            domain_model=_Order,
+        )
+        wrapped = PortProxy(inner=PortProxy(inner=adapter))
+
+        assert _mock_adapter(wrapped, "orders") is adapter
+
+    def test_it_still_refuses_a_port_that_is_not_the_mock(self) -> None:
+        """The narrowing exists because the seeder writes onto the store directly."""
+
+        with pytest.raises(CoreException, match="needs the mock document adapter"):
+            _mock_adapter(PortProxy(inner=object()), "orders")

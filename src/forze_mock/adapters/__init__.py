@@ -6,6 +6,10 @@ from forze_mock.adapters.analytics import MockAnalyticsAdapter
 from forze_mock.adapters.cache import MockCacheAdapter
 from forze_mock.adapters.counter import MockCounterAdapter, MockCounterAdminAdapter
 from forze_mock.adapters.crypto import MockKeyManagement
+from forze_mock.adapters.derived_values import (
+    MockDerivedRegistry,
+    MockDerivedSource,
+)
 from forze_mock.adapters.dlock import MockDistributedLockAdapter
 from forze_mock.adapters.document import MockDocumentAdapter
 from forze_mock.adapters.durable import (
@@ -121,6 +125,8 @@ __all__ = [
     "MockProcedureAdapter",
     "MockProcedureRegistry",
     "MockProcedureHandler",
+    "MockDerivedRegistry",
+    "MockDerivedSource",
     "MockQueryParamsRegistry",
     "MockQueryParamsSource",
     "MockDistributedLockAdapter",
