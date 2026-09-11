@@ -396,3 +396,80 @@ class TestStagedValues:
             pytest.raises(CoreException, match="derived_unsupplied"),
         ):
             await adapter.get(pk)
+
+
+class TestQueryAxesAgreeWithTheSpec:
+    """The runtime validators must refuse what `filterable_fields()` already excludes.
+
+    Without this the mock accepts a direct filter the governed path refuses — and for a
+    *resolved* field it is worse than inconsistent: the value exists only after
+    hydration, so the filter runs against a row that does not have it and matches
+    nothing. Silently.
+    """
+
+    def _adapter(self, state: MockState) -> MockDocumentAdapter:
+        return MockDocumentAdapter(
+            spec=ORDERS,
+            state=state,
+            namespace="orders",
+            read_model=_OrderRead,
+            domain_model=_Order,
+            derived_marked=frozenset({"supplier", "stock_quantity"}),
+        )
+
+    def _seeded_state(self) -> tuple[MockState, UUID]:
+        state = MockState()
+        pk = uuid4()
+        state.documents["orders"] = {
+            pk: {
+                "id": str(pk),
+                "rev": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_update_at": "2026-01-01T00:00:00Z",
+                "supplier_id": str(SUPPLIER_ID),
+                **DERIVED,
+            }
+        }
+        return state, pk
+
+    def test_the_spec_excludes_them_from_every_axis(self) -> None:
+        for axis in (
+            ORDERS.filterable_fields(),
+            ORDERS.sortable_fields(),
+            ORDERS.aggregatable_fields(),
+        ):
+            assert "supplier" not in axis
+            assert "stock_quantity" not in axis
+            assert "supplier_id" in axis
+
+    async def test_a_filter_on_a_derived_field_is_refused(self) -> None:
+        state, _pk = self._seeded_state()
+
+        # The value is right there on the stored row, which is exactly why this has to
+        # be a policy refusal rather than a lookup that happens to miss.
+        with pytest.raises(CoreException, match="field_not_on_read_model"):
+            await self._adapter(state).find_many(
+                filters={"$values": {"supplier": {"$eq": "Acme"}}}
+            )
+
+    async def test_a_sort_on_a_derived_field_is_refused(self) -> None:
+        state, _pk = self._seeded_state()
+
+        with pytest.raises(CoreException):
+            await self._adapter(state).find_many(sorts={"supplier": "asc"})
+
+    async def test_a_cursor_sort_on_a_derived_field_is_refused(self) -> None:
+        state, _pk = self._seeded_state()
+
+        with pytest.raises(CoreException):
+            await self._adapter(state).find_cursor(sorts={"supplier": "asc"})
+
+    async def test_the_stored_join_key_stays_queryable(self) -> None:
+        """The exclusion is the derived field, not everything near it."""
+
+        state, _pk = self._seeded_state()
+        page = await self._adapter(state).find_many(
+            filters={"$values": {"supplier_id": {"$eq": SUPPLIER_ID}}}
+        )
+
+        assert [row.supplier.name for row in page.hits] == ["Acme"]

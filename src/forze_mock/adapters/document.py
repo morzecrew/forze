@@ -335,6 +335,20 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     def _read_codec(self) -> ModelCodec[R, Any]:
         return self.codecs.read
 
+    def _unqueryable(self) -> frozenset[str]:
+        """Read fields with no column of this aggregate's own to query.
+
+        Lenient fields are absent from storage; derived fields are produced by the
+        relation. `DocumentSpec.filterable_fields()` and its siblings already exclude
+        both, and the runtime validators have to agree — otherwise a direct filter on a
+        derived field is accepted here and refused by the governed path, and a resolved
+        one matches nothing at all, because the value exists only after hydration.
+        """
+
+        return self.spec.resolved_lenient_read_fields | frozenset(self.spec.derived_read_fields)
+
+    # ....................... #
+
     def _hydrate(self, doc: JsonDict, fields: Sequence[str] | None = None) -> JsonDict:
         """Resolve this spec's derived read fields on *doc*.
 
@@ -567,7 +581,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             filters,
             model=self.read_model,
             materialized=self.spec.materialized,
-            lenient=self.spec.resolved_lenient_read_fields,
+            lenient=self._unqueryable(),
             # The mock stores plaintext (it is a dict, not a disk), so nothing here would stop a
             # filter on a sealed field from matching — while the same query against a real backend
             # cannot match its ciphertext. Passing the declaration keeps the *policy* identical on
@@ -833,7 +847,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 model=self.read_model,
                 backend="mock",
                 materialized=self.spec.materialized,
-                lenient=self.spec.resolved_lenient_read_fields,
+                lenient=self._unqueryable(),
                 sealed=self._sealed_fields(),
             )
             total = len(filtered)
@@ -1265,7 +1279,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # cursor from the last returned row.
         self._validate_filter_types(filters)
 
-        read_fields = read_fields_for_model(self.read_model) | self.spec.materialized
+        read_fields = (
+            read_fields_for_model(self.read_model) | self.spec.materialized
+        ) - self._unqueryable()
         effective = resolve_effective_sorts(
             sorts=sorts,
             default_sort=self.spec.default_sort,
