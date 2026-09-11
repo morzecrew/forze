@@ -101,7 +101,8 @@ column — while the write-column, sealing and settable-command guards all follo
 it.
 
 In `forze_mock` a marked field's value comes from the stored row, which is where
-[`SpecSeed(derived={...})`](../testing/overview.md) puts it. That value is fixture
+[`SpecSeed(derived={...})`](../testing/overview.md) puts it — seeding goes through the
+spec's create command, so a spec you intend to seed needs its `write` types. That value is fixture
 data, not a derivation: nothing recomputes it, because nothing here implements the
 view. For testing the handler around the read — which is what these aggregates need
 — that is the whole requirement, and a mock that evaluated view expressions would be

@@ -55,12 +55,13 @@ required field.
 Mark those fields and seed their values:
 
 ```python
-from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze_mock.seeding import SeedPlan, SpecSeed
 
 ORDERS = DocumentSpec(
     name="orders",
     read=OrderRead,  # `supplier: SupplierRef`, `stock_quantity: float` — no write makes them
+    write=DocumentWriteTypes(domain=Order, create_cmd=OrderCreate),
     derived_read_fields={"supplier": None, "stock_quantity": None},
 )
 

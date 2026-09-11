@@ -31,7 +31,7 @@ Declare those fields on the spec (`derived_read_fields={"supplier": None}`) and 
 
 ```python
 SpecSeed(
-    spec=ORDERS,
+    spec=ORDERS,  # needs a `write` spec: seeding goes through its create command
     count=20,
     derived={"supplier": {"id": ..., "rev": 1, "name": "Acme", "number_id": 7}},
 )

@@ -44,6 +44,12 @@ class DerivedReadField:
       primary key. Available where the value is one field of one row reached by one key,
       which is the narrow case; everything else is marked.
 
+      The join reads the source's **stored** row, not its read model, so it does not
+      decrypt: a source field the source spec seals at rest arrives as ciphertext. Mark
+      such a field instead of resolving it. The mock cannot refuse this at wiring time —
+      the deps factory sees route configs, never the source spec — so it is a limit to
+      know rather than one the framework enforces.
+
     The split exists because marking and resolving answer different questions, and fusing
     them meant a field could not be declared derived without also declaring a join it may
     not have.
