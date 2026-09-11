@@ -1442,6 +1442,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#read-fields-storage-doesnt-hold" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Read fields storage doesn't hold
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#searching" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6187,6 +6198,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#read-fields-storage-doesnt-hold" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Read fields storage doesn't hold
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#searching" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6398,6 +6420,67 @@ adapters that can't tell the causes apart leave it <code>None</code>, and a page
 never carries one. On governed list operations, <code>AuthzDocumentScopeWrap</code>'s
 opt-in <code>explain_empty</code> sets the reason for you (see the
 <a href="../../recipes/authn-authz-tenancy-fastapi/">authz recipe</a>).</p>
+<h2 id="read-fields-storage-doesnt-hold">Read fields storage doesn't hold<a class="headerlink" href="#read-fields-storage-doesnt-hold" title="Permanent link">&para;</a></h2>
+<p>Three knobs decide what a read model may carry beyond its own stored columns, and
+picking the wrong one is the usual mistake — they answer different questions:</p>
+<table>
+<thead>
+<tr>
+<th>Knob</th>
+<th>The field is…</th>
+<th>Where its value comes from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lenient_read_fields</code></td>
+<td>absent from storage</td>
+<td>the model's own default</td>
+</tr>
+<tr>
+<td><code>materialized</code></td>
+<td>stored here, derived from this row</td>
+<td>a <code>@computed_field</code>, persisted</td>
+</tr>
+<tr>
+<td><code>derived_read_fields</code></td>
+<td>produced by another relation</td>
+<td>a source row, joined</td>
+</tr>
+</tbody>
+</table>
+<p>Leniency needs a default, so it refuses a required field — which a joined display
+name usually is. That is what <code>derived_read_fields</code> is for. Map a field to <code>None</code>
+to <strong>mark</strong> it derived and nothing more:</p>
+<div class="highlight"><pre><span></span><code><span class="n">ORDERS</span> <span class="o">=</span> <span class="n">DocumentSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">,</span>
+    <span class="n">read</span><span class="o">=</span><span class="n">OrderRead</span><span class="p">,</span>  <span class="c1"># carries `supplier: SupplierRef` and `stock_quantity: float`</span>
+    <span class="n">derived_read_fields</span><span class="o">=</span><span class="p">{</span><span class="s2">"supplier"</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span> <span class="s2">"stock_quantity"</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Marking is shape-independent, and that is the point: a joined column, a nested
+reference object, a <code>COALESCE</code> over sibling rows and a <code>CASE</code> expression are all
+the same declaration, because none of them is computed by this aggregate. On a real
+backend the declaration changes nothing at runtime — the view already produces the
+column — while the write-column, sealing and settable-command guards all follow from
+it.</p>
+<p>In <code>forze_mock</code> a marked field's value comes from the stored row, which is where
+<a href="../../testing/overview/"><code>SpecSeed(derived={...})</code></a> puts it — seeding goes through the
+spec's create command, so a spec you intend to seed needs its <code>write</code> types. That value is fixture
+data, not a derivation: nothing recomputes it, because nothing here implements the
+view. For testing the handler around the read — which is what these aggregates need
+— that is the whole requirement, and a mock that evaluated view expressions would be
+a second query engine with divergences of its own.</p>
+<p>Where the value genuinely is one field of one row reached by one key, it can be
+<strong>resolved</strong> instead, and the mock performs the join:</p>
+<div class="highlight"><pre><span></span><code><span class="n">derived_read_fields</span><span class="o">=</span><span class="p">{</span>
+    <span class="s2">"catalog_code"</span><span class="p">:</span> <span class="n">DerivedReadField</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">"catalogs"</span><span class="p">,</span> <span class="n">via</span><span class="o">=</span><span class="s2">"catalog_id"</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="s2">"code"</span><span class="p">),</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>One hop, by primary key, no predicates and no ordering. Declare <code>optional=True</code> when
+the join key is nullable; a key that resolves to no row is refused rather than
+quietly <code>None</code>. A derived field is not filterable, sortable or sealable either way,
+because this aggregate holds no column of its own for it.</p>
 <h2 id="searching">Searching<a class="headerlink" href="#searching" title="Permanent link">&para;</a></h2>
 <p>Full-text and vector search are a parallel surface, through the <strong>search query
 port</strong> — the same shape × pagination naming, but results come back <strong>ranked</strong>:</p>

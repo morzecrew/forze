@@ -6471,7 +6471,17 @@
     <span class="k">assert</span> <span class="n">user</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">"Ada"</span>
     <span class="k">assert</span> <span class="n">user</span><span class="o">.</span><span class="n">id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
 </code></pre></div>
-<p>Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there. (<code>command(...)</code> is the write side — <code>create</code> / <code>update</code>; <code>query(...)</code> is the read side — <code>get</code> / <code>find</code>.)</p>
+<p>Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state.</p>
+<p>One thing to know before you rely on that: the mock stores what was written and reads it back through the read model, so an aggregate whose read model requires a field <strong>no write produces</strong> cannot round-trip through it. That is the ordinary shape of a read model assembled by a SQL view — a joined reference, an aggregate total, a computed flag.</p>
+<p>Declare those fields on the spec (<code>derived_read_fields={"supplier": None}</code>) and supply their values with the seed:</p>
+<div class="highlight"><pre><span></span><code><span class="n">SpecSeed</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">ORDERS</span><span class="p">,</span>  <span class="c1"># needs a `write` spec: seeding goes through its create command</span>
+    <span class="n">count</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span>
+    <span class="n">derived</span><span class="o">=</span><span class="p">{</span><span class="s2">"supplier"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"id"</span><span class="p">:</span> <span class="o">...</span><span class="p">,</span> <span class="s2">"rev"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"name"</span><span class="p">:</span> <span class="s2">"Acme"</span><span class="p">,</span> <span class="s2">"number_id"</span><span class="p">:</span> <span class="mi">7</span><span class="p">}},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The values are fixture data — nothing recomputes them when a source row changes, because the mock does not implement the view. What the test then exercises is your handler around the read, which is what a unit test is for; the derivation itself is the database's, and belongs in an integration test against the real view. A required field declared derived and left unsupplied is refused by name, rather than surfacing as a pydantic error about a missing key.
+ Write a user in one test, query it in the same test, and the data is there. (<code>command(...)</code> is the write side — <code>create</code> / <code>update</code>; <code>query(...)</code> is the read side — <code>get</code> / <code>find</code>.)</p>
 <h2 id="transaction-rollback-in-tests">Transaction rollback in tests<a class="headerlink" href="#transaction-rollback-in-tests" title="Permanent link">&para;</a></h2>
 <p>Mock transactions are <strong>faithful by default</strong>: a write inside a transaction that rolls back is undone, so a "forgot to run it in the same transaction" bug fails in your unit test exactly as it would in production. No flag needed.</p>
 <ul>
