@@ -67,6 +67,7 @@ from forze_mock.adapters._derived import (
 )
 from forze_mock.adapters._journal import JournalingStore
 from forze_mock.adapters._mvcc import current_mvcc_tx
+from forze_mock.adapters.derived_values import MockDerivedSource
 from forze_mock.adapters.query_params import MockQueryParamsSource
 from forze_mock.query._types import (
     C,
@@ -128,6 +129,14 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     Empty for every spec that declares none, which is the overwhelming majority —
     :meth:`_hydrate` returns the document untouched in that case."""
+
+    derived_source: MockDerivedSource | None = None
+    """Stands in for the relation that produces this spec's *marked* derived fields.
+
+    ``None`` leaves the refusal a marked field without a value already raises — the
+    registered default, and the only posture in which an unsupplied value is
+    discoverable. A registered source is consulted for every row, which is what makes
+    a row the workload itself created readable."""
 
     # ....................... #
 
@@ -397,12 +406,30 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         """
 
         if self.derived_marked:
-            # A value staged for this row reads as though it were already on it, which
-            # is what keeps a create's own event handlers from observing a marked field
-            # as missing (see `staged_derived`). The row wins where it has a value:
-            # staging covers a window, it does not override what was persisted.
+            # Three ranks, lowest first. A registered source models the relation for
+            # every row, including the rows a workload created after any seed ran. A
+            # value staged for this row reads as though it were already on it, which is
+            # what keeps a create's own event handlers from observing a marked field as
+            # missing (see `staged_derived`) — and it outranks the source, because it is
+            # a value a test wrote for this row rather than a stand-in for all of them.
+            # The stored row wins over both: staging covers a window and a source is
+            # fixture logic, and neither overrides what was persisted.
+            supplied: JsonDict = {}
+
+            if self.derived_source is not None:
+                # Scoped to the declared names, so a source cannot put a field on the
+                # read model that the spec never declared derived.
+                supplied = {
+                    name: value
+                    for name, value in self.derived_source(doc).items()
+                    if name in self.derived_marked
+                }
+
             if staged := staged_for(self.spec.name, doc.get("id")):
-                doc = {**staged, **doc}
+                supplied = {**supplied, **staged}
+
+            if supplied:
+                doc = {**supplied, **doc}
 
             require_marked(
                 doc,

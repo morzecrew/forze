@@ -383,6 +383,10 @@ class ConfigurableMockDocument(_MockFactoryBase):
         domain_model = spec.write["domain"] if spec.write is not None else None
         sources = self.module.query_param_sources
         query_params_source = sources.source_for(str(spec.name)) if sources is not None else None
+        derived_sources = self.module.derived_values
+        derived_source = (
+            derived_sources.source_for(str(spec.name)) if derived_sources is not None else None
+        )
 
         # The same fail-closed encryption resolution every real document factory runs:
         # a spec that declares encrypted fields gets its codecs wrapped (the module's
@@ -415,6 +419,7 @@ class ConfigurableMockDocument(_MockFactoryBase):
             derived_marked=frozenset(
                 name for name, declared in spec.derived_read_fields.items() if not declared.resolved
             ),
+            derived_source=derived_source,
         )
 
 

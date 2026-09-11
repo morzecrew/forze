@@ -23,7 +23,7 @@ async def test_create_user():
     assert user.id is not None
 ```
 
-Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state.
+Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there. (`command(...)` is the write side — `create` / `update`; `query(...)` is the read side — `get` / `find`.)
 
 One thing to know before you rely on that: the mock stores what was written and reads it back through the read model, so an aggregate whose read model requires a field **no write produces** cannot round-trip through it. That is the ordinary shape of a read model assembled by a SQL view — a joined reference, an aggregate total, a computed flag.
 
@@ -38,7 +38,19 @@ SpecSeed(
 ```
 
 The values are fixture data — nothing recomputes them when a source row changes, because the mock does not implement the view. What the test then exercises is your handler around the read, which is what a unit test is for; the derivation itself is the database's, and belongs in an integration test against the real view. A required field declared derived and left unsupplied is refused by name, rather than surfacing as a pydantic error about a missing key.
- Write a user in one test, query it in the same test, and the data is there. (`command(...)` is the write side — `create` / `update`; `query(...)` is the read side — `get` / `find`.)
+
+A seed cannot reach a row your **code** creates, though — and under [deterministic simulation](../dst/overview.md) the workload creates every row there is. Register what the relation would have produced instead, and the mock consults it per row:
+
+```python
+MockDepsModule(
+    derived_values=MockDerivedRegistry().on(
+        "orders",
+        lambda row: {"supplier": {"id": row["supplier_id"], "rev": 1, "name": "Acme"}},
+    ),
+)
+```
+
+Keep it a function of the row: a source that reads a clock or a counter makes two runs of one seed disagree, and a simulation you cannot replay is one you cannot minimize. A seeded or persisted value still wins, so a test that wrote a specific row keeps it. Registering nothing keeps the refusal above, which is the posture that makes a missing value discoverable.
 
 ## Transaction rollback in tests
 

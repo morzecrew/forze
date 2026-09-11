@@ -9,6 +9,7 @@ from uuid import UUID
 
 from forze.application.contracts.queue import QueueCommandDepKey
 from forze.application.contracts.storage import UploadedObject
+from forze.application.execution.port_proxy_base import PortProxy
 from forze.base.exceptions import exc
 from forze.base.primitives import (
     FrozenTimeSource,
@@ -82,6 +83,29 @@ def _linked(
 # ....................... #
 
 
+def _mock_adapter(port: object, spec_name: str) -> MockDocumentAdapter[Any, Any, Any, Any]:
+    """The mock adapter behind whatever wraps it, or a refusal naming what was found.
+
+    A handler never holds the adapter itself: tracing, resilience and a simulation's fault
+    interceptors each wrap it, and under ``forze_dst`` at least one of them always does. The
+    type this needs is right; looking for it at the top of the chain was not.
+    """
+
+    while isinstance(port, PortProxy):
+        port = port.inner
+
+    if not isinstance(port, MockDocumentAdapter):
+        raise exc.configuration(
+            f"Seeding derived values for '{spec_name}' needs the mock document adapter; "
+            f"got {type(port).__name__}",
+        )
+
+    return port
+
+
+# ....................... #
+
+
 def _write_derived(ctx: ExecutionContext, seed: SpecSeed, pk: UUID) -> None:
     """Write one row's derived values onto the document the port just created.
 
@@ -90,14 +114,7 @@ def _write_derived(ctx: ExecutionContext, seed: SpecSeed, pk: UUID) -> None:
     ``derived_read_fields``, which :class:`SpecSeed` has already checked the keys against.
     """
 
-    port = ctx.doc.query(seed.spec)
-
-    if not isinstance(port, MockDocumentAdapter):  # pragma: no cover — mock-only seeder
-        raise exc.configuration(
-            f"Seeding derived values for '{seed.spec.name}' needs the mock document "
-            f"adapter; got {type(port).__name__}",
-        )
-
+    port = _mock_adapter(ctx.doc.query(seed.spec), str(seed.spec.name))
     store = port._store()
     row = store.get(pk)
 

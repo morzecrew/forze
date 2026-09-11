@@ -153,6 +153,7 @@ from forze.application.integrations.authn import (
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
+    MockDerivedRegistry,
     MockDynamicReadRegistry,
     MockHttpRegistry,
     MockInferenceRegistry,
@@ -314,6 +315,16 @@ class MockDepsModule(DepsModule):
     plane — a write refused by a read-only transaction, a second command refused by the wire
     protocol — is deliberately absent: the mock cannot detect a write in a string and does not
     pretend to, so those refusals are pinned against real Postgres instead."""
+
+    derived_values: MockDerivedRegistry | None = attrs.field(default=None)
+    """Programmable stand-ins for the relations that produce marked ``derived_read_fields``.
+
+    ``None`` keeps the refusal an unsupplied marked field already raises
+    (``code="mock.document.derived_unsupplied"``), which is what makes a missing value
+    discoverable rather than invented. Pass a :class:`MockDerivedRegistry` with a source per
+    spec and every row becomes readable — including the rows a simulation's own workload
+    creates, which no seed can reach. The source is fixture logic, not a derivation: nothing
+    recomputes it when the source row changes."""
 
     query_param_sources: MockQueryParamsRegistry | None = attrs.field(default=None)
     """Programmable sources modelling parametrized document reads (``with_parameters``).
