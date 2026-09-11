@@ -1,6 +1,6 @@
 # RFC 0048 — Read fields no write produces: making view-backed aggregates reachable from the mock
 
-- **Status:** 📝 Draft — the declaration is the decision; the mock's synthesis strategy is deliberately `OPEN`.
+- **Status:** ✅ Complete — **P1 and P1a shipped 2026-09-11** (#423): `DerivedReadField`, the `DocumentSpec` field and its guardrails, the mock's primary-key join, the marker that makes a nested reference or a `CASE` expression one declaration, `SpecSeed.derived`, and the refusal that names an unsupplied required field. **P2 shipped 2026-09-11** (#424): `MockDerivedRegistry` supplies a marked field per row, including rows a workload creates after any seed ran, so an invariant runs over a view-backed aggregate under `forze_dst`. P2a (`field` as a field set) and P3 (search parity) stay recorded and demand-gated — neither has a second application asking.
 - **Scope:** A way for a `DocumentSpec` to declare that some read-model fields are **produced by the backend, not by any write** — a SQL view's joined columns — so that `forze_mock` can serve them and `forze_dst` can simulate the aggregates that carry them. Touches `forze/application/contracts/conformity/` (the leniency contract it extends), `DocumentSpec`, and `forze_mock/adapters/document.py`. **No change to real-backend strictness**: Postgres, Mongo and Firestore keep refusing a read field with no column unless it is already lenient. Not a view generator and not a relationship system — see §4.
 - **Related:** `src/forze/application/contracts/conformity/lenient_read.py` (the shipped leniency mechanism this extends), `src/forze_mock/adapters/document.py:500` and `:766` (the mock already honours `resolved_lenient_read_fields`), `src/forze/application/contracts/document/specs.py` (`materialized`, `write_omit_fields`), RFC 0001 (the mock is the oracle's whole world — this is the same horizon argued from the application's side).
 - **Origin:** A 159-file migration of a production ERP backend from forze 0.1.15 to 0.7.0. 14 of its 25 aggregates could not be tested against `forze_mock` at all; the suite works around it with a `hydrate_view` fixture that fakes each join by hand.
@@ -315,13 +315,13 @@ production also reads. Kept in §8 as the escape hatch, unbuilt.
 
 ## 12. Phasing
 
-- **P1 — the declaration and the mock (one PR).** `DerivedReadField`, the `DocumentSpec`
+- **P1 — the declaration and the mock (shipped 2026-09-11).** `DerivedReadField`, the `DocumentSpec`
   field, the guardrails, the mock's read-side join, the Postgres validator's read-only
   allowance, the tests in §6 and the docs honesty in §7. Independently useful: it is what
   unblocks behavioural tests for the 14 aggregates.
-- **P2 — DST reach (shipped 2026-09-11).** Confirm an invariant over a view-backed aggregate runs, and fix what
-  it turns out to need. Gated on P1, and scoped to *finding out* rather than to a promised
-  outcome (§9). What it turned out to need: rows 14 and 15.
+- **P2 — DST reach (shipped 2026-09-11).** Confirm an invariant over a view-backed
+  aggregate runs, and fix what it turns out to need. Gated on P1, and scoped to *finding
+  out* rather than to a promised outcome (§9). What it turned out to need: rows 14 and 15.
 - **P1a — the marker and its seed (shipped 2026-09-11).** The floor of row 11: `None`
   marks a field derived, `SpecSeed.derived` supplies it, and the refusal in row 13 makes
   an unsupplied one discoverable. This is what actually reaches the aggregates §2 counts,
