@@ -61,6 +61,7 @@ from forze_mock.adapters._derived import (
     ResolvedDerivedRead,
     hydrate_derived,
     require_marked,
+    staged_for,
 )
 from forze_mock.adapters._journal import JournalingStore
 from forze_mock.adapters._mvcc import current_mvcc_tx
@@ -334,7 +335,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     def _read_codec(self) -> ModelCodec[R, Any]:
         return self.codecs.read
 
-    def _hydrate(self, doc: JsonDict) -> JsonDict:
+    def _hydrate(self, doc: JsonDict, fields: Sequence[str] | None = None) -> JsonDict:
         """Resolve this spec's derived read fields on *doc*.
 
         The single point every decode routes through. Placing it per read method is the
@@ -342,14 +343,26 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         paging — so it lives here and in the projection branch of
         :meth:`_to_read_or_projection`, which is the only decode that does not come
         back through :meth:`_to_read`.
+
+        *fields* is the projection the caller asked for, when it asked for one. A
+        projection that excludes a marked field must not be refused for it: the caller
+        is not reading it, so an unsupplied value cannot reach them.
         """
 
         if self.derived_marked:
+            # A value staged for this row reads as though it were already on it, which
+            # is what keeps a create's own event handlers from observing a marked field
+            # as missing (see `staged_derived`). The row wins where it has a value:
+            # staging covers a window, it does not override what was persisted.
+            if staged := staged_for(self.spec.name, doc.get("id")):
+                doc = {**staged, **doc}
+
             require_marked(
                 doc,
                 marked=self.derived_marked,
                 read_model=self.read_model,
                 spec_name=self.spec.name,
+                requested=fields,
             )
 
         if not self.derived:
@@ -466,7 +479,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # read codec). No-op for plain codecs. Synchronous: the mock keyring cache
             # is seeded at encrypt time / via warm(), so no async pre-pass is needed.
             decrypt = getattr(self._read_codec(), "decrypt_mapping", None)
-            hydrated = self._hydrate(dict(doc))
+            hydrated = self._hydrate(dict(doc), return_fields)
             source = decrypt(hydrated) if decrypt is not None else hydrated
             return _project(source, return_fields)
         return self._to_read(doc)

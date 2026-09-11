@@ -17,6 +17,7 @@ from forze.base.primitives import (
     bind_time_source,
     uuid4,
 )
+from forze_mock.adapters._derived import staged_derived
 from forze_mock.adapters.document import MockDocumentAdapter
 
 from .links import plan_links
@@ -172,7 +173,13 @@ async def apply_seed(ctx: ExecutionContext, plan: SeedPlan) -> SeedResult:
                     # the same ids; on the wall clock they differ, exactly as the
                     # write-path ids already did.
                     pk = explicit_id if explicit_id is not None else uuid4()
-                    await command.create(created_cmd, id=pk, return_new=False)
+
+                    # Staged first: `create` drains this aggregate's domain events
+                    # before it returns, and a handler reading the new row would
+                    # otherwise see a required marked field as missing.
+                    with staged_derived({(str(name), pk): dict(seed.derived)}):
+                        await command.create(created_cmd, id=pk, return_new=False)
+
                     _write_derived(ctx, seed, pk)
                     ids.append(pk)
                 else:

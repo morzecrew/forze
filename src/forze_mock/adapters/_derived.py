@@ -14,7 +14,9 @@ carries, so the marker needs no adapter code at all — the deps factory resolve
 the fields that declare a join.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from uuid import UUID
 
 import attrs
@@ -150,6 +152,7 @@ def require_marked(
     marked: frozenset[str],
     read_model: type[BaseModel],
     spec_name: object,
+    requested: Sequence[str] | None = None,
 ) -> None:
     """Refuse a row missing a *required* marked derived field, naming how to supply it.
 
@@ -158,14 +161,24 @@ def require_marked(
     nothing about the declaration that put it there. Refusing here turns a pydantic
     traceback into the one sentence a reader needs.
 
-    Optional fields are left alone: absence is what ``None`` is for.
+    Optional fields are left alone: absence is what ``None`` is for, and so are fields
+    outside *requested* — a projection that does not name a marked field cannot hand an
+    unsupplied value to anyone, so refusing it would reject a read that is fine.
 
     :raises exc.configuration: when a required marked field is absent from the row.
     """
 
     fields = read_model.model_fields
+    # A projection names top-level fields, dotted for nested paths; the marked name is
+    # what the first segment has to match.
+    asked = None if requested is None else {name.split(".", 1)[0] for name in requested}
     missing = sorted(
-        name for name in marked if name not in doc and name in fields and fields[name].is_required()
+        name
+        for name in marked
+        if name not in doc
+        and name in fields
+        and fields[name].is_required()
+        and (asked is None or name in asked)
     )
 
     if missing:
@@ -176,3 +189,52 @@ def require_marked(
             "or give it a join to resolve, or make it optional on the read model.",
             code="mock.document.derived_unsupplied",
         )
+
+
+# ....................... #
+
+_STAGED: ContextVar[Mapping[tuple[str, UUID], JsonDict] | None] = ContextVar(
+    "forze_mock_staged_derived",
+    default=None,
+)
+"""Derived values visible to reads before they are written onto the row."""
+
+
+@contextmanager
+def staged_derived(values: Mapping[tuple[str, UUID], JsonDict]) -> Iterator[None]:
+    """Make *values* readable for the duration, keyed by ``(spec name, primary key)``.
+
+    ``create`` stores the row and then awaits ``drain_domain_events`` **before it
+    returns**, so a handler that reads the created aggregate runs before a seeder can
+    write its derived values — and sees a required marked field as missing. Staging
+    closes that window: during the create the values read exactly as though they were
+    already on the row, and the seeder persists them immediately afterwards.
+    """
+
+    token = _STAGED.set(values)
+
+    try:
+        yield
+    finally:
+        _STAGED.reset(token)
+
+
+# ....................... #
+
+
+def staged_for(spec_name: object, pk: object) -> JsonDict:
+    """Staged derived values for one row, or nothing staged."""
+
+    staged = _STAGED.get()
+
+    if not staged or pk is None:
+        return {}
+
+    try:
+        # A stored row carries its id as a string; the staging key is the UUID the
+        # seeder minted, so the two have to be brought to one type.
+        key = pk if isinstance(pk, UUID) else UUID(str(pk))
+    except (ValueError, AttributeError, TypeError):
+        return {}
+
+    return dict(staged.get((str(spec_name), key), {}))
