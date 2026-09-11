@@ -40,10 +40,12 @@ from forze.application.contracts.querying import (
     assert_cursor_projection_includes_sort_keys,
     build_cursor_binding,
     coerce_query_ord_operands,
+    collect_aggregate_filter_expressions,
     cursor_protection_active,
     normalize_sorts_for_keyset,
     read_fields_for_model,
     resolve_effective_sorts,
+    validate_aggregatable_fields,
     validate_query_field_types,
     validate_runtime_filter_fields,
     validate_runtime_sort_fields,
@@ -334,6 +336,37 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     def _read_codec(self) -> ModelCodec[R, Any]:
         return self.codecs.read
+
+    def _validate_aggregate_fields(self, aggregates: AggregatesExpression) -> None:
+        """Refuse an aggregate that groups, measures or filters on an unqueryable field.
+
+        The same basis the filter and sort validators use — read fields plus
+        ``materialized``, less :meth:`_unqueryable` — rather than
+        ``aggregatable_fields()``, whose query policy is a governed-path concern that a
+        direct adapter call does not otherwise apply.
+        """
+
+        allowed = (
+            read_fields_for_model(self.read_model) | self.spec.materialized
+        ) - self._unqueryable()
+
+        validate_aggregatable_fields(
+            aggregates,
+            allowed=allowed,
+            spec_name=str(self.spec.name),
+        )
+
+        for expression in collect_aggregate_filter_expressions(aggregates):
+            # A per-metric filter is an ordinary filter and gets the ordinary check.
+            validate_runtime_filter_fields(
+                expression,
+                model=self.read_model,
+                materialized=self.spec.materialized,
+                lenient=self._unqueryable(),
+                encrypted=(self.spec.encryption.encrypted if self.spec.encryption else frozenset()),
+            )
+
+    # ....................... #
 
     def _unqueryable(self) -> frozenset[str]:
         """Read fields with no column of this aggregate's own to query.
@@ -833,6 +866,13 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         rows: list[Any]
 
         if aggregates is not None:
+            # The aggregate branch runs before hydration and skips the sort/filter
+            # validation in the `else` arm, so without this a group key or a metric
+            # source could name a derived field: a marked one groups by whatever the row
+            # happens to carry, and a resolved one groups every document under `None`,
+            # because its value does not exist until the read. Both disagree with
+            # `aggregatable_fields()`, and the second is silently wrong.
+            self._validate_aggregate_fields(aggregates)
             aggregate_rows = _aggregate_docs(filtered, aggregates)
             total = len(aggregate_rows)
             page_rows = _page_window(_sort_docs(aggregate_rows, sorts))

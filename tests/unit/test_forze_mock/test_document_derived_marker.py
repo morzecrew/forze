@@ -28,6 +28,7 @@ from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockDocumentAdapter, MockState
 from forze_mock.adapters._derived import (  # pyright: ignore[reportPrivateUsage]
+    ResolvedDerivedRead,
     staged_derived,
 )
 from forze_mock.seeding import SeedPlan, SpecSeed
@@ -66,6 +67,26 @@ ORDERS = DocumentSpec(
     read=_OrderRead,
     write=DocumentWriteTypes(domain=_Order, create_cmd=_OrderCreate),
     derived_read_fields={"supplier": None, "stock_quantity": None},
+)
+
+class _AggRead(ReadDocument):
+    supplier_id: UUID
+    supplier: str
+    qty: int = 1
+
+
+def _agg_spec(derived: dict[str, object]) -> DocumentSpec:
+    return DocumentSpec(
+        name="orders",
+        read=_AggRead,
+        write=DocumentWriteTypes(domain=_Order, create_cmd=_OrderCreate),
+        derived_read_fields=derived,  # type: ignore[arg-type]
+    )
+
+
+_AGG_MARKED = _agg_spec({"supplier": None})
+_AGG_RESOLVED = _agg_spec(
+    {"supplier": DerivedReadField(source="suppliers", via="supplier_id", field="name")}
 )
 
 SUPPLIER_ID = UUID("00000000-0000-4000-8000-000000000001")
@@ -473,3 +494,130 @@ class TestQueryAxesAgreeWithTheSpec:
         )
 
         assert [row.supplier.name for row in page.hits] == ["Acme"]
+
+
+class TestAggregatesAgreeWithTheSpec:
+    """The aggregate branch runs before hydration and skipped validation entirely.
+
+    `aggregatable_fields()` excludes derived names, and the aggregate arm of
+    `_mock_offset_page` reached `_aggregate_docs` without any field check — so a group
+    key or a metric source could name one. For a marked field that groups by whatever
+    the row happens to carry; for a resolved field it groups every document under
+    `None`, because the value does not exist until the read.
+    """
+
+    def _adapter(self, state: MockState, spec: DocumentSpec, **kw: Any) -> MockDocumentAdapter:
+        return MockDocumentAdapter(
+            spec=spec,
+            state=state,
+            namespace="orders",
+            read_model=_AggRead,
+            domain_model=_Order,
+            **kw,
+        )
+
+    def _state(self, *, with_supplier: bool) -> MockState:
+        state = MockState()
+        pk = uuid4()
+        row: dict[str, object] = {
+            "id": str(pk),
+            "rev": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "last_update_at": "2026-01-01T00:00:00Z",
+            "supplier_id": str(SUPPLIER_ID),
+            "qty": 3,
+        }
+
+        if with_supplier:
+            row["supplier"] = "Acme"
+
+        state.documents["orders"] = {pk: row}
+        state.documents["suppliers"] = {
+            SUPPLIER_ID: {
+                "id": str(SUPPLIER_ID),
+                "rev": 1,
+                "created_at": "2026-01-01T00:00:00Z",
+                "last_update_at": "2026-01-01T00:00:00Z",
+                "name": "Acme",
+            }
+        }
+        return state
+
+    async def test_a_group_key_may_not_be_derived(self) -> None:
+        adapter = self._adapter(
+            self._state(with_supplier=True),
+            _AGG_MARKED,
+            derived_marked=frozenset({"supplier"}),
+        )
+
+        with pytest.raises(CoreException, match="field_not_aggregatable"):
+            await adapter.aggregate_many(
+                {"$groups": {"s": "supplier"}, "$computed": {"n": {"$count": {}}}}
+            )
+
+    async def test_a_metric_source_may_not_be_derived(self) -> None:
+        adapter = self._adapter(
+            self._state(with_supplier=True),
+            _AGG_MARKED,
+            derived_marked=frozenset({"supplier"}),
+        )
+
+        with pytest.raises(CoreException, match="field_not_aggregatable"):
+            await adapter.aggregate_many(
+                {"$groups": {"k": "supplier_id"}, "$computed": {"m": {"$max": "supplier"}}}
+            )
+
+    async def test_a_per_metric_filter_may_not_name_a_derived_field(self) -> None:
+        adapter = self._adapter(
+            self._state(with_supplier=True),
+            _AGG_MARKED,
+            derived_marked=frozenset({"supplier"}),
+        )
+
+        with pytest.raises(CoreException):
+            await adapter.aggregate_many(
+                {
+                    "$groups": {"k": "supplier_id"},
+                    "$computed": {
+                        "n": {
+                            "$sum": {
+                                "field": "qty",
+                                "filter": {"$values": {"supplier": {"$eq": "Acme"}}},
+                            }
+                        }
+                    },
+                }
+            )
+
+    async def test_a_resolved_group_key_is_refused_rather_than_grouped_as_none(self) -> None:
+        """The serious half: the row has no `supplier` until the join runs."""
+
+        adapter = self._adapter(
+            self._state(with_supplier=False),
+            _AGG_RESOLVED,
+            derived={
+                "supplier": ResolvedDerivedRead(
+                    namespace="suppliers", via="supplier_id", field="name"
+                )
+            },
+        )
+
+        with pytest.raises(CoreException, match="field_not_aggregatable"):
+            await adapter.aggregate_many(
+                {"$groups": {"s": "supplier"}, "$computed": {"n": {"$count": {}}}}
+            )
+
+    async def test_a_stored_field_still_aggregates(self) -> None:
+        """The exclusion is the derived field, not the aggregate surface."""
+
+        adapter = self._adapter(
+            self._state(with_supplier=True),
+            _AGG_MARKED,
+            derived_marked=frozenset({"supplier"}),
+        )
+
+        page = await adapter.aggregate_many(
+            {"$groups": {"k": "supplier_id"}, "$computed": {"total": {"$sum": "qty"}}}
+        )
+
+        assert [dict(row)["total"] for row in page.hits] == [3]
