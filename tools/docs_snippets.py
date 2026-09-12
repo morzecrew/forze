@@ -33,6 +33,7 @@ import ast
 import importlib
 import inspect
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -260,7 +261,10 @@ def check_call_shapes(blocks: tuple[CodeBlock, ...]) -> Result:
 # ....................... #
 
 
-def _callee(func: ast.expr, targets: dict[str, object]) -> tuple[str, object] | None:
+def _callee(
+    func: ast.expr,
+    targets: dict[str, object],
+) -> tuple[str, Callable[..., object]] | None:
     """How a call names its callee and the live callable behind it, or ``None``.
 
     A bare name the block imported, or one attribute on such a name — the second is how a

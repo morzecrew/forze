@@ -9,9 +9,22 @@ from forze.application.contracts.execution.builders import (
     steps_graph_from_sequence,
     steps_pipe_from_sequence,
 )
+from forze.application.contracts.execution.protocols import (
+    Before,
+    Finally,
+    Middleware,
+    OnFailure,
+    OnSuccess,
+)
 from forze.application.contracts.execution.value_objects import (
+    BeforeStep,
+    DispatchStep,
     ExecutionGraph,
     ExecutionPipeline,
+    FinallyStep,
+    MiddlewareStep,
+    OnFailureStep,
+    OnSuccessStep,
 )
 from forze.application.contracts.transaction import IsolationLevel
 from forze.base.exceptions import exc
@@ -20,20 +33,6 @@ from forze.base.primitives import AbstractSequence, StrKey
 from .resolvers import resolve_graph, resolve_pipe
 
 if TYPE_CHECKING:
-    from forze.application.contracts.execution import (
-        Before,
-        BeforeStep,
-        DispatchStep,
-        Finally,
-        FinallyStep,
-        Middleware,
-        MiddlewareStep,
-        OnFailure,
-        OnFailureStep,
-        OnSuccess,
-        OnSuccessStep,
-    )
-
     from ...context import ExecutionContext
 
 # ----------------------- #
@@ -43,22 +42,26 @@ if TYPE_CHECKING:
 class Scope:
     """Scope plan for a distinct operation."""
 
-    before: AbstractSequence[BeforeStep] = attrs.field(factory=AbstractSequence)
+    before: AbstractSequence[BeforeStep] = attrs.field(factory=AbstractSequence[BeforeStep])
     """Before steps for this scope."""
 
-    wrap: AbstractSequence[MiddlewareStep] = attrs.field(factory=AbstractSequence)
+    wrap: AbstractSequence[MiddlewareStep] = attrs.field(factory=AbstractSequence[MiddlewareStep])
     """Wrap steps for this scope."""
 
-    finally_: AbstractSequence[FinallyStep] = attrs.field(factory=AbstractSequence)
+    finally_: AbstractSequence[FinallyStep] = attrs.field(factory=AbstractSequence[FinallyStep])
     """Finally steps for this scope."""
 
-    on_failure: AbstractSequence[OnFailureStep] = attrs.field(factory=AbstractSequence)
+    on_failure: AbstractSequence[OnFailureStep] = attrs.field(
+        factory=AbstractSequence[OnFailureStep]
+    )
     """On failure steps for this scope."""
 
-    on_success: AbstractSequence[OnSuccessStep] = attrs.field(factory=AbstractSequence)
+    on_success: AbstractSequence[OnSuccessStep] = attrs.field(
+        factory=AbstractSequence[OnSuccessStep]
+    )
     """On success steps for this scope."""
 
-    dispatch: AbstractSequence[DispatchStep] = attrs.field(factory=AbstractSequence)
+    dispatch: AbstractSequence[DispatchStep] = attrs.field(factory=AbstractSequence[DispatchStep])
     """Dispatch steps for this scope."""
 
     # ....................... #
@@ -143,10 +146,14 @@ class TransactionScope(Scope):
     isolation: IsolationLevel | None = None
     """Required isolation level for this scope, or ``None`` for the manager's default."""
 
-    after_commit: AbstractSequence[OnSuccessStep] = attrs.field(factory=AbstractSequence)
+    after_commit: AbstractSequence[OnSuccessStep] = attrs.field(
+        factory=AbstractSequence[OnSuccessStep]
+    )
     """After commit steps for this scope."""
 
-    dispatch_after_commit: AbstractSequence[DispatchStep] = attrs.field(factory=AbstractSequence)
+    dispatch_after_commit: AbstractSequence[DispatchStep] = attrs.field(
+        factory=AbstractSequence[DispatchStep]
+    )
     """After commit dispatches for this scope."""
 
     # ....................... #
@@ -243,22 +250,24 @@ class TransactionScope(Scope):
 class FrozenScope:
     """Frozen scope plan."""
 
-    before: ExecutionGraph[BeforeStep] = attrs.field(factory=ExecutionGraph)
+    before: ExecutionGraph[BeforeStep] = attrs.field(factory=ExecutionGraph[BeforeStep])
     """Before steps for this scope."""
 
-    wrap: ExecutionPipeline[MiddlewareStep] = attrs.field(factory=ExecutionPipeline)
+    wrap: ExecutionPipeline[MiddlewareStep] = attrs.field(factory=ExecutionPipeline[MiddlewareStep])
     """Wrap steps for this scope."""
 
-    finally_: ExecutionPipeline[FinallyStep] = attrs.field(factory=ExecutionPipeline)
+    finally_: ExecutionPipeline[FinallyStep] = attrs.field(factory=ExecutionPipeline[FinallyStep])
     """Finally steps for this scope."""
 
-    on_failure: ExecutionPipeline[OnFailureStep] = attrs.field(factory=ExecutionPipeline)
+    on_failure: ExecutionPipeline[OnFailureStep] = attrs.field(
+        factory=ExecutionPipeline[OnFailureStep]
+    )
     """On failure steps for this scope."""
 
-    on_success: ExecutionGraph[OnSuccessStep] = attrs.field(factory=ExecutionGraph)
+    on_success: ExecutionGraph[OnSuccessStep] = attrs.field(factory=ExecutionGraph[OnSuccessStep])
     """On success steps for this scope."""
 
-    dispatch: ExecutionPipeline[DispatchStep] = attrs.field(factory=ExecutionPipeline)
+    dispatch: ExecutionPipeline[DispatchStep] = attrs.field(factory=ExecutionPipeline[DispatchStep])
     """Dispatch steps for this scope."""
 
     # ....................... #
@@ -325,10 +334,12 @@ class FrozenTransactionScope(FrozenScope):
     isolation: IsolationLevel | None = None
     """Required isolation level for this scope, or ``None`` for the manager's default."""
 
-    after_commit: ExecutionGraph[OnSuccessStep] = attrs.field(factory=ExecutionGraph)
+    after_commit: ExecutionGraph[OnSuccessStep] = attrs.field(factory=ExecutionGraph[OnSuccessStep])
     """After commit steps for this scope."""
 
-    dispatch_after_commit: ExecutionPipeline[DispatchStep] = attrs.field(factory=ExecutionPipeline)
+    dispatch_after_commit: ExecutionPipeline[DispatchStep] = attrs.field(
+        factory=ExecutionPipeline[DispatchStep]
+    )
     """After commit dispatches for this scope."""
 
     # ....................... #
@@ -377,22 +388,32 @@ class FrozenTransactionScope(FrozenScope):
 class ResolvedScope:
     """Resolved scope plan."""
 
-    before: ExecutionGraph[Before[Any]] = attrs.field(factory=ExecutionGraph)
+    before: ExecutionGraph[Before[Any]] = attrs.field(factory=ExecutionGraph[Before[Any]])
     """Resolved before hooks for this scope."""
 
-    wrap: ExecutionPipeline[Middleware[Any, Any]] = attrs.field(factory=ExecutionPipeline)
+    wrap: ExecutionPipeline[Middleware[Any, Any]] = attrs.field(
+        factory=ExecutionPipeline[Middleware[Any, Any]]
+    )
     """Resolved wrap hooks for this scope."""
 
-    finally_: ExecutionPipeline[Finally[Any, Any]] = attrs.field(factory=ExecutionPipeline)
+    finally_: ExecutionPipeline[Finally[Any, Any]] = attrs.field(
+        factory=ExecutionPipeline[Finally[Any, Any]]
+    )
     """Resolved finally hooks for this scope."""
 
-    on_failure: ExecutionPipeline[OnFailure[Any]] = attrs.field(factory=ExecutionPipeline)
+    on_failure: ExecutionPipeline[OnFailure[Any]] = attrs.field(
+        factory=ExecutionPipeline[OnFailure[Any]]
+    )
     """Resolved on failure hooks for this scope."""
 
-    on_success: ExecutionGraph[OnSuccess[Any, Any]] = attrs.field(factory=ExecutionGraph)
+    on_success: ExecutionGraph[OnSuccess[Any, Any]] = attrs.field(
+        factory=ExecutionGraph[OnSuccess[Any, Any]]
+    )
     """Resolved on success hooks for this scope."""
 
-    dispatch: ExecutionPipeline[OnSuccess[Any, Any]] = attrs.field(factory=ExecutionPipeline)
+    dispatch: ExecutionPipeline[OnSuccess[Any, Any]] = attrs.field(
+        factory=ExecutionPipeline[OnSuccess[Any, Any]]
+    )
     """Resolved dispatch hooks for this scope."""
 
     # ....................... #
@@ -457,11 +478,13 @@ class ResolvedTransactionScope(ResolvedScope):
     isolation: IsolationLevel | None = None
     """Required isolation level for this scope, or ``None`` for the manager's default."""
 
-    after_commit: ExecutionGraph[OnSuccess[Any, Any]] = attrs.field(factory=ExecutionGraph)
+    after_commit: ExecutionGraph[OnSuccess[Any, Any]] = attrs.field(
+        factory=ExecutionGraph[OnSuccess[Any, Any]]
+    )
     """Resolved after commit hooks for this scope."""
 
     dispatch_after_commit: ExecutionPipeline[OnSuccess[Any, Any]] = attrs.field(
-        factory=ExecutionPipeline
+        factory=ExecutionPipeline[OnSuccess[Any, Any]]
     )
     """Resolved dispatch after commit hooks for this scope."""
 
