@@ -67,6 +67,28 @@ excludes identity specs by default (a data-portability request wants the tenant'
 data, not their session tokens); a full-system export always carries them, because a live
 system needs its sessions.
 
+## Framework contributions, and narrowing them
+
+Kits and the identity plane hand you a registry of the specs they bind — the routes nobody
+hand-wrote. `forze_identity.spec_contributions()` catalogues all three identity planes,
+which is right for an application that wires all three and wrong for one that wires authn
+alone: reconciliation refuses a spec catalogued but never bound, so the helper and the
+check cannot both be used. Narrow it to the planes you actually wire:
+
+```python
+specs = SpecRegistry().register(order_spec).merge(
+    forze_identity.spec_contributions(planes=["authn"]),
+)
+```
+
+Narrow only for a plane the application genuinely does not wire. A selection is not a way
+to quiet a reconciliation error — the check still fires from the bound side, and a
+bound-but-uncatalogued failure names a narrowed helper as a possible cause for exactly this
+reason. One plane can still reach into another: an authn plane running the default
+principal-eligibility gate reads the authz policy-principal document, so `["authn"]` is
+sound when that gate is off (`eligibility="allow_all"`) and needs `"authz"` beside it when
+it is on.
+
 ## The route guard
 
 Declaring a `spec_registry` installs a resolve-time guard: an uncatalogued route on an

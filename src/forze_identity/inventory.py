@@ -10,8 +10,8 @@ alone: an export that walked only what the author wrote would omit every credent
 and grant in the application — and the artifact would look complete.
 """
 
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Sequence
+from typing import Any, Literal
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.inventory import SpecRegistry, SpecSource
@@ -167,23 +167,83 @@ def identity_document_names(
 # ....................... #
 
 
-def spec_contributions() -> SpecRegistry:
-    """Every document spec the identity plane binds.
+IdentityPlane = Literal["authn", "authz", "tenancy"]
+"""Which identity plane a document belongs to, for :func:`spec_contributions`.
+
+A bare ``Literal`` rather than a ``StrEnum``: the package's three enums
+(``AuthnResourceName`` and its siblings) are vocabularies of resource *names* within a
+plane, so there is no plane vocabulary to reuse and inventing one for a three-member
+keyword argument would add an import to every call site.
+"""
+
+_PLANE_SPECS: dict[IdentityPlane, tuple[DocumentSpec[Any, Any, Any, Any], ...]] = {
+    "authn": AUTHN_SPECS,
+    "authz": AUTHZ_SPECS,
+    "tenancy": TENANCY_SPECS,
+}
+
+
+# ....................... #
+
+
+def spec_contributions(*, planes: Sequence[IdentityPlane] | None = None) -> SpecRegistry:
+    """Every document spec the named identity planes bind — all three by default.
 
     Merge it into the application's inventory whenever any part of ``forze_identity`` is
-    wired. All three planes come together deliberately: authn's dependencies already reach
-    across into authz (its principal-eligibility check reads ``authz_policy_principals``), so
-    a per-subpackage helper would leak that coupling onto the app.
+    wired. ``planes=None`` (the default) is all three, which is what every existing caller
+    gets; narrow it only when the application genuinely wires a subset, because
+    ``build_runtime(specs=…)`` refuses a spec that is catalogued and never bound, and the
+    helper cataloguing twelve documents an authn-only app does not wire makes that check
+    unusable for it.
 
-    ``AuthnSpec`` / ``AuthzSpec`` are **not** here. They are policy — which credential
-    families are enabled, how tenancy is enforced — carry no rows, and take a route name the
-    *app* chooses. There is nothing to catalogue and nothing to export.
+    All three planes still come together *by default* deliberately: authn's dependencies
+    reach across into authz (its principal-eligibility check reads
+    ``authz_policy_principals``), and a per-subpackage helper would leak that coupling onto
+    the app at the one call site that needs to know about it. A selection keeps the
+    coupling documented here. It is not checked here either — this function never sees the
+    ``AuthnSpec`` and so cannot know whether the eligibility check is on — so an
+    application that narrows to ``["authn"]`` with that check live binds
+    ``authz_policy_principals`` without cataloguing it, and reconciliation says so from the
+    bound side.
+
+    An empty selection is refused rather than read as "nothing", exactly as
+    :func:`identity_document_names` refuses one: an emptied constant or a bad
+    comprehension should fail at the seam, not catalogue nothing and pass.
+
+    ``AuthnSpec`` / ``AuthzSpec`` are **not** here, with or without a selection. They are
+    policy — which credential families are enabled, how tenancy is enforced — carry no
+    rows, and take a route name the *app* chooses. There is nothing to catalogue and
+    nothing to export.
+
+    :param planes: The planes to catalogue; ``None`` for all three.
+    :raises exc.configuration: on an empty selection, or an unknown plane name.
     """
 
+    if planes is None:
+        selected = tuple(_PLANE_SPECS)
+
+    else:
+        unknown = sorted({str(plane) for plane in planes} - set(_PLANE_SPECS))
+
+        if unknown:
+            raise exc.configuration(
+                f"Unknown identity plane(s) {unknown}; known planes: {sorted(_PLANE_SPECS)}",
+            )
+
+        if not planes:
+            # Mirrors `identity_document_names`: two seams in one module must not disagree
+            # about whether an empty selection means nothing or means everything.
+            raise exc.configuration(
+                "Identity plane selection is empty; pass planes or omit them",
+            )
+
+        # Deduplicated, and in declaration order rather than the caller's — the registry is
+        # a set of entries, and a stable order keeps a fingerprint from depending on how
+        # the selection was spelled.
+        selected = tuple(plane for plane in _PLANE_SPECS if plane in set(planes))
+
     return SpecRegistry().register(
-        *AUTHN_SPECS,
-        *AUTHZ_SPECS,
-        *TENANCY_SPECS,
+        *(spec for plane in selected for spec in _PLANE_SPECS[plane]),
         source=SpecSource.FRAMEWORK,
         identity=True,
     )

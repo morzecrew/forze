@@ -139,5 +139,30 @@ conveniences, not production defaults: adopt one only once you accept its trust
 model (e.g. VK publishes no JWKS, so its preset verifies `id_token`s by
 server-side introspection against VK rather than a local signature check).
 
+### Cataloguing what it binds
+
+The plane brings nineteen document specs your application never writes — sessions,
+credentials, grants, tenant bindings. If you declare a [spec
+inventory](../reference/spec-registry.md), merge them in rather than listing them by hand,
+so an identity release cannot leave your catalogue behind:
+
+```python
+specs = SpecRegistry().register(order_spec).merge(forze_identity.spec_contributions())
+```
+
+Wiring only part of the plane? Name the parts you wire. `spec_contributions()` catalogues
+all three planes, and the inventory check refuses a spec catalogued but never bound, so an
+authn-only application has to narrow it:
+
+```python
+forze_identity.spec_contributions(planes=["authn"])
+```
+
+Narrow only for a plane you genuinely do not wire — the check is worth keeping strict, and
+it still fires from the bound side if you narrow too far. One caveat that is easy to miss:
+the default principal-eligibility gate in authn reads the authz policy-principal document,
+so `["authn"]` alone is right when that gate is off (`eligibility="allow_all"`, the usual
+choice with no authz plane) and needs `"authz"` beside it when it is on.
+
 Identity settles *who* the caller is; scoping *which data* they may reach is
 [Multi-tenancy](multi-tenancy.md).

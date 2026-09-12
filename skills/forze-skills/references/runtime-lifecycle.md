@@ -121,7 +121,9 @@ specs = SpecRegistry().register(order_spec, order_search_spec, invoice_blob_spec
 runtime = build_runtime(modules, specs=specs, lifecycle_steps=steps)
 ```
 
-Kits and the identity plane contribute their own entries, including the routes nobody hand-wrote (a kit's search-sync outbox, queue and inbox). At construction `build_runtime` reconciles the inventory against the wiring and **logs** a bound route the inventory does not know — a drift signal, not a gate.
+Kits and the identity plane contribute their own entries, including the routes nobody hand-wrote (a kit's search-sync outbox, queue and inbox). At construction `build_runtime` reconciles the inventory against the wiring and **fails assembly** on a mismatch either way — a spec catalogued but never bound, or a route bound but never catalogued. `allow_unregistered=True` downgrades the second one to a warning while you adopt the inventory incrementally; the first stays a hard failure.
+
+That strictness is why a framework helper sometimes needs narrowing. `forze_identity.spec_contributions()` catalogues all three identity planes, so an application wiring authn alone must ask for what it wires — `spec_contributions(planes=["authn"])` — or assembly refuses the thirteen authz and tenancy documents nothing binds.
 
 Declare it whenever you may need to export, migrate, or `quiesce()` this application: all three refuse to run without an inventory, because a plane nobody catalogued is a plane they cannot vouch for.
 
