@@ -621,3 +621,48 @@ class TestTheDenialIsTheOperationsOwn:
             await run_operation(registry, "calc.guarded", _In(n=7), ctx)
 
         assert _CALLS == [7]
+
+
+# ....................... #
+
+
+class _EmptyIn(BaseModel):
+    pass
+
+
+def _empty_input_registry() -> FrozenOperationRegistry:
+    reg = OperationRegistry(handlers={"calc.empty": lambda _c: _Void()})
+    reg = reg.set_descriptor(
+        "calc.empty", OperationDescriptor(input_type=_EmptyIn, description="no arguments")
+    )
+
+    return reg.bind("calc.empty").as_query().finish().freeze()
+
+
+class TestTheArgumentBoundaries:
+    async def test_a_missing_required_argument_is_agent_correctable(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(_use("calc.double"), ctx=ctx, tools=tools)
+
+        assert result.is_error is True
+        assert isinstance(result.content, dict)
+        assert result.content["code"] == "agent_tools_invalid_arguments"
+        assert _CALLS == []
+
+    async def test_an_empty_input_dto_accepts_nothing_and_still_runs(self) -> None:
+        # The empty case of the accepted-names set, decided rather than inherited: a DTO
+        # with no fields accepts an empty call and refuses every name.
+        ctx = _ctx()
+        tools = operation_tools(_empty_input_registry(), include=["calc.empty"])
+
+        with _bound(ctx):
+            empty = await dispatch_tool_use(_use("calc.empty"), ctx=ctx, tools=tools)
+
+            named = await dispatch_tool_use(_use("calc.empty", anything=1), ctx=ctx, tools=tools)
+
+        assert empty.is_error is False, empty.content
+        assert named.is_error is True
+        assert "anything" in str(named.content)
