@@ -93,6 +93,7 @@ transient.
 from forze_postgres import PostgresDepsModule, PostgresRotatingCredentialsConfig
 
 module = PostgresDepsModule(
+    client=client,
     rotating_credentials=PostgresRotatingCredentialsConfig(
         relation=("public", "rotating_credentials"),
         exchanger=CrmTokenExchanger(http=...),

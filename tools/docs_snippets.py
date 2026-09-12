@@ -221,12 +221,7 @@ def check_call_shapes(blocks: tuple[CodeBlock, ...]) -> Result:
 
             source = ast.unparse(node)
 
-            if "..." in source:
-                continue
-
-            if any(isinstance(arg, ast.Starred) for arg in node.args) or any(
-                keyword.arg is None for keyword in node.keywords
-            ):
+            if _elided(node) or _spread(node):
                 continue
 
             try:
@@ -256,6 +251,36 @@ def check_call_shapes(blocks: tuple[CodeBlock, ...]) -> Result:
     )
 
     return result
+
+
+# ....................... #
+
+
+def _elided(call: ast.Call) -> bool:
+    """Whether the call itself passes an ellipsis, standing in for arguments not shown.
+
+    Read off the arguments rather than the unparsed source: a substring test for ``...``
+    also matches a string that merely contains one (``exc.domain("not found...")``) and
+    skipped every such call, widening the elision exemption to ordinary prose.
+    """
+
+    def ellipsis(node: ast.expr) -> bool:
+        return isinstance(node, ast.Constant) and node.value is Ellipsis
+
+    return any(ellipsis(arg) for arg in call.args) or any(
+        ellipsis(keyword.value) for keyword in call.keywords
+    )
+
+
+# ....................... #
+
+
+def _spread(call: ast.Call) -> bool:
+    """Whether the call spreads ``*args`` / ``**kwargs``, which states no shape to bind."""
+
+    return any(isinstance(arg, ast.Starred) for arg in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    )
 
 
 # ....................... #
@@ -366,12 +391,32 @@ def _imported_callables(source: str) -> dict[str, object]:
 
     Every imported object, not only the callable ones: a name that is not itself callable
     can still own the callable a snippet reaches for — ``exc`` is the namespace object
-    behind ``exc.domain(...)``. :func:`_callee` decides what is callable.
+    behind ``exc.domain(...)``, and a plain ``import forze_x`` binds a module.
+    :func:`_callee` decides what is callable.
     """
 
     found: dict[str, object] = {}
 
     for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            # `import forze_x` binds the module, and a call through it (`forze_x.build(…)`)
+            # is as resolvable as one through a `from` import. The import bar already reads
+            # these, so leaving them out here made the two bars disagree about what a block
+            # had imported.
+            for alias in node.names:
+                if not is_forze_module(alias.name):
+                    continue
+
+                bound = alias.asname or alias.name.split(".")[0]
+
+                try:
+                    found[bound] = importlib.import_module(alias.name if alias.asname else bound)
+
+                except Exception:
+                    continue
+
+            continue
+
         if not isinstance(node, ast.ImportFrom) or not node.module:
             continue
 

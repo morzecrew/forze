@@ -108,6 +108,15 @@ def test_the_guard_detects_an_unrun_suite() -> None:
 # Change-scope wiring: a filter that selects nothing, and an output nobody declared
 
 
+_OUTPUT_REF = re.compile(r"needs\.changes\.outputs\.(\w+)")
+"""How a job names one of the `changes` job's outputs.
+
+`\w+`, not `[a-z_]+`: under the narrower class a reference to `docs2` matched as `docs`,
+so naming an output that does not exist read as naming one that does — the guard below
+passed on exactly the wiring it exists to catch.
+"""
+
+
 def _changes_outputs() -> set[str]:
     """The outputs the `changes` job actually exports to the jobs that read it."""
 
@@ -137,13 +146,28 @@ def test_every_changes_output_a_job_reads_is_declared() -> None:
     """
 
     text = _WORKFLOW.read_text(encoding="utf-8")
-    referenced = set(re.findall(r"needs\.changes\.outputs\.([a-z_]+)", text))
+    referenced = set(_OUTPUT_REF.findall(text))
     undeclared = sorted(referenced - _changes_outputs())
 
     assert not undeclared, (
         f"jobs read changes output(s) {undeclared} that the changes job does not export — "
         f"they resolve to an empty string, so every job gated on them is skipped silently"
     )
+
+
+def test_an_output_name_carrying_a_digit_is_read_whole() -> None:
+    """The reference pattern must not truncate a name, or the guard above passes blind.
+
+    `[a-z_]+` stopped at the first digit, so `needs.changes.outputs.docs2` was read as a
+    reference to `docs` — a declared output — and a reference to an undeclared one was
+    indistinguishable from a correct wiring.
+    """
+
+    matched = _OUTPUT_REF.findall(
+        "if: needs.changes.outputs.docs2 == 'true' || needs.changes.outputs.force_full"
+    )
+
+    assert matched == ["docs2", "force_full"]
 
 
 def test_every_declared_filter_gates_at_least_one_job() -> None:

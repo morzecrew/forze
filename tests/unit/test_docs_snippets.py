@@ -235,6 +235,58 @@ class TestCallShapes:
         assert result.ok
         assert result.summary.startswith("0/0 call(s) match their signature")
 
+    def test_a_string_holding_an_ellipsis_does_not_excuse_the_call(self, tmp_path: Path) -> None:
+        """The elision test reads the arguments, not the unparsed source.
+
+        A substring test for `...` also matched a string that merely contains one, so
+        `exc.domain("not found...", bad=1)` was skipped entirely — the exemption for
+        deliberate elisions quietly extended to ordinary prose.
+        """
+
+        _page(
+            tmp_path,
+            _fence(
+                "from forze.base.exceptions import exc\n"
+                "raise exc.domain('Order not found...', bad_kwarg=1)"
+            ),
+        )
+        result = check_call_shapes(_blocks(tmp_path))
+
+        assert not result.ok
+        assert "exc.domain" in result.violations[0]
+
+    def test_a_module_qualified_call_is_checked(self, tmp_path: Path) -> None:
+        """`import forze_x` binds a module, and a call through it is resolvable.
+
+        The import bar already read plain `import` statements; this one did not, so the
+        two bars disagreed about what a block had imported and every call through a module
+        alias went unchecked.
+        """
+
+        _page(
+            tmp_path,
+            _fence(
+                "import forze_identity\nspecs = forze_identity.spec_contributions(plane='authn')"
+            ),
+        )
+        result = check_call_shapes(_blocks(tmp_path))
+
+        assert not result.ok
+        assert "forze_identity.spec_contributions" in result.violations[0]
+
+    def test_an_aliased_module_import_is_checked(self, tmp_path: Path) -> None:
+        _page(
+            tmp_path,
+            _fence(
+                "import forze_identity as identity\n"
+                "specs = identity.spec_contributions(plane='authn')"
+            ),
+        )
+        result = check_call_shapes(_blocks(tmp_path))
+
+        assert not result.ok
+        assert "identity.spec_contributions" in result.violations[0]
+
     def test_a_spread_call_is_skipped(self, tmp_path: Path) -> None:
         _page(
             tmp_path,
