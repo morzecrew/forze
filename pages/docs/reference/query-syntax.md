@@ -222,7 +222,7 @@ Calendar bucketing uses `$trunc` as a group value — `unit` is one of `hour` /
 offset (default UTC):
 
 ```python
-"$groups": {"day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}}}
+{"$groups": {"day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}}}}
 ```
 
 ## Where you pass them

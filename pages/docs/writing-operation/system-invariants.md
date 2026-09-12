@@ -36,7 +36,7 @@ Two enforcement modes, from `forze_kits.invariants`, trade timing against cost:
 
 ```python
 async with ctx.tx_ctx.scope(route, isolation=law.required_isolation):
-    ...writes...
+    ...  # your writes
     await enforce_preventive(law, ctx, params)
 ```
 

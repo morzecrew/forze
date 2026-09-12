@@ -28,7 +28,8 @@ from forze.application.contracts.inventory import SpecRegistry
 
 specs = SpecRegistry().register(OrderSpec, OrderSearchSpec, InvoiceBlobSpec)
 
-runtime = build_runtime(deps=deps, specs=specs, ...)
+# ...plus the rest of your runtime wiring.
+runtime = build_runtime(deps=deps, specs=specs)
 ```
 
 Kits contribute their own — an aggregate kit registers the outbox, queue and

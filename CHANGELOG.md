@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Docs snippets are checked against the API** (`just docs-snippets`, in `just quality`) — every inline python block in `pages/docs` parses, every `forze*` symbol it imports exists, and every call to one matches the live signature. A block that cannot stand alone is marked `python fragment`.
+
 - **An application can catalogue the identity planes it actually wires.** `forze_identity.spec_contributions(planes=["authn"])` narrows the contribution, so an authn-only app passes `build_runtime(specs=…)` reconciliation instead of choosing between the helper and the check. No arguments still catalogues all three.
 
 - **A read model may declare the fields its backend produces.** Mapping a name to `None` in `DocumentSpec.derived_read_fields` marks it derived whatever its shape — a joined column, a nested reference, an aggregate — and `SpecSeed(derived=...)` supplies it, so a view-backed aggregate is readable from `forze_mock`.

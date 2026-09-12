@@ -116,7 +116,8 @@ from forze_kits.integrations.secrets import (
 
 spec = secret_rotated_pubsub_spec()
 query = ctx.deps.resolve_configurable(ctx, PubSubQueryDepKey, spec, route=spec.name)
-binder = SecretsHotReloadBinder(sources=[PubSubSecretsChangeSource(query=query)], ...)
+# ...plus the binder's own options.
+binder = SecretsHotReloadBinder(sources=[PubSubSecretsChangeSource(query=query)])
 ```
 
 Pub/sub is at-most-once and live-only; a missed message is covered by the TTL

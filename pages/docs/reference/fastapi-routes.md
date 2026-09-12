@@ -358,7 +358,12 @@ API = AuthnSpec(name="api", enabled_methods=frozenset({"token"}))
 requirement = AuthnRequirement(
     ingress=(HeaderTokenAuthn(authn_spec=API, header_name="Authorization"),),
 )
-app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context, authn=requirement, ...)
+# ...plus whatever else your middleware takes.
+app.add_middleware(
+    SecurityContextMiddleware,
+    ctx_dep=runtime.get_context,
+    authn=requirement,
+)
 
 # After every router is attached:
 apply_openapi_security(app, requirement)

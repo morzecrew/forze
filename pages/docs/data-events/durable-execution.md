@@ -237,8 +237,8 @@ schedule and run the scheduler step (alongside the recovery step, which executes
 enqueues):
 
 ```python
-deps = PostgresDepsModule(client=client, durable_run=…, durable_schedule=…)
-# …or MongoDepsModule(client=client, durable_run=…, durable_schedule=…)
+deps = PostgresDepsModule(client=client, durable_run=..., durable_schedule=...)
+# ...or MongoDepsModule(client=client, durable_run=..., durable_schedule=...)
 
 await scheduler.put(ctx, "nightly-report", "report", "0 3 * * *", tz="Europe/Berlin")
 
