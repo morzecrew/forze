@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An in-process agent's tools can be your operations.** `operation_tools(registry, include=…)` projects allowlisted operations into tool definitions carrying their own input schema, and `dispatch_tool_use` runs the agent's call through `run_operation` on the live context, so tenancy, permissions, deadlines and audit apply as they do to any caller. Read-only by default; a sensitive operation is refused, not skipped.
+
 - **Docs snippets are checked against the API** (`just docs-snippets`, in `just quality`) — every inline python block in `pages/docs` parses, every `forze*` symbol it imports exists, and every call to one matches the live signature. A block that cannot stand alone is marked `python fragment`.
 
 - **An application can catalogue the identity planes it actually wires.** `forze_identity.spec_contributions(planes=["authn"])` narrows the contribution, so an authn-only app passes `build_runtime(specs=…)` reconciliation instead of choosing between the helper and the check. No arguments still catalogues all three.
