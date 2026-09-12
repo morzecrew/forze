@@ -6857,7 +6857,12 @@ once:</p>
 <span class="n">requirement</span> <span class="o">=</span> <span class="n">AuthnRequirement</span><span class="p">(</span>
     <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderTokenAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">API</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">"Authorization"</span><span class="p">),),</span>
 <span class="p">)</span>
-<span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span><span class="n">SecurityContextMiddleware</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span> <span class="n">authn</span><span class="o">=</span><span class="n">requirement</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="c1"># ...plus whatever else your middleware takes.</span>
+<span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
+    <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
+    <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
+    <span class="n">authn</span><span class="o">=</span><span class="n">requirement</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="c1"># After every router is attached:</span>
 <span class="n">apply_openapi_security</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">requirement</span><span class="p">)</span>

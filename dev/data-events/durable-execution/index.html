@@ -6570,8 +6570,8 @@ the Mongo run store needs — is documented on the adapter classes.</p>
 <p>A <code>durable_schedule</code> table + the <code>DurableScheduler</code> fire a run on a <strong>cron cadence</strong>. Put a
 schedule and run the scheduler step (alongside the recovery step, which executes the runs it
 enqueues):</p>
-<div class="highlight"><pre><span></span><code><span class="n">deps</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">durable_run</span><span class="o">=</span><span class="err">…</span><span class="p">,</span> <span class="n">durable_schedule</span><span class="o">=</span><span class="err">…</span><span class="p">)</span>
-<span class="c1"># …or MongoDepsModule(client=client, durable_run=…, durable_schedule=…)</span>
+<div class="highlight"><pre><span></span><code><span class="n">deps</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span> <span class="n">durable_run</span><span class="o">=...</span><span class="p">,</span> <span class="n">durable_schedule</span><span class="o">=...</span><span class="p">)</span>
+<span class="c1"># ...or MongoDepsModule(client=client, durable_run=..., durable_schedule=...)</span>
 
 <span class="k">await</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="s2">"nightly-report"</span><span class="p">,</span> <span class="s2">"report"</span><span class="p">,</span> <span class="s2">"0 3 * * *"</span><span class="p">,</span> <span class="n">tz</span><span class="o">=</span><span class="s2">"Europe/Berlin"</span><span class="p">)</span>
 

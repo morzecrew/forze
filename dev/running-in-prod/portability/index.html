@@ -6410,7 +6410,8 @@ you own, and <code>build_runtime</code> reconciles it against the wiring at star
 
 <span class="n">specs</span> <span class="o">=</span> <span class="n">SpecRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">OrderSpec</span><span class="p">,</span> <span class="n">OrderSearchSpec</span><span class="p">,</span> <span class="n">InvoiceBlobSpec</span><span class="p">)</span>
 
-<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="n">deps</span><span class="p">,</span> <span class="n">specs</span><span class="o">=</span><span class="n">specs</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="c1"># ...plus the rest of your runtime wiring.</span>
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">deps</span><span class="o">=</span><span class="n">deps</span><span class="p">,</span> <span class="n">specs</span><span class="o">=</span><span class="n">specs</span><span class="p">)</span>
 </code></pre></div>
 <p>Kits contribute their own — an aggregate kit registers the outbox, queue and
 inbox its search-sync mints, and the identity plane registers its account,

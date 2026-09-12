@@ -6537,7 +6537,8 @@ a <code>PubSubSecretsChangeSource</code> into its binder exactly like a poll wat
 
 <span class="n">spec</span> <span class="o">=</span> <span class="n">secret_rotated_pubsub_spec</span><span class="p">()</span>
 <span class="n">query</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">deps</span><span class="o">.</span><span class="n">resolve_configurable</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">PubSubQueryDepKey</span><span class="p">,</span> <span class="n">spec</span><span class="p">,</span> <span class="n">route</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
-<span class="n">binder</span> <span class="o">=</span> <span class="n">SecretsHotReloadBinder</span><span class="p">(</span><span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="n">PubSubSecretsChangeSource</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">)],</span> <span class="o">...</span><span class="p">)</span>
+<span class="c1"># ...plus the binder's own options.</span>
+<span class="n">binder</span> <span class="o">=</span> <span class="n">SecretsHotReloadBinder</span><span class="p">(</span><span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="n">PubSubSecretsChangeSource</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">)])</span>
 </code></pre></div>
 <p>Pub/sub is at-most-once and live-only; a missed message is covered by the TTL
 floor. The channel needs no dedup, ordering, or persistence beyond the outbox's.</p>

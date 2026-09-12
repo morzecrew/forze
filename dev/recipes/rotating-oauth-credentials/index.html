@@ -6562,6 +6562,7 @@ transient.</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresDepsModule</span><span class="p">,</span> <span class="n">PostgresRotatingCredentialsConfig</span>
 
 <span class="n">module</span> <span class="o">=</span> <span class="n">PostgresDepsModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">client</span><span class="p">,</span>
     <span class="n">rotating_credentials</span><span class="o">=</span><span class="n">PostgresRotatingCredentialsConfig</span><span class="p">(</span>
         <span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"rotating_credentials"</span><span class="p">),</span>
         <span class="n">exchanger</span><span class="o">=</span><span class="n">CrmTokenExchanger</span><span class="p">(</span><span class="n">http</span><span class="o">=...</span><span class="p">),</span>
