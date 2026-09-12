@@ -5797,6 +5797,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#framework-contributions-and-narrowing-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Framework contributions, and narrowing them
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-route-guard" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6218,6 +6229,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#framework-contributions-and-narrowing-them" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Framework contributions, and narrowing them
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-route-guard" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6409,6 +6431,22 @@ export carries the spec, not what a target must be able to import. A per-tenant 
 excludes identity specs by default (a data-portability request wants the tenant's business
 data, not their session tokens); a full-system export always carries them, because a live
 system needs its sessions.</p>
+<h2 id="framework-contributions-and-narrowing-them">Framework contributions, and narrowing them<a class="headerlink" href="#framework-contributions-and-narrowing-them" title="Permanent link">&para;</a></h2>
+<p>Kits and the identity plane hand you a registry of the specs they bind — the routes nobody
+hand-wrote. <code>forze_identity.spec_contributions()</code> catalogues all three identity planes,
+which is right for an application that wires all three and wrong for one that wires authn
+alone: reconciliation refuses a spec catalogued but never bound, so the helper and the
+check cannot both be used. Narrow it to the planes you actually wire:</p>
+<div class="highlight"><pre><span></span><code><span class="n">specs</span> <span class="o">=</span> <span class="n">SpecRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">order_spec</span><span class="p">)</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span>
+    <span class="n">forze_identity</span><span class="o">.</span><span class="n">spec_contributions</span><span class="p">(</span><span class="n">planes</span><span class="o">=</span><span class="p">[</span><span class="s2">"authn"</span><span class="p">]),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Narrow only for a plane the application genuinely does not wire. A selection is not a way
+to quiet a reconciliation error — the check still fires from the bound side, and a
+bound-but-uncatalogued failure names a narrowed helper as a possible cause for exactly this
+reason. One plane can still reach into another: authn's principal-eligibility gate reads the authz
+policy-principal document <strong>by default</strong>, so <code>["authn"]</code> pairs with
+<code>eligibility="allow_all"</code> on the authn module and otherwise needs <code>"authz"</code> beside it.</p>
 <h2 id="the-route-guard">The route guard<a class="headerlink" href="#the-route-guard" title="Permanent link">&para;</a></h2>
 <p>Declaring a <code>spec_registry</code> installs a resolve-time guard: an uncatalogued route on an
 inventoried plane is refused at first use, whatever the provider's shape. That is the

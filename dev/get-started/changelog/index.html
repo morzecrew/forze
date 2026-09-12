@@ -8519,6 +8519,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>An application can catalogue the identity planes it actually wires.</strong> <code>forze_identity.spec_contributions(planes=["authn"])</code> narrows the contribution, so an authn-only app passes <code>build_runtime(specs=…)</code> reconciliation instead of choosing between the helper and the check. No arguments still catalogues all three.</p>
+</li>
+<li>
 <p><strong>A read model may declare the fields its backend produces.</strong> Mapping a name to <code>None</code> in <code>DocumentSpec.derived_read_fields</code> marks it derived whatever its shape — a joined column, a nested reference, an aggregate — and <code>SpecSeed(derived=...)</code> supplies it, so a view-backed aggregate is readable from <code>forze_mock</code>.</p>
 </li>
 <li>

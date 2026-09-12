@@ -1881,6 +1881,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The identity plane">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cataloguing-what-it-binds" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cataloguing what it binds
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -6239,6 +6256,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The identity plane">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cataloguing-what-it-binds" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cataloguing what it binds
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -6492,6 +6526,25 @@ modules as any other integration.</p>
 conveniences, not production defaults: adopt one only once you accept its trust
 model (e.g. VK publishes no <abbr title="JSON Web Key Set">JWKS</abbr>, so its preset verifies <code>id_token</code>s by
 server-side introspection against VK rather than a local signature check).</p>
+<h3 id="cataloguing-what-it-binds">Cataloguing what it binds<a class="headerlink" href="#cataloguing-what-it-binds" title="Permanent link">&para;</a></h3>
+<p>The plane brings nineteen document specs your application never writes — sessions,
+credentials, grants, tenant bindings. If you declare a <a href="../../reference/spec-registry/">spec
+inventory</a>, merge them in rather than listing them by hand,
+so an identity release cannot leave your catalogue behind:</p>
+<div class="highlight"><pre><span></span><code><span class="n">specs</span> <span class="o">=</span> <span class="n">SpecRegistry</span><span class="p">()</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">order_spec</span><span class="p">)</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">forze_identity</span><span class="o">.</span><span class="n">spec_contributions</span><span class="p">())</span>
+</code></pre></div>
+<p>Wiring only part of the plane? Name the parts you wire. <code>spec_contributions()</code> catalogues
+all three planes, and the inventory check refuses a spec catalogued but never bound, so an
+authn-only application has to narrow it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">forze_identity</span><span class="o">.</span><span class="n">spec_contributions</span><span class="p">(</span><span class="n">planes</span><span class="o">=</span><span class="p">[</span><span class="s2">"authn"</span><span class="p">])</span>
+</code></pre></div>
+<p>Narrow only for a plane you genuinely do not wire — the check is worth keeping strict, and
+it still fires from the bound side if you narrow too far. One caveat that is easy to miss,
+and it is the <em>default</em>: authn's principal-eligibility gate reads the authz
+policy-principal document unless you opt out, so <code>planes=["authn"]</code> belongs with
+<code>eligibility="allow_all"</code> on the authn module — the declared opt-out for a deployment with
+no authz plane. Leave the gate on its default and authn binds an authz document, which the
+inventory check will tell you about.</p>
 <p>Identity settles <em>who</em> the caller is; scoping <em>which data</em> they may reach is
 <a href="../multi-tenancy/">Multi-tenancy</a>.</p>
 
