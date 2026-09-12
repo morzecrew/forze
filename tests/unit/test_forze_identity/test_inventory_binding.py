@@ -12,9 +12,15 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import structlog.testing
 
+from forze.application.contracts.deps import frame_for
 from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
-from forze.application.contracts.inventory import SpecSource, inventory_route_guard
+from forze.application.contracts.inventory import (
+    SpecSource,
+    inventory_route_guard,
+    reconcile_specs,
+)
 from forze.application.execution import Deps, build_runtime
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.inventory import (
@@ -364,6 +370,44 @@ class TestReconciliationWithAPartialPlane:
 
         assert "authz_policy_principals" in message
         assert "narrowed to a subset" in message
+
+    def test_the_hint_reaches_every_report_of_that_failure(self) -> None:
+        """All four paths, because three of them carried it and one did not.
+
+        The two functions report bound-but-uncatalogued four ways: `reconcile_specs` raises
+        or warns (one shared message, so both carried it), and the route guard raises or
+        warns (two separate strings, so only the refusal did). The lenient path is the one
+        an application adopting the inventory actually reads — it is looking at warnings
+        precisely because it does not yet know what it is missing.
+        """
+
+        registry = spec_contributions(planes=["authn"]).freeze()
+        bound = (*_AUTHN_NAMES, "authz_policy_principals")
+        frames = frozenset(frame_for(DocumentQueryDepKey, name) for name in bound)
+
+        # 1. reconcile_specs, strict.
+        with pytest.raises(CoreException, match="narrowed to a subset"):
+            reconcile_specs(registry, frames)
+
+        # 2. reconcile_specs, lenient.
+        warnings = reconcile_specs(registry, frames, allow_unregistered=True)
+
+        assert any("narrowed to a subset" in warning for warning in warnings)
+
+        # 3. the route guard, lenient — captured, since it logs rather than returns.
+        with structlog.testing.capture_logs() as logs:
+            inventory_route_guard(registry, allow_unregistered=True)(
+                DocumentQueryDepKey.name, "authz_policy_principals"
+            )
+
+        logged = [entry for entry in logs if entry.get("log_level") == "warning"]
+
+        assert logged, "the lenient guard should warn rather than stay silent"
+        assert any("narrowed to a subset" in entry["event"] for entry in logged)
+
+        # 4. the route guard, strict.
+        with pytest.raises(CoreException, match="narrowed to a subset"):
+            inventory_route_guard(registry)(DocumentQueryDepKey.name, "authz_policy_principals")
 
     def test_the_hint_reaches_the_resolve_time_refusal_too(self) -> None:
         """The same failure has two refusals, and a routeless provider only meets one.
