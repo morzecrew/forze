@@ -58,7 +58,12 @@ def reconcile_specs(
     - **A route is bound but nothing catalogues it.** *This is the one that matters.* It is
       the forgotten identity plane, the derived sync route, the spec added last month — the
       failure mode an export cannot detect and cannot recover from, because a missing plane
-      and an empty one look identical in the artifact.
+      and an empty one look identical in the artifact. The message names a **narrowed
+      framework contribution helper** as a possible cause, because that is the one way to
+      reach this failure while believing the catalogue is complete: a helper asked for a
+      subset of what the application actually binds. It is a hint and not a diagnosis —
+      this function cannot see which helpers a caller used, and most occurrences of this
+      failure are a plain forgotten spec.
     - **The inventory is empty while inventoried planes are bound.** The degenerate case of
       the previous check, and the one *routeless* providers would otherwise hide entirely: an
       empty registry reconciles vacuously, fingerprints equal to any other empty registry, and
@@ -135,7 +140,9 @@ def reconcile_specs(
 
         message = (
             f"  - {plane.value}:{frame.route}: bound (as {frame.label()}) but missing from "
-            f"the spec inventory — an export would silently omit it"
+            f"the spec inventory — an export would silently omit it; if a framework "
+            f"contribution helper was narrowed to a subset, this route may belong to a "
+            f"part it excluded"
         )
 
         if allow_unregistered:
@@ -185,6 +192,14 @@ def inventory_route_guard(
 
     catalogued = frozenset((entry.plane, entry.name) for entry in registry.entries)
     warned: set[tuple[SpecPlane, str]] = set()
+    # One clause for both branches. The lenient path is the one an application adopting the
+    # inventory actually reads — it is looking at warnings precisely because it does not yet
+    # know what it is missing — so a hint only the refusal carries reaches the reader who
+    # needs it least.
+    hint = (
+        "if a framework contribution helper was narrowed to a subset, this route may "
+        "belong to a part it excluded"
+    )
 
     def _guard(key_name: str, route: str) -> None:
         plane = plane_of_key(key_name)
@@ -197,10 +212,11 @@ def inventory_route_guard(
                 warned.add((plane, route))
                 logger.warning(
                     "Uncatalogued route resolved: %s:%s (via %s) is missing from the "
-                    "spec inventory — an export would silently omit it",
+                    "spec inventory — an export would silently omit it; %s",
                     plane.value,
                     route,
                     key_name,
+                    hint,
                 )
 
             return
@@ -208,7 +224,7 @@ def inventory_route_guard(
         raise exc.configuration(
             f"{plane.value}:{route} resolved (via {key_name}) but missing from the spec "
             f"inventory — an export would silently omit it. Catalogue the spec, or start "
-            f"with allow_unregistered=True during incremental adoption."
+            f"with allow_unregistered=True during incremental adoption. And {hint}."
         )
 
     return _guard
