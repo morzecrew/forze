@@ -106,9 +106,7 @@ def _standings_as_of(params: BaseModel, state: MockState) -> list[Standing]:
     eligible = [r for r in _RESULTS if r[3] <= as_of]
     rows: list[Standing] = []
     for region in {r[0] for r in eligible}:
-        ranked = sorted(
-            (r for r in eligible if r[0] == region), key=lambda r: r[2], reverse=True
-        )
+        ranked = sorted((r for r in eligible if r[0] == region), key=lambda r: r[2], reverse=True)
         # SQL ``rank()`` semantics: tied scores share a rank, and the next rank skips the gap —
         # so the mock matches the view's window function rather than a plain row number.
         rank = 0
@@ -133,9 +131,7 @@ def build_context() -> ExecutionContext:
 
 
 # --8<-- [start:flow]
-async def regional_top(
-    ctx: ExecutionContext, region: str, as_of: date
-) -> list[Standing]:
+async def regional_top(ctx: ExecutionContext, region: str, as_of: date) -> list[Standing]:
     # Bind the parameter once, then read with the full document DSL on top: the view ranks over the
     # as-of set internally; here we just filter to one region and order by the rank it computed.
     page = await (
