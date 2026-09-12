@@ -142,6 +142,28 @@ Source diagrams live in `pages/diagrams/` as `.d2` files. They are built to SVG 
 just build-diagrams
 ```
 
+**Python snippets are checked against the API**
+
+`just docs-snippets` (part of `just quality`) reads every inline ```` ```python ```` block in
+`pages/docs`: it must parse, every `forze*` symbol it imports must exist, and every call to
+one must match the live signature. A wrong snippet renders exactly like a right one, so
+nothing else would tell you — and a reader finds it by pasting it.
+
+A block that deliberately cannot stand alone — an excerpt, an elision — is marked at its
+fence:
+
+````markdown
+```python fragment
+build_runtime(deps=deps, ...)
+```
+````
+
+The marker is load-bearing in both directions: a marked block that *does* parse fails too,
+so it cannot be sprinkled to opt out of the check. Prefer moving the elision into a comment
+and keeping the block checkable — a fragment is exempt from all three bars, not just the
+one it needed. Blocks pulled from `examples/` with `--8<--` are left alone; a real test
+runs those.
+
 **Consistency**
 
 - Update documentation when behavior changes; keep docs aligned with code.
