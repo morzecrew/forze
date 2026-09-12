@@ -28,6 +28,9 @@ on:
       - ".gitleaks.toml"
       - ".pre-commit-config.yaml"
       - ".github/workflows/ci.yml"
+      # The docs-snippet gate's inputs, for the same reason the `docs` filter below
+      # exists: a docs-only merge would otherwise run no CI at all.
+      - "pages/**"
 
 permissions:
   contents: read
@@ -42,6 +45,7 @@ jobs:
 
     outputs:
       code: ${{ steps.scope.outputs.code }}
+      docs: ${{ steps.scope.outputs.docs }}
       force_full: ${{ steps.force.outputs.force_full }}
 
     steps:
@@ -84,11 +88,21 @@ jobs:
               # without these it would be the change that never runs the gate.
               - "skills/**"
               - "tools/**"
+            # Inputs to the docs-snippet gate, and the third instance of the shape the two
+            # comments above record: a docs-only change is exactly what breaks a snippet,
+            # and `code` does not select it. Kept as its own output rather than folded into
+            # `code`, which also gates the test matrix and the conformance leg — a docs typo
+            # should run the offline gates, not the container suite.
+            docs:
+              - "pages/**"
 
   quality:
     name: Run quality checks
     needs: changes
-    if: needs.changes.outputs.force_full == 'true' || needs.changes.outputs.code == 'true'
+    if: |
+      needs.changes.outputs.force_full == 'true' ||
+      needs.changes.outputs.code == 'true' ||
+      needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -360,6 +374,7 @@ jobs:
           COVERAGE_RESULT: ${{ needs.coverage.result }}
           CONFORMANCE_RESULT: ${{ needs.conformance.result }}
           CODE: ${{ needs.changes.outputs.code }}
+          DOCS: ${{ needs.changes.outputs.docs }}
           FORCE_FULL: ${{ needs.changes.outputs.force_full }}
         run: |
           echo "changes.result=${CHANGES_RESULT}"
@@ -368,6 +383,7 @@ jobs:
           echo "coverage.result=${COVERAGE_RESULT}"
           echo "conformance.result=${CONFORMANCE_RESULT}"
           echo "code=${CODE}"
+          echo "docs=${DOCS}"
           echo "force_full=${FORCE_FULL}"
 
           if [[ "${CHANGES_RESULT}" != "success" ]]; then
@@ -392,6 +408,20 @@ jobs:
               echo "conformance execution gate did not succeed"
               exit 1
             fi
+          elif [[ "${DOCS}" == "true" ]]; then
+            # A docs-only change runs the offline gates and nothing else. Required here as
+            # well as triggered: a job whose result nobody checks is a job that can fail
+            # green.
+            if [[ "${QUALITY_RESULT}" != "success" ]]; then
+              echo "quality job did not succeed"
+              exit 1
+            fi
+            for result in "${TEST_RESULT}" "${COVERAGE_RESULT}" "${CONFORMANCE_RESULT}"; do
+              if [[ "${result}" != "skipped" ]]; then
+                echo "a code-only job ran for a docs-only change"
+                exit 1
+              fi
+            done
           else
             if [[ "${QUALITY_RESULT}" != "skipped" ]]; then
               echo "quality was expected to be skipped"

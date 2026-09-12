@@ -18,6 +18,7 @@ has not gotten around to it.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -101,3 +102,93 @@ def test_the_guard_detects_an_unrun_suite() -> None:
     suites = {*_integration_suites(), "test_forze_newly_added"}
 
     assert sorted(suites - covered - set(_EXEMPTIONS)) == ["test_forze_newly_added"]
+
+
+# ....................... #
+# Change-scope wiring: a filter that selects nothing, and an output nobody declared
+
+
+def _changes_outputs() -> set[str]:
+    """The outputs the `changes` job actually exports to the jobs that read it."""
+
+    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+
+    return set(workflow["jobs"]["changes"]["outputs"])
+
+
+def _filter_names() -> set[str]:
+    """The top-level keys of the `paths-filter` step's `filters` block."""
+
+    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["changes"]["steps"]
+    filters = next(step["with"]["filters"] for step in steps if "filters" in step.get("with", {}))
+
+    return set(yaml.safe_load(filters))
+
+
+def test_every_changes_output_a_job_reads_is_declared() -> None:
+    """A job reading an output the `changes` job never exports sees an empty string.
+
+    Which is falsy, so the job is skipped — silently, and forever. Nothing fails: the
+    pipeline is green because the work was never scheduled, which is the same shape as the
+    unrun suite this file's first guard exists for. It has happened: the `docs` filter for
+    the docs-snippet gate was added to the filter block and not to the job's outputs, so
+    the gate it selects would never have run.
+    """
+
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    referenced = set(re.findall(r"needs\.changes\.outputs\.([a-z_]+)", text))
+    undeclared = sorted(referenced - _changes_outputs())
+
+    assert not undeclared, (
+        f"jobs read changes output(s) {undeclared} that the changes job does not export — "
+        f"they resolve to an empty string, so every job gated on them is skipped silently"
+    )
+
+
+def test_every_declared_filter_gates_at_least_one_job() -> None:
+    """A filter nobody reads is a filter that changes nothing.
+
+    The mirror of the check above, and the reason both exist: one catches a reader with no
+    writer, this catches a writer with no reader. Either way the wiring looks complete in
+    the file and selects nothing in practice.
+    """
+
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    unread = sorted(name for name in _filter_names() if f"needs.changes.outputs.{name}" not in text)
+
+    assert not unread, (
+        f"path filter(s) {unread} are computed and never read — no job's condition "
+        f"mentions them, so the paths they match select nothing"
+    )
+
+
+def test_the_docs_gate_is_selected_by_a_docs_only_change() -> None:
+    """The gate over `pages/docs` has to run for the change class that breaks it.
+
+    Its own guard because the general checks above pass while `pages/**` sits in no filter
+    at all — which is where this started: `just quality` carried the docs-snippet gate and
+    CI's scope filter listed src, tests, skills and tools, so a docs-only pull request ran
+    none of it.
+    """
+
+    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    filters = yaml.safe_load(
+        next(
+            step["with"]["filters"]
+            for step in workflow["jobs"]["changes"]["steps"]
+            if "filters" in step.get("with", {})
+        )
+    )
+    selecting = sorted(
+        name for name, paths in filters.items() if any("pages/" in str(p) for p in paths)
+    )
+
+    assert selecting, "no path filter matches pages/ — a docs-only change scopes to nothing"
+
+    condition = workflow["jobs"]["quality"]["if"]
+
+    assert any(f"needs.changes.outputs.{name}" in condition for name in selecting), (
+        f"filter(s) {selecting} match pages/ but the quality job's condition reads none of "
+        f"them, so the docs-snippet gate does not run for a docs-only change"
+    )
