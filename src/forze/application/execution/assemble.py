@@ -163,7 +163,10 @@ def build_runtime(
         happens into a fresh registry, so none of the arguments is modified, and the result
         is frozen for you. When given, it is reconciled against the wired dependencies at
         construction: a spec catalogued but never bound, or a route bound but never
-        catalogued, fails assembly. ``None`` (default) skips the check. Already-frozen
+        catalogued, fails assembly. A contribution helper that bundles more than this
+        application wires therefore has to be narrowed — ``spec_contributions`` takes a
+        selection for exactly that — because the catalogued-but-unbound half is a hard
+        failure by design. ``None`` (default) skips the check. Already-frozen
         registries are accepted alone but cannot be merged with others.
     :param allow_unregistered: Downgrade "bound but not catalogued" to a logged warning, for
         adopting the inventory incrementally.

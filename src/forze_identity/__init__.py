@@ -17,6 +17,7 @@ from forze.base.lazy import lazy_exports
 _EXPORTS: dict[str, str] = {
     "MIN_SECRET_BYTES": "forze_identity.authn.services.constants",  # nosec B105
     "spec_contributions": "forze_identity.inventory",
+    "IdentityPlane": "forze_identity.inventory",
     "AUTHN_SPECS": "forze_identity.inventory",
     "AUTHZ_SPECS": "forze_identity.inventory",
     "TENANCY_SPECS": "forze_identity.inventory",
@@ -34,6 +35,7 @@ __all__ = [
     "AUTHZ_SPECS",
     "DELEGATION_SPECS",
     "GRANT_RESOLUTION_SPECS",
+    "IdentityPlane",
     "MIN_SECRET_BYTES",
     "PASSWORD_LIFECYCLE_SPECS",
     "TENANCY_SPECS",
@@ -55,6 +57,7 @@ if TYPE_CHECKING:
         PASSWORD_LIFECYCLE_SPECS,
         TENANCY_SPECS,
         TENANT_RESOLUTION_SPECS,
+        IdentityPlane,
         identity_document_names,
         spec_contributions,
     )
