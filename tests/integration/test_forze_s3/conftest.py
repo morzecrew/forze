@@ -66,7 +66,7 @@ def s3_backend(request: pytest.FixtureRequest) -> Iterator[S3Backend]:
 
     if request.param == "minio":
         with MinioContainer(
-            image="minio/minio:RELEASE.2025-09-07T16-13-09Z",
+            image="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
             port=9000,
             access_key=MINIO_ROOT_USER,
             secret_key=MINIO_ROOT_PASSWORD,
