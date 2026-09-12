@@ -88,12 +88,13 @@ one at a time.
 a different plane with a different threat model; see
 [Sandbox](sandbox.md).
 
-**Not dynamic discovery.** The palette is wired at startup from a frozen
-registry. A stable set of tool names is what makes an agent run resumable and
-auditable.
+**Not dynamic discovery.** The palette is projected from a frozen registry, and
+nothing is looked up per turn. Wire it once at startup: a stable set of tool
+names is what makes an agent run resumable and auditable.
 
-**Not a prompt or description layer.** A tool's description is its operation's
-docstring. Tuning what the model reads means editing the operation, which is
+**Not a prompt or description layer.** A tool's description is the one its
+operation's descriptor already carries — the same text the HTTP and MCP surfaces
+show. Tuning what the model reads means editing the operation's catalog entry,
 where the rest of its contract already lives.
 
 ## Sensitive operations are refused, not skipped

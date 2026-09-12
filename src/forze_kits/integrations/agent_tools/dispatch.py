@@ -23,6 +23,7 @@ from forze.application.execution.operations import (
     OperationCatalogEntry,
     run_operation,
 )
+from forze.base.codecs import JsonCodec
 from forze.base.exceptions import CoreException, error_envelope, exc
 from forze.base.primitives import JsonDict
 from forze.base.scrubbing import sanitize_pydantic_errors
@@ -85,9 +86,16 @@ def _validated_args(entry: OperationCatalogEntry, raw: JsonDict) -> Any:
 def _content(result: Any) -> str | JsonDict:
     """Project an operation's result into tool-result content.
 
-    An operation's output type is a Pydantic DTO or nothing, so the JSON projection is the
-    DTO's own. A void operation still owes the agent a reply — an empty object, which says
-    "it ran and returned nothing" without inventing a message the model might read as data.
+    An operation's declared output type is a Pydantic DTO or nothing, so the common two
+    cases are the DTO's own JSON projection and — for a void operation — an empty object,
+    which tells the agent it ran and returned nothing without inventing a message the
+    model might read as data.
+
+    A handler may still return something its descriptor does not describe. That is
+    projected as JSON under a ``result`` key rather than stringified: a model handed
+    ``Page(hits=[...], page=1)`` cannot parse a Python repr and will confidently invent
+    the fields it cannot see. A value that is not JSON at all is a wiring defect, not
+    something an agent can correct, so it refuses loudly instead.
     """
 
     if result is None:
@@ -96,7 +104,19 @@ def _content(result: Any) -> str | JsonDict:
     if isinstance(result, BaseModel):
         return result.model_dump(mode="json")
 
-    return str(result)
+    if isinstance(result, str):
+        return result
+
+    codec = JsonCodec()
+
+    try:
+        return {"result": codec.loads(codec.dumps(result))}
+
+    except TypeError as error:
+        raise exc.internal(
+            f"An agent tool returned a result that is not JSON: {type(result).__name__}",
+            code="agent_tools_unprojectable_result",
+        ) from error
 
 
 # ....................... #
@@ -117,7 +137,8 @@ async def dispatch_tool_use(
     :param tools: The palette. A name outside it is refused *here*, so an operation nobody
         allowlisted stays unreachable even though the registry holds it.
     :returns: The operation's result, or a caller-safe error the agent can act on.
-    :raises Exception: Infrastructure failures propagate unchanged; they are the
+    :raises Exception: Infrastructure failures propagate unchanged — an unexpected
+        exception, and a :class:`CoreException` whose kind is server-side. They are the
         application loop's to handle, not the model's.
     """
 
@@ -140,6 +161,15 @@ async def dispatch_tool_use(
         result = await run_operation(tools.registry, entry.op, args, ctx)
 
     except CoreException as error:
+        # Only a caller-caused failure belongs in the conversation. A 500-class kind
+        # (internal, infrastructure) projects to a generic detail with nothing the model
+        # could act on, so absorbing it into a ToolResult would hide a real failure inside
+        # an agent turn: the loop would see a "handled" call and the operator would see
+        # nothing at all. Those propagate, carrying their traceback to the app's own
+        # error handling.
+        if error_envelope(error).server_error:
+            raise
+
         return _error_result(tool_use, error)
 
     return ToolResult(tool_use_id=tool_use.id, content=_content(result))

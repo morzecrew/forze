@@ -23,7 +23,7 @@ from forze.application.execution.operations.registry import (
 )
 from forze.application.hooks.authn import AuthnRequired
 from forze.application.hooks.authz import AuthzBeforeAuthorize
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.testing import context_from_deps
 from forze_kits.integrations.agent_tools import (
     ToolUse,
@@ -68,6 +68,30 @@ class _Broken(Handler[Any, None]):
 
 
 @attrs.define(slots=True)
+class _Internal(Handler[Any, None]):
+    async def __call__(self, args: Any) -> None:
+        raise exc.internal("the index is corrupt", code="index_corrupt")
+
+
+@attrs.define(slots=True)
+class _Mapping(Handler[Any, Any]):
+    async def __call__(self, args: Any) -> Any:
+        return {"n": 1}
+
+
+@attrs.define(slots=True)
+class _Text(Handler[Any, str]):
+    async def __call__(self, args: Any) -> str:
+        return "plain text"
+
+
+@attrs.define(slots=True)
+class _Opaque(Handler[Any, Any]):
+    async def __call__(self, args: Any) -> Any:
+        return object()
+
+
+@attrs.define(slots=True)
 class _Refuses(Handler[Any, None]):
     async def __call__(self, args: Any) -> None:
         raise exc.precondition("Not in a runnable state", code="not_runnable")
@@ -86,6 +110,10 @@ def _registry() -> FrozenOperationRegistry:
             "calc.void": lambda _c: _Void(),
             "calc.broken": lambda _c: _Broken(),
             "calc.refuses": lambda _c: _Refuses(),
+            "calc.internal": lambda _c: _Internal(),
+            "calc.mapping": lambda _c: _Mapping(),
+            "calc.text": lambda _c: _Text(),
+            "calc.opaque": lambda _c: _Opaque(),
             "calc.guarded": lambda _c: _Doubler(),
         }
     )
@@ -98,7 +126,16 @@ def _registry() -> FrozenOperationRegistry:
         OperationDescriptor(input_type=_In, output_type=_Out, description="guarded"),
     )
 
-    for op in ("calc.double", "calc.void", "calc.broken", "calc.refuses"):
+    for op in (
+        "calc.double",
+        "calc.void",
+        "calc.broken",
+        "calc.refuses",
+        "calc.internal",
+        "calc.mapping",
+        "calc.text",
+        "calc.opaque",
+    ):
         reg = reg.bind(op).as_query().finish()
 
     # The authz guard declares the capability a principal-binding step provides; wiring it
@@ -108,13 +145,7 @@ def _registry() -> FrozenOperationRegistry:
     guard = AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="calc.read").to_step(
         step_id="authz", requires=()
     )
-    reg = (
-        reg.bind("calc.guarded")
-        .as_query()
-        .bind_outer()
-        .before(authn, guard)
-        .finish(deep=True)
-    )
+    reg = reg.bind("calc.guarded").as_query().bind_outer().before(authn, guard).finish(deep=True)
 
     return reg.freeze()
 
@@ -219,9 +250,7 @@ class TestGovernance:
         tools = operation_tools(_registry(), include=["calc.guarded"])
 
         with patch.object(ctx.authz, "decision", return_value=_Deny()), _bound(ctx):
-            result = await dispatch_tool_use(
-                _use("calc.guarded", n=1), ctx=ctx, tools=tools
-            )
+            result = await dispatch_tool_use(_use("calc.guarded", n=1), ctx=ctx, tools=tools)
 
         assert result.is_error is True
         assert isinstance(result.content, dict)
@@ -240,9 +269,7 @@ class TestGovernance:
                 return AuthzDecision(allowed=True, matched_permission_key="calc.read")
 
         with patch.object(ctx.authz, "decision", return_value=_Allow()), _bound(ctx):
-            result = await dispatch_tool_use(
-                _use("calc.guarded", n=4), ctx=ctx, tools=tools
-            )
+            result = await dispatch_tool_use(_use("calc.guarded", n=4), ctx=ctx, tools=tools)
 
         assert result.is_error is False
         assert _CALLS == [4]
@@ -298,3 +325,56 @@ class TestAnInfrastructureFailure:
 
         with _bound(ctx), pytest.raises(RuntimeError, match="database fell over"):
             await dispatch_tool_use(_use("calc.broken"), ctx=ctx, tools=tools)
+
+
+# ....................... #
+
+
+class TestAServerSideCoreException:
+    async def test_it_propagates_rather_than_becoming_an_error_result(self) -> None:
+        # A 500-class CoreException is not the model's to correct, and it is not the
+        # agent's turn that should absorb it: handed back as a ToolResult it would be
+        # masked to a generic detail, the loop would never learn, and nothing would be
+        # logged — an internal bug would vanish into a conversation.
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.internal"])
+
+        with _bound(ctx), pytest.raises(CoreException) as caught:
+            await dispatch_tool_use(_use("calc.internal"), ctx=ctx, tools=tools)
+
+        assert caught.value.kind is ExceptionKind.INTERNAL
+
+
+# ....................... #
+
+
+class TestAnUndescribedResult:
+    async def test_a_non_model_result_is_projected_as_json_not_a_repr(self) -> None:
+        # An operation whose handler returns something its descriptor does not describe
+        # must not reach the model as a Python repr: a model reading
+        # "Page(hits=[...], page=1)" cannot parse it, and will confidently invent the
+        # fields it cannot see.
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.mapping"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(_use("calc.mapping"), ctx=ctx, tools=tools)
+
+        assert result.is_error is False
+        assert result.content == {"result": {"n": 1}}
+
+    async def test_an_unserializable_result_refuses_loudly(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.opaque"])
+
+        with _bound(ctx), pytest.raises(CoreException):
+            await dispatch_tool_use(_use("calc.opaque"), ctx=ctx, tools=tools)
+
+    async def test_a_string_result_passes_through(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.text"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(_use("calc.text"), ctx=ctx, tools=tools)
+
+        assert result.content == "plain text"
