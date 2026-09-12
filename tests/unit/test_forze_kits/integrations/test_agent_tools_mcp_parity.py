@@ -129,3 +129,43 @@ class TestTheTwoSurfacesAgree:
         bridged = operation_tools(registry, include=["calc.double"])
 
         assert set(exposed) == set(bridged.names)
+
+
+# ....................... #
+
+
+class TestBothSurfacesRejectAHallucinatedArgument:
+    async def test_neither_surface_silently_drops_it(self) -> None:
+        # The asymmetry this pins: pydantic's default is to ignore an unknown key, so
+        # without an explicit refusal the in-process bridge would obey a call the MCP
+        # surface rejects — and an agent would be told its invented filter was applied.
+        from uuid import uuid4
+
+        from forze.application.contracts.authn import AuthnIdentity
+        from forze.application.execution import Deps, InvocationMetadata
+        from forze.testing import context_from_deps
+        from forze_kits.integrations.agent_tools import ToolUse, dispatch_tool_use
+
+        server = FastMCP("calc")
+        register_tools(server, _registry(), _ctx_factory)
+
+        async with Client(server) as client:
+            with pytest.raises(Exception) as mcp_refusal:
+                await client.call_tool("calc.double", {"n": 21, "invented": 1})
+
+        ctx = context_from_deps(Deps())
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with ctx.inv_ctx.bind(
+            metadata=InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4()),
+            authn=AuthnIdentity(principal_id=uuid4()),
+        ):
+            bridged = await dispatch_tool_use(
+                ToolUse(id="t", name="calc.double", input={"n": 21, "invented": 1}),
+                ctx=ctx,
+                tools=tools,
+            )
+
+        assert "invented" in str(mcp_refusal.value)
+        assert bridged.is_error is True
+        assert "invented" in str(bridged.content)

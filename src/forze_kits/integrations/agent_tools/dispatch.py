@@ -55,11 +55,45 @@ def _error_result(tool_use: ToolUse, error: CoreException) -> ToolResult:
 # ....................... #
 
 
+def _accepted_names(input_type: type[BaseModel]) -> set[str] | None:
+    """Every name the input DTO accepts, or ``None`` when they cannot all be enumerated.
+
+    Field names plus every inbound spelling, because refusing a name the DTO would have
+    accepted is the one way this check can do harm. ``Field(alias=...)`` sets
+    ``validation_alias`` too, so reading that one covers both; a ``validation_alias`` may
+    instead be an ``AliasChoices`` or an ``AliasPath``, whose accepted spellings are not a
+    flat set of strings — rather than guess at those, the check steps aside and leaves
+    validation to pydantic. Declining to refuse is the safe direction; declining to
+    accept is not.
+    """
+
+    accepted: set[str] = set()
+
+    for name, field in input_type.model_fields.items():
+        accepted.add(name)
+        alias = field.validation_alias
+
+        if alias is None:
+            continue
+
+        if isinstance(alias, str):
+            accepted.add(alias)
+
+        else:
+            return None
+
+    return accepted
+
+
+# ....................... #
+
+
 def _validated_args(entry: OperationCatalogEntry, raw: JsonDict) -> Any:
     """Validate the agent's arguments into the operation's input DTO (``None`` if it has no input).
 
     Validation happens **before** dispatch, so a malformed argument never reaches a
-    half-executed call. Pydantic's own error text embeds the offending value — echoing
+    half-executed call, and an argument the DTO has never heard of is refused rather
+    than dropped. Pydantic's own error text embeds the offending value — echoing
     back whatever the model produced, including a secret it put in the wrong field — so
     the errors are sanitized here rather than passed through.
     """
@@ -68,6 +102,22 @@ def _validated_args(entry: OperationCatalogEntry, raw: JsonDict) -> Any:
 
     if descriptor is None or descriptor.input_type is None:
         return None
+
+    # Pydantic ignores a key it does not know, which is the worst available answer for an
+    # agent: the model believes it passed a filter, the operation runs without one, and
+    # the answer comes back confidently wrong with nothing recording that anything was
+    # dropped. Naming the unknown keys is what lets the next turn correct them — and it
+    # is what the MCP surface already does for the same operation, where the synthesized
+    # signature rejects an unexpected keyword.
+    accepted = _accepted_names(descriptor.input_type)
+    unknown = sorted(set(raw) - accepted) if accepted is not None else []
+
+    if unknown:
+        raise exc.validation(
+            f"Unknown tool argument(s): {', '.join(repr(name) for name in unknown)}",
+            code="agent_tools_unknown_arguments",
+            details={"unknown": unknown},
+        )
 
     try:
         return descriptor.input_type.model_validate(dict(raw))

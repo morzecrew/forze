@@ -65,6 +65,11 @@ denial, a precondition that is not met — carrying the error code and the
 sanitized field errors rather than anything from inside your process. Feed it
 back and the agent takes another turn.
 
+An argument the operation has never heard of is one of those failures. A model
+that invents `filter=…` on a tool without such a field is told so by name,
+rather than having the key quietly dropped and being handed an unfiltered answer
+it will report as filtered.
+
 ## Two failures, kept apart
 
 A **governed** failure belongs to the conversation. Bad arguments, a denied
@@ -77,6 +82,13 @@ language model can fix by rephrasing, so it propagates out of
 `dispatch_tool_use` to your loop, where the application decides whether the turn
 is retried. This is the same split `run_operation` already draws between a
 declared domain outcome and a bug.
+
+The line is the per-kind egress policy the rest of the framework uses, not a
+judgement the bridge makes, and two cases are worth knowing. A **throttle**
+reaches the agent — backing off or narrowing a request is exactly what a model
+can do about it. An **exhausted deadline** does not: the call ran out of its
+budget, so retrying it inside the same turn is the one thing that cannot help,
+and it propagates instead.
 
 ## What the bridge is not
 

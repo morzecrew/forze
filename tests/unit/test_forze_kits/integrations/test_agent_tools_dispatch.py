@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import attrs
 import pytest
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzDecision, AuthzSpec
@@ -74,6 +74,18 @@ class _Internal(Handler[Any, None]):
 
 
 @attrs.define(slots=True)
+class _Slow(Handler[Any, None]):
+    async def __call__(self, args: Any) -> None:
+        raise exc.timeout("Deadline exceeded", code="deadline_exceeded")
+
+
+@attrs.define(slots=True)
+class _Throttled(Handler[Any, None]):
+    async def __call__(self, args: Any) -> None:
+        raise exc.throttled("Slow down", code="rate_limited")
+
+
+@attrs.define(slots=True)
 class _Mapping(Handler[Any, Any]):
     async def __call__(self, args: Any) -> Any:
         return {"n": 1}
@@ -111,6 +123,8 @@ def _registry() -> FrozenOperationRegistry:
             "calc.broken": lambda _c: _Broken(),
             "calc.refuses": lambda _c: _Refuses(),
             "calc.internal": lambda _c: _Internal(),
+            "calc.slow": lambda _c: _Slow(),
+            "calc.throttled": lambda _c: _Throttled(),
             "calc.mapping": lambda _c: _Mapping(),
             "calc.text": lambda _c: _Text(),
             "calc.opaque": lambda _c: _Opaque(),
@@ -132,6 +146,8 @@ def _registry() -> FrozenOperationRegistry:
         "calc.broken",
         "calc.refuses",
         "calc.internal",
+        "calc.slow",
+        "calc.throttled",
         "calc.mapping",
         "calc.text",
         "calc.opaque",
@@ -378,3 +394,180 @@ class TestAnUndescribedResult:
             result = await dispatch_tool_use(_use("calc.text"), ctx=ctx, tools=tools)
 
         assert result.content == "plain text"
+
+
+# ....................... #
+
+
+class TestWhereTheLineFalls:
+    """Which governed failures the agent is told about, and which end the turn.
+
+    The bridge does not classify: it follows the per-kind egress policy every other
+    surface uses. That makes the split worth pinning rather than explaining, because it
+    is not something a reader would predict — and it is the framework's own posture that
+    an agent should not retry a call that ran out of budget.
+    """
+
+    async def test_a_throttle_reaches_the_agent(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.throttled"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(_use("calc.throttled"), ctx=ctx, tools=tools)
+
+        assert result.is_error is True
+        assert isinstance(result.content, dict)
+        assert result.content["code"] == "rate_limited"
+
+    async def test_an_exhausted_deadline_ends_the_turn(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.slow"])
+
+        with _bound(ctx), pytest.raises(CoreException) as caught:
+            await dispatch_tool_use(_use("calc.slow"), ctx=ctx, tools=tools)
+
+        assert caught.value.kind is ExceptionKind.TIMEOUT
+
+
+# ....................... #
+
+
+class TestAHallucinatedArgument:
+    """A model inventing an argument must be told, not quietly obeyed.
+
+    Pydantic's default is to ignore an unknown key, which is the worst possible answer
+    here: the agent believes it filtered something, the operation ran unfiltered, and the
+    model reports a confidently wrong result with nothing anywhere saying otherwise. The
+    MCP surface rejects the same call, so this is also where the two surfaces would
+    quietly stop agreeing.
+    """
+
+    async def test_an_unknown_argument_is_refused(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.double", n=21, hallucinated_filter={"x": 1}),
+                ctx=ctx,
+                tools=tools,
+            )
+
+        assert result.is_error is True
+        assert isinstance(result.content, dict)
+        assert result.content["code"] == "agent_tools_unknown_arguments"
+
+    async def test_the_operation_never_ran(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with _bound(ctx):
+            await dispatch_tool_use(
+                _use("calc.double", n=21, hallucinated_filter={"x": 1}),
+                ctx=ctx,
+                tools=tools,
+            )
+
+        assert _CALLS == []
+
+    async def test_the_refusal_names_the_argument_it_did_not_recognise(self) -> None:
+        # The agent can only correct what it is told about.
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.double", n=21, hallucinated_filter={"x": 1}),
+                ctx=ctx,
+                tools=tools,
+            )
+
+        assert "hallucinated_filter" in str(result.content)
+
+    async def test_a_declared_field_is_still_accepted(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.double", n=21, label="y"), ctx=ctx, tools=tools
+            )
+
+        assert result.is_error is False
+        assert _CALLS == [21]
+
+
+# ....................... #
+
+
+class _AliasIn(BaseModel):
+    n: int = Field(alias="count")
+
+
+class _ChoicesIn(BaseModel):
+    n: int = Field(validation_alias=AliasChoices("n", "count", "howMany"))
+
+
+@attrs.define(slots=True)
+class _Aliased(Handler[Any, _Out]):
+    async def __call__(self, args: Any) -> _Out:
+        _CALLS.append(args.n)
+        return _Out(doubled=args.n * 2)
+
+
+def _aliased_registry(input_type: type[BaseModel]) -> FrozenOperationRegistry:
+    reg = OperationRegistry(handlers={"calc.aliased": lambda _c: _Aliased()})
+    reg = reg.set_descriptor(
+        "calc.aliased",
+        OperationDescriptor(input_type=input_type, output_type=_Out, description="aliased"),
+    )
+
+    return reg.bind("calc.aliased").as_query().finish().freeze()
+
+
+class TestAnAliasedInputDto:
+    """The unknown-argument refusal must not refuse a name the DTO does accept.
+
+    This is the failure mode the refusal itself introduces, so it is the one that needs
+    pinning: an app whose input DTO renames a field inbound would otherwise find every
+    such tool call rejected.
+    """
+
+    async def test_a_plain_alias_is_accepted(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_aliased_registry(_AliasIn), include=["calc.aliased"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(_use("calc.aliased", count=21), ctx=ctx, tools=tools)
+
+        assert result.is_error is False, result.content
+        assert _CALLS == [21]
+
+    async def test_an_unknown_name_is_still_refused(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_aliased_registry(_AliasIn), include=["calc.aliased"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.aliased", count=21, invented=1), ctx=ctx, tools=tools
+            )
+
+        assert result.is_error is True
+        assert "invented" in str(result.content)
+
+    async def test_alias_choices_step_aside_rather_than_refuse(self) -> None:
+        # AliasChoices has no flat set of names, so the check declines to run and
+        # pydantic decides — a legitimate spelling gets through either way.
+        ctx = _ctx()
+        tools = operation_tools(_aliased_registry(_ChoicesIn), include=["calc.aliased"])
+
+        for spelling in ("n", "count", "howMany"):
+            _CALLS.clear()
+
+            with _bound(ctx):
+                result = await dispatch_tool_use(
+                    _use("calc.aliased", **{spelling: 21}), ctx=ctx, tools=tools
+                )
+
+            assert result.is_error is False, (spelling, result.content)
+            assert _CALLS == [21]
