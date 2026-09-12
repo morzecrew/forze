@@ -221,7 +221,7 @@ class TestCallShapes:
         result = check_call_shapes(_blocks(tmp_path))
 
         assert result.ok
-        assert result.summary == "1/1 call(s) match their signature"
+        assert result.summary == "1/1 call(s) match their signature (0 not on an imported symbol)"
 
     def test_an_elided_call_states_no_shape_and_is_skipped(self, tmp_path: Path) -> None:
         """`f(..., x=1)` parses but declares nothing to bind — guessing would invent a failure."""
@@ -233,7 +233,7 @@ class TestCallShapes:
         result = check_call_shapes(_blocks(tmp_path))
 
         assert result.ok
-        assert result.summary == "0/0 call(s) match their signature"
+        assert result.summary.startswith("0/0 call(s) match their signature")
 
     def test_a_spread_call_is_skipped(self, tmp_path: Path) -> None:
         _page(
@@ -241,7 +241,60 @@ class TestCallShapes:
             _fence("from forze_identity import spec_contributions\nspec_contributions(**options)"),
         )
 
-        assert check_call_shapes(_blocks(tmp_path)).summary == ("0/0 call(s) match their signature")
+        assert check_call_shapes(_blocks(tmp_path)).summary.startswith(
+            "0/0 call(s) match their signature"
+        )
+
+    def test_a_classmethod_on_an_imported_class_is_checked(self, tmp_path: Path) -> None:
+        """`DepsRegistry.from_modules(...)` is a third of what the docs actually call.
+
+        The first cut only resolved bare names, which left every classmethod and every
+        imported namespace object unchecked — measured at 41% of the calls in the corpus.
+        """
+
+        _page(
+            tmp_path,
+            _fence(
+                "from forze.application.execution import DepsRegistry\n"
+                "registry = DepsRegistry.from_modules(module, nonsense=1)"
+            ),
+        )
+        result = check_call_shapes(_blocks(tmp_path))
+
+        assert not result.ok
+        assert "does not match DepsRegistry.from_modules" in result.violations[0]
+
+    def test_a_method_on_an_imported_namespace_object_is_checked(self, tmp_path: Path) -> None:
+        """`exc` is an object, not a callable, and `exc.domain(...)` is still resolvable."""
+
+        _page(
+            tmp_path,
+            _fence("from forze.base.exceptions import exc\nraise exc.domain(bad_kwarg=1)"),
+        )
+        result = check_call_shapes(_blocks(tmp_path))
+
+        assert not result.ok
+        assert "exc.domain" in result.violations[0]
+
+    def test_a_call_on_a_local_instance_is_skipped_and_counted(self, tmp_path: Path) -> None:
+        """`runtime.scope()` needs to know what `runtime` was assigned — inference, not resolution.
+
+        Counted in the summary rather than dropped silently, so the denominator cannot be
+        read as "every call in the docs".
+        """
+
+        _page(
+            tmp_path,
+            _fence(
+                "from forze.application.execution import build_runtime\n"
+                "runtime = build_runtime(deps=deps)\n"
+                "async with runtime.scope():\n    pass"
+            ),
+        )
+        result = check_call_shapes(_blocks(tmp_path))
+
+        assert result.ok
+        assert "1/1 call(s) match their signature (1 not on an imported symbol)" in result.summary
 
     def test_a_call_to_something_the_block_did_not_import_is_not_checked(
         self, tmp_path: Path
@@ -258,6 +311,28 @@ class TestCallShapes:
 
 # ----------------------- #
 # The loader and the entrypoint
+
+
+class TestResolutionFailuresDoNotCrashTheBar:
+    def test_a_broken_forze_import_leaves_the_call_bar_quiet(self, tmp_path: Path) -> None:
+        """The import bar owns that finding; reporting it twice would double-count it.
+
+        What matters here is that an unimportable module does not take the call bar down
+        with it — the block still has other calls worth checking.
+        """
+
+        _page(
+            tmp_path,
+            _fence(
+                "from forze_identity.gone import thing\n"
+                "from forze_identity import spec_contributions\n"
+                "thing()\n"
+                "specs = spec_contributions(planes=['authn'])"
+            ),
+        )
+
+        assert check_call_shapes(_blocks(tmp_path)).ok
+        assert not check_imports(_blocks(tmp_path)).ok
 
 
 class TestLoader:

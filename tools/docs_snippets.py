@@ -188,26 +188,35 @@ def check_call_shapes(blocks: tuple[CodeBlock, ...]) -> Result:
     Arity and keyword names only — the values a snippet passes are prose. A call whose
     arguments are spread (``*args`` / ``**kwargs``) or elided (``...``) states no shape to
     check and is skipped rather than guessed at.
+
+    Two callee shapes resolve: a bare imported name (``spec_contributions(...)``) and one
+    attribute deep on an imported name (``DepsRegistry.from_modules(...)``, ``exc.domain(...)``)
+    — classmethods and module attributes, which are a third of the calls the docs make on
+    imported symbols. What stays out of reach is a call on a local instance
+    (``runtime.scope()``), because resolving it means inferring what ``runtime`` was
+    assigned, and the summary reports how many calls were skipped for that reason so the
+    denominator cannot read as "every call".
     """
 
     result = Result(name="call shapes")
     checked = 0
+    skipped = 0
 
     for block in _checkable(blocks):
         tree = ast.parse(block.source)
         targets = _imported_callables(block.source)
 
-        if not targets:
-            continue
-
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            if not isinstance(node, ast.Call):
                 continue
 
-            target = targets.get(node.func.id)
+            resolved = _callee(node.func, targets)
 
-            if target is None:
+            if resolved is None:
+                skipped += 1
                 continue
+
+            callee, target = resolved
 
             source = ast.unparse(node)
 
@@ -237,12 +246,66 @@ def check_call_shapes(blocks: tuple[CodeBlock, ...]) -> Result:
             except TypeError as error:
                 result.violations.append(
                     f"{block.doc}:{block.line}: `{source.splitlines()[0][:60]}` does not "
-                    f"match {node.func.id}{signature} — {error}"
+                    f"match {callee}{_bare(signature)} — {error}"
                 )
 
-    result.summary = f"{checked - len(result.violations)}/{checked} call(s) match their signature"
+    result.summary = (
+        f"{checked - len(result.violations)}/{checked} call(s) match their signature "
+        f"({skipped} not on an imported symbol)"
+    )
 
     return result
+
+
+# ....................... #
+
+
+def _callee(func: ast.expr, targets: dict[str, object]) -> tuple[str, object] | None:
+    """How a call names its callee and the live callable behind it, or ``None``.
+
+    A bare name the block imported, or one attribute on such a name — the second is how a
+    classmethod (``DepsRegistry.from_modules``) and an imported object's method
+    (``exc.domain``) appear. Anything deeper is a local whose type only inference would
+    know.
+
+    The name is returned with the target rather than recovered from the node later: a
+    second dispatch over the same shapes would carry a branch for callees this one has
+    already refused, and an unreachable branch is a branch nobody can test.
+    """
+
+    if isinstance(func, ast.Name):
+        name, target = func.id, targets.get(func.id)
+
+    elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        owner = targets.get(func.value.id)
+        name = f"{func.value.id}.{func.attr}"
+        target = getattr(owner, func.attr, None) if owner is not None else None
+
+    else:
+        return None
+
+    return (name, target) if callable(target) else None
+
+
+# ....................... #
+
+
+def _bare(signature: inspect.Signature) -> str:
+    """*signature* without annotations or a return type.
+
+    A fully-qualified annotation set runs to several hundred characters and buries the part
+    a reader acts on — which parameters exist, and which one the call is missing.
+    """
+
+    return str(
+        signature.replace(
+            parameters=[
+                parameter.replace(annotation=inspect.Parameter.empty)
+                for parameter in signature.parameters.values()
+            ],
+            return_annotation=inspect.Signature.empty,
+        )
+    )
 
 
 # ....................... #
@@ -295,7 +358,12 @@ def _forze_imports(source: str) -> list[tuple[str, str]]:
 
 
 def _imported_callables(source: str) -> dict[str, object]:
-    """Local name → live object, for the ``forze*`` names this block imported."""
+    """Local name → live object, for the ``forze*`` names this block imported.
+
+    Every imported object, not only the callable ones: a name that is not itself callable
+    can still own the callable a snippet reaches for — ``exc`` is the namespace object
+    behind ``exc.domain(...)``. :func:`_callee` decides what is callable.
+    """
 
     found: dict[str, object] = {}
 
@@ -315,7 +383,7 @@ def _imported_callables(source: str) -> dict[str, object]:
         for alias in node.names:
             target = getattr(imported, alias.name, None)
 
-            if callable(target):
+            if target is not None:
                 found[alias.asname or alias.name] = target
 
     return found
