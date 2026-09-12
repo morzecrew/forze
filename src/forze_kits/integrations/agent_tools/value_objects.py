@@ -101,7 +101,9 @@ class OperationToolset:
     defs: tuple[ToolDef, ...] = attrs.field(factory=tuple)
     """The defs to hand the agent's SDK, in the order the allowlist named them."""
 
-    bindings: Mapping[str, OperationCatalogEntry] = attrs.field(factory=dict)
+    bindings: Mapping[str, OperationCatalogEntry] = attrs.field(
+        factory=dict[str, OperationCatalogEntry],
+    )
     """Tool name → the catalog entry it dispatches to. Keyed by the *name* the agent sends,
     which is ``str(entry.op)`` — the same projection the MCP surface exposes."""
 
