@@ -237,10 +237,7 @@ def spec_contributions(*, planes: Sequence[IdentityPlane] | None = None) -> Spec
                 "Identity plane selection is empty; pass planes or omit them",
             )
 
-        # Deduplicated, and in declaration order rather than the caller's — the registry is
-        # a set of entries, and a stable order keeps a fingerprint from depending on how
-        # the selection was spelled.
-        selected = tuple(plane for plane in _PLANE_SPECS if plane in set(planes))
+        selected = tuple(planes)
 
     return SpecRegistry().register(
         *(spec for plane in selected for spec in _PLANE_SPECS[plane]),

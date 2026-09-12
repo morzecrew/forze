@@ -241,9 +241,15 @@ class TestSpecContributionPlanes:
 
         assert {entry.name for entry in entries} == _names(AUTHN_SPECS) | _names(TENANCY_SPECS)
 
-    def test_a_repeated_plane_is_not_registered_twice(self) -> None:
-        """Registering one spec twice is refused outright by the registry's metadata check,
-        so a duplicated selection must deduplicate before it gets there."""
+    def test_a_repeated_plane_is_harmless(self) -> None:
+        """A duplicated selection yields one entry per spec.
+
+        The registry is what makes this true — re-registering a spec with identical
+        metadata is idempotent, and `source` alone never conflicts — so the helper does no
+        deduplicating of its own. Pinned because a caller composing a selection from two
+        lists will produce duplicates, and a reader should not have to derive that it is
+        safe.
+        """
 
         entries = spec_contributions(planes=["authn", "authn"]).freeze().entries
 
@@ -251,12 +257,18 @@ class TestSpecContributionPlanes:
         assert len(entries) == len(AUTHN_SPECS)
 
     def test_the_order_of_the_selection_does_not_change_the_result(self) -> None:
-        """The registry is a set of entries; a fingerprint must not depend on spelling."""
+        """How the selection was spelled must not reach the fingerprint.
+
+        Guaranteed by `freeze()` sorting entries, not by this helper — pinned here anyway,
+        because the helper is where a caller's spelling enters and a `freeze()` that
+        preserved insertion order would make two equivalent selections fingerprint apart.
+        """
 
         forward = spec_contributions(planes=["authn", "tenancy"]).freeze()
         backward = spec_contributions(planes=["tenancy", "authn"]).freeze()
 
         assert [e.name for e in forward.entries] == [e.name for e in backward.entries]
+        assert forward.fingerprint() == backward.fingerprint()
 
     def test_an_empty_selection_is_refused(self) -> None:
         """Not read as "nothing": an emptied constant or a bad comprehension fails here."""
