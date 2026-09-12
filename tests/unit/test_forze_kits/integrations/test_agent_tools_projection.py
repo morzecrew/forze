@@ -141,12 +141,16 @@ class TestTheAllowlistIsMandatory:
 
         assert tools.names == ("calc.double",)
 
-    def test_the_palette_keeps_the_allowlists_order(self) -> None:
-        tools = operation_tools(
-            _registry(), include=["calc.void", "calc.double"], read_only=True
-        )
+    @pytest.mark.parametrize(
+        "include",
+        [("calc.void", "calc.double"), ("calc.double", "calc.void")],
+    )
+    def test_the_palette_keeps_the_allowlists_order(self, include: tuple[str, ...]) -> None:
+        # Both directions, because either one alone coincides with a sorted order: an
+        # implementation that sorted the selection would satisfy a single case by luck.
+        tools = operation_tools(_registry(), include=list(include), read_only=True)
 
-        assert tools.names == ("calc.void", "calc.double")
+        assert tools.names == include
 
 
 # ....................... #
@@ -163,6 +167,4 @@ class TestSensitiveOperations:
 
     def test_the_refusal_does_not_depend_on_its_position(self) -> None:
         with pytest.raises(CoreException):
-            operation_tools(
-                _registry(sensitive=True), include=["calc.void", "calc.double"]
-            )
+            operation_tools(_registry(sensitive=True), include=["calc.void", "calc.double"])

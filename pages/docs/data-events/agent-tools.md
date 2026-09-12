@@ -93,9 +93,10 @@ nothing is looked up per turn. Wire it once at startup: a stable set of tool
 names is what makes an agent run resumable and auditable.
 
 **Not a prompt or description layer.** A tool's description is the one its
-operation's descriptor already carries — the same text the HTTP and MCP surfaces
-show. Tuning what the model reads means editing the operation's catalog entry,
-where the rest of its contract already lives.
+operation's descriptor already carries — the same description the HTTP and MCP
+surfaces start from, though each adds its own notes around it. Tuning what the
+model reads means editing the operation's catalog entry, where the rest of its
+contract already lives.
 
 ## Sensitive operations are refused, not skipped
 
