@@ -90,6 +90,8 @@ from forze_mock.tenancy import MockTenancyMixin, partition_namespace
 
 from ._document_command import MockDocumentCommandMixin
 
+# ----------------------- #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -124,7 +126,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     derived_marked: frozenset[str] = attrs.field(factory=frozenset)
     """Derived fields declared with no join: their value comes from the stored row."""
 
-    derived: Mapping[str, ResolvedDerivedRead] = attrs.field(factory=dict)
+    derived: Mapping[str, ResolvedDerivedRead] = attrs.field(factory=dict[str, ResolvedDerivedRead])
     """Derived read fields with their sources located at wiring time.
 
     Empty for every spec that declares none, which is the overwhelming majority —

@@ -172,7 +172,7 @@ class LifecyclePlan:
 class FrozenLifecyclePlan:
     """Frozen lifecycle plan with validated topological waves."""
 
-    graph: ExecutionGraph[LifecycleStep] = attrs.field(factory=ExecutionGraph)
+    graph: ExecutionGraph[LifecycleStep] = attrs.field(factory=ExecutionGraph[LifecycleStep])
     """Lifecycle steps in topological waves."""
 
     concurrent: bool = False

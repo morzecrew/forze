@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, Sequence
 from typing import Any, Generic, cast
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.base import CursorPage, page_from_limit_offset
 from forze.application.contracts.document import DocumentReadGatewayPort
@@ -23,7 +24,7 @@ from forze.domain.constants import ID_FIELD
 
 from ..persistence import document_cursor_binding
 from ._limits import assert_cursor_advanced, check_page_limit
-from ._types import R, T
+from ._types import R
 
 # ----------------------- #
 
@@ -211,7 +212,7 @@ class DocumentPaginationMixin(Generic[R]):
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         cursor: CursorPaginationExpression | None,
         sorts: QuerySortExpression | None,
-    ) -> CursorPage[R] | CursorPage[JsonDict] | CursorPage[T]:
+    ) -> CursorPage[R] | CursorPage[JsonDict] | CursorPage[BaseModel]:
         if query.return_model is not None and query.return_fields is not None:
             raise exc.precondition("return_model and return_fields cannot be combined")
 
@@ -248,7 +249,7 @@ class DocumentPaginationMixin(Generic[R]):
             return_fields=query.return_fields,  # type: ignore[typeddict, arg-type, misc]
         )
 
-        def _dump(o: R | JsonDict | T) -> JsonDict:
+        def _dump(o: R | JsonDict | BaseModel) -> JsonDict:
             if isinstance(o, dict):
                 return o
 
@@ -268,7 +269,7 @@ class DocumentPaginationMixin(Generic[R]):
 
         if query.return_model is not None:
             return CursorPage(
-                hits=cast(list[T], list(page_raw)),
+                hits=cast(list[BaseModel], list(page_raw)),
                 next_cursor=next_tok,
                 prev_cursor=prev_tok,
                 has_more=has_more,
@@ -296,10 +297,10 @@ class DocumentPaginationMixin(Generic[R]):
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         sorts: QuerySortExpression | None,
         chunk_size: int,
-    ) -> AsyncGenerator[Sequence[R] | Sequence[JsonDict] | Sequence[T]]:
+    ) -> AsyncGenerator[Sequence[R] | Sequence[JsonDict] | Sequence[BaseModel]]:
         eff = self._eff_stream_chunk_size(chunk_size)
         cursor: CursorPaginationExpression = {"limit": eff}
-        page: CursorPage[R] | CursorPage[JsonDict] | CursorPage[T]
+        page: CursorPage[R] | CursorPage[JsonDict] | CursorPage[BaseModel]
         page_num = 0
         prev_cursor: str | None = None
 

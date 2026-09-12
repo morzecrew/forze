@@ -100,7 +100,7 @@ def _mock_adapter(port: object, spec_name: str) -> MockDocumentAdapter[Any, Any,
             f"got {type(port).__name__}",
         )
 
-    return port
+    return port  # pyright: ignore[reportUnknownVariableType]
 
 
 # ....................... #
@@ -120,7 +120,7 @@ def _write_derived(ctx: ExecutionContext, seed: SpecSeed, pk: UUID) -> None:
     # read-modify-write, so holding it is what keeps a concurrent writer's row from being
     # overwritten by the value read before it landed.
     with port.state.lock:
-        store = port._store()
+        store = port._store()  # pyright: ignore[reportPrivateUsage]
         row = store.get(pk)
 
         if row is None:  # pragma: no cover — the port created it one statement ago

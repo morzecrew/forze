@@ -76,6 +76,15 @@ docs-check:
 
     uv run python .github/scripts/docs_floors.py
 
+# Docs snippets: every inline python block in `pages/docs` parses, every `forze*` symbol it
+# imports exists, and every call to one matches the live signature. Floors ask whether a
+# symbol is *mentioned*; this asks whether the code a reader copies is *current* — a wrong
+# snippet renders exactly like a right one. Offline; part of `just quality`.
+docs-snippets *args='':
+    {{ _uv_sync }}
+
+    uv run python -m tools.docs_snippets {{ args }}
+
 # Skills corpus integrity: every python example parses, every `forze*` symbol it imports
 # still exists, structure and index parity hold, and no link escapes the published tree.
 # The corpus ships into other people's repositories and is read by agents that write code
@@ -266,6 +275,7 @@ quality strict="false":
     just _uv_cmd "CI matrix" {{ strict }} pytest "tests/unit/test_ci_matrix_guard.py" -q
     just _uv_cmd "Gitmoji excerpt" {{ strict }} pytest "tests/unit/test_gitmoji_excerpt_guard.py" -q
     just _uv_cmd "Docs floors" {{ strict }} python .github/scripts/docs_floors.py
+    just _uv_cmd "Docs snippets" {{ strict }} python -m tools.docs_snippets
     just _uv_cmd "Skills corpus" {{ strict }} python -m tools.skills_check
     just _uv_cmd "Dead code" {{ strict }} vulture
     just _uv_cmd "Dependencies" {{ strict }} deptry .

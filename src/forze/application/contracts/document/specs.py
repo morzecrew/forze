@@ -130,7 +130,7 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     Empty by default."""
 
     derived_read_fields: Mapping[str, DerivedReadField] = attrs.field(
-        factory=dict,
+        factory=dict[str, DerivedReadField],
         converter=_normalize_derived,
     )
     """Read-model field names the **backend produces**, not this aggregate's writes.
