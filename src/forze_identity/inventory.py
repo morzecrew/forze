@@ -218,7 +218,9 @@ def spec_contributions(*, planes: Sequence[IdentityPlane] | None = None) -> Spec
     rows, and take a route name the *app* chooses. There is nothing to catalogue and
     nothing to export.
 
-    :param planes: The planes to catalogue; ``None`` for all three.
+    :param planes: The planes to catalogue; ``None`` for all three. A literal list checks
+        as it is written; a selection held in a variable wants
+        ``list[IdentityPlane]``, since ``list[str]`` is not a ``Sequence[IdentityPlane]``.
     :raises exc.configuration: on an empty selection, or an unknown plane name.
     """
 
