@@ -17,13 +17,14 @@ from forze.application.execution import (
     OperationDescriptor,
 )
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
 from forze.application.hooks.authn import AuthnRequired
 from forze.application.hooks.authz import AuthzBeforeAuthorize
-from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.exceptions import CoreException, ExceptionKind, error_envelope, exc
 from forze.testing import context_from_deps
 from forze_kits.integrations.agent_tools import (
     ToolUse,
@@ -571,3 +572,52 @@ class TestAnAliasedInputDto:
 
             assert result.is_error is False, (spelling, result.content)
             assert _CALLS == [21]
+
+
+# ....................... #
+
+
+class TestTheDenialIsTheOperationsOwn:
+    """Battery 2's parity half: the same operation is denied identically off this surface.
+
+    Proven against the layer every boundary shares rather than against one more transport.
+    `run_operation` is what an HTTP route, an MCP tool call and this bridge all call, and
+    the guard doing the refusing lives in the operation's plan — so if the two paths ever
+    disagreed, it would be because the bridge had grown enforcement of its own. The
+    assertion is that it has not: same kind, same code, same absence of execution.
+    """
+
+    async def test_the_bridge_and_a_direct_invocation_refuse_alike(self) -> None:
+        ctx = _ctx()
+        registry = _registry()
+        tools = operation_tools(registry, include=["calc.guarded"])
+
+        with patch.object(ctx.authz, "decision", return_value=_Deny()):
+            with _bound(ctx):
+                bridged = await dispatch_tool_use(_use("calc.guarded", n=1), ctx=ctx, tools=tools)
+
+            with _bound(ctx), pytest.raises(CoreException) as direct:
+                await run_operation(registry, "calc.guarded", _In(n=1), ctx)
+
+        assert isinstance(bridged.content, dict)
+        assert direct.value.kind is ExceptionKind.AUTHORIZATION
+        assert bridged.content["code"] == direct.value.code
+        assert bridged.content["detail"] == error_envelope(direct.value).detail
+        assert _CALLS == []
+
+    async def test_the_bridge_adds_no_enforcement_of_its_own(self) -> None:
+        # The structural half of the same claim: if the refusal were the bridge's, the
+        # operation would still refuse without it. Grant permission and it runs — so the
+        # decision is the plan's, not this module's.
+        ctx = _ctx()
+        registry = _registry()
+
+        class _Allow:
+            async def authorize(self, request: Any) -> AuthzDecision:
+                _ = request
+                return AuthzDecision(allowed=True, matched_permission_key="calc.read")
+
+        with patch.object(ctx.authz, "decision", return_value=_Allow()), _bound(ctx):
+            await run_operation(registry, "calc.guarded", _In(n=7), ctx)
+
+        assert _CALLS == [7]

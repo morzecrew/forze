@@ -114,6 +114,15 @@ class TestTheReadCommandSplit:
 
         assert tools.names == ("calc.write",)
 
+    def test_a_command_palette_still_takes_reads(self) -> None:
+        # An agent that must act needs both halves; opting into commands must not turn
+        # into a write-only palette.
+        tools = operation_tools(
+            _registry(), include=["calc.write", "calc.double"], read_only=False
+        )
+
+        assert tools.names == ("calc.write", "calc.double")
+
     def test_read_only_is_the_default(self) -> None:
         # The dangerous direction is never the one you get by omission.
         with pytest.raises(CoreException):
