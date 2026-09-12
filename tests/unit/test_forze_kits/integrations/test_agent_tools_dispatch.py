@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import attrs
 import pytest
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, ConfigDict, Field
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzDecision, AuthzSpec
@@ -666,3 +666,101 @@ class TestTheArgumentBoundaries:
         assert empty.is_error is False, empty.content
         assert named.is_error is True
         assert "anything" in str(named.content)
+
+
+# ....................... #
+
+
+class _ExtraAllowedIn(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    n: int
+
+
+class _PathIn(BaseModel):
+    n: int = Field(validation_alias=AliasPath("outer", "inner"))
+
+
+class TestEveryPathThroughTheAcceptedSet:
+    """The refusal must hold on every shape of input, and let through every shape of DTO.
+
+    One finding class with four doors: a DTO that opts into extension fields, a structured
+    alias, an operation with no input type at all, and the plain field list. A check that
+    only covers the last one refuses what it should accept and accepts what it should
+    refuse, in different places.
+    """
+
+    async def test_a_dto_that_allows_extras_keeps_them(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_aliased_registry(_ExtraAllowedIn), include=["calc.aliased"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.aliased", n=21, extension="kept"), ctx=ctx, tools=tools
+            )
+
+        assert result.is_error is False, result.content
+        assert _CALLS == [21]
+
+    async def test_alias_choices_still_refuse_an_invented_name(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_aliased_registry(_ChoicesIn), include=["calc.aliased"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.aliased", count=21, invented=1), ctx=ctx, tools=tools
+            )
+
+        assert result.is_error is True
+        assert "invented" in str(result.content)
+        assert _CALLS == []
+
+    async def test_an_alias_path_accepts_its_outer_key(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_aliased_registry(_PathIn), include=["calc.aliased"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.aliased", outer={"inner": 21}), ctx=ctx, tools=tools
+            )
+
+        assert result.is_error is False, result.content
+        assert _CALLS == [21]
+
+    async def test_an_alias_path_still_refuses_an_invented_name(self) -> None:
+        # Reading the path's head is what lets the check run at all here: without it the
+        # accepted set is unknowable, the check steps aside, and pydantic drops the
+        # invented key silently — valid, but weaker than it needs to be.
+        ctx = _ctx()
+        tools = operation_tools(_aliased_registry(_PathIn), include=["calc.aliased"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(
+                _use("calc.aliased", outer={"inner": 21}, invented=1), ctx=ctx, tools=tools
+            )
+
+        assert result.is_error is True
+        assert "invented" in str(result.content)
+        assert _CALLS == []
+
+    async def test_an_input_less_operation_refuses_supplied_arguments(self) -> None:
+        # Otherwise a model invents options, the operation runs anyway, and the arguments
+        # are discarded with nothing saying so — the same silence, one branch earlier.
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.void"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(_use("calc.void", invented=1), ctx=ctx, tools=tools)
+
+        assert result.is_error is True
+        assert "invented" in str(result.content)
+
+    async def test_an_input_less_operation_still_runs_with_no_arguments(self) -> None:
+        ctx = _ctx()
+        tools = operation_tools(_registry(), include=["calc.void"])
+
+        with _bound(ctx):
+            result = await dispatch_tool_use(_use("calc.void"), ctx=ctx, tools=tools)
+
+        assert result.is_error is False
+        assert result.content == {}

@@ -117,9 +117,7 @@ class TestTheReadCommandSplit:
     def test_a_command_palette_still_takes_reads(self) -> None:
         # An agent that must act needs both halves; opting into commands must not turn
         # into a write-only palette.
-        tools = operation_tools(
-            _registry(), include=["calc.write", "calc.double"], read_only=False
-        )
+        tools = operation_tools(_registry(), include=["calc.write", "calc.double"], read_only=False)
 
         assert tools.names == ("calc.write", "calc.double")
 
@@ -177,3 +175,27 @@ class TestSensitiveOperations:
     def test_the_refusal_does_not_depend_on_its_position(self) -> None:
         with pytest.raises(CoreException):
             operation_tools(_registry(sensitive=True), include=["calc.void", "calc.double"])
+
+
+# ....................... #
+
+
+class TestThePaletteIsNotEditableAfterProjection:
+    def test_the_bindings_cannot_be_written_through(self) -> None:
+        # The class docstring calls a toolset a reviewed capability grant; a grant whose
+        # entries can be added after review is not one. Nothing here claims to stop
+        # in-process code that could call run_operation directly — it keeps the value
+        # object's own promise, and stops an aliased dict being edited by accident.
+        tools = operation_tools(_registry(), include=["calc.double"])
+
+        with pytest.raises(TypeError):
+            tools.bindings["calc.write"] = object()  # type: ignore[index]
+
+    def test_mutating_the_callers_mapping_does_not_change_the_palette(self) -> None:
+        registry = _registry()
+        allowlist = ["calc.double"]
+        tools = operation_tools(registry, include=allowlist)
+
+        allowlist.append("calc.write")
+
+        assert tools.names == ("calc.double",)

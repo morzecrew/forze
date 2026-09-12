@@ -15,6 +15,7 @@ unreachable through this path even when it exists in the catalog.
 """
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import final
 
 import attrs
@@ -26,6 +27,17 @@ from forze.application.execution.operations import (
 from forze.base.primitives import JsonDict
 
 # ----------------------- #
+
+
+def _read_only(
+    given: Mapping[str, OperationCatalogEntry],
+) -> Mapping[str, OperationCatalogEntry]:
+    """Copy a mapping into a read-only view of its own."""
+
+    return MappingProxyType(dict(given))
+
+
+# ....................... #
 
 
 @final
@@ -103,9 +115,16 @@ class OperationToolset:
 
     bindings: Mapping[str, OperationCatalogEntry] = attrs.field(
         factory=dict[str, OperationCatalogEntry],
+        converter=_read_only,
     )
     """Tool name → the catalog entry it dispatches to. Keyed by the *name* the agent sends,
-    which is ``str(entry.op)`` — the same projection the MCP surface exposes."""
+    which is ``str(entry.op)`` — the same projection the MCP surface exposes.
+
+    Copied into a read-only view at construction, so the palette a reviewer approved is the
+    palette that dispatches: the mapping cannot be written through afterwards, and it does
+    not alias a dict the caller still holds. This is the value object keeping its own
+    promise, not an authorization boundary — in-process code that could edit it could call
+    ``run_operation`` directly."""
 
     # ....................... #
 

@@ -68,7 +68,10 @@ back and the agent takes another turn.
 An argument the operation has never heard of is one of those failures. A model
 that invents `filter=…` on a tool without such a field is told so by name,
 rather than having the key quietly dropped and being handed an unfiltered answer
-it will report as filtered.
+it will report as filtered. That holds for an operation that takes no input at
+all, and for a DTO that renames fields inbound. The one exception is a DTO
+configured `extra="allow"`, which takes extension fields on purpose — there the
+check steps aside and the DTO decides.
 
 ## Two failures, kept apart
 
