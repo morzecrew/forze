@@ -159,10 +159,12 @@ forze_identity.spec_contributions(planes=["authn"])
 ```
 
 Narrow only for a plane you genuinely do not wire — the check is worth keeping strict, and
-it still fires from the bound side if you narrow too far. One caveat that is easy to miss:
-the default principal-eligibility gate in authn reads the authz policy-principal document,
-so `["authn"]` alone is right when that gate is off (`eligibility="allow_all"`, the usual
-choice with no authz plane) and needs `"authz"` beside it when it is on.
+it still fires from the bound side if you narrow too far. One caveat that is easy to miss,
+and it is the *default*: authn's principal-eligibility gate reads the authz
+policy-principal document unless you opt out, so `planes=["authn"]` belongs with
+`eligibility="allow_all"` on the authn module — the declared opt-out for a deployment with
+no authz plane. Leave the gate on its default and authn binds an authz document, which the
+inventory check will tell you about.
 
 Identity settles *who* the caller is; scoping *which data* they may reach is
 [Multi-tenancy](multi-tenancy.md).

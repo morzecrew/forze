@@ -200,11 +200,14 @@ def spec_contributions(*, planes: Sequence[IdentityPlane] | None = None) -> Spec
     reach across into authz (its principal-eligibility check reads
     ``authz_policy_principals``), and a per-subpackage helper would leak that coupling onto
     the app at the one call site that needs to know about it. A selection keeps the
-    coupling documented here. It is not checked here either — this function never sees the
-    ``AuthnSpec`` and so cannot know whether the eligibility check is on — so an
-    application that narrows to ``["authn"]`` with that check live binds
-    ``authz_policy_principals`` without cataloguing it, and reconciliation says so from the
-    bound side.
+    coupling documented here.
+
+    It is not *enforced* here: this function never sees the ``AuthnSpec`` and so cannot
+    know whether that check is on. And it is on unless the application opted out —
+    ``eligibility="policy_principal"`` is the authn module's default — so
+    ``planes=["authn"]`` belongs with ``eligibility="allow_all"``, and narrowing past a
+    live gate binds ``authz_policy_principals`` without cataloguing it. Reconciliation says
+    so from the bound side, at resolve time for a routeless provider.
 
     An empty selection is refused rather than read as "nothing", exactly as
     :func:`identity_document_names` refuses one: an emptied constant or a bad

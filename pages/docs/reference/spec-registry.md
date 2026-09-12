@@ -84,10 +84,9 @@ specs = SpecRegistry().register(order_spec).merge(
 Narrow only for a plane the application genuinely does not wire. A selection is not a way
 to quiet a reconciliation error — the check still fires from the bound side, and a
 bound-but-uncatalogued failure names a narrowed helper as a possible cause for exactly this
-reason. One plane can still reach into another: an authn plane running the default
-principal-eligibility gate reads the authz policy-principal document, so `["authn"]` is
-sound when that gate is off (`eligibility="allow_all"`) and needs `"authz"` beside it when
-it is on.
+reason. One plane can still reach into another: authn's principal-eligibility gate reads the authz
+policy-principal document **by default**, so `["authn"]` pairs with
+`eligibility="allow_all"` on the authn module and otherwise needs `"authz"` beside it.
 
 ## The route guard
 
