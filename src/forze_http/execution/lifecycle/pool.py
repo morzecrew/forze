@@ -28,7 +28,7 @@ class HttpStartupHook(LifecycleHook):
     default_headers: dict[str, str] = attrs.field(factory=dict)
     auth_token: SecretStr | None = attrs.field(
         default=None,
-        converter=pydantic_secret_converter,
+        converter=attrs.converters.optional(pydantic_secret_converter),
         repr=False,
     )
 
