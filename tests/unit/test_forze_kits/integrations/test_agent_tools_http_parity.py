@@ -255,6 +255,28 @@ class TestBothTransportsRefuseForTheSameReason:
 # ....................... #
 
 
+class TestBothSurfacesDriveTheSameOperation:
+    def test_the_post_route_dispatches_the_operation_the_bridge_dispatches(self) -> None:
+        # The claim is that the *identical* operation is denied on both surfaces. Without
+        # this, the comparison would still pass if the route mapped POST to something else
+        # entirely: two different operations, both denied, nothing learned. The attacher
+        # publishes the operation key as the operationId, so the mapping is checkable.
+        ctx = _context(MockState())
+        app = _app(ctx)
+
+        post_ids = {
+            path: methods["post"]["operationId"]
+            for path, methods in app.openapi()["paths"].items()
+            if "post" in methods
+        }
+
+        assert post_ids["/notes"] == _CREATE_OP
+        assert post_ids["/notes/list"] == _LIST_OP
+
+
+# ....................... #
+
+
 class TestTheGuardIsVisibleToBothSurfaces:
     def test_the_catalog_declares_the_permission_the_guard_enforces(self) -> None:
         # The projection both transports read from: HTTP puts it in OpenAPI, the bridge
