@@ -6458,7 +6458,34 @@ resolved via <code>ctx.http.service(spec)</code>.</p>
 <li>A service is either static (<code>base_url</code>) or per-tenant — <code>tenant_aware=True</code>
   forbids a static <code>base_url</code> (it comes from secrets) and requires
   <code>secret_ref_for_tenant</code>.</li>
-<li><code>HttpAuthConfig</code> covers <code>bearer</code>, <code>api_key</code>, and custom-<code>header</code> auth.</li>
+<li><code>HttpAuthConfig</code> covers <code>bearer</code>, <code>api_key</code>, custom-<code>header</code>, and <code>basic</code> auth. The
+  <code>basic</code> kind takes <code>username</code> and <code>password</code> and sends the RFC 7617 header; declare one
+  half without the other and wiring is refused, because sending no header at all would
+  surface at the counterparty as a rejected request rather than here as the mistake it is.
+  The other kinds keep their existing behaviour — an absent token means no auth.</li>
+<li><strong>A request body is JSON unless an operation says otherwise.</strong>
+  <code>async_http_op(..., body_encoding="form")</code> sends
+  <code>application/x-www-form-urlencoded</code>, which is what an OAuth token endpoint requires.
+  It is per operation on purpose: one provider mixes a form-encoded token endpoint with a
+  JSON API behind one base URL and one credential. A form body carries scalars only —
+  a nested object, a list, or a non-finite number is refused by field name rather than
+  stringified into something no server parses; <code>None</code> is omitted and booleans are sent
+  lowercase.</li>
+<li><strong>An operation can declare what its errors look like.</strong>
+  <code>async_http_op(..., error_type=ProviderError)</code> validates the body of a rejected
+  response against that model and attaches it to the raised exception's <code>details</code> under
+  <code>response_error</code>, so a caller can read the provider's own code — <code>invalid_grant</code>, say —
+  and decide whether the failure is worth retrying. Only fields the model declares travel,
+  on the same scrubbed channel as every other error context, and a body that does not
+  match the model changes nothing: you get exactly the exception you would have got
+  without a declaration. A model configured <code>extra="allow"</code> still contributes only its
+  declared fields.</li>
+<li><strong>A credential over a plaintext <code>base_url</code> is warned about at wiring</strong>, for every auth
+  kind — a bearer token on the wire is as readable as a base64 user-and-password. Loopback
+  is exempt. It warns rather than refuses because a service mesh legitimately terminates
+  TLS in a sidecar, so <code>http://service.namespace.svc</code> with a credential is plaintext at
+  this hop and encrypted on the network; refusing that would need an opt-out to stay
+  usable.</li>
 <li>When the caller has a <a href="../../running-in-prod/deadlines/">deadline</a> bound, the adapter
   forwards the remaining budget as an <code>X-Forze-Deadline-Budget</code> header so a
   downstream Forze service can inherit it; opt out per service with

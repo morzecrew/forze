@@ -8577,6 +8577,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>An outbound HTTP operation can send a form body and read its own error responses.</strong> <code>async_http_op(..., body_encoding="form")</code> sends <code>application/x-www-form-urlencoded</code> (scalars only, refusing anything a form cannot carry), <code>error_type=</code> validates a rejected response's body and hands it to the caller in <code>details["response_error"]</code>, and <code>HttpAuthConfig(kind="basic", …)</code> presents HTTP Basic. Together they mean a token endpoint no longer has to be called from a bare client, outside the plane's tenancy, deadlines and egress declaration. Declaring any credential over a plaintext <code>base_url</code> now warns at wiring.</p>
+</li>
+<li>
 <p><strong>An outbound route can declare that data leaves your trust boundary.</strong> <code>HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)</code> makes the egress a reviewed wiring fact — declaring without acknowledging fails closed — and tags the call's span <code>forze.egress.sensitive</code>. Off by default; the inference configs now share the same gate.</p>
 </li>
 <li>
@@ -8601,7 +8604,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong><code>HttpAuthConfig</code> with no token sent <code>Authorization: Bearer None</code>.</strong> An optional secret field converted <code>None</code> into a <code>SecretStr</code> wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on <code>HttpClientLifecycleStep.auth_token</code> and Meilisearch's <code>api_key</code>, where consumers happened to unwrap defensively.</li>
 </ul>
 <h2 id="070-2026-09-10"><a href="https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0">0.7.0</a> - 2026-09-10<a class="headerlink" href="#070-2026-09-10" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
