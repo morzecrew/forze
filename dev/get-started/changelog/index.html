@@ -8577,6 +8577,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>An outbound OAuth2 grant can be acquired, not just stored.</strong> <code>build_authorize_url</code> and <code>read_authorization_callback</code> in <code>forze_identity.oauth</code> cover the redirect and the callback — state compared constant-time first, a provider error never mistaken for a code — and <code>OAuth2TokenClient</code> exchanges the code for the first credential. The same client <em>is</em> the <code>CredentialExchangerPort</code>, so one provider config closes acquisition and every rotation after it; <code>complete_authorization</code> persists before it returns.</p>
+</li>
+<li>
 <p><strong>An outbound HTTP operation can send a form body and read its own error responses.</strong> <code>async_http_op(..., body_encoding="form")</code> sends <code>application/x-www-form-urlencoded</code> (scalars only, refusing anything a form cannot carry), <code>error_type=</code> validates a rejected response's body and hands it to the caller in <code>details["response_error"]</code>, and <code>HttpAuthConfig(kind="basic", …)</code> presents HTTP Basic. Together they mean a token endpoint no longer has to be called from a bare client, outside the plane's tenancy, deadlines and egress declaration. Declaring any credential over a plaintext <code>base_url</code> now warns at wiring.</p>
 </li>
 <li>

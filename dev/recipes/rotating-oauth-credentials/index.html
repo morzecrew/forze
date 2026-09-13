@@ -4891,6 +4891,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Getting the first grant, and getting back from a burn">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#acquiring-the-first-grant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Acquiring the first grant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6324,6 +6341,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Getting the first grant, and getting back from a burn">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#acquiring-the-first-grant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Acquiring the first grant
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6518,9 +6552,13 @@ store wired without a cipher refuses them rather than returning garbage.</p>
 <span class="p">)</span>
 </code></pre></div>
 <h2 id="the-exchanger">The exchanger<a class="headerlink" href="#the-exchanger" title="Permanent link">&para;</a></h2>
-<p>The framework cannot supply this: it is a call to someone else's provider. Its one hard
-obligation beyond being bounded is <strong>classification</strong>, because the store treats the two
-cases oppositely.</p>
+<p>For a <strong>standard OAuth2 token endpoint you do not have to write one</strong>: <code>OAuth2TokenClient</code>
+is an exchanger, and the same instance also acquires the first grant — see
+<a href="#acquiring-the-first-grant">Acquiring the first grant</a> below. Write your own when the
+counterparty is not OAuth2, or when its token response deviates from RFC 6749 enough that
+a thin adapter is cheaper than a configuration.</p>
+<p>Either way, the obligation beyond being bounded is <strong>classification</strong>, because the store
+treats the two cases oppositely.</p>
 <div class="highlight"><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">DemoOAuthProvider</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Stands in for the third party: rotates refresh tokens, and punishes reuse.</span>
 
@@ -6682,6 +6720,56 @@ rotated token because you never have one.</p>
 <p><code>put</code> is unconditional by design. A human has just proven possession of a new grant, so
 there is no earlier version worth defending — and refusing the write would leave a burnt
 credential permanently unrecoverable.</p>
+<h3 id="acquiring-the-first-grant">Acquiring the first grant<a class="headerlink" href="#acquiring-the-first-grant" title="Permanent link">&para;</a></h3>
+<p>For OAuth2 the whole front door ships: <code>build_authorize_url</code> sends the user to the
+provider, <code>read_authorization_callback</code> reads what comes back — comparing <code>state</code>
+constant-time before anything else, refusing a provider <code>error=access_denied</code> rather than
+mistaking it for a code — and <code>complete_authorization</code> exchanges the code and stores the
+grant, in that order, so nothing observes a credential the store does not already hold.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.oauth</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">build_authorize_url</span><span class="p">,</span>
+    <span class="n">generate_pkce</span><span class="p">,</span>
+    <span class="n">generate_state</span><span class="p">,</span>
+    <span class="n">read_authorization_callback</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.secrets</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">OAuth2ProviderConfig</span><span class="p">,</span>
+    <span class="n">OAuth2TokenClient</span><span class="p">,</span>
+    <span class="n">complete_authorization</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">provider</span> <span class="o">=</span> <span class="n">OAuth2ProviderConfig</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"crm"</span><span class="p">,</span>
+    <span class="n">token_endpoint</span><span class="o">=</span><span class="s2">"/oauth/token"</span><span class="p">,</span>
+    <span class="n">client_id</span><span class="o">=</span><span class="s2">"your-client-id"</span><span class="p">,</span>
+    <span class="n">client_secret</span><span class="o">=</span><span class="n">SecretRef</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"providers/crm/client_secret"</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">OAuth2TokenClient</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">provider</span><span class="p">,</span> <span class="n">ctx_factory</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">)</span>
+</code></pre></div>
+<p><code>build_authorize_url</code> requires https on both the authorization endpoint and the redirect
+URI, allowing an http loopback address for local development (RFC 8252's native-app
+carve-out) and nothing else. A provider configured with no <code>client_secret</code> is a public
+client, and exchanging a code then requires the <abbr title="Proof Key for Code Exchange">PKCE</abbr> verifier — without either, an
+intercepted code is enough for anyone.</p>
+<p>Two things the kit cannot do for you. The route is yours — the button, the session, the
+success page — and so is <strong>wiring the token endpoint as a declared service</strong>, which is what
+puts the hop inside the plane's tenancy, deadlines and egress declaration:</p>
+<div class="highlight"><pre><span></span><code><span class="n">HttpDepsModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">HttpClient</span><span class="p">(),</span>
+    <span class="n">services</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"crm"</span><span class="p">:</span> <span class="n">HttpServiceConfig</span><span class="p">(</span>
+            <span class="n">base_url</span><span class="o">=</span><span class="s2">"https://crm.example"</span><span class="p">,</span>
+            <span class="n">egress_sensitive</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>        <span class="c1"># a code and a client secret leave here</span>
+            <span class="n">acknowledge_data_egress</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="c1"># and you are accepting that</span>
+        <span class="p">)</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The same <code>client</code> then goes into the store's <code>exchanger</code>, and every rotation afterwards is
+the same request with a different <code>grant_type</code>. A crash between the exchange and the store
+loses an authorization code, which the user re-mints by clicking connect again — mild, and
+deliberately not defended with the single-flight machinery the refresh path needs, where
+what is at stake is a live refresh token.</p>
 <h2 id="what-the-errors-mean">What the errors mean<a class="headerlink" href="#what-the-errors-mean" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
