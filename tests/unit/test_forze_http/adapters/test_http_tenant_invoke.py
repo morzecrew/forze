@@ -198,6 +198,54 @@ class TestCleartextTenantRoute:
             await made.aclose()
 
     @pytest.mark.asyncio
+    async def test_a_sensitive_route_warns_with_no_credential_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The half the first version of this check missed: a declared-sensitive route can
+        # send a JSON or form body to a plaintext tenant URL carrying no credential
+        # headers at all, and the payload is the thing worth protecting.
+        spy = self._spy(monkeypatch)
+        client = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+            egress_sensitive=True,
+        )
+
+        made = await client.initialize_client(
+            TENANT_ID, HttpRoutingCredentials(base_url="http://tenant.example.com")
+        )
+
+        try:
+            spy.warning.assert_called_once()
+            assert str(TENANT_ID) in str(spy.warning.call_args)
+
+        finally:
+            await made.aclose()
+
+    @pytest.mark.asyncio
+    async def test_a_sensitive_route_over_https_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = self._spy(monkeypatch)
+        client = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+            egress_sensitive=True,
+        )
+
+        made = await client.initialize_client(
+            TENANT_ID, HttpRoutingCredentials(base_url="https://tenant.example.com")
+        )
+
+        try:
+            spy.warning.assert_not_called()
+
+        finally:
+            await made.aclose()
+
+    @pytest.mark.asyncio
     async def test_https_or_no_credentials_is_quiet(self, monkeypatch: pytest.MonkeyPatch) -> None:
         spy = self._spy(monkeypatch)
         client = RoutedHttpClient(
@@ -209,7 +257,8 @@ class TestCleartextTenantRoute:
         quiet = [
             HttpRoutingCredentials(base_url="https://tenant.example.com", bearer_token="tok"),
             HttpRoutingCredentials(base_url="http://localhost:8080", bearer_token="tok"),
-            # No credential to leak: a plaintext URL alone is the app's own business.
+            # No credential to leak and nothing declared sensitive: a plaintext URL
+            # alone is the application's own business.
             HttpRoutingCredentials(base_url="http://tenant.example.com"),
         ]
 
