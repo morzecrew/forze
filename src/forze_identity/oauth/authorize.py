@@ -10,7 +10,7 @@ doctrine those two modules already follow.
 
 from collections.abc import Iterable, Mapping
 from ipaddress import ip_address
-from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import SplitResult, parse_qs, quote, urlencode, urlsplit, urlunsplit
 
 from forze.base.exceptions import exc
 
@@ -30,6 +30,24 @@ _RESERVED: frozenset[str] = frozenset(
 """Parameters this function owns. An extra that repeats one of them is refused rather
 than silently overriding it — a caller that passes its own ``redirect_uri`` through
 *extra_params* believes it changed the request, and the one sent would be the other."""
+
+
+# ....................... #
+
+
+def _split(url: str, *, what: str) -> SplitResult:
+    """Parse *url*, turning a malformed one into a refusal rather than a ``ValueError``.
+
+    ``urlsplit`` raises on a few shapes — an unclosed IPv6 bracket is the reachable one —
+    and this function documents that it raises ``CoreException``. A bare ``ValueError``
+    escaping a validator is a contract break *and* a 500 where a 400 belongs.
+    """
+
+    try:
+        return urlsplit(url)
+
+    except ValueError as malformed:
+        raise exc.validation(f"{what} is not a parseable URL: {url!r}") from malformed
 
 
 # ....................... #
@@ -60,7 +78,7 @@ def _require_secure(url: str, *, what: str) -> None:
     a code is all an interceptor needs whenever PKCE is absent.
     """
 
-    parts = urlsplit(url)
+    parts = _split(url, what=what)
 
     if parts.scheme == "https":
         return
@@ -112,7 +130,7 @@ def build_authorize_url(
         empty, or when *extra_params* repeats a parameter this function owns.
     """
 
-    parts = urlsplit(authorization_endpoint)
+    parts = _split(authorization_endpoint, what="Authorization endpoint")
 
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         raise exc.validation(
@@ -121,7 +139,7 @@ def build_authorize_url(
 
     _require_secure(authorization_endpoint, what="Authorization endpoint")
 
-    redirect = urlsplit(redirect_uri)
+    redirect = _split(redirect_uri, what="Redirect URI")
 
     if redirect.scheme not in {"http", "https"} or not redirect.netloc:
         raise exc.validation(f"Redirect URI must be an absolute http(s) URL: {redirect_uri!r}")

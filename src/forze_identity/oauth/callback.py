@@ -48,7 +48,9 @@ def read_authorization_callback(
        identical from here.
     2. **A provider error is a failure.** ``error=access_denied`` and its siblings are
        surfaced, never mistaken for a code. A user who declined consent must not produce a
-       half-connected account.
+       half-connected account. The code travels in ``details`` and never in the message:
+       a callback's parameters are whatever the caller sent, so putting them in prose puts
+       attacker text into a log line or a rendered page.
     3. **A code must actually be present.**
 
     :param params: The callback's query parameters.
@@ -72,8 +74,13 @@ def read_authorization_callback(
     error = params.get("error")
 
     if error:
+        # The value is not interpolated into the message. Anyone can call a callback URL
+        # with any `error=`, so this text is attacker-controlled: in a summary it reaches a
+        # log line, an API response or a rendered page as prose. It travels in `details`
+        # instead, where it is structured data the scrubber sees and a consumer must
+        # deliberately read.
         raise exc.precondition(
-            f"Authorization was not granted: {error}",
+            "Authorization was not granted by the provider",
             code=CALLBACK_PROVIDER_ERROR_CODE,
             # The provider's own code, which a connect UI needs to tell "the user said no"
             # from "this client is misconfigured". The description is left out: it is

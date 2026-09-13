@@ -119,6 +119,20 @@ class TestAProviderErrorIsAFailure:
             )
 
         assert "script" not in repr(raised.value.details)
+        assert "script" not in str(raised.value)
+
+    def test_the_error_code_stays_out_of_the_message(self) -> None:
+        # A callback's parameters are whatever the caller sent — anyone can request the
+        # callback URL with any `error=`. In a summary that text becomes a log line or a
+        # rendered page; in `details` it is structured data a consumer must read on purpose.
+        hostile = "access_denied\nFAKE LOG LINE root: granted"
+
+        with pytest.raises(CoreException) as raised:
+            read_authorization_callback({"state": "s", "error": hostile}, expected_state="s")
+
+        assert hostile not in raised.value.summary
+        assert hostile not in str(raised.value)
+        assert (raised.value.details or {})["error"] == hostile
 
 
 class TestACodeMustBePresent:

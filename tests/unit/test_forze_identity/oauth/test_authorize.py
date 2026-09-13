@@ -166,6 +166,33 @@ class TestTransportSecurity:
 
 
 class TestWhatItRefuses:
+    def test_a_malformed_url_is_a_refusal_not_a_value_error(self) -> None:
+        # `urlsplit` raises on an unclosed IPv6 bracket. A bare ValueError escaping a
+        # validator breaks its documented contract and turns a 400 into a 500.
+        for bad in ("https://[oops/path", "https://app.example/cb"):
+            args = {
+                "client_id": "cid",
+                "redirect_uri": bad,
+                "state": "s",
+            }
+
+            try:
+                build_authorize_url(_ENDPOINT, **args)
+
+            except CoreException:
+                pass
+
+            except ValueError as leaked:  # pragma: no cover - the defect this pins
+                raise AssertionError(f"a ValueError escaped for {bad!r}") from leaked
+
+        with pytest.raises(CoreException):
+            build_authorize_url(
+                "https://[oops/path",
+                client_id="cid",
+                redirect_uri="https://app.example/cb",
+                state="s",
+            )
+
     def test_a_relative_endpoint(self) -> None:
         with pytest.raises(CoreException):
             build_authorize_url(
