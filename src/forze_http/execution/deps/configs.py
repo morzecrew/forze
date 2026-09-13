@@ -43,7 +43,11 @@ class HttpAuthConfig:
     """Value prefix for bearer tokens."""
 
     username: str | None = None
-    """Client identifier for ``basic`` — the user half of HTTP Basic (RFC 7617)."""
+    """Client identifier for ``basic`` — the user half of HTTP Basic (RFC 7617).
+
+    Cannot contain ``":"``: the decoded pair is split at the first colon, so a user-id
+    carrying one moves the boundary and presents a different credential than the one
+    written here."""
 
     password: SecretStr | None = attrs.field(
         default=None,
@@ -60,9 +64,21 @@ class HttpAuthConfig:
         # counterparty as a rejected request rather than here as the wiring mistake it is.
         # The token-based kinds keep their existing behaviour — an absent token there has
         # always meant "no auth", and wiring depends on it.
-        if self.kind == "basic" and (self.username is None or self.password is None):
+        if self.kind != "basic":
+            return
+
+        if self.username is None or self.password is None:
             raise exc.configuration(
                 "HttpAuthConfig: kind='basic' requires both username and password",
+            )
+
+        # RFC 7617 splits the decoded pair at the *first* colon, so a colon in the user-id
+        # silently moves the boundary: "a:b" with password "c" decodes as user "a" with
+        # password "b:c". The counterparty then rejects a credential that looks correct in
+        # the config, which is the worst way for this to fail.
+        if ":" in self.username:
+            raise exc.configuration(
+                "HttpAuthConfig: a basic user-id cannot contain ':' (RFC 7617)",
             )
 
     # ....................... #
@@ -75,7 +91,7 @@ class HttpAuthConfig:
             secret = self.password.get_secret_value() if self.password is not None else ""
             blob = base64.b64encode(f"{self.username}:{secret}".encode()).decode("ascii")
 
-            return {"Authorization": f"Basic {blob}"}
+            return {self.header_name: f"Basic {blob}"}
 
         if self.token is None:
             return {}

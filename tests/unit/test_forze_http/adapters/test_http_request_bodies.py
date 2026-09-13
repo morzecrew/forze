@@ -239,6 +239,24 @@ class TestBasicAuth:
 
         assert "username and password" in str(raised.value)
 
+    def test_a_colon_in_the_user_id_is_refused(self) -> None:
+        # RFC 7617 splits at the first colon, so "a:b" with password "c" presents user "a"
+        # with password "b:c" — a credential that looks right in the config and is not the
+        # one the counterparty receives.
+        with pytest.raises(CoreException) as raised:
+            HttpAuthConfig(kind="basic", username="a:b", password="c")
+
+        assert "':'" in str(raised.value)
+
+    def test_a_custom_header_name_is_honoured(self) -> None:
+        # Consistent with the api_key and header kinds, and the alternative is silently
+        # ignoring a field the config accepted.
+        headers = HttpAuthConfig(
+            kind="basic", username="cid", password="sec", header_name="X-Auth"
+        ).auth_headers()
+
+        assert headers == {"X-Auth": "Basic Y2lkOnNlYw=="}
+
     def test_an_absent_token_still_means_no_auth(self) -> None:
         # The token kinds keep their old behaviour — and this is the assertion that would
         # have caught `Authorization: Bearer None`.
@@ -262,6 +280,73 @@ class TestDeclaredErrorResponses:
         declared = (raised.value.details or {})[RESPONSE_ERROR_DETAIL]
 
         assert declared == {"error": "invalid_grant", "error_description": "code expired"}
+
+    async def test_only_declared_fields_travel(self) -> None:
+        # The whole reason the declared *model* is the carrier rather than the raw body:
+        # a provider that returns a trace id, an internal message or a token alongside its
+        # error code must not have any of it land in an exception that reaches a log. A
+        # raw-body passthrough passes every other test in this class, so this is the one
+        # that tells the two apart.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={
+                    "error": "invalid_grant",
+                    "error_description": "code expired",
+                    "debug_access_token": "leaked-if-passed-through",
+                    "internal_trace": {"host": "provider-db-7", "query": "select 1"},
+                },
+            )
+
+        adapter = await _adapter(handler, spec=_spec(error_type=TokenError))
+
+        with pytest.raises(CoreException) as raised:
+            await adapter.invoke("token", TokenArgs(grant_type="authorization_code"))
+
+        details = raised.value.details or {}
+
+        assert details[RESPONSE_ERROR_DETAIL] == {
+            "error": "invalid_grant",
+            "error_description": "code expired",
+        }
+        assert "leaked-if-passed-through" not in repr(details)
+        assert "provider-db-7" not in repr(details)
+
+    async def test_the_operations_own_context_survives(self) -> None:
+        # The declaring path raises from the adapter rather than the client, so the
+        # operation's identity has to come along or a log loses which call failed.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(400, json={"error": "invalid_grant"})
+
+        adapter = await _adapter(handler, spec=_spec(error_type=TokenError))
+
+        with pytest.raises(CoreException) as raised:
+            await adapter.invoke("token", TokenArgs(grant_type="authorization_code"))
+
+        details = raised.value.details or {}
+
+        assert details["op"] == "token"
+        assert details["service"] == "provider"
+        assert details["method"] == "POST"
+        assert str(details["url"]).endswith("/oauth/token")
+
+    async def test_a_server_error_body_is_declared_too(self) -> None:
+        # `error_type` is about a rejected response, not about a status range. A 5xx body
+        # is captured the same way — and exposed to nobody, since the envelope masks a
+        # server-side failure.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"error": "temporarily_unavailable"})
+
+        adapter = await _adapter(handler, spec=_spec(error_type=TokenError))
+
+        with pytest.raises(CoreException) as raised:
+            await adapter.invoke("token", TokenArgs(grant_type="authorization_code"))
+
+        assert (raised.value.details or {})[RESPONSE_ERROR_DETAIL] == {
+            "error": "temporarily_unavailable",
+            "error_description": None,
+        }
+        assert error_envelope(raised.value).context is None
 
     async def test_an_undeclared_operation_is_unchanged(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
