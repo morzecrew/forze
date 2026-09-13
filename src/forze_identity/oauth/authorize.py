@@ -9,7 +9,8 @@ doctrine those two modules already follow.
 """
 
 from collections.abc import Iterable, Mapping
-from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+from ipaddress import ip_address
+from urllib.parse import parse_qs, quote, urlencode, urlsplit, urlunsplit
 
 from forze.base.exceptions import exc
 
@@ -29,6 +30,48 @@ _RESERVED: frozenset[str] = frozenset(
 """Parameters this function owns. An extra that repeats one of them is refused rather
 than silently overriding it — a caller that passes its own ``redirect_uri`` through
 *extra_params* believes it changed the request, and the one sent would be the other."""
+
+
+# ....................... #
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether *host* is this machine — where plaintext is a developer's own business."""
+
+    if host == "localhost":
+        return True
+
+    try:
+        return ip_address(host).is_loopback
+
+    except ValueError:
+        return False
+
+
+# ....................... #
+
+
+def _require_secure(url: str, *, what: str) -> None:
+    """Refuse a URL that would carry OAuth parameters over plaintext.
+
+    OAuth 2.1 asks for TLS on both ends of the flow, and the exception is the one RFC 8252
+    carves out: a loopback address, which never leaves the machine. A non-loopback
+    ``http://`` endpoint or redirect puts an authorization code on the wire in clear, and
+    a code is all an interceptor needs whenever PKCE is absent.
+    """
+
+    parts = urlsplit(url)
+
+    if parts.scheme == "https":
+        return
+
+    if parts.scheme == "http" and _is_loopback(parts.hostname or ""):
+        return
+
+    raise exc.validation(
+        f"{what} must use https — an http loopback address is allowed for local "
+        f"development, nothing else: {url!r}",
+    )
 
 
 # ....................... #
@@ -76,6 +119,15 @@ def build_authorize_url(
             f"Authorization endpoint must be an absolute http(s) URL: {authorization_endpoint!r}",
         )
 
+    _require_secure(authorization_endpoint, what="Authorization endpoint")
+
+    redirect = urlsplit(redirect_uri)
+
+    if redirect.scheme not in {"http", "https"} or not redirect.netloc:
+        raise exc.validation(f"Redirect URI must be an absolute http(s) URL: {redirect_uri!r}")
+
+    _require_secure(redirect_uri, what="Redirect URI")
+
     if not state:
         raise exc.validation(
             "Authorization URL requires a non-empty state — it is what ties the callback "
@@ -90,6 +142,19 @@ def build_authorize_url(
             f"extra_params may not set {sorted(reserved)} — those are built from the "
             "arguments above, and a silent override would send a different request than "
             "the caller thinks it built",
+        )
+
+    # The endpoint's own query is checked for the same keys. Appending beside one produces
+    # a duplicated parameter, and which value a provider honours is unspecified — first,
+    # last, or a rejected request. A duplicated `redirect_uri` or `state` is the same
+    # silent substitution the check above refuses, arriving from the other side.
+    published = _RESERVED & parse_qs(parts.query, keep_blank_values=True).keys()
+
+    if published:
+        raise exc.validation(
+            f"Authorization endpoint may not carry {sorted(published)} in its own query — "
+            "appending the built value beside it duplicates the parameter, and which one "
+            "the provider honours is unspecified",
         )
 
     params: dict[str, str] = {

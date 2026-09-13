@@ -16,6 +16,7 @@ client authentication (§2.3.1), and the error body of a rejected request (§5.2
 the only way to tell a dead grant from a provider having a bad minute.
 """
 
+import asyncio
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from typing import Final, Literal, final
@@ -29,6 +30,7 @@ from forze.application.contracts.http import (
     HttpServiceSpec,
 )
 from forze.application.contracts.secrets import (
+    CREDENTIAL_EXCHANGE_TIMEOUT_CODE,
     INVALID_GRANT_CODE,
     ExchangedCredential,
     SecretRef,
@@ -58,13 +60,18 @@ a working credential with a smaller reach, and failing the connect flow would le
 user with nothing. The difference is visible in the stored metadata instead, so a later
 "permission denied" from the provider has an explanation sitting beside the grant."""
 
-_PERMANENT_ERRORS: frozenset[str] = frozenset({"invalid_grant", "unauthorized_client"})
+_PERMANENT_ERRORS: frozenset[str] = frozenset({"invalid_grant"})
 """Provider error codes that mean *this grant is dead* (RFC 6749 §5.2).
 
-Deliberately short. Everything absent from it is treated as transient, because reporting a
-transient failure as permanent burns a working credential — the asymmetry the exchanger
-port spells out. ``invalid_request`` and ``invalid_client`` are ours to fix, not the
-grant's fault, so they do not burn it either."""
+One code, and the shortness is the point: everything absent is treated as transient,
+because reporting a transient failure as permanent burns a working credential while the
+reverse costs one wasted retry — the asymmetry the exchanger port spells out.
+
+``invalid_request``, ``invalid_client`` and ``unauthorized_client`` are all about *this
+client* rather than the grant: a malformed request, a client that failed authentication,
+and a client not authorized for this grant type (§5.2's own wording). Every one of them is
+a wiring mistake that a deployment fixes and retries, so burning a tenant's grant over one
+would destroy working credentials for a typo."""
 
 
 # ....................... #
@@ -73,10 +80,17 @@ grant's fault, so they do not burn it either."""
 class OAuth2TokenResponse(BaseModel):
     """A token endpoint's success body (RFC 6749 §5.1)."""
 
-    access_token: str = Field(repr=False)
+    access_token: str = Field(repr=False, min_length=1)
+    """The credential. Non-empty: a provider answering 200 with an empty token has
+    produced something every subsequent call fails on, and storing it turns a broken
+    response into a credential nobody can explain."""
+
     token_type: str = ""
     expires_in: int | None = None
-    refresh_token: str | None = Field(default=None, repr=False)
+    refresh_token: str | None = Field(default=None, repr=False, min_length=1)
+    """The next token, when the provider rotates it. Absent is meaningful (RFC 6749 §6 —
+    keep the one you presented); empty is not, and must not be stored as one."""
+
     scope: str | None = None
 
 
@@ -132,6 +146,20 @@ class OAuth2ProviderConfig:
 
     Resolved per call rather than held, so a rotated secret is picked up without a restart.
     ``None`` is a public client, which is legitimate only with PKCE."""
+
+    exchange_timeout: timedelta | None = timedelta(seconds=20)
+    """Bound on one token request, owned by the client rather than the transport.
+
+    It exists to make a distinction the transport cannot: when *this* bound fires, the
+    request was sent and the answer is unknown, so the refresh token is spent-or-unknown
+    and the store is told exactly that (:data:`CREDENTIAL_EXCHANGE_TIMEOUT_CODE`) rather
+    than "never delivered". A transport-level timeout and a connection failure arrive as
+    the same kind with the same code, so the two cannot be told apart from the outside —
+    which is why the exchanger port asks an implementation to bring its own deadline.
+
+    Kept under the store's own exchange bound: the store holds a lock across this call, and
+    a client that outwaited it would pin that lock until the store gave up anyway. ``None``
+    defers entirely to the transport, and gives up the distinction."""
 
     token_auth: Literal["post", "basic"] = "post"
     """Where the client credentials go at the token endpoint.
@@ -218,6 +246,16 @@ class OAuth2TokenClient:
             for good; anything else transient, unchanged from how it arrived.
         """
 
+        if self.config.client_secret is None and not code_verifier:
+            # A public client's only proof that this code belongs to the request that
+            # started the flow is the PKCE verifier. Without either, an intercepted code
+            # is enough for anyone — so this is refused rather than sent and rejected
+            # later, where the failure would read as a provider problem.
+            raise exc.configuration(
+                f"Provider {self.config.name!r} is configured as a public client "
+                "(client_secret=None), so exchanging a code requires a PKCE verifier",
+            )
+
         request = OAuth2TokenRequest(
             grant_type="authorization_code",
             code=code,
@@ -226,7 +264,12 @@ class OAuth2TokenClient:
         )
         requested = (requested_scopes or {}).get("scope")
 
-        return await self._exchange(request, fallback_refresh=None, requested_scope=requested)
+        return await self._exchange(
+            request,
+            fallback_refresh=None,
+            carried=None,
+            requested_scope=requested,
+        )
 
     # ....................... #
 
@@ -263,6 +306,10 @@ class OAuth2TokenClient:
         return await self._exchange(
             request,
             fallback_refresh=refresh_token,
+            # Carried forward, not rebuilt: the store hands back what it holds, and the
+            # port's contract is that those facts survive a rotation — an account-specific
+            # endpoint among them, without which the *next* exchange is unaddressable.
+            carried=metadata,
             requested_scope=metadata.get(REQUESTED_SCOPE_METADATA),
         )
 
@@ -273,6 +320,7 @@ class OAuth2TokenClient:
         request: OAuth2TokenRequest,
         *,
         fallback_refresh: str | None,
+        carried: Mapping[str, str] | None,
         requested_scope: str | None,
     ) -> ExchangedCredential:
         """Post *request* and project the answer, whichever grant it came from."""
@@ -281,8 +329,29 @@ class OAuth2TokenClient:
         authenticated = await self._with_client_auth(ctx, request)
         service = ctx.http.service(self.config.service_spec())
 
+        timeout = self.config.exchange_timeout
+
         try:
-            reply = await service.invoke(TOKEN_OPERATION, authenticated)
+            if timeout is None:
+                reply = await service.invoke(TOKEN_OPERATION, authenticated)
+
+            else:
+                async with asyncio.timeout(timeout.total_seconds()):
+                    reply = await service.invoke(TOKEN_OPERATION, authenticated)
+
+        except TimeoutError as timed_out:
+            # Our own bound, so the request left and the answer is unknown. The store
+            # needs that stated: the presented refresh token may already be burned at the
+            # provider, and treating this as "never delivered" invites a retry with a
+            # token that no longer works.
+            bound = timeout.total_seconds() if timeout is not None else 0.0
+
+            raise exc.infrastructure(
+                f"Token endpoint {self.config.name!r} did not answer within "
+                f"{bound:g}s; the refresh token is spent or unknown",
+                code=CREDENTIAL_EXCHANGE_TIMEOUT_CODE,
+                details={"provider": str(self.config.name)},
+            ) from timed_out
 
         except CoreException as error:
             raise self._classified(error) from error
@@ -292,7 +361,12 @@ class OAuth2TokenClient:
                 f"Token endpoint {self.config.name!r} returned {type(reply).__name__}",
             )
 
-        return self._credential(reply, fallback_refresh=fallback_refresh, requested=requested_scope)
+        return self._credential(
+            reply,
+            fallback_refresh=fallback_refresh,
+            carried=carried,
+            requested=requested_scope,
+        )
 
     # ....................... #
 
@@ -352,9 +426,16 @@ class OAuth2TokenClient:
         reply: OAuth2TokenResponse,
         *,
         fallback_refresh: str | None,
+        carried: Mapping[str, str] | None,
         requested: str | None,
     ) -> ExchangedCredential:
-        """Project a token response into the store's input."""
+        """Project a token response into the store's input.
+
+        *carried* is what the store already held. It is the starting point rather than an
+        afterthought: the port stores these facts so the *next* exchange can be addressed,
+        and a rotation that rebuilt the mapping from the response alone would drop
+        everything the provider said once and never repeats.
+        """
 
         refresh = reply.refresh_token or fallback_refresh
 
@@ -370,7 +451,7 @@ class OAuth2TokenClient:
                 details={"provider": str(self.config.name)},
             )
 
-        metadata: dict[str, str] = {}
+        metadata: dict[str, str] = dict(carried or {})
         granted = reply.scope
 
         if granted:
@@ -390,18 +471,32 @@ class OAuth2TokenClient:
 
     @staticmethod
     def _expiry(expires_in: int | None) -> datetime | None:
-        """Absolute expiry from a relative one, or ``None`` when the provider said nothing.
+        """Absolute expiry from a relative one, or ``None`` when nothing was stated.
 
-        A non-positive value is dropped rather than stored as an instant already past: a
-        provider that sends ``0`` is saying nothing useful, and a credential born expired
-        would be refreshed on its first use for no reason.
+        Three cases, and they are different statements rather than shades of one. **Absent
+        or negative** says nothing: no lifetime was given, or the number is nonsense, so
+        the credential is stored without an expiry. **Zero** says the token is already
+        expired (RFC 6749 §5.1 — ``expires_in`` is a lifetime), and storing that as "no
+        expiry" would be reporting the opposite of what the provider said. **Too large to
+        be a duration** also says nothing usable: a value that overflows a ``timedelta``
+        cannot be an instant, and raising an ``OverflowError`` out of an acquisition would
+        turn a provider's nonsense into a crash on our side.
 
         The clock comes through the framework's seam, so an expiry is simulable: a
         simulation that cannot move this forward cannot test what happens when a grant
         ages out.
         """
 
-        if expires_in is None or expires_in <= 0:
+        if expires_in is None or expires_in < 0:
             return None
 
-        return utcnow() + timedelta(seconds=expires_in)
+        now = utcnow()
+
+        if expires_in == 0:
+            return now
+
+        try:
+            return now + timedelta(seconds=expires_in)
+
+        except OverflowError:
+            return None

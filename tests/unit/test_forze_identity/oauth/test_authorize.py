@@ -119,6 +119,52 @@ class TestTheBuiltUrl:
         assert params["access_type"] == ["offline"]
 
 
+class TestTransportSecurity:
+    """OAuth 2.1 asks for TLS on both ends; RFC 8252 carves out loopback for native apps."""
+
+    def test_a_plaintext_endpoint_is_refused(self) -> None:
+        # A non-loopback http endpoint puts the authorization code on the wire in clear,
+        # and a code is all an interceptor needs whenever PKCE is absent.
+        with pytest.raises(CoreException) as raised:
+            build_authorize_url(
+                "http://provider.example/oauth/authorize",
+                client_id="cid",
+                redirect_uri="https://app.example/cb",
+                state="s",
+            )
+
+        assert "https" in str(raised.value)
+
+    def test_a_plaintext_redirect_is_refused(self) -> None:
+        with pytest.raises(CoreException):
+            build_authorize_url(
+                _ENDPOINT, client_id="cid", redirect_uri="http://app.example/cb", state="s"
+            )
+
+    def test_a_relative_redirect_is_refused(self) -> None:
+        # The provider needs somewhere to send the user; a path is not somewhere.
+        with pytest.raises(CoreException):
+            build_authorize_url(_ENDPOINT, client_id="cid", redirect_uri="/cb", state="s")
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        ["http://localhost:8080/auth", "http://127.0.0.1:9000/auth", "http://[::1]:9000/auth"],
+    )
+    def test_an_http_loopback_endpoint_is_allowed(self, endpoint: str) -> None:
+        # A local IdP in a container is how this is developed against, and refusing it
+        # would push people to disable the check rather than to use TLS.
+        assert build_authorize_url(
+            endpoint, client_id="cid", redirect_uri="https://app.example/cb", state="s"
+        ).startswith(endpoint)
+
+    @pytest.mark.parametrize("redirect", ["http://localhost:3000/cb", "http://127.0.0.2:3000/cb"])
+    def test_an_http_loopback_redirect_is_allowed(self, redirect: str) -> None:
+        # RFC 8252's native-app case, and 127.0.0.2 is as loopback as 127.0.0.1.
+        assert redirect.split(":")[1].lstrip("/") in build_authorize_url(
+            _ENDPOINT, client_id="cid", redirect_uri=redirect, state="s"
+        )
+
+
 class TestWhatItRefuses:
     def test_a_relative_endpoint(self) -> None:
         with pytest.raises(CoreException):
@@ -147,6 +193,24 @@ class TestWhatItRefuses:
             build_authorize_url(
                 _ENDPOINT, client_id="cid", redirect_uri="https://app.example/cb", state=""
             )
+
+    @pytest.mark.parametrize(
+        "owned", ["state", "redirect_uri", "client_id", "response_type", "scope"]
+    )
+    def test_an_endpoint_that_publishes_an_owned_parameter(self, owned: str) -> None:
+        # The other side of the override: appending beside a published `state=` duplicates
+        # the parameter, and which one a provider honours is unspecified — first, last, or
+        # a rejected request. The existing test that an endpoint's own query survives is
+        # about parameters nobody here owns.
+        with pytest.raises(CoreException) as raised:
+            build_authorize_url(
+                f"https://provider.example/oauth/authorize?{owned}=attacker",
+                client_id="cid",
+                redirect_uri="https://app.example/cb",
+                state="s",
+            )
+
+        assert owned in str(raised.value)
 
     @pytest.mark.parametrize(
         "owned",

@@ -162,6 +162,34 @@ class TestCleartextCredentialWarning:
 
         spy.warning.assert_called_once()
 
+    def test_a_declared_sensitive_route_warns_without_any_auth_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The blind spot a reviewer found: an OAuth token request posts its client secret
+        # as a form field and needs no `HttpAuthConfig` at all, so reading `auth` alone
+        # stayed silent for exactly the route carrying the most.
+        spy = self._warnings(monkeypatch)
+
+        HttpServiceConfig(
+            base_url="http://provider.example",
+            egress_sensitive=True,
+            acknowledge_data_egress=True,
+        )
+
+        spy.warning.assert_called_once()
+        assert "cleartext_credentials" in str(spy.warning.call_args)
+
+    def test_a_sensitive_route_over_https_is_quiet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        spy = self._warnings(monkeypatch)
+
+        HttpServiceConfig(
+            base_url="https://provider.example",
+            egress_sensitive=True,
+            acknowledge_data_egress=True,
+        )
+
+        spy.warning.assert_not_called()
+
     def test_https_is_quiet(self, monkeypatch: pytest.MonkeyPatch) -> None:
         spy = self._warnings(monkeypatch)
 

@@ -170,6 +170,12 @@ provider = OAuth2ProviderConfig(
 client = OAuth2TokenClient(config=provider, ctx_factory=runtime.get_context)
 ```
 
+`build_authorize_url` requires https on both the authorization endpoint and the redirect
+URI, allowing an http loopback address for local development (RFC 8252's native-app
+carve-out) and nothing else. A provider configured with no `client_secret` is a public
+client, and exchanging a code then requires the PKCE verifier — without either, an
+intercepted code is enough for anyone.
+
 Two things the kit cannot do for you. The route is yours — the button, the session, the
 success page — and so is **wiring the token endpoint as a declared service**, which is what
 puts the hop inside the plane's tenancy, deadlines and egress declaration:

@@ -220,11 +220,14 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def _warn_if_credentials_travel_in_cleartext(self) -> None:
-        """Warn when a declared credential would leave over plaintext HTTP.
+        """Warn when something worth protecting would leave over plaintext HTTP.
 
-        Every auth kind is affected, not just ``basic`` — a bearer token in a header is as
-        readable on the wire as a base64 user-and-password — so the check reads
-        :attr:`auth` rather than its kind.
+        Two triggers, because a credential reaches a counterparty two ways. Every auth
+        *kind* is affected, not just ``basic`` — a bearer token in a header is as readable
+        on the wire as a base64 user-and-password — so the check reads :attr:`auth` rather
+        than its kind. And a route that declares :attr:`egress_sensitive` has said it
+        carries data worth protecting regardless of how it authenticates, which is the
+        case a credential in the request *body* falls into.
 
         A warning rather than a refusal, and the reason is a real deployment: a service
         mesh terminates TLS in a sidecar, so ``http://service.namespace.svc`` with a
@@ -234,7 +237,12 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         machine, and warning on it would train the reader to ignore the warning.
         """
 
-        if self.auth is None or self.base_url is None:
+        # Either a credential the transport sends, or a route that has declared it carries
+        # sensitive data out. The second case is the one a credential in the *body* falls
+        # into — an OAuth token request posts its client secret as a form field and needs
+        # no `HttpAuthConfig` at all, so reading `auth` alone would stay silent for exactly
+        # the route that carries the most.
+        if self.base_url is None or not (self.auth is not None or self.egress_sensitive):
             return
 
         parts = urlsplit(self.base_url)
@@ -248,10 +256,11 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         logger.warning(
             "http.service.cleartext_credentials",
             base_url=self.base_url,
-            auth_kind=self.auth.kind,
+            auth_kind=self.auth.kind if self.auth is not None else None,
+            egress_sensitive=self.egress_sensitive,
             detail=(
-                "an HTTP service declares authentication over a plaintext base_url, so the "
-                "credential is readable by anything on the path; use https, or terminate "
-                "TLS closer to the caller"
+                "an HTTP service sends a credential or declared-sensitive data over a "
+                "plaintext base_url, so it is readable by anything on the path; use https, "
+                "or terminate TLS closer to the caller"
             ),
         )
