@@ -298,6 +298,46 @@ class TestTheProjectedCredential:
         finally:
             await http.aclose()
 
+    async def test_a_malformed_success_is_transient_not_a_dead_grant(self) -> None:
+        # A 200 whose body is not a token response is a provider or proxy bug, and the
+        # grant is untouched by it — so it must not burn anything.
+        client, runtime, http = await _client_over(
+            lambda _r: httpx.Response(200, json={"token_type": "Bearer"})
+        )
+
+        try:
+            async with runtime.scope():
+                await _seed(runtime)
+
+                with pytest.raises(CoreException) as raised:
+                    await client.exchange(SecretRef(path="g"), refresh_token="rt", metadata={})
+
+            assert raised.value.code != INVALID_GRANT_CODE
+
+        finally:
+            await http.aclose()
+
+    async def test_the_context_is_asked_for_on_every_exchange(self) -> None:
+        # The factory contract: a client outlives any one scope, so caching a context
+        # would leave a long-lived client exchanging through a dead one.
+        calls: list[int] = []
+        client, runtime, http = await _client_over(lambda _r: _ok())
+        counting = OAuth2TokenClient(
+            config=client.config,
+            ctx_factory=lambda: (calls.append(1), runtime.get_context())[1],  # type: ignore[union-attr]
+        )
+
+        try:
+            async with runtime.scope():
+                await _seed(runtime)
+                await counting.exchange(SecretRef(path="g"), refresh_token="rt", metadata={})
+                await counting.exchange(SecretRef(path="g"), refresh_token="rt", metadata={})
+
+            assert len(calls) == 2
+
+        finally:
+            await http.aclose()
+
     async def test_the_tokens_stay_out_of_every_repr(self) -> None:
         # The response model holds both tokens; a repr that printed them would put them in
         # any log that formats an unexpected value.

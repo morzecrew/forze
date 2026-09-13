@@ -165,7 +165,9 @@ class TestSweep:
         assert sweep.output_json is not None and sweep.output_json["enqueued"] == 1
 
         # Burnt after the scan, before the run executes.
-        await ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey).burn(_HEALTHY, reason="late webhook")
+        await ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey).burn(
+            _HEALTHY, reason="late webhook"
+        )
 
         await _drain(runner, ctx)
 

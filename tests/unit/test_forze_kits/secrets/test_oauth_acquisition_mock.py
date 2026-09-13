@@ -32,6 +32,7 @@ from tests.support.oauth_acquisition import (
     PROVIDER_NAME,
     TOKEN_PATH,
     Check,
+    FailablePutStore,
     OAuth2AcquisitionHarness,
     ScriptedProvider,
     battery_is_populated,
@@ -108,7 +109,7 @@ async def test_oauth2_acquisition_battery(check: Check) -> None:
         harness = OAuth2AcquisitionHarness(
             ctx=ctx,
             client=client,
-            store=ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey),
+            store=FailablePutStore(inner=ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)),
             provider=provider,
             backend="mock-http",
         )

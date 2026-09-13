@@ -34,9 +34,7 @@ async def test_resolve_structured_ok_env(monkeypatch: pytest.MonkeyPatch) -> Non
 @pytest.mark.asyncio
 async def test_resolve_structured_ok_directory(tmp_path: Path) -> None:
     (tmp_path / "db").mkdir()
-    (tmp_path / "db" / "1").write_text(
-        '{"dsn": "postgres://localhost/x"}', encoding="utf-8"
-    )
+    (tmp_path / "db" / "1").write_text('{"dsn": "postgres://localhost/x"}', encoding="utf-8")
     sec = DirectorySecrets(root=tmp_path)
     model = await resolve_structured(sec, SecretRef(path="db/1"), _Sample)
     assert model.dsn == "postgres://localhost/x"

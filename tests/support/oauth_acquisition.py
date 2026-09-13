@@ -31,7 +31,7 @@ from forze.application.contracts.secrets import (
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import InvocationMetadata
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_kits.integrations.secrets import (
     GRANTED_SCOPE_METADATA,
     REQUESTED_SCOPE_METADATA,
@@ -119,6 +119,44 @@ class ScriptedProvider:
 # ....................... #
 
 
+@attrs.define(slots=True, kw_only=True)
+class FailablePutStore(RotatingCredentialStorePort):
+    """The real store, with a switch that makes one ``put`` fail.
+
+    A proxy rather than a broken store: every other call goes through to the engine under
+    test, so the failed-persist check exercises the same store as the rest of the battery
+    and differs only in the one write it is about.
+    """
+
+    inner: RotatingCredentialStorePort
+    writes_fail: bool = False
+
+    # ....................... #
+
+    async def get(self, ref: SecretRef) -> Any:
+        return await self.inner.get(ref)
+
+    async def refresh(self, ref: SecretRef, *, observed: Any) -> Any:
+        return await self.inner.refresh(ref, observed=observed)
+
+    async def put(self, ref: SecretRef, credential: Any) -> Any:
+        if self.writes_fail:
+            # The shape a store's own persist failure takes: loud, and not a retryable
+            # infrastructure blip, because the authorization code is already spent.
+            raise exc.precondition(
+                f"scripted persist failure at {ref.path!r}",
+                code="scripted_persist_failure",
+            )
+
+        return await self.inner.put(ref, credential)
+
+    async def burn(self, ref: SecretRef, *, reason: str) -> None:
+        await self.inner.burn(ref, reason=reason)
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class OAuth2AcquisitionHarness:
     """One leg's seam: a wired context, a client, a store, and the provider behind them."""
@@ -129,8 +167,8 @@ class OAuth2AcquisitionHarness:
     client: OAuth2TokenClient
     """The client under test — also the store's exchanger, which is the point."""
 
-    store: RotatingCredentialStorePort
-    """The rotating store the acquired grant lands in."""
+    store: FailablePutStore
+    """The rotating store the acquired grant lands in, behind a switch one check flips."""
 
     provider: ScriptedProvider
     """What the token endpoint will say, and what it was asked."""
@@ -378,8 +416,50 @@ async def check_a_grant_lands_only_in_its_own_tenants_slot(
 # ....................... #
 
 
+async def check_a_failed_persist_is_loud_and_leaves_nothing_stored(
+    h: OAuth2AcquisitionHarness,
+) -> None:
+    """The window this handoff exists to close, from the failing side.
+
+    The exchange succeeded, so the authorization code is spent; the store then refused the
+    write. Two things must hold. The caller must be told — a swallowed failure would leave
+    a user looking at a connected account that does not exist — and nothing may be
+    observable afterwards, because a half-stored grant is worse than none.
+
+    What a crash here costs is the code, not a live token, so the recovery is a second
+    consent: the check finishes by proving a fresh code still works.
+    """
+
+    h.store.writes_fail = True
+
+    with pytest.raises(CoreException):
+        await h.acquire(code="first-code")
+
+    assert h.provider.grant_types == ["authorization_code"], (
+        f"{h.backend}: the exchange did not happen, so this checked the wrong failure"
+    )
+
+    with pytest.raises(CoreException) as missing:
+        await h.store.get(REF)
+
+    assert missing.value.kind is ExceptionKind.NOT_FOUND, (
+        f"{h.backend}: something is observable at {REF.path!r} after a failed persist "
+        f"({missing.value.code!r})"
+    )
+
+    # Re-consent works: a fresh code, a working store, a stored grant.
+    h.store.writes_fail = False
+    stored = await h.acquire(code="second-code")
+
+    assert stored.access_token == "access-2", h.backend
+
+
+# ....................... #
+
+
 OAUTH2_ACQUISITION_BATTERY: tuple[Check, ...] = (
     check_the_first_grant_is_acquired_and_stored,
+    check_a_failed_persist_is_loud_and_leaves_nothing_stored,
     check_the_code_and_verifier_reach_the_provider,
     check_the_same_client_refreshes_what_it_acquired,
     check_a_dead_grant_burns_and_a_bad_minute_does_not,
@@ -405,6 +485,7 @@ def battery_is_populated() -> None:
 
     if names != {
         "check_the_first_grant_is_acquired_and_stored",
+        "check_a_failed_persist_is_loud_and_leaves_nothing_stored",
         "check_the_code_and_verifier_reach_the_provider",
         "check_the_same_client_refreshes_what_it_acquired",
         "check_a_dead_grant_burns_and_a_bad_minute_does_not",

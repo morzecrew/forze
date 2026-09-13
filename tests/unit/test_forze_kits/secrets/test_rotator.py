@@ -505,9 +505,7 @@ class TestBackendConvergence:
                 super().__init__()
                 self._confirms = 0
 
-            async def verify(
-                self, tenant_id: UUID | None, pending: PendingCredential
-            ) -> None:
+            async def verify(self, tenant_id: UUID | None, pending: PendingCredential) -> None:
                 if pending.ref == _REF:
                     self._confirms += 1
                     self.fail_confirms = 1 if self._confirms % 2 == 1 else 0
@@ -517,9 +515,7 @@ class TestBackendConvergence:
         target = _AlwaysDriftingTarget()
         state = MockState()
         registry = DurableFunctionRegistry()
-        rotator = SecretRotator(
-            target=target, publish_spec=None, reconfirm_after=timedelta(0)
-        )
+        rotator = SecretRotator(target=target, publish_spec=None, reconfirm_after=timedelta(0))
         rotator.register(registry)
         durable_deps, runner, _ = durable_kits_deps(registry=registry)
         ctx = context_from_deps(MockDepsModule(state=state)(), durable_deps)

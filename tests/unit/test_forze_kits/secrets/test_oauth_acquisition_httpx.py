@@ -36,6 +36,7 @@ from tests.support.oauth_acquisition import (
     PROVIDER_NAME,
     TOKEN_PATH,
     Check,
+    FailablePutStore,
     OAuth2AcquisitionHarness,
     ScriptedProvider,
     battery_is_populated,
@@ -67,6 +68,11 @@ def _transport(provider: ScriptedProvider) -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["content-type"] == "application/x-www-form-urlencoded"
         assert str(request.url) == f"{_BASE_URL}{TOKEN_PATH}"
+
+        # The secret travels in the body and nowhere else: a query string ends up in
+        # every proxy log between here and the provider.
+        assert "client_secret" not in str(request.url)
+        assert "code=" not in str(request.url)
 
         form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
         status, body = provider.answer(form)
@@ -114,7 +120,9 @@ async def test_oauth2_acquisition_battery(check: Check) -> None:
             harness = OAuth2AcquisitionHarness(
                 ctx=ctx,
                 client=client,
-                store=ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey),
+                store=FailablePutStore(
+                    inner=ctx.deps.resolve_simple(ctx, RotatingCredentialsDepKey)
+                ),
                 provider=provider,
                 backend="httpx",
             )
