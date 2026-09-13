@@ -6,8 +6,7 @@ than drifting. What this module owns is the mock's provisioning: a tenant-aware 
 document registry over it.
 """
 
-from uuid import uuid4
-
+import attrs
 import pytest
 
 from forze.application.contracts.document import DocumentSpec
@@ -105,15 +104,14 @@ class TestTheMocksOwnWiring:
 # ....................... #
 
 
-def test_the_two_tenants_are_distinct() -> None:
-    # The harness generates them, so a defaulted-to-one-value regression would make every
-    # isolation assertion vacuous without failing anything.
-    harness = AgentToolsTenancyHarness(
-        ctx=None,  # type: ignore[arg-type]
-        registry=None,  # type: ignore[arg-type]
-        ns=_NS,
-        backend="probe",
-    )
+def test_each_harness_tenant_is_freshly_generated() -> None:
+    # A default that handed out one shared tenant would make every isolation assertion in
+    # the battery vacuous without failing anything. Read off the field rather than built
+    # from a half-populated harness: the property under test is the factory's.
+    fields = attrs.fields(AgentToolsTenancyHarness)
 
-    assert harness.tenant_a.tenant_id != harness.tenant_b.tenant_id
-    assert harness.tenant_a.tenant_id != uuid4()
+    for field in (fields.tenant_a, fields.tenant_b):
+        first = field.default.factory()
+        second = field.default.factory()
+
+        assert first.tenant_id != second.tenant_id, f"{field.name} is not freshly generated"

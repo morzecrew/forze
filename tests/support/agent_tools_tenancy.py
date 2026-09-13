@@ -153,12 +153,24 @@ async def check_an_unbound_tenant_fails_closed(h: AgentToolsTenancyHarness) -> N
 
     An empty answer is the dangerous outcome here: an agent told "no rows" will report that
     as fact, where a refusal makes the missing binding the operator's problem instead.
+
+    The *code* is asserted, not merely the refusal, and it is worth being exact about what
+    that buys. Both engines reach the same core guard — ``TenancyMixin.require_tenant_if_aware``
+    raises ``tenant_required`` — so this is not two implementations independently agreeing;
+    it pins that **neither adapter intercepts the refusal and re-raises its own**, and that
+    both legs are still wired to that guard rather than to something that merely also says
+    no. A bare ``is_error`` check would pass on any refusal at all, including one that told
+    an agent to stop retrying when it should retry, or the reverse.
     """
 
     result = await h.listing(None)
 
     assert result.is_error is True, f"{h.backend}: an unbound tenant answered instead of refusing"
     assert isinstance(result.content, dict)
+    assert result.content["code"] == "tenant_required", (
+        f"{h.backend}: refused with {result.content['code']!r} rather than the shared "
+        "tenant guard's code — the adapter is answering for itself"
+    )
 
 
 # ....................... #
