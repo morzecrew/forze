@@ -147,9 +147,7 @@ class TestDispatch:
                 yield _change(f"tenants/{_TENANT_A}/dsn")
 
         stop = asyncio.Event()
-        await asyncio.wait_for(
-            _consume_until_stopped(binder, _FiniteSource(), stop), timeout=5
-        )
+        await asyncio.wait_for(_consume_until_stopped(binder, _FiniteSource(), stop), timeout=5)
 
         assert client.evicted == [_TENANT_A]
 

@@ -61,6 +61,10 @@ class ConfigurableHttpService(HttpServiceDepPort):
                     secret_ref_for_tenant=self.config.secret_ref_for_tenant,
                     tenant_provider=ctx.inv_ctx.get_tenant,
                     backend=f"http.{spec.name}",
+                    # A tenant-routed service learns its URL from each tenant's secret, so
+                    # the config's own cleartext check never sees one. The declaration
+                    # travels with the client instead, and the check runs per tenant.
+                    egress_sensitive=self.config.egress_sensitive,
                 )
 
             return self._service_routed

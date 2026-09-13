@@ -77,7 +77,7 @@ class _ScriptedDynamic:
 
 async def _drive(manager: SecretsLeaseManager, ref: SecretRef, until: asyncio.Event) -> None:
     stop = asyncio.Event()
-    task = asyncio.create_task(manager._run_role(ref, stop))  # noqa: SLF001
+    task = asyncio.create_task(manager._run_role(ref, stop))
 
     try:
         await asyncio.wait_for(until.wait(), timeout=5)
@@ -95,9 +95,7 @@ class TestLeaseManager:
         async def _on_credential(ref: SecretRef, leased: LeasedSecret) -> None:
             delivered.append((ref.path, leased.lease_id))
 
-        manager = SecretsLeaseManager(
-            dynamic=dynamic, roles=(_ROLE,), on_credential=_on_credential
-        )
+        manager = SecretsLeaseManager(dynamic=dynamic, roles=(_ROLE,), on_credential=_on_credential)
 
         await _drive(manager, _ROLE, dynamic.issue_event)
 
@@ -110,9 +108,7 @@ class TestLeaseManager:
         async def _on_credential(ref: SecretRef, leased: LeasedSecret) -> None:
             pass
 
-        manager = SecretsLeaseManager(
-            dynamic=dynamic, roles=(_ROLE,), on_credential=_on_credential
-        )
+        manager = SecretsLeaseManager(dynamic=dynamic, roles=(_ROLE,), on_credential=_on_credential)
 
         await _drive(manager, _ROLE, dynamic.renew_event)
 
@@ -202,9 +198,7 @@ class TestLeaseManager:
         async def _broken(ref: SecretRef, leased: LeasedSecret) -> None:
             raise RuntimeError("pool rebuild failed")
 
-        manager = SecretsLeaseManager(
-            dynamic=dynamic, roles=(_ROLE,), on_credential=_broken
-        )
+        manager = SecretsLeaseManager(dynamic=dynamic, roles=(_ROLE,), on_credential=_broken)
 
         # The loop survives the failed delivery and still reaches renewal.
         await _drive(manager, _ROLE, dynamic.renew_event)
@@ -273,9 +267,7 @@ class TestLeaseManager:
         async def _on_credential(ref: SecretRef, leased: LeasedSecret) -> None:
             delivered.append(leased.lease_id)
 
-        manager = SecretsLeaseManager(
-            dynamic=dynamic, roles=(_ROLE,), on_credential=_on_credential
-        )
+        manager = SecretsLeaseManager(dynamic=dynamic, roles=(_ROLE,), on_credential=_on_credential)
         ctx = context_from_modules(MockDepsModule())
         step = manager.lifecycle_step()
 
@@ -311,9 +303,7 @@ class TestLeaseManager:
             pass
 
         with pytest.raises(CoreException, match="at least one role"):
-            SecretsLeaseManager(
-                dynamic=_ScriptedDynamic(), roles=(), on_credential=_on_credential
-            )
+            SecretsLeaseManager(dynamic=_ScriptedDynamic(), roles=(), on_credential=_on_credential)
 
     def test_rejects_duplicate_roles(self) -> None:
         async def _on_credential(ref: SecretRef, leased: LeasedSecret) -> None:

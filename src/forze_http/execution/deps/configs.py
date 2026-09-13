@@ -3,9 +3,7 @@
 import base64
 from collections.abc import Callable, Mapping
 from datetime import timedelta
-from ipaddress import ip_address
 from typing import Literal, final
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import attrs
@@ -20,27 +18,9 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 from forze.base.serialization.pydantic import pydantic_secret_converter
 from forze_http.execution._logger import logger
+from forze_http.kernel.client.cleartext import is_cleartext_destination
 
 # ----------------------- #
-
-
-def _is_loopback(host: str) -> bool:
-    """Whether *host* names the local machine — a developer's own setup.
-
-    Parsed rather than matched against a list of spellings: ``127.0.0.2`` is as loopback as
-    ``127.0.0.1``, and a warning that fires on one and not the other reads as a bug. A
-    non-address host is only loopback when it is literally ``localhost``; a name that
-    resolves there is not something a config can know.
-    """
-
-    if host == "localhost":
-        return True
-
-    try:
-        return ip_address(host).is_loopback
-
-    except ValueError:
-        return False
 
 
 # ....................... #
@@ -220,11 +200,14 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def _warn_if_credentials_travel_in_cleartext(self) -> None:
-        """Warn when a declared credential would leave over plaintext HTTP.
+        """Warn when something worth protecting would leave over plaintext HTTP.
 
-        Every auth kind is affected, not just ``basic`` — a bearer token in a header is as
-        readable on the wire as a base64 user-and-password — so the check reads
-        :attr:`auth` rather than its kind.
+        Two triggers, because a credential reaches a counterparty two ways. Every auth
+        *kind* is affected, not just ``basic`` — a bearer token in a header is as readable
+        on the wire as a base64 user-and-password — so the check reads :attr:`auth` rather
+        than its kind. And a route that declares :attr:`egress_sensitive` has said it
+        carries data worth protecting regardless of how it authenticates, which is the
+        case a credential in the request *body* falls into.
 
         A warning rather than a refusal, and the reason is a real deployment: a service
         mesh terminates TLS in a sidecar, so ``http://service.namespace.svc`` with a
@@ -234,24 +217,25 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         machine, and warning on it would train the reader to ignore the warning.
         """
 
-        if self.auth is None or self.base_url is None:
+        # Either a credential the transport sends, or a route that has declared it carries
+        # sensitive data out. The second case is the one a credential in the *body* falls
+        # into — an OAuth token request posts its client secret as a form field and needs
+        # no `HttpAuthConfig` at all, so reading `auth` alone would stay silent for exactly
+        # the route that carries the most.
+        if self.base_url is None or not (self.auth is not None or self.egress_sensitive):
             return
 
-        parts = urlsplit(self.base_url)
-
-        if parts.scheme != "http":
-            return
-
-        if _is_loopback(parts.hostname or ""):
+        if not is_cleartext_destination(self.base_url):
             return
 
         logger.warning(
             "http.service.cleartext_credentials",
             base_url=self.base_url,
-            auth_kind=self.auth.kind,
+            auth_kind=self.auth.kind if self.auth is not None else None,
+            egress_sensitive=self.egress_sensitive,
             detail=(
-                "an HTTP service declares authentication over a plaintext base_url, so the "
-                "credential is readable by anything on the path; use https, or terminate "
-                "TLS closer to the caller"
+                "an HTTP service sends a credential or declared-sensitive data over a "
+                "plaintext base_url, so it is readable by anything on the path; use https, "
+                "or terminate TLS closer to the caller"
             ),
         )

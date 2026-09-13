@@ -1,5 +1,6 @@
 """Tenant-aware HTTP adapter invoke tests."""
 
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import httpx
@@ -11,7 +12,7 @@ from forze.application.integrations.http import build_http_service_spec
 from forze.application.integrations.http.descriptors import BaseHttpIntegration, async_http_op
 from forze_http.adapters.http_service import HttpServiceAdapter
 from forze_http.execution.deps.configs import HttpServiceConfig
-from forze_http.kernel.client import HttpClient, RoutedHttpClient
+from forze_http.kernel.client import HttpClient, RoutedHttpClient, routed_client
 from forze_http.kernel.client.credentials import credential_auth_headers
 from forze_http.kernel.client.routing_credentials import HttpRoutingCredentials
 
@@ -151,3 +152,118 @@ class TestFormBodyThroughTheRoutedClient:
 
         finally:
             await routed.close()
+
+
+# ....................... #
+
+
+class TestCleartextTenantRoute:
+    """A tenant-routed service has no `base_url` at wiring, so the config's cleartext check
+    can never see it — the tenant's URL arrives with the tenant's secret. The warning has
+    to be asked once per tenant client, which is also where a mistake is quietest: it
+    affects one tenant rather than the deployment."""
+
+    @staticmethod
+    def _spy(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        spy = MagicMock()
+        monkeypatch.setattr(routed_client, "logger", spy)
+
+        return spy
+
+    @pytest.mark.asyncio
+    async def test_a_plaintext_tenant_url_with_credentials_warns(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = self._spy(monkeypatch)
+        client = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+        )
+
+        made = await client.initialize_client(
+            TENANT_ID,
+            HttpRoutingCredentials(base_url="http://tenant.example.com", bearer_token="tok"),
+        )
+
+        try:
+            spy.warning.assert_called_once()
+            call = str(spy.warning.call_args)
+            assert "cleartext_credentials" in call
+            assert str(TENANT_ID) in call
+            # The tenant to fix, never the credential itself.
+            assert "tok" not in call
+
+        finally:
+            await made.aclose()
+
+    @pytest.mark.asyncio
+    async def test_a_sensitive_route_warns_with_no_credential_headers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The half the first version of this check missed: a declared-sensitive route can
+        # send a JSON or form body to a plaintext tenant URL carrying no credential
+        # headers at all, and the payload is the thing worth protecting.
+        spy = self._spy(monkeypatch)
+        client = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+            egress_sensitive=True,
+        )
+
+        made = await client.initialize_client(
+            TENANT_ID, HttpRoutingCredentials(base_url="http://tenant.example.com")
+        )
+
+        try:
+            spy.warning.assert_called_once()
+            assert str(TENANT_ID) in str(spy.warning.call_args)
+
+        finally:
+            await made.aclose()
+
+    @pytest.mark.asyncio
+    async def test_a_sensitive_route_over_https_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        spy = self._spy(monkeypatch)
+        client = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+            egress_sensitive=True,
+        )
+
+        made = await client.initialize_client(
+            TENANT_ID, HttpRoutingCredentials(base_url="https://tenant.example.com")
+        )
+
+        try:
+            spy.warning.assert_not_called()
+
+        finally:
+            await made.aclose()
+
+    @pytest.mark.asyncio
+    async def test_https_or_no_credentials_is_quiet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        spy = self._spy(monkeypatch)
+        client = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+        )
+
+        quiet = [
+            HttpRoutingCredentials(base_url="https://tenant.example.com", bearer_token="tok"),
+            HttpRoutingCredentials(base_url="http://localhost:8080", bearer_token="tok"),
+            # No credential to leak and nothing declared sensitive: a plaintext URL
+            # alone is the application's own business.
+            HttpRoutingCredentials(base_url="http://tenant.example.com"),
+        ]
+
+        for creds in quiet:
+            made = await client.initialize_client(TENANT_ID, creds)
+            await made.aclose()
+
+        spy.warning.assert_not_called()

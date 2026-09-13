@@ -72,9 +72,14 @@ PostgresRotatingCredentialsConfig(
 
 ## The exchanger
 
-The framework cannot supply this: it is a call to someone else's provider. Its one hard
-obligation beyond being bounded is **classification**, because the store treats the two
-cases oppositely.
+For a **standard OAuth2 token endpoint you do not have to write one**: `OAuth2TokenClient`
+is an exchanger, and the same instance also acquires the first grant — see
+[Acquiring the first grant](#acquiring-the-first-grant) below. Write your own when the
+counterparty is not OAuth2, or when its token response deviates from RFC 6749 enough that
+a thin adapter is cheaper than a configuration.
+
+Either way, the obligation beyond being bounded is **classification**, because the store
+treats the two cases oppositely.
 
 ```python
 --8<-- "recipes/rotating_credentials/app.py:provider"
@@ -134,6 +139,65 @@ rotated token because you never have one.
 `put` is unconditional by design. A human has just proven possession of a new grant, so
 there is no earlier version worth defending — and refusing the write would leave a burnt
 credential permanently unrecoverable.
+
+### Acquiring the first grant
+
+For OAuth2 the whole front door ships: `build_authorize_url` sends the user to the
+provider, `read_authorization_callback` reads what comes back — comparing `state`
+constant-time before anything else, refusing a provider `error=access_denied` rather than
+mistaking it for a code — and `complete_authorization` exchanges the code and stores the
+grant, in that order, so nothing observes a credential the store does not already hold.
+
+```python
+from forze_identity.oauth import (
+    build_authorize_url,
+    generate_pkce,
+    generate_state,
+    read_authorization_callback,
+)
+from forze_kits.integrations.secrets import (
+    OAuth2ProviderConfig,
+    OAuth2TokenClient,
+    complete_authorization,
+)
+
+provider = OAuth2ProviderConfig(
+    name="crm",
+    token_endpoint="/oauth/token",
+    client_id="your-client-id",
+    client_secret=SecretRef(path="providers/crm/client_secret"),
+)
+client = OAuth2TokenClient(config=provider, ctx_factory=runtime.get_context)
+```
+
+`build_authorize_url` requires https on both the authorization endpoint and the redirect
+URI, allowing an http loopback address for local development (RFC 8252's native-app
+carve-out) and nothing else. A provider configured with no `client_secret` is a public
+client, and exchanging a code then requires the PKCE verifier — without either, an
+intercepted code is enough for anyone.
+
+Two things the kit cannot do for you. The route is yours — the button, the session, the
+success page — and so is **wiring the token endpoint as a declared service**, which is what
+puts the hop inside the plane's tenancy, deadlines and egress declaration:
+
+```python
+HttpDepsModule(
+    client=HttpClient(),
+    services={
+        "crm": HttpServiceConfig(
+            base_url="https://crm.example",
+            egress_sensitive=True,        # a code and a client secret leave here
+            acknowledge_data_egress=True, # and you are accepting that
+        )
+    },
+)
+```
+
+The same `client` then goes into the store's `exchanger`, and every rotation afterwards is
+the same request with a different `grant_type`. A crash between the exchange and the store
+loses an authorization code, which the user re-mints by clicking connect again — mild, and
+deliberately not defended with the single-flight machinery the refresh path needs, where
+what is at stake is a live refresh token.
 
 ## What the errors mean
 

@@ -83,8 +83,13 @@ resolved via `ctx.http.service(spec)`.
   match the model changes nothing: you get exactly the exception you would have got
   without a declaration. A model configured `extra="allow"` still contributes only its
   declared fields.
-- **A credential over a plaintext `base_url` is warned about at wiring**, for every auth
-  kind — a bearer token on the wire is as readable as a base64 user-and-password. Loopback
+- **A credential or declared-sensitive payload over a plaintext `base_url` is warned
+  about at wiring** — for every auth kind, and for an `egress_sensitive` route even when it
+  carries no `HttpAuthConfig` at all, which is the shape of an OAuth token request posting
+  its client secret as a form field. A **tenant-routed** service has no `base_url` at
+  wiring, so the same check runs once per tenant client against the URL that tenant's
+  secret resolved to — on the same two triggers, since a declared-sensitive body needs no
+  credential headers to be worth protecting — naming the tenant rather than the credential — a bearer token on the wire is as readable as a base64 user-and-password. Loopback
   is exempt. It warns rather than refuses because a service mesh legitimately terminates
   TLS in a sidecar, so `http://service.namespace.svc` with a credential is plaintext at
   this hop and encrypted on the network; refusing that would need an opt-out to stay

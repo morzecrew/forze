@@ -13,6 +13,8 @@ from forze.application.contracts.tenancy.routed_client_base import (
 )
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
+from .cleartext import is_cleartext_destination
 from .client import HttpClient
 from .credentials import credential_auth_headers
 from .port import HttpClientPort
@@ -36,6 +38,14 @@ class RoutedHttpClient(
     max_cached_tenants: int = 100
     creds_type: type[BaseModel] = attrs.field(default=HttpRoutingCredentials, init=False)
     backend: str = "http"
+    egress_sensitive: bool = False
+    """Whether the service this client serves declared that it sends sensitive data out.
+
+    Carried from the service config so the cleartext check below can ask the same question
+    the static path asks: a route may leak a credential *or* a declared-sensitive payload,
+    and a body needs no credential headers to be worth protecting. A routed client an
+    application registers directly has no service config behind it, so it keeps the
+    default and the credential trigger still applies."""
     tenant_required_message: str = attrs.field(
         default="Tenant ID is required for routed HTTP access",
         init=False,
@@ -54,11 +64,30 @@ class RoutedHttpClient(
         creds: HttpRoutingCredentials,
     ) -> HttpClient:
         client = HttpClient()
+        headers = credential_auth_headers(creds)
+
+        # A tenant-routed service has no base_url at wiring — it comes from this tenant's
+        # secret — so the config's cleartext check cannot see it and the question has to be
+        # asked here, once per tenant client. The tenant id rather than the credential: the
+        # point is which tenant to fix, and the headers are the credential.
+        if (headers or self.egress_sensitive) and is_cleartext_destination(creds.base_url):
+            logger.warning(
+                "http.routed.cleartext_credentials",
+                tenant_id=str(tenant_id),
+                base_url=creds.base_url,
+                egress_sensitive=self.egress_sensitive,
+                detail=(
+                    "a tenant's routed HTTP route carries credentials or declared-sensitive "
+                    "data to a plaintext base_url, so it is readable by anything on the "
+                    "path; use https for this tenant's route, or terminate TLS closer to "
+                    "the caller"
+                ),
+            )
 
         await client.initialize(
             creds.base_url,
             config=self.client_config,
-            default_headers=credential_auth_headers(creds),
+            default_headers=headers,
         )
 
         return client

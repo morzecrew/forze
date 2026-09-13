@@ -111,9 +111,7 @@ class TestDirectorySource:
         finally:
             task.cancel()
 
-    async def test_unreadable_path_is_skipped_without_state_poisoning(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_unreadable_path_is_skipped_without_state_poisoning(self, tmp_path: Path) -> None:
         # A directory where a file is expected: stat succeeds, the read fails —
         # the tick logs, skips, and records no signature (so a later real file
         # is observed as a fresh appearance).
