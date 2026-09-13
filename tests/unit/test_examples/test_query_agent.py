@@ -114,11 +114,13 @@ class TestTheStubIsOnlyChoosingATool:
         # the palette it claims to read from changed underneath it.
         names = [{"name": name} for name in ("other.list", "other.agg_list")]
 
-        assert canned_model(ModelArgs(question="anything", tools=names)) is not None
-        assert (
-            canned_model(ModelArgs(question="how many?", tools=names)).tool_call.name
-            == "other.agg_list"
-        )
+        listing = canned_model(ModelArgs(question="anything", tools=names)).tool_call
+        counting = canned_model(ModelArgs(question="how many?", tools=names)).tool_call
+
+        assert listing is not None
+        assert counting is not None
+        assert listing.name == "other.list"
+        assert counting.name == "other.agg_list"
 
 
 def _ctx():

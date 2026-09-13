@@ -212,8 +212,10 @@ async def check_an_agent_filter_returns_exactly_the_matching_rows(
 async def check_an_agent_sort_orders_the_rows(h: AgentToolsQueryHarness) -> None:
     """A descending sort comes back descending.
 
-    The seed is inserted ascending by title, so an ignored sort returns the ascending
-    order — the one answer a reversed expectation cannot be satisfied by.
+    The expectation is the exact reverse of the order the rows were written in, so a sort
+    the engine dropped cannot satisfy it — not on the mock, which would answer in
+    insertion order, and not on a database, whose unordered scan is free to answer in any
+    order at all but has no reason to invent this one.
     """
 
     await h.seed()
@@ -310,14 +312,79 @@ async def check_the_tool_advertises_the_policy_and_nothing_else(
 # ....................... #
 
 
+async def check_an_invented_field_is_refused_like_a_withheld_one(
+    h: AgentToolsQueryHarness,
+) -> None:
+    """A filter on a field that is on no read model at all is refused the same way.
+
+    This is the mistake a language model actually makes — a misspelled or invented column
+    name rather than a real one it was not granted — and two things about the answer are
+    worth pinning. It lands as an error *result*: a refusal that propagated out of
+    ``dispatch_tool_use`` would take down the turn instead of letting the agent respell.
+    And it carries the allow-set's code, not the read model's: under a policy the
+    filterable check runs first, so an agent cannot tell a field that does not exist from
+    one it was not given — the palette's advertised surface is all it learns, which is the
+    right amount.
+    """
+
+    await h.seed()
+
+    result = await h.ask(DocumentKernelOp.LIST, {"filters": {"$values": {"titel": "alpha"}}})
+
+    assert result.is_error is True, f"{h.backend}: an invented field name was served"
+    assert isinstance(result.content, dict)
+    assert result.content["code"] == "field_not_filterable", (
+        f"{h.backend}: refused with {result.content['code']!r} — an invented field is "
+        "expected to be indistinguishable from a withheld one, which is what keeps the "
+        "advertised allow-set the whole of what an agent can learn about the model"
+    )
+
+
+# ....................... #
+
+
+async def check_a_group_outside_the_policy_is_refused(h: AgentToolsQueryHarness) -> None:
+    """Grouping by a filterable-but-not-aggregatable field refuses.
+
+    The three allow-sets are separate decisions and ``title`` sits in two of them, so an
+    implementation that consulted the filterable set for a grouping would pass every other
+    check in this battery. The aggregate tool is also the one whose refusal an agent is
+    most likely to hit, since "count by X" is the shape a question takes.
+    """
+
+    await h.seed()
+
+    result = await h.ask(
+        DocumentKernelOp.AGG_LIST,
+        {
+            "aggregates": {
+                "$groups": {"title": "title"},
+                "$computed": {"n": {"$count": None}},
+            }
+        },
+    )
+
+    assert result.is_error is True, f"{h.backend}: grouped by a field outside the allow-set"
+    assert isinstance(result.content, dict)
+    assert result.content["code"] == "field_not_aggregatable", (
+        f"{h.backend}: refused with {result.content['code']!r} rather than the aggregate "
+        "allow-set's code"
+    )
+
+
+# ....................... #
+
+
 AGENT_TOOLS_QUERY_BATTERY: tuple[Check, ...] = (
     check_an_agent_filter_returns_exactly_the_matching_rows,
     check_an_agent_sort_orders_the_rows,
     check_an_agent_aggregate_groups_through_the_tool,
     check_a_field_outside_the_policy_is_refused,
+    check_an_invented_field_is_refused_like_a_withheld_one,
+    check_a_group_outside_the_policy_is_refused,
     check_the_tool_advertises_the_policy_and_nothing_else,
 )
-"""The scenario: the three things a model may express, the one it may not, and what the
+"""The scenario: the three things a model may express, the three it may not, and what the
 palette told it before it tried.
 
 Both legs drive this by ``parametrize``, which is silent about an empty argument list — a
@@ -342,6 +409,8 @@ def battery_is_populated() -> None:
         "check_an_agent_sort_orders_the_rows",
         "check_an_agent_aggregate_groups_through_the_tool",
         "check_a_field_outside_the_policy_is_refused",
+        "check_an_invented_field_is_refused_like_a_withheld_one",
+        "check_a_group_outside_the_policy_is_refused",
         "check_the_tool_advertises_the_policy_and_nothing_else",
     }:
         raise AssertionError(f"the query battery changed shape: {sorted(names)}")

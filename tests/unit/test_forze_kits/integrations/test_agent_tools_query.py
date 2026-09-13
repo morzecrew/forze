@@ -8,9 +8,11 @@ plus the projection facts that belong to the palette rather than to either engin
 
 import pytest
 
+from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.querying import QueryFieldPolicy
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.deps import DepsRegistry
-from forze_kits.aggregates.document import DocumentKernelOp
+from forze_kits.aggregates.document import DocumentKernelOp, build_document_registry
 from forze_kits.integrations.agent_tools import operation_tools
 from forze_mock import MockDepsModule
 from tests.support.agent_tools_query import (
@@ -19,6 +21,8 @@ from tests.support.agent_tools_query import (
     QUERY_POLICY,
     AgentToolsQueryHarness,
     Check,
+    CreateQueryNote,
+    QueryNote,
     QueryNoteRead,
     battery_is_populated,
     query_registry,
@@ -88,6 +92,26 @@ class TestTheProjectedDescription:
         )
 
         assert described == "Fetch a single document by primary key."
+
+    def test_an_empty_allow_set_adds_nothing_at_all(self) -> None:
+        # A policy that withholds every field still attaches a discovery, and its sentence
+        # is empty. Joining that onto the descriptor's text would leave a trailing space
+        # in what a model reads, and a description that differs from the unrestricted one
+        # by invisible whitespace is the kind of thing nobody notices for a year.
+        spec = DocumentSpec(
+            name="notes",
+            read=QueryNoteRead,
+            write={"domain": QueryNote, "create_cmd": CreateQueryNote},
+            query_policy=QueryFieldPolicy(filterable=set(), sortable=set(), aggregatable=set()),
+        )
+        registry = build_document_registry(spec, ns=QUERY_NS).freeze()
+        described = (
+            operation_tools(registry, include=[QUERY_NS.key(DocumentKernelOp.LIST)])
+            .defs[0]
+            .description
+        )
+
+        assert described == "List documents by filters and sorts (offset pagination)."
 
     def test_the_description_starts_with_the_operations_own_text(self) -> None:
         # The discovery is appended, never substituted: the descriptor's sentence is what

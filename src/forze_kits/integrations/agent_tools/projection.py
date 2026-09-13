@@ -61,18 +61,13 @@ def _description(entry: OperationCatalogEntry) -> str | None:
     if descriptor is None:
         return None
 
-    if descriptor.query_discovery is None:
-        return descriptor.description
+    discovery = descriptor.query_discovery
+    sentence = describe_query_discovery(discovery) if discovery is not None else None
 
-    sentence = describe_query_discovery(descriptor.query_discovery)
-
-    if not sentence:
-        return descriptor.description
-
-    if descriptor.description is None:
-        return sentence
-
-    return f"{descriptor.description} {sentence}"
+    # Joined by what is actually there: a descriptor carrying no description, or a
+    # discovery whose allow-sets are all empty, must not leave a stray space behind or
+    # turn an absent description into one.
+    return " ".join(part for part in (descriptor.description, sentence) if part) or None
 
 
 # ....................... #
