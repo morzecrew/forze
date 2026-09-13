@@ -161,6 +161,11 @@ async def _rows(ctx: ExecutionContext, registry: FrozenOperationRegistry) -> str
         tools=operation_tools(registry, include=[_LIST_OP]),
     )
 
+    # A refused listing stringifies to an error payload, in which any title is absent —
+    # so an absence assertion over it would pass for the wrong reason. Fail loudly here
+    # instead, where the cause is still visible.
+    assert listing.is_error is False, f"the listing itself was refused: {listing.content}"
+
     return str(listing.content)
 
 

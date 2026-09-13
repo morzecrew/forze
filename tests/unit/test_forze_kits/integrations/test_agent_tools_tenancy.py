@@ -21,6 +21,7 @@ from tests.support.agent_tools_tenancy import (
     AGENT_TOOLS_TENANCY_BATTERY,
     AgentToolsTenancyHarness,
     Check,
+    battery_is_populated,
 )
 
 pytestmark = pytest.mark.unit
@@ -69,6 +70,15 @@ async def test_agent_tools_tenancy_battery(check: Check) -> None:
                 backend="mock",
             )
         )
+
+
+# ....................... #
+
+
+def test_the_battery_still_has_its_checks() -> None:
+    # parametrize over an emptied tuple collects nothing and reports green, on both legs
+    # at once. This is the floor under that.
+    battery_is_populated()
 
 
 # ....................... #

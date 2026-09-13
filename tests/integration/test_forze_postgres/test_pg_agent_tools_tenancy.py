@@ -35,8 +35,11 @@ from tests.support.agent_tools_tenancy import (
     AGENT_TOOLS_TENANCY_BATTERY,
     AgentToolsTenancyHarness,
     Check,
+    battery_is_populated,
 )
 from tests.support.execution_context import context_from_deps
+
+pytestmark = pytest.mark.integration
 
 # ----------------------- #
 
@@ -113,6 +116,13 @@ async def _table(pg_client: PostgresClient) -> str:
     )
 
     return table
+
+
+# ....................... #
+
+
+def test_the_battery_still_has_its_checks() -> None:
+    battery_is_populated()
 
 
 # ....................... #

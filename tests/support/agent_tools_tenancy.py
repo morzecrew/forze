@@ -170,4 +170,28 @@ AGENT_TOOLS_TENANCY_BATTERY: tuple[Check, ...] = (
     check_an_unbound_tenant_fails_closed,
 )
 """The scenario, in the order a reader should meet it: the write lands, it stays put, and
-an unbound read refuses."""
+an unbound read refuses.
+
+Both legs drive this by ``parametrize``, which is silent about an empty argument list — a
+battery emptied by a bad edit would collect zero tests and report green on both engines.
+:func:`battery_is_populated` is the guard against that, asserted by each leg."""
+
+
+# ....................... #
+
+
+def battery_is_populated() -> None:
+    """Refuse a battery that has lost its checks.
+
+    Named rather than inlined so each leg asserts the same floor, and stated as a count
+    plus the names: a reordering is free, a deletion is not.
+    """
+
+    names = {check.__name__ for check in AGENT_TOOLS_TENANCY_BATTERY}
+
+    if names != {
+        "check_a_tenants_own_write_is_readable_through_a_tool_call",
+        "check_a_tool_call_cannot_read_another_tenants_rows",
+        "check_an_unbound_tenant_fails_closed",
+    }:
+        raise AssertionError(f"the tenancy battery changed shape: {sorted(names)}")
