@@ -31,6 +31,7 @@ from forze_kits.integrations.agent_tools import (
     dispatch_tool_use,
     operation_tools,
 )
+from forze_kits.integrations.agent_tools.dispatch import _accepted_names, _alias_names
 
 pytestmark = pytest.mark.unit
 
@@ -764,3 +765,50 @@ class TestEveryPathThroughTheAcceptedSet:
 
         assert result.is_error is False
         assert result.content == {}
+
+
+# ....................... #
+
+
+class TestTheUnreadableAliasFallback:
+    """The branch that only runs when a name cannot be enumerated at all.
+
+    It is the check's safety valve: when the accepted set cannot be built, the check must
+    step aside rather than refuse what the DTO would accept. A fallback nothing exercises
+    is a fallback nobody knows works, and this one is load-bearing precisely on the inputs
+    nobody anticipated.
+
+    Pinned against the helpers rather than through a dispatch, because pydantic refuses an
+    index-first ``AliasPath`` as a field alias — the shapes that reach this branch cannot
+    be expressed as a DTO field, so an end-to-end test of it would be a test of nothing.
+    """
+
+    def test_an_alias_shape_the_helper_cannot_read_yields_no_names(self) -> None:
+        class _FutureAlias:
+            """Neither a string, nor choices, nor a path — a shape pydantic may add later."""
+
+        assert _alias_names(_FutureAlias()) == set()
+
+    def test_a_path_that_starts_at_an_index_yields_no_names(self) -> None:
+        # The payload is a list, so there is no top-level key to accept or refuse.
+        assert _alias_names(AliasPath(0, "n")) == set()
+
+    def test_choices_carrying_only_unreadable_paths_yield_no_names(self) -> None:
+        assert _alias_names(AliasChoices(AliasPath(0, "n"))) == set()
+
+    def test_a_field_whose_names_cannot_be_enumerated_stops_the_check(self) -> None:
+        # set() from the helper must become None at the DTO level — "do not check",
+        # not "accepts nothing", which would refuse every argument the DTO does take.
+        class _Unreadable:
+            validation_alias = AliasPath(0, "n")
+            alias = None
+
+        class _Fields:
+            model_config: dict[str, object] = {}
+            model_fields = {"n": _Unreadable()}
+
+        assert _accepted_names(_Fields) is None  # type: ignore[arg-type]
+
+    def test_a_readable_dto_is_still_checked(self) -> None:
+        # The contrast that makes the step-aside meaningful rather than a blanket skip.
+        assert _accepted_names(_AliasIn) == {"n", "count"}
