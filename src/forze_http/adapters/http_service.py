@@ -89,6 +89,12 @@ class HttpServiceAdapter(HttpServicePort):
             # enclosing operation span otherwise — and on an uninstrumented app the
             # non-recording span drops it. There is nothing for forze_http to create: it has
             # never opened a span of its own.
+            #
+            # This marks the calls the framework makes. An app that takes the underlying
+            # client and hands it to a provider's SDK keeps the wiring gate — every service
+            # is configured through HttpServiceConfig — but those requests never reach here,
+            # so they carry no tag. Marking them would mean instrumenting someone else's
+            # client, which is theirs to do.
             if self.config.egress_sensitive:
                 trace.get_current_span().set_attribute(EGRESS_SENSITIVE_ATTRIBUTE, True)
 

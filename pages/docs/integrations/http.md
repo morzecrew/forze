@@ -71,10 +71,12 @@ resolved via `ctx.http.service(spec)`.
   `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)`. Declare
   the first without the second and wiring fails closed
   (`http_egress_unacknowledged`). This is a governance marker and a conscious-choice
-  gate, not a DLP filter — nothing inspects a payload — and a declared route tags its
-  span `forze.egress.sensitive`, so sensitive egress is queryable in
-  [observability](../running-in-prod/observability.md) rather than only visible in
-  review. Routes that leave both fields alone are unaffected. An inference route is
-  always sensitive and always requires the acknowledgement, which is the same gate.
+  gate, not a DLP filter — nothing inspects a payload. Calls made through the service
+  port also tag their span `forze.egress.sensitive`, so sensitive egress is queryable
+  in [observability](../running-in-prod/observability.md) rather than only visible in
+  review; hand the underlying client to someone else's SDK and you keep the wiring
+  gate but not the per-call tag, since those calls are not the framework's to mark.
+  Routes that leave both fields alone are unaffected. An inference route is always
+  sensitive and always requires the acknowledgement, which is the same gate.
 - The `HttpServiceSpec` / `HttpOperationSpec` / `HttpServicePort` contracts live
   in core; `forze_http` provides the httpx transport and wiring.
