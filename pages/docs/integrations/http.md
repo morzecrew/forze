@@ -61,7 +61,26 @@ resolved via `ctx.http.service(spec)`.
 - A service is either static (`base_url`) or per-tenant — `tenant_aware=True`
   forbids a static `base_url` (it comes from secrets) and requires
   `secret_ref_for_tenant`.
-- `HttpAuthConfig` covers `bearer`, `api_key`, and custom-`header` auth.
+- `HttpAuthConfig` covers `bearer`, `api_key`, custom-`header`, and `basic` auth. The
+  `basic` kind takes `username` and `password` and sends the RFC 7617 header; declare one
+  half without the other and wiring is refused, because sending no header at all would
+  surface at the counterparty as a rejected request rather than here as the mistake it is.
+  The other kinds keep their existing behaviour — an absent token means no auth.
+- **A request body is JSON unless an operation says otherwise.**
+  `async_http_op(..., body_encoding="form")` sends
+  `application/x-www-form-urlencoded`, which is what an OAuth token endpoint requires.
+  It is per operation on purpose: one provider mixes a form-encoded token endpoint with a
+  JSON API behind one base URL and one credential. A form body carries scalars only —
+  a nested object or a list is refused by field name rather than stringified into
+  something no server parses; `None` is omitted and booleans are sent lowercase.
+- **An operation can declare what its errors look like.**
+  `async_http_op(..., error_type=ProviderError)` validates the body of a rejected
+  response against that model and attaches it to the raised exception's `details` under
+  `response_error`, so a caller can read the provider's own code — `invalid_grant`, say —
+  and decide whether the failure is worth retrying. Only fields the model declares travel,
+  on the same scrubbed channel as every other error context, and a body that does not
+  match the model changes nothing: you get exactly the exception you would have got
+  without a declaration.
 - When the caller has a [deadline](../running-in-prod/deadlines.md) bound, the adapter
   forwards the remaining budget as an `X-Forze-Deadline-Budget` header so a
   downstream Forze service can inherit it; opt out per service with

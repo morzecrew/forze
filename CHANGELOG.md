@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An outbound HTTP operation can send a form body and read its own error responses.** `async_http_op(..., body_encoding="form")` sends `application/x-www-form-urlencoded` (scalars only, refusing anything a form cannot carry), `error_type=` validates a rejected response's body and hands it to the caller in `details["response_error"]`, and `HttpAuthConfig(kind="basic", …)` presents HTTP Basic. Together they mean a token endpoint no longer has to be called from a bare client, outside the plane's tenancy, deadlines and egress declaration.
+
 - **An outbound route can declare that data leaves your trust boundary.** `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)` makes the egress a reviewed wiring fact — declaring without acknowledging fails closed — and tags the call's span `forze.egress.sensitive`. Off by default; the inference configs now share the same gate.
 
 - **An in-process agent's tools can be your operations.** `operation_tools(registry, include=…)` projects allowlisted operations into tool definitions carrying their own input schema, and `dispatch_tool_use` runs the agent's call through `run_operation` on the live context, so tenancy, permissions, deadlines and audit apply as they do to any caller. Read-only by default; a sensitive operation is refused, not skipped. A query tool's description carries the read model's filterable fields and their operators — the spec's allow-set, in the same sentence the MCP surface uses — so a model does not have to guess them.
@@ -27,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **`HttpAuthConfig` with no token sent `Authorization: Bearer None`.** An optional secret field converted `None` into a `SecretStr` wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on `HttpClientLifecycleStep.auth_token` and Meilisearch's `api_key`, where consumers happened to unwrap defensively.
 
 ## [0.7.0] - 2026-09-10
 

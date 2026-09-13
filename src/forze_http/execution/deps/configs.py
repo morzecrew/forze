@@ -1,5 +1,6 @@
 """HTTP service execution configs."""
 
+import base64
 from collections.abc import Callable, Mapping
 from datetime import timedelta
 from typing import Literal, final
@@ -25,12 +26,12 @@ from forze.base.serialization.pydantic import pydantic_secret_converter
 class HttpAuthConfig:
     """Static authentication applied to every request for a service route."""
 
-    kind: Literal["bearer", "api_key", "header"] = "bearer"
+    kind: Literal["bearer", "api_key", "header", "basic"] = "bearer"
     """Authentication style."""
 
     token: SecretStr | None = attrs.field(
         default=None,
-        converter=pydantic_secret_converter,
+        converter=attrs.converters.optional(pydantic_secret_converter),
         repr=False,
     )
     """Bearer token or API key value."""
@@ -41,10 +42,40 @@ class HttpAuthConfig:
     prefix: str = "Bearer "
     """Value prefix for bearer tokens."""
 
+    username: str | None = None
+    """Client identifier for ``basic`` — the user half of HTTP Basic (RFC 7617)."""
+
+    password: SecretStr | None = attrs.field(
+        default=None,
+        converter=attrs.converters.optional(pydantic_secret_converter),
+        repr=False,
+    )
+    """Client secret for ``basic``. Excluded from ``repr`` so a config dump cannot leak it."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Refused rather than silently unauthenticated: a half-declared Basic credential
+        # would send no Authorization header at all, and the failure surfaces at the
+        # counterparty as a rejected request rather than here as the wiring mistake it is.
+        # The token-based kinds keep their existing behaviour — an absent token there has
+        # always meant "no auth", and wiring depends on it.
+        if self.kind == "basic" and (self.username is None or self.password is None):
+            raise exc.configuration(
+                "HttpAuthConfig: kind='basic' requires both username and password",
+            )
+
     # ....................... #
 
     def auth_headers(self) -> dict[str, str]:
         """Headers to merge for this auth configuration."""
+
+        if self.kind == "basic":
+            # Both halves are present — the post-init refuses anything else.
+            secret = self.password.get_secret_value() if self.password is not None else ""
+            blob = base64.b64encode(f"{self.username}:{secret}".encode()).decode("ascii")
+
+            return {"Authorization": f"Basic {blob}"}
 
         if self.token is None:
             return {}
@@ -57,6 +88,9 @@ class HttpAuthConfig:
 
             case "api_key" | "header":
                 return {self.header_name: value}
+
+            case "basic":  # pragma: no cover - handled above, kept for exhaustiveness
+                return {}
 
 
 # ....................... #

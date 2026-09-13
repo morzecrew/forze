@@ -94,3 +94,54 @@ async def test_tenant_invoke_uses_routed_client() -> None:
     assert headers.get("x-tenant") == "abc" or headers.get("X-Tenant") == "abc"
 
     await routed.close()
+
+
+# ....................... #
+
+
+class TestFormBodyThroughTheRoutedClient:
+    """A tenant-routed form POST. The routed client forwards every parameter by hand, which
+    is exactly where a newly added one gets dropped — and a dropped `data` would send an
+    empty body that reads as a provider rejecting the credential."""
+
+    @pytest.mark.asyncio
+    async def test_the_form_body_reaches_the_tenant_client(self) -> None:
+        seen: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["type"] = request.headers.get("content-type")
+            seen["body"] = request.content.decode()
+
+            return httpx.Response(200, json={"ok": True})
+
+        transport = httpx.MockTransport(handler)
+
+        routed = RoutedHttpClient(
+            secrets=_SecretsStub(),
+            secret_ref_for_tenant={TENANT_ID: SecretRef(path="tenants/ping")},
+            tenant_provider=lambda: TENANT_ID,
+        )
+
+        async def initialize_client(
+            tenant_id: UUID,
+            creds: HttpRoutingCredentials,
+        ) -> HttpClient:
+            client = HttpClient()
+            await client.initialize(creds.base_url, transport=transport)
+
+            return client
+
+        routed.initialize_client = initialize_client  # type: ignore[method-assign]
+        await routed.startup()
+
+        response = await routed.request(
+            "POST",
+            "/oauth/token",
+            data={"grant_type": "authorization_code"},
+        )
+
+        assert response.status_code == 200
+        assert seen["type"] == "application/x-www-form-urlencoded"
+        assert seen["body"] == "grant_type=authorization_code"
+
+        await routed.close()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Generic, Literal, TypeVar, final
+from typing import Any, Final, Generic, Literal, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -15,6 +15,14 @@ from forze.base.primitives import StrKey
 # ----------------------- #
 
 HttpMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
+HttpBodyEncoding = Literal["json", "form"]
+
+RESPONSE_ERROR_DETAIL: Final[str] = "response_error"
+"""``details`` key carrying the validated body of a rejected response.
+
+Present only on an operation that declared :attr:`HttpOperationSpec.error_type`, and holding
+only that model's own fields — the channel is the scrubbed ``details`` every other error
+context travels on, so an undeclared body never reaches it."""
 
 In = TypeVar("In", bound=BaseModel)
 Out = TypeVar("Out", bound=BaseModel)
@@ -64,6 +72,26 @@ class HttpOperationSpec(Generic[In, Out]):
 
     allows_empty_body: bool = False
     """When ``True``, an empty response body yields ``return_type.model_construct()``."""
+
+    body_encoding: HttpBodyEncoding = "json"
+    """How a request body is encoded — JSON, or ``application/x-www-form-urlencoded``.
+
+    Per operation rather than per service because one provider legitimately mixes the two:
+    an OAuth token endpoint requires form encoding (RFC 6749) while the same service's data
+    API speaks JSON, and they share a base URL and a credential. A form body carries scalars
+    only — see :func:`~forze.application.integrations.http.form_fields`. Inert on a bodyless
+    method: it describes how a body is encoded, and a ``GET`` has none."""
+
+    error_type: type[BaseModel] | None = None
+    """Model an operation declares for its error responses, or ``None``.
+
+    When set, a response the transport rejects has its body validated against this model and
+    the result attached to the raised exception's ``details`` under
+    :data:`~forze.application.contracts.http.RESPONSE_ERROR_DETAIL`, so a caller can read the
+    fields it declared — a provider's ``error`` code, typically, which decides whether a
+    failure is worth retrying. Only declared fields travel, and they ride the same scrubbed
+    ``details`` channel every other error context uses. A body that does not validate
+    changes nothing: the exception is exactly the one raised with no ``error_type`` at all."""
 
     # ....................... #
 

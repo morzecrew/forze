@@ -80,8 +80,10 @@ class RoutedHttpClient(
         *,
         params: Mapping[str, Any] | None = None,
         json: JsonDict | None = None,
+        data: Mapping[str, str] | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        raise_for_status: bool = True,
     ) -> Any:
         inner = await self._get_client()
 
@@ -90,6 +92,8 @@ class RoutedHttpClient(
             url,
             params=params,
             json=json,
+            data=data,
             headers=headers,
             timeout=timeout,
+            raise_for_status=raise_for_status,
         )

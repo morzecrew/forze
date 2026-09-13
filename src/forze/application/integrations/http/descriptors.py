@@ -8,6 +8,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.http import (
+    HttpBodyEncoding,
     HttpMethod,
     HttpServicePort,
     HttpServiceSpec,
@@ -37,6 +38,8 @@ class async_http_op(Generic[In, Out]):
     idempotent: bool = False
     site: str | None = None
     allows_empty_body: bool = False
+    body_encoding: HttpBodyEncoding = "json"
+    error_type: type[BaseModel] | None = None
     op_name: str | None = None
 
     # ....................... #
