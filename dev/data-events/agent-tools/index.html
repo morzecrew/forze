@@ -1605,6 +1605,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-query-tool-says-what-may-be-queried" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A query tool says what may be queried
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#two-failures-kept-apart" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4396,6 +4407,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../recipes/query-agent/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-message-circle-question" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Build a question-answering agent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../recipes/mock-server/" class="md-nav__link">
         
   
@@ -6227,6 +6267,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-query-tool-says-what-may-be-queried" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A query tool says what may be queried
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#two-failures-kept-apart" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6429,6 +6480,27 @@ it will report as filtered. That holds for an operation that takes no input at
 all, and for a DTO that renames fields inbound. The one exception is a DTO
 configured <code>extra="allow"</code>, which takes extension fields on purpose — there the
 check steps aside and the DTO decides.</p>
+<h2 id="a-query-tool-says-what-may-be-queried">A query tool says what may be queried<a class="headerlink" href="#a-query-tool-says-what-may-be-queried" title="Permanent link">&para;</a></h2>
+<p>A filter-accepting operation's input schema says a filter may be sent; it cannot
+say <em>which fields</em>, because the DSL's expression types are field-agnostic by
+design. So the projected description carries the read model's filter surface —
+the filterable fields with the operators each one accepts, what may be sorted,
+what may be grouped — taken from the spec's query policy rather than from the
+model's field list. A field the policy withholds is not advertised, and a model
+that reads the description gets its first filter right instead of discovering
+the allow-set one refusal at a time.</p>
+<p>A spec with no policy withholds nothing, so every read field is advertised,
+bookkeeping columns included — a second reason to write one, since the
+description a palette carries is paid for on every turn.</p>
+<p>The operators are the <strong>upper bound the field's type allows</strong>, not a promise from
+whichever engine serves the call. Nothing resolves the adapter at projection
+time — a routed dependency picks one per invocation — so a backend with narrower
+<a href="../../reference/query-syntax/">capabilities</a> may compile fewer, and a filter it
+will not take comes back as <code>query_feature_unsupported</code>: an error result the
+model can act on, like any other governed refusal.</p>
+<p>It is the same sentence the <abbr title="Model Context Protocol">MCP</abbr> surface gives an external agent, from one shared
+builder, so the two surfaces cannot describe one read model differently.
+<a href="../../recipes/query-agent/">Build a question-answering agent</a> puts it to work.</p>
 <h2 id="two-failures-kept-apart">Two failures, kept apart<a class="headerlink" href="#two-failures-kept-apart" title="Permanent link">&para;</a></h2>
 <p>A <strong>governed</strong> failure belongs to the conversation. Bad arguments, a denied
 permission, a document that is not in a state the operation accepts: the model
@@ -6471,6 +6543,8 @@ capability it did not, and nobody would find out until an agent needed it.</p>
 <li><a href="../sandbox/">Sandbox</a> — running code, as opposed to running operations</li>
 <li><a href="../../integrations/mcp/"><abbr title="Model Context Protocol">MCP</abbr></a> — the same projection for an agent on the far end
   of a transport</li>
+<li><a href="../../recipes/query-agent/">Build a question-answering agent</a> — a palette, a
+  declared egress and a loop, assembled</li>
 </ul>
 
 
