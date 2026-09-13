@@ -88,6 +88,13 @@ A spec with no policy withholds nothing, so every read field is advertised,
 bookkeeping columns included — a second reason to write one, since the
 description a palette carries is paid for on every turn.
 
+The operators are the **upper bound the field's type allows**, not a promise from
+whichever engine serves the call. Nothing resolves the adapter at projection
+time — a routed dependency picks one per invocation — so a backend with narrower
+[capabilities](../reference/query-syntax.md) may compile fewer, and a filter it
+will not take comes back as `query_feature_unsupported`: an error result the
+model can act on, like any other governed refusal.
+
 It is the same sentence the MCP surface gives an external agent, from one shared
 builder, so the two surfaces cannot describe one read model differently.
 [Build a question-answering agent](../recipes/query-agent.md) puts it to work.
