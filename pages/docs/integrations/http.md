@@ -80,7 +80,14 @@ resolved via `ctx.http.service(spec)`.
   and decide whether the failure is worth retrying. Only fields the model declares travel,
   on the same scrubbed channel as every other error context, and a body that does not
   match the model changes nothing: you get exactly the exception you would have got
-  without a declaration.
+  without a declaration. A model configured `extra="allow"` still contributes only its
+  declared fields.
+- **A credential over a plaintext `base_url` is warned about at wiring**, for every auth
+  kind — a bearer token on the wire is as readable as a base64 user-and-password. Loopback
+  is exempt. It warns rather than refuses because a service mesh legitimately terminates
+  TLS in a sidecar, so `http://service.namespace.svc` with a credential is plaintext at
+  this hop and encrypted on the network; refusing that would need an opt-out to stay
+  usable.
 - When the caller has a [deadline](../running-in-prod/deadlines.md) bound, the adapter
   forwards the remaining budget as an `X-Forze-Deadline-Budget` header so a
   downstream Forze service can inherit it; opt out per service with

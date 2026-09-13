@@ -12,7 +12,7 @@ from urllib.parse import parse_qs
 
 import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from forze.application.contracts.http import (
     RESPONSE_ERROR_DETAIL,
@@ -44,6 +44,25 @@ class TokenReply(BaseModel):
 class TokenError(BaseModel):
     error: str
     error_description: str | None = None
+
+
+class LenientError(BaseModel):
+    """An error model that keeps whatever else the provider sent."""
+
+    model_config = ConfigDict(extra="allow")
+
+    error: str
+
+
+class ExplodingError(BaseModel):
+    """An error model whose validator raises something that is not a ValidationError."""
+
+    error: str
+
+    @field_validator("error")
+    @classmethod
+    def _boom(cls, value: str) -> str:
+        raise RuntimeError("a validator can raise anything")
 
 
 class SecretArgs(BaseModel):
@@ -347,6 +366,46 @@ class TestDeclaredErrorResponses:
             "error_description": None,
         }
         assert error_envelope(raised.value).context is None
+
+    async def test_an_extra_allowing_model_still_carries_only_its_fields(self) -> None:
+        # A model configured `extra="allow"` keeps whatever the provider sent, so dumping
+        # it whole would defeat the declaration — the projection is what holds the line,
+        # and validating with `extra="forbid"` instead would drop the whole detail the
+        # moment a provider adds a field (RFC 6749 defines `error_uri`).
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={
+                    "error": "invalid_grant",
+                    "error_uri": "https://provider.example/docs",
+                    "debug_token": "leaked-if-dumped-whole",
+                },
+            )
+
+        adapter = await _adapter(handler, spec=_spec(error_type=LenientError))
+
+        with pytest.raises(CoreException) as raised:
+            await adapter.invoke("token", TokenArgs(grant_type="authorization_code"))
+
+        details = raised.value.details or {}
+
+        assert details[RESPONSE_ERROR_DETAIL] == {"error": "invalid_grant"}
+        assert "leaked-if-dumped-whole" not in repr(details)
+        assert "error_uri" not in repr(details[RESPONSE_ERROR_DETAIL])
+
+    async def test_a_validator_that_raises_does_not_replace_the_failure(self) -> None:
+        # A custom validator can raise anything it likes. Describing a failure must never
+        # become the failure, so the decoration path swallows whatever comes out of it.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(400, json={"error": "invalid_grant"})
+
+        adapter = await _adapter(handler, spec=_spec(error_type=ExplodingError))
+
+        with pytest.raises(CoreException) as raised:
+            await adapter.invoke("token", TokenArgs(grant_type="authorization_code"))
+
+        assert RESPONSE_ERROR_DETAIL not in (raised.value.details or {})
+        assert "HTTP client error (400)" in raised.value.summary
 
     async def test_an_undeclared_operation_is_unchanged(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:

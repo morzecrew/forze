@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **An outbound HTTP operation can send a form body and read its own error responses.** `async_http_op(..., body_encoding="form")` sends `application/x-www-form-urlencoded` (scalars only, refusing anything a form cannot carry), `error_type=` validates a rejected response's body and hands it to the caller in `details["response_error"]`, and `HttpAuthConfig(kind="basic", …)` presents HTTP Basic. Together they mean a token endpoint no longer has to be called from a bare client, outside the plane's tenancy, deadlines and egress declaration.
+- **An outbound HTTP operation can send a form body and read its own error responses.** `async_http_op(..., body_encoding="form")` sends `application/x-www-form-urlencoded` (scalars only, refusing anything a form cannot carry), `error_type=` validates a rejected response's body and hands it to the caller in `details["response_error"]`, and `HttpAuthConfig(kind="basic", …)` presents HTTP Basic. Together they mean a token endpoint no longer has to be called from a bare client, outside the plane's tenancy, deadlines and egress declaration. Declaring any credential over a plaintext `base_url` now warns at wiring.
 
 - **An outbound route can declare that data leaves your trust boundary.** `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)` makes the egress a reviewed wiring fact — declaring without acknowledging fails closed — and tags the call's span `forze.egress.sensitive`. Off by default; the inference configs now share the same gate.
 

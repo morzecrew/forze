@@ -57,10 +57,22 @@ def _declared_error(
     try:
         declared = operation.error_type.model_validate_json(error.response.content)
 
-    except (ValidationError, httpx.ResponseNotRead, ValueError):
+        # Projected to the model's own fields rather than dumped whole: a model configured
+        # `extra="allow"` keeps whatever the provider sent, and dumping that would carry
+        # undeclared fields — a trace id, an internal message, a token — into an exception
+        # that reaches a log. Narrowing here rather than validating with `extra="forbid"`
+        # keeps a provider free to add a field (RFC 6749 defines `error_uri`, and plenty of
+        # providers send more) without the declaration silently going missing.
+        projected = declared.model_dump(mode="json", include=set(type(declared).model_fields))
+
+    except Exception:
+        # Anything at all: a validation error, an unreadable body, a custom validator
+        # raising something of its own. This is an optional decoration and the caller is
+        # already being told the call failed, so a failure to describe that failure must
+        # not become the failure — it would lose the original.
         return None
 
-    return {RESPONSE_ERROR_DETAIL: declared.model_dump(mode="json")}
+    return {RESPONSE_ERROR_DETAIL: projected}
 
 
 # ....................... #

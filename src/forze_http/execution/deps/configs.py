@@ -3,7 +3,9 @@
 import base64
 from collections.abc import Callable, Mapping
 from datetime import timedelta
+from ipaddress import ip_address
 from typing import Literal, final
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import attrs
@@ -17,8 +19,31 @@ from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 from forze.base.serialization.pydantic import pydantic_secret_converter
+from forze_http.execution._logger import logger
 
 # ----------------------- #
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether *host* names the local machine — a developer's own setup.
+
+    Parsed rather than matched against a list of spellings: ``127.0.0.2`` is as loopback as
+    ``127.0.0.1``, and a warning that fires on one and not the other reads as a bug. A
+    non-address host is only loopback when it is literally ``localhost``; a name that
+    resolves there is not something a config can know.
+    """
+
+    if host == "localhost":
+        return True
+
+    try:
+        return ip_address(host).is_loopback
+
+    except ValueError:
+        return False
+
+
+# ....................... #
 
 
 @final
@@ -160,6 +185,8 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         if self.timeout.total_seconds() <= 0:
             raise exc.configuration("Timeout must be positive")
 
+        self._warn_if_credentials_travel_in_cleartext()
+
         require_egress_acknowledged(
             subject="HttpServiceConfig",
             detail=(
@@ -189,3 +216,42 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
             raise exc.configuration(
                 "HttpServiceConfig: secret_ref_for_tenant applies only when tenant_aware=True",
             )
+
+    # ....................... #
+
+    def _warn_if_credentials_travel_in_cleartext(self) -> None:
+        """Warn when a declared credential would leave over plaintext HTTP.
+
+        Every auth kind is affected, not just ``basic`` — a bearer token in a header is as
+        readable on the wire as a base64 user-and-password — so the check reads
+        :attr:`auth` rather than its kind.
+
+        A warning rather than a refusal, and the reason is a real deployment: a service
+        mesh terminates TLS in a sidecar, so ``http://service.namespace.svc`` with a
+        credential is both plaintext at this hop and encrypted on the network. Refusing it
+        would need an opt-out flag to stay usable, which is a decision this config should
+        not make on its own. Loopback is exempt outright — that is a developer's own
+        machine, and warning on it would train the reader to ignore the warning.
+        """
+
+        if self.auth is None or self.base_url is None:
+            return
+
+        parts = urlsplit(self.base_url)
+
+        if parts.scheme != "http":
+            return
+
+        if _is_loopback(parts.hostname or ""):
+            return
+
+        logger.warning(
+            "http.service.cleartext_credentials",
+            base_url=self.base_url,
+            auth_kind=self.auth.kind,
+            detail=(
+                "an HTTP service declares authentication over a plaintext base_url, so the "
+                "credential is readable by anything on the path; use https, or terminate "
+                "TLS closer to the caller"
+            ),
+        )
