@@ -84,6 +84,10 @@ model's field list. A field the policy withholds is not advertised, and a model
 that reads the description gets its first filter right instead of discovering
 the allow-set one refusal at a time.
 
+A spec with no policy withholds nothing, so every read field is advertised,
+bookkeeping columns included — a second reason to write one, since the
+description a palette carries is paid for on every turn.
+
 It is the same sentence the MCP surface gives an external agent, from one shared
 builder, so the two surfaces cannot describe one read model differently.
 [Build a question-answering agent](../recipes/query-agent.md) puts it to work.

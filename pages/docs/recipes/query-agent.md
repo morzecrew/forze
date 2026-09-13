@@ -129,6 +129,11 @@ That is the trade, stated where it is made rather than discovered later in a rev
 
 ## Notes
 
+- **Without a query policy every read field is advertised**, bookkeeping columns
+  included — around 600 characters for a two-field model, in every tool the palette
+  carries. A policy keeps the description small as well as the surface narrow, which is
+  the same reason to write one twice over.
+
 - **A read-only palette is the default.** `operation_tools` refuses a command operation
   unless you ask for a command-capable toolset, so an agent that must act is a visible
   decision in the diff.
