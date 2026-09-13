@@ -66,5 +66,21 @@ resolved via `ctx.http.service(spec)`.
   forwards the remaining budget as an `X-Forze-Deadline-Budget` header so a
   downstream Forze service can inherit it; opt out per service with
   `HttpServiceConfig(propagate_deadline=False)`.
+- A route that sends business data, personal data or prompts outside your trust
+  boundary can say so, and saying so requires accepting it:
+  `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)`. Declare
+  the first without the second and wiring fails closed
+  (`http_egress_unacknowledged`). The acknowledgement must be a real `True` — wiring
+  from environment text hands you the string `"false"`, which is perfectly truthy, and
+  a gate that reads that as agreement is not a gate. This is a governance marker and a conscious-choice
+  gate, not a DLP filter — nothing inspects a payload. Calls through the service port
+  also tag their span `forze.egress.sensitive`, so sensitive egress is queryable in
+  [observability](../running-in-prod/observability.md) rather than only visible in
+  review. Both halves cover the services you declare: a bare `HttpClient` you point at
+  a provider yourself — handing it to their SDK, say — has no service config and
+  therefore no declaration to gate, because a shared transport carries no destination
+  of its own. Declare the hop as a service if you want it governed. Routes that leave
+  both fields alone are unaffected, and an inference route is always sensitive and
+  always requires the acknowledgement, which is the same gate.
 - The `HttpServiceSpec` / `HttpOperationSpec` / `HttpServicePort` contracts live
   in core; `forze_http` provides the httpx transport and wiring.

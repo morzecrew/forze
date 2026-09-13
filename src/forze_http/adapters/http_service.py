@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any, final
 
 import attrs
-from opentelemetry import propagate
+from opentelemetry import propagate, trace
 from pydantic import BaseModel, ValidationError
 
+from forze.application.contracts.egress import EGRESS_SENSITIVE_ATTRIBUTE
 from forze.application.contracts.envelope import HTTP_HEADER_DEADLINE_BUDGET
 from forze.application.contracts.http import (
     HttpOperationSpec,
@@ -81,6 +82,21 @@ class HttpServiceAdapter(HttpServicePort):
             # side gates on a column migration; HTTP carries no schema).
             headers = dict(headers or {})
             propagate.inject(headers)
+
+            # Mark the call as leaving the trust boundary, so sensitive egress is queryable
+            # rather than only reviewable in the wiring. The attribute lands on whichever
+            # span is current — the port's CLIENT span where per-port spans are enabled, the
+            # enclosing operation span otherwise — and on an uninstrumented app the
+            # non-recording span drops it. There is nothing for forze_http to create: it has
+            # never opened a span of its own.
+            #
+            # This marks the calls made through a declared service. A bare HttpClient an
+            # app points at a provider itself has no HttpServiceConfig behind it, so it
+            # carries neither the tag nor the wiring gate — and there is nowhere to put
+            # one, since HttpConfig configures a transport and names no destination. The
+            # governed unit is the service, which is what declares where data goes.
+            if self.config.egress_sensitive:
+                trace.get_current_span().set_attribute(EGRESS_SENSITIVE_ATTRIBUTE, True)
 
             response = await self.client.request(
                 operation.method,
