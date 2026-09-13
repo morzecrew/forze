@@ -78,6 +78,11 @@ And it covers the hops you *declare*: if you hand a bare `HttpClient` to a provi
 SDK, that call has no service config and therefore nothing to gate. Declaring the hop as
 a service is what puts it inside the marker.
 
+The example itself never reaches a transport — the handler below answers the service call
+in-process — so this config is what a deployment wires rather than something the run
+exercises. Its test constructs it, and constructs it without the acknowledgement to see
+the refusal, which is the part worth pinning.
+
 ## The loop is yours
 
 One turn: ask the model, run the tool it picked, hand back what came out.
@@ -114,9 +119,13 @@ uv run python -m examples.recipes.query_agent.app
 uv run pytest tests/unit/test_examples/test_query_agent.py
 ```
 
-Swapping in a real provider means replacing that handler with the SDK call your account
-uses, adapting its tool-call type to a `ToolUse`, and pointing the service at the real
-base URL. Nothing above it changes.
+Swapping in a real provider is a choice about which of the two things above you keep.
+Point the service at the provider's real base URL and describe its endpoint as an
+`HttpOperationSpec`, and the loop, the palette and the egress declaration all stay as they
+are — you write the request and response models instead of importing an SDK. Reach for the
+vendor's SDK instead and you own the transport: adapt its tool-call type to a `ToolUse` the
+same way, but the hop is no longer a declared service, so the marker no longer covers it.
+That is the trade, stated where it is made rather than discovered later in a review.
 
 ## Notes
 

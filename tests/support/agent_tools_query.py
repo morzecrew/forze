@@ -35,6 +35,7 @@ from forze.base.primitives import JsonDict, StrKeyNamespace
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_kits.aggregates.document import DocumentKernelOp, build_document_registry
 from forze_kits.integrations.agent_tools import (
+    OperationToolset,
     ToolDef,
     ToolResult,
     ToolUse,
@@ -146,7 +147,7 @@ class AgentToolsQueryHarness:
 
     # ....................... #
 
-    def palette(self, op: str) -> Any:
+    def palette(self, op: str) -> OperationToolset:
         """The read-only toolset holding *op* alone."""
 
         return operation_tools(self.registry, include=[QUERY_NS.key(op)])
