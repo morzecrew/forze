@@ -81,6 +81,7 @@ resolved via `ctx.http.service(spec)`.
   therefore no declaration to gate, because a shared transport carries no destination
   of its own. Declare the hop as a service if you want it governed. Routes that leave
   both fields alone are unaffected, and an inference route is always sensitive and
-  always requires the acknowledgement, which is the same gate.
+  always requires the acknowledgement, which is the same gate. [Build a question-answering
+  agent](../recipes/query-agent.md) declares such a route for a model call.
 - The `HttpServiceSpec` / `HttpOperationSpec` / `HttpServicePort` contracts live
   in core; `forze_http` provides the httpx transport and wiring.

@@ -13,6 +13,7 @@ apart: they read the same type.
 
 from collections.abc import Iterable
 
+from forze.application.contracts.querying import describe_query_discovery
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
     OperationCatalogEntry,
@@ -34,6 +35,44 @@ def _input_schema(entry: OperationCatalogEntry) -> JsonDict:
         return {}
 
     return descriptor.input_type.model_json_schema()
+
+
+# ....................... #
+
+
+def _description(entry: OperationCatalogEntry) -> str | None:
+    """*entry*'s own description, plus its filter surface when it accepts one.
+
+    A filter-accepting operation's input schema says a filter may be sent; it does not say
+    which fields and operators the read model allows, because the DSL's expression types
+    are field-agnostic by design. Without that, a model either guesses a field name or is
+    told about it one refusal at a time. The descriptor already carries the discovery the
+    generated HTTP and MCP surfaces advertise, so the palette advertises the same thing,
+    through the same sentence they use.
+
+    The governance facts MCP also states — required permissions, the authentication
+    requirement, the deadline — are deliberately not here: a permission key is not
+    something a model can act on, and a denial already reaches it as an error result
+    carrying the code.
+    """
+
+    descriptor = entry.descriptor
+
+    if descriptor is None:
+        return None
+
+    if descriptor.query_discovery is None:
+        return descriptor.description
+
+    sentence = describe_query_discovery(descriptor.query_discovery)
+
+    if not sentence:
+        return descriptor.description
+
+    if descriptor.description is None:
+        return sentence
+
+    return f"{descriptor.description} {sentence}"
 
 
 # ....................... #
@@ -112,9 +151,14 @@ def operation_tools(
             )
 
         name = str(entry.op)
-        description = entry.descriptor.description if entry.descriptor is not None else None
 
-        defs.append(ToolDef(name=name, description=description, input_schema=_input_schema(entry)))
+        defs.append(
+            ToolDef(
+                name=name,
+                description=_description(entry),
+                input_schema=_input_schema(entry),
+            )
+        )
         bindings[name] = entry
 
     return OperationToolset(registry=registry, defs=tuple(defs), bindings=bindings)

@@ -118,3 +118,44 @@ def build_query_discovery(
         sortable=tuple(sorted(sortable)),
         aggregatable=tuple(sorted(aggregatable)),
     )
+
+
+# ....................... #
+
+
+def describe_query_discovery(discovery: QueryDiscovery) -> str:
+    """One-line filter contract in prose: filterable fields + operators, sort, aggregate.
+
+    Spells out which operator each field accepts (so a caller does not guess ``$like`` on
+    a number) and which array fields take element quantifiers — the type-derived upper
+    bound, independent of the serving backend.
+
+    Written for a reader rather than a parser: the driving surfaces that project
+    :class:`QueryDiscovery` as structured data (the OpenAPI extension) use its fields
+    directly, while the ones whose consumer reads text (an MCP tool description, an agent's
+    tool palette) share this sentence so they cannot tell the same model two different
+    stories about one read model.
+    """
+
+    parts: list[str] = []
+
+    field_bits: list[str] = []
+
+    for field in discovery.filterable:
+        ops = ", ".join(field.operators)
+
+        if field.quantifiable:
+            ops += f"; element quantifiers {', '.join(QUANTIFIER_OPS)}"
+
+        field_bits.append(f"{field.field} ({field.type}: {ops})")
+
+    if field_bits:
+        parts.append("Filterable fields — " + "; ".join(field_bits) + ".")
+
+    if discovery.sortable:
+        parts.append("Sortable by: " + ", ".join(discovery.sortable) + ".")
+
+    if discovery.aggregatable:
+        parts.append("Aggregatable by: " + ", ".join(discovery.aggregatable) + ".")
+
+    return " ".join(parts)
