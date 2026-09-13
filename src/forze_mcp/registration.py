@@ -169,7 +169,14 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
         )
 
     if entry.descriptor is not None and entry.descriptor.query_discovery is not None:
-        parts.append(describe_query_discovery(entry.descriptor.query_discovery))
+        # A policy that withholds every field still attaches a discovery, and its sentence
+        # is empty — appending that would leave a trailing space on the description, or
+        # turn an operation with nothing else to say into an empty string rather than no
+        # description at all.
+        sentence = describe_query_discovery(entry.descriptor.query_discovery)
+
+        if sentence:
+            parts.append(sentence)
 
     return " ".join(parts) if parts else None
 
