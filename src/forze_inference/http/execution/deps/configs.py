@@ -4,6 +4,7 @@ from typing import Any, Literal, final
 
 import attrs
 
+from forze.application.contracts.egress import require_egress_acknowledged
 from forze.application.contracts.inference import InferenceSpec
 from forze.application.contracts.resolution import NamedResourceSpec
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
@@ -66,12 +67,18 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                 "least 1; omit it (None) for an endpoint with no batch limit."
             )
 
-        if not self.acknowledge_data_egress:
-            raise exc.configuration(
-                "HttpInferenceConfig requires acknowledge_data_egress=True: this route "
-                "sends feature values in plaintext to an external endpoint, and the "
-                "operator must state that consciously."
-            )
+        # Sensitivity is not a choice here: a served model needs real values, so a route
+        # always carries them out. The shared gate is called with that fixed, which is why
+        # this config exposes no `egress_sensitive` knob to turn it off.
+        require_egress_acknowledged(
+            subject="HttpInferenceConfig",
+            detail=(
+                "this route sends feature values in plaintext to an external endpoint, "
+                "and the operator must state that consciously."
+            ),
+            egress_sensitive=True,
+            acknowledged=self.acknowledge_data_egress,
+        )
 
     # ....................... #
 
