@@ -77,3 +77,43 @@ class TestTheGate:
             HttpServiceConfig(tenant_aware=True, egress_sensitive=True)
 
         assert caught.value.code == "http_egress_unacknowledged"
+
+
+# ....................... #
+
+
+class TestTheGateIsNotFooledByTruthiness:
+    """`attrs` does not enforce annotations, so a field can hold whatever it is given.
+
+    The realistic way that happens is configuration read as text — `os.environ["ACK"]`
+    is the string `"false"`, which is perfectly truthy. A gate whose whole purpose is to
+    fail closed must not read that as an acknowledgement.
+    """
+
+    @pytest.mark.parametrize("value", ["false", "0", "no", 0.0, [], "True"])
+    def test_only_a_real_true_acknowledges(self, value: object) -> None:
+        with pytest.raises(CoreException) as caught:
+            HttpServiceConfig(
+                base_url="https://api.example.com",
+                egress_sensitive=True,
+                acknowledge_data_egress=value,  # type: ignore[arg-type]
+            )
+
+        assert caught.value.code == "http_egress_unacknowledged"
+
+    @pytest.mark.parametrize("value", ["false", "0", 1, [1]])
+    def test_an_unclear_sensitivity_is_treated_as_sensitive(self, value: object) -> None:
+        # The other direction of the same rule: when the declaration cannot be read as a
+        # plain False, assume the route carries data out and demand the acknowledgement.
+        with pytest.raises(CoreException) as caught:
+            HttpServiceConfig(
+                base_url="https://api.example.com",
+                egress_sensitive=value,  # type: ignore[arg-type]
+            )
+
+        assert caught.value.code == "http_egress_unacknowledged"
+
+    def test_a_real_true_still_acknowledges(self) -> None:
+        config = _config(egress_sensitive=True, acknowledge_data_egress=True)
+
+        assert config.acknowledge_data_egress is True

@@ -70,7 +70,9 @@ resolved via `ctx.http.service(spec)`.
   boundary can say so, and saying so requires accepting it:
   `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)`. Declare
   the first without the second and wiring fails closed
-  (`http_egress_unacknowledged`). This is a governance marker and a conscious-choice
+  (`http_egress_unacknowledged`). The acknowledgement must be a real `True` — wiring
+  from environment text hands you the string `"false"`, which is perfectly truthy, and
+  a gate that reads that as agreement is not a gate. This is a governance marker and a conscious-choice
   gate, not a DLP filter — nothing inspects a payload. Calls through the service port
   also tag their span `forze.egress.sensitive`, so sensitive egress is queryable in
   [observability](../running-in-prod/observability.md) rather than only visible in

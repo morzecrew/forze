@@ -43,12 +43,22 @@ def require_egress_acknowledged(
         they are being asked to accept.
     :param egress_sensitive: Whether this route carries data out of the trust boundary.
         A route that does not is unaffected, so an existing deployment sees no change.
-    :param acknowledged: The operator's statement that they accept it.
+    :param acknowledged: The operator's statement that they accept it. Only a real
+        ``True`` counts — see below.
     :param code: Error code for the refusal, when the caller pins one.
     :raises CoreException: ``configuration`` — when sensitive egress is undeclared.
+
+    Both readings resolve toward the closed door, which is the only way a fail-closed
+    gate can treat a value it cannot interpret. ``attrs`` does not enforce annotations,
+    so either field can hold whatever it was handed — and the realistic way that happens
+    is configuration read as text, where ``os.environ["ACK"]`` is the string ``"false"``
+    and perfectly truthy. So an acknowledgement must be exactly ``True`` to count, while
+    anything that is not plainly falsy reads as sensitive. An operator who meant to
+    acknowledge and wrote a string is told to set ``True``; one who meant to decline and
+    wrote a string is not silently taken to have agreed.
     """
 
-    if not egress_sensitive or acknowledged:
+    if not egress_sensitive or acknowledged is True:
         return
 
     raise exc.configuration(
