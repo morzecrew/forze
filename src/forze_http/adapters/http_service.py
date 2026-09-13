@@ -5,18 +5,20 @@ from __future__ import annotations
 from typing import Any, final
 
 import attrs
+import httpx
 from opentelemetry import propagate, trace
 from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.egress import EGRESS_SENSITIVE_ATTRIBUTE
 from forze.application.contracts.envelope import HTTP_HEADER_DEADLINE_BUDGET
 from forze.application.contracts.http import (
+    RESPONSE_ERROR_DETAIL,
     HttpOperationSpec,
     HttpServicePort,
     HttpServiceSpec,
 )
 from forze.application.execution.context import remaining_time
-from forze.application.integrations.http import request_parts
+from forze.application.integrations.http import form_fields, request_parts
 from forze.base.exceptions import exc
 from forze.base.exceptions._utils import reraise_mapped
 from forze.base.primitives import StrKey
@@ -31,6 +33,46 @@ from forze_http.kernel.client.errors import exc_interceptor
 
 def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
     return not any(field_info.is_required() for field_info in return_type.model_fields.values())
+
+
+# ....................... #
+
+
+def _declared_error(
+    operation: HttpOperationSpec[Any, Any],
+    error: BaseException,
+) -> dict[str, Any] | None:
+    """The declared fields of a rejected response, or ``None`` when there are none.
+
+    Returns ``None`` for every case that is not "this operation declared an error model and
+    the counterparty sent a body matching it" — no declaration, a non-status failure, an
+    unreadable or non-conforming body. A malformed error response must not become a second
+    failure: the caller is already being told something went wrong, and replacing that with
+    a validation error about the *error* would lose the original.
+    """
+
+    if operation.error_type is None or not isinstance(error, httpx.HTTPStatusError):
+        return None
+
+    try:
+        declared = operation.error_type.model_validate_json(error.response.content)
+
+        # Projected to the model's own fields rather than dumped whole: a model configured
+        # `extra="allow"` keeps whatever the provider sent, and dumping that would carry
+        # undeclared fields — a trace id, an internal message, a token — into an exception
+        # that reaches a log. Narrowing here rather than validating with `extra="forbid"`
+        # keeps a provider free to add a field (RFC 6749 defines `error_uri`, and plenty of
+        # providers send more) without the declaration silently going missing.
+        projected = declared.model_dump(mode="json", include=set(type(declared).model_fields))
+
+    except Exception:
+        # Anything at all: a validation error, an unreadable body, a custom validator
+        # raising something of its own. This is an optional decoration and the caller is
+        # already being told the call failed, so a failure to describe that failure must
+        # not become the failure — it would lose the original.
+        return None
+
+    return {RESPONSE_ERROR_DETAIL: projected}
 
 
 # ....................... #
@@ -98,14 +140,27 @@ class HttpServiceAdapter(HttpServicePort):
             if self.config.egress_sensitive:
                 trace.get_current_span().set_attribute(EGRESS_SENSITIVE_ATTRIBUTE, True)
 
+            form = operation.body_encoding == "form"
+            declares_errors = operation.error_type is not None
             response = await self.client.request(
                 operation.method,
                 url,
                 params=query,
-                json=body,
+                json=None if form else body,
+                data=form_fields(operation, body) if form and body is not None else None,
                 headers=headers,
                 timeout=self.config.timeout.total_seconds(),
+                # An operation that declared an error model needs the response, and the
+                # client raises and maps a rejection before a caller can read one. So the
+                # refusal moves here for those operations only — every other operation
+                # keeps raising exactly where it always did.
+                raise_for_status=not declares_errors,
             )
+
+            if declares_errors:
+                # Raised into the same `except` below, so the kind, the code and the
+                # summary stay whatever the shared mapper already makes of this status.
+                response.raise_for_status()
 
             return self._parse_response(operation, response.content)
 
@@ -116,7 +171,15 @@ class HttpServiceAdapter(HttpServicePort):
                 op=str(operation.name),
                 method=operation.method,
             )
-            reraise_mapped(exc_interceptor.mapper, error, site=site, details=details)
+            # The declared fields of a rejected response ride the same `details` the
+            # mapper already carries, so the scrubber and the per-kind egress policy govern
+            # them exactly as they govern every other error context.
+            reraise_mapped(
+                exc_interceptor.mapper,
+                error,
+                site=site,
+                details={**details, **(_declared_error(operation, error) or {})},
+            )
 
     # ....................... #
 

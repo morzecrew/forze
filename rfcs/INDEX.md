@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0051**. Before creating an RFC, glance at the table below
+The next free number is **0052**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -72,6 +72,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0044](0044-lancedb-retrieval-integration.md) | LanceDB retrieval integration | 📝 Draft | A `forze_lancedb` adapter for the existing search plane — vector-first, embedded/object-storage LanceDB — adopting an external request while rejecting its parallel retrieval-contracts package. |
 | [0048](0048-derived-read-fields.md) | Read fields no write produces | ✅ Complete | A `DocumentSpec` may declare the read fields its relation produces — marked whatever their shape, or resolved by a one-hop join. Leniency covers only defaulted fields, which left view-backed aggregates unreachable from `forze_mock` and `forze_dst` |
 | [0050](0050-child-collection-reconciliation.md) | Child collection reconciliation | 📝 Draft | A `forze_kits` component that diffs a parent's child collection against an incoming list over the existing bulk ports. Not execution-ready: child identity, the position rule, and which pipeline stage it belongs to are open |
+| [0051](0051-non-json-request-bodies-and-declared-error-responses-on-the-http-plane.md) | Non-JSON request bodies and declared error responses on the HTTP plane | 📝 Draft | TODO: one sentence, ~200 chars (max 300) — which design this is, not what it decided |
 
 ## Status legend
 

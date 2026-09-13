@@ -2,7 +2,7 @@
 
 from .builder import build_http_service_spec
 from .descriptors import BaseHttpIntegration, HttpBoundOperation, async_http_op
-from .parts import request_parts
+from .parts import form_fields, request_parts
 
 # ----------------------- #
 
@@ -11,5 +11,6 @@ __all__ = [
     "HttpBoundOperation",
     "async_http_op",
     "build_http_service_spec",
+    "form_fields",
     "request_parts",
 ]

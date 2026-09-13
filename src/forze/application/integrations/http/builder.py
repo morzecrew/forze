@@ -93,4 +93,6 @@ def _operation_spec(
         idempotent=descriptor.idempotent,
         site=descriptor.site,
         allows_empty_body=descriptor.allows_empty_body,
+        body_encoding=descriptor.body_encoding,
+        error_type=descriptor.error_type,
     )

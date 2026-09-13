@@ -141,8 +141,10 @@ class HttpClient(HttpClientPort):
         *,
         params: Mapping[str, Any] | None = None,
         json: JsonDict | None = None,
+        data: Mapping[str, str] | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        raise_for_status: bool = True,
     ) -> httpx.Response:
         client = self._require_client()
 
@@ -164,6 +166,7 @@ class HttpClient(HttpClientPort):
             request_url,
             params=params,
             json=json,
+            data=data,
             headers=headers,
             timeout=request_timeout,
         ) as streaming:
@@ -193,6 +196,7 @@ class HttpClient(HttpClientPort):
                 request=streaming.request,
             )
 
-        response.raise_for_status()
+        if raise_for_status:
+            response.raise_for_status()
 
         return response

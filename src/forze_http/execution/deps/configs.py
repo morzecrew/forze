@@ -1,8 +1,11 @@
 """HTTP service execution configs."""
 
+import base64
 from collections.abc import Callable, Mapping
 from datetime import timedelta
+from ipaddress import ip_address
 from typing import Literal, final
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import attrs
@@ -16,8 +19,31 @@ from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 from forze.base.serialization.pydantic import pydantic_secret_converter
+from forze_http.execution._logger import logger
 
 # ----------------------- #
+
+
+def _is_loopback(host: str) -> bool:
+    """Whether *host* names the local machine — a developer's own setup.
+
+    Parsed rather than matched against a list of spellings: ``127.0.0.2`` is as loopback as
+    ``127.0.0.1``, and a warning that fires on one and not the other reads as a bug. A
+    non-address host is only loopback when it is literally ``localhost``; a name that
+    resolves there is not something a config can know.
+    """
+
+    if host == "localhost":
+        return True
+
+    try:
+        return ip_address(host).is_loopback
+
+    except ValueError:
+        return False
+
+
+# ....................... #
 
 
 @final
@@ -25,12 +51,12 @@ from forze.base.serialization.pydantic import pydantic_secret_converter
 class HttpAuthConfig:
     """Static authentication applied to every request for a service route."""
 
-    kind: Literal["bearer", "api_key", "header"] = "bearer"
+    kind: Literal["bearer", "api_key", "header", "basic"] = "bearer"
     """Authentication style."""
 
     token: SecretStr | None = attrs.field(
         default=None,
-        converter=pydantic_secret_converter,
+        converter=attrs.converters.optional(pydantic_secret_converter),
         repr=False,
     )
     """Bearer token or API key value."""
@@ -41,10 +67,56 @@ class HttpAuthConfig:
     prefix: str = "Bearer "
     """Value prefix for bearer tokens."""
 
+    username: str | None = None
+    """Client identifier for ``basic`` — the user half of HTTP Basic (RFC 7617).
+
+    Cannot contain ``":"``: the decoded pair is split at the first colon, so a user-id
+    carrying one moves the boundary and presents a different credential than the one
+    written here."""
+
+    password: SecretStr | None = attrs.field(
+        default=None,
+        converter=attrs.converters.optional(pydantic_secret_converter),
+        repr=False,
+    )
+    """Client secret for ``basic``. Excluded from ``repr`` so a config dump cannot leak it."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Refused rather than silently unauthenticated: a half-declared Basic credential
+        # would send no Authorization header at all, and the failure surfaces at the
+        # counterparty as a rejected request rather than here as the wiring mistake it is.
+        # The token-based kinds keep their existing behaviour — an absent token there has
+        # always meant "no auth", and wiring depends on it.
+        if self.kind != "basic":
+            return
+
+        if self.username is None or self.password is None:
+            raise exc.configuration(
+                "HttpAuthConfig: kind='basic' requires both username and password",
+            )
+
+        # RFC 7617 splits the decoded pair at the *first* colon, so a colon in the user-id
+        # silently moves the boundary: "a:b" with password "c" decodes as user "a" with
+        # password "b:c". The counterparty then rejects a credential that looks correct in
+        # the config, which is the worst way for this to fail.
+        if ":" in self.username:
+            raise exc.configuration(
+                "HttpAuthConfig: a basic user-id cannot contain ':' (RFC 7617)",
+            )
+
     # ....................... #
 
     def auth_headers(self) -> dict[str, str]:
         """Headers to merge for this auth configuration."""
+
+        if self.kind == "basic":
+            # Both halves are present — the post-init refuses anything else.
+            secret = self.password.get_secret_value() if self.password is not None else ""
+            blob = base64.b64encode(f"{self.username}:{secret}".encode()).decode("ascii")
+
+            return {self.header_name: f"Basic {blob}"}
 
         if self.token is None:
             return {}
@@ -57,6 +129,9 @@ class HttpAuthConfig:
 
             case "api_key" | "header":
                 return {self.header_name: value}
+
+            case "basic":  # pragma: no cover - handled above, kept for exhaustiveness
+                return {}
 
 
 # ....................... #
@@ -110,6 +185,8 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         if self.timeout.total_seconds() <= 0:
             raise exc.configuration("Timeout must be positive")
 
+        self._warn_if_credentials_travel_in_cleartext()
+
         require_egress_acknowledged(
             subject="HttpServiceConfig",
             detail=(
@@ -139,3 +216,42 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
             raise exc.configuration(
                 "HttpServiceConfig: secret_ref_for_tenant applies only when tenant_aware=True",
             )
+
+    # ....................... #
+
+    def _warn_if_credentials_travel_in_cleartext(self) -> None:
+        """Warn when a declared credential would leave over plaintext HTTP.
+
+        Every auth kind is affected, not just ``basic`` — a bearer token in a header is as
+        readable on the wire as a base64 user-and-password — so the check reads
+        :attr:`auth` rather than its kind.
+
+        A warning rather than a refusal, and the reason is a real deployment: a service
+        mesh terminates TLS in a sidecar, so ``http://service.namespace.svc`` with a
+        credential is both plaintext at this hop and encrypted on the network. Refusing it
+        would need an opt-out flag to stay usable, which is a decision this config should
+        not make on its own. Loopback is exempt outright — that is a developer's own
+        machine, and warning on it would train the reader to ignore the warning.
+        """
+
+        if self.auth is None or self.base_url is None:
+            return
+
+        parts = urlsplit(self.base_url)
+
+        if parts.scheme != "http":
+            return
+
+        if _is_loopback(parts.hostname or ""):
+            return
+
+        logger.warning(
+            "http.service.cleartext_credentials",
+            base_url=self.base_url,
+            auth_kind=self.auth.kind,
+            detail=(
+                "an HTTP service declares authentication over a plaintext base_url, so the "
+                "credential is readable by anything on the path; use https, or terminate "
+                "TLS closer to the caller"
+            ),
+        )

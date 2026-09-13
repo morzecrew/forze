@@ -2,11 +2,20 @@
 
 from .deps import HttpServiceDepKey, HttpServiceDepPort, HttpServiceDeps
 from .ports import HttpServicePort
-from .specs import HttpMethod, HttpOperationSpec, HttpServiceSpec, path_param_names
+from .specs import (
+    RESPONSE_ERROR_DETAIL,
+    HttpBodyEncoding,
+    HttpMethod,
+    HttpOperationSpec,
+    HttpServiceSpec,
+    path_param_names,
+)
 
 # ----------------------- #
 
 __all__ = [
+    "RESPONSE_ERROR_DETAIL",
+    "HttpBodyEncoding",
     "HttpMethod",
     "HttpOperationSpec",
     "HttpServiceDepKey",

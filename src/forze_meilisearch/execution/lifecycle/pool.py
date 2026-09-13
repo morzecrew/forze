@@ -29,7 +29,7 @@ class MeilisearchStartupHook(LifecycleHook):
     url: str
     api_key: SecretStr | None = attrs.field(
         default=None,
-        converter=pydantic_secret_converter,
+        converter=attrs.converters.optional(pydantic_secret_converter),
         repr=False,
     )
     config: MeilisearchConfig = attrs.field(factory=MeilisearchConfig, repr=False)
