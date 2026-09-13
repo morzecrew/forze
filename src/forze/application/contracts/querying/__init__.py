@@ -19,6 +19,7 @@ from .discovery import (
     FieldQuerySupport,
     QueryDiscovery,
     build_query_discovery,
+    describe_query_discovery,
 )
 from .expressions import (
     AggregateComputedFieldExpression,
@@ -199,6 +200,7 @@ __all__ = [
     "FieldQuerySupport",
     "QueryDiscovery",
     "build_query_discovery",
+    "describe_query_discovery",
     "QueryFilterExpression",
     "QueryNegation",
     "ElementOp",

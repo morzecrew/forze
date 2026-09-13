@@ -73,6 +73,32 @@ all, and for a DTO that renames fields inbound. The one exception is a DTO
 configured `extra="allow"`, which takes extension fields on purpose — there the
 check steps aside and the DTO decides.
 
+## A query tool says what may be queried
+
+A filter-accepting operation's input schema says a filter may be sent; it cannot
+say *which fields*, because the DSL's expression types are field-agnostic by
+design. So the projected description carries the read model's filter surface —
+the filterable fields with the operators each one accepts, what may be sorted,
+what may be grouped — taken from the spec's query policy rather than from the
+model's field list. A field the policy withholds is not advertised, and a model
+that reads the description gets its first filter right instead of discovering
+the allow-set one refusal at a time.
+
+A spec with no policy withholds nothing, so every read field is advertised,
+bookkeeping columns included — a second reason to write one, since the
+description a palette carries is paid for on every turn.
+
+The operators are the **upper bound the field's type allows**, not a promise from
+whichever engine serves the call. Nothing resolves the adapter at projection
+time — a routed dependency picks one per invocation — so a backend with narrower
+[capabilities](../reference/query-syntax.md) may compile fewer, and a filter it
+will not take comes back as `query_feature_unsupported`: an error result the
+model can act on, like any other governed refusal.
+
+It is the same sentence the MCP surface gives an external agent, from one shared
+builder, so the two surfaces cannot describe one read model differently.
+[Build a question-answering agent](../recipes/query-agent.md) puts it to work.
+
 ## Two failures, kept apart
 
 A **governed** failure belongs to the conversation. Bad arguments, a denied
@@ -126,3 +152,5 @@ capability it did not, and nobody would find out until an agent needed it.
 - [Sandbox](sandbox.md) — running code, as opposed to running operations
 - [MCP](../integrations/mcp.md) — the same projection for an agent on the far end
   of a transport
+- [Build a question-answering agent](../recipes/query-agent.md) — a palette, a
+  declared egress and a loop, assembled

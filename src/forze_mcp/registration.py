@@ -18,7 +18,7 @@ from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
 from pydantic.json_schema import PydanticJsonSchemaWarning
 
-from forze.application.contracts.querying import QUANTIFIER_OPS, QueryDiscovery
+from forze.application.contracts.querying import describe_query_discovery
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
@@ -169,44 +169,16 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
         )
 
     if entry.descriptor is not None and entry.descriptor.query_discovery is not None:
-        parts.append(_query_discovery_sentence(entry.descriptor.query_discovery))
+        # A policy that withholds every field still attaches a discovery, and its sentence
+        # is empty — appending that would leave a trailing space on the description, or
+        # turn an operation with nothing else to say into an empty string rather than no
+        # description at all.
+        sentence = describe_query_discovery(entry.descriptor.query_discovery)
+
+        if sentence:
+            parts.append(sentence)
 
     return " ".join(parts) if parts else None
-
-
-# ....................... #
-
-
-def _query_discovery_sentence(discovery: QueryDiscovery) -> str:
-    """One-line filter contract for an LLM: filterable fields + operators, sort, aggregate.
-
-    Spells out which operator each field accepts (so the agent doesn't guess ``$like`` on
-    a number) and which array fields take element quantifiers — the type-derived upper
-    bound, independent of the serving backend.
-    """
-
-    parts: list[str] = []
-
-    field_bits: list[str] = []
-
-    for field in discovery.filterable:
-        ops = ", ".join(field.operators)
-
-        if field.quantifiable:
-            ops += f"; element quantifiers {', '.join(QUANTIFIER_OPS)}"
-
-        field_bits.append(f"{field.field} ({field.type}: {ops})")
-
-    if field_bits:
-        parts.append("Filterable fields — " + "; ".join(field_bits) + ".")
-
-    if discovery.sortable:
-        parts.append("Sortable by: " + ", ".join(discovery.sortable) + ".")
-
-    if discovery.aggregatable:
-        parts.append("Aggregatable by: " + ", ".join(discovery.aggregatable) + ".")
-
-    return " ".join(parts)
 
 
 # ....................... #

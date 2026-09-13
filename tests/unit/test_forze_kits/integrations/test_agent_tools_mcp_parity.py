@@ -22,15 +22,18 @@ from fastmcp import Client, FastMCP
 from pydantic import BaseModel
 
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.querying import describe_query_discovery
 from forze.application.execution import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
 from forze.testing import context_from_modules
+from forze_kits.aggregates.document import DocumentKernelOp
 from forze_kits.integrations.agent_tools import operation_tools
 from forze_mcp.registration import register_tools
 from forze_mock import MockDepsModule
+from tests.support.agent_tools_query import QUERY_NS, QUERY_POLICY, query_registry
 
 pytestmark = pytest.mark.unit
 
@@ -169,3 +172,53 @@ class TestBothSurfacesRejectAHallucinatedArgument:
         assert "invented" in str(mcp_refusal.value)
         assert bridged.is_error is True
         assert "invented" in str(bridged.content)
+
+
+class TestTheFilterSurfaceIsOneSentence:
+    """A filter-accepting operation tells both agents the same thing about its fields.
+
+    Two surfaces describing one read model is exactly where a second implementation used
+    to sit: `forze_mcp` had a private sentence builder and the bridge had nothing, so the
+    in-process agent was left to discover the allow-set one refusal at a time. They now
+    share the builder that lives beside :class:`QueryDiscovery`, and this is what fails if
+    either surface grows its own copy again.
+    """
+
+    async def test_both_surfaces_carry_the_identical_discovery_sentence(self) -> None:
+        registry = query_registry()
+        op = str(QUERY_NS.key(DocumentKernelOp.LIST))
+
+        server = FastMCP("notes")
+        register_tools(server, registry, _ctx_factory)
+
+        async with Client(server) as client:
+            mcp_tool = {t.name: t for t in await client.list_tools()}[op]
+
+        bridged = operation_tools(registry, include=[op]).defs[0]
+
+        descriptor = registry.descriptors[op]
+
+        assert descriptor.query_discovery is not None
+        sentence = describe_query_discovery(descriptor.query_discovery)
+
+        # Non-empty first: every assertion below is satisfied by the empty string, and a
+        # projection that lost its discovery would then pass on both surfaces at once.
+        assert "Filterable fields —" in sentence
+        assert mcp_tool.description is not None
+        assert bridged.description is not None
+        assert sentence in mcp_tool.description
+        assert sentence in bridged.description
+
+    def test_the_allow_set_is_what_both_of_them_advertise(self) -> None:
+        # The sentence being shared is only worth something while it reports the policy.
+        # Read off the spec's allow-set rather than the model's fields, which is the
+        # substitution that would look right and be wrong by one field.
+        registry = query_registry()
+        op = str(QUERY_NS.key(DocumentKernelOp.LIST))
+        descriptor = registry.descriptors[op]
+
+        assert descriptor.query_discovery is not None
+        advertised = {field.field for field in descriptor.query_discovery.filterable}
+
+        assert advertised == set(QUERY_POLICY.filterable)
+        assert "body" not in advertised

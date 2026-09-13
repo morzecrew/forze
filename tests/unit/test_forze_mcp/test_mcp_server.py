@@ -104,9 +104,7 @@ class TestDelegatedIdentity:
         async def _resolve_subject():
             return user, None
 
-        resolver = DelegatedIdentityResolver(
-            agent=agent, resolve_subject=_resolve_subject
-        )
+        resolver = DelegatedIdentityResolver(agent=agent, resolve_subject=_resolve_subject)
         authn, tenant = await resolver.resolve()
 
         assert authn is not None
@@ -351,6 +349,42 @@ class TestQueryDiscoveryDescription:
         assert get_desc is not None
         assert "Filterable fields" not in get_desc
 
+    def test_an_empty_allow_set_adds_no_sentence_and_no_stray_space(self) -> None:
+        # A policy that withholds every field still attaches a discovery whose sentence is
+        # empty. Appending it left the description ending in a space — invisible in a
+        # diff, and carried to every MCP client. The in-process bridge joins the same two
+        # parts and must agree, which is the property worth holding both surfaces to.
+        from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+        from forze.application.contracts.querying import QueryFieldPolicy
+        from forze_kits.aggregates.document import (
+            DocumentDTOs,
+            DocumentKernelOp,
+            build_document_registry,
+        )
+        from forze.domain.models import Document
+        from forze_kits.integrations.agent_tools import operation_tools
+        from forze_mcp.registration import _tool_description
+
+        class _WithheldNote(Document):
+            title: str = ""
+
+        spec = DocumentSpec(
+            name="notes",
+            read=_NoteRead,
+            write=DocumentWriteTypes(domain=_WithheldNote, create_cmd=_NoteInput),
+            query_policy=QueryFieldPolicy(filterable=set(), sortable=set(), aggregatable=set()),
+        )
+        reg = build_document_registry(
+            spec, DocumentDTOs(read=_NoteRead, create=_NoteInput)
+        ).freeze()
+        list_op = spec.default_namespace.key(DocumentKernelOp.LIST)
+
+        described = _tool_description(reg.catalog()[list_op])
+        bridged = operation_tools(reg, include=[list_op]).defs[0].description
+
+        assert described == "List documents by filters and sorts (offset pagination)."
+        assert bridged == described
+
     def test_array_field_mentions_element_quantifiers(self) -> None:
         from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
         from forze.domain.models import Document
@@ -375,9 +409,7 @@ class TestQueryDiscoveryDescription:
             read=_TagRead,
             write=DocumentWriteTypes(domain=_TagDomain, create_cmd=_TagIn),
         )
-        reg = build_document_registry(
-            spec, DocumentDTOs(read=_TagRead, create=_TagIn)
-        ).freeze()
+        reg = build_document_registry(spec, DocumentDTOs(read=_TagRead, create=_TagIn)).freeze()
         list_op = spec.default_namespace.key(DocumentKernelOp.LIST)
 
         desc = _tool_description(reg.catalog()[list_op])
@@ -420,9 +452,7 @@ class TestResourceTemplates:
         assert uris == ["notes://{id}"]
 
         async with Client(server) as client:
-            templates = {
-                str(t.uri_template) for t in await client.list_resource_templates()
-            }
+            templates = {str(t.uri_template) for t in await client.list_resource_templates()}
             assert "notes://{id}" in templates
 
             content = await client.read_resource(f"notes://{note_id}")
@@ -443,11 +473,7 @@ class TestResourceTemplates:
                 server,
                 reg,
                 _ctx_factory,
-                [
-                    ResourceTemplateSpec(
-                        op=spec.default_namespace.key(op.CREATE), scheme="notes"
-                    )
-                ],
+                [ResourceTemplateSpec(op=spec.default_namespace.key(op.CREATE), scheme="notes")],
             )
 
     def test_rejects_unknown_id_param(self) -> None:
@@ -481,9 +507,7 @@ class TestLoggingMiddleware:
 
         server = build_mcp_server(_registry(), _ctx_factory, name="calc-mcp")
         # Full mode: assert a line per message deterministically (the default samples successes).
-        server.add_middleware(
-            LoggingMiddleware(access_log=AccessLogSampler(mode="full"))
-        )
+        server.add_middleware(LoggingMiddleware(access_log=AccessLogSampler(mode="full")))
 
         with structlog.testing.capture_logs() as logs:
             async with Client(server) as client:
@@ -520,9 +544,7 @@ class TestRoundTrip:
 
 class TestWriteEnablement:
     async def test_write_op_exposed_with_destructive_hints(self) -> None:
-        server = build_mcp_server(
-            _registry(), _ctx_factory, name="calc-mcp", include_writes=True
-        )
+        server = build_mcp_server(_registry(), _ctx_factory, name="calc-mcp", include_writes=True)
 
         async with Client(server) as client:
             tools = {t.name: t for t in await client.list_tools()}
@@ -542,9 +564,7 @@ class TestWriteEnablement:
             assert set(write_tool.input_schema.get("properties", {})) == {"n", "label"}
 
     async def test_client_calls_a_write_tool_end_to_end(self) -> None:
-        server = build_mcp_server(
-            _registry(), _ctx_factory, name="calc-mcp", include_writes=True
-        )
+        server = build_mcp_server(_registry(), _ctx_factory, name="calc-mcp", include_writes=True)
 
         async with Client(server) as client:
             result = await client.call_tool("calc.write", {"n": 21})
@@ -589,9 +609,9 @@ class TestCatalogDerivedDescriptions:
             .with_deadline(timedelta(seconds=5))
             .bind_outer()
             .before(
-                AuthzBeforeAuthorize(
-                    spec=AuthzSpec(name="z"), action="calc.write"
-                ).to_step(step_id="authz", requires=())
+                AuthzBeforeAuthorize(spec=AuthzSpec(name="z"), action="calc.write").to_step(
+                    step_id="authz", requires=()
+                )
             )
             .wrap(
                 IdempotencyWrap(
@@ -618,9 +638,7 @@ class TestCatalogDerivedDescriptions:
         # no-op — promising safe retries would invite duplicate writes.
         assert "idempotent" not in tool.description.lower()
         # The authz hook implies a bound principal — the authn line is advertised too.
-        assert "Requires authentication: a verified principal must be bound" in (
-            tool.description
-        )
+        assert "Requires authentication: a verified principal must be bound" in (tool.description)
         assert "Requires permissions: calc.write" in tool.description
         # Honesty caveat: declared-hook introspection, not a security statement.
         assert "declared by attached authorization hooks" in tool.description
@@ -726,11 +744,7 @@ class TestSensitiveRefusal:
                 server,
                 reg,
                 _ctx_factory,
-                [
-                    ResourceTemplateSpec(
-                        op=spec.default_namespace.key(op.GET), scheme="secrets"
-                    )
-                ],
+                [ResourceTemplateSpec(op=spec.default_namespace.key(op.GET), scheme="secrets")],
             )
 
         assert e.value.kind.value == "configuration"
@@ -1040,9 +1054,7 @@ class TestDefaultFactory:
         reg = OperationRegistry(handlers={"stamp": lambda _c: _Stamp()})
         reg = reg.set_descriptor(
             "stamp",
-            OperationDescriptor(
-                input_type=_StampIn, output_type=_StampOut, description="s"
-            ),
+            OperationDescriptor(input_type=_StampIn, output_type=_StampOut, description="s"),
         )
         reg = reg.bind("stamp").as_query().finish()
         server = build_mcp_server(reg.freeze(), _ctx_factory, name="s")
