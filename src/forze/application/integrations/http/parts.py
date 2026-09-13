@@ -1,5 +1,6 @@
 """Split request models into HTTP path, query, and body parts."""
 
+from math import isfinite
 from typing import Any
 from urllib.parse import quote
 
@@ -90,6 +91,9 @@ def form_fields(op: HttpOperationSpec[Any, Any], body: JsonDict) -> dict[str, st
     sending a request no server can parse, which fails as a provider error rather than as
     the wiring mistake it is.
 
+    A non-finite number is refused for the same reason a mapping is: ``str(float("nan"))``
+    is ``"nan"``, which a form endpoint rejects or misreads.
+
     ``None`` is omitted rather than sent as an empty value: a field a caller left unset and
     a field it set to empty text mean different things to a token endpoint. Booleans
     serialize lowercase, which is what every form-encoded API this exists for reads.
@@ -110,6 +114,16 @@ def form_fields(op: HttpOperationSpec[Any, Any], body: JsonDict) -> dict[str, st
             fields[name] = "true" if value else "false"
 
             continue
+
+        if isinstance(value, (int, float)) and not isfinite(value):
+            # `str(float("nan"))` is `"nan"` — a value a form endpoint either rejects or
+            # reads as something else entirely. It is a scalar by type and not one a form
+            # can carry, which is the same line the refusal below draws.
+            raise exc.validation(
+                f"HTTP operation {op.name!r}: field {name!r} is {value} and a "
+                "form-encoded body carries finite numbers only",
+                details={"op": str(op.name), "field": name},
+            )
 
         if isinstance(value, (str, int, float)):
             fields[name] = str(value)

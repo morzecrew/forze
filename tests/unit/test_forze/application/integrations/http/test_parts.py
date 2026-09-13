@@ -158,5 +158,22 @@ class TestFormFields:
         with pytest.raises(CoreException):
             form_fields(_form_op(), {"grant_type": "x", "extra": ["a", "b"]})
 
+    def test_a_non_finite_number_is_refused(self) -> None:
+        # `str(float("nan"))` is "nan" — a scalar by type, and not a value a form endpoint
+        # can read. Refused for the same reason a mapping is.
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(CoreException) as raised:
+                form_fields(_form_op(), {"weight": value})
+
+            assert "weight" in str(raised.value)
+            assert "finite" in str(raised.value)
+
+    def test_ordinary_numbers_still_pass(self) -> None:
+        # The guard reads `isfinite`, so it must not catch what it is not for.
+        assert form_fields(_form_op(), {"weight": 0.0, "expires_in": 0}) == {
+            "weight": "0.0",
+            "expires_in": "0",
+        }
+
     def test_an_empty_body_stays_empty(self) -> None:
         assert form_fields(_form_op(), {}) == {}

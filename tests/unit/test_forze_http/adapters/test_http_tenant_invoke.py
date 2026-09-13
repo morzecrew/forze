@@ -85,15 +85,19 @@ async def test_tenant_invoke_uses_routed_client() -> None:
         spec=spec,
     )
 
-    result = await adapter.invoke("ping")
+    # `finally`, so a failed assertion still closes the pool — an open client leaks into
+    # whatever runs next, and the leak is harder to read than the assertion that caused it.
+    try:
+        result = await adapter.invoke("ping")
 
-    assert result.ok is True
-    assert captured["url"] == "https://tenant.example.com/ping"
-    headers = captured["headers"]
-    assert isinstance(headers, dict)
-    assert headers.get("x-tenant") == "abc" or headers.get("X-Tenant") == "abc"
+        assert result.ok is True
+        assert captured["url"] == "https://tenant.example.com/ping"
+        headers = captured["headers"]
+        assert isinstance(headers, dict)
+        assert headers.get("x-tenant") == "abc" or headers.get("X-Tenant") == "abc"
 
-    await routed.close()
+    finally:
+        await routed.close()
 
 
 # ....................... #
@@ -134,14 +138,16 @@ class TestFormBodyThroughTheRoutedClient:
         routed.initialize_client = initialize_client  # type: ignore[method-assign]
         await routed.startup()
 
-        response = await routed.request(
-            "POST",
-            "/oauth/token",
-            data={"grant_type": "authorization_code"},
-        )
+        try:
+            response = await routed.request(
+                "POST",
+                "/oauth/token",
+                data={"grant_type": "authorization_code"},
+            )
 
-        assert response.status_code == 200
-        assert seen["type"] == "application/x-www-form-urlencoded"
-        assert seen["body"] == "grant_type=authorization_code"
+            assert response.status_code == 200
+            assert seen["type"] == "application/x-www-form-urlencoded"
+            assert seen["body"] == "grant_type=authorization_code"
 
-        await routed.close()
+        finally:
+            await routed.close()

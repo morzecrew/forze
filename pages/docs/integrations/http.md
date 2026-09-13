@@ -71,8 +71,9 @@ resolved via `ctx.http.service(spec)`.
   `application/x-www-form-urlencoded`, which is what an OAuth token endpoint requires.
   It is per operation on purpose: one provider mixes a form-encoded token endpoint with a
   JSON API behind one base URL and one credential. A form body carries scalars only —
-  a nested object or a list is refused by field name rather than stringified into
-  something no server parses; `None` is omitted and booleans are sent lowercase.
+  a nested object, a list, or a non-finite number is refused by field name rather than
+  stringified into something no server parses; `None` is omitted and booleans are sent
+  lowercase.
 - **An operation can declare what its errors look like.**
   `async_http_op(..., error_type=ProviderError)` validates the body of a rejected
   response against that model and attaches it to the raised exception's `details` under
