@@ -16,8 +16,8 @@ pytestmark = pytest.mark.unit
 # ----------------------- #
 
 
-def _config(**overrides: object) -> HttpServiceConfig:
-    return HttpServiceConfig(base_url="https://api.example.com", **overrides)  # type: ignore[arg-type]
+def _config(**overrides: bool) -> HttpServiceConfig:
+    return HttpServiceConfig(base_url="https://api.example.com", **overrides)
 
 
 # ....................... #
@@ -34,7 +34,12 @@ class TestTheDefaultIsSilence:
     def test_acknowledging_without_declaring_is_not_an_error(self) -> None:
         # Harmless and worth pinning: the acknowledgement is about a declared egress, so
         # an operator who sets it on a route that carries nothing has done nothing wrong.
-        assert _config(acknowledge_data_egress=True).egress_sensitive is False
+        # Constructing at all is the assertion — the gate would raise here if it keyed off
+        # the acknowledgement rather than off the declaration.
+        config = _config(acknowledge_data_egress=True)
+
+        assert config.acknowledge_data_egress is True
+        assert config.egress_sensitive is False
 
 
 # ....................... #
