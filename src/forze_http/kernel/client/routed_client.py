@@ -13,6 +13,8 @@ from forze.application.contracts.tenancy.routed_client_base import (
 )
 from forze.base.primitives import JsonDict
 
+from .._logger import logger
+from .cleartext import is_cleartext_destination
 from .client import HttpClient
 from .credentials import credential_auth_headers
 from .port import HttpClientPort
@@ -54,11 +56,28 @@ class RoutedHttpClient(
         creds: HttpRoutingCredentials,
     ) -> HttpClient:
         client = HttpClient()
+        headers = credential_auth_headers(creds)
+
+        # A tenant-routed service has no base_url at wiring — it comes from this tenant's
+        # secret — so the config's cleartext check cannot see it and the question has to be
+        # asked here, once per tenant client. The tenant id rather than the credential: the
+        # point is which tenant to fix, and the headers are the credential.
+        if headers and is_cleartext_destination(creds.base_url):
+            logger.warning(
+                "http.routed.cleartext_credentials",
+                tenant_id=str(tenant_id),
+                base_url=creds.base_url,
+                detail=(
+                    "a tenant's routed HTTP credentials point at a plaintext base_url, so "
+                    "they are readable by anything on the path; use https for this "
+                    "tenant's route, or terminate TLS closer to the caller"
+                ),
+            )
 
         await client.initialize(
             creds.base_url,
             config=self.client_config,
-            default_headers=credential_auth_headers(creds),
+            default_headers=headers,
         )
 
         return client

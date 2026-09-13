@@ -3,9 +3,7 @@
 import base64
 from collections.abc import Callable, Mapping
 from datetime import timedelta
-from ipaddress import ip_address
 from typing import Literal, final
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import attrs
@@ -20,27 +18,9 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 from forze.base.serialization.pydantic import pydantic_secret_converter
 from forze_http.execution._logger import logger
+from forze_http.kernel.client.cleartext import is_cleartext_destination
 
 # ----------------------- #
-
-
-def _is_loopback(host: str) -> bool:
-    """Whether *host* names the local machine — a developer's own setup.
-
-    Parsed rather than matched against a list of spellings: ``127.0.0.2`` is as loopback as
-    ``127.0.0.1``, and a warning that fires on one and not the other reads as a bug. A
-    non-address host is only loopback when it is literally ``localhost``; a name that
-    resolves there is not something a config can know.
-    """
-
-    if host == "localhost":
-        return True
-
-    try:
-        return ip_address(host).is_loopback
-
-    except ValueError:
-        return False
 
 
 # ....................... #
@@ -245,12 +225,7 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         if self.base_url is None or not (self.auth is not None or self.egress_sensitive):
             return
 
-        parts = urlsplit(self.base_url)
-
-        if parts.scheme != "http":
-            return
-
-        if _is_loopback(parts.hostname or ""):
+        if not is_cleartext_destination(self.base_url):
             return
 
         logger.warning(
