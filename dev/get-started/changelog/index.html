@@ -2732,6 +2732,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../data-events/agent-tools/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent tools
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../data-events/sandbox/" class="md-nav__link">
         
   
@@ -8518,6 +8547,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.7.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>An in-process agent's tools can be your operations.</strong> <code>operation_tools(registry, include=…)</code> projects allowlisted operations into tool definitions carrying their own input schema, and <code>dispatch_tool_use</code> runs the agent's call through <code>run_operation</code> on the live context, so tenancy, permissions, deadlines and audit apply as they do to any caller. Read-only by default; a sensitive operation is refused, not skipped.</p>
+</li>
 <li>
 <p><strong>Docs snippets are checked against the API</strong> (<code>just docs-snippets</code>, in <code>just quality</code>) — every inline python block in <code>pages/docs</code> parses, every <code>forze*</code> symbol it imports exists, and every call to one matches the live signature. A block that cannot stand alone is marked <code>python fragment</code>.</p>
 </li>
