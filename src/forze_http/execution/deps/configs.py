@@ -8,6 +8,10 @@ from uuid import UUID
 import attrs
 from pydantic import SecretStr
 
+from forze.application.contracts.egress import (
+    HTTP_EGRESS_UNACKNOWLEDGED,
+    require_egress_acknowledged,
+)
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
@@ -86,11 +90,36 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
     auth: HttpAuthConfig | None = None
     """Optional static authentication."""
 
+    egress_sensitive: bool = False
+    """This route sends business, personal or prompt data outside the trust boundary.
+
+    A **data fact**, declared by the application: it describes what the route carries, not
+    whether anyone approved it. Left ``False`` (the default) nothing changes — no gate, no
+    span attribute, no behaviour difference for any existing wiring."""
+
+    acknowledge_data_egress: bool = False
+    """The operator accepts that the data named by :attr:`egress_sensitive` leaves.
+
+    An **operator act**, separate from the declaration on purpose: a route that carries
+    sensitive data but has not been acknowledged fails at wiring rather than shipping the
+    data and noting it somewhere."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
         if self.timeout.total_seconds() <= 0:
             raise exc.configuration("Timeout must be positive")
+
+        require_egress_acknowledged(
+            subject="HttpServiceConfig",
+            detail=(
+                "this route is declared egress_sensitive=True, so it sends data outside "
+                "the trust boundary and the operator must state that consciously."
+            ),
+            egress_sensitive=self.egress_sensitive,
+            acknowledged=self.acknowledge_data_egress,
+            code=HTTP_EGRESS_UNACKNOWLEDGED,
+        )
 
         if self.tenant_aware:
             if self.base_url is not None:

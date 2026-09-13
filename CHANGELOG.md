@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An outbound route can declare that data leaves your trust boundary.** `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)` makes the egress a reviewed wiring fact — declaring without acknowledging fails closed — and tags the call's span `forze.egress.sensitive`. Off by default; the inference configs now share the same gate.
+
 - **An in-process agent's tools can be your operations.** `operation_tools(registry, include=…)` projects allowlisted operations into tool definitions carrying their own input schema, and `dispatch_tool_use` runs the agent's call through `run_operation` on the live context, so tenancy, permissions, deadlines and audit apply as they do to any caller. Read-only by default; a sensitive operation is refused, not skipped.
 
 - **Docs snippets are checked against the API** (`just docs-snippets`, in `just quality`) — every inline python block in `pages/docs` parses, every `forze*` symbol it imports exists, and every call to one matches the live signature. A block that cannot stand alone is marked `python fragment`.

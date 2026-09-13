@@ -4,6 +4,7 @@ from typing import final
 
 import attrs
 
+from forze.application.contracts.egress import require_egress_acknowledged
 from forze.application.contracts.resolution import NamedResourceSpec
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
@@ -61,9 +62,14 @@ class SageMakerInferenceConfig(TenantAwareIntegrationConfig):
                 "at least 1; omit it (None) for an endpoint with no batch limit."
             )
 
-        if not self.acknowledge_data_egress:
-            raise exc.configuration(
-                "SageMakerInferenceConfig requires acknowledge_data_egress=True: this "
-                "route sends feature values in plaintext to an external endpoint, and "
-                "the operator must state that consciously."
-            )
+        # Always sensitive, for the same reason as the HTTP inference route: the endpoint
+        # is handed real feature values or it cannot score them.
+        require_egress_acknowledged(
+            subject="SageMakerInferenceConfig",
+            detail=(
+                "this route sends feature values in plaintext to an external endpoint, "
+                "and the operator must state that consciously."
+            ),
+            egress_sensitive=True,
+            acknowledged=self.acknowledge_data_egress,
+        )
