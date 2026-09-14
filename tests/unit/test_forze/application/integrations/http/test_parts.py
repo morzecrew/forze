@@ -153,8 +153,8 @@ class TestFormFields:
         assert "scalars only" in str(raised.value)
 
     def test_a_list_is_refused_too(self) -> None:
-        # RFC 0051 §10 leaves repeated keys open; until something decides them, a list is
-        # refused rather than silently becoming one comma-joined value.
+        # Repeated keys (`scope=a&scope=b`) are undecided; until a consumer needs them, a
+        # list is refused rather than silently becoming one comma-joined value.
         with pytest.raises(CoreException):
             form_fields(_form_op(), {"grant_type": "x", "extra": ["a", "b"]})
 
