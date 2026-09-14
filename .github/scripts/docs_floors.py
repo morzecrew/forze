@@ -350,8 +350,20 @@ def accessor_key_owners() -> dict[str, frozenset[str]]:
 
     module = vars(sys.modules[ExecutionContext.__module__])
     owners: dict[str, set[str]] = {}
+    declared_by: dict[str, Any] = dict(ExecutionContext.__annotations__)
 
-    for attribute, annotation in ExecutionContext.__annotations__.items():
+    # Alias accessors are properties, not annotated fields (`ctx.doc` returns the same
+    # `DocumentDeps` as `ctx.document`, and `forze_kits` is written with the short one). A
+    # row may legitimately show either, so both have to map to the same keys — otherwise
+    # the bar reports a correct row for naming the alias.
+    for attribute, value in vars(ExecutionContext).items():
+        if isinstance(value, property) and value.fget is not None:
+            returns = value.fget.__annotations__.get("return")
+
+            if returns is not None:
+                declared_by.setdefault(attribute, returns)
+
+    for attribute, annotation in declared_by.items():
         declared = module.get(annotation) if isinstance(annotation, str) else annotation
 
         if not isinstance(declared, type):

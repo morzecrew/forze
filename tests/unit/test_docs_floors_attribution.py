@@ -79,6 +79,14 @@ class TestTheAccessorMapping:
         assert owners["CacheDepKey"] == frozenset({"cache"})
         assert "counter" in owners["CounterDepKey"]
 
+    def test_an_alias_accessor_maps_to_the_same_keys(self) -> None:
+        # `ctx.doc` is a property returning the same `DocumentDeps` as `ctx.document`, and
+        # `forze_kits` is written with the short one. A row showing either must satisfy the
+        # bar, or a correct row fails for picking the alias.
+        owners = checker.accessor_key_owners()
+
+        assert {"document", "doc"} <= owners["DocumentCommandDepKey"]
+
     def test_a_key_no_accessor_resolves_is_absent_rather_than_guessed(self) -> None:
         # The durable family and the queue keys have no `ctx` accessor. Absent means "not
         # checkable", which is the honest answer; inventing an owner would put a guess in
