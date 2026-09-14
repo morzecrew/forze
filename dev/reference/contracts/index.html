@@ -6409,9 +6409,13 @@
   <h1 id="__skip">Contracts</h1>
 
 <p>The narrative is in <a href="../../core-concepts/contracts/">Contracts &amp; adapters</a>; this is
-the index — each capability, the spec it's keyed by, and how a handler reaches it
-from the <code>ExecutionContext</code>. Capabilities with a dedicated reference page are linked
-(the spec fields, the method surface, and the integrations that implement it).</p>
+the index — each capability, the spec it's keyed by, how a handler reaches it from
+the <code>ExecutionContext</code>, and the dep key it resolves under. Capabilities with a
+dedicated reference page are linked (the spec fields, the method surface, and the
+integrations that implement it).</p>
+<p>Read the last column when you are <strong>wiring</strong> rather than calling: a dep key is what
+a deps module binds, so it is the name you register a custom provider against and
+the name a resolution error prints. Handlers should keep to the accessor.</p>
 <h2 id="data-storage">Data &amp; storage<a class="headerlink" href="#data-storage" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6419,6 +6423,7 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <th>Capability</th>
 <th>Spec</th>
 <th>Resolve via</th>
+<th>Dep key</th>
 </tr>
 </thead>
 <tbody>
@@ -6426,31 +6431,43 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <td><a href="../contracts/document/">Document</a> (read / write)</td>
 <td><code>DocumentSpec</code></td>
 <td><code>ctx.document.query(spec)</code> / <code>ctx.document.command(spec)</code></td>
+<td><code>DocumentQueryDepKey</code> / <code>DocumentCommandDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/stores/#cache">Cache</a></td>
 <td><code>CacheSpec</code></td>
 <td><code>ctx.cache(spec)</code></td>
+<td><code>CacheDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/stores/#counter">Counter</a></td>
 <td><code>CounterSpec</code></td>
 <td><code>ctx.counter(spec)</code></td>
+<td><code>CounterDepKey</code> (+ <code>CounterAdminDepKey</code> for reset / drop)</td>
 </tr>
 <tr>
 <td><a href="../contracts/stores/#storage">Object storage</a></td>
 <td><code>StorageSpec</code></td>
 <td><code>ctx.storage.query(spec)</code> / <code>ctx.storage.command(spec)</code></td>
+<td><code>StorageQueryDepKey</code> / <code>StorageCommandDepKey</code> (+ <code>StorageUploadSessionDepKey</code> for presigned uploads)</td>
 </tr>
 <tr>
 <td><a href="../contracts/graph/">Graph</a></td>
 <td><code>GraphModuleSpec</code></td>
 <td><code>ctx.graph</code></td>
+<td><code>GraphQueryDepKey</code> / <code>GraphCommandDepKey</code> (+ <code>GraphManagementDepKey</code>, <code>GraphRawQueryDepKey</code>)</td>
 </tr>
 <tr>
 <td>Embeddings</td>
 <td><code>EmbeddingsSpec</code></td>
 <td><code>ctx.embeddings.provider(spec)</code></td>
+<td><code>EmbeddingsProviderDepKey</code></td>
+</tr>
+<tr>
+<td><a href="../../data-events/dynamic-read/">Dynamic read</a></td>
+<td><code>DynamicReadSpec</code></td>
+<td><code>ctx.dynamic_read.query(spec)</code></td>
+<td><code>DynamicReadDepKey</code></td>
 </tr>
 </tbody>
 </table>
@@ -6461,6 +6478,7 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <th>Capability</th>
 <th>Spec</th>
 <th>Resolve via</th>
+<th>Dep key</th>
 </tr>
 </thead>
 <tbody>
@@ -6468,16 +6486,25 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <td><a href="../contracts/search/">Search</a> (query / index)</td>
 <td><code>SearchSpec</code></td>
 <td><code>ctx.search.query(spec)</code> / <code>ctx.search.command(spec)</code></td>
+<td><code>SearchQueryDepKey</code> / <code>SearchCommandDepKey</code> (+ <code>SearchManagementDepKey</code> for index admin)</td>
+</tr>
+<tr>
+<td><a href="../contracts/search/">Federated &amp; hub search</a></td>
+<td><code>SearchSpec</code></td>
+<td><code>ctx.search.federated(spec)</code> / <code>ctx.search.hub(spec)</code></td>
+<td><code>FederatedSearchQueryDepKey</code> / <code>HubSearchQueryDepKey</code> (+ <code>SearchResultSnapshotDepKey</code> for late materialization)</td>
 </tr>
 <tr>
 <td><a href="../contracts/analytics/">Analytics</a></td>
 <td><code>AnalyticsSpec</code></td>
 <td><code>ctx.analytics.query(spec)</code> (+ ingest)</td>
+<td><code>AnalyticsQueryDepKey</code> / <code>AnalyticsIngestDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/procedure/">Procedures</a> (command / compute)</td>
 <td><code>ProcedureSpec</code></td>
 <td><code>ctx.procedure.command(spec)</code></td>
+<td><code>ProcedureCommandDepKey</code></td>
 </tr>
 </tbody>
 </table>
@@ -6488,48 +6515,57 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <th>Capability</th>
 <th>Spec / key</th>
 <th>Resolve via</th>
+<th>Dep key</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><a href="../contracts/messaging/#queue">Queue</a> (produce / consume)</td>
 <td>queue route</td>
-<td><code>QueueQueryDepKey</code> / <code>QueueCommandDepKey</code></td>
+<td>by dep key + route</td>
+<td><code>QueueCommandDepKey</code> / <code>QueueQueryDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/streaming/#pubsub">Pub/Sub</a></td>
 <td>topic route</td>
+<td>by dep key + route</td>
 <td><code>PubSubCommandDepKey</code> / <code>PubSubQueryDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/streaming/#streams">Stream</a></td>
 <td>stream route</td>
-<td><code>StreamCommandDepKey</code> / <code>StreamQueryDepKey</code> (+ the ack / commit group dep keys; <code>ctx.stream.commit_query</code> / <code>.commit_admin</code> shortcuts)</td>
+<td>by dep key + route; <code>ctx.stream.commit_query</code> / <code>.commit_admin</code> for the commit sub-model</td>
+<td><code>StreamCommandDepKey</code> / <code>StreamQueryDepKey</code> (+ <code>AckStreamGroupQueryDepKey</code>, <code>AckStreamGroupAdminDepKey</code>, <code>CommitStreamGroupQueryDepKey</code>, <code>CommitStreamGroupAdminDepKey</code>)</td>
 </tr>
 <tr>
 <td><a href="../contracts/messaging/#outbox">Outbox</a></td>
 <td><code>OutboxSpec</code></td>
 <td><code>ctx.outbox.command(spec)</code> / <code>ctx.outbox.query(spec)</code></td>
+<td><code>OutboxCommandDepKey</code> / <code>OutboxQueryDepKey</code> (+ <code>OutboxAdminDepKey</code> for the relay)</td>
 </tr>
 <tr>
 <td><a href="../contracts/messaging/#inbox">Inbox</a></td>
 <td><code>InboxSpec</code></td>
 <td><code>ctx.inbox</code></td>
+<td><code>InboxDepKey</code></td>
 </tr>
 <tr>
 <td>Domain events</td>
 <td>—</td>
 <td><code>ctx.domain</code> (dispatch)</td>
+<td><code>DomainEventDispatcherDepKey</code></td>
 </tr>
 <tr>
 <td>Saga</td>
 <td><code>SagaDefinition</code></td>
+<td>by dep key</td>
 <td><code>SagaExecutorDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../../data-events/realtime/">Realtime egress</a></td>
 <td><code>RealtimeEvent</code> catalog</td>
 <td><code>build_realtime_publisher(ctx, …)</code> (<a href="../realtime-protocol/">wire protocol</a>)</td>
+<td>— (composed from the stream and pub/sub keys above)</td>
 </tr>
 </tbody>
 </table>
@@ -6540,28 +6576,45 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <th>Capability</th>
 <th>Spec / key</th>
 <th>Resolve via</th>
+<th>Dep key</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>Transactions</td>
 <td>tx route</td>
-<td><code>ctx.tx_ctx.scope(route)</code></td>
+<td><code>ctx.transaction(route)</code> for the manager; <code>ctx.tx_ctx.scope(route)</code> for the ambient scope</td>
+<td><code>TransactionManagerDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/coordination/#idempotency">Idempotency</a></td>
 <td><code>IdempotencySpec</code></td>
 <td><code>ctx.idempotency(spec)</code></td>
+<td><code>IdempotencyDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../resilience-tuning/">Resilience</a></td>
 <td><code>ResiliencePolicy</code></td>
 <td><code>ctx.resilience().run(fn, policy=…)</code></td>
+<td><code>ResilienceExecutorDepKey</code> (+ <code>ResiliencePortPoliciesDepKey</code> for per-port defaults, <code>ResilienceAdminDepKey</code> for breaker state)</td>
 </tr>
 <tr>
 <td><a href="../contracts/coordination/#distributed-lock">Distributed lock</a></td>
 <td><code>DistributedLockSpec</code></td>
 <td><code>ctx.dlock</code></td>
+<td><code>DistributedLockCommandDepKey</code> / <code>DistributedLockQueryDepKey</code></td>
+</tr>
+<tr>
+<td>Hybrid logical clock</td>
+<td>—</td>
+<td>by dep key</td>
+<td><code>HlcCheckpointDepKey</code></td>
+</tr>
+<tr>
+<td><a href="../../data-events/sandbox/">Sandboxed execution</a></td>
+<td><code>SandboxSpec</code></td>
+<td><code>ctx.sandbox.run(spec)</code></td>
+<td><code>SandboxDepKey</code></td>
 </tr>
 </tbody>
 </table>
@@ -6572,27 +6625,32 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <th>Capability</th>
 <th>Spec</th>
 <th>Resolve via</th>
+<th>Dep key</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><a href="../contracts/durable/#workflows">Durable workflows</a></td>
 <td><code>DurableWorkflowSpec</code></td>
-<td><code>DurableWorkflowCommandDepKey</code> / <code>…QueryDepKey</code></td>
+<td>by dep key</td>
+<td><code>DurableWorkflowCommandDepKey</code> / <code>DurableWorkflowQueryDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/durable/#schedules">Workflow schedules</a></td>
 <td>—</td>
-<td><code>DurableWorkflowScheduleCommandDepKey</code> / <code>…QueryDepKey</code></td>
+<td>by dep key</td>
+<td><code>DurableWorkflowScheduleCommandDepKey</code> / <code>DurableWorkflowScheduleQueryDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/durable/#event-driven-functions">Durable functions</a></td>
 <td><code>DurableFunctionSpec</code></td>
+<td>by dep key</td>
 <td><code>DurableFunctionEventCommandDepKey</code> / <code>DurableFunctionStepDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../contracts/durable/#event-driven-functions">Run &amp; schedule stores, run listing</a></td>
 <td>—</td>
+<td>by dep key</td>
 <td><code>DurableRunStoreDepKey</code> / <code>DurableRunAdminDepKey</code> / <code>DurableScheduleStoreDepKey</code></td>
 </tr>
 </tbody>
@@ -6604,6 +6662,7 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <th>Capability</th>
 <th>Spec</th>
 <th>Resolve via</th>
+<th>Dep key</th>
 </tr>
 </thead>
 <tbody>
@@ -6611,26 +6670,43 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <td><a href="../contracts/identity/#authentication">Authentication</a></td>
 <td><code>AuthnSpec</code></td>
 <td><code>ctx.authn</code></td>
+<td><code>AuthnDepKey</code> (the lifecycle ports it composes are in <a href="../contracts/identity/">identity</a>)</td>
 </tr>
 <tr>
 <td><a href="../contracts/identity/#authorization">Authorization</a></td>
 <td><code>AuthzSpec</code></td>
 <td><code>ctx.authz.decision(spec)</code> / <code>ctx.authz.scope(spec)</code></td>
+<td><code>AuthzDecisionDepKey</code> / <code>AuthzScopeDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../tenancy-matrix/">Tenancy</a></td>
 <td>—</td>
 <td><code>ctx.tenancy</code></td>
+<td><code>TenantResolverDepKey</code> (+ <code>TenantManagementDepKey</code> for provisioning)</td>
 </tr>
 <tr>
 <td>Secrets</td>
 <td><code>SecretRef</code></td>
-<td><code>SecretsPort</code> (<code>SecretsDepKey</code>)</td>
+<td>by dep key</td>
+<td><code>SecretsDepKey</code> (+ <code>SecretsAdminDepKey</code>, <code>SecretsLeaseDepKey</code>)</td>
 </tr>
 <tr>
 <td><a href="../../running-in-prod/credential-rotation/#when-the-other-side-rotates-it">Counterparty-rotated credentials</a></td>
 <td><code>SecretRef</code></td>
-<td><code>RotatingCredentialStorePort</code> (<code>RotatingCredentialsDepKey</code>)</td>
+<td>by dep key</td>
+<td><code>RotatingCredentialsDepKey</code> (+ <code>RotatingCredentialsAdminDepKey</code> for the refresh sweeper)</td>
+</tr>
+<tr>
+<td><a href="../../identity-tenancy-enc/encryption/">Field encryption</a></td>
+<td><code>FieldEncryption</code></td>
+<td>declared on a spec; applied by the plane, never called directly</td>
+<td><code>AeadDepKey</code> / <code>DeterministicCipherDepKey</code> (+ <code>RequiredReachDepKey</code> for the tier floor)</td>
+</tr>
+<tr>
+<td><a href="../../identity-tenancy-enc/encryption/#wiring-the-keyring">Key management</a></td>
+<td><code>KeyRef</code></td>
+<td>by dep key</td>
+<td><code>KeyringDepKey</code> / <code>KeyManagementDepKey</code> (+ <code>KeyDirectoryDepKey</code> for per-tenant key lookup)</td>
 </tr>
 </tbody>
 </table>
@@ -6641,6 +6717,7 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <th>Capability</th>
 <th>Spec</th>
 <th>Resolve via</th>
+<th>Dep key</th>
 </tr>
 </thead>
 <tbody>
@@ -6648,19 +6725,21 @@ from the <code>ExecutionContext</code>. Capabilities with a dedicated reference 
 <td>Outbound HTTP</td>
 <td><code>HttpServiceSpec</code></td>
 <td><code>ctx.http.service(spec)</code></td>
+<td><code>HttpServiceDepKey</code></td>
 </tr>
 <tr>
 <td><a href="../../data-events/inference/">Model inference</a></td>
 <td><code>InferenceSpec</code></td>
 <td><code>ctx.inference.model(spec)</code></td>
+<td><code>InferenceDepKey</code></td>
 </tr>
 </tbody>
 </table>
-<p>Capabilities resolved by a <code>*DepKey</code> (queue, pub/sub, durable) have no short
-<code>ctx.&lt;x&gt;</code> accessor — resolve them through the context's dependency resolution by
-their dep key and route. Streams have shortcuts for the commit sub-model only
-(<code>ctx.stream.commit_query</code> / <code>.commit_admin</code>); the rest of the stream family
-resolves by dep key too.</p>
+<p>A capability whose <strong>Resolve via</strong> cell reads <em>by dep key</em> has no short <code>ctx.&lt;x&gt;</code>
+accessor: resolve it through the context's dependency resolution, by the key in the
+last column and the route it is registered under. Streams are the mixed case —
+shortcuts exist for the commit sub-model only, and the rest of the family resolves
+by key.</p>
 
 
 
