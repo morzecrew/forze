@@ -250,3 +250,4 @@ if __name__ == "__main__":
         log.info("no violation: the declared law survived every agent turn")
     else:
         log.error("violation", report=str(violation))
+        raise SystemExit(1)  # a violation is a failed verification; `forze dst run` exits 1 too
