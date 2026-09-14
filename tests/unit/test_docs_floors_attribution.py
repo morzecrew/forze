@@ -196,6 +196,116 @@ class TestTheAttributionBar:
         assert checker.check_dep_key_attribution(policy) == []
 
 
+class TestTableParsing:
+    def test_an_escaped_pipe_does_not_hide_the_key_cell(self, tmp_path: Path) -> None:
+        # Markdown escapes a literal pipe inside a cell as `\|`, and other reference pages
+        # use it for type unions. Splitting on it truncates the row, so a wrong key sitting
+        # before the escape would never be read — the attribution silently unchecked.
+        policy = _index(
+            tmp_path,
+            r"| Cache | `CacheSpec` | `ctx.cache(spec)` | `CounterDepKey` \| legacy alias |",
+        )
+        violations = checker.check_dep_key_attribution(policy)
+
+        assert len(violations) == 1
+        assert "names CounterDepKey" in violations[0]
+
+    def test_an_escaped_pipe_in_a_correct_row_is_not_a_violation(self, tmp_path: Path) -> None:
+        policy = _index(
+            tmp_path,
+            r"| Cache | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` \| its alias `cache` |",
+        )
+
+        assert checker.check_dep_key_attribution(policy) == []
+
+
+class TestCompleteness:
+    """The other direction: a key may not quietly leave the index.
+
+    Attribution alone lets a row lose a key without a sound — the symbol bar still passes
+    because some other page mentions it in prose, and the wiring-facing index is the poorer
+    for it. So a key an accessor resolves must be attributed somewhere in the index, or
+    declared exempt like any other undocumented symbol.
+    """
+
+    def test_an_accessor_resolved_key_missing_from_the_index_is_reported(
+        self, tmp_path: Path
+    ) -> None:
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` |",
+        )
+        violations = checker.check_dep_key_index_completeness(policy)
+
+        assert any("CounterDepKey" in violation for violation in violations)
+        assert all("ctx." in violation for violation in violations)
+
+    def test_a_declared_exemption_excuses_it(self, tmp_path: Path) -> None:
+        # The identity lifecycle ports are exempt while their own reference page is
+        # unwritten; this bar must not demand them in the index ahead of that page.
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` |",
+        )
+        every_other = frozenset(
+            key for key in checker.accessor_key_owners() if key != "CacheDepKey"
+        )
+        group = checker.ExemptGroup(kind="declared", symbols=every_other, reason="test")
+        policy = checker.Policy(
+            docs_root=policy.docs_root,
+            nav_config=policy.nav_config,
+            exempt_groups=(group,),
+            dep_key_index=policy.dep_key_index,
+            _exempt=dict.fromkeys(every_other, group),
+        )
+
+        assert checker.check_dep_key_index_completeness(policy) == []
+
+    def test_a_family_with_a_declared_gap_is_conceded_whole(self, tmp_path: Path) -> None:
+        # One exempt sibling concedes its accessor family: the identity ports are exempt
+        # while their reference page is unwritten, so `PasswordResetDepKey` — resolved by
+        # the same `ctx.authn` and documented only by its wire name — is not demanded here.
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` |",
+        )
+        owners = checker.accessor_key_owners()
+        authn = frozenset(key for key, seen in owners.items() if "authn" in seen)
+        group = checker.ExemptGroup(
+            kind="identity-plane-undocumented",
+            symbols=frozenset({next(iter(authn))}),
+            reason="test",
+        )
+        policy = checker.Policy(
+            docs_root=policy.docs_root,
+            nav_config=policy.nav_config,
+            exempt_groups=(group,),
+            dep_key_index=policy.dep_key_index,
+            _exempt={next(iter(authn)): group},
+        )
+        violations = checker.check_dep_key_index_completeness(policy)
+
+        assert not [v for v in violations if v.split("attributes ")[1].split(",")[0] in authn]
+
+    def test_a_family_with_no_declared_gap_is_still_demanded(self, tmp_path: Path) -> None:
+        # The concession is per family and retires itself: nothing about cache is exempt,
+        # so an index that omits its key fails whatever other families concede.
+        policy = _index(
+            tmp_path,
+            "| Counter | `CounterSpec` | `ctx.counter(spec)` | `CounterDepKey` |",
+        )
+        violations = checker.check_dep_key_index_completeness(policy)
+
+        assert any("CacheDepKey" in violation for violation in violations)
+
+    def test_the_real_index_is_complete(self) -> None:
+        # The bar against the shipped page, which is what a reviewer cares about: every key
+        # some accessor resolves is either in the index or declared exempt.
+        policy = checker.load_policy(_REPO / "pyproject.toml")
+
+        assert checker.check_dep_key_index_completeness(policy) == []
+
+
 class TestTheBarIsActuallyWired:
     """A bar that exists and never runs is the failure this repository keeps finding.
 

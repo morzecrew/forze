@@ -75,6 +75,8 @@ _CONTRACTS_PACKAGE = "forze.application.contracts"
 _LINK_PATTERN = re.compile(r"\]\(([^)]+)\)")
 _DEP_KEY_PATTERN = re.compile(r"\b([A-Z][A-Za-z0-9]*DepKey)\b")
 _ACCESSOR_PATTERN = re.compile(r"`ctx\.([a-z_]+)")
+_CELL_SPLIT_PATTERN = re.compile(r"(?<!\\)\|")
+_LABEL_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "//", "/")
 
 
@@ -368,6 +370,36 @@ def accessor_key_owners() -> dict[str, frozenset[str]]:
     return {key: frozenset(attributes) for key, attributes in owners.items()}
 
 
+def index_rows(page: Path) -> list[tuple[str, frozenset[str], frozenset[str]]]:
+    """Each table row of the dep-key index as (capability, keys attributed, accessors shown).
+
+    Cells are split on **unescaped** pipes only: Markdown spells a literal pipe inside a
+    cell as ``\\|`` (the reference pages use it for type unions), and splitting on one
+    truncates the row — which would drop the key column and silently stop checking the
+    attribution it holds. Keys count only from the last cell, so a cross-reference in prose
+    or in the accessor cell is not read as an attribution; accessors count from anywhere in
+    the row, since some rows name theirs inside the key cell's parenthetical.
+    """
+
+    rows: list[tuple[str, frozenset[str], frozenset[str]]] = []
+
+    for line in page.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("| ") or "DepKey" not in line:
+            continue
+
+        cells = [cell.strip() for cell in _CELL_SPLIT_PATTERN.split(line.strip().strip("|"))]
+        capability = _LABEL_LINK_PATTERN.sub(r"\1", cells[0])
+        rows.append(
+            (
+                capability,
+                frozenset(_DEP_KEY_PATTERN.findall(cells[-1])),
+                frozenset(_ACCESSOR_PATTERN.findall(line)),
+            )
+        )
+
+    return rows
+
+
 def check_dep_key_attribution(policy: Policy) -> list[str]:
     """Every dep key the index attributes to a capability is one that row resolves.
 
@@ -389,15 +421,8 @@ def check_dep_key_attribution(policy: Policy) -> list[str]:
     owners = accessor_key_owners()
     violations: list[str] = []
 
-    for line in page.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("| ") or "DepKey" not in line:
-            continue
-
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        capability = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", cells[0])
-        shown = set(_ACCESSOR_PATTERN.findall(line))
-
-        for key in _DEP_KEY_PATTERN.findall(cells[-1]):
+    for capability, keys, shown in index_rows(page):
+        for key in keys:
             resolved_by = owners.get(key)
 
             if resolved_by is None or resolved_by & shown:
@@ -409,6 +434,57 @@ def check_dep_key_attribution(policy: Policy) -> list[str]:
                 f"{expected} resolves and this row does not — the key is attributed to "
                 "the wrong capability, or the row is missing that accessor"
             )
+
+    return violations
+
+
+def check_dep_key_index_completeness(policy: Policy) -> list[str]:
+    """Every accessor-resolved dep key is attributed by the index, or declared exempt.
+
+    The attribution check above asks whether a *named* key sits in the right row, which
+    leaves the other direction open: a key dropped from the index goes unnoticed as long as
+    some other page still mentions it in prose, and the wiring-facing table quietly stops
+    covering its plane. Exemption is the same escape hatch the symbol bar uses — a key
+    whose plane has no reference page yet is declared, not pretended.
+    """
+
+    if policy.dep_key_index is None:
+        return []
+
+    page = policy.docs_root / policy.dep_key_index
+
+    if not page.is_file():
+        return []  # the attribution check reports the missing page; one voice is enough
+
+    owners = accessor_key_owners()
+    attributed = {key for _, keys, _ in index_rows(page) for key in keys}
+    # An accessor family still carrying a declared gap is mid-documentation: the identity
+    # lifecycle ports are exempt while their own reference page is unwritten, and demanding
+    # them here would move that phase's work into this bar. The scope retires itself — the
+    # family becomes subject to completeness as soon as its last exemption goes. It is a
+    # narrow escape, not a mute button: every undocumented key still owes the symbol bar a
+    # mention or an exemption of its own.
+    conceded = {
+        accessor
+        for key, accessors in owners.items()
+        if policy.exempt_for(key) is not None
+        for accessor in accessors
+    }
+    violations = []
+
+    for key, resolved_by in sorted(owners.items()):
+        if key in attributed or policy.exempt_for(key) is not None:
+            continue
+
+        if resolved_by & conceded:
+            continue
+
+        accessors = ", ".join(f"ctx.{name}" for name in sorted(resolved_by))
+        violations.append(
+            f"{policy.dep_key_index}: no row attributes {key}, which {accessors} "
+            "resolves — name it in the row for its capability, or declare it in an "
+            "exempt group with the reason its plane is not documented yet"
+        )
 
     return violations
 
@@ -498,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
         + check_nav(policy)
         + check_links(policy)
         + check_dep_key_attribution(policy)
+        + check_dep_key_index_completeness(policy)
     )
 
     exempt_total = sum(len(group.symbols) for group in policy.exempt_groups)
