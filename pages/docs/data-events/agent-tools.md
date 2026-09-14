@@ -99,6 +99,23 @@ It is the same sentence the MCP surface gives an external agent, from one shared
 builder, so the two surfaces cannot describe one read model differently.
 [Build a question-answering agent](../recipes/query-agent.md) puts it to work.
 
+## A tool call is simulable, because it is an operation
+
+Nothing about the bridge is deterministic-simulation-aware, and it does not need to be. A
+dispatch goes through `run_operation`, so a deterministic simulation drives an agent's
+turns the way it drives any other caller: concurrent tool calls interleave under a forced
+schedule, and an invariant declared on the aggregate is checked over the result.
+
+`examples/recipes/agent_tools_dst/` is that run. One operation stands between the
+simulation and the bridge — a *turn*, carrying whichever tool the run's seeded RNG picked
+and the arguments it built — so the model's choice is part of what the search explores and
+reproduces from the master seed. Everything below the turn is the real thing.
+
+The contrast is what makes it evidence rather than decoration: under the same schedule and
+the same compiled oracle, the same turns against a registry with no enforcement composed
+into it double-book the aggregate's capacity, while the governed one holds. If the bridge
+were bypassing the pipeline, the green run would look identical to the broken one.
+
 ## Two failures, kept apart
 
 A **governed** failure belongs to the conversation. Bad arguments, a denied
