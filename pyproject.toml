@@ -384,6 +384,10 @@ default = 80
 [tool.docs_floors]
 docs_root = "pages/docs"
 nav_config = "pages/zensical.toml"
+# The capability index whose last column names each capability's dep keys. A key some
+# `ctx` accessor resolves must appear in a row that shows that accessor, so a key
+# cannot be documented under the wrong capability.
+dep_key_index = "reference/contracts.md"
 # Snippet includes pulled into other pages with `--8<--`; they are content, not
 # destinations, so they are deliberately absent from the nav.
 orphan_allow = ["dst/_generated/*.md"]
@@ -398,60 +402,16 @@ source_dir = "pages/diagrams"
 source_suffix = ".d2"
 
 [[tool.docs_floors.exempt_groups]]
-kind = "port-plane-undocumented"
-symbols = [
-    "AnalyticsIngestDepKey",
-    "AnalyticsQueryDepKey",
-    "CounterAdminDepKey",
-    "DistributedLockCommandDepKey",
-    "DistributedLockQueryDepKey",
-    "DomainEventDispatcherDepKey",
-    "EmbeddingsProviderDepKey",
-    "FederatedSearchQueryDepKey",
-    "GraphCommandDepKey",
-    "GraphManagementDepKey",
-    "GraphQueryDepKey",
-    "GraphRawQueryDepKey",
-    "HubSearchQueryDepKey",
-    "OutboxAdminDepKey",
-    "OutboxCommandDepKey",
-    "OutboxQueryDepKey",
-    "ProcedureCommandDepKey",
-    "ResilienceExecutorDepKey",
-    "ResiliencePortPoliciesDepKey",
-    "RotatingCredentialsAdminDepKey",
-    "SearchCommandDepKey",
-    "SearchManagementDepKey",
-    "SearchQueryDepKey",
-    "SearchResultSnapshotDepKey",
-    "StorageCommandDepKey",
-    "StorageQueryDepKey",
-    "StorageUploadSessionDepKey",
-    "TransactionManagerDepKey",
-]
-reason = """
-The plane is documented — its ports, verbs and semantics all have pages — but the pages \
-speak in terms of the accessor (`ctx.storage.query(spec)`) rather than the dep key behind \
-it, so the key's own symbol never appears. That is mostly the right altitude for a guide: \
-an app author resolves through `ctx`, and the key matters only when wiring a custom \
-provider. What is missing is the wiring-facing half — one reference table mapping every \
-dep key to its accessor, its plane and the modules that register it. Until that page \
-exists these are declared rather than pretended-documented, and this is the single \
-biggest entry in the table for that reason.\
-"""
-
-[[tool.docs_floors.exempt_groups]]
 kind = "identity-plane-undocumented"
 symbols = [
     "ApiKeyLifecycleDepKey",
     "AuthnEventSinkDepKey",
-    "AuthzDecisionDepKey",
-    "AuthzScopeDepKey",
     "DelegationDepKey",
     "DelegationGrantDepKey",
     "GrantQueryDepKey",
     "PasswordAccountProvisioningDepKey",
     "PasswordLifecycleDepKey",
+    "PasswordResetDepKey",
     "PrincipalDeactivationDepKey",
     "PrincipalEligibilityDepKey",
     "PrincipalRegistryDepKey",
@@ -463,21 +423,9 @@ The identity plane splits its surface across many small lifecycle ports, and the
 teach it through the presets and recipes that wire them together rather than port by \
 port. The gap is real for anyone replacing one port (a custom password lifecycle, an \
 external principal registry), which is exactly the audience the identity reference page \
-does not yet serve.\
-"""
-
-[[tool.docs_floors.exempt_groups]]
-kind = "crypto-internals-undocumented"
-symbols = [
-    "DeterministicCipherDepKey",
-    "KeyDirectoryDepKey",
-    "RequiredReachDepKey",
-]
-reason = """
-Wired by `CryptoDepsModule` and rarely named by an application: the encryption page \
-teaches the policy (`FieldEncryption`, tiers, the keyring) and leaves the keys that \
-module binds implicit. Documenting them belongs with the same dep-key reference table \
-the port-plane group is waiting on.\
+does not yet serve. `PasswordResetDepKey` joined its siblings when dep keys stopped \
+counting as documented on a substring of their wire name: it had been passing on \
+`authn_password_reset` appearing somewhere rather than on any page naming the key.\
 """
 
 [[tool.docs_floors.exempt_groups]]

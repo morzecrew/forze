@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import pkgutil
 import re
 import sys
@@ -72,6 +73,10 @@ from typing import Any
 _CONFIG_TABLE = "docs_floors"
 _CONTRACTS_PACKAGE = "forze.application.contracts"
 _LINK_PATTERN = re.compile(r"\]\(([^)]+)\)")
+_DEP_KEY_PATTERN = re.compile(r"\b([A-Z][A-Za-z0-9]*DepKey)\b")
+_ACCESSOR_PATTERN = re.compile(r"`ctx\.([a-z_]+)")
+_CELL_SPLIT_PATTERN = re.compile(r"(?<!\\)\|")
+_LABEL_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "//", "/")
 
 
@@ -154,6 +159,9 @@ class Policy:
     orphan_allow: tuple[str, ...] = ()
     exempt_groups: tuple[ExemptGroup, ...] = ()
     generated: GeneratedLinks | None = None
+    dep_key_index: Path | None = None
+    """Docs-root-relative page whose tables map a capability to its dep keys, checked for
+    attribution (see :func:`check_dep_key_attribution`). ``None`` skips that check."""
     _exempt: dict[str, ExemptGroup] = field(default_factory=dict, compare=False)
 
     def exempt_for(self, symbol: str) -> ExemptGroup | None:
@@ -201,12 +209,15 @@ def load_policy(pyproject_path: Path) -> Policy:
         else None
     )
 
+    raw_index = table.get("dep_key_index")
+
     return Policy(
         docs_root=Path(str(table["docs_root"])),
         nav_config=Path(str(table["nav_config"])),
         orphan_allow=tuple(str(pattern) for pattern in table.get("orphan_allow", ())),
         exempt_groups=groups,
         generated=generated,
+        dep_key_index=Path(str(raw_index)) if raw_index is not None else None,
         _exempt=index,
     )
 
@@ -293,7 +304,11 @@ def check_symbols(
     documented: set[str] = set()
 
     for name, symbol in sorted(symbols.items()):
-        is_documented = name in corpus or symbol.alias in corpus
+        # A dep key's wire alias is often a common word (`cache`, `secrets`, `inbox`), so
+        # accepting it made "documented" mean "this word appears somewhere" — one key
+        # passed for years on a substring while being named on no page. Keys are matched
+        # by symbol; a spec's alias *is* its symbol, so nothing changes for specs.
+        is_documented = name in corpus or (symbol.kind != "dep_key" and symbol.alias in corpus)
         exempt = policy.exempt_for(name)
 
         if is_documented:
@@ -326,14 +341,164 @@ def check_symbols(
     return violations, documented
 
 
+def accessor_key_owners() -> dict[str, frozenset[str]]:
+    """Dep key → the ``ctx.<attr>`` accessors whose ``Deps`` class resolves it.
+
+    Read out of the accessor's own source, so the mapping is the code's rather than a
+    second copy of it kept by hand. A key no accessor resolves (the durable family, the
+    queue and pub/sub keys, the crypto internals) is simply absent — its attribution is
+    not checkable this way, and claiming otherwise would put a guess in a gate.
+    """
+
+    from forze.application.execution.context import ExecutionContext
+
+    module = vars(sys.modules[ExecutionContext.__module__])
+    owners: dict[str, set[str]] = {}
+    declared_by: dict[str, Any] = dict(ExecutionContext.__annotations__)
+
+    # Alias accessors are properties, not annotated fields (`ctx.doc` returns the same
+    # `DocumentDeps` as `ctx.document`, and `forze_kits` is written with the short one). A
+    # row may legitimately show either, so both have to map to the same keys — otherwise
+    # the bar reports a correct row for naming the alias.
+    for attribute, value in vars(ExecutionContext).items():
+        if isinstance(value, property) and value.fget is not None:
+            returns = value.fget.__annotations__.get("return")
+
+            if returns is not None:
+                declared_by.setdefault(attribute, returns)
+
+    for attribute, annotation in declared_by.items():
+        declared = module.get(annotation) if isinstance(annotation, str) else annotation
+
+        if not isinstance(declared, type):
+            continue
+
+        try:
+            source = inspect.getsource(declared)
+        except (OSError, TypeError):
+            # TypeError: a builtin annotation (`bool`, `str`) has no source file; OSError:
+            # a class whose module is not on disk. Neither can own a dep key.
+            continue
+
+        for key in _DEP_KEY_PATTERN.findall(source):
+            owners.setdefault(key, set()).add(attribute)
+
+    return {key: frozenset(attributes) for key, attributes in owners.items()}
+
+
+def index_rows(page: Path) -> list[tuple[str, frozenset[str], frozenset[str]]]:
+    """Each table row of the dep-key index as (capability, keys attributed, accessors shown).
+
+    Cells are split on **unescaped** pipes only: Markdown spells a literal pipe inside a
+    cell as ``\\|`` (the reference pages use it for type unions), and splitting on one
+    truncates the row — which would drop the key column and silently stop checking the
+    attribution it holds. Keys count only from the last cell, so a cross-reference in prose
+    or in the accessor cell is not read as an attribution; accessors count from anywhere in
+    the row, since some rows name theirs inside the key cell's parenthetical.
+    """
+
+    rows: list[tuple[str, frozenset[str], frozenset[str]]] = []
+
+    for line in page.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("| ") or "DepKey" not in line:
+            continue
+
+        cells = [cell.strip() for cell in _CELL_SPLIT_PATTERN.split(line.strip().strip("|"))]
+        capability = _LABEL_LINK_PATTERN.sub(r"\1", cells[0])
+        rows.append(
+            (
+                capability,
+                frozenset(_DEP_KEY_PATTERN.findall(cells[-1])),
+                frozenset(_ACCESSOR_PATTERN.findall(line)),
+            )
+        )
+
+    return rows
+
+
+def check_dep_key_attribution(policy: Policy) -> list[str]:
+    """Every dep key the index attributes to a capability is one that row resolves.
+
+    The symbol check above only asks whether a name is *mentioned* somewhere, which a
+    table of 75 keys satisfies while attributing any of them to the wrong capability —
+    the one defect that makes such an index worse than no index. Here each key named in a
+    row is compared against the accessors the row itself shows: if some ``ctx`` accessor
+    resolves that key, the row must be one that names it.
+    """
+
+    if policy.dep_key_index is None:
+        return []
+
+    page = policy.docs_root / policy.dep_key_index
+
+    if not page.is_file():
+        return [f"{policy.dep_key_index}: dep-key index page not found"]
+
+    owners = accessor_key_owners()
+    violations: list[str] = []
+
+    for capability, keys, shown in index_rows(page):
+        for key in keys:
+            resolved_by = owners.get(key)
+
+            if resolved_by is None or resolved_by & shown:
+                continue
+
+            expected = ", ".join(f"ctx.{name}" for name in sorted(resolved_by))
+            violations.append(
+                f"{policy.dep_key_index}: row '{capability}' names {key}, which "
+                f"{expected} resolves and this row does not — the key is attributed to "
+                "the wrong capability, or the row is missing that accessor"
+            )
+
+    return violations
+
+
+def check_dep_key_index_completeness(policy: Policy) -> list[str]:
+    """Every accessor-resolved dep key is attributed by the index, or declared exempt.
+
+    The attribution check above asks whether a *named* key sits in the right row, which
+    leaves the other direction open: a key dropped from the index goes unnoticed as long as
+    some other page still mentions it in prose, and the wiring-facing table quietly stops
+    covering its plane. Exemption is the same escape hatch the symbol bar uses — a key
+    whose plane has no reference page yet is declared, not pretended.
+    """
+
+    if policy.dep_key_index is None:
+        return []
+
+    page = policy.docs_root / policy.dep_key_index
+
+    if not page.is_file():
+        return []  # the attribution check reports the missing page; one voice is enough
+
+    attributed = {key for _, keys, _ in index_rows(page) for key in keys}
+    violations = []
+
+    for key, resolved_by in sorted(accessor_key_owners().items()):
+        # Per key, never per family: conceding a whole accessor because one of its keys is
+        # exempt would let an undeclared sibling through on someone else's declaration,
+        # which is the hole this direction exists to close.
+        if key in attributed or policy.exempt_for(key) is not None:
+            continue
+
+        accessors = ", ".join(f"ctx.{name}" for name in sorted(resolved_by))
+        violations.append(
+            f"{policy.dep_key_index}: no row attributes {key}, which {accessors} "
+            "resolves — name it in the row for its capability, or declare it in an "
+            "exempt group with the reason its plane is not documented yet"
+        )
+
+    return violations
+
+
 def check_nav(policy: Policy) -> list[str]:
     """Nav entries resolve to files, and every file is reachable from the nav."""
 
     violations: list[str] = []
     entries = nav_entries(policy.nav_config)
     on_disk = {
-        path.relative_to(policy.docs_root).as_posix()
-        for path in policy.docs_root.rglob("*.md")
+        path.relative_to(policy.docs_root).as_posix() for path in policy.docs_root.rglob("*.md")
     }
 
     for entry in sorted(set(entries) - on_disk):
@@ -404,12 +569,16 @@ def main(argv: list[str] | None = None) -> int:
 
     policy = load_policy(args.pyproject)
     symbols = discover_symbols()
-    corpus = "\n".join(
-        path.read_text(encoding="utf-8") for path in policy.docs_root.rglob("*.md")
-    )
+    corpus = "\n".join(path.read_text(encoding="utf-8") for path in policy.docs_root.rglob("*.md"))
 
     symbol_violations, documented = check_symbols(symbols, corpus, policy)
-    violations = symbol_violations + check_nav(policy) + check_links(policy)
+    violations = (
+        symbol_violations
+        + check_nav(policy)
+        + check_links(policy)
+        + check_dep_key_attribution(policy)
+        + check_dep_key_index_completeness(policy)
+    )
 
     exempt_total = sum(len(group.symbols) for group in policy.exempt_groups)
     planes: dict[str, tuple[int, int]] = {}
