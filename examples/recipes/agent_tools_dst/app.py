@@ -14,9 +14,17 @@ What stands in for the model is the run's seeded RNG. It picks which tool to cal
 to pass, so an agent's *choice* is part of what the search explores and reproduces from the
 master seed — where a scripted stub would freeze one choice per run and call it coverage.
 
-Try it (from the repo root)::
+Run it (from the repo root)::
 
-    forze dst run examples.recipes.agent_tools_dst.app:simulation   # ✓ no violation
+    python -m examples.recipes.agent_tools_dst.app   # ✓ no violation
+
+``forze dst run`` is the wrong driver here, and instructively so: it derives inputs from the
+declared type, which for a turn means tool names no palette holds. Every dispatch is then
+refused before it reaches an operation, so nothing races and the law is never at risk — the
+run says as much (``vacuous invariant``) rather than reporting a clean bill. A turn's
+arguments have to come from the palette, which is what :func:`agent_scenario` is for.
+
+    forze dst topology examples.recipes.agent_tools_dst.app:simulation
 """
 
 from __future__ import annotations
@@ -25,6 +33,7 @@ import random
 from typing import final
 
 import attrs
+import structlog
 from pydantic import Field
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -36,9 +45,10 @@ from forze.application.execution.operations import (
     OperationDescriptor,
     OperationRegistry,
 )
-from forze.base.primitives import JsonDict
+from forze.base.logging import LogLevel, configure_logging
+from forze.base.primitives import JsonDict, current_entropy_source
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
-from forze_dst import Simulation
+from forze_dst import Simulation, SimulationConfig, Strategy
 from forze_dst.oracle import compile_oracle
 from forze_dst.scenario import ModelState, Rule, Scenario
 from forze_kits.aggregates import AggregateKit
@@ -49,6 +59,15 @@ from forze_kits.integrations.agent_tools import (
     operation_tools,
 )
 from forze_mock import MockDepsModule
+
+_LOGGER_NAME = "agent_tools_dst"
+
+
+def _setup_logging(level: LogLevel) -> None:
+    # Render this run's narration and any framework logs cleanly, **only when run as a
+    # script** — leaving global logging untouched so imports and tests are unaffected.
+    configure_logging(level=level, logger_names=[_LOGGER_NAME, "forze"])
+
 
 # ----------------------- #
 # Domain — a sprint's tickets, deliberately the same shape as the direct-call DST example so
@@ -123,15 +142,26 @@ class AgentTurn(Handler[AgentTurnInput, JsonDict]):
     tools: OperationToolset
 
     async def __call__(self, args: AgentTurnInput) -> JsonDict:
+        # One id per call, from the replayable entropy seam: a result block is correlated to
+        # its call by this id, so reusing one across turns would make two results
+        # indistinguishable to the loop. Drawn from the seam, it still reproduces from the seed.
+        use_id = f"turn-{current_entropy_source().uuid4()}"
+
         result = await dispatch_tool_use(
-            ToolUse(id=f"turn-{args.tool}", name=args.tool, input=dict(args.input)),
+            ToolUse(id=use_id, name=args.tool, input=dict(args.input)),
             ctx=self.ctx,
             tools=self.tools,
         )
 
-        # Returned rather than raised: a governed refusal is the agent's to act on, and a
-        # simulation that treated one as a crash would be measuring the wrong thing.
-        return {"is_error": result.is_error}
+        # The whole result, not just its verdict: content is what an agent loop feeds back to
+        # the model, and a turn that dropped it would leave the model unable to read what it
+        # just did. Returned rather than raised, because a governed refusal is the agent's to
+        # act on — a simulation that treated one as a crash would measure the wrong thing.
+        return {
+            "tool_use_id": result.tool_use_id,
+            "is_error": result.is_error,
+            "content": result.content,
+        }
 
 
 # --8<-- [end:turn]
@@ -201,3 +231,22 @@ simulation = Simulation(
     invariants=[*_ORACLE.invariants],
 )
 # --8<-- [end:simulation]
+
+
+# ....................... #
+
+if __name__ == "__main__":
+    log = structlog.get_logger(_LOGGER_NAME)
+    _setup_logging("info")
+
+    # The scenario is the point: turns, with arguments the palette accepts, interleaved four
+    # deep across ten seeds. `run` returns the counterexample, or `None` when the law held.
+    violation = simulation.run(
+        SimulationConfig(strategy=Strategy.SCENARIO, act_count=8, concurrency=4, seeds=range(10)),
+        scenario=agent_scenario(),
+    )
+
+    if violation is None:
+        log.info("no violation: the declared law survived every agent turn")
+    else:
+        log.error("violation", report=str(violation))

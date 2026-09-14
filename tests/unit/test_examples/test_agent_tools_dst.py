@@ -31,6 +31,7 @@ from examples.recipes.agent_tools_dst.app import (
     simulation,
     turn_registry,
 )
+from forze.base.primitives import JsonDict
 from forze_dst import Simulation, SimulationConfig, Strategy
 from forze_dst.oracle import compile_oracle
 from forze_dst.scenario import ModelState
@@ -143,10 +144,10 @@ class TestTheWorkloadReallyGoesThroughTheBridge:
 
 
 class TestATurnAnswersRatherThanRaises:
-    async def test_a_tool_outside_the_palette_comes_back_as_an_error(self) -> None:
-        # The handler returns the dispatch's verdict, so a refusal is data the next turn can
-        # act on. A raise would abort the simulated workload and report a crash where the
-        # agent simply asked for something it was not given.
+    @staticmethod
+    async def _turns(*decisions: AgentTurnInput) -> list[JsonDict]:
+        """Drive turns through the example's own registry, on one runtime scope."""
+
         from forze.application.execution import ExecutionRuntime
         from forze.application.execution.deps import DepsRegistry
         from forze.application.execution.operations import run_operation
@@ -155,11 +156,37 @@ class TestATurnAnswersRatherThanRaises:
 
         async with runtime.scope():
             ctx = runtime.get_context()
-            result = await run_operation(
-                simulation.operations,
-                TURN_OP,
-                AgentTurnInput(tool="tickets.kill", input={}),
-                ctx,
-            )
 
-        assert result == {"is_error": True}
+            return [
+                await run_operation(simulation.operations, TURN_OP, decision, ctx)
+                for decision in decisions
+            ]
+
+    async def test_a_tool_outside_the_palette_comes_back_as_an_error(self) -> None:
+        # The handler returns the dispatch's verdict, so a refusal is data the next turn can
+        # act on. A raise would abort the simulated workload and report a crash where the
+        # agent simply asked for something it was not given.
+        (refused,) = await self._turns(AgentTurnInput(tool="tickets.kill", input={}))
+
+        assert refused["is_error"] is True
+
+    async def test_a_turn_hands_the_tools_output_back(self) -> None:
+        # Content, not just the verdict: an agent loop feeds the result back to the model, so
+        # a turn that returned only `is_error` would leave it unable to read what it just did
+        # — and the refusal above indistinguishable from any other refusal.
+        (created,) = await self._turns(AgentTurnInput(tool=CREATE_OP, input={"points": 3}))
+        (refused,) = await self._turns(AgentTurnInput(tool="tickets.kill", input={}))
+
+        assert created["is_error"] is False
+        assert created["content"]["points"] == 3  # type: ignore[index]
+        assert refused["content"]["code"] == "agent_tools_unknown_tool"  # type: ignore[index]
+
+    async def test_every_turn_is_correlated_by_its_own_id(self) -> None:
+        # Two identical calls, two ids: the id is what correlates a result to the call that
+        # produced it, so a shared one would make the loop's two results indistinguishable.
+        first, second = await self._turns(
+            AgentTurnInput(tool=CREATE_OP, input={"points": 1}),
+            AgentTurnInput(tool=CREATE_OP, input={"points": 1}),
+        )
+
+        assert first["tool_use_id"] != second["tool_use_id"]
