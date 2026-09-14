@@ -147,6 +147,30 @@ class TestTheAttributionBar:
 
         assert checker.check_dep_key_attribution(policy) == []
 
+    def test_a_row_showing_no_accessor_still_owes_one(self, tmp_path: Path) -> None:
+        # "by dep key" is how the durable and queue rows are written, and it must not
+        # double as a way to silence the bar: the cache key *is* accessor-resolved, so a
+        # row claiming otherwise is wrong even though it names no accessor to contradict.
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | by dep key | `CacheDepKey` |",
+        )
+        violations = checker.check_dep_key_attribution(policy)
+
+        assert len(violations) == 1
+        assert "ctx.cache resolves" in violations[0]
+
+    def test_a_key_named_outside_the_key_cell_is_not_an_attribution(self, tmp_path: Path) -> None:
+        # Only the last column attributes. A key named in prose or in the accessor cell is
+        # a cross-reference, and reading the whole row for keys would make a correct
+        # sentence about a neighbouring plane fail the build.
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` — not `CounterDepKey` | `CacheDepKey` |",
+        )
+
+        assert checker.check_dep_key_attribution(policy) == []
+
     def test_rows_without_a_key_cell_are_skipped(self, tmp_path: Path) -> None:
         policy = _index(
             tmp_path,
