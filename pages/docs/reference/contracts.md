@@ -24,7 +24,7 @@ the name a resolution error prints. Handlers should keep to the accessor.
 | [Object storage](contracts/stores.md#storage) | `StorageSpec` | `ctx.storage.query(spec)` / `ctx.storage.command(spec)` | `StorageQueryDepKey` / `StorageCommandDepKey` (+ `StorageUploadSessionDepKey` for presigned uploads) |
 | [Graph](contracts/graph.md) | `GraphModuleSpec` | `ctx.graph` | `GraphQueryDepKey` / `GraphCommandDepKey` (+ `GraphManagementDepKey`, `GraphRawQueryDepKey`) |
 | Embeddings | `EmbeddingsSpec` | `ctx.embeddings.provider(spec)` | `EmbeddingsProviderDepKey` |
-| [Dynamic read](../data-events/dynamic-read.md) | `DynamicReadSpec` | by dep key + route | `DynamicReadDepKey` |
+| [Dynamic read](../data-events/dynamic-read.md) | `DynamicReadSpec` | `ctx.dynamic_read.query(spec)` | `DynamicReadDepKey` |
 
 ## Search & analytics
 
@@ -52,7 +52,7 @@ the name a resolution error prints. Handlers should keep to the accessor.
 
 | Capability | Spec / key | Resolve via | Dep key |
 |------------|-----------|-------------|---------|
-| Transactions | tx route | `ctx.tx_ctx.scope(route)` | `TransactionManagerDepKey` |
+| Transactions | tx route | `ctx.transaction(route)` for the manager; `ctx.tx_ctx.scope(route)` for the ambient scope | `TransactionManagerDepKey` |
 | [Idempotency](contracts/coordination.md#idempotency) | `IdempotencySpec` | `ctx.idempotency(spec)` | `IdempotencyDepKey` |
 | [Resilience](resilience-tuning.md) | `ResiliencePolicy` | `ctx.resilience().run(fn, policy=…)` | `ResilienceExecutorDepKey` (+ `ResiliencePortPoliciesDepKey` for per-port defaults, `ResilienceAdminDepKey` for breaker state) |
 | [Distributed lock](contracts/coordination.md#distributed-lock) | `DistributedLockSpec` | `ctx.dlock` | `DistributedLockCommandDepKey` / `DistributedLockQueryDepKey` |

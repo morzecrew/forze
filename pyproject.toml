@@ -384,6 +384,10 @@ default = 80
 [tool.docs_floors]
 docs_root = "pages/docs"
 nav_config = "pages/zensical.toml"
+# The capability index whose last column names each capability's dep keys. A key some
+# `ctx` accessor resolves must appear in a row that shows that accessor, so a key
+# cannot be documented under the wrong capability.
+dep_key_index = "reference/contracts.md"
 # Snippet includes pulled into other pages with `--8<--`; they are content, not
 # destinations, so they are deliberately absent from the nav.
 orphan_allow = ["dst/_generated/*.md"]

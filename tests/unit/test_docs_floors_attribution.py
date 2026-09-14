@@ -1,0 +1,178 @@
+"""The dep-key attribution bar, seen red (.github/scripts/docs_floors.py).
+
+The symbol bar next to it only asks whether a contract symbol is *mentioned* anywhere in
+`pages/docs`, which an index of 75 dep keys satisfies while attributing any of them to the
+wrong capability — a table that confidently names the wrong key is worse than a table with
+no key column at all, because a reader trusts it.
+
+So the bar under test compares each row's keys against the accessors the row itself shows,
+using the accessor's own source as the authority. The tests inject the swap, the omission
+and the shape it cannot see, over a synthetic page in `tmp_path`: running the real page
+would pass against a checker that returns nothing, which is the failure mode that matters
+here (the published page is green, so a dead check and a correct page look identical).
+The accessor side is deliberately *not* synthetic — its whole value is the link to the
+live `ExecutionContext`.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+from types import ModuleType
+
+import pytest
+
+pytestmark = pytest.mark.unit
+
+# ----------------------- #
+
+_REPO = Path(__file__).resolve().parents[2]
+_SCRIPT = _REPO / ".github" / "scripts" / "docs_floors.py"
+
+
+def _load_checker() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("docs_floors", _SCRIPT)
+
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load checker script at {_SCRIPT}")
+
+    module = importlib.util.module_from_spec(spec)
+    # dataclass processing resolves the defining module via sys.modules, so the script
+    # must be registered before exec, like a normal import would.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+
+    return module
+
+
+checker = _load_checker()
+
+_HEADER = (
+    "| Capability | Spec | Resolve via | Dep key |\n|------------|------|-------------|---------|\n"
+)
+
+
+def _index(root: Path, *rows: str) -> object:
+    """A policy pointing at a synthetic index page holding *rows*."""
+
+    page = root / "reference" / "contracts.md"
+    page.parent.mkdir(parents=True, exist_ok=True)
+    page.write_text(_HEADER + "".join(f"{row}\n" for row in rows), encoding="utf-8")
+
+    return checker.Policy(
+        docs_root=root,
+        nav_config=root / "unused.toml",
+        dep_key_index=Path("reference/contracts.md"),
+    )
+
+
+# ----------------------- #
+
+
+class TestTheAccessorMapping:
+    def test_it_is_read_from_the_accessors_own_source(self) -> None:
+        # The authority is the code, not a table kept beside it: `ctx.cache` resolves the
+        # cache key and nothing else claims it.
+        owners = checker.accessor_key_owners()
+
+        assert owners["CacheDepKey"] == frozenset({"cache"})
+        assert "counter" in owners["CounterDepKey"]
+
+    def test_a_key_no_accessor_resolves_is_absent_rather_than_guessed(self) -> None:
+        # The durable family and the queue keys have no `ctx` accessor. Absent means "not
+        # checkable", which is the honest answer; inventing an owner would put a guess in
+        # a gate and fail a correct page.
+        owners = checker.accessor_key_owners()
+
+        assert "DurableRunStoreDepKey" not in owners
+        assert "QueueCommandDepKey" not in owners
+
+
+class TestTheAttributionBar:
+    def test_a_row_carrying_another_capabilitys_key_is_reported(self, tmp_path: Path) -> None:
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CounterDepKey` |",
+        )
+        violations = checker.check_dep_key_attribution(policy)
+
+        assert len(violations) == 1
+        assert "row 'Cache' names CounterDepKey" in violations[0]
+        assert "ctx.counter resolves" in violations[0]
+
+    def test_a_swap_between_two_rows_is_reported_on_both(self, tmp_path: Path) -> None:
+        # The mutation the bar exists for: two rows keep their accessors and exchange
+        # their keys, so every symbol is still mentioned and the symbol bar stays green.
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CounterDepKey` |",
+            "| Counter | `CounterSpec` | `ctx.counter(spec)` | `CacheDepKey` |",
+        )
+        violations = checker.check_dep_key_attribution(policy)
+
+        assert len(violations) == 2
+        assert {"Cache", "Counter"} == {
+            violation.split("row '")[1].split("'")[0] for violation in violations
+        }
+
+    def test_a_correctly_attributed_row_passes(self, tmp_path: Path) -> None:
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` |",
+            "| Counter | `CounterSpec` | `ctx.counter(spec)` | `CounterDepKey` "
+            "(+ `CounterAdminDepKey` for reset / drop) |",
+        )
+
+        assert checker.check_dep_key_attribution(policy) == []
+
+    def test_the_accessor_may_sit_in_any_cell_of_the_row(self, tmp_path: Path) -> None:
+        # Some rows name the accessor inside the key cell's parenthetical ("`ctx.stream`
+        # shortcuts for the commit sub-model"), so the row is searched whole rather than
+        # column by column.
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | by dep key | `CacheDepKey` (via `ctx.cache(spec)`) |",
+        )
+
+        assert checker.check_dep_key_attribution(policy) == []
+
+    def test_a_key_with_no_accessor_is_not_second_guessed(self, tmp_path: Path) -> None:
+        # `DurableRunStoreDepKey` is resolved by dep key alone, so the bar has nothing to
+        # compare and must stay silent rather than demand an accessor that does not exist.
+        policy = _index(
+            tmp_path,
+            "| Run stores | — | by dep key | `DurableRunStoreDepKey` |",
+        )
+
+        assert checker.check_dep_key_attribution(policy) == []
+
+    def test_rows_without_a_key_cell_are_skipped(self, tmp_path: Path) -> None:
+        policy = _index(
+            tmp_path,
+            "| Realtime egress | catalog | `build_realtime_publisher(ctx, …)` | — |",
+        )
+
+        assert checker.check_dep_key_attribution(policy) == []
+
+
+class TestTheBarsOwnLimits:
+    def test_no_index_configured_skips_the_bar(self, tmp_path: Path) -> None:
+        policy = checker.Policy(docs_root=tmp_path, nav_config=tmp_path / "unused.toml")
+
+        assert checker.check_dep_key_attribution(policy) == []
+
+    def test_a_configured_index_that_does_not_exist_fails_rather_than_passes(
+        self, tmp_path: Path
+    ) -> None:
+        # A renamed page must not retire the bar silently — the same reason the link check
+        # resolves generated targets back to their sources instead of skipping them.
+        policy = checker.Policy(
+            docs_root=tmp_path,
+            nav_config=tmp_path / "unused.toml",
+            dep_key_index=Path("reference/gone.md"),
+        )
+        violations = checker.check_dep_key_attribution(policy)
+
+        assert len(violations) == 1
+        assert "not found" in violations[0]
