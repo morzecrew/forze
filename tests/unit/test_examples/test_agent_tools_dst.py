@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import random
 
+import attrs
 import pytest
 
 from examples.recipes.agent_tools_dst.app import (
@@ -44,15 +45,15 @@ pytestmark = pytest.mark.unit
 _CONFIG = SimulationConfig(strategy=Strategy.SCENARIO, act_count=8, concurrency=4, seeds=range(10))
 
 
-def _simulation_over(operations) -> Simulation:
-    oracle = compile_oracle(SPRINT_CAPACITY)
+def _over(operations) -> Simulation:
+    """The example's own simulation with a different registry under the palette.
 
-    return Simulation(
-        operations=operations,
-        deps=lambda: MockDepsModule(),
-        observe=oracle.observe,
-        invariants=[*oracle.invariants],
-    )
+    `attrs.evolve` rather than a fresh `Simulation`: both halves of the contrast then carry
+    the *example's* oracle objects, so a tautological law in the example cannot hide behind
+    a correct one built here — the bare half would stop reporting anything.
+    """
+
+    return attrs.evolve(simulation, operations=operations)
 
 
 # ....................... #
@@ -63,14 +64,51 @@ class TestTheGovernanceSurvivesToolCalls:
         # The falsifiability half: with no enforcement composed into the write op, concurrent
         # turns push the sprint past its capacity and DST reports it. Without this, the green
         # run below would be indistinguishable from a simulation that never reached the cap.
-        bare = _simulation_over(turn_registry(build_document_registry(TICKET_SPEC).freeze()))
+        bare = _over(turn_registry(build_document_registry(TICKET_SPEC).freeze()))
+        report = bare.run(_CONFIG, scenario=agent_scenario())
 
-        assert bare.run(_CONFIG, scenario=agent_scenario()) is not None
+        assert report is not None
+        # And it fires for *this* law, through the example's own oracle. The violation
+        # carries the declared name even though the compiled callable does not, so this is
+        # where the oracle's identity is pinned — swap the example's law for a tautology and
+        # this stops reporting.
+        assert {violation.invariant for violation in report.violations} == {SPRINT_CAPACITY.name}
 
     def test_the_kit_composed_slice_holds_under_interleaved_turns(self) -> None:
         # Same schedule, same oracle, same palette — the enforcement the kit folded into the
         # write op composes into a tool call because a tool call is an operation invocation.
+        # This is the example's own simulation, which is the run the docs point a reader at.
         assert simulation.run(_CONFIG, scenario=agent_scenario()) is None
+
+
+class TestTheExamplesOwnWiring:
+    """The green run above is only evidence while the example's simulation is wired.
+
+    Both halves of the contrast are built by `_simulation_over`, so they share an oracle by
+    construction — but the run that the docs tell a reader to reproduce is the example's own
+    `simulation`, and an unwired one reports no violation for the most boring reason there
+    is. Dropping `observe` or `invariants` from the example fails here rather than passing
+    green over there.
+    """
+
+    def test_the_oracle_is_attached(self) -> None:
+        assert simulation.observe is not None
+        assert len(simulation.invariants) > 0
+
+    def test_it_carries_as_many_checks_as_the_law_compiles_to(self) -> None:
+        # `compile_oracle` does not wrap its checks with `named`, so a compiled invariant's
+        # callable name is the ambiguous `_check` and identity cannot be read off it. Which
+        # law it watches is established by the violation the bare half reports; this only
+        # pins that nothing was added or dropped.
+        assert len(simulation.invariants) == len(compile_oracle(SPRINT_CAPACITY).invariants)
+
+    def test_it_drives_the_governed_registrys_tools(self) -> None:
+        # The turn registry the example builds, over the kit's composed registry — not a
+        # hand-assembled one that might differ from what `forze dst run` would execute.
+        expected = turn_registry(TICKETS.registry(tx_route="mock"))
+
+        assert simulation.operations is not None
+        assert simulation.operations.fingerprint() == expected.fingerprint()
 
 
 class TestTheWorkloadReallyGoesThroughTheBridge:
