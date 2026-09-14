@@ -171,6 +171,22 @@ class TestTheAttributionBar:
 
         assert checker.check_dep_key_attribution(policy) == []
 
+    def test_prose_outside_the_tables_is_not_parsed_as_a_row(self, tmp_path: Path) -> None:
+        # The page's closing paragraphs explain the column and may well name a key while
+        # doing so. Only table rows attribute, so a sentence must never be read as one.
+        policy = _index(
+            tmp_path,
+            "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` |",
+        )
+        page = tmp_path / "reference" / "contracts.md"
+        page.write_text(
+            page.read_text(encoding="utf-8")
+            + "\nWiring a counter yourself means binding `CounterDepKey` by hand.\n",
+            encoding="utf-8",
+        )
+
+        assert checker.check_dep_key_attribution(policy) == []
+
     def test_rows_without_a_key_cell_are_skipped(self, tmp_path: Path) -> None:
         policy = _index(
             tmp_path,
@@ -178,6 +194,40 @@ class TestTheAttributionBar:
         )
 
         assert checker.check_dep_key_attribution(policy) == []
+
+
+class TestTheBarIsActuallyWired:
+    """A bar that exists and never runs is the failure this repository keeps finding.
+
+    Two ways it could happen here: the check is written but left out of `main`'s violation
+    sum, or the config line that arms it is dropped from `pyproject.toml`. Neither is
+    visible in the checker's own unit tests, so both are pinned.
+    """
+
+    def test_the_repository_arms_the_bar(self) -> None:
+        policy = checker.load_policy(_REPO / "pyproject.toml")
+
+        assert policy.dep_key_index == Path("reference/contracts.md")
+
+    def test_main_fails_on_a_swap(self, tmp_path: Path) -> None:
+        # End-to-end through the entry point the justfile calls, over a synthetic corpus:
+        # this is what fails if the check is dropped from `main`'s violation sum.
+        docs = tmp_path / "docs"
+        _index(docs, "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CounterDepKey` |")
+        every_symbol = ", ".join(f"`{name}`" for name in checker.discover_symbols())
+        (docs / "everything.md").write_text(every_symbol, encoding="utf-8")
+        (tmp_path / "nav.toml").write_text(
+            'nav = ["reference/contracts.md", "everything.md"]\n', encoding="utf-8"
+        )
+        (tmp_path / "pyproject.toml").write_text(
+            "[tool.docs_floors]\n"
+            f'docs_root = "{docs}"\n'
+            f'nav_config = "{tmp_path / "nav.toml"}"\n'
+            'dep_key_index = "reference/contracts.md"\n',
+            encoding="utf-8",
+        )
+
+        assert checker.main(["--pyproject", str(tmp_path / "pyproject.toml")]) == 1
 
 
 class TestTheBarsOwnLimits:
