@@ -304,7 +304,11 @@ def check_symbols(
     documented: set[str] = set()
 
     for name, symbol in sorted(symbols.items()):
-        is_documented = name in corpus or symbol.alias in corpus
+        # A dep key's wire alias is often a common word (`cache`, `secrets`, `inbox`), so
+        # accepting it made "documented" mean "this word appears somewhere" — one key
+        # passed for years on a substring while being named on no page. Keys are matched
+        # by symbol; a spec's alias *is* its symbol, so nothing changes for specs.
+        is_documented = name in corpus or (symbol.kind != "dep_key" and symbol.alias in corpus)
         exempt = policy.exempt_for(name)
 
         if is_documented:
@@ -468,27 +472,14 @@ def check_dep_key_index_completeness(policy: Policy) -> list[str]:
     if not page.is_file():
         return []  # the attribution check reports the missing page; one voice is enough
 
-    owners = accessor_key_owners()
     attributed = {key for _, keys, _ in index_rows(page) for key in keys}
-    # An accessor family still carrying a declared gap is mid-documentation: the identity
-    # lifecycle ports are exempt while their own reference page is unwritten, and demanding
-    # them here would move that phase's work into this bar. The scope retires itself — the
-    # family becomes subject to completeness as soon as its last exemption goes. It is a
-    # narrow escape, not a mute button: every undocumented key still owes the symbol bar a
-    # mention or an exemption of its own.
-    conceded = {
-        accessor
-        for key, accessors in owners.items()
-        if policy.exempt_for(key) is not None
-        for accessor in accessors
-    }
     violations = []
 
-    for key, resolved_by in sorted(owners.items()):
+    for key, resolved_by in sorted(accessor_key_owners().items()):
+        # Per key, never per family: conceding a whole accessor because one of its keys is
+        # exempt would let an undeclared sibling through on someone else's declaration,
+        # which is the hole this direction exists to close.
         if key in attributed or policy.exempt_for(key) is not None:
-            continue
-
-        if resolved_by & conceded:
             continue
 
         accessors = ", ".join(f"ctx.{name}" for name in sorted(resolved_by))

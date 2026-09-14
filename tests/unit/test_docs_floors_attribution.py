@@ -204,6 +204,38 @@ class TestTheAttributionBar:
         assert checker.check_dep_key_attribution(policy) == []
 
 
+class TestWhatCountsAsDocumented:
+    def test_a_dep_key_is_not_documented_by_its_wire_alias(self, tmp_path: Path) -> None:
+        # `secrets`, `cache`, `inbox` are ordinary words: accepting a dep key's wire alias
+        # made "documented" mean "this word appears somewhere in the corpus", which is how
+        # a key named on no page at all passed the bar.
+        symbols = {
+            "CacheDepKey": checker.Symbol(
+                name="CacheDepKey", alias="cache", kind="dep_key", module="m"
+            )
+        }
+        policy = checker.Policy(docs_root=tmp_path, nav_config=tmp_path / "unused.toml")
+        violations, documented = checker.check_symbols(
+            symbols, "the cache page talks about caching", policy
+        )
+
+        assert documented == set()
+        assert "CacheDepKey" in violations[0]
+
+    def test_a_spec_is_still_accepted_by_its_alias(self, tmp_path: Path) -> None:
+        # A spec's alias *is* its symbol, so the tightening must not touch that path.
+        symbols = {
+            "CacheSpec": checker.Symbol(
+                name="CacheSpec", alias="CacheSpec", kind="spec", module="m"
+            )
+        }
+        policy = checker.Policy(docs_root=tmp_path, nav_config=tmp_path / "unused.toml")
+        violations, documented = checker.check_symbols(symbols, "`CacheSpec`", policy)
+
+        assert documented == {"CacheSpec"}
+        assert violations == []
+
+
 class TestTableParsing:
     def test_an_escaped_pipe_does_not_hide_the_key_cell(self, tmp_path: Path) -> None:
         # Markdown escapes a literal pipe inside a cell as `\|`, and other reference pages
@@ -269,19 +301,19 @@ class TestCompleteness:
 
         assert checker.check_dep_key_index_completeness(policy) == []
 
-    def test_a_family_with_a_declared_gap_is_conceded_whole(self, tmp_path: Path) -> None:
-        # One exempt sibling concedes its accessor family: the identity ports are exempt
-        # while their reference page is unwritten, so `PasswordResetDepKey` — resolved by
-        # the same `ctx.authn` and documented only by its wire name — is not demanded here.
+    def test_an_exempt_sibling_does_not_excuse_its_family(self, tmp_path: Path) -> None:
+        # Exemption is per key. Conceding a whole accessor because one of its keys is
+        # declared would let an undeclared sibling through on someone else's declaration —
+        # so a family with one exempt key still owes the index every other key it resolves.
         policy = _index(
             tmp_path,
             "| Cache | `CacheSpec` | `ctx.cache(spec)` | `CacheDepKey` |",
         )
         owners = checker.accessor_key_owners()
-        authn = frozenset(key for key, seen in owners.items() if "authn" in seen)
+        authn = sorted(key for key, seen in owners.items() if "authn" in seen)
         group = checker.ExemptGroup(
             kind="identity-plane-undocumented",
-            symbols=frozenset({next(iter(authn))}),
+            symbols=frozenset({authn[0]}),
             reason="test",
         )
         policy = checker.Policy(
@@ -289,22 +321,15 @@ class TestCompleteness:
             nav_config=policy.nav_config,
             exempt_groups=(group,),
             dep_key_index=policy.dep_key_index,
-            _exempt={next(iter(authn)): group},
+            _exempt={authn[0]: group},
         )
-        violations = checker.check_dep_key_index_completeness(policy)
+        reported = {
+            violation.split("attributes ")[1].split(",")[0]
+            for violation in checker.check_dep_key_index_completeness(policy)
+        }
 
-        assert not [v for v in violations if v.split("attributes ")[1].split(",")[0] in authn]
-
-    def test_a_family_with_no_declared_gap_is_still_demanded(self, tmp_path: Path) -> None:
-        # The concession is per family and retires itself: nothing about cache is exempt,
-        # so an index that omits its key fails whatever other families concede.
-        policy = _index(
-            tmp_path,
-            "| Counter | `CounterSpec` | `ctx.counter(spec)` | `CounterDepKey` |",
-        )
-        violations = checker.check_dep_key_index_completeness(policy)
-
-        assert any("CacheDepKey" in violation for violation in violations)
+        assert authn[0] not in reported  # declared, so excused
+        assert set(authn[1:]) <= reported  # its siblings are not
 
     def test_the_real_index_is_complete(self) -> None:
         # The bar against the shipped page, which is what a reviewer cares about: every key

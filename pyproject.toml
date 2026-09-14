@@ -411,6 +411,7 @@ symbols = [
     "GrantQueryDepKey",
     "PasswordAccountProvisioningDepKey",
     "PasswordLifecycleDepKey",
+    "PasswordResetDepKey",
     "PrincipalDeactivationDepKey",
     "PrincipalEligibilityDepKey",
     "PrincipalRegistryDepKey",
@@ -422,7 +423,9 @@ The identity plane splits its surface across many small lifecycle ports, and the
 teach it through the presets and recipes that wire them together rather than port by \
 port. The gap is real for anyone replacing one port (a custom password lifecycle, an \
 external principal registry), which is exactly the audience the identity reference page \
-does not yet serve.\
+does not yet serve. `PasswordResetDepKey` joined its siblings when dep keys stopped \
+counting as documented on a substring of their wire name: it had been passing on \
+`authn_password_reset` appearing somewhere rather than on any page naming the key.\
 """
 
 [[tool.docs_floors.exempt_groups]]
