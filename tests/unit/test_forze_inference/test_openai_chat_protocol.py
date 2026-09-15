@@ -15,7 +15,7 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, RootModel, field_serializer
 
 from forze.application.contracts.inference import InferenceSpec
 from forze.application.execution import ExecutionContext
@@ -857,6 +857,14 @@ class TestTheRouteRefusesAValueTheProviderWould:
             ("temperature", float("inf")),
             ("max_output_tokens", float("nan")),
             ("max_output_tokens", float("-inf")),
+            # The annotations are not enforced at runtime: a string reaches a comparison,
+            # `True` passes as a number, and a fractional cap reaches `itertools.batched`.
+            ("temperature", "warm"),
+            ("temperature", True),
+            ("max_output_tokens", 1.5),
+            ("max_output_tokens", "many"),
+            ("max_batch_size", 1.5),
+            ("max_batch_size", True),
         ],
     )
     def test_a_generation_limit_the_endpoint_rejects(self, field: str, value: Any) -> None:
@@ -908,104 +916,76 @@ class TestATemplateThatCannotRender:
 
         assert ei.value.kind == "configuration"
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("template", ["{text!z}", "{text:invalid}"])
-    async def test_a_modifier_str_format_rejects_is_refused_at_wiring(
-        self,
-        template: str,
-    ) -> None:
-        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt(template)))
+    @pytest.mark.parametrize("template", ["{text!z}", "{text!d}", "{text!}"])
+    def test_a_conversion_str_format_does_not_know_is_refused(self, template: str) -> None:
+        """A conversion is valid or not regardless of the value, so it is checked for every
+        field type — including the ones no stand-in value could stand in for."""
 
         with pytest.raises(CoreException) as ei:
-            ctx.inference.model(_spec())
+            _ = PromptTemplate(template=template).slots
 
         assert ei.value.kind == "configuration"
-        assert "cannot be rendered" in str(ei.value)
+
+    @pytest.mark.parametrize("template", ["{text!r}", "{text!s}", "{text!a}", "{text:>10}"])
+    def test_the_conversions_and_specs_it_does_know_are_accepted(self, template: str) -> None:
+        assert PromptTemplate(template=template).slots == ("text",)
+
+    @pytest.mark.asyncio
+    async def test_a_format_spec_is_left_to_the_value_the_model_serializes(self) -> None:
+        """Whether a spec renders depends on serializers the wiring check cannot see.
+
+        A `Decimal` field crosses as a string by default and as a number with a custom
+        `field_serializer`, so `{amount:.2f}` is valid for one model and not the other —
+        the same declared type either way. Every probe tried here refused a working route
+        or passed a broken one, so the spec is not checked at wiring at all.
+        """
+
+        class _Priced(BaseModel):
+            amount: Decimal
+
+        class _Numeric(BaseModel):
+            amount: Decimal
+
+            @field_serializer("amount")
+            def _as_number(self, value: Decimal) -> float:
+                return float(value)
+
+        sent: list[dict[str, Any]] = []
+        client = await _client(_recording(sent))
+        config = _config(prompt=PromptTemplate(template="A: {amount:.2f}"))
+
+        # The custom serializer hands the formatter a float: wiring accepts, and it renders.
+        numeric = _ctx(client, config).inference.model(
+            InferenceSpec(name=_ROUTE, input=_Numeric, output=_Invoice)
+        )
+        await numeric.predict(_Numeric(amount=Decimal("12.5")))
+
+        assert sent[0]["messages"][-1]["content"] == "A: 12.50"
+
+        # The default dump hands it a string, which that spec cannot format — a classified
+        # refusal at the call rather than a bare ValueError out of the encoder.
+        plain = _ctx(client, config).inference.model(
+            InferenceSpec(name=_ROUTE, input=_Priced, output=_Invoice)
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await plain.predict(_Priced(amount=Decimal("12.5")))
+
+        assert ei.value.kind == "configuration"
+        assert "does not fit what the model serializes" in str(ei.value)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("template", ["{count:d}", "{count:>5}", "{count:.2f}"])
-    async def test_a_format_spec_valid_for_the_fields_type_is_accepted(
-        self,
-        template: str,
-    ) -> None:
-        """The dry render must carry a value of the declared type, not a placeholder.
-
-        `{count:d}` is valid for an int and invalid for the empty string, so probing with
-        one stand-in for every field refused working routes.
-        """
-
+    async def test_a_spec_that_fits_the_serialized_value_renders(self, template: str) -> None:
         class _Counted(BaseModel):
             count: int
 
+        sent: list[dict[str, Any]] = []
         spec = InferenceSpec(name=_ROUTE, input=_Counted, output=_Invoice)
-        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt(template)))
-
-        assert ctx.inference.model(spec) is not None
-
-    @pytest.mark.asyncio
-    async def test_the_probe_mirrors_the_wire_representation_not_the_python_one(self) -> None:
-        """A `Decimal` crosses as a string, so `{amount:.2f}` cannot render.
-
-        Probing with a real `Decimal` accepted the route and left it unable to serve: the
-        encoder interpolates `model_dump(mode="json")`, and the first prediction raised
-        before any request was made.
-        """
-
-        class _Priced(BaseModel):
-            amount: Decimal
-
-        spec = InferenceSpec(name=_ROUTE, input=_Priced, output=_Invoice)
-        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt("Amount: {amount:.2f}")))
-
-        with pytest.raises(CoreException) as ei:
-            ctx.inference.model(spec)
-
-        assert "cannot be rendered" in str(ei.value)
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("template", "rendered"),
-        [("{amount}", "12.5"), ("{amount:>8}", "    12.5")],
-    )
-    async def test_a_spec_that_works_on_the_wire_value_is_accepted(
-        self,
-        template: str,
-        rendered: str,
-    ) -> None:
-        # The refusal above must not become a ban on formatting a decimal at all: these
-        # render, and the assertion is on what the request actually carries.
-        class _Priced(BaseModel):
-            amount: Decimal
-
-        sent: list[dict[str, Any]] = []
-        spec = InferenceSpec(name=_ROUTE, input=_Priced, output=_Invoice)
-        config = _config(prompt=PromptTemplate(template=template))
-        port = _ctx(await _client(_recording(sent)), config).inference.model(spec)
-        await port.predict(_Priced(amount=Decimal("12.5")))
-
-        assert sent[0]["messages"][-1]["content"] == rendered
-
-    @pytest.mark.asyncio
-    async def test_a_field_type_with_no_stand_in_is_left_unverified(self) -> None:
-        """Rather than refused on a guess: a format spec valid for a `datetime` cannot be
-        checked against anything this knows how to construct."""
-
-        class _Timed(BaseModel):
-            when: datetime
-
-        spec = InferenceSpec(name=_ROUTE, input=_Timed, output=_Invoice)
-        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt("{when:%Y}")))
-
-        assert ctx.inference.model(spec) is not None
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("template", ["{text!r}", "{text:>10}", "{text!s:^20}"])
-    async def test_a_modifier_str_format_accepts_still_works(self, template: str) -> None:
-        # The refusal above must not become a ban on conversions and format specs: these
-        # render fine, and a route using one is not a wiring mistake.
-        sent: list[dict[str, Any]] = []
-        ctx = _ctx(await _client(_recording(sent)), _config(prompt=_prompt(template)))
-        await ctx.inference.model(_spec()).predict(_Document(text="x"))
+        port = _ctx(
+            await _client(_recording(sent)), _config(prompt=PromptTemplate(template=template))
+        ).inference.model(spec)
+        await port.predict(_Counted(count=7))
 
         assert len(sent) == 1
 

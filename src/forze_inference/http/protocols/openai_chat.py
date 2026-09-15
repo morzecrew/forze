@@ -20,7 +20,6 @@ into sequential calls.
 import json
 import re
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
 from string import Formatter
 from typing import Any, Final, Literal, cast, final
 
@@ -136,6 +135,7 @@ class PromptTemplate:
         """
 
         names: list[str] = []
+        conversions: list[str] = []
 
         try:
             # Materialized inside the guard: `parse` is a lazy iterator, and an unmatched
@@ -149,7 +149,10 @@ class PromptTemplate:
                 "brace is written '{{' or '}}'."
             ) from e
 
-        for _, field, _, _ in parsed:
+        for _, field, _, conversion in parsed:
+            if conversion is not None:
+                conversions.append(conversion)
+
             if field is None:
                 continue
 
@@ -161,6 +164,15 @@ class PromptTemplate:
                 )
 
             names.append(field)
+
+        unknown = sorted(set(conversions) - _FORMAT_CONVERSIONS)
+
+        if unknown:
+            raise exc.configuration(
+                f"PromptTemplate template uses the conversion(s) "
+                f"{', '.join('!' + c for c in unknown)}, which str.format does not know; "
+                f"the ones it does are {', '.join('!' + c for c in sorted(_FORMAT_CONVERSIONS))}."
+            )
 
         return tuple(names)
 
@@ -195,65 +207,23 @@ def validate_prompt_template(
             f"Available fields: {', '.join(spec.input.model_fields) or 'none'}."
         )
 
-    # The slot names parse and resolve; rendering can still fail on a conversion or format
-    # spec `str.format` rejects (`{text!z}`, `{text:invalid}`), which `parse` accepts and
-    # hands on. A dry run settles it here rather than on the first request.
-    probe = _render_probe(spec, slots)
-
-    if probe is None:
-        # A slot whose declared type has no faithful stand-in: the render would test the
-        # placeholder rather than the template. `{count:d}` is valid for an int and invalid
-        # for the empty string, so guessing here refuses working routes — the failure this
-        # check had on its first outing.
-        return
-
-    try:
-        prompt.template.format(**probe)
-
-    except (ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
-        raise exc.configuration(
-            f"Inference {spec.name!r}: the openai_chat prompt template cannot be rendered "
-            f"from {spec.input.__name__} ({type(e).__name__}: {e})."
-        ) from e
+    # A format spec is deliberately *not* checked here. Whether `{amount:.2f}` renders
+    # depends on what the input model's serializers hand the formatter — a `Decimal` field
+    # crosses as a string by default and as a number with a custom `field_serializer` — and
+    # no stand-in value this could invent knows which. Three rounds of probes each refused
+    # a working route or passed a broken one; the conversion check above is the part that
+    # holds for every field type, and `encode_request` classifies whatever is left.
+    _ = prompt
 
 
 # ....................... #
 
 
-_RENDER_PROBES: Final[Mapping[type, Any]] = {
-    bool: False,  # before int: bool is an int subclass
-    int: 0,
-    float: 0.0,
-    str: "",
-    # A `Decimal` crosses as a *string*, so a spec like `{amount:.2f}` genuinely cannot
-    # render and is refused here rather than failing on the first request.
-    Decimal: "",
-}
-"""Stand-in values for a dry render, by declared field type.
-
-What the encoder interpolates is ``model_dump(mode="json")`` — the wire-safe dump the whole
-plane uses — not the Python value, so a probe has to carry the *dumped* type or it tests a
-representation production never sees. Only these four dump to themselves; a field whose type
-is absent here leaves the template unverified rather than refused on a guess."""
-
-
-def _render_probe(
-    spec: InferenceSpec[Any, Any],
-    slots: tuple[str, ...],
-) -> dict[str, Any] | None:
-    """Values for every interpolated field, or ``None`` when one cannot be stood in for."""
-
-    probe: dict[str, Any] = {}
-
-    for name in slots:
-        annotation = spec.input.model_fields[name].annotation
-
-        if annotation not in _RENDER_PROBES:
-            return None
-
-        probe[name] = _RENDER_PROBES[annotation]
-
-    return probe
+_FORMAT_CONVERSIONS: Final[frozenset[str]] = frozenset({"s", "r", "a"})
+"""The conversions ``str.format`` knows. Unlike a format spec, a conversion is valid or not
+regardless of the value it is applied to, so a template carrying an unknown one (``{x!z}``)
+can be refused at wiring for any field type — no stand-in value, and no guess about what a
+model's serializers will hand the formatter."""
 
 
 # ....................... #
@@ -484,14 +454,22 @@ class OpenAiChatProtocol:
         if self.prompt.system is not None:
             messages.append({"role": "system", "content": self.prompt.system})
 
-        messages.append(
-            {
-                "role": "user",
-                # Slot names are checked against the input model at wiring, so a missing
-                # key here would be a spec/config pair that never resolved.
-                "content": self.prompt.template.format(**values),
-            }
-        )
+        # Slot names and conversions are checked at wiring, so what can still fail here is
+        # a format spec against the value the model actually serialized. Classified rather
+        # than raised bare: it is a wiring mistake, and a caller reading `configuration`
+        # knows to fix the route instead of retrying the request.
+        try:
+            rendered = self.prompt.template.format(**values)
+
+        except (ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
+            raise exc.configuration(
+                f"Inference {spec.name!r}: the openai_chat prompt template cannot be "
+                f"rendered from a {spec.input.__name__} instance "
+                f"({type(e).__name__}: {e}); the format spec does not fit what the model "
+                "serializes."
+            ) from e
+
+        messages.append({"role": "user", "content": rendered})
 
         body: dict[str, Any] = {"model": model_name, "messages": messages}
 

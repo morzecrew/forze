@@ -138,7 +138,28 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def _validate_limits(self) -> None:
-        """Numeric bounds, each refused at wiring rather than by the endpoint."""
+        """Numeric types and bounds, each refused at wiring rather than by the endpoint."""
+
+        # The annotations are not enforced at runtime, and every one of these values is
+        # then acted on somewhere it cannot be: a string reaches a comparison, `True`
+        # passes as a number (it is an int), and a fractional cap reaches
+        # `itertools.batched`, which takes integers only.
+        if self.temperature is not None and (
+            isinstance(self.temperature, bool) or not isinstance(self.temperature, (int, float))
+        ):
+            raise exc.configuration(
+                f"HttpInferenceConfig.temperature must be a number, got "
+                f"{type(self.temperature).__name__}."
+            )
+
+        for field in ("max_output_tokens", "max_batch_size"):
+            count = getattr(self, field)
+
+            if count is not None and (isinstance(count, bool) or not isinstance(count, int)):
+                raise exc.configuration(
+                    f"HttpInferenceConfig.{field} must be a whole number of instances, got "
+                    f"{type(count).__name__}."
+                )
 
         # NaN and the infinities pass every comparison below (`nan < 1` is False), and
         # JSON cannot carry them — the request fails to serialize at the client, before the
