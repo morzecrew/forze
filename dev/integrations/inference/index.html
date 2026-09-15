@@ -4038,6 +4038,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#generation-openai_chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Generation (<code>openai_chat</code>)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Generation (openai_chat)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#structured-and-text-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Structured and text modes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-generation-route-costs-and-refuses" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a generation route costs and refuses
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-a-vendor-sdk-instead" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When to use a vendor SDK instead
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sagemaker" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6235,6 +6285,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#generation-openai_chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Generation (<code>openai_chat</code>)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Generation (openai_chat)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#structured-and-text-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Structured and text modes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-generation-route-costs-and-refuses" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a generation route costs and refuses
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#when-to-use-a-vendor-sdk-instead" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        When to use a vendor SDK instead
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sagemaker" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6389,7 +6489,7 @@ to a served endpoint or a cloud one.</p>
 <tr>
 <td><code>forze_inference.http</code></td>
 <td><code>forze[inference-http]</code></td>
-<td>KServe, mlserver, Seldon, Triton (Open Inference Protocol); legacy MLflow <code>/invocations</code></td>
+<td>KServe, mlserver, Seldon, Triton (Open Inference Protocol); legacy MLflow <code>/invocations</code>; OpenAI-style <code>/v1/chat/completions</code></td>
 </tr>
 <tr>
 <td><code>forze_inference.sagemaker</code></td>
@@ -6434,6 +6534,130 @@ wiring with the offending fields named. <code>protocol="mlflow"</code> posts
 per-tenant models — the same namespace-tier pattern as a per-tenant bucket or
 database. A <code>tenant_aware=True</code> route with no bound tenant fails closed
 (<code>tenant_required</code>).</p>
+<h2 id="generation-openai_chat">Generation (<code>openai_chat</code>)<a class="headerlink" href="#generation-openai_chat" title="Permanent link">&para;</a></h2>
+<p>The third dialect covers anything speaking <code>/v1/chat/completions</code> — OpenAI, vLLM,
+Ollama, LM Studio, TGI, Groq, OpenRouter, Together. One dialect, no
+provider SDK, no second client: a generative call is an inference route, so it
+carries the enclosing operation's deadline, the route's tenant and credentials,
+the egress declaration, the resilience policy — and it can be simulated, which a
+call made from a vendor client cannot.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.inference</span><span class="w"> </span><span class="kn">import</span> <span class="n">InferenceSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_inference.http</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">HttpInferenceConfig</span><span class="p">,</span>
+    <span class="n">HttpInferenceDepsModule</span><span class="p">,</span>
+    <span class="n">InferenceHttpClient</span><span class="p">,</span>
+    <span class="n">PromptTemplate</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TicketText</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">text</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Triage</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">queue_id</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">weight</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="n">TRIAGE</span> <span class="o">=</span> <span class="n">InferenceSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"ticket_triage"</span><span class="p">,</span> <span class="nb">input</span><span class="o">=</span><span class="n">TicketText</span><span class="p">,</span> <span class="n">output</span><span class="o">=</span><span class="n">Triage</span><span class="p">)</span>
+
+<span class="n">module</span> <span class="o">=</span> <span class="n">HttpInferenceDepsModule</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">InferenceHttpClient</span><span class="p">(),</span>
+    <span class="n">models</span><span class="o">=</span><span class="p">{</span>
+        <span class="s2">"ticket_triage"</span><span class="p">:</span> <span class="n">HttpInferenceConfig</span><span class="p">(</span>
+            <span class="n">protocol</span><span class="o">=</span><span class="s2">"openai_chat"</span><span class="p">,</span>
+            <span class="n">model_name</span><span class="o">=</span><span class="s2">"gpt-5"</span><span class="p">,</span>                  <span class="c1"># or a (tenant_id) -&gt; name resolver</span>
+            <span class="n">prompt</span><span class="o">=</span><span class="n">PromptTemplate</span><span class="p">(</span>
+                <span class="n">system</span><span class="o">=</span><span class="s2">"You triage support tickets."</span><span class="p">,</span>
+                <span class="n">template</span><span class="o">=</span><span class="s2">"Triage this ticket:</span><span class="se">\n\n</span><span class="si">{text}</span><span class="s2">"</span><span class="p">,</span>
+            <span class="p">),</span>
+            <span class="n">temperature</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>
+            <span class="n">acknowledge_data_egress</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Point the lifecycle step at the server <strong>root</strong> (<code>https://api.openai.com</code>,
+<code>http://vllm:8000</code>) — the dialect owns the <code>/v1/chat/completions</code> path. Azure
+OpenAI's classic per-deployment URLs
+(<code>/openai/deployments/{deployment}/chat/completions?api-version=…</code>) are not that
+shape and this dialect does not serve them; its newer <code>/openai/v1</code> surface is,
+with the base URL carrying <code>/openai</code>.</p>
+<p><strong>The prompt is wiring.</strong> A handler calls
+<code>ctx.inference.model(TRIAGE).predict(TicketText(text=...))</code> and gets a <code>Triage</code>;
+it never sees a prompt, a model id or a provider, the same way the procedure
+plane keeps its SQL in the composition root. Template slots are <code>str.format</code>
+field names bound from the input instance (<code>{text}</code>), and they are checked
+against the input model at resolve time: a slot no field provides, or a template
+with no slots at all, is a boot error rather than a malformed prompt in
+production. Positional and attribute slots (<code>{0}</code>, <code>{a.b}</code>) are refused, so a
+slot always names one field.</p>
+<p><strong>Sampling is configuration.</strong> <code>temperature</code> and <code>max_output_tokens</code> live on the
+route, never in <code>options=</code>, so what the model does is a reviewed deployment fact.</p>
+<h3 id="structured-and-text-modes">Structured and text modes<a class="headerlink" href="#structured-and-text-modes" title="Permanent link">&para;</a></h3>
+<p><code>output_mode</code> defaults to <code>structured</code>: the output model's JSON schema is sent as
+a strict <code>response_format</code> constraint, so the route answers with a validated
+<code>Out</code>. The constraint enforces less than JSON Schema can express, and the
+difference fails <strong>at wiring</strong>, naming every offending field:</p>
+<ul>
+<li>A field with a <strong>default</strong> is refused. Under the constraint a field cannot be
+  absent, so the default is unreachable — and forcing the model to fill it would
+  make it invent a value. Declare <code>T | None</code> (with no default) for something the
+  model may not know, and it must answer <code>null</code> explicitly.</li>
+<li>A <strong>mapping</strong> field (<code>dict[str, int]</code>) is refused: the constraint cannot
+  express dynamic keys. So is a <strong>non-object root</strong> (a <code>RootModel</code>, or a
+  root-level union) — wrap it in a model with one field. And the output model's
+  own name is sent as the constraint's name, so it must be ASCII letters,
+  digits, underscore or dash, at most 64 characters.</li>
+<li>Value constraints (<code>format</code>, <code>pattern</code>, <code>max_length</code>, <code>ge</code>/<code>le</code>, …) are
+  refused, because the provider does not enforce them. A <code>datetime</code> or <code>EmailStr</code>
+  field emits <code>format</code> — use <code>str</code> and validate after, or drop the constraint.</li>
+<li><code>additionalProperties: false</code> is added for you on every object.</li>
+</ul>
+<p><code>output_mode="text"</code> sends no constraint and fills a one-field <code>str</code> output model
+with the completion prose; any other output model is refused at wiring.</p>
+<h3 id="what-a-generation-route-costs-and-refuses">What a generation route costs and refuses<a class="headerlink" href="#what-a-generation-route-costs-and-refuses" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>One request per instance.</strong> A chat completion answers one prompt, so
+  <code>predict_many</code> is N sequential requests (<code>native_batch=False</code>) and the budget
+  is checked before each one: a fan-out that runs out of deadline stops rather
+  than finishing on borrowed time. Nothing caps the fan-out by default, so a
+  generation route is a good place to set <code>max_batch_size</code> — an oversized batch
+  is then refused up front instead of becoming a hundred billed requests.</li>
+<li><strong>Usage is telemetry.</strong> Token counts land on the call's span as
+  <code>gen_ai.usage.input_tokens</code> / <code>.output_tokens</code> — OpenTelemetry's GenAI names,
+  so a cost dashboard reads them untaught — summed over the fan-out and recorded
+  even when a request part-way through fails. There is no envelope method; cost
+  accounting does not belong in every handler's return type.</li>
+<li><strong>A safety refusal is not a wire defect.</strong> A provider declining on content
+  grounds raises <code>precondition</code> (<code>inference_content_refused</code>), non-retryable,
+  whether it says so in <code>message.refusal</code> or in <code>finish_reason</code>.</li>
+<li><strong>A truncated completion is refused, not returned.</strong> A completion the provider
+  cut off at the token ceiling raises <code>inference_output_mismatch</code> naming
+  <code>max_output_tokens</code>, in both modes — it can still parse as JSON or read as
+  prose, so returning it would hand back a half answer the caller cannot tell
+  from a whole one.</li>
+<li><strong>Anthropic: <code>text</code> mode only.</strong> Its OpenAI-compatibility endpoint <em>ignores</em>
+  <code>response_format</code> rather than rejecting it, so a structured route there answers
+  with prose and fails at the output boundary. Use the native API for Claude's
+  structured outputs.</li>
+</ul>
+<h3 id="when-to-use-a-vendor-sdk-instead">When to use a vendor SDK instead<a class="headerlink" href="#when-to-use-a-vendor-sdk-instead" title="Permanent link">&para;</a></h3>
+<p>This plane serves <strong>typed one-shot generation inside a governed operation</strong> —
+extraction, classification, scoring, routing. That is the dominant backend LLM
+workload, and the one an SDK gives no governance for.</p>
+<p>An app that owns a multi-turn agent loop — conversation state, tool-call
+orchestration, streaming tokens to a user — should use its provider's SDK for the
+model and <a href="../../data-events/agent-tools/">operations as tools</a> for the tools. The
+SDKs will always cover streaming, prompt caching, reasoning parameters, files and
+vision better, because they ship with the provider; this dialect is not trying to,
+and intra-response token streaming is not part of it yet.</p>
+<p><code>examples/recipes/llm_triage_dst/</code> is the simulability argument as a runnable
+example: one operation asks the model to triage a ticket and files the answer
+through a governed aggregate, and the same workload runs under <code>forze_dst</code> with
+<code>MockInferenceAdapter</code> standing in for the endpoint — so the model's answer is
+explored as untrusted input to an invariant, reproducibly, from a seed.</p>
 <h2 id="sagemaker">SageMaker<a class="headerlink" href="#sagemaker" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_inference.sagemaker</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">SageMakerInferenceConfig</span><span class="p">,</span>
@@ -6500,10 +6724,11 @@ would put every tenant back on one principal, defeating the isolation.</p>
 rotating a tenant's secret changes its fingerprint and rebuilds that client
 transparently. Calls with no bound tenant fail closed rather than picking a
 default.
-- <strong>All-or-nothing batches.</strong> <code>predict_many</code> is one wire call
-  (<code>native_batch=True</code>); with a configured <code>max_batch_size</code> an oversized batch
-  is refused whole, never silently split. <code>predict_stream</code> <em>does</em> sub-batch its
-  wire calls to the cap — while preserving your chunk boundaries.
+- <strong>All-or-nothing batches.</strong> With a configured <code>max_batch_size</code> an oversized
+  <code>predict_many</code> is refused whole, never silently split; <code>predict_stream</code> <em>does</em>
+  sub-batch its wire calls to the cap, preserving your chunk boundaries. Whether
+  a batch is one wire call is the dialect's to say (<code>native_batch</code>): the scoring
+  protocols send one, <code>openai_chat</code> sends one request per instance.
 - <strong>Typed boundary.</strong> Responses decode through the spec's output codec; a
   response that doesn't fit raises <code>inference_output_mismatch</code> at the port, and
   scalar predictions wrap into a one-field output model automatically.
