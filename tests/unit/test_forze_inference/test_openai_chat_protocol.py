@@ -18,8 +18,8 @@ from pydantic import BaseModel, Field
 
 from forze.application.contracts.inference import InferenceSpec
 from forze.application.execution import ExecutionContext
-from forze.base.exceptions import CoreException
-from forze.base.exceptions.egress import ExceptionKind, exception_egress_policy
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions.egress import exception_egress_policy
 from forze.testing import context_from_modules
 from forze_inference.http import (
     HttpInferenceConfig,
@@ -33,6 +33,7 @@ from forze_inference.http.protocols.openai_chat import (
     CONTENT_REFUSED_CODE,
     USAGE_INPUT_TOKENS_ATTRIBUTE,
     USAGE_OUTPUT_TOKENS_ATTRIBUTE,
+    OpenAiChatProtocol,
 )
 
 # ----------------------- #
@@ -417,9 +418,11 @@ class TestUsageTelemetry:
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         port = _ctx(await _client(handler), _config()).inference.model(_spec())
 
-        with provider.get_tracer("test").start_as_current_span("op"):
-            with pytest.raises(CoreException):
-                await port.predict_many([_Document(text="a"), _Document(text="b")])
+        with (
+            provider.get_tracer("test").start_as_current_span("op"),
+            pytest.raises(CoreException),
+        ):
+            await port.predict_many([_Document(text="a"), _Document(text="b")])
 
         attributes = exporter.get_finished_spans()[0].attributes or {}
 
@@ -615,6 +618,42 @@ class TestWiringRefusals:
 # ....................... #
 
 
+class TestTheDialectsOwnInvariants:
+    """Reachable by a caller using the dialect directly — the adapter cannot produce them.
+
+    Both are `internal`, not caller errors: a dialect that encodes one instance per request
+    being handed two means the adapter and the declaration disagree, which is a defect in
+    this package rather than something an application did.
+    """
+
+    def test_encoding_more_than_one_instance_is_an_internal_error(self) -> None:
+        protocol = OpenAiChatProtocol(prompt=_prompt())
+
+        with pytest.raises(CoreException) as ei:
+            protocol.encode_request(
+                _spec(),
+                [_Document(text="a"), _Document(text="b")],
+                model_name="gpt-5",
+            )
+
+        assert ei.value.kind == "internal"
+
+    def test_decoding_for_more_than_one_instance_is_an_internal_error(self) -> None:
+        protocol = OpenAiChatProtocol(prompt=_prompt())
+
+        with pytest.raises(CoreException) as ei:
+            protocol.decode_response(
+                _spec(),
+                _completion('{"number": "a", "total": 1.0}'),
+                expected=2,
+            )
+
+        assert ei.value.kind == "internal"
+
+
+# ....................... #
+
+
 class TestErrorTaxonomy:
     """Every §2.3 mapping, from a provider-shaped body (acceptance 3)."""
 
@@ -749,6 +788,42 @@ class TestErrorTaxonomy:
             await port.predict(_Document(text="x"))
 
         assert ei.value.code == "inference_output_mismatch"
+
+    @pytest.mark.asyncio
+    async def test_a_choice_that_is_not_an_object(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"choices": ["nope"]})
+
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert ei.value.code == "inference_output_mismatch"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("content", [None, ""])
+    async def test_a_completion_with_no_content_at_all(self, content: Any) -> None:
+        """Not a refusal and not prose: the model answered nothing, and the reason is named.
+
+        The refusal tests reach the same response shape but stop at the refusal branch, so
+        without this the "answered nothing" path only ran when something else was wrong too.
+        """
+
+        handler = _answers(
+            "",
+            choice={
+                "message": {"role": "assistant", "content": content, "refusal": None},
+                "finish_reason": "stop",
+            },
+        )
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert (ei.value.kind, ei.value.code) == ("validation", "inference_output_mismatch")
+        assert "finish_reason='stop'" in str(ei.value)
 
     @pytest.mark.asyncio
     async def test_a_valid_completion_that_does_not_fit_the_output_model(self) -> None:
