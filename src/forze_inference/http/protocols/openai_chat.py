@@ -146,14 +146,23 @@ class PromptTemplate:
 # ....................... #
 
 
-def _walk_template(template: str, names: list[str]) -> None:
-    """Append *template*'s slot names to *names*, depth-first in appearance order.
+def _nested_fields(format_spec: str) -> list[str]:
+    """Replacement fields inside a format spec (``{value:{width}}`` → ``["width"]``)."""
 
-    Depth-first rather than through a worklist, because ``slots`` documents appearance
-    order and a deferred inner field would arrive after everything written to its right.
+    try:
+        return [field for _, field, _, _ in Formatter().parse(format_spec) if field is not None]
+
+    except ValueError:
+        # An unparseable spec is reported by the outer parse of the whole template.
+        return []
+
+
+def _walk_template(template: str, names: list[str]) -> None:
+    """Append *template*'s slot names to *names*, in order of appearance.
 
     :raises CoreException: ``configuration`` for an unparseable template, a slot that is
-        not a plain field name, or a conversion ``str.format`` does not know.
+        not a plain field name, a conversion ``str.format`` does not know, or a format spec
+        that interpolates.
     """
 
     try:
@@ -186,8 +195,22 @@ def _walk_template(template: str, names: list[str]) -> None:
 
             names.append(field)
 
-        if format_spec:
-            _walk_template(format_spec, names)
+        # A dynamic width or precision (`{text:>{width}}`) takes a *caller-supplied* value
+        # into an allocation: the field is bound from the input instance, so a request
+        # asking for a width of 10**10 asks the process for 10 GB before any transport
+        # limit applies. Refused rather than bounded — a prompt is text for a model, not a
+        # report column, and no route needs one.
+        nested = _nested_fields(format_spec) if format_spec else []
+
+        if nested:
+            shown = "{" + (field or "") + ":" + (format_spec or "") + "}"
+
+            raise exc.configuration(
+                f"PromptTemplate format spec {shown!r} "
+                f"interpolates {', '.join(nested)}. A dynamic width or precision is bound "
+                "from the caller's own input and sizes an allocation, so it is refused; "
+                "write the width into the template."
+            )
 
 
 # ....................... #

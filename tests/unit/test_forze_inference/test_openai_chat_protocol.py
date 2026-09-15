@@ -930,51 +930,24 @@ class TestATemplateThatCannotRender:
     def test_the_conversions_and_specs_it_does_know_are_accepted(self, template: str) -> None:
         assert PromptTemplate(template=template).slots == ("text",)
 
-    def test_a_field_nested_in_a_format_spec_is_a_slot_too(self) -> None:
-        """`{value:{width}}` binds `width` from the same instance, so it is a slot.
+    @pytest.mark.parametrize("template", ["{text:>{width}}", "{value:{width}}", "{v:.{p}f}"])
+    def test_a_dynamic_width_or_precision_is_refused(self, template: str) -> None:
+        """The nested field is bound from the caller's input and sizes an allocation.
 
-        Recording only the outer name wired a route cleanly that could not serve a single
-        request — the inner field was missing from every render.
+        A request asking for a width of 10**10 asks the process for 10 GB before any
+        transport limit applies — `{text:>{width}}` with a 5,000,000 width really does
+        build a five-megabyte prompt. Refused rather than bounded: a prompt is text for a
+        model, not a report column.
         """
-
-        assert PromptTemplate(template="{value:{width}}").slots == ("value", "width")
-
-    def test_slots_are_in_appearance_order_including_nested_ones(self) -> None:
-        """The property documents appearance order, and it is public.
-
-        A worklist that deferred the inner fields returned `("a", "c", "d", "b")` — right
-        as a set, which is all route validation reads, and wrong for anything inspecting
-        the prompt.
-        """
-
-        assert PromptTemplate(template="{a:{b}} {c:{d}}").slots == ("a", "b", "c", "d")
-
-    @pytest.mark.asyncio
-    async def test_a_nested_field_the_input_does_not_declare_is_refused(self) -> None:
-        class _Narrow(BaseModel):
-            value: str
-
-        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt("{value:{width}}")))
 
         with pytest.raises(CoreException) as ei:
-            ctx.inference.model(InferenceSpec(name=_ROUTE, input=_Narrow, output=_Invoice))
+            _ = PromptTemplate(template=template).slots
 
-        assert "interpolates width" in str(ei.value)
+        assert ei.value.kind == "configuration"
+        assert "dynamic width or precision" in str(ei.value)
 
-    @pytest.mark.asyncio
-    async def test_a_nested_field_the_input_declares_renders(self) -> None:
-        class _Wide(BaseModel):
-            value: str
-            width: int
-
-        sent: list[dict[str, Any]] = []
-        config = _config(prompt=PromptTemplate(template="{value:{width}}"))
-        port = _ctx(await _client(_recording(sent)), config).inference.model(
-            InferenceSpec(name=_ROUTE, input=_Wide, output=_Invoice)
-        )
-        await port.predict(_Wide(value="x", width=6))
-
-        assert sent[0]["messages"][-1]["content"] == "x     "
+    def test_slots_are_in_appearance_order(self) -> None:
+        assert PromptTemplate(template="{a} {b!r} {c:>4}").slots == ("a", "b", "c")
 
     @pytest.mark.asyncio
     async def test_a_format_spec_is_left_to_the_value_the_model_serializes(self) -> None:
