@@ -163,11 +163,13 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
 
         # NaN and the infinities pass every comparison below (`nan < 1` is False), and
         # JSON cannot carry them — the request fails to serialize at the client, before the
-        # endpoint, which is a wiring mistake surfacing as a runtime error.
+        # endpoint, which is a wiring mistake surfacing as a runtime error. Floats only: an
+        # int is finite by definition, and `isfinite` converts to float first, so a large
+        # one (10**400) would raise `OverflowError` here instead of being refused by name.
         for field in ("temperature", "max_output_tokens"):
             value = getattr(self, field)
 
-            if value is not None and not isfinite(value):
+            if isinstance(value, float) and not isfinite(value):
                 raise exc.configuration(
                     f"HttpInferenceConfig.{field}={value} is not a finite number, and a "
                     "request carrying it cannot be serialized."

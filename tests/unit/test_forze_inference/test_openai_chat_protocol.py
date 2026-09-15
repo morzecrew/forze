@@ -874,6 +874,16 @@ class TestTheRouteRefusesAValueTheProviderWould:
         assert field in str(ei.value)
         assert ei.value.kind == "configuration"
 
+    @pytest.mark.parametrize("field", ["temperature", "max_output_tokens"])
+    def test_a_huge_integer_limit_does_not_crash_the_finite_check(self, field: str) -> None:
+        """`isfinite` converts to float first, so `10**400` raised `OverflowError` here.
+
+        An int is finite by definition, so the check is for floats only. The value is left
+        to the provider to reject, like every other upper bound on these two fields.
+        """
+
+        assert _config(**{field: 10**400}) is not None
+
     @pytest.mark.parametrize("protocol", ["openai-chat", "gpt", ""])
     def test_a_protocol_outside_the_closed_set(self, protocol: str) -> None:
         """`attrs` does not enforce the literal, and an unknown value reached
