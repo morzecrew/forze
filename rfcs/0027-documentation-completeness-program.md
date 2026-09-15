@@ -1,6 +1,6 @@
 # RFC 0027 — Documentation completeness program
 
-- **Status:** 📝 Draft — a scheduled program, not a design fork. Phases and exit criteria are the deliverable; every phase closes against a number that already exists.
+- **Status:** 🚧 In progress — a scheduled program, not a design fork. Phases and exit criteria are the deliverable; every phase closes against a number that already exists. **P1 shipped 2026-09-15** (#437): `reference/contracts.md` carries a `Dep key` column on every capability row, five capabilities missing from the index entirely are in it, and the two groups waiting on that column are deleted. Execution added two bars to `docs_floors.py` that the phase did not ask for and the column needs — attribution against the accessor that resolves a key, and completeness of the index — plus one correction to the symbol bar: a dep key is documented when a page names the *symbol*, not when its wire name happens to be an English word. Exemptions went 50 → 18, documented 87/137 → 119/137. Departures and the audit are in [`logs/T-0027.md`](../logs/T-0027.md); §7 carries the rows they proposed. **P2–P5 remain.**
 - **Scope:** Bring `pages/docs` and `skills/` from "gated for presence" to "complete and navigable", against the standard that already governs page construction. Execution only: this RFC decides *what gets written, in what order, and when it is done* — never *how a page is built* (`altitude-docs`) nor *how doc code stays current* ([RFC 0026](0026-executable-documentation.md)).
 - **Related:** [`docs_floors.py`](../.github/scripts/docs_floors.py) — the gate this program shrinks; `.agents/skills/altitude-docs/SKILL.md` — the 298-line page standard, unchanged by this RFC; [RFC 0026](0026-executable-documentation.md) — code correctness, deliberately carved out; [RFC 0008](0008-docs-language-switcher-ru.md) — translation, downstream of this.
 - **Origin:** Six framework audits recorded documentation debt as a recurring finding. The docs-floors gate converted the *recurring* half into a build failure, so new debt cannot accrue silently. What it did not do is discharge the standing balance: 51 declared exemptions, 26 of 37 contract planes with no reference page, and a reference layer whose largest single gap is one missing table column. This RFC is the schedule for that balance.
@@ -28,6 +28,11 @@ it down is that the balance stops being folklore: each phase names its number, a
 number is one `just docs-check` away from being checked.
 
 ## 2. The measured balance
+
+*Measured 2026-08-16, and left as measured: by the time P1 executed, the table had moved to
+50 exemptions with 28 in the port-plane group (see [`logs/T-0027.md`](../logs/T-0027.md),
+D-4). Correcting the figures would erase the evidence that a measurement ages; the exit
+criteria are unaffected, since they name end states rather than deltas.*
 
 | Debt | Now | Source |
 | --- | --- | --- |
@@ -99,7 +104,22 @@ design question that is not this RFC's to answer.
   still reads badly — which would be evidence, rather than the assumption it is today.
 - **No prose standard.** `altitude-docs` owns it.
 
-## 6. Decision log
+## 6. Decisions
 
-*(intentionally empty — this RFC schedules work against decisions already made elsewhere.
-A choice that needs arguing belongs in RFC 0026 or in the altitude-docs standard, not here.)*
+*Empty at authoring, and deliberately so: this RFC schedules work against decisions already
+made elsewhere, and a choice that needs arguing belongs in RFC 0026 or in the altitude-docs
+standard. The rows below are not that. Every one was forced by contact with the corpus while
+P1 executed, each cites the log entry that produced it, and none of them is about **what to
+write** — they are about what the gate may claim, which is why they land here rather than in
+a phase.*
+
+| # | Decision | Grade | From |
+| --- | --- | --- | --- |
+| 1 | The capability index attributes every row's dep keys, not only the ones a gate forced; an em dash where the capability composes from others. A column filled where it had to be documents the gate, not the plane | `LOCKED` | `logs/T-0027.md` D-2 |
+| 2 | The three crypto keys join *Identity & access* as two rows (field encryption, key management) rather than a new section — §5 declines a page restructure, and they sit beside secrets and credentials | `ASSUMED` | D-1 |
+| 3 | P1 ships the key and the accessor, never the registering modules: each plane's reference page already lists its integrations, and a third column would duplicate eleven pages and rot apart from them | `LOCKED` | D-3 |
+| 4 | A dep key named in the index is checked against the accessor that resolves it, read from the accessor's own source. Keys no accessor resolves are not second-guessed | `LOCKED` | audit finding 1 |
+| 5 | The index must attribute every accessor-resolved key, or the key is declared exempt — per key, never per accessor family, so no key passes on a sibling's declaration | `LOCKED` | D-7 (supersedes D-6) |
+| 6 | A **dep key** counts as documented only when a page names its symbol; its wire name (`cache`, `secrets`, `inbox`) does not. A spec's alias is its symbol, so specs are unaffected | `LOCKED` | D-7 |
+| 7 | An exemption may be **added** when a symbol turns out to be undocumented, even though the table's direction is to shrink: a declared gap beats an accidental pass, which is the whole premise of the floors | `ASSUMED` | D-7 |
+| 8 | P1's exit is 18 exemptions rather than §3's predicted 19: two authorization keys left the identity group when the index named them, and one password-lifecycle key joined it when the symbol rule tightened | `ASSUMED` | D-5, D-7 |
