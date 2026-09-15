@@ -1,5 +1,6 @@
 """Route configs for served-model inference over HTTP."""
 
+from math import isfinite
 from typing import Any, Literal, final, get_args
 
 import attrs
@@ -138,6 +139,18 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
 
     def _validate_limits(self) -> None:
         """Numeric bounds, each refused at wiring rather than by the endpoint."""
+
+        # NaN and the infinities pass every comparison below (`nan < 1` is False), and
+        # JSON cannot carry them — the request fails to serialize at the client, before the
+        # endpoint, which is a wiring mistake surfacing as a runtime error.
+        for field in ("temperature", "max_output_tokens"):
+            value = getattr(self, field)
+
+            if value is not None and not isfinite(value):
+                raise exc.configuration(
+                    f"HttpInferenceConfig.{field}={value} is not a finite number, and a "
+                    "request carrying it cannot be serialized."
+                )
 
         # Both are sent to the provider verbatim, and both have a value the endpoint
         # rejects: a rejection then reaches the caller as a wire mismatch, after the

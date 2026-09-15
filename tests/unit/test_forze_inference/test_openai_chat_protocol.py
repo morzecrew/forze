@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, cast, final
 
 import attrs
@@ -845,7 +845,18 @@ class TestWhatTheConstraintCannotExpress:
 class TestTheRouteRefusesAValueTheProviderWould:
     @pytest.mark.parametrize(
         ("field", "value"),
-        [("max_output_tokens", 0), ("max_output_tokens", -1), ("temperature", -0.5)],
+        [
+            ("max_output_tokens", 0),
+            ("max_output_tokens", -1),
+            ("temperature", -0.5),
+            # NaN passes every comparison (`nan < 0` is False) and the infinities pass the
+            # lower bounds; JSON carries none of them, so the request would fail to
+            # serialize at the client instead of the route failing to wire.
+            ("temperature", float("nan")),
+            ("temperature", float("inf")),
+            ("max_output_tokens", float("nan")),
+            ("max_output_tokens", float("-inf")),
+        ],
     )
     def test_a_generation_limit_the_endpoint_rejects(self, field: str, value: Any) -> None:
         with pytest.raises(CoreException) as ei:
@@ -909,6 +920,39 @@ class TestATemplateThatCannotRender:
 
         assert ei.value.kind == "configuration"
         assert "cannot be rendered" in str(ei.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("template", ["{count:d}", "{count:>5}", "{count:.2f}"])
+    async def test_a_format_spec_valid_for_the_fields_type_is_accepted(
+        self,
+        template: str,
+    ) -> None:
+        """The dry render must carry a value of the declared type, not a placeholder.
+
+        `{count:d}` is valid for an int and invalid for the empty string, so probing with
+        one stand-in for every field refused working routes.
+        """
+
+        class _Counted(BaseModel):
+            count: int
+
+        spec = InferenceSpec(name=_ROUTE, input=_Counted, output=_Invoice)
+        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt(template)))
+
+        assert ctx.inference.model(spec) is not None
+
+    @pytest.mark.asyncio
+    async def test_a_field_type_with_no_stand_in_is_left_unverified(self) -> None:
+        """Rather than refused on a guess: a format spec valid for a `datetime` cannot be
+        checked against anything this knows how to construct."""
+
+        class _Timed(BaseModel):
+            when: datetime
+
+        spec = InferenceSpec(name=_ROUTE, input=_Timed, output=_Invoice)
+        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt("{when:%Y}")))
+
+        assert ctx.inference.model(spec) is not None
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("template", ["{text!r}", "{text:>10}", "{text!s:^20}"])

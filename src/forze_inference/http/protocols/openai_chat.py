@@ -20,6 +20,7 @@ into sequential calls.
 import json
 import re
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from string import Formatter
 from typing import Any, Final, Literal, cast, final
 
@@ -196,16 +197,58 @@ def validate_prompt_template(
 
     # The slot names parse and resolve; rendering can still fail on a conversion or format
     # spec `str.format` rejects (`{text!z}`, `{text:invalid}`), which `parse` accepts and
-    # hands on. A dry run settles it here rather than on the first request, and it accepts
-    # every spec that works — `{text!r}` and `{text:>10}` render fine.
+    # hands on. A dry run settles it here rather than on the first request.
+    probe = _render_probe(spec, slots)
+
+    if probe is None:
+        # A slot whose declared type has no faithful stand-in: the render would test the
+        # placeholder rather than the template. `{count:d}` is valid for an int and invalid
+        # for the empty string, so guessing here refuses working routes — the failure this
+        # check had on its first outing.
+        return
+
     try:
-        prompt.template.format(**dict.fromkeys(spec.input.model_fields, ""))
+        prompt.template.format(**probe)
 
     except (ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         raise exc.configuration(
             f"Inference {spec.name!r}: the openai_chat prompt template cannot be rendered "
             f"from {spec.input.__name__} ({type(e).__name__}: {e})."
         ) from e
+
+
+# ....................... #
+
+
+_RENDER_PROBES: Final[Mapping[type, Any]] = {
+    bool: False,  # before int: bool is an int subclass
+    int: 0,
+    float: 0.0,
+    str: "",
+    Decimal: Decimal(0),
+}
+"""Stand-in values for a dry render, by declared field type. A format spec is only valid
+against a value of the right type, so the probe has to carry one — and where a field's type
+has no entry here, the template is left unverified rather than refused on a guess."""
+
+
+def _render_probe(
+    spec: InferenceSpec[Any, Any],
+    slots: tuple[str, ...],
+) -> dict[str, Any] | None:
+    """Values for every interpolated field, or ``None`` when one cannot be stood in for."""
+
+    probe: dict[str, Any] = {}
+
+    for name in slots:
+        annotation = spec.input.model_fields[name].annotation
+
+        if annotation not in _RENDER_PROBES:
+            return None
+
+        probe[name] = _RENDER_PROBES[annotation]
+
+    return probe
 
 
 # ....................... #
