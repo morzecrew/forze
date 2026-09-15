@@ -875,6 +875,20 @@ class TestTheRouteRefusesAValueTheProviderWould:
         assert ei.value.kind == "configuration"
 
     @pytest.mark.parametrize("field", ["temperature", "max_output_tokens"])
+    def test_a_limit_with_more_digits_than_a_request_can_carry(self, field: str) -> None:
+        """An integer's own way of being unserializable, refused beside NaN and infinity.
+
+        Past the interpreter's decimal-conversion limit, JSON refuses the value with a bare
+        `ValueError` at the client rather than the plane's classified refusal.
+        """
+
+        with pytest.raises(CoreException) as ei:
+            _config(**{field: 10**5000})
+
+        assert ei.value.kind == "configuration"
+        assert "more digits than a request can carry" in str(ei.value)
+
+    @pytest.mark.parametrize("field", ["temperature", "max_output_tokens"])
     def test_a_huge_integer_limit_does_not_crash_the_finite_check(self, field: str) -> None:
         """`isfinite` converts to float first, so `10**400` raised `OverflowError` here.
 

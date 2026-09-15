@@ -128,13 +128,12 @@ class PromptTemplate:
     def slots(self) -> tuple[str, ...]:
         """Field names the template interpolates, in order of appearance.
 
-        A format spec may interpolate too (``{value:{width}}``), and that inner field is
-        bound from the same instance — so it is a slot, and it appears where it is written.
-
         :raises CoreException: ``configuration`` for a slot that is not a plain field name
             — positional (``{}``, ``{0}``) and attribute/index access (``{a.b}``,
             ``{a[b]}``) are refused, so a slot always names one input field — for a
-            conversion ``str.format`` does not know, and for a template it cannot parse.
+            conversion ``str.format`` does not know, for a format spec that interpolates
+            (``{value:{width}}``, which would size an allocation from the caller's own
+            input), and for a template it cannot parse.
         """
 
         names: list[str] = []

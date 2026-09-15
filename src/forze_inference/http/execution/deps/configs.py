@@ -175,6 +175,20 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                     "request carrying it cannot be serialized."
                 )
 
+            # The same requirement for an integer, which has its own way of being
+            # unserializable: past the interpreter's decimal-conversion limit, JSON refuses
+            # it with a bare ValueError at the client. Expressed as the conversion that
+            # fails, because computing the digit count needs that conversion.
+            if isinstance(value, int):
+                try:
+                    str(value)
+
+                except ValueError as e:
+                    raise exc.configuration(
+                        f"HttpInferenceConfig.{field} has more digits than a request can "
+                        f"carry ({e}); a generation limit is a small whole number."
+                    ) from e
+
         # Both are sent to the provider verbatim, and both have a value the endpoint
         # rejects: a rejection then reaches the caller as a wire mismatch, after the
         # request was made. Refused at wiring, the way the batch cap is.
