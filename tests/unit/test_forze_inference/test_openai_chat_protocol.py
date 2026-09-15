@@ -939,6 +939,16 @@ class TestATemplateThatCannotRender:
 
         assert PromptTemplate(template="{value:{width}}").slots == ("value", "width")
 
+    def test_slots_are_in_appearance_order_including_nested_ones(self) -> None:
+        """The property documents appearance order, and it is public.
+
+        A worklist that deferred the inner fields returned `("a", "c", "d", "b")` — right
+        as a set, which is all route validation reads, and wrong for anything inspecting
+        the prompt.
+        """
+
+        assert PromptTemplate(template="{a:{b}} {c:{d}}").slots == ("a", "b", "c", "d")
+
     @pytest.mark.asyncio
     async def test_a_nested_field_the_input_does_not_declare_is_refused(self) -> None:
         class _Narrow(BaseModel):
