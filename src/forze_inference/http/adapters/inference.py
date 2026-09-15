@@ -25,6 +25,7 @@ from forze.application.integrations.inference import (
     shape_outputs,
     validated_instances,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import OnceCell, remaining_time
 
 from ..kernel import InferenceHttpClientPort
@@ -126,6 +127,16 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
 
         model_name = await self._model_name()
         per_request = self.protocol.instances_per_request
+
+        # `itertools.batched` raises a bare ValueError below 1, and a dialect declaring 0
+        # can serve nothing at all — refused by name, the way the per-call batch hint is.
+        if per_request is not None and per_request < 1:
+            raise exc.configuration(
+                f"Wire dialect {self.config.protocol!r} declares "
+                f"instances_per_request={per_request}; it must be at least 1, or None for "
+                "a dialect that carries a whole batch."
+            )
+
         groups: Sequence[Sequence[In]] = (
             [prepared]
             if per_request is None
@@ -135,18 +146,24 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
         records: list[Mapping[str, Any]] = []
         usage: dict[str, int] = {}
 
-        for group in groups:
-            records.extend(await self._wire_call(group, model_name=model_name, usage=usage))
+        try:
+            for group in groups:
+                records.extend(await self._wire_call(group, model_name=model_name, usage=usage))
 
-        # Summed over the fan-out and set once, so the attribute reports what the port
-        # call spent rather than what its last request did. It lands on whichever span is
-        # current — the port's CLIENT span where per-port spans are on, the operation span
-        # otherwise — and a non-recording span drops it.
-        if usage:
-            span = trace.get_current_span()
+        finally:
+            # In a `finally` because a fan-out that fails half way has still spent what its
+            # earlier requests consumed, and losing the count exactly when something went
+            # wrong is losing it when it matters. Summed and set once, so the attribute
+            # reports the port call rather than its last request; it lands on whichever span
+            # is current — the port's CLIENT span where per-port spans are on, the operation
+            # span otherwise — and a non-recording span drops it. Nothing here can outrank
+            # the outcome: `set_attribute` on a live or a no-op span does not raise for the
+            # ints this collects.
+            if usage:
+                span = trace.get_current_span()
 
-            for attribute, total in usage.items():
-                span.set_attribute(attribute, total)
+                for attribute, total in usage.items():
+                    span.set_attribute(attribute, total)
 
         return shape_outputs(
             self.spec,

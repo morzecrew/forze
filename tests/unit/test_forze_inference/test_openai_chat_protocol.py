@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Mapping, Sequence
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, final
 
+import attrs
 import httpx
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -118,6 +121,17 @@ def _answers(content: str, **overrides: Any) -> Any:
     return handler
 
 
+def _recording(sent: list[dict[str, Any]], content: str = '{"number": "a", "total": 1.0}') -> Any:
+    """A handler that records each request body and answers *content*."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+
+        return httpx.Response(200, json=_completion(content))
+
+    return handler
+
+
 # ....................... #
 
 
@@ -157,13 +171,7 @@ class TestStructuredGeneration:
         """A non-strict or open constraint would leave the model free to answer otherwise."""
 
         seen: list[dict[str, Any]] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen.append(json.loads(request.content))
-
-            return httpx.Response(200, json=_completion(json.dumps({"number": "a", "total": 1.0})))
-
-        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+        port = _ctx(await _client(_recording(seen)), _config()).inference.model(_spec())
         await port.predict(_Document(text="x"))
 
         constraint = seen[0]["response_format"]
@@ -176,13 +184,7 @@ class TestStructuredGeneration:
     @pytest.mark.asyncio
     async def test_sampling_is_config_and_omitted_when_unset(self) -> None:
         seen: list[dict[str, Any]] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen.append(json.loads(request.content))
-
-            return httpx.Response(200, json=_completion(json.dumps({"number": "a", "total": 1.0})))
-
-        client = await _client(handler)
+        client = await _client(_recording(seen))
         plain = _ctx(client, _config()).inference.model(_spec())
         tuned = _ctx(
             client,
@@ -199,14 +201,8 @@ class TestStructuredGeneration:
     @pytest.mark.asyncio
     async def test_a_prompt_with_no_system_message_sends_only_the_user_turn(self) -> None:
         seen: list[dict[str, Any]] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen.append(json.loads(request.content))
-
-            return httpx.Response(200, json=_completion(json.dumps({"number": "a", "total": 1.0})))
-
         config = _config(prompt=PromptTemplate(template="{text}"))
-        port = _ctx(await _client(handler), config).inference.model(_spec())
+        port = _ctx(await _client(_recording(seen)), config).inference.model(_spec())
         await port.predict(_Document(text="only"))
 
         assert seen[0]["messages"] == [{"role": "user", "content": "only"}]
@@ -254,27 +250,115 @@ class TestOneRequestPerInstance:
             assert protocol.usage_attributes({"usage": {"prompt_tokens": 5}}) == {}
 
     @pytest.mark.asyncio
-    async def test_a_dead_budget_stops_the_fan_out_mid_batch(self) -> None:
-        """A fan-out spends the budget as it goes; the remaining requests are never sent."""
+    async def test_a_spent_budget_refuses_before_the_first_request(self) -> None:
+        sent: list[dict[str, Any]] = []
+        port = _ctx(await _client(_recording(sent)), _config()).inference.model(_spec())
 
-        calls: list[None] = []
+        with pytest.raises(CoreException) as ei:
+            await port.predict_many(
+                [_Document(text="a"), _Document(text="b")],
+                options={"timeout": timedelta(seconds=0)},
+            )
 
-        def handler(_request: httpx.Request) -> httpx.Response:
-            calls.append(None)
+        assert ei.value.code == "inference_budget_exhausted"
+        assert sent == []
 
-            return httpx.Response(200, json=_completion(json.dumps({"number": "a", "total": 1.0})))
+    @pytest.mark.asyncio
+    async def test_a_budget_that_dies_mid_fan_out_stops_the_rest(self) -> None:
+        """The check is per request, not per port call.
+
+        A fan-out of N spends the deadline as it goes, so a batch whose budget runs out
+        after the second completion must not send the third. Checking once up front would
+        pass the test above and still send every request on borrowed time.
+        """
+
+        sent: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            sent.append(json.loads(request.content))
+            # Spends most of the budget in the first request; MockTransport is in-process,
+            # so this is the deadline elapsing rather than a transport timeout.
+            time.sleep(0.05)
+
+            return httpx.Response(200, json=_completion('{"number": "a", "total": 1.0}'))
 
         port = _ctx(await _client(handler), _config()).inference.model(_spec())
 
         with pytest.raises(CoreException) as ei:
             await port.predict_many(
-                [_Document(text="a"), _Document(text="b")],
-                # Zero budget: refused before the first request, not after the last.
-                options={"timeout": timedelta(seconds=0)},
+                [_Document(text="a"), _Document(text="b"), _Document(text="c")],
+                options={"timeout": timedelta(seconds=0.04)},
             )
 
         assert ei.value.code == "inference_budget_exhausted"
-        assert calls == []
+        assert len(sent) == 1  # the second and third were never sent
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _ZeroInstanceDialect:
+    """A dialect declaring it carries no instance per request — what the interface admits
+    and no shipped dialect does. Written out rather than subclassed: the real dialects are
+    `final`, and a stub is what the adapter's own guard is being tested against."""
+
+    @property
+    def instances_per_request(self) -> int | None:
+        return 0
+
+    def usage_attributes(self, body: Mapping[str, Any]) -> Mapping[str, int]:
+        _ = body
+
+        return {}
+
+    def encode_request(
+        self,
+        spec: InferenceSpec[Any, Any],
+        instances: Sequence[BaseModel],
+        *,
+        model_name: str,
+    ) -> tuple[str, dict[str, Any]]:  # pragma: no cover - the guard refuses first
+        _ = (spec, instances, model_name)
+
+        return ("/v1/chat/completions", {})
+
+    def decode_response(
+        self,
+        spec: InferenceSpec[Any, Any],
+        body: Mapping[str, Any],
+        *,
+        expected: int,
+    ) -> Sequence[Mapping[str, Any]]:  # pragma: no cover - the guard refuses first
+        _ = (spec, body, expected)
+
+        return []
+
+
+class TestADialectThatCarriesNoInstance:
+    @pytest.mark.asyncio
+    async def test_a_zero_instance_dialect_is_refused_by_name(self) -> None:
+        """`itertools.batched` raises a bare ValueError below 1, so the fan-out refuses first.
+
+        No shipped dialect declares it; the interface admits it, and the sibling per-call
+        hint already refuses the same value rather than crashing inside the stdlib.
+        """
+
+        from forze_inference.http import HttpInferenceAdapter
+
+        adapter = HttpInferenceAdapter(
+            spec=_spec(),
+            client=await _client(_answers('{"number": "a", "total": 1.0}')),
+            config=_config(),
+            protocol=_ZeroInstanceDialect(),
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await adapter.predict(_Document(text="x"))
+
+        assert ei.value.kind == "configuration"
+        assert "instances_per_request=0" in str(ei.value)
 
 
 # ....................... #
@@ -309,6 +393,39 @@ class TestUsageTelemetry:
         assert attributes == (20, 8)
 
     @pytest.mark.asyncio
+    async def test_what_a_failed_fan_out_spent_is_still_recorded(self) -> None:
+        """Losing the count exactly when a batch fails is losing it when it matters."""
+
+        sent: list[None] = []
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            sent.append(None)
+
+            if len(sent) > 1:
+                return httpx.Response(500, json={"error": {"message": "overloaded"}})
+
+            return httpx.Response(
+                200,
+                json=_completion(
+                    '{"number": "a", "total": 1.0}',
+                    usage={"prompt_tokens": 7, "completion_tokens": 2},
+                ),
+            )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with provider.get_tracer("test").start_as_current_span("op"):
+            with pytest.raises(CoreException):
+                await port.predict_many([_Document(text="a"), _Document(text="b")])
+
+        attributes = exporter.get_finished_spans()[0].attributes or {}
+
+        assert attributes[USAGE_INPUT_TOKENS_ATTRIBUTE] == 7
+
+    @pytest.mark.asyncio
     async def test_a_provider_reporting_no_usage_leaves_no_attribute(self) -> None:
         """An absent count must not become an attribute claiming zero tokens were spent."""
 
@@ -335,12 +452,7 @@ class TestTextMode:
     @pytest.mark.asyncio
     async def test_prose_fills_the_one_field_output_model(self) -> None:
         seen: list[dict[str, Any]] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen.append(json.loads(request.content))
-
-            return httpx.Response(200, json=_completion("a free-form answer"))
-
+        handler = _recording(seen, content="a free-form answer")
         config = _config(output_mode="text")
         port = _ctx(await _client(handler), config).inference.model(_spec(_Completion))
 
@@ -407,6 +519,16 @@ class TestWiringRefusals:
             _ = PromptTemplate(template=template).slots
 
         assert ei.value.kind == "configuration"
+
+    @pytest.mark.asyncio
+    async def test_escaped_braces_are_literal_and_not_slots(self) -> None:
+        sent: list[dict[str, Any]] = []
+        config = _config(prompt=PromptTemplate(template="Answer with {{json}} for {text}"))
+        port = _ctx(await _client(_recording(sent)), config).inference.model(_spec())
+        await port.predict(_Document(text="this"))
+
+        assert PromptTemplate(template="Answer with {{json}} for {text}").slots == ("text",)
+        assert sent[0]["messages"][-1]["content"] == "Answer with {json} for this"
 
     def test_a_prompt_on_a_scoring_protocol(self) -> None:
         with pytest.raises(CoreException) as ei:
@@ -555,6 +677,9 @@ class TestErrorTaxonomy:
         assert (ei.value.kind, ei.value.code) == ("precondition", CONTENT_REFUSED_CODE)
         # Non-retryable by the kind's own policy: the same content refuses again.
         assert exception_egress_policy(ExceptionKind.PRECONDITION).retryable is False
+        # And the provider's wording stays out of it: it quotes the prompt back, which is
+        # built from the caller's input, and this summary renders verbatim to an API caller.
+        assert "I can't help" not in str(ei.value)
 
     @pytest.mark.asyncio
     async def test_a_content_filter_finish_reason_is_the_same_refusal(self) -> None:

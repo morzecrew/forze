@@ -412,9 +412,12 @@ class OpenAiChatProtocol:
         refusal: Any = message_fields.get("refusal")
 
         if refusal or finish_reason == "content_filter":
+            # The provider's wording is withheld, like every other upstream body on this
+            # plane: it quotes back the prompt, which is built from the caller's own input,
+            # and a `precondition` summary renders verbatim to whoever called the API.
             raise exc.precondition(
                 f"Inference {spec.name!r}: the provider declined to answer on content "
-                f"grounds{f' ({refusal})' if isinstance(refusal, str) and refusal else ''}.",
+                f"grounds (its explanation is withheld).",
                 code=CONTENT_REFUSED_CODE,
             )
 

@@ -29,10 +29,12 @@ class WireProtocol(Protocol):
 
         A dialect whose endpoint scores one instance per call (a chat completion) returns
         ``1``, and the adapter fans a batch out into that many sequential requests. It is
-        declared here rather than decided in the adapter because the same number is what
-        the adapter publishes as ``native_batch``: a dialect that cannot vectorize must not
-        leave the capability claiming otherwise, since the in-memory oracle mirrors the
-        declaration to refuse where the deployment would.
+        declared here rather than decided in the adapter because ``native_batch`` is
+        derived from it: a dialect that cannot vectorize must not leave the capability
+        claiming otherwise, since the in-memory oracle mirrors the declaration in order to
+        refuse where the deployment would.
+
+        Must be at least 1 — a dialect carrying no instance per request can serve nothing.
         """
         ...  # pragma: no cover
 

@@ -20,18 +20,22 @@ Run it (from the repo root)::
 
     python -m examples.recipes.llm_triage_dst.app   # ✓ no violation
 
-``forze dst run`` derives its inputs from the declared type, which for this workload means
-ticket text no triage function has an answer for. The scenario below supplies the texts, the
-way a real queue would::
+The derived driver works here too, and is worth running — a triage function answers any
+string, so nothing has to be scripted for the law to be at risk::
 
-    forze dst topology examples.recipes.llm_triage_dst.app:simulation
+    forze dst run examples.recipes.llm_triage_dst.app:simulation --act-count 6 --concurrency 2
+    # ✓ no violation · raced 2/2 operations · at risk 3–3 of 3 runs per invariant
+
+:func:`triage_scenario` exists for a different reason: derived text is arbitrary, and a queue
+of recognisable tickets is what makes the weights the model answers with mean anything to a
+reader. Both drivers exercise the same invariant.
 """
 
 from __future__ import annotations
 
 import random
 from collections.abc import Sequence
-from typing import final
+from typing import TYPE_CHECKING, final
 
 import attrs
 import structlog
@@ -56,6 +60,11 @@ from forze_dst.oracle import compile_oracle
 from forze_dst.scenario import ModelState, Rule, Scenario
 from forze_kits.aggregates import AggregateKit
 from forze_mock import MockDepsModule, MockInferenceRegistry
+
+if TYPE_CHECKING:
+    # Imported for the annotation only: the recipe runs (and simulates) without the
+    # `inference-http` extra, and the deployed half is what needs it.
+    from forze_inference.http import HttpInferenceDepsModule
 
 _LOGGER_NAME = "llm_triage_dst"
 
@@ -213,7 +222,7 @@ def triage_registry(governed: FrozenOperationRegistry) -> FrozenOperationRegistr
 
 
 # --8<-- [start:wiring]
-def production_route() -> object:
+def production_route() -> HttpInferenceDepsModule:
     """The deployed route. Not used by the simulation — this is what it stands in for.
 
     Everything prompt-shaped is wiring: what the model is asked, how the answer is

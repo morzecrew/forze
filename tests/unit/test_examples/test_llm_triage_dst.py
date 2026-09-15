@@ -14,6 +14,8 @@ proving nothing about the inference plane.
 from __future__ import annotations
 
 import random
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import attrs
 import pytest
@@ -38,7 +40,14 @@ from examples.recipes.llm_triage_dst.app import (
     triage_scenario,
 )
 from forze.application.contracts.execution import Handler
+from forze.application.execution import ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.deps import DepsRegistry
+from forze.application.execution.operations import (
+    OperationDescriptor,
+    OperationRegistry,
+    run_operation,
+)
 from forze.base.exceptions import CoreException
 from forze_dst import Simulation, SimulationConfig, Strategy
 from forze_dst.oracle import compile_oracle
@@ -67,6 +76,27 @@ def _over(operations) -> Simulation:  # type: ignore[no-untyped-def]
 def _ungoverned() -> Simulation:
     return _over(
         triage_registry(AggregateKit(spec=ITEM_SPEC, invariants=()).registry(tx_route="mock"))
+    )
+
+
+@asynccontextmanager
+async def _scope(registry: MockInferenceRegistry | None = None) -> AsyncIterator[ExecutionContext]:
+    """One runtime scope over the mock plane, with *registry* answering the model route."""
+
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(MockDepsModule(inference=registry)).freeze()
+    )
+
+    async with runtime.scope():
+        yield runtime.get_context()
+
+
+def _fixed(weight: int) -> MockInferenceRegistry:
+    """A model that always answers *weight* — the assertion is about the handler."""
+
+    return MockInferenceRegistry().on(
+        TRIAGE_SPEC.name,
+        lambda instances: [{"queue_id": "support", "weight": weight} for _ in instances],
     )
 
 
@@ -103,15 +133,7 @@ class TestTheHandlerReallyCallsTheSeam:
     async def test_an_unprogrammed_route_fails_the_operation(self) -> None:
         """No predictor, no triage — a handler computing the answer itself would pass anyway."""
 
-        from forze.application.execution import ExecutionRuntime
-        from forze.application.execution.deps import DepsRegistry
-        from forze.application.execution.operations import run_operation
-
-        runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
-
-        async with runtime.scope():
-            ctx = runtime.get_context()
-
+        async with _scope() as ctx:
             with pytest.raises(CoreException) as ei:
                 await run_operation(
                     simulation.operations,
@@ -123,22 +145,7 @@ class TestTheHandlerReallyCallsTheSeam:
         assert ei.value.code == "mock.inference.unprogrammed"
 
     async def test_the_models_answer_is_what_gets_filed(self) -> None:
-        from forze.application.execution import ExecutionRuntime
-        from forze.application.execution.deps import DepsRegistry
-        from forze.application.execution.operations import run_operation
-
-        # A fixed answer, so the assertion is about the handler passing the model's value
-        # through rather than about the example's triage function.
-        registry = MockInferenceRegistry().on(
-            TRIAGE_SPEC.name,
-            lambda instances: [{"queue_id": "support", "weight": 3} for _ in instances],
-        )
-        runtime = ExecutionRuntime(
-            deps=DepsRegistry.from_modules(MockDepsModule(inference=registry)).freeze()
-        )
-
-        async with runtime.scope():
-            ctx = runtime.get_context()
+        async with _scope(_fixed(3)) as ctx:
             filed = await run_operation(
                 simulation.operations, TRIAGE_OP, TriageInput(text="anything"), ctx
             )
@@ -148,20 +155,7 @@ class TestTheHandlerReallyCallsTheSeam:
     async def test_a_queue_that_cannot_take_the_weight_answers_rather_than_raises(self) -> None:
         """The plane's refusal is the caller's verdict to act on, not a crash."""
 
-        from forze.application.execution import ExecutionRuntime
-        from forze.application.execution.deps import DepsRegistry
-        from forze.application.execution.operations import run_operation
-
-        registry = MockInferenceRegistry().on(
-            TRIAGE_SPEC.name,
-            lambda instances: [{"queue_id": "support", "weight": 9} for _ in instances],
-        )
-        runtime = ExecutionRuntime(
-            deps=DepsRegistry.from_modules(MockDepsModule(inference=registry)).freeze()
-        )
-
-        async with runtime.scope():
-            ctx = runtime.get_context()
+        async with _scope(_fixed(9)) as ctx:
             results = [
                 await run_operation(simulation.operations, TRIAGE_OP, TriageInput(text="x"), ctx)
                 for _ in range(2)
@@ -174,14 +168,6 @@ class TestTheHandlerReallyCallsTheSeam:
     async def test_any_other_failure_propagates(self) -> None:
         """Only the declared law's refusal is data. A catch-all would read a broken store
         as "the queue is full" — absorbing exactly what a simulation exists to surface."""
-
-        from forze.application.execution import ExecutionRuntime
-        from forze.application.execution.deps import DepsRegistry
-        from forze.application.execution.operations import (
-            OperationDescriptor,
-            OperationRegistry,
-            run_operation,
-        )
 
         class _Broken(Handler[ItemCreate, None]):
             async def __call__(self, args: ItemCreate) -> None:
@@ -197,17 +183,7 @@ class TestTheHandlerReallyCallsTheSeam:
             .set_descriptor(CREATE_OP, OperationDescriptor(input_type=ItemCreate))
             .freeze()
         )
-        registry = MockInferenceRegistry().on(
-            TRIAGE_SPEC.name,
-            lambda instances: [{"queue_id": "support", "weight": 1} for _ in instances],
-        )
-        runtime = ExecutionRuntime(
-            deps=DepsRegistry.from_modules(MockDepsModule(inference=registry)).freeze()
-        )
-
-        async with runtime.scope():
-            ctx = runtime.get_context()
-
+        async with _scope(_fixed(1)) as ctx:
             with pytest.raises(Exception, match="store is gone"):
                 await run_operation(triage_registry(broken), TRIAGE_OP, TriageInput(text="x"), ctx)
 
