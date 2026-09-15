@@ -43,11 +43,16 @@ defect, and never retryable: the same request refuses again."""
 
 _OUTPUT_MISMATCH_CODE = "inference_output_mismatch"
 
-USAGE_INPUT_TOKENS_ATTRIBUTE: Final[str] = "forze.inference.usage.input_tokens"
-USAGE_OUTPUT_TOKENS_ATTRIBUTE: Final[str] = "forze.inference.usage.output_tokens"
+USAGE_INPUT_TOKENS_ATTRIBUTE: Final[str] = "gen_ai.usage.input_tokens"
+USAGE_OUTPUT_TOKENS_ATTRIBUTE: Final[str] = "gen_ai.usage.output_tokens"
 """Span attributes carrying what a generation consumed. Usage is telemetry here, never a
 return value: an envelope method would put cost accounting in every handler's way, and the
-numbers a caller acts on belong on the same span as the call that spent them."""
+numbers a caller acts on belong on the same span as the call that spent them.
+
+OpenTelemetry's GenAI names rather than a ``forze.`` one, so a collector or dashboard that
+already understands model cost reads these without being taught. That convention is still
+marked experimental upstream; a rename there would be a rename here, which is why the names
+live in these two constants and nowhere else."""
 
 InferenceOutputMode = Literal["structured", "text"]
 """``structured`` constrains the completion to the output model's JSON schema; ``text``

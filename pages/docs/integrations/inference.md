@@ -144,11 +144,14 @@ with the completion prose; any other output model is refused at wiring.
 - **One request per instance.** A chat completion answers one prompt, so
   `predict_many` is N sequential requests (`native_batch=False`) and the budget
   is checked before each one: a fan-out that runs out of deadline stops rather
-  than finishing on borrowed time.
+  than finishing on borrowed time. Nothing caps the fan-out by default, so a
+  generation route is a good place to set `max_batch_size` — an oversized batch
+  is then refused up front instead of becoming a hundred billed requests.
 - **Usage is telemetry.** Token counts land on the call's span as
-  `forze.inference.usage.input_tokens` / `.output_tokens`, summed over the
-  fan-out. There is no envelope method — cost accounting does not belong in every
-  handler's return type.
+  `gen_ai.usage.input_tokens` / `.output_tokens` — OpenTelemetry's GenAI names,
+  so a cost dashboard reads them untaught — summed over the fan-out and recorded
+  even when a request part-way through fails. There is no envelope method; cost
+  accounting does not belong in every handler's return type.
 - **A safety refusal is not a wire defect.** A provider declining on content
   grounds raises `precondition` (`inference_content_refused`), non-retryable,
   whether it says so in `message.refusal` or in `finish_reason`. A truncated
