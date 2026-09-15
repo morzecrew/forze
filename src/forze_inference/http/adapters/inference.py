@@ -1,10 +1,11 @@
 """Served-model ``InferencePort`` over an HTTP wire protocol."""
 
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from itertools import batched
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Any, final
 
 import attrs
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from forze.application.contracts.inference import (
@@ -61,7 +62,11 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
     def inference_capabilities(self) -> InferenceCapabilities:
         return attrs.evolve(
             DEFAULT_INFERENCE_CAPABILITIES,
-            native_batch=True,
+            # The dialect decides: one request per batch is vectorized scoring, one
+            # request per instance is not. Declaring it unconditionally would leave the
+            # capability claiming a batch call the wire never makes, and the in-memory
+            # oracle mirrors this declaration to refuse where a deployment would.
+            native_batch=self.protocol.instances_per_request is None,
             supports_stream=True,
             max_batch_size=self.config.max_batch_size,
             deterministic=self.config.deterministic,
@@ -80,15 +85,22 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
 
     # ....................... #
 
-    async def _score(self, prepared: Sequence[In]) -> Sequence[Out]:
-        """One wire call for one already-validated, already-capped batch."""
+    async def _wire_call(
+        self,
+        group: Sequence[In],
+        *,
+        model_name: str,
+        usage: dict[str, int],
+    ) -> Sequence[Mapping[str, Any]]:
+        """One request/response for one group of instances the dialect can carry."""
 
+        # Inside the loop, not before it: a fan-out spends the budget as it goes, and a
+        # request the deadline can no longer cover must not be sent.
         ensure_budget(backend=self.config.protocol)
 
-        model_name = await self._model_name()
         path, body = self.protocol.encode_request(
             self.spec,
-            prepared,
+            group,
             model_name=model_name,
         )
 
@@ -98,11 +110,43 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
             timeout=remaining_time(),
         )
 
-        records = self.protocol.decode_response(
+        for attribute, value in self.protocol.usage_attributes(response).items():
+            usage[attribute] = usage.get(attribute, 0) + value
+
+        return self.protocol.decode_response(
             self.spec,
             response,
-            expected=len(prepared),
+            expected=len(group),
         )
+
+    # ....................... #
+
+    async def _score(self, prepared: Sequence[In]) -> Sequence[Out]:
+        """Score one already-validated, already-capped batch over one or more wire calls."""
+
+        model_name = await self._model_name()
+        per_request = self.protocol.instances_per_request
+        groups: Sequence[Sequence[In]] = (
+            [prepared]
+            if per_request is None
+            else [list(group) for group in batched(prepared, per_request, strict=False)]
+        )
+
+        records: list[Mapping[str, Any]] = []
+        usage: dict[str, int] = {}
+
+        for group in groups:
+            records.extend(await self._wire_call(group, model_name=model_name, usage=usage))
+
+        # Summed over the fan-out and set once, so the attribute reports what the port
+        # call spent rather than what its last request did. It lands on whichever span is
+        # current — the port's CLIENT span where per-port spans are on, the operation span
+        # otherwise — and a non-recording span drops it.
+        if usage:
+            span = trace.get_current_span()
+
+            for attribute, total in usage.items():
+                span.set_attribute(attribute, total)
 
         return shape_outputs(
             self.spec,

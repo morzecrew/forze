@@ -73,6 +73,19 @@ def _column_datatype(spec_name: str, field: str, values: Sequence[Any]) -> str:
 class KserveV2Protocol:
     """The Open Inference Protocol dialect (KServe, mlserver, Seldon, Triton HTTP)."""
 
+    @property
+    def instances_per_request(self) -> int | None:
+        # Columnar by construction: a batch is one request with one value per instance in
+        # every input tensor, which is what makes the dialect natively batched.
+        return None
+
+    def usage_attributes(self, body: Mapping[str, Any]) -> Mapping[str, int]:
+        _ = body  # the V2 response carries no cost or token accounting
+
+        return {}
+
+    # ....................... #
+
     def encode_request(
         self,
         spec: InferenceSpec[Any, Any],

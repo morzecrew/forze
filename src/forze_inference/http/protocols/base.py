@@ -22,6 +22,30 @@ WireRequest = tuple[str, dict[str, Any]]
 class WireProtocol(Protocol):
     """One serving wire dialect: encode a batch request, decode its response."""
 
+    @property
+    def instances_per_request(self) -> int | None:
+        """How many instances one request of this dialect may carry, or ``None`` for a
+        whole batch.
+
+        A dialect whose endpoint scores one instance per call (a chat completion) returns
+        ``1``, and the adapter fans a batch out into that many sequential requests. It is
+        declared here rather than decided in the adapter because the same number is what
+        the adapter publishes as ``native_batch``: a dialect that cannot vectorize must not
+        leave the capability claiming otherwise, since the in-memory oracle mirrors the
+        declaration to refuse where the deployment would.
+        """
+        ...  # pragma: no cover
+
+    def usage_attributes(self, body: Mapping[str, Any]) -> Mapping[str, int]:
+        """Span attributes describing what the call consumed, or empty for a dialect that
+        reports nothing.
+
+        Returned rather than recorded so the dialect stays a pure encode/decode strategy;
+        the adapter puts them on whichever span is current, the way a declared egress is
+        tagged.
+        """
+        ...  # pragma: no cover
+
     def encode_request(
         self,
         spec: InferenceSpec[Any, Any],

@@ -22,6 +22,18 @@ class MlflowProtocol:
     """The MLflow ``/invocations`` dialect (one model per server; the route's
     ``model_name`` selects the server via the client's base URL, not the path)."""
 
+    @property
+    def instances_per_request(self) -> int | None:
+        # `/invocations` takes the whole `instances` list in one call.
+        return None
+
+    def usage_attributes(self, body: Mapping[str, Any]) -> Mapping[str, int]:
+        _ = body  # a scoring response carries no cost or token accounting
+
+        return {}
+
+    # ....................... #
+
     def encode_request(
         self,
         spec: InferenceSpec[Any, Any],

@@ -11,16 +11,27 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 
 from ...protocols import (
+    InferenceOutputMode,
     KserveV2Protocol,
     MlflowProtocol,
+    OpenAiChatProtocol,
+    PromptTemplate,
     WireProtocol,
+    chat_output_schema,
     validate_flat_scalar_fields,
+    validate_prompt_template,
+    validate_text_output,
 )
 
 # ----------------------- #
 
-InferenceWireProtocolName = Literal["kserve_v2", "mlflow"]
+InferenceWireProtocolName = Literal["kserve_v2", "mlflow", "openai_chat"]
 """Supported serving dialects (JSON-record scope)."""
+
+_GENERATION_FIELDS = ("prompt", "output_mode", "temperature", "max_output_tokens")
+"""Fields only the ``openai_chat`` dialect reads. Refused on the others rather than
+ignored: a prompt on a KServe route is a wiring mistake, and silently dropping it would
+send the model a request the operator believes was shaped by it."""
 
 
 @final
@@ -36,7 +47,7 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     protocol: InferenceWireProtocolName
     """Which wire dialect the endpoint speaks. ``kserve_v2`` covers KServe, mlserver,
     Seldon and Triton's HTTP frontend; ``mlflow`` is the legacy ``/invocations`` scoring
-    protocol."""
+    protocol; ``openai_chat`` covers anything speaking ``/v1/chat/completions``."""
 
     model_name: NamedResourceSpec
     """Server-side model id — a static name or a ``(tenant_id) -> name`` resolver for
@@ -54,6 +65,29 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     deterministic: bool = False
     """Declare that the served model returns the same output for the same input
     (advertised via capabilities; the adapter cannot verify it)."""
+
+    prompt: PromptTemplate | None = None
+    """The generation prompt, required by ``openai_chat`` and refused by the others.
+
+    Prompt-shaped configuration lives here rather than in handler code for the reason the
+    procedure plane keeps its SQL in wiring: what the model is asked is a reviewed
+    deployment fact, and a handler that passes a typed instance cannot drift from it."""
+
+    output_mode: InferenceOutputMode | None = None
+    """``openai_chat`` only; defaults to ``structured``.
+
+    ``structured`` constrains the completion to the output model's JSON schema, so the
+    route answers with a validated ``Out``. ``text`` takes completion prose into a
+    one-field ``str`` output model."""
+
+    temperature: float | None = None
+    """``openai_chat`` only: sampling temperature, omitted when unset.
+
+    Sampling is configuration, never a per-call option — a route's behaviour is a reviewed
+    wiring fact, the same stance the port takes on which model answers."""
+
+    max_output_tokens: int | None = None
+    """``openai_chat`` only: completion-length ceiling, omitted when unset."""
 
     # ....................... #
 
@@ -80,6 +114,26 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
             acknowledged=self.acknowledge_data_egress,
         )
 
+        # Fail-closed in both directions. A chat route with no prompt has nothing to ask
+        # the model; a prompt on a scoring route is a field nothing reads, and an ignored
+        # field is indistinguishable from an applied one from the outside.
+        if self.protocol == "openai_chat":
+            if self.prompt is None:
+                raise exc.configuration(
+                    "HttpInferenceConfig(protocol='openai_chat') requires prompt=..., "
+                    "the template the route sends for every instance."
+                )
+
+        else:
+            offending = [field for field in _GENERATION_FIELDS if getattr(self, field) is not None]
+
+            if offending:
+                raise exc.configuration(
+                    f"HttpInferenceConfig(protocol={self.protocol!r}) does not read "
+                    f"{', '.join(offending)}; {'that field is' if len(offending) == 1 else 'those fields are'} "
+                    "read by the openai_chat dialect only."
+                )
+
     # ....................... #
 
     def validate_against_spec(self, spec: InferenceSpec[Any, Any]) -> None:
@@ -88,10 +142,42 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
         if self.protocol == "kserve_v2":
             validate_flat_scalar_fields(spec)
 
+        if self.protocol == "openai_chat" and self.prompt is not None:
+            validate_prompt_template(spec, self.prompt)
+
+            if self._output_mode == "text":
+                validate_text_output(spec)
+
+            else:
+                # Derived here for its refusals only — the encoder derives it again per
+                # request from the same spec. A schema the constraint cannot express costs
+                # a resolve, not a production request that answers with unconstrained prose.
+                chat_output_schema(spec)
+
+    # ....................... #
+
+    @property
+    def _output_mode(self) -> InferenceOutputMode:
+        return self.output_mode if self.output_mode is not None else "structured"
+
     # ....................... #
 
     def wire_protocol(self) -> WireProtocol:
         if self.protocol == "kserve_v2":
             return KserveV2Protocol()
 
-        return MlflowProtocol()
+        if self.protocol == "mlflow":
+            return MlflowProtocol()
+
+        if self.prompt is None:  # pragma: no cover - refused in __attrs_post_init__
+            raise exc.internal(
+                "HttpInferenceConfig(protocol='openai_chat') reached wire_protocol() "
+                "without a prompt."
+            )
+
+        return OpenAiChatProtocol(
+            prompt=self.prompt,
+            output_mode=self._output_mode,
+            temperature=self.temperature,
+            max_output_tokens=self.max_output_tokens,
+        )
