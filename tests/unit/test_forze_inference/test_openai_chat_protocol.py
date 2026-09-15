@@ -930,6 +930,42 @@ class TestATemplateThatCannotRender:
     def test_the_conversions_and_specs_it_does_know_are_accepted(self, template: str) -> None:
         assert PromptTemplate(template=template).slots == ("text",)
 
+    def test_a_field_nested_in_a_format_spec_is_a_slot_too(self) -> None:
+        """`{value:{width}}` binds `width` from the same instance, so it is a slot.
+
+        Recording only the outer name wired a route cleanly that could not serve a single
+        request — the inner field was missing from every render.
+        """
+
+        assert PromptTemplate(template="{value:{width}}").slots == ("value", "width")
+
+    @pytest.mark.asyncio
+    async def test_a_nested_field_the_input_does_not_declare_is_refused(self) -> None:
+        class _Narrow(BaseModel):
+            value: str
+
+        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt("{value:{width}}")))
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(InferenceSpec(name=_ROUTE, input=_Narrow, output=_Invoice))
+
+        assert "interpolates width" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_a_nested_field_the_input_declares_renders(self) -> None:
+        class _Wide(BaseModel):
+            value: str
+            width: int
+
+        sent: list[dict[str, Any]] = []
+        config = _config(prompt=PromptTemplate(template="{value:{width}}"))
+        port = _ctx(await _client(_recording(sent)), config).inference.model(
+            InferenceSpec(name=_ROUTE, input=_Wide, output=_Invoice)
+        )
+        await port.predict(_Wide(value="x", width=6))
+
+        assert sent[0]["messages"][-1]["content"] == "x     "
+
     @pytest.mark.asyncio
     async def test_a_format_spec_is_left_to_the_value_the_model_serializes(self) -> None:
         """Whether a spec renders depends on serializers the wiring check cannot see.

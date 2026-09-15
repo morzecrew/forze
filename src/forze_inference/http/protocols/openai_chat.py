@@ -136,34 +136,43 @@ class PromptTemplate:
 
         names: list[str] = []
         conversions: list[str] = []
+        pending = [self.template]
 
-        try:
-            # Materialized inside the guard: `parse` is a lazy iterator, and an unmatched
-            # brace raises `ValueError` mid-iteration — which would escape a route resolve
-            # as an unclassified failure rather than a named wiring refusal.
-            parsed = list(Formatter().parse(self.template))
+        while pending:
+            try:
+                # Materialized inside the guard: `parse` is a lazy iterator, and an
+                # unmatched brace raises `ValueError` mid-iteration — which would escape a
+                # route resolve as an unclassified failure rather than a named refusal.
+                parsed = list(Formatter().parse(pending.pop()))
 
-        except ValueError as e:
-            raise exc.configuration(
-                f"PromptTemplate template is not a valid format string ({e}); a literal "
-                "brace is written '{{' or '}}'."
-            ) from e
-
-        for _, field, _, conversion in parsed:
-            if conversion is not None:
-                conversions.append(conversion)
-
-            if field is None:
-                continue
-
-            if not field.isidentifier():
+            except ValueError as e:
                 raise exc.configuration(
-                    f"PromptTemplate slot {'{' + field + '}'!r} is not a plain field name; "
-                    "a slot names one input field, so positional and attribute or index "
-                    "access are refused."
-                )
+                    f"PromptTemplate template is not a valid format string ({e}); a literal "
+                    "brace is written '{{' or '}}'."
+                ) from e
 
-            names.append(field)
+            for _, field, format_spec, conversion in parsed:
+                if conversion is not None:
+                    conversions.append(conversion)
+
+                # A format spec may itself interpolate (`{value:{width}}`), and that inner
+                # field is bound from the same instance — so it is a slot too. Recorded
+                # rather than ignored: unrecorded, a spec naming a field the input model
+                # does not declare wired cleanly and failed on every request.
+                if format_spec:
+                    pending.append(format_spec)
+
+                if field is None:
+                    continue
+
+                if not field.isidentifier():
+                    raise exc.configuration(
+                        f"PromptTemplate slot {'{' + field + '}'!r} is not a plain field "
+                        "name; a slot names one input field, so positional and attribute "
+                        "or index access are refused."
+                    )
+
+                names.append(field)
 
         unknown = sorted(set(conversions) - _FORMAT_CONVERSIONS)
 
