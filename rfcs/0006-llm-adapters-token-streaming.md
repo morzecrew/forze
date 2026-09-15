@@ -1,6 +1,6 @@
 # RFC 0006 — LLM adapters + token streaming (the standalone LLM block)
 
-- **Status:** 🚧 In progress — **rewritten 2026-09-14**; the 2026-07 draft is superseded in full and §7 records what changed and why. Tier 0 is now **one wire protocol on the shipped inference-HTTP plane**, not two provider submodules with their own clients. Executes the inference seam's LLM direction (decision #18): LLM converges **in-area**; no parallel `contracts/llm`, ever. **P1 shipped 2026-09-16** (#439): the `openai_chat` dialect and `PromptTemplate` with their wiring refusals, `strict` structured outputs, the `inference_content_refused` row, usage as span attributes, a docs section, and `examples/recipes/llm_triage_dst/` — a simulation whose handler calls the seam and whose green run is backed by an ungoverned contrast, which is §1's hole closed and demonstrably so. Row 13 did not survive contact: Anthropic's compatibility endpoint **ignores** `response_format` rather than rejecting it, so the dialect covers it in `text` mode only (row 14) — row 3's gate still needs a named consumer before a native client is built. Departures and the audit are in [`logs/T-0006.md`](../logs/T-0006.md); rows 14–21 are the rows they proposed. **P2–P4 remain, all demand-gated.**
+- **Status:** 🚧 In progress — **rewritten 2026-09-14**; the 2026-07 draft is superseded in full and §7 records what changed and why. Tier 0 is now **one wire protocol on the shipped inference-HTTP plane**, not two provider submodules with their own clients. Executes the inference seam's LLM direction (decision #18): LLM converges **in-area**; no parallel `contracts/llm`, ever. **P1 shipped 2026-09-16** (#439): the `openai_chat` dialect and `PromptTemplate` with their wiring refusals, `strict` structured outputs, the `inference_content_refused` row, usage as span attributes, a docs section, and `examples/recipes/llm_triage_dst/` — a simulation whose handler calls the seam and whose green run is backed by an ungoverned contrast, which is §1's hole closed and demonstrably so. Row 13 did not survive contact: Anthropic's compatibility endpoint **ignores** `response_format` rather than rejecting it, so the dialect covers it in `text` mode only (row 14) — row 3's gate still needs a named consumer before a native client is built. Departures and the audit are in [`logs/T-0006.md`](../logs/T-0006.md); rows 14–21 are the rows they proposed. **P2 re-scoped 2026-09-16** (rows 22–25): the compatibility endpoint cannot carry a schema constraint at all — it ignores `response_format` *and* a tool's `strict`, and the provider's own page names the native API as the remedy — so P2 is a second **dialect** (`anthropic_messages`, native `/v1/messages`), not the native SDK client it used to be. That client is now P5 and stays gated, because row 3 always gated a *client* and a dialect is not one. **P2–P5 remain.**
 - **Scope:** Schema-constrained generation as ordinary inference, by teaching `forze_inference.http` one more dialect: an `openai_chat` `WireProtocol` plus **prompt-as-config** (the template is route wiring, exactly like procedure's SQL). No new package, no provider SDK, no provider-specific client code. Tier 1 — intra-response **token streaming** as an additive sibling port (`GenerationStreamPort`) — stays specified and demand-gated. Agent loops, conversation state, tool orchestration and prompt DSLs are permanently app/kits territory.
 - **Related:** the inference seam's LLM direction (tiers fixed 2026-07-13) and its locked decisions (all-or-nothing `predict_many`, `Out` model-only, egress-ack, capabilities). [`forze_inference/http/protocols/base.py`](../src/forze_inference/http/protocols/base.py) — the `WireProtocol` strategy this RFC extends (`kserve_v2` 171 lines, `mlflow` 52); [`configs.py`](../src/forze_inference/http/execution/deps/configs.py) — `HttpInferenceConfig.protocol`, its `wire_protocol()` factory, its `validate_against_spec` hook, and the egress acknowledgement it already enforces. [`MockInferenceAdapter`](../src/forze_mock/adapters/inference.py) — the simulated half of this seam, already shipped. Prompt-as-config precedent — [`procedure/specs.py`](../src/forze/application/contracts/procedure/specs.py). Delta delivery — the realtime egress plane ([realtime.md](../pages/docs/data-events/realtime.md)). [RFC 0022](0022-sensitive-egress-gate.md) (the egress marker, and the doctrine that forze owns no loop), [RFC 0023](0023-operation-tool-bridge.md) (the inbound half: an agent's tools are governed operations, proved under simulation).
 - **Origin:** the inference seam shipped classic-ML shapes first and fixed the LLM direction without building it. The motivating workload is the dominant *backend* LLM use: extraction, classification, scoring, routing, single-shot completion — typed `In → Out` where the model happens to be an LLM. A 2026-09-14 review asked whether that is worth building at all, given that the provider SDKs exist and are better than anything here could be. It is, for one reason that has nothing to do with protocol coverage (§1) — and at roughly a quarter of the original scope (§7).
@@ -113,7 +113,7 @@ No agent loops, no conversation or session state, no tool-call execution, no pro
 until a second dialect *forces* shared VOs, and no `contracts/llm` — every piece lands in
 `contracts/inference` or `forze_inference.http`. **And no second provider client**: a native
 Anthropic or OpenAI SDK adapter ships only if the compatibility endpoint provably fails a named
-consumer (§8 row 3), because a second client doubles the maintenance surface for coverage the first
+consumer (§8 rows 3, 22), because a second client doubles the maintenance surface for coverage the first
 one already has.
 
 ## 4. Tier 1 — token streaming (specified, demand-gated)
@@ -150,12 +150,15 @@ class GenerationStreamPort[In: BaseModel](BaseInferencePort, Protocol):
 | Phase | Deliverable |
 | --- | --- |
 | **P1** | `OpenAiChatProtocol` + `PromptTemplate` + the wiring checks (slots ⊆ input fields, schema-feature refusal, prompt-protocol pairing) + the refusal taxonomy row + unit tests over `httpx.MockTransport` + a simulated leg through `MockInferenceAdapter` + a docs section and recipe |
-| P2 *(demand-gated)* | A native provider client, only against a named consumer the compatibility endpoint fails |
+| **P2** | `AnthropicMessagesProtocol` (`protocol="anthropic_messages"`) over the native `/v1/messages`: structured outputs through `output_config.format`, the per-dialect schema-refusal split (row 23), a refusal read off `stop_reason` (row 24), unit tests over `httpx.MockTransport` shaped from the published field tables, and the docs' Anthropic paragraph rewritten. A third dialect on the shipped kernel client — no SDK, no client, no extra. Re-scoped 2026-09-16, row 22 |
 | P3 *(demand-gated)* | `GenerationDelta` + `GenerationStreamPort` + `token_stream` capability + `ctx.inference.generation`; protocol and mock streaming; realtime-egress recipe |
 | P4 *(deferred)* | Provider batch APIs vs [RFC 0004](0004-batch-inference-plane.md)'s ports — both providers' batch surfaces are inline-requests-plus-poll, a different shape from storage-location ports; investigate before mapping either way |
+| P5 *(demand-gated)* | A native provider client — the phase P2 used to be — only against a named consumer that no *dialect* can serve. What the compatibility endpoint failed at is reachable over the wire, so this now needs a gap in the provider's own HTTP API rather than in one endpoint of it |
 
-P1 adds no extra and no package: the dialect rides `inference-http`. Only P2 would bring a new extra,
-with the usual registration mechanics (pyproject, import-linter, vulture/deptry, changelog, docs).
+P1 and P2 add no extra and no package: both dialects ride `inference-http`, and the kernel client
+already takes arbitrary default headers, so `x-api-key` and `anthropic-version` are wiring rather
+than client code. Only P5 would bring a new extra, with the usual registration mechanics
+(pyproject, import-linter, vulture/deptry, changelog, docs).
 
 ## 6. Acceptance
 
@@ -170,6 +173,18 @@ P1 is done when, and only when:
 4. A simulation drives an operation whose handler calls the seam, through `MockInferenceAdapter`, and
    the run reproduces from its seed — the hole in §1 is closed, and demonstrably so.
 5. The docs section says plainly when to use the vendor SDK instead (§1, last paragraph).
+
+P2 is done when:
+
+1. A route declared `protocol="anthropic_messages"` answers `ctx.inference.model(spec).predict(...)`
+   with a validated `Out` in **structured** mode, against `httpx.MockTransport`.
+2. The refusal set is the dialect's own, asserted in both directions from one output model: a field
+   the chat dialect refuses for a keyword Anthropic accepts — a string `format`, an `anyOf`, a
+   defaulted field — wires clean here and is still refused there.
+3. A `stop_reason` of `refusal` maps to `precondition` / `inference_content_refused`, and one of
+   `max_tokens` is refused as a truncated completion, as the chat dialect already does.
+4. The docs' Anthropic paragraph names the dialect instead of the text-mode-only limitation, and
+   still says where a vendor SDK is the better tool.
 
 ## 7. What the 2026-07 draft said, and what changed
 
@@ -201,14 +216,15 @@ to be reconstructed from the diff. The table below is renumbered and, for the fi
 ## 8. Decisions
 
 *Rows 1–13 are the design's. Rows 14–21 were proposed by execution and each cites the log entry
-that produced it; row 13 is superseded by the first of them. The table is append-only — a
-superseded row stays, because it is the record that the design once believed otherwise.*
+that produced it; row 13 is superseded by the first of them. Rows 22–25 are the design's again —
+P2 re-scoped against what row 14 turned up. The table is append-only: a superseded row stays,
+because it is the record that the design once believed otherwise.*
 
 | # | Decision | Grade |
 | --- | --- | --- |
 | 1 | Tier 0 is adapter-only; prompt-as-config with fail-closed slot and schema validation at wiring | `LOCKED` |
 | 2 | Tier 0 ships as one `WireProtocol` (`protocol="openai_chat"`) inside `forze_inference.http` — no new submodule, no new client, no new extra | `LOCKED` |
-| 3 | No second provider client until a named consumer proves the compatibility endpoint insufficient; the first such failure is what opens P2 | `LOCKED` |
+| 3 | ~~No second provider client until a named consumer proves the compatibility endpoint insufficient; the first such failure is what opens P2~~ — **superseded by row 22**: what the endpoint failed at is a dialect's job, and the gate is narrowed to the client it always named | `LOCKED` |
 | 4 | Prompt configuration is a nested `PromptTemplate`, required iff the protocol is `openai_chat` and refused otherwise | `ASSUMED` |
 | 5 | Structured mode derives the provider constraint from `spec.output`'s JSON schema; text mode requires the one-field-`str` output model | `LOCKED` |
 | 6 | Sampling, effort and model parameters are config, never per-call options | `LOCKED` |
@@ -227,3 +243,7 @@ superseded row stays, because it is the record that the design once believed oth
 | 19 | Amends §2.3's "auth" clause rather than the code: the shipped kernel client maps 401/403 to `infrastructure`/`inference_endpoint_unavailable` and only 404 to `configuration`/`inference_route_mismatch`. An upstream auth refusal is a deployment fault — an expired service credential, a WAF rule — and classifying it as a caller error would surface a permanent 422 with no 5xx alert and no retry for something an operator must fix. The dialect adds no mapping of its own. Added by execution 2026-09-16 — see `logs/T-0006.md` (Unlisted, 16:44Z) | `ASSUMED` |
 | 20 | Amends §2.2's promise that `validate_against_spec` carries the whole prompt check: only the **value-independent** part is checked at wiring — slots against the input model's fields, and conversions (`!r`, `!z`) for every field type. A **format spec** is not checked at wiring at all, because the declared type does not determine what `str.format` receives (a `Decimal` crosses as a string by default and as a number with a `field_serializer`, same annotation either way); `encode_request` classifies a render failure as `configuration` so the residual failure names the route instead of escaping as a bare `ValueError`. A validation probe that invents its own input is testing itself. Added by execution 2026-09-16 — see `logs/T-0006.md` (Review round 4) | `LOCKED` |
 | 21 | A nested format-spec field — `{text:>{width}}` — is **refused at wiring**, not validated. `width` binds from the input instance, which is caller data, and `str.format` sizes an allocation from it: a width of 5,000,000 builds a five-megabyte prompt and 10\*\*10 asks the process for ten gigabytes before any transport limit applies. A prompt is text for a model, not a report column, so a static width is the whole requirement. Added by execution 2026-09-16 — see `logs/T-0006.md` (Review round 7) | `LOCKED` |
+| 22 | **A second dialect is not a second client.** P2 becomes `anthropic_messages` — a third `WireProtocol` over the native `/v1/messages`, on the same kernel client, config, taxonomy and adapter — and it is *not* demand-gated. The compatibility endpoint carries no schema constraint at all: it ignores `response_format`, ignores a tool's `strict`, and its own page says "For JSON output, use Structured Outputs with the native Claude API", so typed `In → Out` — the plane's whole promise — is unreachable there for one provider (row 14). Row 3's gate survives for what it named: a native **SDK client** is P5, and now needs a gap in the provider's HTTP API rather than in one endpoint of it. Verified 2026-09-16 against `docs.claude.com/en/api/openai-sdk` | `LOCKED` |
+| 23 | Which schema keywords are refused is **the dialect's**, not the plane's. Anthropic's accepted set is strictly wider than OpenAI strict mode's — `anyOf`, `allOf` without `$ref`, `$ref`/`$defs`, `default` on every supported type, string formats (`date-time`, `date`, `email`, `uri`), `enum` — while both require every object closed to extra properties. One shared refusal set could only be the intersection (refusing models Anthropic serves) or the union (sending OpenAI schemas it rejects at request time), so P2 moves the refusal set behind the protocol and P1's checks become the chat dialect's own | `ASSUMED` |
+| 24 | The native dialect reads a refusal off `stop_reason == "refusal"` — a first-class value carrying a `RefusalStopDetails.category` from a closed policy vocabulary, rather than the chat dialect's two-shape heuristic (row 17) — and maps it to row 8's code. Whether that category travels anywhere (error detail, span attribute, or nowhere, as the provider's refusal wording is withheld today) is delegated to implementation | `OPEN` |
+| 25 | Two request-shape facts are believed rather than verified, and they are row 13's class: that `max_tokens` is required on `/v1/messages`, and that the constraint should be sent as `output_config.format` while the older `output_format` is still accepted. Both are checked at execution against the live reference, and a departure is logged rather than absorbed | `ASSUMED` |
