@@ -99,6 +99,29 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        self._validate_vocabulary()
+        self._validate_limits()
+
+        # Sensitivity is not a choice here: a served model needs real values, so a route
+        # always carries them out. The shared gate is called with that fixed, which is why
+        # this config exposes no `egress_sensitive` knob to turn it off.
+        require_egress_acknowledged(
+            subject="HttpInferenceConfig",
+            detail=(
+                "this route sends feature values in plaintext to an external endpoint, "
+                "and the operator must state that consciously."
+            ),
+            egress_sensitive=True,
+            acknowledged=self.acknowledge_data_egress,
+        )
+
+        self._validate_dialect_pairing()
+
+    # ....................... #
+
+    def _validate_vocabulary(self) -> None:
+        """The two closed sets `attrs` does not enforce at runtime."""
+
         if self.protocol not in _PROTOCOL_NAMES:
             raise exc.configuration(
                 f"HttpInferenceConfig.protocol={self.protocol!r} is not a wire dialect this "
@@ -110,6 +133,11 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                 f"HttpInferenceConfig.output_mode={self.output_mode!r} is not a generation "
                 f"mode; choose one of {', '.join(sorted(_OUTPUT_MODES))}."
             )
+
+    # ....................... #
+
+    def _validate_limits(self) -> None:
+        """Numeric bounds, each refused at wiring rather than by the endpoint."""
 
         # Both are sent to the provider verbatim, and both have a value the endpoint
         # rejects: a rejection then reaches the caller as a wire mismatch, after the
@@ -136,19 +164,9 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
                 "least 1; omit it (None) for an endpoint with no batch limit."
             )
 
-        # Sensitivity is not a choice here: a served model needs real values, so a route
-        # always carries them out. The shared gate is called with that fixed, which is why
-        # this config exposes no `egress_sensitive` knob to turn it off.
-        require_egress_acknowledged(
-            subject="HttpInferenceConfig",
-            detail=(
-                "this route sends feature values in plaintext to an external endpoint, "
-                "and the operator must state that consciously."
-            ),
-            egress_sensitive=True,
-            acknowledged=self.acknowledge_data_egress,
-        )
+    # ....................... #
 
+    def _validate_dialect_pairing(self) -> None:
         # Fail-closed in both directions. A chat route with no prompt has nothing to ask
         # the model; a prompt on a scoring route is a field nothing reads, and an ignored
         # field is indistinguishable from an applied one from the outside.

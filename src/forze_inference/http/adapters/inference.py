@@ -141,8 +141,31 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
 
     # ....................... #
 
-    async def _score(self, prepared: Sequence[In]) -> Sequence[Out]:
-        """Score one already-validated, already-capped batch over one or more wire calls."""
+    @staticmethod
+    def _record_usage(usage: Mapping[str, int]) -> None:
+        """Put what one port call spent on whichever span is current.
+
+        The port's CLIENT span where per-port spans are on, the enclosing operation span
+        otherwise, and dropped by a non-recording span. Called once per port call rather
+        than once per wire call, because a span attribute is overwritten rather than
+        accumulated: a stream of three chunks would otherwise report its last chunk.
+        """
+
+        if not usage:
+            return
+
+        span = trace.get_current_span()
+
+        for attribute, total in usage.items():
+            span.set_attribute(attribute, total)
+
+    # ....................... #
+
+    async def _score(self, prepared: Sequence[In], usage: dict[str, int]) -> Sequence[Out]:
+        """Score one already-validated, already-capped batch over one or more wire calls.
+
+        *usage* accumulates across the whole port call; the caller records it.
+        """
 
         # Before the model name, not after: resolving it can call an application's tenant
         # resolver, and this code's refusal promises that nothing ran and nothing was
@@ -169,26 +192,9 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
         )
 
         records: list[Mapping[str, Any]] = []
-        usage: dict[str, int] = {}
 
-        try:
-            for group in groups:
-                records.extend(await self._wire_call(group, model_name=model_name, usage=usage))
-
-        finally:
-            # In a `finally` because a fan-out that fails half way has still spent what its
-            # earlier requests consumed, and losing the count exactly when something went
-            # wrong is losing it when it matters. Summed and set once, so the attribute
-            # reports the port call rather than its last request; it lands on whichever span
-            # is current — the port's CLIENT span where per-port spans are on, the operation
-            # span otherwise — and a non-recording span drops it. Nothing here can outrank
-            # the outcome: `set_attribute` on a live or a no-op span does not raise for the
-            # ints this collects.
-            if usage:
-                span = trace.get_current_span()
-
-                for attribute, total in usage.items():
-                    span.set_attribute(attribute, total)
+        for group in groups:
+            records.extend(await self._wire_call(group, model_name=model_name, usage=usage))
 
         return shape_outputs(
             self.spec,
@@ -227,8 +233,18 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
             backend=self.config.protocol,
         )
 
-        with bind_run_options(options):
-            return await self._score(prepared)
+        usage: dict[str, int] = {}
+
+        # In a `finally` because a fan-out that fails half way has still spent what its
+        # earlier requests consumed, and losing the count exactly when something went wrong
+        # is losing it when it matters. Nothing here can outrank the outcome:
+        # `set_attribute` does not raise for the ints this collects.
+        try:
+            with bind_run_options(options):
+                return await self._score(prepared, usage)
+
+        finally:
+            self._record_usage(usage)
 
     # ....................... #
 
@@ -247,26 +263,47 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
             backend=self.config.protocol,
         )
 
-        async for chunk in instances:
-            prepared = validated_instances(self.spec, chunk)
+        # One accumulator for the whole stream: the attribute is overwritten rather than
+        # summed, so recording per chunk would report only the last one. The `finally`
+        # covers an abandoned generator too, which is closed rather than exhausted.
+        usage: dict[str, int] = {}
 
-            if not prepared:
-                yield []
-                continue
+        try:
+            async for chunk in instances:
+                yield await self._score_chunk(chunk, options=options, usage=usage, cap=wire_cap)
 
-            # The per-call deadline covers the wire calls only. Yielding inside the bound
-            # context would charge the consumer's own processing time to the model's
-            # budget, and would reset the deadline token from whatever context finalizes
-            # the generator if the consumer abandons it mid-stream.
-            scored: list[Out]
+        finally:
+            self._record_usage(usage)
 
-            with bind_run_options(options):
-                if wire_cap is None:
-                    scored = list(await self._score(prepared))
-                else:
-                    scored = []
+    # ....................... #
 
-                    for sub_batch in batched(prepared, wire_cap, strict=False):
-                        scored.extend(await self._score(list(sub_batch)))
+    async def _score_chunk(
+        self,
+        chunk: Sequence[In],
+        *,
+        options: InferenceRunOptions | None,
+        usage: dict[str, int],
+        cap: int | None,
+    ) -> list[Out]:
+        """One yielded chunk of a stream: validate, sub-batch to *cap*, score."""
 
-            yield scored
+        prepared = validated_instances(self.spec, chunk)
+
+        if not prepared:
+            return []
+
+        # The per-call deadline covers the wire calls only. Yielding inside the bound
+        # context would charge the consumer's own processing time to the model's budget,
+        # and would reset the deadline token from whatever context finalizes the generator
+        # if the consumer abandons it mid-stream — which is why the scoring is a method
+        # the generator awaits rather than a block it yields inside.
+        scored: list[Out] = []
+
+        with bind_run_options(options):
+            if cap is None:
+                return list(await self._score(prepared, usage))
+
+            for sub_batch in batched(prepared, cap, strict=False):
+                scored.extend(await self._score(list(sub_batch), usage))
+
+        return scored

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import date, timedelta
 from typing import Any, cast, final
 
@@ -520,6 +520,72 @@ class TestUsageTelemetry:
         attributes = exporter.get_finished_spans()[0].attributes or {}
 
         assert attributes[USAGE_INPUT_TOKENS_ATTRIBUTE] == 7
+
+    @pytest.mark.asyncio
+    async def test_a_stream_reports_what_the_whole_stream_spent(self) -> None:
+        """A span attribute is overwritten, not accumulated.
+
+        `predict_stream` scores each chunk separately, so recording per chunk left the
+        span reporting only the last one — the same defect as the per-request write, one
+        level up.
+        """
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_completion(
+                    '{"number": "a", "total": 1.0}',
+                    usage={"prompt_tokens": 5, "completion_tokens": 1},
+                ),
+            )
+
+        async def chunks() -> AsyncIterator[Sequence[_Document]]:
+            yield [_Document(text="a"), _Document(text="b")]
+            yield [_Document(text="c")]
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with provider.get_tracer("test").start_as_current_span("op"):
+            async for _ in port.predict_stream(chunks()):
+                pass
+
+        attributes = exporter.get_finished_spans()[0].attributes or {}
+
+        # Three instances, three requests, five prompt tokens each.
+        assert attributes[USAGE_INPUT_TOKENS_ATTRIBUTE] == 15
+
+    @pytest.mark.asyncio
+    async def test_an_abandoned_stream_still_reports_what_it_spent(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=_completion(
+                    '{"number": "a", "total": 1.0}',
+                    usage={"prompt_tokens": 4, "completion_tokens": 1},
+                ),
+            )
+
+        async def chunks() -> AsyncIterator[Sequence[_Document]]:
+            yield [_Document(text="a")]
+            yield [_Document(text="b")]  # pragma: no cover - never requested
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with provider.get_tracer("test").start_as_current_span("op"):
+            stream = port.predict_stream(chunks())
+            await anext(stream)
+            # A consumer that walks away: the generator is closed, not exhausted.
+            await stream.aclose()
+
+        attributes = exporter.get_finished_spans()[0].attributes or {}
+
+        assert attributes[USAGE_INPUT_TOKENS_ATTRIBUTE] == 4
 
     @pytest.mark.asyncio
     async def test_a_provider_reporting_no_usage_leaves_no_attribute(self) -> None:
