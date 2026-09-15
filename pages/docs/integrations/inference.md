@@ -59,7 +59,7 @@ database. A `tenant_aware=True` route with no bound tenant fails closed
 ## Generation (`openai_chat`)
 
 The third dialect covers anything speaking `/v1/chat/completions` — OpenAI, vLLM,
-Ollama, LM Studio, TGI, Groq, OpenRouter, Azure, Together. One dialect, no
+Ollama, LM Studio, TGI, Groq, OpenRouter, Together. One dialect, no
 provider SDK, no second client: a generative call is an inference route, so it
 carries the enclosing operation's deadline, the route's tenant and credentials,
 the egress declaration, the resilience policy — and it can be simulated, which a
@@ -105,7 +105,11 @@ module = HttpInferenceDepsModule(
 ```
 
 Point the lifecycle step at the server **root** (`https://api.openai.com`,
-`http://vllm:8000`) — the dialect owns the `/v1/chat/completions` path.
+`http://vllm:8000`) — the dialect owns the `/v1/chat/completions` path. Azure
+OpenAI's classic per-deployment URLs
+(`/openai/deployments/{deployment}/chat/completions?api-version=…`) are not that
+shape and this dialect does not serve them; its newer `/openai/v1` surface is,
+with the base URL carrying `/openai`.
 
 **The prompt is wiring.** A handler calls
 `ctx.inference.model(TRIAGE).predict(TicketText(text=...))` and gets a `Triage`;
@@ -131,6 +135,11 @@ difference fails **at wiring**, naming every offending field:
   absent, so the default is unreachable — and forcing the model to fill it would
   make it invent a value. Declare `T | None` (with no default) for something the
   model may not know, and it must answer `null` explicitly.
+- A **mapping** field (`dict[str, int]`) is refused: the constraint cannot
+  express dynamic keys. So is a **non-object root** (a `RootModel`, or a
+  root-level union) — wrap it in a model with one field. And the output model's
+  own name is sent as the constraint's name, so it must be ASCII letters,
+  digits, underscore or dash, at most 64 characters.
 - Value constraints (`format`, `pattern`, `max_length`, `ge`/`le`, …) are
   refused, because the provider does not enforce them. A `datetime` or `EmailStr`
   field emits `format` — use `str` and validate after, or drop the constraint.
@@ -154,8 +163,12 @@ with the completion prose; any other output model is refused at wiring.
   accounting does not belong in every handler's return type.
 - **A safety refusal is not a wire defect.** A provider declining on content
   grounds raises `precondition` (`inference_content_refused`), non-retryable,
-  whether it says so in `message.refusal` or in `finish_reason`. A truncated
-  completion says which knob to raise.
+  whether it says so in `message.refusal` or in `finish_reason`.
+- **A truncated completion is refused, not returned.** A completion the provider
+  cut off at the token ceiling raises `inference_output_mismatch` naming
+  `max_output_tokens`, in both modes — it can still parse as JSON or read as
+  prose, so returning it would hand back a half answer the caller cannot tell
+  from a whole one.
 - **Anthropic: `text` mode only.** Its OpenAI-compatibility endpoint *ignores*
   `response_format` rather than rejecting it, so a structured route there answers
   with prose and fails at the output boundary. Use the native API for Claude's

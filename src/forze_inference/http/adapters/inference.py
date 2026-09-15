@@ -60,6 +60,21 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
     # ....................... #
 
     @property
+    def _instances_per_request(self) -> int | None:
+        """What the dialect carries per request, or ``None`` for a whole batch.
+
+        Read with a fallback rather than off the attribute, because ``WireProtocol`` is a
+        public extension point and a dialect written against its earlier shape declares
+        neither member. ``None`` *is* that shape's semantics — its ``encode_request`` took
+        the whole batch — so an existing custom dialect keeps serving instead of raising
+        ``AttributeError`` before a request is even made.
+        """
+
+        return getattr(self.protocol, "instances_per_request", None)
+
+    # ....................... #
+
+    @property
     def inference_capabilities(self) -> InferenceCapabilities:
         return attrs.evolve(
             DEFAULT_INFERENCE_CAPABILITIES,
@@ -67,7 +82,7 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
             # request per instance is not. Declaring it unconditionally would leave the
             # capability claiming a batch call the wire never makes, and the in-memory
             # oracle mirrors this declaration to refuse where a deployment would.
-            native_batch=self.protocol.instances_per_request is None,
+            native_batch=self._instances_per_request is None,
             supports_stream=True,
             max_batch_size=self.config.max_batch_size,
             deterministic=self.config.deterministic,
@@ -111,7 +126,11 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
             timeout=remaining_time(),
         )
 
-        for attribute, value in self.protocol.usage_attributes(response).items():
+        # Same fallback as the batch declaration: a dialect from before this member
+        # reports no usage rather than failing the call.
+        report = getattr(self.protocol, "usage_attributes", None)
+
+        for attribute, value in (report(response) if report is not None else {}).items():
             usage[attribute] = usage.get(attribute, 0) + value
 
         return self.protocol.decode_response(
@@ -125,8 +144,14 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
     async def _score(self, prepared: Sequence[In]) -> Sequence[Out]:
         """Score one already-validated, already-capped batch over one or more wire calls."""
 
+        # Before the model name, not after: resolving it can call an application's tenant
+        # resolver, and this code's refusal promises that nothing ran and nothing was
+        # billed. The per-request check inside the loop is the one that stops a fan-out
+        # part way; this one is what keeps that promise for the first request.
+        ensure_budget(backend=self.config.protocol)
+
         model_name = await self._model_name()
-        per_request = self.protocol.instances_per_request
+        per_request = self._instances_per_request
 
         # `itertools.batched` raises a bare ValueError below 1, and a dialect declaring 0
         # can serve nothing at all — refused by name, the way the per-call batch hint is.

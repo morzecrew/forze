@@ -1,6 +1,6 @@
 """Route configs for served-model inference over HTTP."""
 
-from typing import Any, Literal, final
+from typing import Any, Literal, final, get_args
 
 import attrs
 
@@ -27,6 +27,13 @@ from ...protocols import (
 
 InferenceWireProtocolName = Literal["kserve_v2", "mlflow", "openai_chat"]
 """Supported serving dialects (JSON-record scope)."""
+
+_PROTOCOL_NAMES = frozenset(get_args(InferenceWireProtocolName))
+_OUTPUT_MODES = frozenset(get_args(InferenceOutputMode))
+"""The closed sets behind the two literal annotations, read off the aliases so they cannot
+drift. `attrs` does not enforce a `Literal` at runtime, and neither value fails loudly on
+its own: an unknown protocol reaches `wire_protocol()` as an internal error, and an unknown
+output mode makes the encoder send no constraint while the decoder still expects JSON."""
 
 _GENERATION_FIELDS = ("prompt", "output_mode", "temperature", "max_output_tokens")
 """Fields only the ``openai_chat`` dialect reads. Refused on the others rather than
@@ -92,6 +99,34 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.protocol not in _PROTOCOL_NAMES:
+            raise exc.configuration(
+                f"HttpInferenceConfig.protocol={self.protocol!r} is not a wire dialect this "
+                f"plane speaks; choose one of {', '.join(sorted(_PROTOCOL_NAMES))}."
+            )
+
+        if self.output_mode is not None and self.output_mode not in _OUTPUT_MODES:
+            raise exc.configuration(
+                f"HttpInferenceConfig.output_mode={self.output_mode!r} is not a generation "
+                f"mode; choose one of {', '.join(sorted(_OUTPUT_MODES))}."
+            )
+
+        # Both are sent to the provider verbatim, and both have a value the endpoint
+        # rejects: a rejection then reaches the caller as a wire mismatch, after the
+        # request was made. Refused at wiring, the way the batch cap is.
+        if self.max_output_tokens is not None and self.max_output_tokens < 1:
+            raise exc.configuration(
+                f"HttpInferenceConfig.max_output_tokens={self.max_output_tokens} must be at "
+                "least 1; omit it to leave the ceiling to the endpoint."
+            )
+
+        if self.temperature is not None and self.temperature < 0:
+            raise exc.configuration(
+                f"HttpInferenceConfig.temperature={self.temperature} must not be negative. "
+                "The upper bound is the provider's (2 for OpenAI, 1 for Anthropic) and is "
+                "not checked here."
+            )
+
         # Caught here rather than at the first stream call: a cap below 1 makes
         # predict_many refuse everything and predict_stream have no servable sub-batch,
         # so it is a wiring mistake and should cost a boot, not a request.

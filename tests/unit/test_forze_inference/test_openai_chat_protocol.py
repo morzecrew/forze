@@ -6,7 +6,7 @@ import json
 import time
 from collections.abc import Mapping, Sequence
 from datetime import date, timedelta
-from typing import Any, final
+from typing import Any, cast, final
 
 import attrs
 import httpx
@@ -14,7 +14,7 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 
 from forze.application.contracts.inference import InferenceSpec
 from forze.application.execution import ExecutionContext
@@ -28,6 +28,7 @@ from forze_inference.http import (
     KserveV2Protocol,
     MlflowProtocol,
     PromptTemplate,
+    WireProtocol,
 )
 from forze_inference.http.protocols.openai_chat import (
     CONTENT_REFUSED_CODE,
@@ -265,6 +266,31 @@ class TestOneRequestPerInstance:
         assert sent == []
 
     @pytest.mark.asyncio
+    async def test_a_spent_budget_does_not_even_resolve_the_model_name(self) -> None:
+        """The refusal promises nothing ran and nothing was billed.
+
+        Resolving a per-tenant model name calls an application's own resolver, so doing it
+        before the check breaks that promise for work the app can see.
+        """
+
+        resolved: list[str | None] = []
+
+        def resolver(tenant_id: str | None) -> str:
+            resolved.append(tenant_id)
+
+            return "gpt-5"
+
+        sent: list[dict[str, Any]] = []
+        config = _config(model_name=resolver)
+        port = _ctx(await _client(_recording(sent)), config).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="a"), options={"timeout": timedelta(seconds=0)})
+
+        assert ei.value.code == "inference_budget_exhausted"
+        assert (resolved, sent) == ([], [])
+
+    @pytest.mark.asyncio
     async def test_a_budget_that_dies_mid_fan_out_stops_the_rest(self) -> None:
         """The check is per request, not per port call.
 
@@ -296,6 +322,34 @@ class TestOneRequestPerInstance:
 
 
 # ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _LegacyDialect:
+    """The `WireProtocol` shape from before `instances_per_request` and `usage_attributes`."""
+
+    def encode_request(
+        self,
+        spec: InferenceSpec[Any, Any],
+        instances: Sequence[BaseModel],
+        *,
+        model_name: str,
+    ) -> tuple[str, dict[str, Any]]:
+        _ = (spec, model_name)
+
+        return ("/v1/chat/completions", {"instances": [i.model_dump() for i in instances]})
+
+    def decode_response(
+        self,
+        spec: InferenceSpec[Any, Any],
+        body: Mapping[str, Any],
+        *,
+        expected: int,
+    ) -> Sequence[Mapping[str, Any]]:
+        _ = (spec, body)
+
+        return [{"number": "legacy", "total": 1.0} for _ in range(expected)]
 
 
 @final
@@ -360,6 +414,45 @@ class TestADialectThatCarriesNoInstance:
 
         assert ei.value.kind == "configuration"
         assert "instances_per_request=0" in str(ei.value)
+
+
+# ....................... #
+
+
+class TestADialectFromBeforeTheseMembers:
+    """`WireProtocol` is a public extension point, so a custom dialect predating the two
+    new members must keep serving rather than raising `AttributeError` before any request.
+
+    `None` and no usage are that shape's own semantics: its `encode_request` took the whole
+    batch, and it reported no token counts.
+    """
+
+    @staticmethod
+    async def _legacy_port() -> Any:
+        from forze_inference.http import HttpInferenceAdapter
+
+        config = _config()
+
+        return HttpInferenceAdapter(
+            spec=_spec(),
+            client=await _client(_answers('{"number": "legacy", "total": 1.0}')),
+            config=config,
+            # Cast deliberately: the annotation requires the two new members, and the
+            # point of the test is that the adapter tolerates a dialect without them.
+            protocol=cast(WireProtocol, _LegacyDialect()),
+        )
+
+    @pytest.mark.asyncio
+    async def test_it_still_serves_a_prediction(self) -> None:
+        port = await self._legacy_port()
+
+        assert (await port.predict(_Document(text="x"))).number == "legacy"
+
+    @pytest.mark.asyncio
+    async def test_it_is_read_as_carrying_a_whole_batch(self) -> None:
+        port = await self._legacy_port()
+
+        assert port.inference_capabilities.native_batch is True
 
 
 # ....................... #
@@ -618,6 +711,154 @@ class TestWiringRefusals:
 # ....................... #
 
 
+class TestWhatTheConstraintCannotExpress:
+    """Every shape the strict constraint cannot carry is refused at wiring.
+
+    Each of these otherwise reaches the provider: some as a request it rejects, and the
+    mapping field as a constraint that silently permits nothing but an empty object.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_mapping_field_is_refused_rather_than_closed(self) -> None:
+        class _WithCounts(BaseModel):
+            counts: dict[str, int]
+
+        ctx = _ctx(await _client(_answers("{}")), _config())
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(_spec(_WithCounts))
+
+        # Pydantic spells `dict[str, V]` as a schema-valued `additionalProperties`, which
+        # the tightening would overwrite with `false` — a constraint permitting only `{}`.
+        assert "counts: additionalProperties" in str(ei.value)
+        assert ei.value.kind == "configuration"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("root", [list[str], float])
+    async def test_a_non_object_root_is_refused(self, root: Any) -> None:
+        class _Rooted(RootModel[root]):  # type: ignore[valid-type]
+            pass
+
+        ctx = _ctx(await _client(_answers("{}")), _config())
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(_spec(_Rooted))
+
+        assert "<root>: type=" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_a_root_level_union_is_refused(self) -> None:
+        class _Either(RootModel[int | str]):
+            pass
+
+        ctx = _ctx(await _client(_answers("{}")), _config())
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(_spec(_Either))
+
+        assert "<root>: anyOf" in str(ei.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["Café", "A" * 65])
+    async def test_an_output_model_the_provider_cannot_name_is_refused(self, name: str) -> None:
+        """The constraint is named after the output model, and a Python identifier is not a
+        subset of the provider's grammar: identifiers may be Unicode and of any length."""
+
+        model = type(name, (BaseModel,), {"__annotations__": {"a": str}})
+        ctx = _ctx(await _client(_answers("{}")), _config())
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(_spec(model))
+
+        assert "not a name the provider accepts" in str(ei.value)
+
+
+# ....................... #
+
+
+class TestTheRouteRefusesAValueTheProviderWould:
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("max_output_tokens", 0), ("max_output_tokens", -1), ("temperature", -0.5)],
+    )
+    def test_a_generation_limit_the_endpoint_rejects(self, field: str, value: Any) -> None:
+        with pytest.raises(CoreException) as ei:
+            _config(**{field: value})
+
+        assert field in str(ei.value)
+        assert ei.value.kind == "configuration"
+
+    @pytest.mark.parametrize("protocol", ["openai-chat", "gpt", ""])
+    def test_a_protocol_outside_the_closed_set(self, protocol: str) -> None:
+        """`attrs` does not enforce the literal, and an unknown value reached
+        `wire_protocol()` as an internal error rather than a wiring refusal."""
+
+        with pytest.raises(CoreException) as ei:
+            HttpInferenceConfig(
+                protocol=protocol,  # type: ignore[arg-type]
+                model_name="m",
+                acknowledge_data_egress=True,
+            )
+
+        assert ei.value.kind == "configuration"
+        assert "not a wire dialect" in str(ei.value)
+
+    @pytest.mark.parametrize("mode", ["Text", "json", "structured "])
+    def test_an_output_mode_outside_the_closed_set(self, mode: str) -> None:
+        """A misspelling is the worst case, not the loudest: the encoder would send no
+        constraint (the value is not `structured`) while the decoder still expected JSON
+        (the value is not `text`)."""
+
+        with pytest.raises(CoreException) as ei:
+            _config(output_mode=mode)
+
+        assert ei.value.kind == "configuration"
+        assert "not a generation mode" in str(ei.value)
+
+
+# ....................... #
+
+
+class TestATemplateThatCannotRender:
+    @pytest.mark.parametrize("template", ["{text", "text}", "{text}}{"])
+    def test_an_unparseable_template_is_a_configuration_refusal(self, template: str) -> None:
+        """`Formatter().parse` is lazy, so the `ValueError` used to escape a route resolve
+        as an unclassified failure."""
+
+        with pytest.raises(CoreException) as ei:
+            _ = PromptTemplate(template=template).slots
+
+        assert ei.value.kind == "configuration"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("template", ["{text!z}", "{text:invalid}"])
+    async def test_a_modifier_str_format_rejects_is_refused_at_wiring(
+        self,
+        template: str,
+    ) -> None:
+        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt(template)))
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(_spec())
+
+        assert ei.value.kind == "configuration"
+        assert "cannot be rendered" in str(ei.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("template", ["{text!r}", "{text:>10}", "{text!s:^20}"])
+    async def test_a_modifier_str_format_accepts_still_works(self, template: str) -> None:
+        # The refusal above must not become a ban on conversions and format specs: these
+        # render fine, and a route using one is not a wiring mistake.
+        sent: list[dict[str, Any]] = []
+        ctx = _ctx(await _client(_recording(sent)), _config(prompt=_prompt(template)))
+        await ctx.inference.model(_spec()).predict(_Document(text="x"))
+
+        assert len(sent) == 1
+
+
+# ....................... #
+
+
 class TestTheDialectsOwnInvariants:
     """Reachable by a caller using the dialect directly — the adapter cannot produce them.
 
@@ -752,15 +993,49 @@ class TestErrorTaxonomy:
         assert "did not honour the structured constraint" in str(ei.value)
 
     @pytest.mark.asyncio
-    async def test_a_truncated_completion_says_which_knob_to_raise(self) -> None:
+    @pytest.mark.parametrize(
+        "content",
+        [
+            '{"number": "INV-7", "tot',  # cut mid-token
+            '{"number": "a", "total": 1.0}',  # cut at a boundary: still parses
+        ],
+    )
+    async def test_a_truncated_completion_is_refused_even_when_it_parses(
+        self,
+        content: str,
+    ) -> None:
+        """A completion cut off at the ceiling is an incomplete answer either way.
+
+        Refusing only the unparseable half would hand back a validated `Out` built from a
+        partial answer the caller cannot tell from a whole one.
+        """
+
         handler = _answers(
-            '{"number": "INV-7", "tot',
+            content,
             choice={
-                "message": {"role": "assistant", "content": '{"number": "INV-7", "tot'},
+                "message": {"role": "assistant", "content": content},
                 "finish_reason": "length",
             },
         )
         port = _ctx(await _client(handler), _config()).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert (ei.value.kind, ei.value.code) == ("validation", "inference_output_mismatch")
+        assert "max_output_tokens" in str(ei.value)
+
+    @pytest.mark.asyncio
+    async def test_truncated_prose_is_refused_in_text_mode_too(self) -> None:
+        handler = _answers(
+            "the answer is cut off mid-",
+            choice={
+                "message": {"role": "assistant", "content": "the answer is cut off mid-"},
+                "finish_reason": "length",
+            },
+        )
+        config = _config(output_mode="text")
+        port = _ctx(await _client(handler), config).inference.model(_spec(_Completion))
 
         with pytest.raises(CoreException) as ei:
             await port.predict(_Document(text="x"))

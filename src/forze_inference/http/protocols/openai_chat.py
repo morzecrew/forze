@@ -18,6 +18,7 @@ into sequential calls.
 """
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from string import Formatter
 from typing import Any, Final, Literal, cast, final
@@ -57,6 +58,11 @@ live in these two constants and nowhere else."""
 InferenceOutputMode = Literal["structured", "text"]
 """``structured`` constrains the completion to the output model's JSON schema; ``text``
 takes the completion prose into a one-field ``str`` output model."""
+
+_SCHEMA_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+"""What the provider accepts as a ``json_schema.name``. A Python class name is not a
+subset of it: identifiers may be Unicode (``class Café``) and of any length, and a
+generic's ``__name__`` carries brackets."""
 
 _REFUSED_SCHEMA_KEYWORDS: Final[frozenset[str]] = frozenset(
     {
@@ -124,12 +130,25 @@ class PromptTemplate:
 
         :raises CoreException: ``configuration`` for a slot that is not a plain field name
             — positional (``{}``, ``{0}``) and attribute/index access (``{a.b}``,
-            ``{a[b]}``) are refused, so a slot always names one input field.
+            ``{a[b]}``) are refused, so a slot always names one input field — and for a
+            template ``str.format`` cannot parse at all.
         """
 
         names: list[str] = []
 
-        for _, field, _, _ in Formatter().parse(self.template):
+        try:
+            # Materialized inside the guard: `parse` is a lazy iterator, and an unmatched
+            # brace raises `ValueError` mid-iteration — which would escape a route resolve
+            # as an unclassified failure rather than a named wiring refusal.
+            parsed = list(Formatter().parse(self.template))
+
+        except ValueError as e:
+            raise exc.configuration(
+                f"PromptTemplate template is not a valid format string ({e}); a literal "
+                "brace is written '{{' or '}}'."
+            ) from e
+
+        for _, field, _, _ in parsed:
             if field is None:
                 continue
 
@@ -175,6 +194,19 @@ def validate_prompt_template(
             f"Available fields: {', '.join(spec.input.model_fields) or 'none'}."
         )
 
+    # The slot names parse and resolve; rendering can still fail on a conversion or format
+    # spec `str.format` rejects (`{text!z}`, `{text:invalid}`), which `parse` accepts and
+    # hands on. A dry run settles it here rather than on the first request, and it accepts
+    # every spec that works — `{text!r}` and `{text:>10}` render fine.
+    try:
+        prompt.template.format(**dict.fromkeys(spec.input.model_fields, ""))
+
+    except (ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
+        raise exc.configuration(
+            f"Inference {spec.name!r}: the openai_chat prompt template cannot be rendered "
+            f"from {spec.input.__name__} ({type(e).__name__}: {e})."
+        ) from e
+
 
 # ....................... #
 
@@ -209,8 +241,14 @@ def _schema_violations(node: Any, path: str) -> list[str]:
 
             found.extend(_schema_violations(sub_schema, f"{path}.{name}"))
 
-    for keyword in ("items", "additionalProperties"):
-        found.extend(_schema_violations(schema.get(keyword), f"{path}[{keyword}]"))
+    found.extend(_schema_violations(schema.get("items"), f"{path}[items]"))
+
+    # A schema-valued `additionalProperties` is how Pydantic spells `dict[str, V]`: dynamic
+    # keys, which the constraint cannot express — it requires that keyword to be `false`.
+    # Recursing into it instead would let `_tighten` overwrite the value schema with
+    # `false`, leaving a constraint that permits only an empty object. Silently.
+    if isinstance(schema.get("additionalProperties"), Mapping):
+        found.append(f"{where}: additionalProperties (a mapping field has dynamic keys)")
 
     options = schema.get("anyOf")
 
@@ -225,6 +263,32 @@ def _schema_violations(node: Any, path: str) -> list[str]:
             found.extend(_schema_violations(definition, f"${name}"))
 
     return found
+
+
+def _root_violations(schema: Mapping[str, Any]) -> list[str]:
+    """Constraint requirements that apply to the root object only.
+
+    A ``RootModel`` is a ``BaseModel``, so the spec accepts one: its schema has an array or
+    scalar root, which the constraint refuses, and the provider would reject the request
+    rather than the wiring. A root ``anyOf`` — a root-level union — is refused for the same
+    reason.
+    """
+
+    if "anyOf" in schema:
+        return ["<root>: anyOf (the constraint takes one object at the root, not a union)"]
+
+    if schema.get("type") != "object":
+        return [
+            (
+                f"<root>: type={schema.get('type')!r} (the constraint takes an object at "
+                "the root; wrap a list or a scalar in a model with one field)"
+            )
+        ]
+
+    return []
+
+
+# ....................... #
 
 
 def _tighten(node: Any) -> Any:
@@ -259,8 +323,17 @@ def chat_output_schema(spec: InferenceSpec[Any, Any]) -> dict[str, Any]:
         output codec then refuses.
     """
 
+    name = spec.output.__name__
+
+    if not _SCHEMA_NAME_PATTERN.match(name):
+        raise exc.configuration(
+            f"Inference {spec.name!r}: the openai_chat structured constraint is named after "
+            f"the output model, and {name!r} is not a name the provider accepts (ASCII "
+            "letters, digits, underscore or dash, at most 64 characters). Rename the model."
+        )
+
     schema = spec.output.model_json_schema()
-    violations = _schema_violations(schema, "")
+    violations = _root_violations(schema) + _schema_violations(schema, "")
 
     if violations:
         raise exc.configuration(
@@ -378,8 +451,8 @@ class OpenAiChatProtocol:
             body["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {
-                    # The output model's own name: a valid identifier by construction,
-                    # which the provider's name grammar requires.
+                    # Checked against the provider's name grammar at wiring, not assumed
+                    # from it being a Python identifier.
                     "name": spec.output.__name__,
                     "strict": True,
                     "schema": chat_output_schema(spec),
@@ -426,6 +499,17 @@ class OpenAiChatProtocol:
                 code=CONTENT_REFUSED_CODE,
             )
 
+        # Before the content is read, and in both modes: a completion the provider cut off
+        # at the token ceiling is an incomplete answer that can still parse (structured) or
+        # still read as prose (text), so accepting it hands back a half answer the caller
+        # cannot tell from a whole one.
+        if finish_reason == "length":
+            raise exc.validation(
+                f"Inference {spec.name!r}: the provider truncated the completion at the "
+                "token ceiling; raise max_output_tokens on the route.",
+                code=_OUTPUT_MISMATCH_CODE,
+            )
+
         content: Any = message_fields.get("content")
 
         if not isinstance(content, str) or not content:
@@ -439,7 +523,7 @@ class OpenAiChatProtocol:
             # One `str` field, enforced at wiring; the shared boundary shaping decodes it.
             return [{next(iter(spec.output.model_fields)): content}]
 
-        return [_decode_structured(spec, content, finish_reason=finish_reason)]
+        return [_decode_structured(spec, content)]
 
 
 # ....................... #
@@ -478,28 +562,17 @@ def _first_choice(
     return cast(Mapping[str, Any], choice)
 
 
-def _decode_structured(
-    spec: InferenceSpec[Any, Any],
-    content: str,
-    *,
-    finish_reason: Any,
-) -> Mapping[str, Any]:
+def _decode_structured(spec: InferenceSpec[Any, Any], content: str) -> Mapping[str, Any]:
     try:
         payload: Any = json.loads(content)
 
     except ValueError as e:
-        # Two causes look identical on the wire and the reason distinguishes them: a
-        # truncated completion (`length`) is a max_output_tokens that is too small for the
-        # declared output, while anything else means the endpoint did not honour the
-        # constraint — the Anthropic compatibility endpoint, for one, ignores it outright.
-        hint = (
-            " The completion was truncated (finish_reason='length'); raise max_output_tokens."
-            if finish_reason == "length"
-            else " The endpoint did not honour the structured constraint."
-        )
-
+        # Truncation is refused before this by its finish reason, so what is left is an
+        # endpoint that did not honour the constraint — the Anthropic compatibility
+        # endpoint, for one, ignores it outright rather than rejecting the request.
         raise exc.validation(
-            f"Inference {spec.name!r}: the openai_chat completion is not JSON.{hint}",
+            f"Inference {spec.name!r}: the openai_chat completion is not JSON; the endpoint "
+            "did not honour the structured constraint.",
             code=_OUTPUT_MISMATCH_CODE,
         ) from e
 
