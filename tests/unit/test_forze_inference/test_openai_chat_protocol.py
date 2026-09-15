@@ -6,6 +6,7 @@ import json
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, cast, final
 
 import attrs
@@ -940,6 +941,49 @@ class TestATemplateThatCannotRender:
         ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt(template)))
 
         assert ctx.inference.model(spec) is not None
+
+    @pytest.mark.asyncio
+    async def test_the_probe_mirrors_the_wire_representation_not_the_python_one(self) -> None:
+        """A `Decimal` crosses as a string, so `{amount:.2f}` cannot render.
+
+        Probing with a real `Decimal` accepted the route and left it unable to serve: the
+        encoder interpolates `model_dump(mode="json")`, and the first prediction raised
+        before any request was made.
+        """
+
+        class _Priced(BaseModel):
+            amount: Decimal
+
+        spec = InferenceSpec(name=_ROUTE, input=_Priced, output=_Invoice)
+        ctx = _ctx(await _client(_answers("{}")), _config(prompt=_prompt("Amount: {amount:.2f}")))
+
+        with pytest.raises(CoreException) as ei:
+            ctx.inference.model(spec)
+
+        assert "cannot be rendered" in str(ei.value)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("template", "rendered"),
+        [("{amount}", "12.5"), ("{amount:>8}", "    12.5")],
+    )
+    async def test_a_spec_that_works_on_the_wire_value_is_accepted(
+        self,
+        template: str,
+        rendered: str,
+    ) -> None:
+        # The refusal above must not become a ban on formatting a decimal at all: these
+        # render, and the assertion is on what the request actually carries.
+        class _Priced(BaseModel):
+            amount: Decimal
+
+        sent: list[dict[str, Any]] = []
+        spec = InferenceSpec(name=_ROUTE, input=_Priced, output=_Invoice)
+        config = _config(prompt=PromptTemplate(template=template))
+        port = _ctx(await _client(_recording(sent)), config).inference.model(spec)
+        await port.predict(_Priced(amount=Decimal("12.5")))
+
+        assert sent[0]["messages"][-1]["content"] == rendered
 
     @pytest.mark.asyncio
     async def test_a_field_type_with_no_stand_in_is_left_unverified(self) -> None:

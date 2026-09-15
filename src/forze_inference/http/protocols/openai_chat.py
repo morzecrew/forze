@@ -225,11 +225,16 @@ _RENDER_PROBES: Final[Mapping[type, Any]] = {
     int: 0,
     float: 0.0,
     str: "",
-    Decimal: Decimal(0),
+    # A `Decimal` crosses as a *string*, so a spec like `{amount:.2f}` genuinely cannot
+    # render and is refused here rather than failing on the first request.
+    Decimal: "",
 }
-"""Stand-in values for a dry render, by declared field type. A format spec is only valid
-against a value of the right type, so the probe has to carry one — and where a field's type
-has no entry here, the template is left unverified rather than refused on a guess."""
+"""Stand-in values for a dry render, by declared field type.
+
+What the encoder interpolates is ``model_dump(mode="json")`` — the wire-safe dump the whole
+plane uses — not the Python value, so a probe has to carry the *dumped* type or it tests a
+representation production never sees. Only these four dump to themselves; a field whose type
+is absent here leaves the template unverified rather than refused on a guess."""
 
 
 def _render_probe(
