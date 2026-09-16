@@ -124,6 +124,65 @@ def root_violations(schema: Mapping[str, Any]) -> list[str]:
     return []
 
 
+def recursive_definitions(schema: Mapping[str, Any]) -> list[str]:
+    """``$defs`` entries that reach themselves through a chain of ``$ref``.
+
+    A self-referencing output model (a comment with replies, a tree node) is ordinary
+    Pydantic and emits a ``$ref`` cycle. A dialect whose constraint cannot decode one needs
+    to say so at wiring: the alternative is a 400 from the endpoint on every request, which
+    reads as an outage rather than as a model the route cannot serve.
+    """
+
+    definitions = schema.get("$defs")
+
+    if not isinstance(definitions, Mapping):
+        return []
+
+    edges = {str(name): _referenced(body) for name, body in definitions.items()}
+    recursive: list[str] = []
+
+    for name in sorted(edges):
+        seen: set[str] = set()
+        pending = list(edges[name])
+
+        while pending:
+            target = pending.pop()
+
+            if target == name:
+                recursive.append(f"${name}: recursive (it reaches itself through $ref)")
+                break
+
+            if target in seen:
+                continue
+
+            seen.add(target)
+            pending.extend(edges.get(target, ()))
+
+    return recursive
+
+
+def _referenced(node: Any) -> list[str]:
+    """``$defs`` names *node* refers to, at any depth."""
+
+    if isinstance(node, list):
+        return [name for item in node for name in _referenced(item)]
+
+    if not isinstance(node, Mapping):
+        return []
+
+    schema: Mapping[str, Any] = node
+    found: list[str] = []
+    reference = schema.get("$ref")
+
+    if isinstance(reference, str) and reference.startswith("#/$defs/"):
+        found.append(reference.removeprefix("#/$defs/"))
+
+    for value in schema.values():
+        found.extend(_referenced(value))
+
+    return found
+
+
 # ....................... #
 
 

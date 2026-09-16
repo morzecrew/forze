@@ -11,6 +11,7 @@ handler passes a typed instance and receives a typed one, never seeing a prompt,
 or a provider.
 """
 
+import json
 from collections.abc import Mapping, Sequence
 from string import Formatter
 from typing import Any, Final, Literal, cast, final
@@ -314,3 +315,40 @@ def token_usage(
             attributes[attribute] = value
 
     return attributes
+
+
+# ....................... #
+
+
+def decode_json_object(
+    spec: InferenceSpec[Any, Any],
+    content: str,
+    *,
+    dialect: str,
+) -> Mapping[str, Any]:
+    """The completion text as the record one instance predicted.
+
+    :raises CoreException: ``validation`` when the text is not a JSON object — which is
+        what an endpoint that did not honour the constraint answers with.
+    """
+
+    try:
+        payload: Any = json.loads(content)
+
+    except ValueError as e:
+        # Truncation is refused before this by its stop reason, so what is left is an
+        # endpoint that did not honour the constraint.
+        raise exc.validation(
+            f"Inference {spec.name!r}: the {dialect} completion is not JSON; the endpoint "
+            "did not honour the structured constraint.",
+            code=OUTPUT_MISMATCH_CODE,
+        ) from e
+
+    if not isinstance(payload, dict):
+        raise exc.validation(
+            f"Inference {spec.name!r}: the {dialect} completion decoded to "
+            f"{type(payload).__name__}, not an object.",
+            code=OUTPUT_MISMATCH_CODE,
+        )
+
+    return cast(dict[str, Any], payload)

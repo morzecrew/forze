@@ -16,7 +16,6 @@ One completion per request: the endpoint scores a single instance, so
 into sequential calls.
 """
 
-import json
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast, final
@@ -35,6 +34,7 @@ from .generation import (
     USAGE_OUTPUT_TOKENS_ATTRIBUTE,
     InferenceOutputMode,
     PromptTemplate,
+    decode_json_object,
     render_prompt,
     single_instance,
     token_usage,
@@ -259,7 +259,7 @@ class OpenAiChatProtocol:
             # One `str` field, enforced at wiring; the shared boundary shaping decodes it.
             return [{next(iter(spec.output.model_fields)): content}]
 
-        return [_decode_structured(spec, content)]
+        return [decode_json_object(spec, content, dialect=_DIALECT)]
 
 
 # ....................... #
@@ -296,30 +296,6 @@ def _first_choice(
         )
 
     return cast(Mapping[str, Any], choice)
-
-
-def _decode_structured(spec: InferenceSpec[Any, Any], content: str) -> Mapping[str, Any]:
-    try:
-        payload: Any = json.loads(content)
-
-    except ValueError as e:
-        # Truncation is refused before this by its finish reason, so what is left is an
-        # endpoint that did not honour the constraint — the Anthropic compatibility
-        # endpoint, for one, ignores it outright rather than rejecting the request.
-        raise exc.validation(
-            f"Inference {spec.name!r}: the openai_chat completion is not JSON; the endpoint "
-            "did not honour the structured constraint.",
-            code=OUTPUT_MISMATCH_CODE,
-        ) from e
-
-    if not isinstance(payload, dict):
-        raise exc.validation(
-            f"Inference {spec.name!r}: the openai_chat completion decoded to "
-            f"{type(payload).__name__}, not an object.",
-            code=OUTPUT_MISMATCH_CODE,
-        )
-
-    return cast(dict[str, Any], payload)
 
 
 # ....................... #
