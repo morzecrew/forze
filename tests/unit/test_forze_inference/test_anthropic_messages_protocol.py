@@ -349,6 +349,66 @@ class TestTheDialectsOwnRefusals:
 
         assert "<root>" in str(ei.value)
 
+    def test_a_cycle_through_a_second_model_is_refused(self) -> None:
+        """The transitive case, not just a model that names itself: two models referencing
+        each other reach themselves only through the other's `$defs` entry."""
+
+        class _Parent(BaseModel):
+            child: _Child | None = None
+
+        class _Child(BaseModel):
+            parent: _Parent | None = None
+
+        _Parent.model_rebuild()
+
+        with pytest.raises(CoreException) as ei:
+            messages_output_schema(_spec(_Parent))
+
+        assert "recursive" in str(ei.value)
+
+    def test_a_cycle_the_walked_model_is_not_part_of_still_terminates(self) -> None:
+        """The reason the walk carries a visited set at all.
+
+        A model that reaches a cycle without being in it — `_Outer` -> `_Ping` <-> `_Pong`
+        — is walked from a name the cycle never returns to, so without the visited set the
+        traversal would follow `$ping -> $pong -> $ping` forever. Reported for the two
+        models that are recursive and not for the one that merely reaches them.
+        """
+
+        from forze_inference.http.protocols.schema import recursive_definitions
+
+        reached = {
+            "$defs": {
+                "_Outer": {"properties": {"p": {"$ref": "#/$defs/_Ping"}}},
+                "_Ping": {"properties": {"q": {"$ref": "#/$defs/_Pong"}}},
+                "_Pong": {"properties": {"p": {"$ref": "#/$defs/_Ping"}}},
+            },
+            "type": "object",
+            "properties": {"o": {"$ref": "#/$defs/_Outer"}},
+        }
+
+        recursive = recursive_definitions(reached)
+
+        assert [violation.split(":")[0] for violation in recursive] == ["$_Ping", "$_Pong"]
+
+    def test_an_allof_carrying_a_reference_is_refused(self) -> None:
+        """`allOf` is enforced and a local `$ref` is enforced; the combination is not.
+        Nothing Pydantic emits today, and a schema that reached the wire would 400."""
+
+        from forze_inference.http.protocols.anthropic_messages import _SCHEMA_RULES
+        from forze_inference.http.protocols.schema import schema_violations
+
+        combined = {
+            "type": "object",
+            "properties": {"a": {"allOf": [{"$ref": "#/$defs/_Line"}]}},
+            "required": ["a"],
+        }
+
+        assert any(
+            "allOf carrying a $ref" in violation
+            for violation in schema_violations(combined, "", rules=_SCHEMA_RULES)
+        )
+
     def test_an_external_reference_is_refused(self) -> None:
         """Nothing Pydantic emits, and a hand-written schema reaching the wire would have
         the provider fetch a document it cannot reach."""
@@ -442,17 +502,39 @@ class TestReadingTheContent:
 
         assert (await port.predict(_Document(text="x"))).number == "INV-2"
 
+    async def test_a_block_that_is_not_an_object_is_skipped(self) -> None:
+        port = _ctx(
+            await _client(
+                _answers(
+                    "",
+                    content=[
+                        "not a block",
+                        {"type": "text", "text": '{"number": "a", "total": 2.0}'},
+                    ],
+                )
+            ),
+            _config(),
+        ).inference.model(_spec())
+
+        assert (await port.predict(_Document(text="x"))).total == 2.0
+
     @pytest.mark.parametrize(
         "content",
         [
             [],
             [{"type": "thinking", "thinking": "..."}],
             [{"type": "text", "text": ""}],
-            "a text block, if a string were a sequence of them",
-            None,
+            [{"type": "text"}],
         ],
     )
-    async def test_a_message_with_no_text_is_refused(self, content: Any) -> None:
+    async def test_a_message_with_no_usable_text_is_refused(self, content: Any) -> None:
+        """Asserted on this dialect's own words, not on the code alone.
+
+        `inference_output_mismatch` is also what the JSON decode and the output codec
+        raise, so a route that answered an empty string here would still fail *somewhere*
+        with the same code — and a test reading only the code cannot tell the two apart.
+        """
+
         port = _ctx(await _client(_answers("", content=content)), _config()).inference.model(
             _spec()
         )
@@ -461,6 +543,48 @@ class TestReadingTheContent:
             await port.predict(_Document(text="x"))
 
         assert ei.value.code == "inference_output_mismatch"
+        assert "no text block" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            [],
+            [{"type": "text", "text": ""}],
+        ],
+    )
+    async def test_text_mode_refuses_an_empty_answer_rather_than_returning_it(
+        self,
+        content: Any,
+    ) -> None:
+        """Where structured mode has the JSON decode behind it, text mode has nothing: an
+        empty block accepted here is a successful prediction of empty prose."""
+
+        config = _config(output_mode="text")
+        port = _ctx(await _client(_answers("", content=content)), config).inference.model(
+            _spec(_Completion)
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert "no text block" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        "content",
+        ["a text block, if a string were a sequence of them", None, {"type": "text"}],
+    )
+    async def test_a_message_whose_content_is_not_a_list_is_refused(self, content: Any) -> None:
+        """A bare string is also a Sequence, and iterating one would read the characters of
+        an error message as blocks."""
+
+        port = _ctx(await _client(_answers("", content=content)), _config()).inference.model(
+            _spec()
+        )
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert "no 'content'" in str(ei.value)
 
     async def test_prose_where_json_was_constrained_is_refused(self) -> None:
         port = _ctx(await _client(_answers("I think the number is INV-9.")), _config()).inference
@@ -471,13 +595,17 @@ class TestReadingTheContent:
 
         assert ei.value.code == "inference_output_mismatch"
 
-    async def test_a_json_array_is_refused(self) -> None:
+    async def test_a_json_array_is_refused_by_the_dialect(self) -> None:
+        """Named by the dialect rather than left to the output codec, which refuses a
+        non-record with the same code and a message about the model instead of the wire."""
+
         port = _ctx(await _client(_answers('["INV-9"]')), _config()).inference.model(_spec())
 
         with pytest.raises(CoreException) as ei:
             await port.predict(_Document(text="x"))
 
         assert ei.value.code == "inference_output_mismatch"
+        assert "not an object" in str(ei.value)
 
     async def test_text_mode_fills_the_single_field(self) -> None:
         seen: list[dict[str, Any]] = []
@@ -611,6 +739,18 @@ class TestWiringRefusals:
 
         assert isinstance(protocol, AnthropicMessagesProtocol)
         assert protocol.max_output_tokens == 1024
+
+    def test_decoding_more_than_one_message_is_an_internal_error(self) -> None:
+        """The mirror of the encode guard: one response carries one message."""
+
+        with pytest.raises(CoreException) as ei:
+            _config().wire_protocol().decode_response(
+                _spec(),
+                _message('{"number": "a", "total": 1.0}'),
+                expected=2,
+            )
+
+        assert ei.value.kind is ExceptionKind.INTERNAL
 
     async def test_the_fan_out_is_the_adapters_and_not_the_dialects(self) -> None:
         """Two instances reaching one encode is the adapter's bug, not a wiring mistake."""
