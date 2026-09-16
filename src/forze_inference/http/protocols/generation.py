@@ -292,9 +292,10 @@ def token_usage(
     """Span attributes for the token counts *body* reports under the two given keys.
 
     Both dialects report them in a ``usage`` object and differ only in what they call the
-    two counts. A provider that reports nothing (or reports a null, or a bool, which is an
-    ``int`` in Python) contributes no attribute, rather than one claiming zero tokens were
-    spent.
+    two counts. A count that is missing, null, a bool (which is an ``int`` in Python) or
+    **negative** contributes no attribute, rather than one claiming zero tokens were spent
+    or fewer than none: the adapter sums these across a fan-out, so one malformed response
+    would otherwise reduce what the whole call is recorded as having spent.
     """
 
     usage = body.get("usage")
@@ -311,7 +312,7 @@ def token_usage(
     ):
         value = counts.get(key)
 
-        if isinstance(value, int) and not isinstance(value, bool):
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             attributes[attribute] = value
 
     return attributes

@@ -796,7 +796,19 @@ class TestUsageTelemetry:
         attributes = dict(exporter.get_finished_spans()[0].attributes or {})
         assert attributes[USAGE_INPUT_TOKENS_ATTRIBUTE] == 22
 
-    @pytest.mark.parametrize("usage", [None, {}, {"input_tokens": None}, {"input_tokens": True}])
+    @pytest.mark.parametrize(
+        "usage",
+        [
+            None,
+            {},
+            {"input_tokens": None},
+            {"input_tokens": True},
+            # Below zero is not a smaller count. The adapter sums these over a fan-out, so
+            # one malformed response would reduce what the whole call is recorded as having
+            # spent — a cost number that moves the wrong way is worse than a missing one.
+            {"input_tokens": -5},
+        ],
+    )
     async def test_an_unreported_count_contributes_no_attribute(self, usage: Any) -> None:
         """Not an attribute claiming zero tokens were spent."""
 
