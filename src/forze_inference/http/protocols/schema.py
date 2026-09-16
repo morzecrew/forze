@@ -18,6 +18,17 @@ import attrs
 
 # ----------------------- #
 
+_SCHEMA_VALUED: Final[frozenset[str]] = frozenset({"items", "contains", "not", "propertyNames"})
+_SCHEMA_LISTS: Final[frozenset[str]] = frozenset({"anyOf", "allOf", "oneOf", "prefixItems"})
+_SCHEMA_MAPS: Final[frozenset[str]] = frozenset({"properties", "$defs", "definitions"})
+"""Where a schema holds other schemas: one, a list of them, or a map of them.
+
+Both the walk and the closing pass go through these keywords and nowhere else. Treating
+every mapping alike loses in both directions — a container that is skipped is a container a
+refused keyword can hide in, and a container mistaken for a schema node grows an
+`additionalProperties` of its own, which for a model whose field is *named* `properties`
+lands beside the field as though a second one had been declared."""
+
 _TYPED_KEYWORDS: Final[frozenset[str]] = frozenset({"type", "$ref", "anyOf", "enum", "const"})
 """One of these makes a subschema constrainable.
 
@@ -80,7 +91,8 @@ def schema_violations(
 
             found.extend(schema_violations(sub_schema, f"{path}.{name}", rules=rules))
 
-    found.extend(schema_violations(schema.get("items"), f"{path}[items]", rules=rules))
+    for keyword in sorted(_SCHEMA_VALUED & set(schema)):
+        found.extend(schema_violations(schema[keyword], f"{path}[{keyword}]", rules=rules))
 
     # Nothing to constrain: an `Any`- or `object`-typed field, or the member schema of a
     # bare `list`, carries a title and nothing else. The provider is then free to answer
@@ -111,17 +123,19 @@ def schema_violations(
             + ")"
         )
 
-    options = schema.get("anyOf")
+    for keyword in sorted(_SCHEMA_LISTS & set(schema)):
+        options = schema[keyword]
 
-    if isinstance(options, list):
-        for position, option in enumerate(options):
-            found.extend(schema_violations(option, f"{path}|{position}", rules=rules))
+        if isinstance(options, list):
+            for position, option in enumerate(options):
+                found.extend(schema_violations(option, f"{path}|{position}", rules=rules))
 
-    definitions = schema.get("$defs")
+    for keyword in sorted((_SCHEMA_MAPS - {"properties"}) & set(schema)):
+        definitions = schema.get(keyword)
 
-    if isinstance(definitions, Mapping):
-        for name, definition in definitions.items():
-            found.extend(schema_violations(definition, f"${name}", rules=rules))
+        if isinstance(definitions, Mapping):
+            for name, definition in definitions.items():
+                found.extend(schema_violations(definition, f"${name}", rules=rules))
 
     return found
 
@@ -219,16 +233,30 @@ def tighten(node: Any) -> Any:
 
     Both constraints require ``additionalProperties: false`` on each object, and a Pydantic
     model only emits it under ``extra="forbid"``.
-    """
 
-    if isinstance(node, list):
-        return [tighten(item) for item in node]
+    Recursion follows the schema-holding keywords rather than every mapping: a keyword
+    container is not a schema node, and closing one writes a property the model never
+    declared.
+    """
 
     if not isinstance(node, Mapping):
         return node
 
     schema: Mapping[str, Any] = node
-    tightened = {key: tighten(value) for key, value in schema.items()}
+    tightened: dict[str, Any] = {}
+
+    for key, value in schema.items():
+        if key in _SCHEMA_MAPS and isinstance(value, Mapping):
+            tightened[key] = {name: tighten(sub) for name, sub in value.items()}
+
+        elif key in _SCHEMA_LISTS and isinstance(value, list):
+            tightened[key] = [tighten(item) for item in value]
+
+        elif key in _SCHEMA_VALUED:
+            tightened[key] = tighten(value)
+
+        else:
+            tightened[key] = value
 
     if tightened.get("type") == "object" or "properties" in tightened:
         tightened["additionalProperties"] = False
