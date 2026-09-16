@@ -3,17 +3,16 @@
 from forze_inference.records import wrap_scalar_predictions
 
 from .base import WireProtocol, WireRequest
-from .kserve_v2 import KserveV2Protocol, validate_flat_scalar_fields
-from .mlflow import MlflowProtocol
-from .openai_chat import (
+from .generation import (
     CONTENT_REFUSED_CODE,
     InferenceOutputMode,
-    OpenAiChatProtocol,
     PromptTemplate,
-    chat_output_schema,
     validate_prompt_template,
     validate_text_output,
 )
+from .kserve_v2 import KserveV2Protocol, validate_flat_scalar_fields
+from .mlflow import MlflowProtocol
+from .openai_chat import OpenAiChatProtocol, chat_output_schema
 
 # ----------------------- #
 
