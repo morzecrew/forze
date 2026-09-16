@@ -296,15 +296,3 @@ def _first_choice(
         )
 
     return cast(Mapping[str, Any], choice)
-
-
-# ....................... #
-
-__all__ = [
-    "CHAT_COMPLETIONS_PATH",
-    "CONTENT_REFUSED_CODE",
-    "USAGE_INPUT_TOKENS_ATTRIBUTE",
-    "USAGE_OUTPUT_TOKENS_ATTRIBUTE",
-    "OpenAiChatProtocol",
-    "chat_output_schema",
-]

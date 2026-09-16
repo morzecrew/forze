@@ -14,9 +14,10 @@ Two things differ from the chat dialect in ways a wiring author sees:
 
 * ``max_output_tokens`` is **required**. The endpoint requires ``max_tokens`` on every
   request, so a route without one cannot make a single valid call.
-* The accepted schema vocabulary is **wider** — ``$ref``, string formats, defaulted (and
-  therefore optional) properties all pass here and are refused by the chat dialect — which
-  is why the refusal set belongs to the dialect rather than to the plane.
+* The accepted schema vocabulary is **wider**: string formats, defaulted (and therefore
+  optional) properties, and a list that must not be empty all pass here and are refused by
+  the chat dialect, which is why the refusal set belongs to the dialect rather than to the
+  plane. ``$ref`` is accepted by both.
 
 The transport headers are wiring, not dialect: ``x-api-key`` and ``anthropic-version`` go on
 ``InferenceHttpSettings.default_headers``, because a ``WireProtocol`` carries a path and a
@@ -133,8 +134,8 @@ Both are reported by the endpoint as a rejected request naming the offending par
 
 
 def _node_check(schema: Mapping[str, Any], where: str) -> list[str]:
-    """The three rules a keyword set cannot express: format, minItems, and where a ``$ref``
-    may appear."""
+    """What a keyword set cannot express: a keyword enforced for some values only
+    (``format``, ``minItems``), and one enforced in some positions only (``$ref``)."""
 
     found: list[str] = []
     declared_format = schema.get("format")
@@ -368,12 +369,3 @@ def _first_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str:
         f"Inference {spec.name!r}: the anthropic_messages response carries no text block.",
         code=OUTPUT_MISMATCH_CODE,
     )
-
-
-# ....................... #
-
-__all__ = [
-    "MESSAGES_PATH",
-    "AnthropicMessagesProtocol",
-    "messages_output_schema",
-]
