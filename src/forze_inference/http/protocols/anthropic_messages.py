@@ -302,7 +302,7 @@ class AnthropicMessagesProtocol:
 
         _require_complete(spec, stop_reason)
 
-        content = _first_text(spec, body)
+        content = _message_text(spec, body)
 
         if self.output_mode == "text":
             # One `str` field, enforced at wiring; the shared boundary shaping decodes it.
@@ -337,12 +337,18 @@ def _require_complete(spec: InferenceSpec[Any, Any], stop_reason: Any) -> None:
     )
 
 
-def _first_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str:
-    """The first text block's text.
+def _message_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str:
+    """Every text block's text, in order.
 
-    :raises CoreException: ``validation`` when the message carries no text block — a
-        response shaped by a feature this dialect never asks for (a tool call, a thinking
-        block on its own) answers nothing the route can decode.
+    All of them, not the first: a message may carry several ordered text blocks, and they
+    are one answer between them. Taking the first would decode half a JSON document, and in
+    text mode return half a sentence as though it were whole — the truncation this dialect
+    refuses everywhere else. Blocks of any other kind are skipped, since the route asks for
+    none of the features that produce them.
+
+    :raises CoreException: ``validation`` when the message carries no text at all — a
+        response shaped by something this dialect never asks for answers nothing it can
+        decode.
     """
 
     blocks = body.get("content")
@@ -355,6 +361,8 @@ def _first_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str:
             code=OUTPUT_MISMATCH_CODE,
         )
 
+    texts: list[str] = []
+
     for block in blocks:
         if not isinstance(block, Mapping):
             continue
@@ -362,10 +370,15 @@ def _first_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str:
         fields = cast(Mapping[str, Any], block)
         text = fields.get("text")
 
-        if fields.get("type") == "text" and isinstance(text, str) and text:
-            return text
+        if fields.get("type") == "text" and isinstance(text, str):
+            texts.append(text)
 
-    raise exc.validation(
-        f"Inference {spec.name!r}: the anthropic_messages response carries no text block.",
-        code=OUTPUT_MISMATCH_CODE,
-    )
+    answer = "".join(texts)
+
+    if not answer:
+        raise exc.validation(
+            f"Inference {spec.name!r}: the anthropic_messages response carries no text block.",
+            code=OUTPUT_MISMATCH_CODE,
+        )
+
+    return answer
