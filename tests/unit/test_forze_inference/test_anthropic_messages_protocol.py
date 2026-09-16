@@ -19,7 +19,7 @@ import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from forze.application.contracts.inference import InferenceSpec
 from forze.application.execution import ExecutionContext
@@ -339,6 +339,52 @@ class TestTheDialectsOwnRefusals:
             messages_output_schema(_spec(_Tagged))
 
         assert "additionalProperties" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        ("annotation", "offending"),
+        [
+            (dict, "dynamic keys"),
+            (dict[str, str], "dynamic keys"),
+            (Any, "untyped"),
+            (object, "untyped"),
+            (list, "untyped"),
+        ],
+    )
+    def test_a_field_the_constraint_cannot_express_is_refused(
+        self,
+        annotation: Any,
+        offending: str,
+    ) -> None:
+        """A bare `dict` is the one that used to pass.
+
+        `dict[str, V]` emits a schema under `additionalProperties` and was refused; a bare
+        `dict` emits `true` there, which nothing looked at — and the tightening pass then
+        rewrote it to `false`, leaving a constraint that permitted only `{}` for that field.
+        A route wired that way asked the model for an empty object on every request, and
+        said nothing.
+        """
+
+        model = type("_Loose", (BaseModel,), {"__annotations__": {"value": annotation}})
+
+        with pytest.raises(CoreException) as ei:
+            messages_output_schema(_spec(model))
+
+        assert offending in str(ei.value)
+
+    def test_a_model_that_allows_extra_keys_is_refused(self) -> None:
+        """Closing it instead would contradict what the model declares, which is the one
+        thing the tightening pass is licensed on: it may only narrow to what the model
+        already means."""
+
+        class _Open(BaseModel):
+            model_config = ConfigDict(extra="allow")
+
+            number: str
+
+        with pytest.raises(CoreException) as ei:
+            messages_output_schema(_spec(_Open))
+
+        assert "extra properties are allowed" in str(ei.value)
 
     def test_a_non_object_root_is_refused(self) -> None:
         class _Numbers(RootModel[list[int]]):

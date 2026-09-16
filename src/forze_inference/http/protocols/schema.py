@@ -12,11 +12,17 @@ provider may answer with, which is what the declared output model already means.
 """
 
 from collections.abc import Callable, Mapping
-from typing import Any, final
+from typing import Any, Final, final
 
 import attrs
 
 # ----------------------- #
+
+_TYPED_KEYWORDS: Final[frozenset[str]] = frozenset({"type", "$ref", "anyOf", "enum", "const"})
+"""One of these makes a subschema constrainable.
+
+A node carrying none of them says nothing about what the model may answer — `Any` and
+`object` emit a title alone, and a bare `list`'s member schema is `{}`."""
 
 
 @final
@@ -76,12 +82,34 @@ def schema_violations(
 
     found.extend(schema_violations(schema.get("items"), f"{path}[items]", rules=rules))
 
-    # A schema-valued `additionalProperties` is how Pydantic spells `dict[str, V]`: dynamic
-    # keys, which neither constraint can express — both require that keyword to be `false`.
-    # Recursing into it instead would let `tighten` overwrite the value schema with `false`,
-    # leaving a constraint that permits only an empty object. Silently.
-    if isinstance(schema.get("additionalProperties"), Mapping):
-        found.append(f"{where}: additionalProperties (a mapping field has dynamic keys)")
+    # Nothing to constrain: an `Any`- or `object`-typed field, or the member schema of a
+    # bare `list`, carries a title and nothing else. The provider is then free to answer
+    # with anything at all, which is the one thing a validated `Out` rules out — and it is a
+    # `configuration` refusal rather than a 400 from the endpoint on every request.
+    if not (_TYPED_KEYWORDS & set(schema)):
+        found.append(
+            f"{where}: untyped (the constraint needs a declared type; 'Any', a bare 'dict' "
+            "or a bare 'list' member cannot be expressed)"
+        )
+
+    # Dynamic keys, which neither constraint can express — both require that keyword to be
+    # `false`. Pydantic spells them two ways: `dict[str, V]` emits a *schema* here, and a
+    # bare `dict` (or a model with `extra="allow"`) emits `true`. Both must be refused
+    # rather than narrowed, because `tighten` would rewrite them to `false` — leaving a
+    # constraint that permits only an empty object, silently, where the field was declared
+    # to take any keys at all.
+    extra = schema.get("additionalProperties")
+
+    if isinstance(extra, Mapping) or extra is True:
+        found.append(
+            f"{where}: additionalProperties ("
+            + (
+                "extra properties are allowed"
+                if "properties" in schema
+                else "a mapping field has dynamic keys"
+            )
+            + ")"
+        )
 
     options = schema.get("anyOf")
 

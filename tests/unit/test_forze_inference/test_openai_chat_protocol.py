@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, cast, final
 
@@ -36,7 +36,7 @@ from forze_inference.http.protocols.generation import (
     USAGE_INPUT_TOKENS_ATTRIBUTE,
     USAGE_OUTPUT_TOKENS_ATTRIBUTE,
 )
-from forze_inference.http.protocols.openai_chat import OpenAiChatProtocol
+from forze_inference.http.protocols.openai_chat import OpenAiChatProtocol, chat_output_schema
 
 # ----------------------- #
 
@@ -779,6 +779,19 @@ class TestWiringRefusals:
 
 
 class TestWhatTheConstraintCannotExpress:
+    @pytest.mark.parametrize("annotation", [dict, Any, object, list])
+    def test_a_field_with_nothing_to_constrain_is_refused(self, annotation: Any) -> None:
+        """The same hole the other dialect had: a bare `dict` reached the wire as
+        `additionalProperties: true`, was rewritten to `false` by the tightening pass, and
+        left a constraint permitting only `{}`. Refused for both dialects now, at the one
+        walk they share.
+        """
+
+        model = type("_Loose", (BaseModel,), {"__annotations__": {"value": annotation}})
+
+        with pytest.raises(CoreException):
+            chat_output_schema(_spec(model))
+
     """Every shape the strict constraint cannot carry is refused at wiring.
 
     Each of these otherwise reaches the provider: some as a request it rejects, and the

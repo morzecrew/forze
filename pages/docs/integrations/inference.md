@@ -175,9 +175,12 @@ constraint enforces less than JSON Schema can express, and the difference fails
 
 Both dialects refuse these:
 
-- A **mapping** field (`dict[str, int]`): the constraint cannot express dynamic
-  keys. And a **non-object root** (a `RootModel`, or a root-level union) — wrap
-  it in a model with one field.
+- A **mapping** field — `dict[str, int]` or a bare `dict`, and a model with
+  `extra="allow"`: the constraint cannot express dynamic keys, and closing them
+  for you would leave it permitting nothing but `{}`. And a **non-object root**
+  (a `RootModel`, or a root-level union) — wrap it in a model with one field.
+- A field with **nothing to constrain**: `Any`, `object`, or a bare `list`, whose
+  member schema says nothing. Declare the shape, or use `output_mode="text"`.
 - Numeric and length bounds (`ge`/`le`, `max_length`, …), which neither provider
   enforces, so the model would be free to answer outside them.
 - `additionalProperties: false` is added for you on every object.

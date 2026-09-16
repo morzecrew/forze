@@ -30,8 +30,6 @@ from .base import WireRequest
 from .generation import (
     CONTENT_REFUSED_CODE,
     OUTPUT_MISMATCH_CODE,
-    USAGE_INPUT_TOKENS_ATTRIBUTE,
-    USAGE_OUTPUT_TOKENS_ATTRIBUTE,
     InferenceOutputMode,
     PromptTemplate,
     decode_json_object,

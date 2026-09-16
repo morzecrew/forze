@@ -261,9 +261,7 @@ class TestErrorTaxonomy:
         assert "078-05-1120" not in str(ei.value.details or {})
 
     @pytest.mark.asyncio
-    async def test_upstream_body_is_never_logged(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_upstream_body_is_never_logged(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The log scrubber recognizes credential-shaped patterns, not arbitrary PII —
         # so the body must be withheld from the log line itself, not entrusted to it.
         # Only the status and the body's size are recorded.

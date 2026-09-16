@@ -333,5 +333,8 @@ def test_routed_http_step_id_is_stable_and_overridable() -> None:
         tenant_provider=lambda: _T1,
     )
 
-    assert routed_client_lifecycle_step("routed_inference_http_client", client=routed).id == "routed_inference_http_client"
+    assert (
+        routed_client_lifecycle_step("routed_inference_http_client", client=routed).id
+        == "routed_inference_http_client"
+    )
     assert routed_client_lifecycle_step("custom", client=routed).id == "custom"
