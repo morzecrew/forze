@@ -31,12 +31,12 @@ from forze_inference.http import (
     PromptTemplate,
     WireProtocol,
 )
-from forze_inference.http.protocols.openai_chat import (
+from forze_inference.http.protocols.generation import (
     CONTENT_REFUSED_CODE,
     USAGE_INPUT_TOKENS_ATTRIBUTE,
     USAGE_OUTPUT_TOKENS_ATTRIBUTE,
-    OpenAiChatProtocol,
 )
+from forze_inference.http.protocols.openai_chat import OpenAiChatProtocol
 
 # ----------------------- #
 
