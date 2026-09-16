@@ -125,6 +125,8 @@ slot always names one field.
 
 **Sampling is configuration.** `temperature` and `max_output_tokens` live on the
 route, never in `options=`, so what the model does is a reviewed deployment fact.
+A temperature above the endpoint's own ceiling — 2 for chat completions, 1 for
+the Messages API — is refused at wiring rather than on every request.
 
 ### Claude, natively (`anthropic_messages`)
 

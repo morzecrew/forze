@@ -901,15 +901,24 @@ class TestTheRouteRefusesAValueTheProviderWould:
         assert ei.value.kind == "configuration"
         assert "more digits than a request can carry" in str(ei.value)
 
-    @pytest.mark.parametrize("field", ["temperature", "max_output_tokens"])
-    def test_a_huge_integer_limit_does_not_crash_the_finite_check(self, field: str) -> None:
+    def test_a_huge_integer_ceiling_does_not_crash_the_finite_check(self) -> None:
         """`isfinite` converts to float first, so `10**400` raised `OverflowError` here.
 
-        An int is finite by definition, so the check is for floats only. The value is left
-        to the provider to reject, like every other upper bound on these two fields.
+        An int is finite by definition, so the check is for floats only, and a token
+        ceiling has no upper bound of its own to fail against.
         """
 
-        assert _config(**{field: 10**400}) is not None
+        assert _config(max_output_tokens=10**400) is not None
+
+    def test_a_huge_integer_temperature_is_refused_by_the_ceiling(self) -> None:
+        """The same value, on the field that now has a ceiling: refused by name rather than
+        left to the provider, and still not an `OverflowError` from the finite check."""
+
+        with pytest.raises(CoreException) as ei:
+            _config(temperature=10**400)
+
+        assert ei.value.kind == "configuration"
+        assert "ceiling" in str(ei.value)
 
     @pytest.mark.parametrize("protocol", ["openai-chat", "gpt", ""])
     def test_a_protocol_outside_the_closed_set(self, protocol: str) -> None:

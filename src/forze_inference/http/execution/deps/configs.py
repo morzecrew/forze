@@ -45,6 +45,13 @@ drift. `attrs` does not enforce a `Literal` at runtime, and neither value fails 
 its own: an unknown protocol reaches `wire_protocol()` as an internal error, and an unknown
 output mode makes the encoder send no constraint while the decoder still expects JSON."""
 
+_TEMPERATURE_CEILINGS: dict[str, float] = {"openai_chat": 2.0, "anthropic_messages": 1.0}
+"""The highest temperature each generation endpoint accepts.
+
+A route names its dialect, so which ceiling applies is known at wiring — and a value above
+it is rejected by the provider on every request, which is a boot error wearing a runtime
+error's clothes."""
+
 _GENERATION_FIELDS = ("prompt", "output_mode", "temperature", "max_output_tokens")
 """Fields only a generation dialect reads. Refused on the others rather than ignored: a
 prompt on a KServe route is a wiring mistake, and silently dropping it would send the model
@@ -216,9 +223,16 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
 
         if self.temperature is not None and self.temperature < 0:
             raise exc.configuration(
-                f"HttpInferenceConfig.temperature={self.temperature} must not be negative. "
-                "The upper bound is the provider's (2 for OpenAI, 1 for Anthropic) and is "
-                "not checked here."
+                f"HttpInferenceConfig.temperature={self.temperature} must not be negative."
+            )
+
+        ceiling = _TEMPERATURE_CEILINGS.get(self.protocol)
+
+        if self.temperature is not None and ceiling is not None and self.temperature > ceiling:
+            raise exc.configuration(
+                f"HttpInferenceConfig.temperature={self.temperature} is above the "
+                f"{self.protocol} endpoint's ceiling of {ceiling}; it would be rejected on "
+                "every request."
             )
 
         # Caught here rather than at the first stream call: a cap below 1 makes

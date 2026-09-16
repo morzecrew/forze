@@ -14,6 +14,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+import attrs
 import httpx
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -455,6 +456,59 @@ class TestTheDialectsOwnRefusals:
             for violation in schema_violations(combined, "", rules=_SCHEMA_RULES)
         )
 
+    @pytest.mark.parametrize(
+        ("node", "offending"),
+        [
+            ({"type": "integer", "allOf": [{"minimum": 3}]}, "minimum"),
+            ({"type": "array", "prefixItems": [{"type": "string", "maxLength": 3}]}, "maxLength"),
+        ],
+    )
+    def test_a_refused_keyword_inside_a_container_is_still_found(
+        self,
+        node: Any,
+        offending: str,
+    ) -> None:
+        """`allOf` and `prefixItems` hold schemas, and a walk that skips a container is a
+        walk that can be hidden in. Nothing Pydantic emits reaches these today — a fixed
+        tuple is refused by its own bounds first — which is exactly why the walk has to
+        cover them rather than the shapes that happen to arrive.
+        """
+
+        from forze_inference.http.protocols.anthropic_messages import _SCHEMA_RULES
+        from forze_inference.http.protocols.schema import schema_violations
+
+        schema = {"type": "object", "properties": {"n": node}, "required": ["n"]}
+
+        assert any(
+            offending in violation
+            for violation in schema_violations(schema, "", rules=_SCHEMA_RULES)
+        )
+
+    async def test_a_field_named_properties_does_not_grow_a_neighbour(self) -> None:
+        """The keyword container is not a schema node.
+
+        Walking every mapping alike, the `properties` map of a model whose own field is
+        called `properties` looks like a schema with properties of its own — and the
+        closing pass then writes `additionalProperties: false` *beside* the field, as
+        though the model declared a second one by that name.
+        """
+
+        class _Meta(BaseModel):
+            properties: str
+
+        schema = messages_output_schema(_spec(_Meta))
+
+        assert set(schema["properties"]) == {"properties"}
+        assert schema["additionalProperties"] is False
+
+        seen: list[dict[str, Any]] = []
+        port = _ctx(
+            await _client(_recording(seen, '{"properties": "a"}')), _config()
+        ).inference.model(_spec(_Meta))
+        await port.predict(_Document(text="x"))
+
+        assert set(seen[0]["output_config"]["format"]["schema"]["properties"]) == {"properties"}
+
     def test_an_external_reference_is_refused(self) -> None:
         """Nothing Pydantic emits, and a hand-written schema reaching the wire would have
         the provider fetch a document it cannot reach."""
@@ -563,6 +617,45 @@ class TestReadingTheContent:
         ).inference.model(_spec())
 
         assert (await port.predict(_Document(text="x"))).total == 2.0
+
+    async def test_an_answer_split_across_text_blocks_is_whole(self) -> None:
+        """A message may carry several ordered text blocks, and all of them are the answer:
+        taking the first would decode half a document — or return half a sentence in text
+        mode, which is the truncation this dialect refuses everywhere else."""
+
+        port = _ctx(
+            await _client(
+                _answers(
+                    "",
+                    content=[
+                        {"type": "text", "text": '{"number": "INV-3",'},
+                        {"type": "text", "text": ' "total": 9.5}'},
+                    ],
+                )
+            ),
+            _config(),
+        ).inference.model(_spec())
+        out = await port.predict(_Document(text="x"))
+
+        assert (out.number, out.total) == ("INV-3", 9.5)
+
+    async def test_text_mode_joins_the_blocks_in_order(self) -> None:
+        config = _config(output_mode="text")
+        port = _ctx(
+            await _client(
+                _answers(
+                    "",
+                    content=[
+                        {"type": "text", "text": "The invoice totals"},
+                        {"type": "thinking", "thinking": "checking the currency"},
+                        {"type": "text", "text": " 42.50 EUR."},
+                    ],
+                )
+            ),
+            config,
+        ).inference.model(_spec(_Completion))
+
+        assert (await port.predict(_Document(text="x"))).answer == ("The invoice totals 42.50 EUR.")
 
     @pytest.mark.parametrize(
         "content",
@@ -749,6 +842,33 @@ class TestWiringRefusals:
             ).max_output_tokens
             is None
         )
+
+    @pytest.mark.parametrize("temperature", [1.5, 2.0])
+    def test_a_temperature_the_provider_rejects_is_refused(self, temperature: float) -> None:
+        """This endpoint takes 0 through 1. Which ceiling applies is now known at wiring —
+        the route names its dialect — so a value the provider would reject costs a boot
+        rather than every request."""
+
+        with pytest.raises(CoreException) as ei:
+            _config(temperature=temperature)
+
+        assert "temperature" in str(ei.value)
+
+    def test_the_ceiling_is_the_dialects_own(self) -> None:
+        assert _config(temperature=1.0).temperature == 1.0
+
+        chat = HttpInferenceConfig(
+            protocol="openai_chat",
+            model_name="gpt-5",
+            acknowledge_data_egress=True,
+            prompt=_prompt(),
+            temperature=1.5,
+        )
+
+        assert chat.temperature == 1.5
+
+        with pytest.raises(CoreException):
+            attrs.evolve(chat, temperature=2.5)
 
     def test_a_prompt_on_a_scoring_dialect_is_still_refused(self) -> None:
         with pytest.raises(CoreException) as ei:
