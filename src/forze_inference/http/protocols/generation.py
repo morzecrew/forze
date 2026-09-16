@@ -93,14 +93,23 @@ class PromptTemplate:
 
 
 def _nested_fields(format_spec: str) -> list[str]:
-    """Replacement fields inside a format spec (``{value:{width}}`` → ``["width"]``)."""
+    """Replacement fields inside a format spec (``{value:{width}}`` → ``["width"]``).
+
+    :raises CoreException: ``configuration`` when the spec is not a format string in its own
+        right. The outer parse does **not** cover this: ``"{x:{{}:}}"`` tokenizes as a
+        template and hands back ``"{{}:}"`` as the spec, which does not parse alone — and
+        whether a spec *parses* is value-independent, so it belongs at wiring rather than in
+        a render failure on every request.
+    """
 
     try:
         return [field for _, field, _, _ in Formatter().parse(format_spec) if field is not None]
 
-    except ValueError:
-        # An unparseable spec is reported by the outer parse of the whole template.
-        return []
+    except ValueError as e:
+        raise exc.configuration(
+            f"PromptTemplate format spec {format_spec!r} is not a valid format string "
+            f"({e}); a literal brace inside a spec is written '{{{{' or '}}}}'."
+        ) from e
 
 
 def _walk_template(template: str, names: list[str]) -> None:

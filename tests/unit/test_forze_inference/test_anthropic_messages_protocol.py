@@ -893,6 +893,23 @@ class TestWiringRefusals:
 
         assert "prompt" in str(ei.value)
 
+    @pytest.mark.parametrize("template", ["Ask {text:{{}:}}", "Ask {text:{x{}}}"])
+    def test_a_format_spec_that_is_not_a_format_string_is_refused(self, template: str) -> None:
+        """The outer parse does not cover this, which is what made the branch look dead.
+
+        `"{text:{{}:}}"` tokenizes as a template and hands back `"{{}:}"` as the spec; that
+        string does not parse on its own. Whether a spec *parses* is value-independent — it
+        is the type fit that is not — so it is refused here rather than raised from
+        `str.format` on every request the route serves.
+        """
+
+        config = _config(prompt=PromptTemplate(template=template))
+
+        with pytest.raises(CoreException) as ei:
+            config.validate_against_spec(_spec())
+
+        assert "not a valid format string" in str(ei.value)
+
     def test_a_slot_the_input_does_not_declare_is_refused_at_resolve(self) -> None:
         config = _config(prompt=PromptTemplate(template="Extract from:\n\n{body}"))
 
