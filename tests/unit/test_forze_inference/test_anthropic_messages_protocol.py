@@ -383,6 +383,53 @@ class TestTheDialectsOwnRefusals:
 
         assert "word boundary" in str(ei.value)
 
+    @pytest.mark.parametrize(
+        ("pattern", "offending"),
+        [
+            (r"\\\bword", "word boundary"),
+            (r"(a)\\\1", "backreference"),
+            (r"(?<n>a)\\\k<n>", "named backreference"),
+        ],
+    )
+    def test_the_parity_rule_holds_for_every_construct(
+        self,
+        pattern: str,
+        offending: str,
+    ) -> None:
+        """An odd run longer than one, in front of each construct the scan looks for.
+
+        Not just the boundary: the rule is one rule, and a scan that lost it for the
+        backreferences would be the same defect wearing a different escape.
+        """
+
+        from forze_inference.http.protocols.anthropic_messages import _SCHEMA_RULES
+        from forze_inference.http.protocols.schema import schema_violations
+
+        schema = {
+            "type": "object",
+            "properties": {"code": {"type": "string", "pattern": pattern}},
+            "required": ["code"],
+        }
+
+        assert any(
+            offending in violation
+            for violation in schema_violations(schema, "", rules=_SCHEMA_RULES)
+        )
+
+    @pytest.mark.parametrize("pattern", [r"a\\bc", r"a\\\\bc", r"\(?=x)"])
+    def test_an_escaped_construct_is_left_inert(self, pattern: str) -> None:
+        """The other half of the same rule, including the case a search cannot reach: one
+        backslash before a paren makes it a literal paren, not a lookahead.
+
+        Note which runs are which. Before a `b`, an *even* run leaves the letter plain —
+        the backslashes pair off. Before a `(`, an *odd* run escapes the paren. Same rule,
+        read from the construct backwards.
+        """
+
+        from forze_inference.http.protocols.anthropic_messages import _unsupported_constructs
+
+        assert _unsupported_constructs(pattern) == []
+
     def test_a_literal_backslash_is_not_a_word_boundary(self) -> None:
         """The scanner reads the escape, not just the letter.
 
