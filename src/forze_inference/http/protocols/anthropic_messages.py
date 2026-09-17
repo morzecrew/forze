@@ -117,10 +117,13 @@ def _unsupported_constructs(pattern: str) -> list[str]:
     rest before a model carrying one can be built; they are checked either way, because
     which constructs arrive is a property of that engine rather than of this constraint.
 
-    A character class holds members rather than syntax, so the scan carries one bit of state
-    for it: ``[(?=]`` matches one of three characters and ``[\\b]`` matches a backspace, and
-    neither is the construct it spells outside a class. The state has to end where the class
-    does, or one ``[`` would serve everything after it.
+    A character class holds members rather than syntax, so the scan tracks where one is:
+    ``[(?=]`` matches one of three characters and ``[\\b]`` matches a backspace, and neither is
+    the construct it spells outside a class. Where the class *ends* is the fiddly half, and
+    both engines agree on the two rules that decide it — a ``]`` in first position is a
+    member (``[]]`` matches one bracket, and ``[^]]`` anything but one), and a POSIX class
+    name carries a ``]`` of its own (``[[:alpha:](?=x)]``). Ending the class early serves
+    nothing; ending it late would serve every construct after the first ``[``.
 
     Knowingly left out: a ``{n,m}`` quantifier over a range the provider calls too large,
     which it does not quantify, so it stays a rejected request.
@@ -129,6 +132,7 @@ def _unsupported_constructs(pattern: str) -> list[str]:
     found: list[str] = []
     index = 0
     in_class = False
+    members = 0
 
     while index < len(pattern):
         character = pattern[index]
@@ -151,14 +155,36 @@ def _unsupported_constructs(pattern: str) -> list[str]:
             # Two characters, whatever the second one is: that is what makes the next
             # backslash a fresh escape rather than an escaped one — inside a class as much
             # as outside one, which is what keeps `[\]]` open until its real end.
+            members += 1
             index += 2
             continue
 
         if in_class:
-            in_class = character != "]"
+            if character == "^" and members == 0:
+                # The negation marker, which is not itself a member — so the `]` of
+                # `[^]]` is still in first position.
+                index += 1
+                continue
+
+            if pattern.startswith("[:", index):
+                # A POSIX class name, whose own `]` does not end the enclosing class:
+                # `[[:alpha:](?=x)]` is alphanumerics plus five literal characters.
+                closing = pattern.find(":]", index + 2)
+                index = len(pattern) if closing < 0 else closing + 2
+                members += 1
+                continue
+
+            if character == "]" and members:
+                in_class = False
+
+            else:
+                # A `]` in first position is a member rather than the close, which is how
+                # `[]]` matches one bracket and `[](?=foo)]` matches one of seven.
+                members += 1
 
         elif character == "[":
             in_class = True
+            members = 0
 
         elif pattern.startswith(_LOOKAROUND, index):
             found.append("a lookahead or lookbehind")

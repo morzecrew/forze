@@ -430,7 +430,19 @@ class TestTheDialectsOwnRefusals:
 
         assert _unsupported_constructs(pattern) == []
 
-    @pytest.mark.parametrize("pattern", [r"[(?=]", r"[(?P=]", r"[\b]", r"[\](?P=n]"])
+    @pytest.mark.parametrize(
+        "pattern",
+        [
+            r"[(?=]",
+            r"[(?P=]",
+            r"[\b]",
+            r"[\](?P=n]",
+            r"[](?=foo)]",
+            r"[]]x",
+            r"[^]]x",
+            r"[[:alpha:](?=x)]",
+        ],
+    )
     def test_group_syntax_inside_a_character_class_is_literal(self, pattern: str) -> None:
         """A class holds members, not syntax.
 
@@ -453,6 +465,8 @@ class TestTheDialectsOwnRefusals:
             (r"[a-z](?=x)", "lookahead"),
             (r"[\]]\bword", "word boundary"),
             (r"[(]x(?P=n)", "named backreference"),
+            (r"[]](?=x)", "lookahead"),
+            (r"[[:alpha:]](?=x)", "lookahead"),
         ],
     )
     def test_a_closed_character_class_does_not_blind_the_scan(
