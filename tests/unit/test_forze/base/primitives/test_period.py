@@ -7,7 +7,7 @@ both directions because that is the property a wrong implementation breaks first
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -61,7 +61,54 @@ class TestConstruction:
         with pytest.raises(CoreException) as ei:
             Period(start=date(2026, 1, 1), end=datetime(2026, 2, 1))  # type: ignore[type-var]
 
-        assert "different grains" in str(ei.value)
+        assert "not comparable" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "expected"),
+        [
+            ({"start": 1, "end": 2}, "must be a date or a datetime"),
+            ({"start": "2026-01-01"}, "must be a date or a datetime"),
+            ({"start": date(2026, 1, 1), "end": 7}, "must be a date or a datetime"),
+            ({"start": date(2026, 1, 1), "bounds": "]["}, "is not one of"),
+        ],
+    )
+    def test_endpoints_and_bounds_are_checked_at_runtime(
+        self,
+        kwargs: dict[str, object],
+        expected: str,
+    ) -> None:
+        """The annotations guarantee nothing here: a period is built from recorded markers and
+        other dynamic input as often as from typed code, and every one of these would otherwise
+        surface as a stdlib `TypeError` from inside whichever predicate touched the value — past
+        the boundary where a caller can report it. `Period(start=1, end=2)` is the worst case: it
+        sorts and compares like a period, so it is swept as *valid*.
+        """
+
+        with pytest.raises(CoreException) as ei:
+            Period(**kwargs)  # type: ignore[arg-type]
+
+        assert expected in str(ei.value)
+
+    def test_mixed_datetime_awareness_is_refused(self) -> None:
+        """A naive and an aware `datetime` are one type, so neither the annotation nor the
+        grain check sees the difference — and `<` between them raises `TypeError`."""
+
+        with pytest.raises(CoreException) as ei:
+            Period(start=datetime(2026, 1, 1), end=datetime(2026, 2, 1, tzinfo=UTC))
+
+        assert "not comparable" in str(ei.value)
+        assert "naive datetime" in str(ei.value)
+        assert "aware datetime" in str(ei.value)
+
+    def test_an_aware_period_is_ordinary(self) -> None:
+        period = Period(
+            start=datetime(2026, 1, 1, tzinfo=UTC), end=datetime(2026, 2, 1, tzinfo=UTC)
+        )
+
+        assert period.contains(datetime(2026, 1, 15, tzinfo=UTC))
+
+        with pytest.raises(CoreException):
+            period.contains(datetime(2026, 1, 15))
 
     def test_a_datetime_period_is_ordinary(self) -> None:
         period = Period(start=datetime(2026, 1, 1, 9), end=datetime(2026, 1, 1, 17))

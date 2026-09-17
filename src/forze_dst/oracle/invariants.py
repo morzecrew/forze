@@ -10,12 +10,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from typing import Any, final
 
 import attrs
 
 from forze.base.exceptions import CoreException
-from forze.base.primitives import Bounds, Period
+from forze.base.primitives import Bounds, Period, grain_of
 from forze_dst.oracle.recorder import Event, History
 
 # ----------------------- #
@@ -373,14 +374,19 @@ def no_overlapping_periods(
     one per period it writes (``record(kind, **{key: owner, start: …, end: …})``), and an ``end``
     that is absent or ``None`` is read as open-ended.
 
+    **Every** overlapping pair is reported, not one per period: three nested periods are three
+    conflicts, and a consumer correcting only the pairs it was handed would leave the rest.
+
     Everything a marker can get wrong is *reported* rather than raised, because an oracle that
     raised would take the whole run's checking with it: a marker missing ``key`` or ``start``,
     endpoints a period cannot be built from, a ``key`` value that cannot be grouped (an
-    unhashable one), and a ``key`` whose markers mix ``date`` with ``datetime`` — which is
-    reported once and then checked per grain, so a real overlap inside one grain still surfaces.
+    unhashable one), and a ``key`` whose markers are not mutually comparable — a ``date`` against
+    a ``datetime``, or a naive ``datetime`` against an aware one — which is reported once and then
+    checked per comparable group, so a real overlap inside one of them still surfaces.
 
-    Violations come back in the order the markers were recorded, on every run and under every
-    hash seed: a determinism tool whose report changes between two runs of one seed is not one.
+    Violations come back in the order the markers that complete them were recorded, on every run
+    and under every hash seed: a determinism tool whose report changes between two runs of one
+    seed is not one.
     """
 
     def _reported(message: str, event: Event) -> Violation:
@@ -392,13 +398,14 @@ def no_overlapping_periods(
 
     def _check(history: History) -> list[Violation]:
         violations: list[Violation] = []
-        # Owner, then grain. A `date` and a `datetime` do not compare, so a key whose markers
-        # mix them would raise out of the sort below — from inside the oracle, taking the run's
-        # remaining checks with it. The mixture is reported once per owner instead, and each
-        # grain is still swept, so an overlap within one of them is not lost to the other's
-        # noise. Both levels are plain dicts because insertion order is what makes the reported
-        # violations the same on every run: a set of owners would order them by hash seed.
-        by_owner: dict[Any, dict[type, list[tuple[Period[Any], Event]]]] = {}
+        # Owner, then comparability class (`grain_of`: the type, plus whether a `datetime` is
+        # aware — a naive and an aware one are one type and raise against each other). Values
+        # that do not compare would raise out of the sort below, from inside the oracle, taking
+        # the run's remaining checks with it; the mixture is reported once per owner instead and
+        # each group is still swept, so an overlap within one is not lost to the other's noise.
+        # Plain dicts at both levels: insertion order is what makes a run's grouping stable,
+        # while a set of owners would order them by hash seed.
+        by_owner: dict[Any, dict[tuple[type, bool], list[tuple[Period[Any], Event]]]] = {}
 
         for event in history.of_kind(kind):
             fields = event.fields
@@ -435,59 +442,71 @@ def no_overlapping_periods(
                 )
                 continue
 
-            by_grain.setdefault(type(period.start), []).append((period, event))
+            by_grain.setdefault(grain_of(period.start), []).append((period, event))
 
         for owner, by_grain in by_owner.items():
             if len(by_grain) > 1:
-                grains = ", ".join(sorted(grain.__name__ for grain in by_grain))
-                first_event = next(iter(next(iter(by_grain.values()))))[1]
+                grains = ", ".join(sorted(_grain_label(grain) for grain in by_grain))
+                first_event = next(iter(by_grain.values()))[0][1]
                 violations.append(
                     _reported(
-                        f"{kind} markers for {key}={owner!r} mix grains: {grains}",
+                        f"{kind} markers for {key}={owner!r} are not mutually comparable: {grains}",
                         first_event,
                     )
                 )
 
         for owner, by_grain in by_owner.items():
             for entries in by_grain.values():
-                entries.sort(key=lambda entry: entry[0].start)
-                covering: tuple[Period[Any], Event] | None = None
+                entries.sort(key=lambda entry: (entry[0].start, entry[1].seq))
+                # Every *pair*, not one per period: the periods still reaching past the
+                # candidate's start stay active and are each compared against it, so three
+                # nested periods report three conflicts. Pruning keeps the scan linear in the
+                # common case — a history with no overlaps retires each period as the next
+                # begins — and quadratic only in the number of genuinely overlapping rows.
+                active: list[tuple[Period[Any], Event]] = []
 
                 for period, event in entries:
-                    if covering is not None and covering[0].overlaps(period):
-                        violations.append(
-                            Violation(
-                                invariant="no_overlapping_periods",
-                                message=(
-                                    f"overlapping periods for {key}={owner!r}: "
-                                    f"{covering[0].start}..{covering[0].end} and "
-                                    f"{period.start}..{period.end}"
-                                ),
-                                events=(covering[1], event),
-                            )
-                        )
+                    active = [
+                        (earlier, earlier_event)
+                        for earlier, earlier_event in active
+                        if earlier.end is None or earlier.end >= period.start
+                    ]
 
-                    # The period reaching furthest forward is the one a later period can still
-                    # overlap; keeping the latest-started one would miss a long period
-                    # enclosing several short ones.
-                    if covering is None or _reaches_further(period, covering[0]):
-                        covering = (period, event)
+                    for earlier, earlier_event in active:
+                        if earlier.overlaps(period):
+                            violations.append(
+                                Violation(
+                                    invariant="no_overlapping_periods",
+                                    message=(
+                                        f"overlapping periods for {key}={owner!r}: "
+                                        f"{earlier.start}..{earlier.end} and "
+                                        f"{period.start}..{period.end}"
+                                    ),
+                                    events=(earlier_event, event),
+                                )
+                            )
+
+                    active.append((period, event))
+
+        # By the marker that completes each violation, so the report reads in recorded order
+        # however the owners interleaved — and identically on every run, which grouping by owner
+        # alone does not give.
+        violations.sort(key=lambda violation: max(event.seq for event in violation.events))
 
         return violations
 
     return named("no_overlapping_periods", _check)
 
 
-def _reaches_further(period: Period[Any], than: Period[Any]) -> bool:
-    """Whether *period* ends after *than* — an open end reaching furthest of all."""
+def _grain_label(grain: tuple[type, bool]) -> str:
+    """A comparability class as a reader sees it in a violation message."""
 
-    if period.end is None:
-        return True
+    kind, aware = grain
 
-    if than.end is None:
-        return False
+    if kind is datetime:
+        return "aware datetime" if aware else "naive datetime"
 
-    return period.end > than.end
+    return kind.__name__
 
 
 def no_unexpected_error() -> Invariant:

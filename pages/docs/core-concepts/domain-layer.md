@@ -130,9 +130,11 @@ value, so a shared endpoint is counted only when both sides have it in force: ha
 everything at or after its start. A zero-length period is accepted — a booking cancelled in the
 instant it was made is a real row — and is empty unless both ends are included.
 
-Endpoints must share a grain: `datetime` subclasses `date`, so a type checker passes a mixed
-pair, and `Period` refuses one at construction rather than letting it fail inside a comparison
-later.
+Endpoints must be comparable, and the type system cannot say so: `datetime` subclasses `date`, so
+a type checker passes a `date`/`datetime` pair, and a naive and an aware `datetime` are one type
+to it. `Period` checks both at construction — along with the endpoints being dates at all, since a
+period is as often built from dynamic input as from typed code — rather than letting any of them
+surface as a `TypeError` from inside a comparison later.
 
 Aggregates define *what* your domain is and the rules it keeps; turning actions
 on them into something the runtime can execute is the

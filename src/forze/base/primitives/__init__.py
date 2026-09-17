@@ -62,7 +62,7 @@ from .mapping import (
 )
 from .namespace import StrKeyNamespace
 from .numeric import clamp
-from .period import Bounds, Period
+from .period import Bounds, Period, grain_of
 from .projection import (
     MISSING,
     build_projection,
@@ -173,5 +173,6 @@ __all__ = [
     "DirectedAcyclicGraph",
     "Bounds",
     "Period",
+    "grain_of",
     "MappingConverter",
 ]

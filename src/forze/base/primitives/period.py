@@ -28,7 +28,7 @@ build periods rather than to the type itself.
 """
 
 from datetime import date, datetime
-from typing import Literal, final
+from typing import Literal, final, get_args
 
 import attrs
 
@@ -43,11 +43,30 @@ Four members rather than the two the framework's own declarations use: the predi
 symmetric in the endpoints, so an exclusive start costs a row in a table instead of a branch in
 the code."""
 
+_ALL_BOUNDS: frozenset[str] = frozenset(get_args(Bounds))
+"""Every convention, read off the alias so the two cannot drift apart."""
+
 _START_CLOSED: frozenset[str] = frozenset({"[)", "[]"})
 """Bounds whose first endpoint is in force."""
 
 _END_CLOSED: frozenset[str] = frozenset({"[]", "(]"})
 """Bounds whose last endpoint is in force."""
+
+
+def grain_of(value: date) -> tuple[type, bool]:
+    """The comparability class of *value*: its type, and whether a ``datetime`` is aware.
+
+    Two endpoints compare only when this matches. The type alone is not enough — a naive and an
+    aware ``datetime`` are both ``datetime`` and raise ``TypeError`` against each other — which is
+    why anything grouping values before comparing them (a sweep over recorded periods, say) has to
+    group by this rather than by ``type``.
+    """
+
+    if isinstance(value, datetime):
+        return (datetime, value.utcoffset() is not None)
+
+    return (type(value), False)
+
 
 # ....................... #
 
@@ -73,18 +92,36 @@ class Period[T: (date, datetime)]:
     """Which endpoints are in force (:data:`Bounds`)."""
 
     def __attrs_post_init__(self) -> None:
-        # `datetime` subclasses `date`, so a constrained type variable resolves a mixed pair to
-        # `date` and a type checker passes it (verified against mypy --strict). The mismatch then
-        # survives to the first comparison, where the stdlib raises `TypeError` from inside
-        # whichever predicate happened to touch it. Refused here instead, naming both endpoints.
-        if self.end is not None and type(self.start) is not type(self.end):
+        # Nothing here is guaranteed by the annotations: a period is built from recorded markers
+        # and other dynamic input as often as from typed code, and every refusal below is a
+        # `TypeError` the stdlib would otherwise raise from inside whichever predicate happened
+        # to touch the value — past the boundary where a caller can report it.
+        for name, endpoint in (("start", self.start), ("end", self.end)):
+            if endpoint is not None and not isinstance(endpoint, date):
+                raise exc.validation(
+                    f"Period {name} must be a date or a datetime, not {type(endpoint).__name__}."
+                )
+
+        if self.bounds not in _ALL_BOUNDS:
             raise exc.validation(
-                f"Period endpoints are of different grains: start is "
-                f"{type(self.start).__name__}, end is {type(self.end).__name__}. A period spans "
-                "one grain; convert the endpoint, or build two periods."
+                f"Period bounds {self.bounds!r} is not one of "
+                f"{', '.join(repr(bound) for bound in sorted(_ALL_BOUNDS))}."
             )
 
-        if self.end is not None and self.end < self.start:
+        if self.end is None:
+            return
+
+        # `datetime` subclasses `date`, so a constrained type variable resolves a mixed pair to
+        # `date` and a type checker passes it (verified against mypy --strict); awareness is
+        # invisible to it entirely, since a naive and an aware `datetime` are one type.
+        if grain_of(self.start) != grain_of(self.end):
+            raise exc.validation(
+                f"Period endpoints are not comparable: start is {_grain_name(self.start)}, end "
+                f"is {_grain_name(self.end)}. A period spans one grain; convert the endpoint, or "
+                "build two periods."
+            )
+
+        if self.end < self.start:
             raise exc.validation(f"Period ends before it starts: {self.start!r} to {self.end!r}.")
 
     # ....................... #
@@ -186,8 +223,20 @@ class Period[T: (date, datetime)]:
         return self.start < other.end
 
     def _require_same_grain(self, value: T) -> None:
-        if type(value) is not type(self.start):
+        if not isinstance(value, date) or grain_of(value) != grain_of(self.start):
             raise exc.validation(
                 f"Period comparison mixes grains: this period holds "
-                f"{type(self.start).__name__}, the other value is {type(value).__name__}."
+                f"{_grain_name(self.start)}, the other value is {_grain_name(value)}."
             )
+
+
+# ....................... #
+
+
+def _grain_name(value: object) -> str:
+    """*value*'s comparability class, for a refusal a reader can act on."""
+
+    if isinstance(value, datetime):
+        return "an aware datetime" if value.utcoffset() is not None else "a naive datetime"
+
+    return f"a {type(value).__name__}"
