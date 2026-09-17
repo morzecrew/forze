@@ -378,28 +378,35 @@ def no_overlapping_periods(
     endpoints a period cannot be built from, a ``key`` value that cannot be grouped (an
     unhashable one), and a ``key`` whose markers mix ``date`` with ``datetime`` — which is
     reported once and then checked per grain, so a real overlap inside one grain still surfaces.
+
+    Violations come back in the order the markers were recorded, on every run and under every
+    hash seed: a determinism tool whose report changes between two runs of one seed is not one.
     """
 
     def _reported(message: str, event: Event) -> Violation:
         return Violation(
             invariant="no_overlapping_periods",
-            message=f"{kind} event {message}",
+            message=message,
             events=(event,),
         )
 
     def _check(history: History) -> list[Violation]:
         violations: list[Violation] = []
-        # Grouped by owner *and* grain: a `date` and a `datetime` do not compare, so a key whose
-        # markers mix them would raise out of the sort below — from inside the oracle, taking the
-        # run's remaining checks with it. The mixture is reported once per key instead, and each
-        # grain is still swept, so an overlap within one of them is not lost to the other's noise.
-        by_group: dict[tuple[Any, type], list[tuple[Period[Any], Event]]] = defaultdict(list)
+        # Owner, then grain. A `date` and a `datetime` do not compare, so a key whose markers
+        # mix them would raise out of the sort below — from inside the oracle, taking the run's
+        # remaining checks with it. The mixture is reported once per owner instead, and each
+        # grain is still swept, so an overlap within one of them is not lost to the other's
+        # noise. Both levels are plain dicts because insertion order is what makes the reported
+        # violations the same on every run: a set of owners would order them by hash seed.
+        by_owner: dict[Any, dict[type, list[tuple[Period[Any], Event]]]] = {}
 
         for event in history.of_kind(kind):
             fields = event.fields
 
             if key not in fields or start not in fields:
-                violations.append(_reported(f"recorded without {key!r} and {start!r}", event))
+                violations.append(
+                    _reported(f"{kind} event recorded without {key!r} and {start!r}", event)
+                )
                 continue
 
             try:
@@ -410,59 +417,61 @@ def no_overlapping_periods(
                 )
 
             except CoreException as error:
-                violations.append(_reported(f"carries an unusable period: {error.summary}", event))
+                violations.append(
+                    _reported(f"{kind} event carries an unusable period: {error.summary}", event)
+                )
                 continue
 
             try:
-                by_group[(fields[key], type(period.start))].append((period, event))
+                by_grain = by_owner.setdefault(fields[key], {})
 
             except TypeError:
-                # An unhashable owner cannot be grouped, and `defaultdict` would raise here.
-                violations.append(
-                    _reported(f"carries a {key!r} that cannot be grouped: {fields[key]!r}", event)
-                )
-
-        for owner in {group_owner for group_owner, _ in by_group}:
-            grains = {grain for group_owner, grain in by_group if group_owner == owner}
-
-            if len(grains) > 1:
-                first_event = next(
-                    event
-                    for (group_owner, _), entries in by_group.items()
-                    for _, event in entries
-                    if group_owner == owner
-                )
+                # An unhashable owner cannot be grouped, and the dict would raise here.
                 violations.append(
                     _reported(
-                        f"markers for {key}={owner!r} mix grains: "
-                        f"{', '.join(sorted(grain.__name__ for grain in grains))}",
+                        f"{kind} event carries a {key!r} that cannot be grouped: {fields[key]!r}",
+                        event,
+                    )
+                )
+                continue
+
+            by_grain.setdefault(type(period.start), []).append((period, event))
+
+        for owner, by_grain in by_owner.items():
+            if len(by_grain) > 1:
+                grains = ", ".join(sorted(grain.__name__ for grain in by_grain))
+                first_event = next(iter(next(iter(by_grain.values()))))[1]
+                violations.append(
+                    _reported(
+                        f"{kind} markers for {key}={owner!r} mix grains: {grains}",
                         first_event,
                     )
                 )
 
-        for (owner, _), entries in by_group.items():
-            entries.sort(key=lambda entry: entry[0].start)
-            covering: tuple[Period[Any], Event] | None = None
+        for owner, by_grain in by_owner.items():
+            for entries in by_grain.values():
+                entries.sort(key=lambda entry: entry[0].start)
+                covering: tuple[Period[Any], Event] | None = None
 
-            for period, event in entries:
-                if covering is not None and covering[0].overlaps(period):
-                    violations.append(
-                        Violation(
-                            invariant="no_overlapping_periods",
-                            message=(
-                                f"overlapping periods for {key}={owner!r}: "
-                                f"{covering[0].start}..{covering[0].end} and "
-                                f"{period.start}..{period.end}"
-                            ),
-                            events=(covering[1], event),
+                for period, event in entries:
+                    if covering is not None and covering[0].overlaps(period):
+                        violations.append(
+                            Violation(
+                                invariant="no_overlapping_periods",
+                                message=(
+                                    f"overlapping periods for {key}={owner!r}: "
+                                    f"{covering[0].start}..{covering[0].end} and "
+                                    f"{period.start}..{period.end}"
+                                ),
+                                events=(covering[1], event),
+                            )
                         )
-                    )
 
-                # The period reaching furthest forward is the one a later period can still
-                # overlap; keeping the latest-started one would miss a long period enclosing
-                # several short ones.
-                if covering is None or _reaches_further(period, covering[0]):
-                    covering = (period, event)
+                    # The period reaching furthest forward is the one a later period can still
+                    # overlap; keeping the latest-started one would miss a long period
+                    # enclosing several short ones.
+                    if covering is None or _reaches_further(period, covering[0]):
+                        covering = (period, event)
 
         return violations
 

@@ -8,6 +8,10 @@ bookings, shifts and leases.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import textwrap
 from datetime import date, datetime
 
 from forze_dst.invariants import no_overlapping_periods
@@ -251,3 +255,60 @@ class TestAMarkerTheWorkloadRecordedBadly:
         assert len(violations) == 2
         assert any("unusable period" in violation.message for violation in violations)
         assert any("overlapping periods" in violation.message for violation in violations)
+
+
+class TestTheReportIsTheSameOnEveryRun:
+    """A determinism tool that reports its findings in hash order is not one.
+
+    The first fix for the mixed-grain crash grouped owners through a set comprehension, so the
+    order of the violations it returned changed with ``PYTHONHASHSEED`` — which would make a
+    minimized counterexample's report differ between two runs of the same seed. Single-process
+    tests cannot see it: within one interpreter the order is stable, just arbitrary.
+    """
+
+    def test_violation_order_does_not_vary_by_hash_seed(self) -> None:
+        script = textwrap.dedent(
+            """
+            from datetime import date, datetime
+
+            from forze_dst.invariants import no_overlapping_periods
+            from forze_dst.oracle import Event, History
+
+            check = no_overlapping_periods("shift", key="employee_id", start="s", end="e")
+            events = []
+
+            for index, owner in enumerate(["ann", "bob", "cat", "dan", "eve"]):
+                events.append(
+                    Event(
+                        seq=2 * index,
+                        kind="shift",
+                        at=0.0,
+                        fields={"employee_id": owner, "s": date(2026, 1, 1)},
+                    )
+                )
+                events.append(
+                    Event(
+                        seq=2 * index + 1,
+                        kind="shift",
+                        at=1.0,
+                        fields={"employee_id": owner, "s": datetime(2026, 2, 1)},
+                    )
+                )
+
+            print([violation.message for violation in check(History(seed=1, events=tuple(events)))])
+            """
+        )
+
+        reports = {
+            seed: subprocess.run(
+                [sys.executable, "-c", script],
+                env={**os.environ, "PYTHONHASHSEED": seed},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            for seed in ("0", "1", "12345", "99999")
+        }
+
+        assert len(set(reports.values())) == 1, f"violation order varies by hash seed: {reports}"
+        assert reports["0"].index("'ann'") < reports["0"].index("'eve'")
