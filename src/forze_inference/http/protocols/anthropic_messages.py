@@ -99,16 +99,29 @@ _NAMED_BACKREFERENCE: Final[str] = "(?P="
 def _unsupported_constructs(pattern: str) -> list[str]:
     """Constructs in *pattern* that the constrained decoder does not run.
 
-    Scanned left to right rather than searched, because every one of these can be turned
-    off by an escape in front of it and an escape is decided by **parity**: in ``\\\\b`` the
-    first backslash escapes the second, leaving the third to make an active word boundary,
-    while in ``a\\\\bc`` the pair is a literal backslash and the ``b`` is a plain letter.
-    Looking at the single character in front gets both of those wrong. Walking the string
-    and letting an escape consume the character after it gets parity for free.
+    ``pattern`` is enforced here — which is why it is absent from the refused keywords —
+    but over a subset, and what the subset leaves out is refused by name rather than the
+    keyword outright: a route asking for ``^INV-`` plus digits gets a constraint the
+    provider honours.
 
-    One knowingly conservative call: ``\\b`` inside a character class means a backspace
-    rather than a boundary, and is reported here as a boundary. Refusing a pattern the
-    decoder would have run is the safe side of that, and no output model has wanted one.
+    Scanned left to right rather than searched, because every one of these can be turned
+    off by an escape in front of it and an escape is decided by **parity**. Counted in
+    words, since counting them in escapes is how this went wrong twice: three backslashes
+    and a ``b`` are a literal backslash followed by an *active* boundary, while two
+    backslashes and a ``b`` are a literal backslash followed by a plain letter. Looking at
+    the single character in front gets both wrong. Walking the string and letting an escape
+    consume the character after it gets parity for free — and the mirror case with it, where
+    one backslash before a parenthesis makes it literal rather than a lookahead.
+
+    Only the word boundary is reachable through Pydantic, whose own regex engine refuses the
+    rest before a model carrying one can be built; they are checked either way, because
+    which constructs arrive is a property of that engine rather than of this constraint.
+
+    Two things are knowingly left out. A ``{n,m}`` quantifier over a range the provider
+    calls too large, which it does not quantify, so it stays a rejected request. And a
+    ``\\b`` inside a character class, which means a backspace rather than a boundary and is
+    reported here as a boundary: refusing a pattern the decoder would have run is the safe
+    side of that one.
     """
 
     found: list[str] = []
@@ -144,15 +157,6 @@ def _unsupported_constructs(pattern: str) -> list[str]:
 
     return sorted(set(found))
 
-
-"""Regex constructs the decoder cannot run, refused rather than sent.
-
-``pattern`` itself is enforced here — which is why it is absent from the refused keywords —
-but over a subset. Only the word boundary is reachable through Pydantic, whose own engine
-refuses the rest before a model carrying one can be built; they are checked either way,
-because which constructs arrive is a property of that engine rather than of this constraint.
-Not covered: a ``{n,m}`` quantifier over a range the provider calls too large, which it does
-not quantify, so it stays a rejected request."""
 
 _REFUSED_SCHEMA_KEYWORDS: Final[frozenset[str]] = frozenset(
     {
@@ -190,7 +194,7 @@ _REFUSED_SCHEMA_KEYWORDS: Final[frozenset[str]] = frozenset(
 and ignored. Deliberately absent, because the constraint *does* enforce them: ``$ref`` and
 ``$defs``, ``default``, ``const``, ``enum``, ``pattern``, and the string formats above.
 
-What ``pattern`` is checked against lives in :data:`_UNSUPPORTED_REGEX`. Not covered here:
+What ``pattern`` is checked against lives in :func:`_unsupported_constructs`. Not covered here:
 enum members that are not scalars, which the endpoint reports as a rejected request naming
 the offending part."""
 
