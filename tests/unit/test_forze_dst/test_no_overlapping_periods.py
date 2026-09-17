@@ -232,6 +232,38 @@ class TestAMarkerTheWorkloadRecordedBadly:
         assert any("mix grains" in violation.message for violation in violations)
         assert any("overlapping periods" in violation.message for violation in violations)
 
+    def test_an_overlap_in_the_second_grain_is_still_found(self) -> None:
+        """"Each grain is still swept" is only a claim while the overlap sits in the grain that
+        happened to be recorded first: sweeping one grain per owner passes every other leg in
+        this file. Here the `date` markers tile and the `datetime` ones overlap.
+        """
+
+        violations = _CHECK(
+            _history(
+                _shift("ann", JAN, FEB),
+                _shift("ann", datetime(2026, 2, 1), datetime(2026, 4, 1)),
+                _shift("ann", datetime(2026, 3, 1), datetime(2026, 5, 1)),
+            )
+        )
+
+        assert len(violations) == 2
+        assert any("mix grains" in violation.message for violation in violations)
+        assert any("overlapping periods" in violation.message for violation in violations)
+
+    def test_the_mixture_message_names_the_grains_in_a_canonical_order(self) -> None:
+        """Sorted rather than insertion-ordered, so two histories that mix the same two grains
+        report the same sentence whichever marker arrived first."""
+
+        datetime_first = _CHECK(
+            _history(
+                _shift("ann", datetime(2026, 1, 1), datetime(2026, 2, 1)),
+                _shift("ann", JAN, FEB),
+            )
+        )
+
+        assert len(datetime_first) == 1
+        assert datetime_first[0].message.endswith("mix grains: date, datetime")
+
     def test_an_explicit_none_end_is_open_ended(self) -> None:
         violations = _CHECK(
             _history(
