@@ -2,23 +2,24 @@
 
 from forze_inference.records import wrap_scalar_predictions
 
+from .anthropic_messages import AnthropicMessagesProtocol, messages_output_schema
 from .base import WireProtocol, WireRequest
-from .kserve_v2 import KserveV2Protocol, validate_flat_scalar_fields
-from .mlflow import MlflowProtocol
-from .openai_chat import (
+from .generation import (
     CONTENT_REFUSED_CODE,
     InferenceOutputMode,
-    OpenAiChatProtocol,
     PromptTemplate,
-    chat_output_schema,
     validate_prompt_template,
     validate_text_output,
 )
+from .kserve_v2 import KserveV2Protocol, validate_flat_scalar_fields
+from .mlflow import MlflowProtocol
+from .openai_chat import OpenAiChatProtocol, chat_output_schema
 
 # ----------------------- #
 
 __all__ = [
     "CONTENT_REFUSED_CODE",
+    "AnthropicMessagesProtocol",
     "InferenceOutputMode",
     "KserveV2Protocol",
     "MlflowProtocol",
@@ -27,6 +28,7 @@ __all__ = [
     "WireProtocol",
     "WireRequest",
     "chat_output_schema",
+    "messages_output_schema",
     "validate_flat_scalar_fields",
     "validate_prompt_template",
     "validate_text_output",

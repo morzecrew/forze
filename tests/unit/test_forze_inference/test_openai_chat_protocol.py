@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator, Mapping, Sequence
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, cast, final
 
@@ -31,12 +31,12 @@ from forze_inference.http import (
     PromptTemplate,
     WireProtocol,
 )
-from forze_inference.http.protocols.openai_chat import (
+from forze_inference.http.protocols.generation import (
     CONTENT_REFUSED_CODE,
     USAGE_INPUT_TOKENS_ATTRIBUTE,
     USAGE_OUTPUT_TOKENS_ATTRIBUTE,
-    OpenAiChatProtocol,
 )
+from forze_inference.http.protocols.openai_chat import OpenAiChatProtocol, chat_output_schema
 
 # ----------------------- #
 
@@ -779,6 +779,19 @@ class TestWiringRefusals:
 
 
 class TestWhatTheConstraintCannotExpress:
+    @pytest.mark.parametrize("annotation", [dict, Any, object, list])
+    def test_a_field_with_nothing_to_constrain_is_refused(self, annotation: Any) -> None:
+        """The same hole the other dialect had: a bare `dict` reached the wire as
+        `additionalProperties: true`, was rewritten to `false` by the tightening pass, and
+        left a constraint permitting only `{}`. Refused for both dialects now, at the one
+        walk they share.
+        """
+
+        model = type("_Loose", (BaseModel,), {"__annotations__": {"value": annotation}})
+
+        with pytest.raises(CoreException):
+            chat_output_schema(_spec(model))
+
     """Every shape the strict constraint cannot carry is refused at wiring.
 
     Each of these otherwise reaches the provider: some as a request it rejects, and the
@@ -888,15 +901,24 @@ class TestTheRouteRefusesAValueTheProviderWould:
         assert ei.value.kind == "configuration"
         assert "more digits than a request can carry" in str(ei.value)
 
-    @pytest.mark.parametrize("field", ["temperature", "max_output_tokens"])
-    def test_a_huge_integer_limit_does_not_crash_the_finite_check(self, field: str) -> None:
+    def test_a_huge_integer_ceiling_does_not_crash_the_finite_check(self) -> None:
         """`isfinite` converts to float first, so `10**400` raised `OverflowError` here.
 
-        An int is finite by definition, so the check is for floats only. The value is left
-        to the provider to reject, like every other upper bound on these two fields.
+        An int is finite by definition, so the check is for floats only, and a token
+        ceiling has no upper bound of its own to fail against.
         """
 
-        assert _config(**{field: 10**400}) is not None
+        assert _config(max_output_tokens=10**400) is not None
+
+    def test_a_huge_integer_temperature_is_refused_by_the_ceiling(self) -> None:
+        """The same value, on the field that now has a ceiling: refused by name rather than
+        left to the provider, and still not an `OverflowError` from the finite check."""
+
+        with pytest.raises(CoreException) as ei:
+            _config(temperature=10**400)
+
+        assert ei.value.kind == "configuration"
+        assert "ceiling" in str(ei.value)
 
     @pytest.mark.parametrize("protocol", ["openai-chat", "gpt", ""])
     def test_a_protocol_outside_the_closed_set(self, protocol: str) -> None:

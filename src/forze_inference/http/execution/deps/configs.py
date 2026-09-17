@@ -12,6 +12,7 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
 
 from ...protocols import (
+    AnthropicMessagesProtocol,
     InferenceOutputMode,
     KserveV2Protocol,
     MlflowProtocol,
@@ -19,6 +20,7 @@ from ...protocols import (
     PromptTemplate,
     WireProtocol,
     chat_output_schema,
+    messages_output_schema,
     validate_flat_scalar_fields,
     validate_prompt_template,
     validate_text_output,
@@ -26,8 +28,15 @@ from ...protocols import (
 
 # ----------------------- #
 
-InferenceWireProtocolName = Literal["kserve_v2", "mlflow", "openai_chat"]
+InferenceWireProtocolName = Literal["kserve_v2", "mlflow", "openai_chat", "anthropic_messages"]
 """Supported serving dialects (JSON-record scope)."""
+
+_GENERATION_DIALECTS = frozenset({"openai_chat", "anthropic_messages"})
+"""The dialects that ask a model for a completion, and so read the generation fields below.
+
+Named once rather than checked as one protocol at a time: a pairing check keyed on a single
+dialect passes a prompt through unread the moment a second one arrives, which is the failure
+the check exists to prevent."""
 
 _PROTOCOL_NAMES = frozenset(get_args(InferenceWireProtocolName))
 _OUTPUT_MODES = frozenset(get_args(InferenceOutputMode))
@@ -36,10 +45,17 @@ drift. `attrs` does not enforce a `Literal` at runtime, and neither value fails 
 its own: an unknown protocol reaches `wire_protocol()` as an internal error, and an unknown
 output mode makes the encoder send no constraint while the decoder still expects JSON."""
 
+_TEMPERATURE_CEILINGS: dict[str, float] = {"openai_chat": 2.0, "anthropic_messages": 1.0}
+"""The highest temperature each generation endpoint accepts.
+
+A route names its dialect, so which ceiling applies is known at wiring — and a value above
+it is rejected by the provider on every request, which is a boot error wearing a runtime
+error's clothes."""
+
 _GENERATION_FIELDS = ("prompt", "output_mode", "temperature", "max_output_tokens")
-"""Fields only the ``openai_chat`` dialect reads. Refused on the others rather than
-ignored: a prompt on a KServe route is a wiring mistake, and silently dropping it would
-send the model a request the operator believes was shaped by it."""
+"""Fields only a generation dialect reads. Refused on the others rather than ignored: a
+prompt on a KServe route is a wiring mistake, and silently dropping it would send the model
+a request the operator believes was shaped by it."""
 
 
 @final
@@ -55,7 +71,9 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     protocol: InferenceWireProtocolName
     """Which wire dialect the endpoint speaks. ``kserve_v2`` covers KServe, mlserver,
     Seldon and Triton's HTTP frontend; ``mlflow`` is the legacy ``/invocations`` scoring
-    protocol; ``openai_chat`` covers anything speaking ``/v1/chat/completions``."""
+    protocol; ``openai_chat`` covers anything speaking ``/v1/chat/completions``;
+    ``anthropic_messages`` speaks Anthropic's native ``/v1/messages``, where a schema
+    constraint is honoured and the compatibility endpoint's is not."""
 
     model_name: NamedResourceSpec
     """Server-side model id — a static name or a ``(tenant_id) -> name`` resolver for
@@ -75,27 +93,32 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     (advertised via capabilities; the adapter cannot verify it)."""
 
     prompt: PromptTemplate | None = None
-    """The generation prompt, required by ``openai_chat`` and refused by the others.
+    """The generation prompt, required by a generation dialect and refused by the scoring
+    ones.
 
     Prompt-shaped configuration lives here rather than in handler code for the reason the
     procedure plane keeps its SQL in wiring: what the model is asked is a reviewed
     deployment fact, and a handler that passes a typed instance cannot drift from it."""
 
     output_mode: InferenceOutputMode | None = None
-    """``openai_chat`` only; defaults to ``structured``.
+    """Generation dialects only; defaults to ``structured``.
 
     ``structured`` constrains the completion to the output model's JSON schema, so the
     route answers with a validated ``Out``. ``text`` takes completion prose into a
     one-field ``str`` output model."""
 
     temperature: float | None = None
-    """``openai_chat`` only: sampling temperature, omitted when unset.
+    """Generation dialects only: sampling temperature, omitted when unset.
 
     Sampling is configuration, never a per-call option — a route's behaviour is a reviewed
     wiring fact, the same stance the port takes on which model answers."""
 
     max_output_tokens: int | None = None
-    """``openai_chat`` only: completion-length ceiling, omitted when unset."""
+    """Generation dialects only: completion-length ceiling.
+
+    Omitted when unset on ``openai_chat``, where the endpoint has its own default;
+    **required** on ``anthropic_messages``, whose endpoint requires ``max_tokens`` on every
+    request, so a route without one could not make a single valid call."""
 
     # ....................... #
 
@@ -200,9 +223,16 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
 
         if self.temperature is not None and self.temperature < 0:
             raise exc.configuration(
-                f"HttpInferenceConfig.temperature={self.temperature} must not be negative. "
-                "The upper bound is the provider's (2 for OpenAI, 1 for Anthropic) and is "
-                "not checked here."
+                f"HttpInferenceConfig.temperature={self.temperature} must not be negative."
+            )
+
+        ceiling = _TEMPERATURE_CEILINGS.get(self.protocol)
+
+        if self.temperature is not None and ceiling is not None and self.temperature > ceiling:
+            raise exc.configuration(
+                f"HttpInferenceConfig.temperature={self.temperature} is above the "
+                f"{self.protocol} endpoint's ceiling of {ceiling}; it would be rejected on "
+                "every request."
             )
 
         # Caught here rather than at the first stream call: a cap below 1 makes
@@ -217,14 +247,25 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
     # ....................... #
 
     def _validate_dialect_pairing(self) -> None:
-        # Fail-closed in both directions. A chat route with no prompt has nothing to ask
-        # the model; a prompt on a scoring route is a field nothing reads, and an ignored
-        # field is indistinguishable from an applied one from the outside.
-        if self.protocol == "openai_chat":
+        # Fail-closed in both directions. A generation route with no prompt has nothing to
+        # ask the model; a prompt on a scoring route is a field nothing reads, and an
+        # ignored field is indistinguishable from an applied one from the outside.
+        if self.protocol in _GENERATION_DIALECTS:
             if self.prompt is None:
                 raise exc.configuration(
-                    "HttpInferenceConfig(protocol='openai_chat') requires prompt=..., "
+                    f"HttpInferenceConfig(protocol={self.protocol!r}) requires prompt=..., "
                     "the template the route sends for every instance."
+                )
+
+            # The endpoint requires `max_tokens` on every request, so a route wired the way
+            # an openai_chat route may be wired cannot make one valid call. Refused here
+            # rather than defaulted: the plane refuses a truncated completion as an output
+            # mismatch, and a default would pick that truncation point for an operator who
+            # never saw it.
+            if self.protocol == "anthropic_messages" and self.max_output_tokens is None:
+                raise exc.configuration(
+                    "HttpInferenceConfig(protocol='anthropic_messages') requires "
+                    "max_output_tokens=..., which the endpoint requires on every request."
                 )
 
         else:
@@ -245,17 +286,23 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
         if self.protocol == "kserve_v2":
             validate_flat_scalar_fields(spec)
 
-        if self.protocol == "openai_chat" and self.prompt is not None:
+        if self.protocol in _GENERATION_DIALECTS and self.prompt is not None:
             validate_prompt_template(spec, self.prompt)
 
             if self._output_mode == "text":
                 validate_text_output(spec)
 
-            else:
+            elif self.protocol == "openai_chat":
                 # Derived here for its refusals only — the encoder derives it again per
                 # request from the same spec. A schema the constraint cannot express costs
                 # a resolve, not a production request that answers with unconstrained prose.
                 chat_output_schema(spec)
+
+            else:
+                # The same check against the other dialect's own vocabulary, which is wider:
+                # a model refused above can be servable here, and one refused here is
+                # refused for its own reasons.
+                messages_output_schema(spec)
 
     # ....................... #
 
@@ -274,13 +321,27 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
 
         if self.prompt is None:  # pragma: no cover - refused in __attrs_post_init__
             raise exc.internal(
-                "HttpInferenceConfig(protocol='openai_chat') reached wire_protocol() "
+                f"HttpInferenceConfig(protocol={self.protocol!r}) reached wire_protocol() "
                 "without a prompt."
             )
 
-        return OpenAiChatProtocol(
+        if self.protocol == "openai_chat":
+            return OpenAiChatProtocol(
+                prompt=self.prompt,
+                output_mode=self._output_mode,
+                temperature=self.temperature,
+                max_output_tokens=self.max_output_tokens,
+            )
+
+        if self.max_output_tokens is None:  # pragma: no cover - refused in __attrs_post_init__
+            raise exc.internal(
+                "HttpInferenceConfig(protocol='anthropic_messages') reached wire_protocol() "
+                "without max_output_tokens."
+            )
+
+        return AnthropicMessagesProtocol(
             prompt=self.prompt,
+            max_output_tokens=self.max_output_tokens,
             output_mode=self._output_mode,
             temperature=self.temperature,
-            max_output_tokens=self.max_output_tokens,
         )

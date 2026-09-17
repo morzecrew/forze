@@ -25,12 +25,18 @@ class TestTheRefusalIsUnchanged:
     @pytest.mark.parametrize(
         ("build", "subject"),
         [
-            (lambda ack: HttpInferenceConfig(
-                protocol="mlflow", model_name="m", acknowledge_data_egress=ack
-            ), "HttpInferenceConfig"),
-            (lambda ack: SageMakerInferenceConfig(
-                endpoint_name="e", acknowledge_data_egress=ack
-            ), "SageMakerInferenceConfig"),
+            (
+                lambda ack: HttpInferenceConfig(
+                    protocol="mlflow", model_name="m", acknowledge_data_egress=ack
+                ),
+                "HttpInferenceConfig",
+            ),
+            (
+                lambda ack: SageMakerInferenceConfig(
+                    endpoint_name="e", acknowledge_data_egress=ack
+                ),
+                "SageMakerInferenceConfig",
+            ),
         ],
         ids=["http", "sagemaker"],
     )
@@ -51,9 +57,7 @@ class TestTheRefusalIsUnchanged:
             lambda: HttpInferenceConfig(
                 protocol="mlflow", model_name="m", acknowledge_data_egress=True
             ),
-            lambda: SageMakerInferenceConfig(
-                endpoint_name="e", acknowledge_data_egress=True
-            ),
+            lambda: SageMakerInferenceConfig(endpoint_name="e", acknowledge_data_egress=True),
         ],
         ids=["http", "sagemaker"],
     )
@@ -64,8 +68,6 @@ class TestTheRefusalIsUnchanged:
         # The shared helper takes a sensitivity flag; these configs pin it True rather
         # than exposing it, so no wiring can opt an inference route out of the gate.
         assert not hasattr(
-            HttpInferenceConfig(
-                protocol="mlflow", model_name="m", acknowledge_data_egress=True
-            ),
+            HttpInferenceConfig(protocol="mlflow", model_name="m", acknowledge_data_egress=True),
             "egress_sensitive",
         )

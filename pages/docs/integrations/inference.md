@@ -56,14 +56,15 @@ per-tenant models — the same namespace-tier pattern as a per-tenant bucket or
 database. A `tenant_aware=True` route with no bound tenant fails closed
 (`tenant_required`).
 
-## Generation (`openai_chat`)
+## Generation (`openai_chat`, `anthropic_messages`)
 
-The third dialect covers anything speaking `/v1/chat/completions` — OpenAI, vLLM,
-Ollama, LM Studio, TGI, Groq, OpenRouter, Together. One dialect, no
-provider SDK, no second client: a generative call is an inference route, so it
-carries the enclosing operation's deadline, the route's tenant and credentials,
-the egress declaration, the resilience policy — and it can be simulated, which a
-call made from a vendor client cannot.
+Two dialects ask a model for a completion. `openai_chat` covers anything speaking
+`/v1/chat/completions` — OpenAI, vLLM, Ollama, LM Studio, TGI, Groq, OpenRouter,
+Together — and `anthropic_messages` speaks Anthropic's native `/v1/messages`.
+Dialects, not clients: a generative call is an inference route, so it carries the
+enclosing operation's deadline, the route's tenant and credentials, the egress
+declaration, the resilience policy — and it can be simulated, which a call made
+from a vendor client cannot.
 
 ```python
 from forze.application.contracts.inference import InferenceSpec
@@ -105,7 +106,8 @@ module = HttpInferenceDepsModule(
 ```
 
 Point the lifecycle step at the server **root** (`https://api.openai.com`,
-`http://vllm:8000`) — the dialect owns the `/v1/chat/completions` path. Azure
+`http://vllm:8000`, `https://api.anthropic.com`) — the dialect owns the path it
+speaks, `/v1/chat/completions` or `/v1/messages`. Azure
 OpenAI's classic per-deployment URLs
 (`/openai/deployments/{deployment}/chat/completions?api-version=…`) are not that
 shape and this dialect does not serve them; its newer `/openai/v1` surface is,
@@ -123,27 +125,87 @@ slot always names one field.
 
 **Sampling is configuration.** `temperature` and `max_output_tokens` live on the
 route, never in `options=`, so what the model does is a reviewed deployment fact.
+A temperature above the endpoint's own ceiling — 2 for chat completions, 1 for
+the Messages API — is refused at wiring rather than on every request.
+
+### Claude, natively (`anthropic_messages`)
+
+Same config, two differences. The endpoint requires `max_tokens` on every
+request, so `max_output_tokens` is **required** here and a route without one is a
+boot error — the alternative would be a default that picks the truncation point
+for you. And the transport headers are wiring: the dialect sends a path and a
+body, so `x-api-key` and `anthropic-version` go on the client's settings.
+
+```python
+HttpInferenceConfig(
+    protocol="anthropic_messages",
+    model_name="claude-opus-5",
+    prompt=PromptTemplate(
+        system="You extract invoice fields precisely.",
+        template="Extract the invoice fields from this document:\n\n{text}",
+    ),
+    max_output_tokens=1024,
+    acknowledge_data_egress=True,
+)
+```
+
+```yaml
+# settings — the endpoint's own requirements, not the dialect's
+inference_http:
+  base_url: https://api.anthropic.com
+  default_headers:
+    x-api-key: ${ANTHROPIC_API_KEY}
+    anthropic-version: "2023-06-01"
+```
+
+A missing `anthropic-version` is a 400 from the endpoint on the first request,
+not a boot refusal — the one wiring mistake on this route the plane cannot catch
+for you.
+
+**Use this dialect, not the compatibility endpoint, for structured output.**
+Anthropic's OpenAI-compatible surface *ignores* `response_format` and ignores a
+tool's `strict` flag, so a structured route pointed there answers with prose and
+fails at the output boundary. Reach `openai_chat` at Anthropic only for
+`output_mode="text"`.
 
 ### Structured and text modes
 
 `output_mode` defaults to `structured`: the output model's JSON schema is sent as
-a strict `response_format` constraint, so the route answers with a validated
-`Out`. The constraint enforces less than JSON Schema can express, and the
-difference fails **at wiring**, naming every offending field:
+the provider's constraint, so the route answers with a validated `Out`. Each
+constraint enforces less than JSON Schema can express, and the difference fails
+**at wiring**, naming every offending field.
 
-- A field with a **default** is refused. Under the constraint a field cannot be
-  absent, so the default is unreachable — and forcing the model to fill it would
-  make it invent a value. Declare `T | None` (with no default) for something the
-  model may not know, and it must answer `null` explicitly.
-- A **mapping** field (`dict[str, int]`) is refused: the constraint cannot
-  express dynamic keys. So is a **non-object root** (a `RootModel`, or a
-  root-level union) — wrap it in a model with one field. And the output model's
-  own name is sent as the constraint's name, so it must be ASCII letters,
-  digits, underscore or dash, at most 64 characters.
-- Value constraints (`format`, `pattern`, `max_length`, `ge`/`le`, …) are
-  refused, because the provider does not enforce them. A `datetime` or `EmailStr`
-  field emits `format` — use `str` and validate after, or drop the constraint.
+Both dialects refuse these:
+
+- A **mapping** field — `dict[str, int]` or a bare `dict`, and a model with
+  `extra="allow"`: the constraint cannot express dynamic keys, and closing them
+  for you would leave it permitting nothing but `{}`. And a **non-object root**
+  (a `RootModel`, or a root-level union) — wrap it in a model with one field.
+- A field with **nothing to constrain**: `Any`, `object`, or a bare `list`, whose
+  member schema says nothing. Declare the shape, or use `output_mode="text"`.
+- Numeric and length bounds (`ge`/`le`, `max_length`, …), which neither provider
+  enforces, so the model would be free to answer outside them.
 - `additionalProperties: false` is added for you on every object.
+
+The rest is **per dialect**, because the accepted vocabularies differ — and this
+is the practical reason to pick one endpoint over the other for a given model:
+
+| Output model feature | `openai_chat` | `anthropic_messages` |
+| --- | --- | --- |
+| A field with a **default** (an optional property) | refused | served |
+| `datetime`, `EmailStr`, `UUID` (a string `format`) | refused | served |
+| A nested model (`$ref`) | served | served |
+| `min_length=1` on a list | refused | served |
+| `min_length=2` on a list | refused | refused |
+| A **self-referencing** model | refused | refused |
+| Output model name as the constraint's name | ASCII, ≤ 64 chars | not sent |
+
+Where the chat dialect refuses a `format` outright, the native one enforces a
+listed set (`date-time`, `date`, `time`, `duration`, `email`, `hostname`, `uri`,
+`ipv4`, `ipv6`, `uuid`) and refuses anything outside it. A `pattern` is the same
+story: enforced natively, so it serves — except for the constructs the decoder
+does not run (a word boundary, lookaround, a backreference), which are refused
+by name.
 
 `output_mode="text"` sends no constraint and fills a one-field `str` output model
 with the completion prose; any other output model is refused at wiring.
@@ -162,17 +224,16 @@ with the completion prose; any other output model is refused at wiring.
   even when a request part-way through fails. There is no envelope method; cost
   accounting does not belong in every handler's return type.
 - **A safety refusal is not a wire defect.** A provider declining on content
-  grounds raises `precondition` (`inference_content_refused`), non-retryable,
-  whether it says so in `message.refusal` or in `finish_reason`.
-- **A truncated completion is refused, not returned.** A completion the provider
-  cut off at the token ceiling raises `inference_output_mismatch` naming
-  `max_output_tokens`, in both modes — it can still parse as JSON or read as
-  prose, so returning it would hand back a half answer the caller cannot tell
-  from a whole one.
-- **Anthropic: `text` mode only.** Its OpenAI-compatibility endpoint *ignores*
-  `response_format` rather than rejecting it, so a structured route there answers
-  with prose and fails at the output boundary. Use the native API for Claude's
-  structured outputs.
+  grounds raises `precondition` (`inference_content_refused`), non-retryable —
+  reported as `message.refusal` or a `finish_reason` by one dialect, and as a
+  first-class `refusal` stop reason by the other. Its explanation is withheld:
+  it quotes back a prompt built from the caller's own input.
+- **An unfinished answer is refused, not returned.** A completion cut off at the
+  token ceiling raises `inference_output_mismatch` naming `max_output_tokens`, in
+  both modes — it can still parse as JSON or read as prose, so returning it would
+  hand back a half answer the caller cannot tell from a whole one. On
+  `anthropic_messages` that generalizes: any stop reason other than a finished
+  answer or a stop sequence is refused the same way.
 
 ### When to use a vendor SDK instead
 
