@@ -60,10 +60,23 @@ def grain_of(value: date) -> tuple[type, bool]:
     aware ``datetime`` are both ``datetime`` and raise ``TypeError`` against each other — which is
     why anything grouping values before comparing them (a sweep over recorded periods, say) has to
     group by this rather than by ``type``.
+
+    :raises CoreException: ``validation`` when the value's own ``tzinfo`` cannot say whether it is
+        aware. ``utcoffset()`` is application code — an app-defined ``tzinfo`` may raise, or return
+        something that is not a ``timedelta`` — and a caller asking a value's grain is at a
+        boundary that owes a refusal, not whatever that code raised.
     """
 
     if isinstance(value, datetime):
-        return (datetime, value.utcoffset() is not None)
+        try:
+            return (datetime, value.utcoffset() is not None)
+
+        # Any failure is the same answer: `utcoffset()` is app code and it did not answer.
+        except Exception as error:
+            raise exc.validation(
+                f"Period endpoint {value!r} has a tzinfo whose utcoffset() failed "
+                f"({type(error).__name__}: {error}), so whether it is aware cannot be decided."
+            ) from error
 
     return (type(value), False)
 
@@ -108,13 +121,18 @@ class Period[T: (date, datetime)]:
                 f"{', '.join(repr(bound) for bound in sorted(_ALL_BOUNDS))}."
             )
 
+        # Settled even for an open-ended period: the value's own grain is what a sweep groups by
+        # later, and a `tzinfo` that cannot answer has to be refused here rather than at whatever
+        # boundary happens to ask first.
+        start_grain = grain_of(self.start)
+
         if self.end is None:
             return
 
         # `datetime` subclasses `date`, so a constrained type variable resolves a mixed pair to
         # `date` and a type checker passes it (verified against mypy --strict); awareness is
         # invisible to it entirely, since a naive and an aware `datetime` are one type.
-        if grain_of(self.start) != grain_of(self.end):
+        if start_grain != grain_of(self.end):
             raise exc.validation(
                 f"Period endpoints are not comparable: start is {_grain_name(self.start)}, end "
                 f"is {_grain_name(self.end)}. A period spans one grain; convert the endpoint, or "

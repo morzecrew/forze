@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 import textwrap
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
 from forze_dst.invariants import no_overlapping_periods
 from forze_dst.oracle import Event, History
@@ -325,6 +325,47 @@ class TestAMarkerTheWorkloadRecordedBadly:
 
         assert len(violations) == 1
         assert "overlapping periods" in violations[0].message
+
+    def test_a_tzinfo_that_will_not_answer_is_reported(self) -> None:
+        """An open-ended marker whose `tzinfo` raises from `utcoffset()`: the fourth shape of
+        this crash, and the one that made the guard cover the whole per-marker step rather than
+        one more exception type."""
+
+        class Unhelpful(tzinfo):
+            def utcoffset(self, dt: datetime | None) -> timedelta | None:
+                raise RuntimeError("no offset for you")
+
+            def dst(self, dt: datetime | None) -> timedelta | None:
+                return None
+
+        violations = _CHECK(
+            _history({"employee_id": "ann", "valid_from": datetime(2026, 1, 1, tzinfo=Unhelpful())})
+        )
+
+        assert len(violations) == 1
+        assert "unusable period" in violations[0].message
+
+    def test_one_owners_unorderable_values_do_not_cost_another_owner_the_check(self) -> None:
+        """A `date` subclass that refuses to be ordered raises out of the sort, past every
+        per-marker guard. Reported for that owner, and the next owner's real overlap still
+        surfaces — which is the whole point of reporting rather than raising."""
+
+        class Rude(date):
+            def __lt__(self, other: object) -> bool:
+                raise RuntimeError("I refuse to be ordered")
+
+        violations = _CHECK(
+            _history(
+                _shift("bob", Rude(2026, 1, 1)),
+                _shift("bob", Rude(2026, 2, 1)),
+                _shift("cat", JAN, MAR),
+                _shift("cat", FEB, APR),
+            )
+        )
+
+        assert len(violations) == 2
+        assert any("could not be swept" in violation.message for violation in violations)
+        assert any("overlapping periods for employee_id='cat'" in v.message for v in violations)
 
     def test_a_bad_marker_does_not_hide_a_real_overlap(self) -> None:
         violations = _CHECK(

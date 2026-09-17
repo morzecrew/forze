@@ -457,37 +457,19 @@ def no_overlapping_periods(
 
         for owner, by_grain in by_owner.items():
             for entries in by_grain.values():
-                entries.sort(key=lambda entry: (entry[0].start, entry[1].seq))
-                # Every *pair*, not one per period: the periods still reaching past the
-                # candidate's start stay active and are each compared against it, so three
-                # nested periods report three conflicts. Pruning keeps the scan linear in the
-                # common case — a history with no overlaps retires each period as the next
-                # begins — and quadratic only in the number of genuinely overlapping rows.
-                active: list[tuple[Period[Any], Event]] = []
+                try:
+                    violations.extend(_overlaps_within(entries, kind=kind, key=key, owner=owner))
 
-                for period, event in entries:
-                    active = [
-                        (earlier, earlier_event)
-                        for earlier, earlier_event in active
-                        if earlier.end is None or earlier.end >= period.start
-                    ]
-
-                    for earlier, earlier_event in active:
-                        if earlier.overlaps(period):
-                            violations.append(
-                                Violation(
-                                    invariant="no_overlapping_periods",
-                                    message=(
-                                        f"overlapping periods for {key}={owner!r}: "
-                                        f"{earlier.start}..{earlier.end} and "
-                                        f"{period.start}..{period.end}"
-                                    ),
-                                    events=(earlier_event, event),
-                                )
-                            )
-
-                    active.append((period, event))
-
+                # Same rule one level up: the values in a group are comparable by grain, and a
+                # `date` subclass with an opinionated `__lt__` can still raise out of the sort.
+                # One owner's hostile data must not cost every other owner their check.
+                except Exception as error:
+                    violations.append(
+                        _reported(
+                            f"{kind} periods for {key}={owner!r} could not be swept: {_why(error)}",
+                            entries[0][1],
+                        )
+                    )
         # By the marker that completes each violation, so the report reads in recorded order
         # however the owners interleaved — and identically on every run, which grouping by owner
         # alone does not give.
@@ -496,6 +478,60 @@ def no_overlapping_periods(
         return violations
 
     return named("no_overlapping_periods", _check)
+
+
+def _overlaps_within(
+    entries: list[tuple[Period[Any], Event]],
+    *,
+    kind: str,
+    key: str,
+    owner: Any,
+) -> list[Violation]:
+    """Every overlapping pair among *entries*, which share one comparability class.
+
+    Every *pair*, not one per period: the periods still reaching past the candidate's start stay
+    active and are each compared against it, so three nested periods report three conflicts.
+    Pruning keeps the scan linear in the common case — a history with no overlaps retires each
+    period as the next begins — and quadratic only in the number of genuinely overlapping rows.
+    """
+
+    _ = kind
+    entries.sort(key=lambda entry: (entry[0].start, entry[1].seq))
+    violations: list[Violation] = []
+    active: list[tuple[Period[Any], Event]] = []
+
+    for period, event in entries:
+        active = [
+            (earlier, earlier_event)
+            for earlier, earlier_event in active
+            if earlier.end is None or earlier.end >= period.start
+        ]
+
+        for earlier, earlier_event in active:
+            if earlier.overlaps(period):
+                violations.append(
+                    Violation(
+                        invariant="no_overlapping_periods",
+                        message=(
+                            f"overlapping periods for {key}={owner!r}: "
+                            f"{earlier.start}..{earlier.end} and {period.start}..{period.end}"
+                        ),
+                        events=(earlier_event, event),
+                    )
+                )
+
+        active.append((period, event))
+
+    return violations
+
+
+def _why(error: BaseException) -> str:
+    """What to put in a violation when a marker's own values failed."""
+
+    if isinstance(error, CoreException):
+        return error.summary
+
+    return f"{type(error).__name__}: {error}"
 
 
 def _grain_label(grain: tuple[type, bool]) -> str:

@@ -133,6 +133,13 @@ class TestParallelSweepUnderACoverageSession:
     concurrent.futures.process._CallItem`). A plain `coverage run` does not reproduce it and a
     package-wide `--cov=forze_dst` does not either, so only the real configuration pins it —
     hence a pytest subprocess rather than an in-process assertion.
+
+    The subprocess's **exit code is deliberately not asserted**: that same narrow-source
+    configuration segfaults at interpreter shutdown roughly twice in ten runs, *after* the tests
+    have reported success, with a fork context and a spawn one alike. It is the tooling's crash
+    rather than the sweep's, and CI's own `--cov=src` shape does not show it (ten clean runs), so
+    asserting the code here would buy a flaky test instead of a signal. What this asserts is what
+    it is for: the sweep ran, and nothing failed to pickle.
     """
 
     def test_a_sweep_survives_pytest_cov_with_a_module_source(self) -> None:
@@ -156,8 +163,8 @@ class TestParallelSweepUnderACoverageSession:
             check=False,
         )
 
-        assert completed.returncode == 0, completed.stdout[-3000:]
-        assert "PicklingError" not in completed.stdout
+        assert "PicklingError" not in completed.stdout, completed.stdout[-3000:]
+        assert "2 passed" in completed.stdout, completed.stdout[-3000:]
 
 
 class TestSimulationSeedRunner:

@@ -7,7 +7,7 @@ both directions because that is the property a wrong implementation breaks first
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
 import pytest
 
@@ -99,6 +99,24 @@ class TestConstruction:
         assert "not comparable" in str(ei.value)
         assert "naive datetime" in str(ei.value)
         assert "aware datetime" in str(ei.value)
+
+    def test_a_tzinfo_that_will_not_answer_is_refused(self) -> None:
+        """`utcoffset()` is application code, and whether an endpoint is aware is what a sweep
+        groups by — so a `tzinfo` that raises has to be refused here rather than escaping from
+        whatever asks the value's grain first. Settled even for an open-ended period, which has
+        no second endpoint to compare against."""
+
+        class Unhelpful(tzinfo):
+            def utcoffset(self, dt: datetime | None) -> timedelta | None:
+                raise RuntimeError("no offset for you")
+
+            def dst(self, dt: datetime | None) -> timedelta | None:
+                return None
+
+        with pytest.raises(CoreException) as ei:
+            Period(start=datetime(2026, 1, 1, tzinfo=Unhelpful()))
+
+        assert "utcoffset() failed" in str(ei.value)
 
     def test_an_aware_period_is_ordinary(self) -> None:
         period = Period(
