@@ -1,8 +1,8 @@
 # RFC 0052 — Versioned facts with correction lineage
 
 - **Status:** 📝 Draft — execution-ready, and the head of the batch: `0053` and `0063` both wait on the backend-requirement primitive this RFC owns (§5.4).
-- **Scope:** A `forze_kits.aggregates.versioned` kit that turns "correct, never overwrite" into one declaration: lineage fields on the domain model, a `correct` command that supersedes in one transaction, a read side that defaults to the current row, a declared backend constraint, and one `SystemInvariant` the DST oracle already knows how to compile. Touches `forze_kits` plus **one new contract field** for the declared backend requirement (§5.4) and its Postgres/Mongo/mock validators. No change to the document ports, the history relation, or `rev`.
-- **Related:** [`src/forze_kits/aggregates/soft_deletion/`](../src/forze_kits/aggregates/soft_deletion/) (the kit shape this copies: `factories.py`, `handlers.py`, `operations.py`, `wiring.py`), [`src/forze_kits/domain/soft_deletion/`](../src/forze_kits/domain/soft_deletion/) (the mixin shape), [`src/forze_kits/aggregates/kit.py:146`](../src/forze_kits/aggregates/kit.py) (`AggregateKit`'s config fields), [`src/forze/domain/models/document.py:460`](../src/forze/domain/models/document.py) (`DocumentHistory`), [`src/forze/application/contracts/invariants.py`](../src/forze/application/contracts/invariants.py) (`SystemInvariant`, `ReadSet`, `CountAll`), [`src/forze_postgres/kernel/catalog/validation/validate_schema.py:266`](../src/forze_postgres/kernel/catalog/validation/validate_schema.py) (`validate_postgres_document_schemas`, the startup refusal this extends), RFC 0013 (`AggregateKit`, shipped and retired from this directory — the precedent for one declaration standing in for a hand-written slice). Sibling RFCs from the same source: [0053](0053-temporal-validity.md), [0055](0055-scoped-disclosure.md), [0063](0063-per-owner-write-serialization.md).
+- **Scope:** A `forze_kits.aggregates.versioned` kit that turns "correct, never overwrite" into one declaration: lineage fields on the domain model, a `correct` command that supersedes in one transaction, a read side that defaults to the current row, a declared backend constraint, and one `SystemInvariant` the DST oracle already knows how to compile. Touches `forze_kits` plus **one new contract field** for the declared storage guarantee (§5.4) — a property, not DDL — and its Postgres/Mongo/mock implementations. No change to the document ports, the history relation, or `rev`.
+- **Related:** [`src/forze_kits/aggregates/soft_deletion/`](../src/forze_kits/aggregates/soft_deletion/) (the kit shape this copies: `factories.py`, `handlers.py`, `operations.py`, `wiring.py`, and `DELETE`/`RESTORE` as the op-key precedent), [`src/forze_kits/domain/soft_deletion/`](../src/forze_kits/domain/soft_deletion/) (the mixin shape), [`src/forze_kits/aggregates/kit.py:146`](../src/forze_kits/aggregates/kit.py) (`AggregateKit`'s config fields), [`src/forze/domain/models/document.py:460`](../src/forze/domain/models/document.py) (`DocumentHistory`), [`src/forze/application/contracts/invariants.py`](../src/forze/application/contracts/invariants.py) (`SystemInvariant`, `ReadSet`, `CountAll`), [`src/forze_postgres/kernel/catalog/validation/validate_schema.py:266`](../src/forze_postgres/kernel/catalog/validation/validate_schema.py) (`validate_postgres_document_schemas`, the startup refusal this extends), [`src/forze_kits/aggregates/kit.py:103`](../src/forze_kits/aggregates/kit.py) (the shipped `BackendRequirements` wiring checklist, which §5.4 is *not*), [`src/forze_mongo/kernel/validate_indexes.py:46`](../src/forze_mongo/kernel/validate_indexes.py) (`validate_mongo_document_indexes`, where Mongo's half lands), RFC 0013 (`AggregateKit`, shipped and retired from this directory — the precedent for one declaration standing in for a hand-written slice). Sibling RFCs from the same source: [0053](0053-temporal-validity.md), [0055](0055-scoped-disclosure.md), [0063](0063-per-owner-write-serialization.md).
 - **Origin:** A working-time ledger (Chronobeam) where seven fact tables carry `version` / `supersedes_id` / a `correction` row, hand-rolled 14 times for the "is current" anti-join, 7 times for chain walkers and 9 times for the conflict check. Two of the audit's high findings live in exactly that hand-rolled code: one anti-join compiles to a dead predicate, and no unique index on `supersedes_id` exists anywhere, so two concurrent corrections both win.
 
 ---
@@ -10,11 +10,11 @@
 ## 1. Summary
 
 An aggregate declares `versioned=VersionedPolicy(...)` on its kit. Its domain model gains
-`root_id`, `version`, `supersedes_id`, `is_current` and `superseded_at`; a `CORRECT` operation
+`root_id`, `version`, `supersedes_id`, `is_current` and `superseded_at`; a `correct` operation
 inserts the successor, clears `is_current` on the predecessor and writes a `Correction` record
 naming the actor and a reason code, in one transaction; every generated read filters
-`is_current = true` unless the caller asks for the chain. The kit declares two backend
-constraints and one invariant, and the invariant compiles into the DST oracle that already
+`is_current = true` unless the caller asks for the chain. The kit declares two storage
+guarantees and one invariant, and the invariant compiles into the DST oracle that already
 exists for `SystemInvariant`.
 
 ## 2. Motivation
@@ -60,11 +60,13 @@ turns the same declaration into a simulation oracle. **`Reducer` is a closed set
 `SumOf | CountAll` — because each member has to both push down to the query port and fold from a
 recorded trace. So `single_current_head` is expressible today and `lineage_closed` is not (§5.5).
 
-**No backend constraint can be declared.** Postgres validates *columns* at startup
+**No storage guarantee can be declared.** Postgres validates *columns* at startup
 (`validate_postgres_document_schemas` raises `internal` for a model field with no column) and
 Mongo lists indexes and warns. Neither takes a declared requirement — a unique index, a partial
 index, an exclusion constraint — so a kit that depends on one for correctness has no way to
-fail at boot when the deployment forgot the migration.
+fail at boot when the deployment forgot the migration. `forze_kits.aggregates.BackendRequirements`
+([`kit.py:103`](../src/forze_kits/aggregates/kit.py)) is the nearest shipped thing and is a
+different one: a checklist of *routes* to wire, explicitly declining to describe backend config.
 
 ## 4. Goals / Non-goals
 
@@ -109,7 +111,7 @@ by the type system rather than at runtime.
 ### 5.2 The correction command
 
 ```python
-CORRECT(id: UUID, expected_version: int, patch: U, reason: str, ...) -> R
+correct(id: UUID, expected_version: int, patch: U, reason: str, ...) -> R
 ```
 
 One transaction, in this order: read the predecessor and refuse unless it is current and at
@@ -134,28 +136,42 @@ time, ops merged after). Two additions on the facade:
   `superseded_at`. Named here because a ledger asks for it constantly; it reads only stored
   columns, so it is not a temporal-validity feature.
 
-### 5.4 The declared backend requirement
+### 5.4 The declared storage guarantee
 
-A new field on `DocumentSpec`:
+A new field on `DocumentSpec`, and the vocabulary is a **property**, never DDL:
 
 ```python
-requires: tuple[BackendRequirement, ...] = ()
+guarantees: tuple[StorageGuarantee, ...] = ()
 
-UniqueIndex(fields=("root_id",), where="is_current")     # one current head per fact
-UniqueIndex(fields=("supersedes_id",), nulls="distinct") # a predecessor is superseded once
+UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}})
+UniqueTogether(fields=("supersedes_id",), skip_null=True)
 ```
 
-Declared, **validated at startup, never created**: the adapters own DDL nowhere else, and a
-framework that silently creates indexes is a framework that silently locks a production table.
-Postgres checks `pg_indexes` inside `validate_postgres_document_schemas` and raises `internal`
-naming the missing index and the DDL that would satisfy it; Mongo checks `list_indexes` in the
-mechanism that already lists them; the mock registers the requirement so DST can enforce it
-in-memory.
+`where` is an ordinary `QueryFilterExpression` — the filter language is already backend-agnostic
+and every adapter parses it — so the declaration says *at most one row per `root_id` among the
+rows matching this predicate* and names no index, no partial-index syntax and no extension.
+`forze.application.contracts` cannot spell `gist`, and nothing in it should have to.
 
-This is the primitive [RFC 0053](0053-temporal-validity.md) needs for its `EXCLUDE USING gist`
-and [RFC 0063](0063-per-owner-write-serialization.md) for its overlap constraint. It lands here
-because this RFC is first in the batch, and `ExclusionConstraint` joins the vocabulary with
-0053 rather than being invented for it.
+Each adapter maps the guarantee to whatever it has, and **validates, never creates**: a framework
+that silently creates an index silently takes a lock on a production table.
+
+| Backend | Mechanism | On mismatch |
+| --- | --- | --- |
+| Postgres | partial unique index, checked against `pg_indexes` inside `validate_postgres_document_schemas` | `internal` at startup, naming the guarantee and the DDL that satisfies it |
+| Mongo | unique index with `partialFilterExpression`, checked where indexes are already listed | same refusal, from the mechanism that already warns about secondary unique indexes |
+| Mock | in-memory enforcement, so DST sees the guarantee rather than assuming it | a violated write raises `conflict`, as a real backend would |
+
+A backend with no mechanism for a guarantee **refuses the declaration at wiring** rather than
+skipping it silently — the rule [RFC 0053](0053-temporal-validity.md) decision 2 states for its
+own case. `UniqueTogether` happens to be portable across all three; the non-overlap guarantee
+0053 needs is not, which is exactly why the vocabulary is per-guarantee and the capability answer
+is per adapter.
+
+**Not to be confused with the shipped `BackendRequirements`**
+([`kit.py:103`](../src/forze_kits/aggregates/kit.py)), which is a *wiring* checklist — routes, a
+tx route, whether a keyring is needed — and deliberately fabricates no backend config. A storage
+guarantee is a property of the aggregate's data, so it belongs on the spec, which is usable
+without a kit; the checklist stays what it is.
 
 ### 5.5 The invariants, and which one the oracle can take
 
@@ -178,8 +194,8 @@ down). Three ways out, and this RFC takes the third:
 1. A new reducer. Rejected: a join-shaped reducer has to fold from a trace too, and nothing else
    asks for one yet.
 2. A `forze_dst` history invariant. Possible, and it would only cover simulated runs.
-3. **The unique index on `supersedes_id` plus the command's own transaction.** A fork requires two
-   successors pointing at one predecessor, which the index refuses, and an orphan requires the
+3. **The `UniqueTogether` guarantee on `supersedes_id` plus the command's own transaction.** A
+   fork requires two successors pointing at one predecessor, which the guarantee refuses, and an orphan requires the
    successor to commit without its predecessor's update, which the single transaction refuses.
    The property is enforced by construction, so it is documented as a constraint rather than
    declared as a law.
@@ -206,11 +222,11 @@ be scoped to current rows, which its exclusion predicate states.
 ## 6. Tests
 
 - **Battery per behaviour, over the mock and Postgres:** first insert seeds `root_id = id`;
-  `CORRECT` inserts, flips, records; a stale `expected_version` is `conflict`; a correction of a
+  `correct` inserts, flips, records; a stale `expected_version` is `conflict`; a correction of a
   superseded row is `conflict`; the read family hides superseded rows; `history` returns the
   chain in order; `as_of` picks the right version at boundaries (equal to `created_at`, equal to
   `superseded_at`).
-- **DST:** two concurrent `CORRECT`s on one fact under the kit's composed registry, with
+- **DST:** two concurrent `correct`s on one fact under the kit's composed registry, with
   `single_current_head` as the oracle and a bare registry as the ungoverned contrast — the
   shape `examples/recipes/aggregate_kit_dst/` already proves for a capacity cap.
 - **The declared requirement:** a Postgres fixture with the index dropped must fail at startup
@@ -222,8 +238,8 @@ be scoped to current rows, which its exclusion predicate states.
 
 A section in the aggregates/kits page: the declaration, the one screen of generated surface,
 and the sentence that matters — **"current" is a stored flag, and the index that protects it is
-your migration to write.** The `requires` vocabulary gets its own short page section, since
-0053 and 0063 point at it.
+your migration to write.** The `guarantees` vocabulary gets its own short page section with the
+per-backend table, since 0053 and 0063 point at it.
 
 ## 8. Out of scope
 
@@ -248,14 +264,15 @@ your migration to write.** The `requires` vocabulary gets its own short page sec
 
 ## 10. Unresolved questions
 
-- **Does `CORRECT` emit a domain event by default?** The outbox arm is already composed by
+- **Does `correct` emit a domain event by default?** The outbox arm is already composed by
   `AggregateKit`; a correction is exactly the kind of fact downstream consumers want. Settled by
   whether the first consumer is inside the app or across a boundary.
 - **Is `as_of` on the facade or a query option?** A facade method is discoverable; a query option
   composes with filters. Implementation decides, and the row records it.
-- **Does the requirement vocabulary live on `DocumentSpec` or beside it?** `DocumentSpec` is
-  already wide (§3 lists twelve fields). A `BackendRequirements` value object mounted as one
-  field keeps it one field, and that is the leaning.
+- **Does the guarantee vocabulary live on `DocumentSpec` or beside it?** `DocumentSpec` is
+  already wide (§3 lists twelve fields). One `StorageGuarantees` value object mounted as a single
+  field keeps it one field, and that is the leaning — and it keeps the name clear of the shipped
+  `BackendRequirements`, which is a wiring checklist and not this.
 
 ## 11. Decisions
 
@@ -263,18 +280,19 @@ your migration to write.** The `requires` vocabulary gets its own short page sec
 | --- | --- | --- |
 | 1 | `LOCKED` | "Current" is a **stored `is_current` flag**, never a derived anti-join. The flag is what an index and a `SystemInvariant` can read; the anti-join is what the origin application got wrong twice. Consequence: every write path must go through the kit's handlers, and the invariant is the control that catches one that did not. |
 | 2 | `LOCKED` | A correction is a **new row plus a `Correction` document in one transaction**, never an update in place. Addressability is the point: a disclosure grant, an export and a citation all have to name the version they saw. |
-| 3 | `LOCKED` | The kit **declares** its backend constraints and the adapters **validate** them at startup; nothing creates DDL. A framework that creates an index takes a lock on a production table nobody asked it to take. |
+| 3 | `LOCKED` | The spec **declares** its storage guarantees and the adapters **validate** them at startup; nothing creates DDL. A framework that creates an index takes a lock on a production table nobody asked it to take. |
 | 4 | `ASSUMED` | `lineage_closed` is enforced **by construction** (the unique index on `supersedes_id` plus the single transaction) rather than declared as a law, because the reducer set is closed at `SumOf \| CountAll` and nothing else yet needs a join-shaped reducer. Depart if a second consumer appears. |
-| 5 | `ASSUMED` | `CORRECT` takes `expected_version`, not `rev`: the caller asserts which version of the fact it read, which an unrelated column update must not invalidate. |
-| 6 | `OPEN` | Whether the `requires` vocabulary lands as a field on `DocumentSpec` or as a `BackendRequirements` value object mounted on one field. Settled by how wide the vocabulary gets once 0053's exclusion constraint joins it. |
-| 7 | `OPEN` | Whether `CORRECT` emits a domain event by default, always, or on declaration. Settled by the first consumer. |
+| 5 | `ASSUMED` | `correct` takes `expected_version`, not `rev`: the caller asserts which version of the fact it read, which an unrelated column update must not invalidate. |
+| 6 | `LOCKED` | The vocabulary declares a **property** (`UniqueTogether(fields, where=<filter expression>)`), never a backend's DDL. `DocumentSpec` lives in `forze.application.contracts`, which must not spell `gist`, `partialFilterExpression` or `nulls distinct`; each adapter maps the property to its own mechanism, and one with no mechanism refuses at wiring. |
+| 7 | `ASSUMED` | Guarantees land on `DocumentSpec` (a property of the aggregate's data, usable without a kit), not on the kit's shipped `BackendRequirements`, which is a wiring checklist that deliberately fabricates no backend config. Whether they arrive as a tuple field or one mounted value object is implementation's. |
+| 8 | `OPEN` | Whether `correct` emits a domain event by default, always, or on declaration. Settled by the first consumer. |
 
 ## 12. Phasing
 
-- **P1** — mixins, `CORRECT`, the read side, `history` / `as_of`, the invariant, mock + Postgres
+- **P1** — mixins, `correct`, the read side, `history` / `as_of`, the invariant, mock + Postgres
   batteries, the DST leg. No backend requirement: the invariant is the control.
-- **P2** — the `requires` vocabulary with `UniqueIndex`, its Postgres and Mongo validators, and
-  the mock registration DST reads. Unblocks [0053](0053-temporal-validity.md) and
-  [0063](0063-per-owner-write-serialization.md).
+- **P2** — the `guarantees` vocabulary with `UniqueTogether`, its Postgres, Mongo and mock
+  implementations, and the wiring refusal for a backend without a mechanism. Unblocks
+  [0053](0053-temporal-validity.md) and [0063](0063-per-owner-write-serialization.md).
 - **P3** *(demand-gated)* — `as_of` as a query option, bulk correction, chain merge. Each needs a
   named consumer.

@@ -1,8 +1,8 @@
 # RFC 0053 — Temporal validity for effective-dated master data
 
-- **Status:** 📝 Draft — **gated on [RFC 0052](0052-versioned-facts-correction-lineage.md) P2**, which owns the declared-backend-requirement primitive this design needs for its exclusion constraint.
-- **Scope:** A `forze_kits.aggregates.temporal` kit for effective-dated records: `valid_from` / `valid_to` on the model, an `effective_on` filter and a batched `timeline` read, a declared `EXCLUDE USING gist` non-overlap constraint, and the open-ended-interval semantics stated once instead of per aggregate. Touches `forze_kits` and 0052's `requires` vocabulary (one new member, `ExclusionConstraint`). **No contract change** beyond that member, and no new query operator — §3 shows the lookup is already expressible.
-- **Related:** [`src/forze/application/contracts/querying/expressions.py:127-165`](../src/forze/application/contracts/querying/expressions.py) (`$and` / `$or` / `$not`, the constraint bundle), [`types.py:31-40`](../src/forze/application/contracts/querying/types.py) (`$null`, the ordering operators), [`src/forze_kits/aggregates/kit.py`](../src/forze_kits/aggregates/kit.py), [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4 (the requirement vocabulary), [RFC 0054](0054-civil-time.md) (what a "date" means at a boundary).
+- **Status:** 📝 Draft — **gated on [RFC 0052](0052-versioned-facts-correction-lineage.md) P2**, which owns the storage-guarantee primitive this design needs for its non-overlap rule.
+- **Scope:** A `forze_kits.aggregates.temporal` kit for effective-dated records: `valid_from` / `valid_to` on the model, an `effective_on` filter and a batched `timeline` read, a declared non-overlap guarantee the adapter maps to its own mechanism, and the open-ended-interval semantics stated once instead of per aggregate. Touches `forze_kits` and 0052's `guarantees` vocabulary (one new member, `NonOverlapping`, declared as a property — the `gist` words stay in `forze_postgres`). **No contract change** beyond that member, and no new query operator — §3 shows the lookup is already expressible.
+- **Related:** [`src/forze/application/contracts/querying/expressions.py:127-165`](../src/forze/application/contracts/querying/expressions.py) (`$and` / `$or` / `$not`, the constraint bundle), [`types.py:31-40`](../src/forze/application/contracts/querying/types.py) (`$null`, the ordering operators), [`src/forze_kits/aggregates/kit.py`](../src/forze_kits/aggregates/kit.py), [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4 (the guarantee vocabulary, and why it is a property rather than DDL), [RFC 0054](0054-civil-time.md) (what a "date" means at a boundary).
 - **Origin:** A working-time ledger where `employment_contract` and `work_schedule_version` carry `valid_from` / `valid_to` / `version` / `source`, the seed asserts non-overlap **in application code**, the models carry a comment saying the `EXCLUDE USING gist` constraint is deferred, and the effective-on lookup runs once per day inside a loop over a month.
 
 ---
@@ -11,7 +11,7 @@
 
 An aggregate declares `temporal=TemporalPolicy(key=("employee_id",))`. Its model gains
 `valid_from` and a nullable `valid_to`; the facade gains `effective_on(key, date)` and
-`timeline(key, from, to)`; the kit declares one exclusion constraint per key, validated at
+`timeline(key, from, to)`; the kit declares one non-overlap guarantee per key, validated at
 startup; and the half-open/closed question is answered once, in the framework, instead of per
 application.
 
@@ -49,16 +49,16 @@ is inclusive.
 cover history, conformity, caching, sorting, query policy and encryption. No validity, no key,
 no overlap.
 
-**There is no way to declare the constraint.** Postgres validates columns at startup and Mongo
-lists indexes; neither takes a declared requirement. [RFC 0052](0052-versioned-facts-correction-lineage.md)
-§5.4 introduces one for its partial unique index, which is why this RFC waits on it rather than
-inventing a second vocabulary.
+**There is no way to declare the rule.** Postgres validates columns at startup and Mongo lists
+indexes; neither takes a declared storage guarantee. [RFC 0052](0052-versioned-facts-correction-lineage.md)
+§5.4 introduces the vocabulary for its unique-head guarantee, which is why this RFC waits on it
+rather than inventing a second one.
 
 ## 4. Goals / Non-goals
 
 **Goals**
 
-- One declaration: the fields, the two reads, and the constraint.
+- One declaration: the fields, the two reads, and the guarantee.
 - The non-overlap rule enforced **by the database**, not by application code.
 - One stated answer to the boundary question, tested at the boundary.
 - `timeline` answers a range in one call, so the origin's per-day loop is not the shape the
@@ -87,7 +87,7 @@ TemporalPolicy(key=("employee_id",), grain="date")
 ```
 
 `key` is what the period is scoped by (the non-overlap rule holds *per key*), and `grain` is
-`date` or `instant`. A `date` grain is the common case and the one the exclusion constraint
+`date` or `instant`. A `date` grain is the common case and the one the guarantee
 below is written for; `instant` exists because a shift or a lease is not day-aligned, and it
 changes the declared range type rather than the semantics.
 
@@ -109,25 +109,27 @@ answer depends on a zone.
 
 Both are facade methods over the existing query port; neither needs a new capability.
 
-### 5.4 The declared constraint
+### 5.4 The declared guarantee
 
 ```python
-requires = (
-    ExclusionConstraint(
-        using="gist",
-        key=("employee_id",),
-        range=("valid_from", "valid_to", "[]"),
-        extension="btree_gist",
-    ),
+guarantees = (
+    NonOverlapping(key=("employee_id",), range=("valid_from", "valid_to"), bounds="[]"),
 )
 ```
 
-Startup validates that the constraint and the extension exist and raises `internal` naming the
-DDL that would satisfy it — [RFC 0052](0052-versioned-facts-correction-lineage.md) decision 3:
-declared, validated, never created. On a backend with no exclusion constraints (Mongo, the
-mock), the requirement is **unsatisfiable rather than skipped**: the kit refuses at wiring and
-says so, because a temporal aggregate whose overlap rule is unenforced is the origin
-application's bug with a framework's name on it.
+A property, not DDL, for the reason [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4
+gives: the declaration says *no two rows sharing this key have intersecting periods*, and the
+adapter decides how. Postgres satisfies it with an `EXCLUDE USING gist` constraint over
+`(key, daterange(valid_from, valid_to, '[]'))` and the `btree_gist` extension — words that live in
+`forze_postgres` and nowhere near the contract — and startup validates that the constraint and the
+extension exist, raising `internal` with the DDL that would satisfy it. Nothing is created:
+declared, validated, never created.
+
+On a backend with no mechanism for it — Mongo has no exclusion constraint, and this one is not
+expressible as a partial unique index the way `UniqueTogether` is — the guarantee is
+**unsatisfiable rather than skipped**: the kit refuses at wiring and says so, because a temporal
+aggregate whose overlap rule is unenforced is the origin application's bug with a framework's name
+on it.
 
 ### 5.5 What DST can and cannot assert
 
@@ -159,7 +161,7 @@ new part, and it is shared with 0063.
 - Overlap refusal on Postgres: an insert that overlaps raises `conflict`; two concurrent
   overlapping inserts leave exactly one committed.
 - Wiring refusal: declaring `temporal` against the Mongo or mock document route fails at wiring,
-  naming the unsatisfiable requirement.
+  naming the unsatisfiable guarantee.
 - DST: concurrent inserts for one key under the overlap history invariant.
 - **Not tested:** that `EXCLUDE USING gist` works. That is Postgres's property; the battery
   asserts the refusal reaches the caller as `conflict`.
@@ -201,8 +203,8 @@ requirement, named as a deliberate refusal rather than a missing feature.
 
 | # | Grade | Decision |
 | --- | --- | --- |
-| 1 | `LOCKED` | Non-overlap is enforced by a **declared database constraint**, not by the kit's write path. A read-then-insert check cannot be correct under concurrency, which is the origin application's accepted race written down. |
-| 2 | `LOCKED` | A backend that cannot satisfy the constraint **refuses at wiring**. A temporal aggregate with an unenforced overlap rule is worse than no kit, because the declaration reads as a guarantee. |
+| 1 | `LOCKED` | Non-overlap is enforced by a **declared guarantee the backend satisfies**, not by the kit's write path. A read-then-insert check cannot be correct under concurrency, which is the origin application's accepted race written down. |
+| 2 | `LOCKED` | A backend that cannot satisfy the guarantee **refuses at wiring**. A temporal aggregate with an unenforced overlap rule is worse than no kit, because the declaration reads as a guarantee. |
 | 3 | `ASSUMED` | `valid_to` is **inclusive** at a `date` grain and exclusive at an `instant` grain, with the grain required in the declaration. Human-written dates are inclusive; instants cannot be closed without naming a last moment. |
 | 4 | `ASSUMED` | `NULL` means open-ended. No sentinel date: `$null` is already an operator, and a sentinel lies in every export. |
 | 5 | `ASSUMED` | The overlap property is asserted in DST through the existing `mutual_exclusion`-shaped history invariant rather than a new `SystemInvariant` reducer, shared with [RFC 0063](0063-per-owner-write-serialization.md). |
@@ -210,8 +212,8 @@ requirement, named as a deliberate refusal rather than a missing feature.
 
 ## 12. Phasing
 
-- **P1** — mixin, `TemporalPolicy`, `effective_on`, `timeline`, the `ExclusionConstraint`
-  requirement and its Postgres validator, batteries. Gated on
+- **P1** — mixin, `TemporalPolicy`, `effective_on`, `timeline`, the `NonOverlapping` guarantee
+  and its Postgres mapping and validator, batteries. Gated on
   [RFC 0052](0052-versioned-facts-correction-lineage.md) P2.
 - **P2** — the mock's overlap check and the DST leg, if decision 6 lands that way.
 - **P3** *(demand-gated)* — `grain="instant"`, multi-key exclusion.

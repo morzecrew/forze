@@ -1,7 +1,7 @@
 # RFC 0063 — Per-owner write serialization and the overlap invariant
 
-- **Status:** 📝 Draft — second in the batch's priority order, **gated on [RFC 0052](0052-versioned-facts-correction-lineage.md) P2** for the declared backend requirement.
-- **Scope:** `serialize_by=` on `DocumentSpec`: every write to that aggregate for one owner is serialized by a transaction-scoped advisory lock the adapter takes, the mock simulates it, and DST gains an overlap assertion over the intervals a workload wrote. Touches `DocumentSpec`, the Postgres write path, the mock adapter and `forze_dst`; the exclusion-constraint half rides [RFC 0052](0052-versioned-facts-correction-lineage.md)'s `requires` vocabulary. No port signature change.
+- **Status:** 📝 Draft — second in the batch's priority order, **gated on [RFC 0052](0052-versioned-facts-correction-lineage.md) P2** for the storage-guarantee primitive.
+- **Scope:** `serialize_by=` on `DocumentSpec`: every write to that aggregate for one owner is serialized by a transaction-scoped advisory lock the adapter takes, the mock simulates it, and DST gains an overlap assertion over the intervals a workload wrote. Touches `DocumentSpec`, the Postgres write path, the mock adapter and `forze_dst`; the hard-guarantee half rides [RFC 0052](0052-versioned-facts-correction-lineage.md)'s `guarantees` vocabulary. No port signature change.
 - **Related:** [`src/forze_postgres/adapters/tenant_provisioner.py:328-345`](../src/forze_postgres/adapters/tenant_provisioner.py) (`pg_advisory_xact_lock` already used, once, privately) and `:511-525` (`_advisory_key` — a blake2b digest rather than `hash`, with the salted-hash failure written down), [`src/forze_kits/scopes/dlock.py:29`](../src/forze_kits/scopes/dlock.py) (`DistributedLockScope`, the cross-process lock this is **not**), [`src/forze_dst/oracle/invariants.py:306`](../src/forze_dst/oracle/invariants.py) (`mutual_exclusion(kind, resource=, start=, end=)` — "no two holds overlap in `[start, end)` for the same resource", the checker this reuses), [`src/forze/application/contracts/invariants.py:42-57`](../src/forze/application/contracts/invariants.py) (why `no_overlap` cannot be a `SystemInvariant`: the reducer set is `SumOf | CountAll`), [RFC 0053](0053-temporal-validity.md) (the same overlap question, on validity periods).
 - **Origin:** A working-time ledger where one of four writers to a table takes `pg_advisory_xact_lock(hash(employee_id))` before writing and the other three do not — finding 3 in its audit — while overlap is checked in application code against the whole history, with a docstring calling the race accepted.
 
@@ -13,7 +13,7 @@
 It needs two things the framework does not have: a way to say *every* write for an owner is
 serialized (so the rule cannot be enforced by three writers out of four), and a way to prove the
 rule held under concurrency. `serialize_by` is the declaration; the DST assertion is the proof;
-the database constraint is the guarantee where the backend can give one.
+the declared guarantee is the hard stop where the backend can give one.
 
 ## 2. Motivation
 
@@ -63,7 +63,7 @@ declared law.
 - One declaration that serializes every write for an owner, including writers added later.
 - The correct key derivation, shipped, so no app repeats `hash(employee_id)`.
 - A DST assertion that the intervals a workload wrote do not overlap per owner.
-- An optional hard guarantee where the backend has one (the exclusion constraint).
+- An optional hard guarantee where the backend has one (0052's `NonOverlapping`).
 
 **Non-goals**
 
@@ -72,7 +72,7 @@ declared law.
 - **Not a queue.** Serialization means "one at a time", not "in submission order". A caller that
   needs ordering needs the stream plane.
 - **Not overlap *validation*.** The kit does not check intervals; it serializes writes so the app's
-  own check can be correct, and declares the constraint where the database can enforce it.
+  own check can be correct, and declares the guarantee where the backend can enforce it.
 - **Not cross-aggregate serialization.** One spec, one owner field.
 
 ## 5. Design
@@ -109,7 +109,7 @@ it.
 | --- | --- | --- |
 | Serialization | two writes for one owner never interleave | DST `mutual_exclusion` over the write spans |
 | Overlap | two stored intervals for one owner never overlap | DST history invariant over the rows written |
-| Overlap (hard) | the database refuses an overlapping row | `ExclusionConstraint` from [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4 |
+| Overlap (hard) | the database refuses an overlapping row | the `NonOverlapping` guarantee from [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4, mapped by the adapter |
 
 The middle row is the one the origin application needed and did not have; the third is the one it
 deferred in a comment. Both ship, and the invariant is the part that is valuable without Postgres.
@@ -144,15 +144,15 @@ default.
 - Mock parity: the same interleaving test passes against the mock and against Postgres.
 - DST: a workload of concurrent interval writes per owner, with the overlap history invariant; the
   ungoverned contrast (no `serialize_by`) must **fail** it, or the test proves nothing.
-- With the exclusion constraint declared: an overlapping insert raises `conflict` even with the
-  lock, since the two controls are independent.
+- With the `NonOverlapping` guarantee declared: an overlapping insert raises `conflict` even with
+  the lock, since the two controls are independent.
 - **Not tested:** advisory-lock semantics themselves. Postgres's property.
 
 ## 7. Docs
 
 A section beside the aggregate declaration: what `serialize_by` guarantees, what it costs (§5.4),
 the backend table, and the sentence that keeps the two layers apart — **the lock makes your check
-correct; the constraint makes the database refuse the row.**
+correct; the guarantee makes the backend refuse the row.**
 
 ## 8. Out of scope
 
@@ -171,7 +171,7 @@ correct; the constraint makes the database refuse the row.**
 - **Lock-key collisions across specs or tenants.** Answered in the key: spec name and tenant are
   part of it, and the battery asserts distinctness.
 - **A declaration that reads as an overlap guarantee.** `serialize_by` serializes; it does not
-  validate. Mitigation: §7's sentence, and the fact that the constraint is a separate declaration.
+  validate. Mitigation: §7's sentence, and the fact that the guarantee is a separate declaration.
 - **The mock's lock making DST optimistic.** If the mock serialized more than Postgres does, the
   simulation would pass where a deployment fails. Mitigation: the parity leg in §6.
 
@@ -202,6 +202,6 @@ correct; the constraint makes the database refuse the row.**
 - **P1** — `serialize_by`, the shared key helper, the Postgres and mock implementations, the wiring
   refusal, batteries including the subprocess key leg and the mock parity leg.
 - **P2** — the DST overlap invariant and the ungoverned contrast.
-- **P3** — the `ExclusionConstraint` declaration, once
+- **P3** — the `NonOverlapping` guarantee declaration, once
   [RFC 0052](0052-versioned-facts-correction-lineage.md) P2 lands.
 - **P4** *(demand-gated)* — bulk-write locking, multi-field owners, the non-waiting variant.
