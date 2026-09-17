@@ -80,6 +80,38 @@ class TestWhatItCatches:
 
         assert len(violations) == 2
 
+    def test_an_open_end_reached_later_keeps_covering(self) -> None:
+        """The open-ended period is not the earliest one, so it only keeps covering if the sweep
+        treats "no end" as reaching furthest. Sabotaging that branch leaves every other leg in
+        this file passing — the first period is adopted before the branch is ever consulted, and
+        the open-ended one is adopted by the `covering is None` path there.
+        """
+
+        violations = _CHECK(
+            _history(
+                _shift("ann", JAN, FEB),
+                _shift("ann", FEB),
+                _shift("ann", MAR, APR),
+            )
+        )
+
+        assert len(violations) == 1
+        assert "overlapping periods" in violations[0].message
+
+    def test_a_closed_period_does_not_displace_an_open_one(self) -> None:
+        """The mirror: once an open-ended period is covering, a shorter closed one that overlaps
+        it must not take its place, or everything after it is served as clean."""
+
+        violations = _CHECK(
+            _history(
+                _shift("ann", JAN),
+                _shift("ann", FEB, MAR),
+                _shift("ann", APR, MAY),
+            )
+        )
+
+        assert len(violations) == 2
+
     def test_datetime_endpoints_are_ordinary(self) -> None:
         violations = _CHECK(
             _history(
