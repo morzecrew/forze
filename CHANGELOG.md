@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A parallel DST sweep died under a coverage session.** `parallel_sweep` ran its seeds through a `ProcessPoolExecutor`, which pickles a private stdlib task class by name; under `pytest --cov` with a module-level source the parent could no longer resolve that name to the same object and every sweep failed before a worker saw a seed. It runs on a `multiprocessing.Pool` now, which pickles only the caller's `run` and the seeds.
+
 - **`HttpAuthConfig` with no token sent `Authorization: Bearer None`.** An optional secret field converted `None` into a `SecretStr` wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on `HttpClientLifecycleStep.auth_token` and Meilisearch's `api_key`, where consumers happened to unwrap defensively.
 
 ## [0.7.0] - 2026-09-10
