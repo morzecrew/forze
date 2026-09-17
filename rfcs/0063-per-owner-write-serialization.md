@@ -1,7 +1,7 @@
 # RFC 0063 — Per-owner write serialization and the overlap invariant
 
-- **Status:** 📝 Draft — second in the batch's priority order, **gated on [RFC 0052](0052-versioned-facts-correction-lineage.md) P2** for the storage-guarantee primitive.
-- **Scope:** `serialize_by=` on `DocumentSpec`: every write to that aggregate for one owner is serialized by a transaction-scoped advisory lock the adapter takes, the mock simulates it, and DST gains an overlap assertion over the intervals a workload wrote. Touches `DocumentSpec`, the Postgres write path, the mock adapter and `forze_dst`; the hard-guarantee half rides [RFC 0052](0052-versioned-facts-correction-lineage.md)'s `guarantees` vocabulary. No port signature change.
+- **Status:** 📝 Draft — second in the batch's priority order, **gated on [RFC 0066](0066-storage-guarantees.md) P4** (the `SerializedBy` guarantee) and [RFC 0067](0067-period-and-overlap.md) (the overlap oracle).
+- **Scope:** `SerializedBy(key=…)` as a declared storage guarantee: every write to an aggregate for one key is serialized, the Postgres mapping is a transaction-scoped advisory lock, the mock simulates it, and the overlap property is asserted with [RFC 0067](0067-period-and-overlap.md)'s oracle. Touches the Postgres write path, the mock adapter and the shared advisory-key helper; the vocabulary, the reconciliation and the wiring refusal are [RFC 0066](0066-storage-guarantees.md)'s. No port signature change, and **no contract change left here**.
 - **Related:** [`src/forze_postgres/adapters/tenant_provisioner.py:328-345`](../src/forze_postgres/adapters/tenant_provisioner.py) (`pg_advisory_xact_lock` already used, once, privately) and `:511-525` (`_advisory_key` — a blake2b digest rather than `hash`, with the salted-hash failure written down), [`src/forze_kits/scopes/dlock.py:29`](../src/forze_kits/scopes/dlock.py) (`DistributedLockScope`, the cross-process lock this is **not**), [`src/forze_dst/oracle/invariants.py:306`](../src/forze_dst/oracle/invariants.py) (`mutual_exclusion(kind, resource=, start=, end=)` — "no two holds overlap in `[start, end)` for the same resource", the checker this reuses), [`src/forze/application/contracts/invariants.py:42-57`](../src/forze/application/contracts/invariants.py) (why `no_overlap` cannot be a `SystemInvariant`: the reducer set is `SumOf | CountAll`), [RFC 0053](0053-temporal-validity.md) (the same overlap question, on validity periods).
 - **Origin:** A working-time ledger where one of four writers to a table takes `pg_advisory_xact_lock(hash(employee_id))` before writing and the other three do not — finding 3 in its audit — while overlap is checked in application code against the whole history, with a docstring calling the race accepted.
 
@@ -47,9 +47,9 @@ conformity, materialization, caching, sorting, query policy, query params, encry
 about write ordering.
 
 **DST can already check overlap — of lock holds.** `mutual_exclusion(kind, resource, start, end)`
-asserts no two holds of one resource overlap in `[start, end)`. Pointing it at *stored intervals*
-rather than lock holds is the new part, and it is shared with
-[RFC 0053](0053-temporal-validity.md).
+asserts no two holds of one resource overlap in `[start, end)`. Pointing it at *stored rows* is
+the new part, and because [RFC 0053](0053-temporal-validity.md) needed the same thing it was
+extracted to [RFC 0067](0067-period-and-overlap.md) rather than written twice.
 
 **`no_overlap` cannot be a `SystemInvariant`.** The reducer set is closed at `SumOf | CountAll`
 because each member must both push down to the query port and fold from a recorded trace; overlap
@@ -80,7 +80,7 @@ declared law.
 ### 5.1 The declaration
 
 ```python
-DocumentSpec(..., serialize_by="employee_id")
+DocumentSpec(..., guarantees=(SerializedBy(key=("employee_id",)),))
 ```
 
 Before any write to that spec inside a transaction, the adapter takes a transaction-scoped
@@ -108,8 +108,8 @@ it.
 | Layer | Property | Mechanism |
 | --- | --- | --- |
 | Serialization | two writes for one owner never interleave | DST `mutual_exclusion` over the write spans |
-| Overlap | two stored intervals for one owner never overlap | DST history invariant over the rows written |
-| Overlap (hard) | the database refuses an overlapping row | the `NonOverlapping` guarantee from [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4, mapped by the adapter |
+| Overlap | two stored periods for one owner never overlap | [RFC 0067](0067-period-and-overlap.md)'s `no_overlapping_periods` over the rows written |
+| Overlap (hard) | the store refuses an overlapping row | the `NonOverlapping` guarantee from [RFC 0066](0066-storage-guarantees.md), mapped by the adapter |
 
 The middle row is the one the origin application needed and did not have; the third is the one it
 deferred in a comment. Both ship, and the invariant is the part that is valuable without Postgres.
@@ -180,10 +180,10 @@ correct; the guarantee makes the backend refuse the row.**
 - **Does `serialize_by` cover deletes and bulk writes?** It should, and bulk writes touch many
   owners — which means many locks in one transaction, in a deterministic order or it deadlocks.
   Sorting the keys is the obvious answer and needs asserting.
-- **Is this a `StorageGuarantee` rather than its own field?** 0052's vocabulary already declares
-  properties a backend must satisfy, and "every write for one owner is serialized" is one. The
-  reason it is written as `serialize_by` here is that the guarantee vocabulary did not exist when
-  this was drafted; decision 7 records that the two should be reconciled before either ships.
+- **Does `SerializedBy` stay in the guarantee vocabulary?** It is the one member about *write
+  ordering* rather than a property of stored rows, and [RFC 0066](0066-storage-guarantees.md)
+  decision 9 carries the same question from the other side. Either answer keeps this RFC's design;
+  only the declaration's spelling changes.
 - **Is the lock taken by the adapter or by the transaction scope?** The adapter knows the spec; the
   transaction scope knows the connection. Implementation decides.
 - **Does a lock timeout exist?** `pg_advisory_xact_lock` waits. A `_try` variant that refuses as
@@ -193,20 +193,22 @@ correct; the guarantee makes the backend refuse the row.**
 
 | # | Grade | Decision |
 | --- | --- | --- |
-| 1 | `LOCKED` | Serialization is declared **on the spec**, not taken at call sites. A rule enforced per writer holds until the next writer, which is the origin application's audit finding 3. |
+| 1 | `LOCKED` | Serialization is declared **on the spec, as a guarantee**, not taken at call sites. A rule enforced per writer holds until the next writer, which is the origin application's audit finding 3. |
 | 2 | `LOCKED` | The lock is **transaction-scoped**, so it is released by commit or rollback and no unlock path can be forgotten. `DistributedLockScope`'s heartbeat-and-lease shape is for sections that outlive a transaction. |
 | 3 | `LOCKED` | The key is derived with the shipped blake2b helper, including spec name and tenant. `hash()` is salted per interpreter, so two workers would serialize against nobody — the exact mistake the origin made, already written down in `_advisory_key`. |
 | 4 | `LOCKED` | A backend with no mechanism to serialize writes per key **refuses the declaration at wiring** (for Postgres that mechanism is an advisory lock; the rule names the property, not the tool). A spec claiming serialized writes that are not serialized is worse than a spec that claims nothing. |
 | 5 | `ASSUMED` | The mock implements the same serialization, so DST observes what a deployment gets; the parity leg in the battery is what keeps it honest. |
-| 6 | `ASSUMED` | Overlap is asserted as a **DST history invariant** (the `mutual_exclusion` shape over written rows), not as a `SystemInvariant` — the reducer set is closed at `SumOf \| CountAll` and overlap is pairwise. Shared with [RFC 0053](0053-temporal-validity.md). |
-| 7 | `OPEN` | Whether this is a bespoke `serialize_by` field or a member of [RFC 0052](0052-versioned-facts-correction-lineage.md)'s `StorageGuarantee` vocabulary (`SerializedBy(key=…)`). Both declare a property the backend must satisfy and both refuse a backend that cannot; two mechanisms on one spec for one class of thing is the thing to avoid. Settled with 0052 P2, not independently. |
+| 6 | `ASSUMED` | Overlap is asserted with [RFC 0067](0067-period-and-overlap.md)'s `no_overlapping_periods`, not a `SystemInvariant` — the reducer set is closed at `SumOf \| CountAll` and overlap is pairwise. Extracted because [RFC 0053](0053-temporal-validity.md) needed the same assertion. |
+| 7 | `ASSUMED` | The declaration is the `SerializedBy` member of [RFC 0066](0066-storage-guarantees.md)'s vocabulary, not a bespoke `serialize_by` field. Two declaration mechanisms on one spec for one class of property is what the extraction exists to prevent; 0066 decision 9 records the residual question about this member's home. |
 | 8 | `OPEN` | Whether bulk writes take many locks in a sorted order (and how that is asserted), where the lock is taken, and whether a non-waiting variant refusing as `throttled` ships. |
 
 ## 12. Phasing
 
-- **P1** — `serialize_by`, the shared key helper, the Postgres and mock implementations, the wiring
-  refusal, batteries including the subprocess key leg and the mock parity leg.
-- **P2** — the DST overlap invariant and the ungoverned contrast.
-- **P3** — the `NonOverlapping` guarantee declaration, once
-  [RFC 0052](0052-versioned-facts-correction-lineage.md) P2 lands.
+- **P1** — the shared advisory-key helper, the Postgres and mock implementations of
+  `SerializedBy`, batteries including the subprocess key leg and the mock parity leg. Gated on
+  [RFC 0066](0066-storage-guarantees.md) P1 for the declaration and the refusal.
+- **P2** — the DST overlap leg over [RFC 0067](0067-period-and-overlap.md)'s invariant, with the
+  ungoverned contrast.
+- **P3** — the `NonOverlapping` declaration for aggregates that want the hard stop too, once
+  [RFC 0066](0066-storage-guarantees.md) P3 lands.
 - **P4** *(demand-gated)* — bulk-write locking, multi-field owners, the non-waiting variant.

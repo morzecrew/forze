@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0066**. Before creating an RFC, glance at the table below
+The next free number is **0068**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -85,6 +85,8 @@ only in the code, which is the failure this log exists to prevent.
 | [0063](0063-per-owner-write-serialization.md) | Per-owner write serialization and the overlap invariant | 📝 Draft | `serialize_by` on a document spec: every write for one owner serialized by a transaction-scoped advisory lock, with the overlap property asserted in simulation rather than left to call sites. |
 | [0064](0064-principal-scoped-idempotency-claims.md) | Principal-scoped idempotency claims | 📝 Draft | A confirmed defect: an idempotency claim is scoped to tenant and operation but not to the acting principal, so two principals sharing one key can be served each other's result. |
 | [0065](0065-snapshot-consistent-export-verification.md) | Snapshot-consistent export and its verification | 📝 Draft | Adds the one consistency level the portability plane lacks — every read of an export, counts included, from one Postgres snapshot — plus a server-version import gate and a crash round-trip battery. |
+| [0066](0066-storage-guarantees.md) | Storage guarantees: the declared half of the capability convention | 📝 Draft | A spec declares a property its store must enforce — filtered uniqueness, non-overlap, per-key serialization — and each adapter declares which it can keep, reconciled at wiring, validated at startup. |
+| [0067](0067-period-and-overlap.md) | Period, its bounds, and the overlap oracle | 📝 Draft | One value object for a period and its bounds convention, the overlap predicate decided once, and a DST invariant asserting no two periods sharing a key overlap in a recorded history. |
 
 ## Status legend
 

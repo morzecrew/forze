@@ -2,7 +2,7 @@
 
 - **Status:** 📝 Draft — **execution-ready and the batch's only confirmed defect in shipped code.** The source proposal asked for a verification ("if it already is, document it"); it is not, and §3 shows what the current key admits.
 - **Scope:** Add the acting principal to an idempotency claim's identity, so a key is unique per `(tenant, principal, op, key)` rather than per `(tenant, op, key)`. Touches the idempotency port's method signatures or its ownership mixin, the four stores, the AAD binding of the encrypted variant, and the replay semantics for a foreign key. **Behaviour change on a shipped mechanism**, which is why §5.5 carries a compatibility path.
-- **Related:** [`src/forze/application/contracts/idempotency/ports.py:53-73`](../src/forze/application/contracts/idempotency/ports.py) (`begin(op, key, payload_hash)` and its documented `conflict` contract), [`src/forze/application/contracts/idempotency/ownership.py`](../src/forze/application/contracts/idempotency/ownership.py) (`ClaimOwnerMixin` — the precedent for adding an identity to a claim *without* changing the port signature, and the two-slotted-bases note), [`src/forze/application/contracts/idempotency/specs.py:32`](../src/forze/application/contracts/idempotency/specs.py) (the encrypted variant whose "AAD binds tenant + operation/key"), [`src/forze/application/hooks/idempotency/plans.py:104-133`](../src/forze/application/hooks/idempotency/plans.py) (`tenant_provider`, and where the key is read off `ctx.inv_ctx`), [RFC 0059](0059-non-disclosing-denials.md) (why a foreign key's answer must not be a distinguishable conflict).
+- **Related:** [`src/forze/application/contracts/idempotency/ports.py:53-73`](../src/forze/application/contracts/idempotency/ports.py) (`begin(op, key, payload_hash)` and its documented `conflict` contract), [`src/forze/application/contracts/idempotency/ownership.py`](../src/forze/application/contracts/idempotency/ownership.py) (`ClaimOwnerMixin` — the precedent for adding an identity to a claim *without* changing the port signature, and the two-slotted-bases note), [`src/forze/application/contracts/idempotency/specs.py:32`](../src/forze/application/contracts/idempotency/specs.py) (the encrypted variant whose "AAD binds tenant + operation/key"), [`src/forze/application/hooks/idempotency/plans.py:104-133`](../src/forze/application/hooks/idempotency/plans.py) (`tenant_provider`, and where the key is read off `ctx.inv_ctx`), [`src/forze/application/contracts/authn/value_objects/identity.py:11-32`](../src/forze/application/contracts/authn/value_objects/identity.py) (`AuthnIdentity` — the shipped subject/actor pair `get_authn()` already returns), [RFC 0059](0059-non-disclosing-denials.md) (why a foreign key's answer must not be a distinguishable conflict).
 - **Origin:** A working-time ledger where `client_request_id` is unique per table **globally**, so two employees generating the same UUID collide and the second gets a 422 that reveals the collision. Its stated correct behaviour: uniqueness per `(owner, key)`.
 
 ---
@@ -79,8 +79,12 @@ crypto-touching change, not a key-format change.
 
 ### 5.1 The principal in the claim
 
-A `principal_provider` beside `owner_provider`, wired like `tenant_provider`, yielding the acting
-principal's identifier. Every store writes it into the claim and adds it to the predicate `begin`,
+The acting principal is already on the invocation context: `get_authn()` returns
+`AuthnIdentity(principal_id, actor)`
+([`invocation.py:112`](../src/forze/application/execution/context/invocation.py)), whose
+`principal_id` aligns with `PrincipalRef` and whose `actor` names the agent on a delegated call. So
+the store takes a `principal_provider` beside `owner_provider`, wired like `tenant_provider` and
+reading that identity rather than a new channel. Every store writes it into the claim and adds it to the predicate `begin`,
 `commit` and `fail` already use.
 
 **Degradation is where the two mixins differ.** `ClaimOwnerMixin` treats a missing owner as the
@@ -186,9 +190,11 @@ upgrade. The migration honesty matters more than the feature description here.
 
 ## 10. Unresolved questions
 
-- **What identifier is the principal?** The authn principal id, the policy principal document id, or
-  the external subject. They differ, and the wrong one re-scopes a claim across a re-login.
-  Leaning: the policy principal id, which is stable across credentials.
+- **Subject or actor?** `AuthnIdentity` carries both, and they differ on a delegated call: keying on
+  the subject means an agent's retry replays the user's claim, keying on the actor means two agents
+  acting for one user do not share one. Leaning: the **subject** (`principal_id`), because
+  idempotency is about the effect on the user's data — and the row is graded so execution can
+  depart with evidence.
 - **Does a service-to-service call have a principal?** If not, those claims land in the `None` space
   and share it. A machine identity would be the better answer and is an identity question, not an
   idempotency one.
@@ -205,7 +211,7 @@ upgrade. The migration honesty matters more than the feature description here.
 | 5 | `LOCKED` | The AAD binding follows the claim's identity, so a record written under the old scope does not open under the new one. |
 | 6 | `ASSUMED` | No dual-read of v1 claims for authenticated callers: the compatibility cost is stated in the release note instead, because a fallback restores the cross-principal match. |
 | 7 | `ASSUMED` | Fencing by `execution_id` is untouched; this is a different axis of the same claim, and the docs carry the two-sentence table that keeps them apart. |
-| 8 | `OPEN` | Which identifier is "the principal" (authn id, policy principal id, external subject), what a service-to-service caller uses, and whether the unwired-provider case warns or refuses at wiring. |
+| 8 | `OPEN` | Whether the claim keys on `AuthnIdentity.principal_id` (the subject) or `.actor` on a delegated call, what a service-to-service caller uses, and whether the unwired-provider case warns or refuses at wiring. |
 
 ## 12. Phasing
 

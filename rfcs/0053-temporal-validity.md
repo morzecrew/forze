@@ -1,8 +1,8 @@
 # RFC 0053 — Temporal validity for effective-dated master data
 
-- **Status:** 📝 Draft — **gated on [RFC 0052](0052-versioned-facts-correction-lineage.md) P2**, which owns the storage-guarantee primitive this design needs for its non-overlap rule.
-- **Scope:** A `forze_kits.aggregates.temporal` kit for effective-dated records: `valid_from` / `valid_to` on the model, an `effective_on` filter and a batched `timeline` read, a declared non-overlap guarantee the adapter maps to its own mechanism, and the open-ended-interval semantics stated once instead of per aggregate. Touches `forze_kits` and 0052's `guarantees` vocabulary (one new member, `NonOverlapping`, declared as a property — the `gist` words stay in `forze_postgres`). **No contract change** beyond that member, and no new query operator — §3 shows the lookup is already expressible.
-- **Related:** [`src/forze/application/contracts/querying/expressions.py:127-165`](../src/forze/application/contracts/querying/expressions.py) (`$and` / `$or` / `$not`, the constraint bundle), [`types.py:31-40`](../src/forze/application/contracts/querying/types.py) (`$null`, the ordering operators), [`src/forze_kits/aggregates/kit.py`](../src/forze_kits/aggregates/kit.py), [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4 (the guarantee vocabulary, and why it is a property rather than DDL), [RFC 0054](0054-civil-time.md) (what a "date" means at a boundary).
+- **Status:** 📝 Draft — **gated on [RFC 0066](0066-storage-guarantees.md) P3** (the `NonOverlapping` guarantee) and [RFC 0067](0067-period-and-overlap.md) (what a period and an overlap are). Both were extracted from this RFC's first draft and 0052's.
+- **Scope:** A `forze_kits.aggregates.temporal` kit for effective-dated records: `valid_from` / `valid_to` on the model, an `effective_on` filter and a batched `timeline` read, a declared non-overlap guarantee the adapter maps to its own mechanism, and one `bounds` choice per aggregate instead of a semantics paragraph per aggregate. Touches `forze_kits` only: the period type is [RFC 0067](0067-period-and-overlap.md)'s and the non-overlap guarantee is [RFC 0066](0066-storage-guarantees.md)'s, so **no contract change is left here**. **No contract change** beyond that member, and no new query operator — §3 shows the lookup is already expressible.
+- **Related:** [`src/forze/application/contracts/querying/expressions.py:127-165`](../src/forze/application/contracts/querying/expressions.py) (`$and` / `$or` / `$not`, the constraint bundle), [`types.py:31-40`](../src/forze/application/contracts/querying/types.py) (`$null`, the ordering operators), [`src/forze_kits/aggregates/kit.py`](../src/forze_kits/aggregates/kit.py), [RFC 0066](0066-storage-guarantees.md) (the guarantee vocabulary, and why it is a property rather than DDL), [RFC 0067](0067-period-and-overlap.md) (`Period`, its bounds and the overlap oracle), [RFC 0054](0054-civil-time.md) (what a "date" means at a boundary).
 - **Origin:** A working-time ledger where `employment_contract` and `work_schedule_version` carry `valid_from` / `valid_to` / `version` / `source`, the seed asserts non-overlap **in application code**, the models carry a comment saying the `EXCLUDE USING gist` constraint is deferred, and the effective-on lookup runs once per day inside a loop over a month.
 
 ---
@@ -49,10 +49,10 @@ is inclusive.
 cover history, conformity, caching, sorting, query policy and encryption. No validity, no key,
 no overlap.
 
-**There is no way to declare the rule.** Postgres validates columns at startup and Mongo lists
-indexes; neither takes a declared storage guarantee. [RFC 0052](0052-versioned-facts-correction-lineage.md)
-§5.4 introduces the vocabulary for its unique-head guarantee, which is why this RFC waits on it
-rather than inventing a second one.
+**There is no way to declare the rule, and no period type to state it over.**
+[RFC 0066](0066-storage-guarantees.md) introduces the first and
+[RFC 0067](0067-period-and-overlap.md) the second; both were extracted from this RFC's first
+draft and 0052's, rather than each kit inventing one.
 
 ## 4. Goals / Non-goals
 
@@ -83,23 +83,23 @@ class TemporalMixin(CoreModel):
     valid_from: date = Field(frozen=True)
     valid_to: date | None = None      # None = open-ended, "still in force"
 
-TemporalPolicy(key=("employee_id",), grain="date")
+TemporalPolicy(key=("employee_id",), bounds="[]")
 ```
 
-`key` is what the period is scoped by (the non-overlap rule holds *per key*), and `grain` is
-`date` or `instant`. A `date` grain is the common case and the one the guarantee
-below is written for; `instant` exists because a shift or a lease is not day-aligned, and it
-changes the declared range type rather than the semantics.
+Two stored columns rather than one `Period` field: the filter language compares scalars and every
+adapter maps them, while the *semantics* of the pair — what the end means, what an open end means,
+when two of them overlap — are [RFC 0067](0067-period-and-overlap.md)'s `Period`, which the facade
+returns and the guarantee names. `key` is what the period is scoped by (the non-overlap rule holds
+*per key*), and `bounds` is the convention this aggregate declares.
 
-### 5.2 Boundaries: `valid_to` is inclusive at a `date` grain
+### 5.2 Boundaries: one declaration, no per-kit rule
 
-`[valid_from, valid_to]` — both ends in force. Rejected alternative: half-open `[from, to)`,
-which is correct for instants and reads wrong for humans, who write "valid through 31 March".
-The cost is stated rather than hidden: at an `instant` grain the range is half-open
-`[from, to)`, because a closed instant range cannot express "until midnight" without naming a
-last representable moment. The declaration carries the grain, so the semantics are never
-ambiguous at a call site, and [RFC 0054](0054-civil-time.md) owns what "a day" means when the
-answer depends on a zone.
+`bounds` is [RFC 0067](0067-period-and-overlap.md)'s convention, declared per aggregate rather than
+decided per kit. A contract entered by a human is `"[]"` — "valid through 31 March" is inclusive —
+and a day-aligned or instant-grained period is `"[)"`, which tiles. The kit does not redefine
+either; it records which one this aggregate uses so `effective_on`, `timeline` and the guarantee all
+read the same value. What a "day" is when the answer depends on a zone stays
+[RFC 0054](0054-civil-time.md)'s.
 
 ### 5.3 The reads
 
@@ -113,13 +113,14 @@ Both are facade methods over the existing query port; neither needs a new capabi
 
 ```python
 guarantees = (
-    NonOverlapping(key=("employee_id",), range=("valid_from", "valid_to"), bounds="[]"),
+    NonOverlapping(key=("employee_id",), period=("valid_from", "valid_to"), bounds="[]"),
 )
 ```
 
-A property, not DDL, for the reason [RFC 0052](0052-versioned-facts-correction-lineage.md) §5.4
-gives: the declaration says *no two rows sharing this key have intersecting periods*, and the
-adapter decides how. Postgres satisfies it with an `EXCLUDE USING gist` constraint over
+A property, not DDL, for the reason [RFC 0066](0066-storage-guarantees.md) decision 1 gives: the
+declaration says *no two rows sharing this key have overlapping periods* — overlapping in
+[RFC 0067](0067-period-and-overlap.md)'s sense — and the adapter decides how. Postgres satisfies it
+with an `EXCLUDE USING gist` constraint over
 `(key, daterange(valid_from, valid_to, '[]'))` and the `btree_gist` extension — words that live in
 `forze_postgres` and nowhere near the contract — and startup validates that the constraint and the
 extension exist, raising `internal` with the DDL that would satisfy it. Nothing is created:
@@ -127,20 +128,20 @@ declared, validated, never created.
 
 On a backend with no mechanism for it — Mongo has no exclusion constraint, and this one is not
 expressible as a partial unique index the way `UniqueTogether` is — the guarantee is
-**unsatisfiable rather than skipped**: the kit refuses at wiring and says so, because a temporal
-aggregate whose overlap rule is unenforced is the origin application's bug with a framework's name
-on it.
+**unsatisfiable rather than skipped**, which is [RFC 0066](0066-storage-guarantees.md) decision 4:
+the kit refuses at wiring and says so, because a temporal aggregate whose overlap rule is
+unenforced is the origin application's bug with a framework's name on it.
 
 ### 5.5 What DST can and cannot assert
 
 `no_overlapping_validity` is not a `SystemInvariant`: the reducer set is closed at
 `SumOf | CountAll` ([RFC 0052](0052-versioned-facts-correction-lineage.md) §5.5) and overlap is
-a pairwise comparison, not a scalar reduce. What DST *can* do is what
-[RFC 0063](0063-per-owner-write-serialization.md) needs too — a history invariant in the
-`mutual_exclusion` shape ([`src/forze_dst/oracle/invariants.py:306`](../src/forze_dst/oracle/invariants.py),
-"no two holds overlap in `[start, end)` for the same resource"), applied to the intervals a
-workload wrote rather than to lock holds. That checker exists; pointing it at stored rows is the
-new part, and it is shared with 0063.
+a pairwise comparison, not a scalar reduce. What DST *can* do is
+[RFC 0067](0067-period-and-overlap.md)'s `no_overlapping_periods` — the `mutual_exclusion` shape
+([`src/forze_dst/oracle/invariants.py:306`](../src/forze_dst/oracle/invariants.py), "no two holds
+overlap in `[start, end)` for the same resource") generalized from lock holds to written rows.
+That invariant was extracted precisely because this RFC and
+[RFC 0063](0063-per-owner-write-serialization.md) were each about to write it.
 
 ### Alternatives considered
 
@@ -205,15 +206,16 @@ requirement, named as a deliberate refusal rather than a missing feature.
 | --- | --- | --- |
 | 1 | `LOCKED` | Non-overlap is enforced by a **declared guarantee the backend satisfies**, not by the kit's write path. A read-then-insert check cannot be correct under concurrency, which is the origin application's accepted race written down. |
 | 2 | `LOCKED` | A backend that cannot satisfy the guarantee **refuses at wiring**. A temporal aggregate with an unenforced overlap rule is worse than no kit, because the declaration reads as a guarantee. |
-| 3 | `ASSUMED` | `valid_to` is **inclusive** at a `date` grain and exclusive at an `instant` grain, with the grain required in the declaration. Human-written dates are inclusive; instants cannot be closed without naming a last moment. |
+| 3 | `ASSUMED` | The aggregate **declares its `bounds`** rather than the kit deciding by grain. The convention and its edge behaviour are [RFC 0067](0067-period-and-overlap.md)'s; what this kit owns is that the declaration is required and is read by `effective_on`, `timeline` and the guarantee alike. |
 | 4 | `ASSUMED` | `NULL` means open-ended. No sentinel date: `$null` is already an operator, and a sentinel lies in every export. |
-| 5 | `ASSUMED` | The overlap property is asserted in DST through the existing `mutual_exclusion`-shaped history invariant rather than a new `SystemInvariant` reducer, shared with [RFC 0063](0063-per-owner-write-serialization.md). |
+| 5 | `ASSUMED` | The overlap property is asserted through [RFC 0067](0067-period-and-overlap.md)'s history invariant rather than a new `SystemInvariant` reducer — the reducer set is closed at `SumOf \| CountAll` and overlap is pairwise. |
 | 6 | `OPEN` | Whether the mock implements an in-memory overlap check (making the kit simulable, and stricter than Mongo) or stays refused like Mongo. |
 
 ## 12. Phasing
 
-- **P1** — mixin, `TemporalPolicy`, `effective_on`, `timeline`, the `NonOverlapping` guarantee
-  and its Postgres mapping and validator, batteries. Gated on
-  [RFC 0052](0052-versioned-facts-correction-lineage.md) P2.
+- **P1** — mixin, `TemporalPolicy`, `effective_on`, `timeline`, batteries. Gated on
+  [RFC 0067](0067-period-and-overlap.md) for the period semantics.
+- **P1b** — the `NonOverlapping` declaration, once
+  [RFC 0066](0066-storage-guarantees.md) P3 ships it.
 - **P2** — the mock's overlap check and the DST leg, if decision 6 lands that way.
 - **P3** *(demand-gated)* — `grain="instant"`, multi-key exclusion.

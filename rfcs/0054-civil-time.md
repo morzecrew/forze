@@ -1,8 +1,8 @@
 # RFC 0054 — Civil time: wall clock versus instant
 
-- **Status:** 📝 Draft — execution-ready, one small PR, no dependencies.
+- **Status:** 📝 Draft — execution-ready, one small PR, gated only on [RFC 0067](0067-period-and-overlap.md) for the `Period` its day and month helpers return.
 - **Scope:** A `forze_kits.domain.civil_time` module: a `CivilZone` value object, wall-time → instant conversion that **refuses** ambiguous and non-existent local times, local-day and month bounds, the local days an instant range spans, and an `AwareDatetime` boundary type that refuses naive input. Pure functions plus one value object; **no ports, no contract change, no adapter work.** Deliberately does not unify the two timezone islands that already exist (§3) — it sits beside them and §9 says why that is a risk.
-- **Related:** [`src/forze/application/contracts/querying/internal/time_bucket.py`](../src/forze/application/contracts/querying/internal/time_bucket.py) (`ResolvedTimeBucketTimezone`, the IANA/fixed-offset split already in the analytics path), [`src/forze/application/integrations/durable/cron.py:57`](../src/forze/application/integrations/durable/cron.py) (the one place that already refuses a naive datetime, and why), [`src/forze/base/primitives/datetime.py:10`](../src/forze/base/primitives/datetime.py) (`utcnow`, and the `TimeSource` every clock read goes through), [RFC 0053](0053-temporal-validity.md) (what a "day" means at a validity boundary).
+- **Related:** [`src/forze/application/contracts/querying/internal/time_bucket.py`](../src/forze/application/contracts/querying/internal/time_bucket.py) (`ResolvedTimeBucketTimezone`, the IANA/fixed-offset split already in the analytics path), [`src/forze/application/integrations/durable/cron.py:57`](../src/forze/application/integrations/durable/cron.py) (the one place that already refuses a naive datetime, and why), [`src/forze/base/primitives/datetime.py:10`](../src/forze/base/primitives/datetime.py) (`utcnow`, and the `TimeSource` every clock read goes through), [RFC 0053](0053-temporal-validity.md) (what a "day" means at a validity boundary), [RFC 0067](0067-period-and-overlap.md) (`Period` and its bounds, which the day and month helpers return).
 - **Origin:** A working-time ledger that converts Berlin wall time to instants, refuses DST-ambiguous and non-existent times with stable error codes, and computes month bounds and spanned local days — then copies those helpers into three modules with three separate `BERLIN` constants.
 
 ---
@@ -11,7 +11,8 @@
 
 Six functions and one value object, in one module, with a DST battery across three zones. A
 `CivilZone` is injected (never a module constant); `to_instant` refuses the two local times that
-are not a single instant; the day and month helpers state their half-open semantics once; and
+are not a single instant; the day and month helpers return a `Period` that carries its own bounds;
+and
 `elapsed_minutes` only accepts instants, so the one arithmetic that is wrong in wall time cannot
 be written.
 
@@ -54,8 +55,8 @@ input is treated as an error.
 
 - One injected zone per aggregate or route, never a module constant.
 - The two impossible local times are **refused**, with a stable code a caller can branch on.
-- Day and month bounds, and the local days an instant range spans, with the interval semantics
-  written down.
+- Day and month bounds as periods, and the local days an instant range spans, with the bounds
+  convention carried by the value rather than the prose.
 - Duration arithmetic that cannot be performed on wall-clock values.
 - A boundary type that turns "naive datetime accepted silently" into a validation error where an
   app wants that.
@@ -101,13 +102,14 @@ Detection is by round-trip (`local → aware → UTC → local`), which is the o
 not depend on a zone database's transition table being enumerable.
 
 ```python
-def local_day_bounds(zone, day: date) -> tuple[datetime, datetime]   # [start, next_start)
-def month_bounds(zone, year: int, month: int) -> tuple[datetime, datetime]
+def local_day_bounds(zone, day: date) -> Period[datetime]     # bounds="[)"
+def month_bounds(zone, year: int, month: int) -> Period[datetime]
 def spanned_local_days(zone, start: datetime, end: datetime) -> tuple[date, ...]
 def elapsed_minutes(start: datetime, end: datetime) -> int           # instants only
 ```
 
-All ranges are **half-open** `[start, end)`. A day whose local start does not exist (a
+Both return [RFC 0067](0067-period-and-overlap.md)'s `Period` with `bounds="[)"`, so the half-open
+convention travels in the value instead of in this docstring. A day whose local start does not exist (a
 spring-forward midnight, which some zones have) resolves to the first instant that does, because
 a day always has a first moment even when 00:00 is not it — the one place this module resolves
 rather than refuses, and the reason is that the alternative is a calendar with holes in it.
@@ -191,13 +193,13 @@ times across a transition, and what each function returns).
 | --- | --- | --- |
 | 1 | `LOCKED` | An ambiguous local time is **refused** unless the caller passes `fold`; a nonexistent one is **always refused**. Both are `precondition` with stable codes. Picking an instant silently is how an hour of working time disappears with no signal. |
 | 2 | `LOCKED` | The zone is an injected value object, never a module constant or a process setting. The origin application's three `BERLIN` constants are the failure this prevents. |
-| 3 | `ASSUMED` | Ranges are half-open `[start, end)`, and a nonexistent local midnight resolves forward to the first instant of the day — the single place the module resolves instead of refusing, because a calendar with holes is worse. |
+| 3 | `ASSUMED` | The day and month helpers return a `Period` with `bounds="[)"` ([RFC 0067](0067-period-and-overlap.md)), so the convention travels in the value; a nonexistent local midnight resolves forward to the first instant of the day — the single place this module resolves instead of refusing, because a calendar with holes is worse. |
 | 4 | `ASSUMED` | `elapsed_minutes` accepts instants only and refuses naive input, making the silently-wrong arithmetic unwritable rather than documented. |
 | 5 | `ASSUMED` | The framework's own models are **not** migrated to `AwareDatetime`; the type is offered for an app's boundary. `utcnow` is already aware, so the framework gains nothing and every stored row's model would change. |
-| 6 | `OPEN` | Whether the module lands in `forze_kits.domain` or `forze.domain` (no dependencies beyond the stdlib argues core; precedent argues kits). |
+| 6 | `OPEN` | Whether the module lands in `forze_kits.domain` or `forze.domain` (no dependencies beyond the stdlib argues core; precedent argues kits). [RFC 0067](0067-period-and-overlap.md) has the same question and the two should answer it together. |
 
 ## 12. Phasing
 
-One PR: the value object, the six functions, the three-zone battery, the docs section. Nothing
-here is gated, and nothing else in the batch is gated on it — [RFC 0053](0053-temporal-validity.md)
-cites it for what a day means, but does not import it.
+One PR: the value object, the six functions, the three-zone battery, the docs section. Gated only
+on [RFC 0067](0067-period-and-overlap.md), whose `Period` the day and month helpers return;
+[RFC 0053](0053-temporal-validity.md) cites this RFC for what a day means, but does not import it.

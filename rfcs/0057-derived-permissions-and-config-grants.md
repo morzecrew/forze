@@ -104,7 +104,13 @@ attribute a grant to.
 `PrincipalRef` is the shipped type
 ([`catalog.py:46`](../src/forze/application/contracts/authz/value_objects/catalog.py)), and it
 already carries `is_active` — the same fact `decide` takes as `principal_active`, which is why
-§5.3's rule is a generalization rather than a new axis.
+§5.3's rule is a generalization rather than a new axis. The principal a provider is called for comes
+from the invocation context's shipped identity, `get_authn()` →
+`AuthnIdentity(principal_id, actor)`
+([`identity.py:11-32`](../src/forze/application/contracts/authn/value_objects/identity.py)), whose
+`principal_id` the docstring states "aligns with `PrincipalRef`" — so a delegated call can be
+resolved for the subject, the actor, or both, and the rule for which is §10's question rather than a
+new channel.
 
 **Permissions, not "capabilities".** The origin application says capabilities; in this codebase a
 *capability* is an adapter's declared feature flag (the port capability model, `token_stream`,
@@ -218,6 +224,10 @@ never on roles**, which is what makes a derived denial able to close a route.
 
 ## 10. Unresolved questions
 
+- **On a delegated call, which identity does a provider derive for?** `AuthnIdentity` carries the
+  subject and the `actor` chain; deriving for the subject alone grants an agent everything the user
+  has, deriving for the actor alone ignores the delegation. Leaning: derive for both and intersect,
+  which is the conservative reading and needs a battery rather than a paragraph.
 - **Does a provider see the whole `ExecutionContext` or a narrowed view?** The context is powerful
   (every port, the tenant, the invocation); a narrowed view is safer and may not be enough to read
   the documents a provider needs. Leaning: the context, with the docs saying a provider reads and

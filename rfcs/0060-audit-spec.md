@@ -48,8 +48,14 @@ message. That is a **denylist** — it removes what looks sensitive. An audit tr
 inverse: nothing is recorded unless it was declared. A denylist that misses one key name is a
 disclosure; an allowlist that misses one key is a missing field in a report.
 
-**The invocation context already carries the actor.** `ctx.inv_ctx` is where tenancy, the
-idempotency key and the execution id come from, so the actor does not need a new channel.
+**The invocation context already carries the actor *and* the subject.**
+`InvocationContext.get_authn()` returns `AuthnIdentity(principal_id, actor: AuthnIdentity | None)`
+([`invocation.py:112`](../src/forze/application/execution/context/invocation.py),
+[`identity.py:11-32`](../src/forze/application/contracts/authn/value_objects/identity.py)):
+`principal_id` is the effective **subject**, `actor` is the principal *performing* the action when
+the call is delegated, chainable for multi-hop, with `is_delegated` as the shorthand. That is
+exactly the distinction §5.1 needs, already shipped and already aligned with `PrincipalRef` — so
+the entry's actor and subject are read from there rather than from a new channel or a payload.
 
 ## 4. Goals / Non-goals
 
@@ -80,11 +86,13 @@ idempotency key and the execution id come from, so the actor does not need a new
 class AuditPort(Protocol):
     async def record(self, entry: AuditEntry) -> None: ...
 
-AuditEntry(actor_ref, action, outcome, object_ref, subject_ref, metadata, at)
+AuditEntry(actor, action, outcome, object_ref, subject, metadata, at)
 ```
 
-`object_ref` is what was acted on; `subject_ref` is whose data it was — the two differ whenever
-one principal acts on another's records, which is the case an audit exists for. `outcome` is
+`object_ref` is what was acted on; `subject` is whose data it was, and `actor` is who did it — the
+two differ whenever one principal acts on another's records, which is the case an audit exists for.
+Both come from `get_authn()`: `AuthnIdentity.principal_id` is the subject and `.actor` is the agent,
+so a delegated call records both without the decorator being told. `outcome` is
 `allowed | denied | failed`.
 
 ### 5.2 The spec
@@ -120,7 +128,7 @@ test that introduced it.
 ```
 
 Wired as a `Finally` hook so the outcome is known and a guard denial is still observed. The actor
-is read from `ctx.inv_ctx`; a metadata callable that raises is itself an audit failure (§5.5), not
+and subject are read from `ctx.inv_ctx.get_authn()`; a metadata callable that raises is itself an audit failure (§5.5), not
 a silent skip.
 
 ### 5.5 When the audit write fails
@@ -160,8 +168,9 @@ The mock's implementation is what DST reads for `audit_row_per_effect`.
 - Outcome coverage: success records `allowed`; a handler failure records `failed`; an authz guard
   denial records `denied` — the last one is the `Finally` claim, and it is the battery that proves
   the hook choice.
-- Actor binding: an entry's actor comes from `ctx.inv_ctx` even when the payload carries a
-  different one (the payload's value is ignored, asserted).
+- Actor binding: an entry's actor and subject come from `get_authn()` even when the payload carries
+  a different actor (the payload's value is ignored, asserted), and a delegated identity records
+  the agent in `actor` and the user in `subject`.
 - Read rules: `after_authz` records an admitted read and nothing for a refused one; own-data reads
   record nothing; `never` records nothing at all.
 - Failure policy: with the default, a failing audit port fails the operation and the business write
@@ -217,7 +226,7 @@ non-claim: no tamper-evidence.
 | # | Grade | Decision |
 | --- | --- | --- |
 | 1 | `LOCKED` | Metadata is an **allowlist that raises**, not a denylist that filters. A filter leaves the over-collecting call site alive to be copied; a refusal fails the test that introduced it. The shipped scrubbing is a denylist and is the wrong tool here. |
-| 2 | `LOCKED` | The actor is bound from `ctx.inv_ctx` and a payload-supplied actor is ignored. An audit trail whose actor the caller can set records nothing. |
+| 2 | `LOCKED` | The actor and subject are bound from the shipped `AuthnIdentity` on the invocation context (`get_authn()`, whose `actor` field already carries the delegation distinction), and a payload-supplied actor is ignored. An audit trail whose actor the caller can set records nothing. |
 | 3 | `LOCKED` | Nothing is audited unless declared. Automatic coverage produces exactly the over-collection §2 is about. |
 | 4 | `LOCKED` | The decorator wires as a `Finally` hook, because that is the only hook that runs when a `before` guard denies — and a denial is the event the trail most needs. |
 | 5 | `ASSUMED` | A failed audit write **fails the operation** by default, overridable per spec. Contested on purpose: failing closed turns a store outage into an outage, failing open turns it into a silent gap, and the right answer differs per action. |
