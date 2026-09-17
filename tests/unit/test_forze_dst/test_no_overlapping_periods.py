@@ -349,15 +349,16 @@ class TestTheReportFollowsTheMarkers:
 
         violations = _CHECK(
             _history(
-                _shift("ann", JAN, MAR),  # 0
+                _shift("ann", JAN, MAR),  # 0 — ann appears first…
                 _shift("bob", JAN, MAR),  # 1
-                _shift("ann", FEB, APR),  # 2 — completes ann's overlap
-                _shift("cat", JAN, MAR),  # 3
-                _shift("bob", FEB, APR),  # 4 — completes bob's
+                _shift("bob", FEB, APR),  # 2 — …but bob's overlap completes first
+                _shift("ann", FEB, APR),  # 3
             )
         )
 
-        assert [max(event.seq for event in violation.events) for violation in violations] == [2, 4]
+        # Grouped by owner and left unsorted this reads [3, 2]: ann's conflict first, because
+        # ann's first marker arrived first. The report follows the markers, not the grouping.
+        assert [max(event.seq for event in violation.events) for violation in violations] == [2, 3]
 
 
 class TestTheReportIsTheSameOnEveryRun:
