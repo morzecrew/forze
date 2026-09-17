@@ -29,6 +29,10 @@ The generic `expect(kind, predicate, message=...)` covers most domain rules: it 
 
     No two holds of a resource overlap — a distributed lock or critical section held correctly, no split-brain across nodes.
 
+-   :lucide-calendar-range: **`no_overlapping_periods(kind, key=, start=, end=, bounds=)`**
+
+    No two recorded periods for one owner overlap — effective-dated master data, bookings, shifts, leases. Reads `Period` semantics, so the aggregate's own `bounds` decide whether touching periods count; a marker the workload recorded badly is reported rather than raised.
+
 -   :lucide-list-checks: **`operation_succeeds(*ops)` · `completes_within(op, seconds)` · `single_key_per_operation(op)`**
 
     Named ops must reach `ok`; an op must finish within a virtual-time budget; an op must touch one entity key (the *wrong-entity* guard) — all from the trace alone.

@@ -12,6 +12,9 @@ toy runner here is a module-level function (a closure would not pickle).
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 from forze_dst.artifacts import SeedOutcome, SimulationSeedRunner, parallel_sweep, sweep
 
 # ----------------------- #
@@ -118,6 +121,50 @@ class TestParallelMatchesSequential:
         par = parallel_sweep(_toy_run, seeds, workers=2, chunk=4)
         assert par.runs == 20
         assert par.violations == (0, 5, 10, 15)
+
+
+class TestParallelSweepUnderACoverageSession:
+    """The parallel sweep has to survive the tool a user's CI runs it with.
+
+    A `pytest --cov=<module inside forze_dst>` session made every parallel sweep die in the
+    parent before a worker saw a seed: `ProcessPoolExecutor` wraps each task in a private stdlib
+    class and pickles it *by name*, and in that configuration the queue-feeder thread stopped
+    resolving the name to the same object (`PicklingError: … it's not the same object as
+    concurrent.futures.process._CallItem`). A plain `coverage run` does not reproduce it and a
+    package-wide `--cov=forze_dst` does not either, so only the real configuration pins it —
+    hence a pytest subprocess rather than an in-process assertion.
+
+    The subprocess's **exit code is deliberately not asserted**: that same narrow-source
+    configuration segfaults at interpreter shutdown roughly twice in ten runs, *after* the tests
+    have reported success, with a fork context and a spawn one alike. It is the tooling's crash
+    rather than the sweep's, and CI's own `--cov=src` shape does not show it (ten clean runs), so
+    asserting the code here would buy a flaky test instead of a signal. What this asserts is what
+    it is for: the sweep ran, and nothing failed to pickle.
+    """
+
+    def test_a_sweep_survives_pytest_cov_with_a_module_source(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                f"{__file__}::TestParallelMatchesSequential",
+                "-q",
+                "--cov=forze_dst.artifacts",
+                "--cov-report=",
+                # The session's global floor is about the whole suite; two tests will never
+                # clear it, and a threshold failure would mask the one thing under test.
+                "--cov-fail-under=0",
+                "-p",
+                "no:cacheprovider",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert "PicklingError" not in completed.stdout, completed.stdout[-3000:]
+        assert "2 passed" in completed.stdout, completed.stdout[-3000:]
 
 
 class TestSimulationSeedRunner:

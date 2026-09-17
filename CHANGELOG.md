@@ -27,11 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A view-backed aggregate can be simulated.** `MockDepsModule(derived_values=MockDerivedRegistry().on(spec, source))` supplies a marked derived field per row, including rows a workload creates after any seed ran, so an invariant runs over such an aggregate under `forze_dst`. Registering nothing keeps the refusal.
 
+- **A span of time says which end is in force.** `Period(start, end, bounds)` in `forze.base.primitives` carries its bounds convention in the value — `"[)"` by default, so consecutive periods tile — with `contains`, `overlaps` and `intersects` reading it, an open end as `None` rather than a sentinel, and endpoints checked at construction — dates or datetimes, mutually comparable, with a naive/aware `datetime` mix refused like a `date`/`datetime` one. `forze_dst.invariants.no_overlapping_periods(kind, key=…, start=…, end=…, bounds=…)` asserts the matching property over a recorded history: no two periods for one owner overlap, reporting every conflicting pair in recorded order and reporting a malformed marker rather than raising.
+
 ### Changed
 
 - ...
 
 ### Fixed
+
+- **A parallel DST sweep died under a coverage session.** `parallel_sweep` ran its seeds through a `ProcessPoolExecutor`, which pickles a private stdlib task class by name; under `pytest --cov` with a module-level source the parent could no longer resolve that name to the same object and every sweep failed before a worker saw a seed. It runs on a `multiprocessing.Pool` now, which pickles only the caller's `run` and the seeds.
 
 - **`HttpAuthConfig` with no token sent `Authorization: Bearer None`.** An optional secret field converted `None` into a `SecretStr` wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on `HttpClientLifecycleStep.auth_token` and Meilisearch's `api_key`, where consumers happened to unwrap defensively.
 

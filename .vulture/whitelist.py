@@ -377,6 +377,8 @@ _.create_edges  # unused method (src/forze/application/contracts/graph/ports.py:
 _.has_undrained  # unused method (src/forze/application/contracts/outbox/admin.py:77)
 _.with_concurrent  # unused method (src/forze/application/execution/lifecycle/plans.py:113)
 _.topological_order  # unused method (src/forze/base/primitives/graph.py:67)
+_.contains  # unused method (src/forze/base/primitives/period.py:106)
+_.intersects  # unused method (src/forze/base/primitives/period.py:136)
 _.decode_mapping_many_batched  # unused method (src/forze/base/serialization/model_codec.py:71)
 _._one_credential_source  # unused method (src/forze_bigquery/kernel/client/routing_credentials.py:28)
 topology  # unused function (src/forze_cli/dst.py:582)

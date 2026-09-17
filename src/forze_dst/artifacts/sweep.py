@@ -18,9 +18,9 @@ crosses the process boundary, only the string), so it is picklable where a closu
 from __future__ import annotations
 
 import importlib
+import multiprocessing
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor
 from types import MappingProxyType
 from typing import final
 
@@ -230,10 +230,20 @@ def parallel_sweep(
     folded :class:`SweepResult` is identical to :func:`sweep`'s; only wall time (and so throughput)
     differs. *workers* defaults to the pool's own default (CPU count); *chunk* batches seeds per
     task to amortise dispatch.
+
+    :class:`multiprocessing.Pool` rather than a :class:`~concurrent.futures.ProcessPoolExecutor`:
+    the executor wraps each task in a private stdlib class and pickles *that* by name, and under a
+    ``pytest --cov`` session whose source is a module inside this package the parent's queue-feeder
+    thread stops resolving the name to the same object — ``PicklingError: Can't pickle <class
+    'concurrent.futures.process._CallItem'>: it's not the same object`` — so every parallel sweep
+    dies before a worker sees a seed. Nothing private crosses the boundary here: the pool pickles
+    *run* and the seeds, which the contract above already requires to be picklable. Ordering,
+    chunking and the worker default are the executor's, and a failure in a worker still re-raises
+    in the caller.
     """
 
     start = time.perf_counter()
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    with multiprocessing.Pool(processes=workers) as pool:
         outcomes = list(pool.map(run, seeds, chunksize=max(1, chunk)))
     return _aggregate(outcomes, wall_seconds=time.perf_counter() - start)
 
