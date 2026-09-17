@@ -430,6 +430,43 @@ class TestTheDialectsOwnRefusals:
 
         assert _unsupported_constructs(pattern) == []
 
+    @pytest.mark.parametrize("pattern", [r"[(?=]", r"[(?P=]", r"[\b]", r"[\](?P=n]"])
+    def test_group_syntax_inside_a_character_class_is_literal(self, pattern: str) -> None:
+        """A class holds members, not syntax.
+
+        `[(?=]` matches one of three characters and `[\b]` matches a backspace; neither is
+        the construct it spells outside a class. Refusing them costs a route a constraint
+        the decoder runs — and the first two are reachable through an ordinary model, since
+        Pydantic's engine builds both.
+
+        The last case pins the escape rule inside the class as well: the `]` is escaped, so
+        the class is still open where the named-backreference spelling appears.
+        """
+
+        from forze_inference.http.protocols.anthropic_messages import _unsupported_constructs
+
+        assert _unsupported_constructs(pattern) == []
+
+    @pytest.mark.parametrize(
+        ("pattern", "offending"),
+        [
+            (r"[a-z](?=x)", "lookahead"),
+            (r"[\]]\bword", "word boundary"),
+            (r"[(]x(?P=n)", "named backreference"),
+        ],
+    )
+    def test_a_closed_character_class_does_not_blind_the_scan(
+        self,
+        pattern: str,
+        offending: str,
+    ) -> None:
+        """The other half: class state has to end where the class does, or one `[` early in
+        a pattern would serve every construct after it."""
+
+        from forze_inference.http.protocols.anthropic_messages import _unsupported_constructs
+
+        assert any(offending in construct for construct in _unsupported_constructs(pattern))
+
     def test_a_literal_backslash_is_not_a_word_boundary(self) -> None:
         """The scanner reads the escape, not just the letter.
 

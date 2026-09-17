@@ -117,37 +117,50 @@ def _unsupported_constructs(pattern: str) -> list[str]:
     rest before a model carrying one can be built; they are checked either way, because
     which constructs arrive is a property of that engine rather than of this constraint.
 
-    Two things are knowingly left out. A ``{n,m}`` quantifier over a range the provider
-    calls too large, which it does not quantify, so it stays a rejected request. And a
-    ``\\b`` inside a character class, which means a backspace rather than a boundary and is
-    reported here as a boundary: refusing a pattern the decoder would have run is the safe
-    side of that one.
+    A character class holds members rather than syntax, so the scan carries one bit of state
+    for it: ``[(?=]`` matches one of three characters and ``[\\b]`` matches a backspace, and
+    neither is the construct it spells outside a class. The state has to end where the class
+    does, or one ``[`` would serve everything after it.
+
+    Knowingly left out: a ``{n,m}`` quantifier over a range the provider calls too large,
+    which it does not quantify, so it stays a rejected request.
     """
 
     found: list[str] = []
     index = 0
+    in_class = False
 
     while index < len(pattern):
         character = pattern[index]
 
         if character == "\\":
-            escaped = pattern[index + 1 : index + 2]
+            # Inside a class an escape spells a member rather than a construct — `[\b]` is a
+            # backspace — so there only the two-character consumption below matters.
+            if not in_class:
+                escaped = pattern[index + 1 : index + 2]
 
-            if escaped in {"b", "B"}:
-                found.append("a word boundary (\\b)")
+                if escaped in {"b", "B"}:
+                    found.append("a word boundary (\\b)")
 
-            elif escaped.isdigit() and escaped != "0":
-                found.append("a backreference")
+                elif escaped.isdigit() and escaped != "0":
+                    found.append("a backreference")
 
-            elif escaped == "k":
-                found.append("a named backreference")
+                elif escaped == "k":
+                    found.append("a named backreference")
 
             # Two characters, whatever the second one is: that is what makes the next
-            # backslash a fresh escape rather than an escaped one.
+            # backslash a fresh escape rather than an escaped one — inside a class as much
+            # as outside one, which is what keeps `[\]]` open until its real end.
             index += 2
             continue
 
-        if pattern.startswith(_LOOKAROUND, index):
+        if in_class:
+            in_class = character != "]"
+
+        elif character == "[":
+            in_class = True
+
+        elif pattern.startswith(_LOOKAROUND, index):
             found.append("a lookahead or lookbehind")
 
         elif pattern.startswith(_NAMED_BACKREFERENCE, index):
