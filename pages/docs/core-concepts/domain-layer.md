@@ -126,9 +126,10 @@ current = Period(start=date(2026, 1, 1))                                # open-e
 
 `contains(at)`, `overlaps(other)` and `intersects(start, end)` read the convention from the
 value, so a shared endpoint is counted only when both sides have it in force: half-open
-`[Jan, Feb)` and `[Feb, Mar)` do not overlap, and the inclusive pair does. An open end overlaps
-everything at or after its start. A zero-length period is accepted — a booking cancelled in the
-instant it was made is a real row — and is empty unless both ends are included.
+`[Jan, Feb)` and `[Feb, Mar)` do not overlap, and the inclusive pair does. An open end reaches
+every point its own convention admits and no earlier one, so an open-ended period that excludes
+its start still does not meet a point at that start. A zero-length period is accepted — a booking
+cancelled in the instant it was made is a real row — and is empty unless both ends are included.
 
 Endpoints must be comparable, and the type system cannot say so: `datetime` subclasses `date`, so
 a type checker passes a `date`/`datetime` pair, and a naive and an aware `datetime` are one type
