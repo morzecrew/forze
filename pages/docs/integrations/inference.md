@@ -202,7 +202,10 @@ is the practical reason to pick one endpoint over the other for a given model:
 
 Where the chat dialect refuses a `format` outright, the native one enforces a
 listed set (`date-time`, `date`, `time`, `duration`, `email`, `hostname`, `uri`,
-`ipv4`, `ipv6`, `uuid`) and refuses anything outside it.
+`ipv4`, `ipv6`, `uuid`) and refuses anything outside it. A `pattern` is the same
+story: enforced natively, so it serves — except for the constructs the decoder
+does not run (a word boundary, lookaround, a backreference), which are refused
+by name.
 
 `output_mode="text"` sends no constraint and fills a one-field `str` output model
 with the completion prose; any other output model is refused at wiring.

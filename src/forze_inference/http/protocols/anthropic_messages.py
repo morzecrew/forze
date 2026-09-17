@@ -24,6 +24,7 @@ The transport headers are wiring, not dialect: ``x-api-key`` and ``anthropic-ver
 body and one provider's transport requirement should not become every dialect's contract.
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast, final
 
@@ -92,6 +93,24 @@ _SUPPORTED_MIN_ITEMS: Final[frozenset[int]] = frozenset({0, 1})
 ``list[X]`` with ``min_length=1`` is therefore servable, and one with ``min_length=2`` is
 not."""
 
+_UNSUPPORTED_REGEX: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    # Each is a construct the constrained decoder does not run, and each is written to
+    # ignore an escaped backslash before it, so a pattern matching a literal `\\b` is not
+    # mistaken for a word boundary.
+    (re.compile(r"(?<!\\)\\[bB]"), "a word boundary (\\b)"),
+    (re.compile(r"\(\?<?[=!]"), "a lookahead or lookbehind"),
+    (re.compile(r"(?<!\\)\\[1-9]"), "a backreference"),
+    (re.compile(r"\(\?P=|\\k<"), "a named backreference"),
+)
+"""Regex constructs the decoder cannot run, refused rather than sent.
+
+``pattern`` itself is enforced here — which is why it is absent from the refused keywords —
+but over a subset. Only the word boundary is reachable through Pydantic, whose own engine
+refuses the rest before a model carrying one can be built; the list covers what the provider
+documents either way, because which constructs arrive is a property of that engine rather
+than of this constraint. Not covered: a ``{n,m}`` quantifier over a range the provider calls
+too large, which it does not quantify, so it stays a rejected request."""
+
 _REFUSED_SCHEMA_KEYWORDS: Final[frozenset[str]] = frozenset(
     {
         # Numeric and string-length constraints the constraint does not enforce.
@@ -128,9 +147,9 @@ _REFUSED_SCHEMA_KEYWORDS: Final[frozenset[str]] = frozenset(
 and ignored. Deliberately absent, because the constraint *does* enforce them: ``$ref`` and
 ``$defs``, ``default``, ``const``, ``enum``, ``pattern``, and the string formats above.
 
-Not covered here: the regex subset ``pattern`` is decoded with — backreferences, lookaround
-and word boundaries are rejected by the endpoint — and enum members that are not scalars.
-Both are reported by the endpoint as a rejected request naming the offending part."""
+What ``pattern`` is checked against lives in :data:`_UNSUPPORTED_REGEX`. Not covered here:
+enum members that are not scalars, which the endpoint reports as a rejected request naming
+the offending part."""
 
 
 def _node_check(schema: Mapping[str, Any], where: str) -> list[str]:
@@ -150,6 +169,16 @@ def _node_check(schema: Mapping[str, Any], where: str) -> list[str]:
 
     if minimum_items is not None and minimum_items not in _SUPPORTED_MIN_ITEMS:
         found.append(f"{where}: minItems={minimum_items!r} (only 0 and 1 are enforced)")
+
+    declared_pattern = schema.get("pattern")
+
+    if isinstance(declared_pattern, str):
+        for construct, name in _UNSUPPORTED_REGEX:
+            if construct.search(declared_pattern):
+                found.append(
+                    f"{where}: pattern={declared_pattern!r} uses {name}, which the "
+                    "constrained decoder does not run"
+                )
 
     reference = schema.get("$ref")
 

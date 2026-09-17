@@ -317,6 +317,79 @@ class TestTheDialectsOwnRefusals:
 
         assert "format=" in str(ei.value)
 
+    def test_a_word_boundary_in_a_pattern_is_refused(self) -> None:
+        """The one unsupported construct a Pydantic model can actually carry.
+
+        `pattern` is enforced here — by constrained decoding over a regex subset — so it is
+        not refused wholesale the way the chat dialect refuses it. What the subset leaves out
+        is refused by name, because a route carrying one is a 400 on every request.
+        """
+
+        class _Coded(BaseModel):
+            code: str = Field(pattern=r"\bword\b")
+
+        with pytest.raises(CoreException) as ei:
+            messages_output_schema(_spec(_Coded))
+
+        assert "word boundary" in str(ei.value)
+
+    @pytest.mark.parametrize(
+        ("pattern", "offending"),
+        [
+            (r"(?=.*x)", "lookahead"),
+            (r"(?<=a)b", "lookahead"),
+            (r"(\d)\1", "backreference"),
+            (r"(?P<n>a)(?P=n)", "backreference"),
+        ],
+    )
+    def test_the_other_unsupported_constructs_are_refused_too(
+        self,
+        pattern: str,
+        offending: str,
+    ) -> None:
+        """Asserted against a hand-built schema, because Pydantic's own regex engine
+        refuses these before a model carrying one can be built — so they cannot arrive
+        through `model_json_schema` today. Checked anyway: which constructs reach the walk
+        is a property of Pydantic's engine, not of this dialect's constraint.
+        """
+
+        from forze_inference.http.protocols.anthropic_messages import _SCHEMA_RULES
+        from forze_inference.http.protocols.schema import schema_violations
+
+        schema = {
+            "type": "object",
+            "properties": {"code": {"type": "string", "pattern": pattern}},
+            "required": ["code"],
+        }
+        found = schema_violations(schema, "", rules=_SCHEMA_RULES)
+
+        assert any(offending in violation for violation in found)
+
+    def test_a_literal_backslash_is_not_a_word_boundary(self) -> None:
+        """The scanner reads the escape, not just the letter.
+
+        `a\\\\bc` matches a backslash followed by `bc`; reading it as `\\b` would refuse a
+        pattern the decoder runs perfectly well, which is the failure a blunt search makes
+        and the reason each construct ignores an escaped backslash before it.
+        """
+
+        class _Escaped(BaseModel):
+            code: str = Field(pattern=r"a\\\\bc")
+
+        assert messages_output_schema(_spec(_Escaped))["properties"]["code"]["pattern"]
+
+    def test_a_simple_pattern_is_still_served(self) -> None:
+        """The reason the keyword is not refused outright: the provider does enforce this
+        one, and refusing it would cost a route the constraint it asked for."""
+
+        class _Invoiced(BaseModel):
+            code: str = Field(pattern=r"^INV-\d+$")
+
+        assert messages_output_schema(_spec(_Invoiced))["properties"]["code"]["pattern"]
+
+        with pytest.raises(CoreException):
+            chat_output_schema(_spec(_Invoiced))
+
     def test_a_recursive_model_is_named_as_recursive(self) -> None:
         """Its schema is a bare `$ref` at the root, so the root check alone would report a
         missing object type — true, and useless to whoever has to fix it."""
