@@ -103,6 +103,37 @@ default install). Each adds one focused capability — no deep inheritance chain
 | **Number id** | A human-readable `number_id`, populated by a counter on create |
 | **Creator id** | A frozen `creator_id`, injected from the current actor context |
 
+## A period, and which end is in force
+
+A span of time is four decisions — is the end included, can it be open-ended, what does overlap
+mean where two spans touch, and what is a zero-length span — and a codebase that leaves them to
+prose answers them differently in two modules. `Period` carries the answers in the value:
+
+```python
+from datetime import date
+from forze.base.primitives import Period
+
+quarter = Period(start=date(2026, 1, 1), end=date(2026, 4, 1))         # bounds="[)"
+contract = Period(start=date(2026, 1, 1), end=date(2026, 3, 31), bounds="[]")
+current = Period(start=date(2026, 1, 1))                                # open-ended
+```
+
+| Bounds | Reads as | Use it for |
+|--------|----------|------------|
+| `"[)"` *(default)* | start included, end excluded | anything that must tile — consecutive periods cover a timeline with no gap and no overlap |
+| `"[]"` | both included | periods a person wrote: "valid through 31 March" |
+| `"(]"` · `"()"` | start excluded | available for completeness; an excluded *start* on a `date` grain is the shape to avoid when a database constraint has to agree |
+
+`contains(at)`, `overlaps(other)` and `intersects(start, end)` read the convention from the
+value, so a shared endpoint is counted only when both sides have it in force: half-open
+`[Jan, Feb)` and `[Feb, Mar)` do not overlap, and the inclusive pair does. An open end overlaps
+everything at or after its start. A zero-length period is accepted — a booking cancelled in the
+instant it was made is a real row — and is empty unless both ends are included.
+
+Endpoints must share a grain: `datetime` subclasses `date`, so a type checker passes a mixed
+pair, and `Period` refuses one at construction rather than letting it fail inside a comparison
+later.
+
 Aggregates define *what* your domain is and the rules it keeps; turning actions
 on them into something the runtime can execute is the
 [application layer](application-layer.md).

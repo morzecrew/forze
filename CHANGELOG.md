@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A view-backed aggregate can be simulated.** `MockDepsModule(derived_values=MockDerivedRegistry().on(spec, source))` supplies a marked derived field per row, including rows a workload creates after any seed ran, so an invariant runs over such an aggregate under `forze_dst`. Registering nothing keeps the refusal.
 
+- **A span of time says which end is in force.** `Period(start, end, bounds)` in `forze.base.primitives` carries its bounds convention in the value — `"[)"` by default, so consecutive periods tile — with `contains`, `overlaps` and `intersects` reading it, an open end as `None` rather than a sentinel, and a mixed `date`/`datetime` pair refused at construction. `forze_dst.invariants.no_overlapping_periods(kind, key=…, start=…, end=…, bounds=…)` asserts the matching property over a recorded history: no two periods for one owner overlap.
+
 ### Changed
 
 - ...

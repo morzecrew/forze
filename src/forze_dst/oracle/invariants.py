@@ -14,6 +14,8 @@ from typing import Any, final
 
 import attrs
 
+from forze.base.exceptions import CoreException
+from forze.base.primitives import Bounds, Period
 from forze_dst.oracle.recorder import Event, History
 
 # ----------------------- #
@@ -345,6 +347,110 @@ def mutual_exclusion(
         return violations
 
     return named("mutual_exclusion", _check)
+
+
+def no_overlapping_periods(
+    kind: str,
+    *,
+    key: str,
+    start: str,
+    end: str,
+    bounds: Bounds = "[)",
+) -> Invariant:
+    """No two ``kind`` periods sharing ``key`` may overlap, under *bounds*.
+
+    The data-level twin of :func:`mutual_exclusion`: that one asks whether two *holders* of a
+    lock overlapped in time and reads ``float`` markers under a fixed ``[start, end)`` reading,
+    while this one asks whether two *stored* periods for one owner overlap — the property behind
+    effective-dated master data, bookings, shifts and leases — and reads ``date`` or ``datetime``
+    endpoints under the convention the aggregate declared
+    (:class:`~forze.base.primitives.Period`).
+
+    It cannot be a :class:`~forze.application.contracts.invariants.SystemInvariant`: that
+    declaration reduces a read-set to one number, and overlap is pairwise.
+
+    Periods come from **recorded markers**, as every invariant here does — the workload records
+    one per period it writes (``record(kind, **{key: owner, start: …, end: …})``), and an ``end``
+    that is absent or ``None`` is read as open-ended. A marker missing ``key`` or ``start``, or
+    carrying endpoints a period cannot be built from, is itself reported: an oracle that raised
+    on a malformed marker would take the whole run's checking with it.
+    """
+
+    def _check(history: History) -> list[Violation]:
+        violations: list[Violation] = []
+        by_key: dict[Any, list[tuple[Period[Any], Event]]] = defaultdict(list)
+
+        for event in history.of_kind(kind):
+            fields = event.fields
+
+            if key not in fields or start not in fields:
+                violations.append(
+                    Violation(
+                        invariant="no_overlapping_periods",
+                        message=f"{kind} event recorded without {key!r} and {start!r}",
+                        events=(event,),
+                    )
+                )
+                continue
+
+            try:
+                period: Period[Any] = Period(
+                    start=fields[start],
+                    end=fields.get(end),
+                    bounds=bounds,
+                )
+
+            except CoreException as error:
+                violations.append(
+                    Violation(
+                        invariant="no_overlapping_periods",
+                        message=f"{kind} event carries an unusable period: {error.summary}",
+                        events=(event,),
+                    )
+                )
+                continue
+
+            by_key[fields[key]].append((period, event))
+
+        for owner, entries in by_key.items():
+            entries.sort(key=lambda entry: entry[0].start)
+            covering: tuple[Period[Any], Event] | None = None
+
+            for period, event in entries:
+                if covering is not None and covering[0].overlaps(period):
+                    violations.append(
+                        Violation(
+                            invariant="no_overlapping_periods",
+                            message=(
+                                f"overlapping periods for {key}={owner!r}: "
+                                f"{covering[0].start}..{covering[0].end} and "
+                                f"{period.start}..{period.end}"
+                            ),
+                            events=(covering[1], event),
+                        )
+                    )
+
+                # The period reaching furthest forward is the one a later period can still
+                # overlap; keeping the latest-started one would miss a long period enclosing
+                # several short ones.
+                if covering is None or _reaches_further(period, covering[0]):
+                    covering = (period, event)
+
+        return violations
+
+    return named("no_overlapping_periods", _check)
+
+
+def _reaches_further(period: Period[Any], than: Period[Any]) -> bool:
+    """Whether *period* ends after *than* — an open end reaching furthest of all."""
+
+    if period.end is None:
+        return True
+
+    if than.end is None:
+        return False
+
+    return period.end > than.end
 
 
 def no_unexpected_error() -> Invariant:

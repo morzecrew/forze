@@ -1,7 +1,7 @@
 """The assertion toolkit — everything you pass to ``Simulation(invariants=[...])``.
 
 A namespace over the oracle's assertion vocabulary: always-properties (``no_duplicate_effect``,
-``monotonic_per``, ``mutual_exclusion``, …), value-level checks (``expect``, ``expect_value``,
+``monotonic_per``, ``mutual_exclusion``, ``no_overlapping_periods``, …), value-level checks (``expect``, ``expect_value``,
 ``read_your_writes``), transactional isolation (``snapshot_isolation``, ``serializable``),
 linearizability (``linearizable`` + its specs), commutativity (``commutative_convergence`` — the one
 *cross-history* checker, not a single-history :data:`Invariant`), and reachability / "sometimes"
@@ -23,6 +23,7 @@ from .oracle.invariants import (
     named,
     no_duplicate_effect,
     no_duplicate_trace_effect,
+    no_overlapping_periods,
     no_resource_leak,
     no_unclosed_transaction,
     no_unexpected_error,
@@ -73,6 +74,7 @@ __all__ = [
     "name_of",
     # always-properties
     "no_duplicate_effect",
+    "no_overlapping_periods",
     "no_duplicate_trace_effect",
     "no_resource_leak",
     "no_unclosed_transaction",
