@@ -59,6 +59,31 @@ def _program(source: str, **request: object) -> SandboxRequest:
     )
 
 
+def _grows_to(mebibytes: int) -> str:
+    """A program that charges *mebibytes* of memory a chunk at a time, touching every page.
+
+    A single ``bytearray(n)`` has two fates under a cgroup cap and these tests assert only one of
+    them: charged, and the kernel kills the process (``killed_oom``), or refused, and Python
+    raises ``MemoryError`` and exits non-zero — which the adapter reports as ``exited`` with the
+    limits it had in force. Which one happens is the host's to decide, and CI decided differently
+    twice. Growing in 4 MiB chunks removes the second fate: a chunk that size is mapped under any
+    cap these tests use, and touching one byte per page charges it, so the only way out is the
+    kill.
+
+    **Bounded** rather than an endless loop, because a ceiling that was never applied has to end
+    the program rather than the kernel ending it: that is what lets the narrowing test fail when
+    the narrowing silently does not happen.
+    """
+
+    return (
+        "chunks = []\n"
+        f"for _ in range({mebibytes} // 4):\n"
+        "    chunk = bytearray(4 * 1024 * 1024)\n"
+        "    chunk[::4096] = b'\\x01' * (len(chunk) // 4096)\n"
+        "    chunks.append(chunk)\n"
+    )
+
+
 def _containers() -> int:
     """This plane's containers on the daemon right now.
 
@@ -328,7 +353,7 @@ class TestCeilingsTheDaemonWatches:
         # The tier's difference from the process one, in a single assertion: an RLIMIT_AS
         # breach in a bare child is its own MemoryError and says nothing about a ceiling.
         result = await container_sandbox(ctx, memory_ceiling=32 * 1024 * 1024).run(
-            _program("b = bytearray(512 * 1024 * 1024)")
+            _program(_grows_to(512))
         )
 
         assert result.outcome == "killed_oom"
@@ -382,14 +407,31 @@ class TestCeilingsTheDaemonWatches:
         assert result.stdout.text.strip() == "SIGXCPU"
 
     async def test_a_request_narrows_the_route_s_ceiling(self, ctx: ExecutionContext) -> None:
+        # 200 MiB sits above the request's 32 MiB and below the route's 512 MiB, so the kill can
+        # only come from the narrowing: a run that applied the route's ceiling instead reaches the
+        # end of the program and comes back `exited`.
         result = await container_sandbox(ctx, memory_ceiling=512 * 1024 * 1024).run(
             _program(
-                "b = bytearray(200 * 1024 * 1024)",
+                _grows_to(200),
                 resources=ResourceRequest(memory_bytes=32 * 1024 * 1024),
             )
         )
 
-        assert result.outcome == "killed_oom"
+        assert result.outcome == "killed_oom", result.detail
+
+    async def test_the_same_program_runs_out_when_only_the_route_s_ceiling_applies(
+        self, ctx: ExecutionContext
+    ) -> None:
+        # The contrast the narrowing test needs to mean anything: the same program under the same
+        # route ceiling, with nothing narrowed, reaches its end. Without this the narrowing test
+        # would still pass if the growth target were raised past the route's ceiling — the kill
+        # would come from the route, and the assertion would prove nothing about the request.
+        result = await container_sandbox(ctx, memory_ceiling=512 * 1024 * 1024).run(
+            _program(_grows_to(200))
+        )
+
+        assert result.outcome == "exited", result.detail
+        assert result.exit_code == 0
 
     async def test_a_ceiling_the_route_does_not_impose_is_refused(
         self, ctx: ExecutionContext
