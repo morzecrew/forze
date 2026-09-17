@@ -171,6 +171,42 @@ class TestAMarkerTheWorkloadRecordedBadly:
         assert len(violations) == 2
         assert all("unusable period" in violation.message for violation in violations)
 
+    def test_an_unhashable_owner_is_reported_not_raised(self) -> None:
+        """`defaultdict` raises on an unhashable key, which would end the run's checking."""
+
+        violations = _CHECK(_history({"employee_id": {"team": "a"}, "valid_from": JAN}))
+
+        assert len(violations) == 1
+        assert "cannot be grouped" in violations[0].message
+
+    def test_markers_mixing_grains_for_one_owner_are_reported_and_still_swept(self) -> None:
+        """Each marker builds a valid period, so the mismatch only surfaces when the two are
+        compared — where a `date` against a `datetime` raises `TypeError` out of the sort. It is
+        reported once per owner, and each grain is still swept so a real overlap survives."""
+
+        violations = _CHECK(
+            _history(
+                _shift("ann", JAN, MAR),
+                _shift("ann", datetime(2026, 2, 1), datetime(2026, 4, 1)),
+                _shift("ann", FEB, APR),
+            )
+        )
+
+        assert len(violations) == 2
+        assert any("mix grains" in violation.message for violation in violations)
+        assert any("overlapping periods" in violation.message for violation in violations)
+
+    def test_an_explicit_none_end_is_open_ended(self) -> None:
+        violations = _CHECK(
+            _history(
+                {"employee_id": "ann", "valid_from": JAN, "valid_to": None},
+                _shift("ann", MAR, APR),
+            )
+        )
+
+        assert len(violations) == 1
+        assert "overlapping periods" in violations[0].message
+
     def test_a_bad_marker_does_not_hide_a_real_overlap(self) -> None:
         violations = _CHECK(
             _history(

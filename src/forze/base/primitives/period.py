@@ -119,8 +119,9 @@ class Period[T: (date, datetime)]:
         Symmetric by construction: each period's start is tested against the other's end, and a
         shared endpoint counts only when **both** sides have it in force — so two periods whose
         conventions differ are compared under the stricter reading of the point they touch at, and
-        a mixed comparison never claims more than both conventions agree on. An open end overlaps
-        everything at or after its start.
+        a mixed comparison never claims more than both conventions agree on. An open end reaches
+        every point its own convention admits and no earlier one — so an open-ended period whose
+        start is excluded still does not meet a point at that start.
 
         :raises CoreException: ``validation`` when the two periods are of different grains.
         """

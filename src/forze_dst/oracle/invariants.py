@@ -371,26 +371,35 @@ def no_overlapping_periods(
 
     Periods come from **recorded markers**, as every invariant here does — the workload records
     one per period it writes (``record(kind, **{key: owner, start: …, end: …})``), and an ``end``
-    that is absent or ``None`` is read as open-ended. A marker missing ``key`` or ``start``, or
-    carrying endpoints a period cannot be built from, is itself reported: an oracle that raised
-    on a malformed marker would take the whole run's checking with it.
+    that is absent or ``None`` is read as open-ended.
+
+    Everything a marker can get wrong is *reported* rather than raised, because an oracle that
+    raised would take the whole run's checking with it: a marker missing ``key`` or ``start``,
+    endpoints a period cannot be built from, a ``key`` value that cannot be grouped (an
+    unhashable one), and a ``key`` whose markers mix ``date`` with ``datetime`` — which is
+    reported once and then checked per grain, so a real overlap inside one grain still surfaces.
     """
+
+    def _reported(message: str, event: Event) -> Violation:
+        return Violation(
+            invariant="no_overlapping_periods",
+            message=f"{kind} event {message}",
+            events=(event,),
+        )
 
     def _check(history: History) -> list[Violation]:
         violations: list[Violation] = []
-        by_key: dict[Any, list[tuple[Period[Any], Event]]] = defaultdict(list)
+        # Grouped by owner *and* grain: a `date` and a `datetime` do not compare, so a key whose
+        # markers mix them would raise out of the sort below — from inside the oracle, taking the
+        # run's remaining checks with it. The mixture is reported once per key instead, and each
+        # grain is still swept, so an overlap within one of them is not lost to the other's noise.
+        by_group: dict[tuple[Any, type], list[tuple[Period[Any], Event]]] = defaultdict(list)
 
         for event in history.of_kind(kind):
             fields = event.fields
 
             if key not in fields or start not in fields:
-                violations.append(
-                    Violation(
-                        invariant="no_overlapping_periods",
-                        message=f"{kind} event recorded without {key!r} and {start!r}",
-                        events=(event,),
-                    )
-                )
+                violations.append(_reported(f"recorded without {key!r} and {start!r}", event))
                 continue
 
             try:
@@ -401,18 +410,37 @@ def no_overlapping_periods(
                 )
 
             except CoreException as error:
-                violations.append(
-                    Violation(
-                        invariant="no_overlapping_periods",
-                        message=f"{kind} event carries an unusable period: {error.summary}",
-                        events=(event,),
-                    )
-                )
+                violations.append(_reported(f"carries an unusable period: {error.summary}", event))
                 continue
 
-            by_key[fields[key]].append((period, event))
+            try:
+                by_group[(fields[key], type(period.start))].append((period, event))
 
-        for owner, entries in by_key.items():
+            except TypeError:
+                # An unhashable owner cannot be grouped, and `defaultdict` would raise here.
+                violations.append(
+                    _reported(f"carries a {key!r} that cannot be grouped: {fields[key]!r}", event)
+                )
+
+        for owner in {group_owner for group_owner, _ in by_group}:
+            grains = {grain for group_owner, grain in by_group if group_owner == owner}
+
+            if len(grains) > 1:
+                first_event = next(
+                    event
+                    for (group_owner, _), entries in by_group.items()
+                    for _, event in entries
+                    if group_owner == owner
+                )
+                violations.append(
+                    _reported(
+                        f"markers for {key}={owner!r} mix grains: "
+                        f"{', '.join(sorted(grain.__name__ for grain in grains))}",
+                        first_event,
+                    )
+                )
+
+        for (owner, _), entries in by_group.items():
             entries.sort(key=lambda entry: entry[0].start)
             covering: tuple[Period[Any], Event] | None = None
 
