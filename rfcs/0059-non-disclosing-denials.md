@@ -1,6 +1,6 @@
 # RFC 0059 — Non-disclosing denials
 
-- **Status:** 📝 Draft — execution-ready, and a prerequisite for [RFC 0055](0055-scoped-disclosure.md) and [RFC 0057](0057-derived-capabilities-and-config-grants.md), both of which need a denial that does not answer "does this object exist?".
+- **Status:** 📝 Draft — execution-ready, and a prerequisite for [RFC 0055](0055-scoped-disclosure.md) and [RFC 0057](0057-derived-permissions-and-config-grants.md), both of which need a denial that does not answer "does this object exist?".
 - **Scope:** A declared denial posture that collapses an authorization refusal on a resource into the same status, body and code as a not-found for that resource type, and an `owned_by` predicate on the document read port so ownership is part of the lookup rather than a check after it. Lands in `forze.base.exceptions` (the shared envelope) plus the read port and its adapters — **not** in the FastAPI adapter, for the reason §3 gives. One contract addition, no change to `ExceptionKind`.
 - **Related:** [`src/forze/base/exceptions/envelope.py:139`](../src/forze/base/exceptions/envelope.py) (`error_envelope` — the one projection FastAPI and Socket.IO both render), [`src/forze/base/exceptions/egress.py:97-122`](../src/forze/base/exceptions/egress.py) (`_EXC_KIND_HTTP_STATUS`: `AUTHORIZATION` → 403, `NOT_FOUND` → 404; `exception_egress_policy`), [`src/forze_fastapi/exceptions.py:34`](../src/forze_fastapi/exceptions.py) (`build_core_exception_response`, and the `X-Error-Code` header), [`src/forze/application/contracts/document/ports.py:80`](../src/forze/application/contracts/document/ports.py) (`get(pk, *, for_update, skip_cache)` — no ownership argument), [`src/forze_identity/authz/services/policy.py:95`](../src/forze_identity/authz/services/policy.py) (the `owner_id` ABAC check that runs *after* the read).
 - **Origin:** A working-time ledger with one constant 403 body for every `/me/*` denial — missing capability, unmapped subject, inactive employee — and one constant 404 for unknown, inactive or foreign targets, with ownership in the `WHERE` predicate so a foreign id is indistinguishable from a nonexistent one, and denials raised before any data is materialized.
@@ -208,5 +208,5 @@ preferred way to express ownership.
   a foreign row stops being readable by a careless handler.
 - **P2** — `DenialPosture` in the envelope, the byte-equality battery across both transports, the
   docs section. Unblocks [RFC 0055](0055-scoped-disclosure.md) and
-  [RFC 0057](0057-derived-capabilities-and-config-grants.md)'s `require_capability`.
+  [RFC 0057](0057-derived-permissions-and-config-grants.md)'s `require_permission`.
 - **P3** — the DST history invariant over rendered denials.

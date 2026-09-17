@@ -270,7 +270,7 @@ per-backend table, since 0053 and 0063 point at it.
 - **Is `as_of` on the facade or a query option?** A facade method is discoverable; a query option
   composes with filters. Implementation decides, and the row records it.
 - **Does the guarantee vocabulary live on `DocumentSpec` or beside it?** `DocumentSpec` is
-  already wide (§3 lists twelve fields). One `StorageGuarantees` value object mounted as a single
+  already wide (§3 lists fifteen fields). One `StorageGuarantees` value object mounted as a single
   field keeps it one field, and that is the leaning — and it keeps the name clear of the shipped
   `BackendRequirements`, which is a wiring checklist and not this.
 

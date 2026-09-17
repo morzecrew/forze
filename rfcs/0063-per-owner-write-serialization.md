@@ -42,7 +42,7 @@ including the exact mistake the origin application made (`hash(employee_id)`).
 extend loop and fencing tokens, for a critical section that spans I/O. A write-serializing lock
 wants none of that: it is taken inside one transaction and released by the commit.
 
-**`DocumentSpec` has no serialization concept.** Verified against its twelve fields: history,
+**`DocumentSpec` has no serialization concept.** Verified against its fifteen fields: history,
 conformity, materialization, caching, sorting, query policy, query params, encryption. Nothing
 about write ordering.
 
@@ -180,6 +180,10 @@ correct; the guarantee makes the backend refuse the row.**
 - **Does `serialize_by` cover deletes and bulk writes?** It should, and bulk writes touch many
   owners — which means many locks in one transaction, in a deterministic order or it deadlocks.
   Sorting the keys is the obvious answer and needs asserting.
+- **Is this a `StorageGuarantee` rather than its own field?** 0052's vocabulary already declares
+  properties a backend must satisfy, and "every write for one owner is serialized" is one. The
+  reason it is written as `serialize_by` here is that the guarantee vocabulary did not exist when
+  this was drafted; decision 7 records that the two should be reconciled before either ships.
 - **Is the lock taken by the adapter or by the transaction scope?** The adapter knows the spec; the
   transaction scope knows the connection. Implementation decides.
 - **Does a lock timeout exist?** `pg_advisory_xact_lock` waits. A `_try` variant that refuses as
@@ -192,10 +196,11 @@ correct; the guarantee makes the backend refuse the row.**
 | 1 | `LOCKED` | Serialization is declared **on the spec**, not taken at call sites. A rule enforced per writer holds until the next writer, which is the origin application's audit finding 3. |
 | 2 | `LOCKED` | The lock is **transaction-scoped**, so it is released by commit or rollback and no unlock path can be forgotten. `DistributedLockScope`'s heartbeat-and-lease shape is for sections that outlive a transaction. |
 | 3 | `LOCKED` | The key is derived with the shipped blake2b helper, including spec name and tenant. `hash()` is salted per interpreter, so two workers would serialize against nobody — the exact mistake the origin made, already written down in `_advisory_key`. |
-| 4 | `LOCKED` | A backend with no advisory lock **refuses the declaration at wiring**. A spec claiming serialized writes that are not serialized is worse than a spec that claims nothing. |
+| 4 | `LOCKED` | A backend with no mechanism to serialize writes per key **refuses the declaration at wiring** (for Postgres that mechanism is an advisory lock; the rule names the property, not the tool). A spec claiming serialized writes that are not serialized is worse than a spec that claims nothing. |
 | 5 | `ASSUMED` | The mock implements the same serialization, so DST observes what a deployment gets; the parity leg in the battery is what keeps it honest. |
 | 6 | `ASSUMED` | Overlap is asserted as a **DST history invariant** (the `mutual_exclusion` shape over written rows), not as a `SystemInvariant` — the reducer set is closed at `SumOf \| CountAll` and overlap is pairwise. Shared with [RFC 0053](0053-temporal-validity.md). |
-| 7 | `OPEN` | Whether bulk writes take many locks in a sorted order (and how that is asserted), where the lock is taken, and whether a non-waiting variant refusing as `throttled` ships. |
+| 7 | `OPEN` | Whether this is a bespoke `serialize_by` field or a member of [RFC 0052](0052-versioned-facts-correction-lineage.md)'s `StorageGuarantee` vocabulary (`SerializedBy(key=…)`). Both declare a property the backend must satisfy and both refuse a backend that cannot; two mechanisms on one spec for one class of thing is the thing to avoid. Settled with 0052 P2, not independently. |
+| 8 | `OPEN` | Whether bulk writes take many locks in a sorted order (and how that is asserted), where the lock is taken, and whether a non-waiting variant refusing as `throttled` ships. |
 
 ## 12. Phasing
 

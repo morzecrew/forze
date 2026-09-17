@@ -45,7 +45,7 @@ application re-derives the predicate — and each one picks its own answer to wh
 is inclusive.
 
 **Nothing in `DocumentSpec` is period-aware.** Verified against
-[`specs.py:58-200`](../src/forze/application/contracts/document/specs.py): the twelve fields
+[`specs.py:58-200`](../src/forze/application/contracts/document/specs.py): the fifteen fields
 cover history, conformity, caching, sorting, query policy and encryption. No validity, no key,
 no overlap.
 

@@ -1,7 +1,7 @@
-# RFC 0056 — Sealed preview: what you saw is what you submit
+# RFC 0056 — Preview binding: what you saw is what you submit
 
 - **Status:** 📝 Draft — execution-ready, one small PR. [RFC 0055](0055-scoped-disclosure.md) depends on it.
-- **Scope:** A `forze_kits.domain.sealed` module: a `Sealed[T]` wrapper carrying a fingerprint, a `SealedCommand` mixin whose handler recomputes the projection and refuses on mismatch, and one decorator that wires the check into an operation. Built on the shipped `stable_payload_fingerprint`; **no new hashing, no port, no contract change.**
+- **Scope:** A `forze_kits.domain.preview` module: a `Reviewed[T]` wrapper carrying a fingerprint, a `ReviewedCommand` mixin whose handler recomputes the projection and refuses on mismatch, and one decorator that wires the check into an operation. Built on the shipped `stable_payload_fingerprint`; **no new hashing, no port, no contract change.**
 - **Related:** [`src/forze/base/primitives/fingerprint.py:80`](../src/forze/base/primitives/fingerprint.py) (`stable_payload_fingerprint`, canonical-JSON SHA-256 with a prefix), [`src/forze/application/contracts/querying/pagination/cursor_token.py:276`](../src/forze/application/contracts/querying/pagination/cursor_token.py) (`fingerprint_filter` — the precedent for binding a client-held token to server state, and its PYTHONHASHSEED note), [`src/forze/application/contracts/idempotency/ports.py:53`](../src/forze/application/contracts/idempotency/ports.py) (`begin(op, key, payload_hash)`, the adjacent mechanism this is **not**), [RFC 0055](0055-scoped-disclosure.md) (the consumer that needs a snapshot to be citable).
 - **Origin:** A working-time ledger whose preview endpoint returns a projection plus a SHA-256 over its canonical JSON with private fields excluded; the submit command recomputes the projection and refuses with `SUBMISSION_CHANGED` if the fingerprint differs, so a recipient can only ever receive exactly what the submitter previewed.
 
@@ -50,7 +50,7 @@ projector stays the app's function, and the module owns only the fingerprint and
 - A mismatch is a **refusal**, never a merge or an overwrite.
 - Private and volatile fields excluded from the fingerprint by declaration, so a rendering
   detail does not invalidate every preview.
-- Usable without the rest of the batch: a small app should be able to seal one flow.
+- Usable without the rest of the batch: a small app should be able to bind one flow.
 
 **Non-goals**
 
@@ -69,11 +69,11 @@ projector stays the app's function, and the module owns only the fingerprint and
 ### 5.1 The wrapper and the mixin
 
 ```python
-class Sealed[T](BaseDTO):
+class Reviewed[T](BaseDTO):
     data: T
     fingerprint: str          # "sha256:…" over data, minus the excluded fields
 
-class SealedCommand(CoreModel):
+class ReviewedCommand(CoreModel):
     fingerprint: str = Field(frozen=True)
 ```
 
@@ -88,7 +88,7 @@ this prevents is a preview and a submit that exclude different fields and never 
 ### 5.2 The check
 
 ```python
-@sealed(projector=preview_for, exclude=frozenset({"generated_at"}))
+@confirms_preview(projector=preview_for, exclude=frozenset({"generated_at"}))
 async def submit(ctx, args: MySubmitCmd) -> Out: ...
 ```
 
@@ -138,7 +138,7 @@ again — not as a diff.
 ## 7. Docs
 
 A short section next to idempotency, leading with the distinction — **idempotency answers "did I
-already send this?", sealing answers "is this still what I saw?"** — the decorator, and the
+already send this?", preview binding answers "is this still what I saw?"** — the decorator, and the
 `exclude` rule.
 
 ## 8. Out of scope
@@ -146,13 +146,13 @@ already send this?", sealing answers "is this still what I saw?"** — the decor
 - **Partial re-confirmation** ("three of five lines changed, confirm the rest"). Needs a diff,
   which §5.3 refuses to expose.
 - **Preview persistence.** [RFC 0055](0055-scoped-disclosure.md)'s `Snapshot`.
-- **Cross-operation sealing** (a fingerprint spanning a multi-step wizard). Each step seals its
-  own projection; a wizard-wide seal needs a session concept this module does not have.
+- **Cross-operation binding** (a fingerprint spanning a multi-step wizard). Each step binds its
+  own projection; a wizard-wide binding needs a session concept this module does not have.
 
 ## 9. Risks
 
-- **A false sense of atomicity.** Sealing detects change; it does not prevent it. Two callers can
-  both preview, and the second's submit refuses — correct, and not what "sealed" sounds like.
+- **A false sense of atomicity.** Binding detects change; it does not prevent it. Two callers can
+  both preview, and the second's submit refuses — correct, and not what a "binding" sounds like.
   Mitigation: the docs name it as detection, and point at 0063 for prevention.
 - **`exclude` grows until the fingerprint means nothing.** An app that excludes every volatile
   field can end up hashing a constant. Mitigation: the refusal message names the projection, and
@@ -166,7 +166,7 @@ already send this?", sealing answers "is this still what I saw?"** — the decor
 - **Is `exclude` on the decorator, on the model, or both?** On the model it travels with the DTO;
   on the decorator it stays with the operation. Leaning: the declaration is one object passed to
   both, which is what §6's asymmetry test pins.
-- **Does the preview operation get a helper that returns `Sealed[T]` automatically?** It would
+- **Does the preview operation get a helper that returns `Reviewed[T]` automatically?** It would
   make the two sides symmetric; it also puts the module in the query path. Implementation
   decides.
 
@@ -180,10 +180,11 @@ already send this?", sealing answers "is this still what I saw?"** — the decor
 | 4 | `ASSUMED` | Built on `stable_payload_fingerprint` rather than a new hash, and the prefix is kept so a future canonicalizer refuses old previews instead of matching them silently. |
 | 5 | `ASSUMED` | The fingerprint is **not signed**. A tampered client copy makes the submit fail, which is the safe direction; signing is the named escape hatch for a two-party preview. |
 | 6 | `ASSUMED` | The projector stays the app's function. Only the app knows what the caller was shown. |
-| 7 | `OPEN` | Where `exclude` is declared (model, decorator, or one shared declaration object), and whether the preview side gets a `Sealed[T]` helper. |
+| 7 | `LOCKED` | The vocabulary is **`Reviewed` / preview binding**, never "sealed". In this codebase *sealed* means field-encrypted at rest — sealed fields, `ArchiveSealer`, "sealed roots are left untouched" — so a `Sealed[T]` DTO would read as ciphertext. The source proposal's name is recorded here and deliberately not used. |
+| 8 | `OPEN` | Where `exclude` is declared (model, decorator, or one shared declaration object), and whether the preview side gets a `Reviewed[T]` helper. |
 
 ## 12. Phasing
 
-One PR: `Sealed`, `SealedCommand`, `canonical_fingerprint`, the `@sealed` middleware, the
+One PR: `Reviewed`, `ReviewedCommand`, `canonical_fingerprint`, the `@confirms_preview` middleware, the
 battery including the cross-process determinism leg, and the docs section. No dependencies;
 [RFC 0055](0055-scoped-disclosure.md) consumes it.

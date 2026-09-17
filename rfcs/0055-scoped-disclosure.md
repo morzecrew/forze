@@ -1,8 +1,8 @@
 # RFC 0055 — Scoped disclosure: purpose-, period- and grantee-bound grants over frozen snapshots
 
-- **Status:** 📝 Draft — the largest design in the batch, and **sequenced after [0052](0052-versioned-facts-correction-lineage.md), [0056](0056-sealed-preview.md) and [0060](0060-audit-spec.md)**: it needs addressable versions, a canonical fingerprint and an audit port, and building it first would invent all three privately.
-- **Scope:** A `forze_kits.aggregates.disclosure` kit: an `AccessRequest` that carries no data, a `DisclosureGrant` bound to grantee, purpose, scope, period and a frozen snapshot, a `Snapshot` whose payload is immutable and fingerprinted, the four commands that move a request through its states, an authz resolution that admits a read only through exactly one live grant, a guard refusing destructive edits to disclosed facts, and audit-on-read. Touches `forze_kits` and adds a `CapabilityProvider`-shaped resolution hook in `forze_identity.authz` ([RFC 0057](0057-derived-capabilities-and-config-grants.md) owns the protocol). No document-port change.
-- **Related:** [`src/forze_identity/authz/domain/models/bindings.py:181`](../src/forze_identity/authz/domain/models/bindings.py) (`DelegationGrant` — actor and subject, and nothing else), [`src/forze_identity/authz/services/policy.py:65`](../src/forze_identity/authz/services/policy.py) (`AuthzPolicyService.decide`, the `owner_id` ABAC check and the owner-override keys), [`src/forze/application/contracts/search/specs.py:252`](../src/forze/application/contracts/search/specs.py) (`SearchResultSnapshotSpec` — the framework's one existing "frozen result" precedent, TTL'd ids), [RFC 0056](0056-sealed-preview.md) (the fingerprint this binds), [RFC 0060](0060-audit-spec.md) (the port audit-on-read calls), [RFC 0052](0052-versioned-facts-correction-lineage.md) (why a disclosed fact must be addressable by version).
+- **Status:** 📝 Draft — the largest design in the batch, and **sequenced after [0052](0052-versioned-facts-correction-lineage.md), [0056](0056-preview-binding.md) and [0060](0060-audit-spec.md)**: it needs addressable versions, a canonical fingerprint and an audit port, and building it first would invent all three privately.
+- **Scope:** A `forze_kits.aggregates.disclosure` kit: an `AccessRequest` that carries no data, a `DisclosureGrant` bound to grantee, purpose, scope, period and a frozen snapshot, a `DisclosureSnapshot` whose payload is immutable and fingerprinted, the four commands that move a request through its states, an authz resolution that admits a read only through exactly one live grant, a guard refusing destructive edits to disclosed facts, and audit-on-read. Touches `forze_kits` and adds a `PermissionProvider`-shaped resolution hook in `forze_identity.authz` ([RFC 0057](0057-derived-permissions-and-config-grants.md) owns the protocol). No document-port change.
+- **Related:** [`src/forze_identity/authz/domain/models/bindings.py:181`](../src/forze_identity/authz/domain/models/bindings.py) (`DelegationGrant` — actor and subject, and nothing else), [`src/forze_identity/authz/services/policy.py:65`](../src/forze_identity/authz/services/policy.py) (`AuthzPolicyService.decide`, the `owner_id` ABAC check and the owner-override keys), [`src/forze/application/contracts/search/specs.py:252`](../src/forze/application/contracts/search/specs.py) (`SearchResultSnapshotSpec` — the framework's one existing "frozen result" precedent, TTL'd ids), [RFC 0056](0056-preview-binding.md) (the fingerprint this binds), [RFC 0060](0060-audit-spec.md) (the port audit-on-read calls), [RFC 0052](0052-versioned-facts-correction-lineage.md) (why a disclosed fact must be addressable by version).
 - **Origin:** A working-time ledger whose `disclosure/` package is the product: 844 lines plus routes and models, covering request-without-data, owner-grants-exactly-the-requested-scope, a frozen append-only month snapshot, re-grant that revokes and supersedes, audit only after authorization, 410 for revoked or superseded grants, and a month-wide refusal of destructive edits to disclosed facts. Two things it does not have: expiry, and owner-initiated revoke.
 
 ---
@@ -53,7 +53,7 @@ action.
 principal-permission, role-permission (with role lineage) and group-permission bindings, and
 every `PermissionRef` carries a catalog `permission_id`. A grant that does not exist as a
 catalog row has no representation today — which is why this RFC depends on
-[RFC 0057](0057-derived-capabilities-and-config-grants.md)'s provider protocol rather than
+[RFC 0057](0057-derived-permissions-and-config-grants.md)'s provider protocol rather than
 inventing one.
 
 **The framework's only frozen-result precedent is TTL'd ids.**
@@ -95,15 +95,18 @@ witness machinery), so audit-on-read has nowhere to land until
 AccessRequest(id, requester_id, owner_id, purpose, scope, state, created_at)
 DisclosureGrant(id, owner_id, grantee_id, purpose, scope, snapshot_id,
                 supersedes_id, granted_at, expires_at, revoked_at)
-Snapshot(id, scope, payload, fingerprint, policy_version, frozen_at)
+DisclosureSnapshot(id, scope, payload, fingerprint, policy_version, frozen_at)
 ```
 
-`scope` is a typed value object, not a string: `(spec_name, key_values, period)`. It has to be
-comparable, because §5.3's supersede rule and §5.5's guard both range over "the same scope".
+`scope` is a `DisclosureScope` value object, not a string: `(spec_name, key_values, period)`. It
+has to be comparable, because §5.3's supersede rule and §5.5's guard both range over "the same
+scope". Named for its plane rather than `Scope`, which in this codebase already means an authz
+scope (`AuthzScope`) and a kit-level scope (`forze_kits.scopes`) — and `Snapshot` is taken twice
+over, by the search plane's result snapshot and by the portability plane's.
 
 `payload` is written once and never updated — enforced by the kit registering the spec with no
 update command, so "append-only" is a property of the wiring rather than a convention.
-`fingerprint` is [RFC 0056](0056-sealed-preview.md)'s canonical fingerprint over the payload with
+`fingerprint` is [RFC 0056](0056-preview-binding.md)'s canonical fingerprint over the payload with
 private fields excluded, which makes a snapshot citable: a recipient can prove what they were
 shown.
 
@@ -112,7 +115,7 @@ shown.
 - `request(owner_id, purpose, scope)` → an `AccessRequest`. Carries no data, and the requester
   learns nothing about whether the scope has any.
 - `grant(request_id, expires_at)` — **owner only**. In one transaction: project the scope through
-  a caller-supplied projector, freeze it as a `Snapshot`, insert the grant, and revoke plus
+  a caller-supplied projector, freeze it as a `DisclosureSnapshot`, insert the grant, and revoke plus
   supersede every live grant for the same `(grantee, scope)`.
 - `revoke(grant_id)` — owner or grantee. Sets `revoked_at`; the grant stays readable as a record.
 - `decline(request_id)` — owner. Terminal, and indistinguishable to the requester from a request
@@ -127,12 +130,12 @@ fingerprinting it and binding it.
 
 ### 5.3 Resolution: exactly one live grant
 
-A read of `Snapshot(s)` by principal `p` is admitted iff exactly one `DisclosureGrant` has
+A read of `DisclosureSnapshot(s)` by principal `p` is admitted iff exactly one `DisclosureGrant` has
 `grantee_id = p`, `snapshot_id = s`, `revoked_at IS NULL` and `expires_at > now`. Not "at least
 one": two live grants for one `(grantee, scope)` means the supersede rule failed, and admitting
 the read would hide that. Zero and two are both refusals, and the two-grant case logs.
 
-The hook is [RFC 0057](0057-derived-capabilities-and-config-grants.md)'s provider shape —
+The hook is [RFC 0057](0057-derived-permissions-and-config-grants.md)'s provider shape —
 derived authorization from document state, which is exactly what this is.
 
 ### 5.4 Audit on read, after authorization
@@ -168,8 +171,8 @@ guards, because only the app knows which of its writes are destructive.
 
 - State machine: every legal transition, and every illegal one refused (`grant` on a declined
   request, `revoke` of a revoked grant, a second `grant` producing exactly one live grant).
-- Snapshot immutability: the spec has no update command, and an attempt to write one fails at
-  wiring; the fingerprint matches [RFC 0056](0056-sealed-preview.md)'s over the same payload.
+- Snapshot immutability: the snapshot spec has no update command, and an attempt to write one fails at
+  wiring; the fingerprint matches [RFC 0056](0056-preview-binding.md)'s over the same payload.
 - Resolution: zero, one and two live grants; an expired grant refused at the boundary second;
   a revoked grant refused; a grantee reading another snapshot refused with the same status and
   body as a nonexistent one ([RFC 0059](0059-non-disclosing-denials.md)).
@@ -240,7 +243,8 @@ and freezing it does not make the underlying facts immutable.**
 | 7 | `ASSUMED` | The guard refuses destructive writes but permits a **correction** ([RFC 0052](0052-versioned-facts-correction-lineage.md)): a correction adds a version, it does not remove evidence a recipient relied on. |
 | 8 | `ASSUMED` | The projector is the app's; the kit owns freezing, fingerprinting and binding. Only the app knows what a scope means. |
 | 9 | `OPEN` | Whether a failed audit write fails an admitted disclosure read (§10, leaning yes for this kit and no for ordinary actions). |
-| 10 | `OPEN` | Snapshot payload in a document field or on the storage plane, and whether `scope` compares structurally or by a canonical key. |
+| 10 | `ASSUMED` | The documents are `DisclosureSnapshot` and `DisclosureScope`, not `Snapshot` and `Scope`: both bare names are already taken — the search plane's result snapshot and the portability archive's, `AuthzScope` and `forze_kits.scopes` — and a kit that reuses them makes every mention ambiguous. |
+| 11 | `OPEN` | Snapshot payload in a document field or on the storage plane, and whether `scope` compares structurally or by a canonical key. |
 
 ## 12. Phasing
 

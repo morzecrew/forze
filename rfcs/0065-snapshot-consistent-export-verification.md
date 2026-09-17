@@ -190,8 +190,9 @@ implication for long exports.
 | 3 | `LOCKED` | An export that cannot be served from one Postgres client **refuses** the `snapshot` level. Two connections are two snapshots. |
 | 4 | `ASSUMED` | `server_version` is a **gate** on import (client major older than server major refuses) while `forze_version` stays diagnostic. The registry fingerprint already proves shape compatibility; an unknown server type is what silently mis-decodes. |
 | 5 | `ASSUMED` | The snapshot id is **exported, not managed**: the plane records it and the operator aligns their own `pg_dump`. Owning the dump would make this a backup tool. |
-| 6 | `ASSUMED` | Four of the five requested pieces already ship (§3), so this RFC does not re-propose them; the table is kept in the document so a reader does not rebuild them by accident. |
-| 7 | `OPEN` | Whether `snapshot` is a fourth level or a flag, how long the transaction is held for an operator's dump (and whether the window is declared), and whether `server_version` is recorded at every level. |
+| 6 | `ASSUMED` | A `Consistency` member describes **what happened to the data**, so the vocabulary stays backend-agnostic even though only Postgres can produce `snapshot` today; which levels an export can offer is a per-adapter answer, as [RFC 0052](0052-versioned-facts-correction-lineage.md) decision 6 has it for guarantees. Asking for a level the backend cannot produce refuses, rather than silently downgrading to `fuzzy`. |
+| 7 | `ASSUMED` | Four of the five requested pieces already ship (§3), so this RFC does not re-propose them; the table is kept in the document so a reader does not rebuild them by accident. |
+| 8 | `OPEN` | Whether `snapshot` is a fourth level or a flag, how long the transaction is held for an operator's dump (and whether the window is declared), and whether `server_version` is recorded at every level. |
 
 ## 12. Phasing
 

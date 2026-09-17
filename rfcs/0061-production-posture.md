@@ -2,7 +2,7 @@
 
 - **Status:** 📝 Draft — execution-ready, and the one RFC in the batch that pays for itself on the first deployment.
 - **Scope:** A `ProductionPosture` the runtime evaluates at `check_wiring` and again at `build_runtime`: required-set fields, HTTPS-required fields, refused development values, and a default environment of "production" when nothing says otherwise. Errors name **keys, never values**. Touches `forze.application.execution` (assembly and the wiring report) and gives the existing per-config safety *warnings* somewhere to escalate to. No settings class owned by the framework — §3 says why that stays the app's.
-- **Related:** [`src/forze/application/execution/operations/wiring.py:123`](../src/forze/application/execution/operations/wiring.py) (`check_wiring`, the dry-run pass and its `WiringReport.raise_if_failed`), [`src/forze/application/execution/assemble.py:72`](../src/forze/application/execution/assemble.py) (`build_runtime`, the second gate), [`src/forze/base/settings.py`](../src/forze/base/settings.py) (the settings doctrine: the root class is the application's, `RuntimeSettings` is mounted as a field), [`src/forze_http/execution/deps/configs.py:202-241`](../src/forze_http/execution/deps/configs.py) (`_warn_if_credentials_travel_in_cleartext` — a shipped safety check that is a *warning* precisely because it cannot know whether the deployment is production; this RFC is what it escalates to), [RFC 0057](0057-derived-capabilities-and-config-grants.md) (`ConfigGrants` is posture-checked the same way).
+- **Related:** [`src/forze/application/execution/operations/wiring.py:123`](../src/forze/application/execution/operations/wiring.py) (`check_wiring`, the dry-run pass and its `WiringReport.raise_if_failed`), [`src/forze/application/execution/assemble.py:72`](../src/forze/application/execution/assemble.py) (`build_runtime`, the second gate), [`src/forze/base/settings.py`](../src/forze/base/settings.py) (the settings doctrine: the root class is the application's, `RuntimeSettings` is mounted as a field), [`src/forze_http/execution/deps/configs.py:202-241`](../src/forze_http/execution/deps/configs.py) (`_warn_if_credentials_travel_in_cleartext` — a shipped safety check that is a *warning* precisely because it cannot know whether the deployment is production; this RFC is what it escalates to), [RFC 0057](0057-derived-permissions-and-config-grants.md) (`ConfigGrants` is posture-checked the same way).
 - **Origin:** A working-time ledger whose `production_settings_errors` returns the **names** of missing or unsafe keys and never their values, treats an unset environment as production, requires HTTPS origins, recognizes and refuses the dev database URL, the dev password and the dev port, refuses wildcard CORS, and refuses to start on any error — with protected routes answering 501 rather than 500 or 200 until OIDC is configured.
 
 ---
@@ -92,8 +92,13 @@ posture whose rules every app writes from scratch is a posture most apps will no
 
 ### 5.2 Where it runs
 
-- **`check_wiring`** — the posture's findings join the `WiringReport`, so an app that already calls
-  it in CI or at startup gets them with everything else, and `raise_if_failed` covers both.
+- **`check_wiring`** — the posture's findings reach the caller through the `WiringReport`, so an
+  app that already calls it in CI or at startup gets them with everything else. The report as it
+  stands carries `checked`, `failures: tuple[WiringFailure, ...]` and `fallbacks`
+  ([`wiring.py:79-97`](../src/forze/application/execution/operations/wiring.py)) — a posture
+  violation is **not** an operation that failed to resolve, so either it arrives as a new
+  `posture` field or it is synthesized as `WiringFailure`s. The first keeps `ok` and
+  `raise_if_failed` meaning what they mean today and is the leaning; §10 carries it.
 - **`build_runtime`** — evaluated again, because `check_wiring` is optional and an app that skips
   it must still not boot with dev settings in production.
 
@@ -185,6 +190,9 @@ today, which is the point, and the way to find out is `check_wiring` in CI first
 - **Does the posture live in `forze.application.execution` or beside the settings module?** It reads
   settings and is evaluated by the runtime; the leaning is the runtime, with the value objects in
   `forze.base`.
+- **Does `WiringReport` gain a `posture` field, or do violations arrive as `WiringFailure`s?**
+  (§5.2.) A new field keeps `ok` and `raise_if_failed` meaning "every operation resolved"; reusing
+  `WiringFailure` needs an operation name a posture violation does not have.
 - **Is there a `forze` CLI entry (`forze check-posture`)?** Useful in a deploy pipeline before the
   app starts; adds a CLI surface for a check the app can already run.
 - **How does a rule exempt a field** (the service-mesh case)? An exemption list per rule, or a
@@ -202,7 +210,8 @@ today, which is the point, and the way to find out is `check_wiring` in CI first
 | 5 | `ASSUMED` | A rule whose path does not resolve is an **error**, not a skip. A posture referring to a renamed field is one nobody is enforcing. |
 | 6 | `ASSUMED` | Existing per-config safety checks become posture-aware — warn without it, refuse under it — rather than each growing an opt-out flag. The cleartext-credentials check is the first adopter and its docstring is the argument. |
 | 7 | `ASSUMED` | The framework distinguishes only production from not-production; the app's other environment names are its own. Enumerating environments would be wrong about the fourth one. |
-| 8 | `OPEN` | Where the posture module lands, whether a CLI entry point ships with it, and how a field is exempted from a rule (exemption list with a reason, or narrower rules). |
+| 8 | `OPEN` | Whether `WiringReport` gains a `posture` field or posture violations are synthesized as `WiringFailure`s. The report has no findings channel today, and a violation is not an unresolved operation. |
+| 9 | `OPEN` | Where the posture module lands, whether a CLI entry point ships with it, and how a field is exempted from a rule (exemption list with a reason, or narrower rules). |
 
 ## 12. Phasing
 
