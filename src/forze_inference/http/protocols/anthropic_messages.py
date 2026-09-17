@@ -346,7 +346,15 @@ def _message_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str
     refuses everywhere else. Blocks of any other kind are skipped, since the route asks for
     none of the features that produce them.
 
-    :raises CoreException: ``validation`` when the message carries no text at all — a
+    What is refused is a message with **no text block**, not one whose text is empty.
+    Whether the provider produced text is a fact about the wire; whether that text says
+    anything is content, and a one-field ``str`` output can validly be empty. Truncation is
+    refused because it carries a marker of its own — an empty string carries none, and
+    reporting it as a wire mismatch would conflate the two the way nothing else here does.
+    Structured mode still refuses it, by the rule it already has: an empty string is not
+    JSON.
+
+    :raises CoreException: ``validation`` when the message carries no text block at all — a
         response shaped by something this dialect never asks for answers nothing it can
         decode.
     """
@@ -373,12 +381,10 @@ def _message_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str
         if fields.get("type") == "text" and isinstance(text, str):
             texts.append(text)
 
-    answer = "".join(texts)
-
-    if not answer:
+    if not texts:
         raise exc.validation(
             f"Inference {spec.name!r}: the anthropic_messages response carries no text block.",
             code=OUTPUT_MISMATCH_CODE,
         )
 
-    return answer
+    return "".join(texts)

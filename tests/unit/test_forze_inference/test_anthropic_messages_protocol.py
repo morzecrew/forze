@@ -662,7 +662,6 @@ class TestReadingTheContent:
         [
             [],
             [{"type": "thinking", "thinking": "..."}],
-            [{"type": "text", "text": ""}],
             [{"type": "text"}],
         ],
     )
@@ -684,22 +683,39 @@ class TestReadingTheContent:
         assert ei.value.code == "inference_output_mismatch"
         assert "no text block" in str(ei.value)
 
-    @pytest.mark.parametrize(
-        "content",
-        [
-            [],
-            [{"type": "text", "text": ""}],
-        ],
-    )
-    async def test_text_mode_refuses_an_empty_answer_rather_than_returning_it(
-        self,
-        content: Any,
-    ) -> None:
-        """Where structured mode has the JSON decode behind it, text mode has nothing: an
-        empty block accepted here is a successful prediction of empty prose."""
+    async def test_text_mode_answers_with_an_empty_block_rather_than_refusing(self) -> None:
+        """A text block that is present and empty is an answer, not a wire defect.
+
+        The line between them is presence: whether the provider produced a text block is a
+        fact about the wire, and whether that text says anything is content. Refusing here
+        would report a content outcome as `inference_output_mismatch` — the conflation this
+        plane's taxonomy avoids everywhere else — and a one-field `str` output can validly
+        be empty. Truncation is refused because it has a marker of its own (`stop_reason`);
+        an empty string has none.
+        """
 
         config = _config(output_mode="text")
-        port = _ctx(await _client(_answers("", content=content)), config).inference.model(
+        port = _ctx(
+            await _client(_answers("", content=[{"type": "text", "text": ""}])), config
+        ).inference.model(_spec(_Completion))
+
+        assert (await port.predict(_Document(text="x"))).answer == ""
+
+    async def test_structured_mode_still_refuses_an_empty_block(self) -> None:
+        """Not by a rule of its own: an empty string is not JSON, and the decode says so."""
+
+        port = _ctx(
+            await _client(_answers("", content=[{"type": "text", "text": ""}])), _config()
+        ).inference.model(_spec())
+
+        with pytest.raises(CoreException) as ei:
+            await port.predict(_Document(text="x"))
+
+        assert "not JSON" in str(ei.value)
+
+    async def test_a_message_with_no_text_block_at_all_is_refused(self) -> None:
+        config = _config(output_mode="text")
+        port = _ctx(await _client(_answers("", content=[])), config).inference.model(
             _spec(_Completion)
         )
 
