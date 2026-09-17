@@ -365,6 +365,24 @@ class TestTheDialectsOwnRefusals:
 
         assert any(offending in violation for violation in found)
 
+    def test_a_boundary_behind_an_escaped_backslash_is_still_refused(self) -> None:
+        """Parity, not the one character in front.
+
+        Three backslashes and a `b`: the first two are a literal backslash and the third
+        makes an *active* word boundary. Looking only at the immediately preceding
+        character reads that third backslash as escaped and serves the pattern, which the
+        provider then rejects on every request. An even run — `a\\\\bc` below — is the
+        opposite case, and the same rule decides both.
+        """
+
+        class _Parity(BaseModel):
+            code: str = Field(pattern=r"\\\b")
+
+        with pytest.raises(CoreException) as ei:
+            messages_output_schema(_spec(_Parity))
+
+        assert "word boundary" in str(ei.value)
+
     def test_a_literal_backslash_is_not_a_word_boundary(self) -> None:
         """The scanner reads the escape, not just the letter.
 

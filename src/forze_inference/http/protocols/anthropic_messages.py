@@ -24,7 +24,6 @@ The transport headers are wiring, not dialect: ``x-api-key`` and ``anthropic-ver
 body and one provider's transport requirement should not become every dialect's contract.
 """
 
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final, cast, final
 
@@ -93,23 +92,67 @@ _SUPPORTED_MIN_ITEMS: Final[frozenset[int]] = frozenset({0, 1})
 ``list[X]`` with ``min_length=1`` is therefore servable, and one with ``min_length=2`` is
 not."""
 
-_UNSUPPORTED_REGEX: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
-    # Each is a construct the constrained decoder does not run, and each is written to
-    # ignore an escaped backslash before it, so a pattern matching a literal `\\b` is not
-    # mistaken for a word boundary.
-    (re.compile(r"(?<!\\)\\[bB]"), "a word boundary (\\b)"),
-    (re.compile(r"\(\?<?[=!]"), "a lookahead or lookbehind"),
-    (re.compile(r"(?<!\\)\\[1-9]"), "a backreference"),
-    (re.compile(r"\(\?P=|\\k<"), "a named backreference"),
-)
+_LOOKAROUND: Final[tuple[str, ...]] = ("(?=", "(?!", "(?<=", "(?<!")
+_NAMED_BACKREFERENCE: Final[str] = "(?P="
+
+
+def _unsupported_constructs(pattern: str) -> list[str]:
+    """Constructs in *pattern* that the constrained decoder does not run.
+
+    Scanned left to right rather than searched, because every one of these can be turned
+    off by an escape in front of it and an escape is decided by **parity**: in ``\\\\b`` the
+    first backslash escapes the second, leaving the third to make an active word boundary,
+    while in ``a\\\\bc`` the pair is a literal backslash and the ``b`` is a plain letter.
+    Looking at the single character in front gets both of those wrong. Walking the string
+    and letting an escape consume the character after it gets parity for free.
+
+    One knowingly conservative call: ``\\b`` inside a character class means a backspace
+    rather than a boundary, and is reported here as a boundary. Refusing a pattern the
+    decoder would have run is the safe side of that, and no output model has wanted one.
+    """
+
+    found: list[str] = []
+    index = 0
+
+    while index < len(pattern):
+        character = pattern[index]
+
+        if character == "\\":
+            escaped = pattern[index + 1 : index + 2]
+
+            if escaped in {"b", "B"}:
+                found.append("a word boundary (\\b)")
+
+            elif escaped.isdigit() and escaped != "0":
+                found.append("a backreference")
+
+            elif escaped == "k":
+                found.append("a named backreference")
+
+            # Two characters, whatever the second one is: that is what makes the next
+            # backslash a fresh escape rather than an escaped one.
+            index += 2
+            continue
+
+        if pattern.startswith(_LOOKAROUND, index):
+            found.append("a lookahead or lookbehind")
+
+        elif pattern.startswith(_NAMED_BACKREFERENCE, index):
+            found.append("a named backreference")
+
+        index += 1
+
+    return sorted(set(found))
+
+
 """Regex constructs the decoder cannot run, refused rather than sent.
 
 ``pattern`` itself is enforced here — which is why it is absent from the refused keywords —
 but over a subset. Only the word boundary is reachable through Pydantic, whose own engine
-refuses the rest before a model carrying one can be built; the list covers what the provider
-documents either way, because which constructs arrive is a property of that engine rather
-than of this constraint. Not covered: a ``{n,m}`` quantifier over a range the provider calls
-too large, which it does not quantify, so it stays a rejected request."""
+refuses the rest before a model carrying one can be built; they are checked either way,
+because which constructs arrive is a property of that engine rather than of this constraint.
+Not covered: a ``{n,m}`` quantifier over a range the provider calls too large, which it does
+not quantify, so it stays a rejected request."""
 
 _REFUSED_SCHEMA_KEYWORDS: Final[frozenset[str]] = frozenset(
     {
@@ -173,12 +216,11 @@ def _node_check(schema: Mapping[str, Any], where: str) -> list[str]:
     declared_pattern = schema.get("pattern")
 
     if isinstance(declared_pattern, str):
-        for construct, name in _UNSUPPORTED_REGEX:
-            if construct.search(declared_pattern):
-                found.append(
-                    f"{where}: pattern={declared_pattern!r} uses {name}, which the "
-                    "constrained decoder does not run"
-                )
+        found.extend(
+            f"{where}: pattern={declared_pattern!r} uses {name}, which the constrained "
+            "decoder does not run"
+            for name in _unsupported_constructs(declared_pattern)
+        )
 
     reference = schema.get("$ref")
 
