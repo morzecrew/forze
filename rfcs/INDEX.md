@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0052**. Before creating an RFC, glance at the table below
+The next free number is **0066**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -71,6 +71,20 @@ only in the code, which is the failure this log exists to prevent.
 | [0043](0043-capability-gated-values-and-the-pinned-read-scope.md) | Capability-gated values and the pinned-read scope | 📝 Draft | Two provenance mechanisms, demand-gated: a value type constructible only through its owning package's mint function, and a read scope that resolves a pin once so no request reads against two pins. |
 | [0044](0044-lancedb-retrieval-integration.md) | LanceDB retrieval integration | 📝 Draft | A `forze_lancedb` adapter for the existing search plane — vector-first, embedded/object-storage LanceDB — adopting an external request while rejecting its parallel retrieval-contracts package. |
 | [0050](0050-child-collection-reconciliation.md) | Child collection reconciliation | 📝 Draft | A `forze_kits` component that diffs a parent's child collection against an incoming list over the existing bulk ports. Not execution-ready: child identity, the position rule, and which pipeline stage it belongs to are open |
+| [0052](0052-versioned-facts-correction-lineage.md) | Versioned facts with correction lineage | 📝 Draft | An aggregate kit for "correct, never overwrite": lineage fields, a `correct` command that supersedes in one transaction, a current-row read side, and the declared constraint two sibling kits reuse. |
+| [0053](0053-temporal-validity.md) | Temporal validity for effective-dated master data | 📝 Draft | An aggregate kit for effective-dated records: `valid_from` / `valid_to`, an effective-on and a batched timeline read, and non-overlap enforced by a declared constraint rather than application code. |
+| [0054](0054-civil-time.md) | Civil time: wall clock versus instant | 📝 Draft | Domain helpers for wall-clock time: an injected zone, conversion that refuses DST-ambiguous and nonexistent local times, day and month bounds, and duration arithmetic that only accepts instants. |
+| [0055](0055-scoped-disclosure.md) | Scoped disclosure over frozen snapshots | 📝 Draft | The data-subject sharing shape as a kit: a request carrying no data, a grant bound to grantee, purpose, period and a frozen snapshot, and reads admitted through exactly one live grant. |
+| [0056](0056-sealed-preview.md) | Sealed preview: what you saw is what you submit | 📝 Draft | Binds a confirming command to the state the caller reviewed: a fingerprint on the preview DTO, recomputed inside the handler's transaction and refused on mismatch, over the shipped primitive. |
+| [0057](0057-derived-capabilities-and-config-grants.md) | Derived capabilities and config-bound grants | 📝 Draft | A provider protocol so permissions can be derived per request from document state or reviewed deployment config, unioned with catalog grants, with a derived denial outranking every binding. |
+| [0058](0058-opaque-server-side-sessions.md) | Opaque server-side sessions with instant revoke | 📝 Draft (not scheduled) | A session mode for browser-only deployments where the cookie is an opaque id resolved per request, so revocation takes effect immediately instead of at token expiry. The JWT path stays the default. |
+| [0059](0059-non-disclosing-denials.md) | Non-disclosing denials | 📝 Draft | Closes the 403-versus-404 existence oracle: a declared posture collapses a resource authorization failure into the not-found answer, in the shared envelope, and ownership moves into the lookup. |
+| [0060](0060-audit-spec.md) | Audit spec with allowlisted metadata | 📝 Draft | An audit port whose point is the metadata allowlist: an undeclared key raises rather than being filtered, the actor comes from the invocation context, and denials are recorded too. |
+| [0061](0061-production-posture.md) | Fail-closed production posture | 📝 Draft | A posture the runtime evaluates at wiring and assembly: required fields, HTTPS-only fields, refused development values, unset environment meaning production, and errors naming keys, never values. |
+| [0062](0062-log-redaction-reach.md) | Log redaction reach | 📝 Draft | Narrow residue of a proposal the framework already ships: redaction stays attached when an application narrows `logger_names`, so third-party loggers it did not list are still scrubbed. |
+| [0063](0063-per-owner-write-serialization.md) | Per-owner write serialization and the overlap invariant | 📝 Draft | `serialize_by` on a document spec: every write for one owner serialized by a transaction-scoped advisory lock, with the overlap property asserted in simulation rather than left to call sites. |
+| [0064](0064-principal-scoped-idempotency-claims.md) | Principal-scoped idempotency claims | 📝 Draft | A confirmed defect: an idempotency claim is scoped to tenant and operation but not to the acting principal, so two principals sharing one key can be served each other's result. |
+| [0065](0065-snapshot-consistent-export-verification.md) | Snapshot-consistent export and its verification | 📝 Draft | Adds the one consistency level the portability plane lacks — every read of an export, counts included, from one Postgres snapshot — plus a server-version import gate and a crash round-trip battery. |
 
 ## Status legend
 
