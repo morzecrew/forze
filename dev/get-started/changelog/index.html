@@ -8603,6 +8603,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A view-backed aggregate can be simulated.</strong> <code>MockDepsModule(derived_values=MockDerivedRegistry().on(spec, source))</code> supplies a marked derived field per row, including rows a workload creates after any seed ran, so an invariant runs over such an aggregate under <code>forze_dst</code>. Registering nothing keeps the refusal.</p>
 </li>
+<li>
+<p><strong>A span of time says which end is in force.</strong> <code>Period(start, end, bounds)</code> in <code>forze.base.primitives</code> carries its bounds convention in the value — <code>"[)"</code> by default, so consecutive periods tile — with <code>contains</code>, <code>overlaps</code> and <code>intersects</code> reading it, an open end as <code>None</code> rather than a sentinel, and endpoints checked at construction — dates or datetimes, mutually comparable, with a naive/aware <code>datetime</code> mix refused like a <code>date</code>/<code>datetime</code> one. <code>forze_dst.invariants.no_overlapping_periods(kind, key=…, start=…, end=…, bounds=…)</code> asserts the matching property over a recorded history: no two periods for one owner overlap, reporting every conflicting pair in recorded order and reporting a malformed marker rather than raising.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -8610,7 +8613,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>HttpAuthConfig</code> with no token sent <code>Authorization: Bearer None</code>.</strong> An optional secret field converted <code>None</code> into a <code>SecretStr</code> wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on <code>HttpClientLifecycleStep.auth_token</code> and Meilisearch's <code>api_key</code>, where consumers happened to unwrap defensively.</li>
+<li>
+<p><strong>A parallel <abbr title="Deterministic Simulation Testing">DST</abbr> sweep died under a coverage session.</strong> <code>parallel_sweep</code> ran its seeds through a <code>ProcessPoolExecutor</code>, which pickles a private stdlib task class by name; under <code>pytest --cov</code> with a module-level source the parent could no longer resolve that name to the same object and every sweep failed before a worker saw a seed. It runs on a <code>multiprocessing.Pool</code> now, which pickles only the caller's <code>run</code> and the seeds.</p>
+</li>
+<li>
+<p><strong><code>HttpAuthConfig</code> with no token sent <code>Authorization: Bearer None</code>.</strong> An optional secret field converted <code>None</code> into a <code>SecretStr</code> wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on <code>HttpClientLifecycleStep.auth_token</code> and Meilisearch's <code>api_key</code>, where consumers happened to unwrap defensively.</p>
+</li>
 </ul>
 <h2 id="070-2026-09-10"><a href="https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0">0.7.0</a> - 2026-09-10<a class="headerlink" href="#070-2026-09-10" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>

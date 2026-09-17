@@ -942,6 +942,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#a-period-and-which-end-is-in-force" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A period, and which end is in force
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6233,6 +6244,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#a-period-and-which-end-is-in-force" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A period, and which end is in force
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6492,6 +6514,54 @@ default install). Each adds one focused capability — no deep inheritance chain
 </tr>
 </tbody>
 </table>
+<h2 id="a-period-and-which-end-is-in-force">A period, and which end is in force<a class="headerlink" href="#a-period-and-which-end-is-in-force" title="Permanent link">&para;</a></h2>
+<p>A span of time is four decisions — is the end included, can it be open-ended, what does overlap
+mean where two spans touch, and what is a zero-length span — and a codebase that leaves them to
+prose answers them differently in two modules. <code>Period</code> carries the answers in the value:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">date</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.primitives</span><span class="w"> </span><span class="kn">import</span> <span class="n">Period</span>
+
+<span class="n">quarter</span> <span class="o">=</span> <span class="n">Period</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">date</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">end</span><span class="o">=</span><span class="n">date</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>         <span class="c1"># bounds="[)"</span>
+<span class="n">contract</span> <span class="o">=</span> <span class="n">Period</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">date</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="n">end</span><span class="o">=</span><span class="n">date</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">31</span><span class="p">),</span> <span class="n">bounds</span><span class="o">=</span><span class="s2">"[]"</span><span class="p">)</span>
+<span class="n">current</span> <span class="o">=</span> <span class="n">Period</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="n">date</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>                                <span class="c1"># open-ended</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Bounds</th>
+<th>Reads as</th>
+<th>Use it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"[)"</code> <em>(default)</em></td>
+<td>start included, end excluded</td>
+<td>anything that must tile — consecutive periods cover a timeline with no gap and no overlap</td>
+</tr>
+<tr>
+<td><code>"[]"</code></td>
+<td>both included</td>
+<td>periods a person wrote: "valid through 31 March"</td>
+</tr>
+<tr>
+<td><code>"(]"</code> · <code>"()"</code></td>
+<td>start excluded</td>
+<td>available for completeness; an excluded <em>start</em> on a <code>date</code> grain is the shape to avoid when a database constraint has to agree</td>
+</tr>
+</tbody>
+</table>
+<p><code>contains(at)</code>, <code>overlaps(other)</code> and <code>intersects(start, end)</code> read the convention from the
+value, so a shared endpoint is counted only when both sides have it in force: half-open
+<code>[Jan, Feb)</code> and <code>[Feb, Mar)</code> do not overlap, and the inclusive pair does. An open end reaches
+every point its own convention admits and no earlier one, so an open-ended period that excludes
+its start still does not meet a point at that start. A zero-length period is accepted — a booking
+cancelled in the instant it was made is a real row — and is empty unless both ends are included.</p>
+<p>Endpoints must be comparable, and the type system cannot say so: <code>datetime</code> subclasses <code>date</code>, so
+a type checker passes a <code>date</code>/<code>datetime</code> pair, and a naive and an aware <code>datetime</code> are one type
+to it. <code>Period</code> checks both at construction — along with the endpoints being dates at all, since a
+period is as often built from dynamic input as from typed code — rather than letting any of them
+surface as a <code>TypeError</code> from inside a comparison later.</p>
 <p>Aggregates define <em>what</em> your domain is and the rules it keeps; turning actions
 on them into something the runtime can execute is the
 <a href="../application-layer/">application layer</a>.</p>
