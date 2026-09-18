@@ -59,7 +59,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
         def _check_rev(self, current_rev: int, expected_rev: int | None) -> None: ...
         def _mark_rev_guarded(self, pk: UUID) -> None: ...
-        def _mark_guarantee_recheck(self, pk: UUID, row: JsonDict) -> None: ...
+        def _mark_guarantee_recheck(self, pk: UUID) -> None: ...
         def _mark_created(self, pk: UUID) -> None: ...
         def _create_codec(self) -> ModelCodec[D, Any]: ...
         def _domain_codec(self) -> ModelCodec[D, Any]: ...
@@ -93,7 +93,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         store[pk] = row
 
         if self.spec.guarantees:
-            self._mark_guarantee_recheck(pk, row)
+            self._mark_guarantee_recheck(pk)
 
     # ....................... #
 
@@ -771,7 +771,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 store[pk] = row
 
                 if self.spec.guarantees:
-                    self._mark_guarantee_recheck(pk, row)
+                    self._mark_guarantee_recheck(pk)
 
         await drain_domain_events(
             mutated,

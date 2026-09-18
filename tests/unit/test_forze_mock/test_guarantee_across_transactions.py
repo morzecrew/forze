@@ -20,6 +20,7 @@ attest nothing.
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 
 import attrs
 import pytest
@@ -37,7 +38,8 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_dst.runtime import run_simulation
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters._mvcc import MvccTx, _mvcc_tx  # pyright: ignore[reportPrivateUsage]
 
 # ----------------------- #
 
@@ -171,3 +173,75 @@ class TestTwoTransactionsCannotBothLandTheSameTuple:
 
         assert rows == 2, f"the writers did not race under {isolation}"
         assert errors == []
+
+
+# ....................... #
+
+
+class TestOnlyTheFinalValueOfAKeyIsRechecked:
+    """A transaction is judged on what it publishes, not on what it passed through.
+
+    A key written and then rewritten inside one transaction lands once, holding its final value.
+    Re-checking every intermediate value against the committed store rejects a transaction over
+    a tuple it no longer carries — a spurious conflict, and one that gets worse the more work a
+    transaction does before committing.
+    """
+
+    def test_a_row_moved_off_a_tuple_does_not_conflict_with_it(self) -> None:
+        mock_state = MockState()
+        deps = DepsRegistry.from_modules(MockDepsModule(state=mock_state)).freeze().resolve()
+        command = ExecutionContext(deps=deps).document.command(GOVERNED)
+        tx = MvccTx.begin(mock_state, serializable=False, read_committed=False)
+        token = _mvcc_tx.set(tx)
+
+        async def write() -> None:
+            row = await command.create(_FactCreate(root_id="x"))
+            await command.update(row.id, row.rev, _FactUpdate(root_id="z"))
+
+        try:
+            asyncio.run(write())
+
+        finally:
+            _mvcc_tx.reset(token)
+
+        # A concurrent committer publishes the tuple this transaction wrote and then left.
+        mock_state.documents.setdefault("facts", {})[uuid4()] = {
+            "id": str(uuid4()),
+            "rev": 1,
+            "root_id": "x",
+        }
+
+        try:
+            tx.validate(mock_state)
+
+        finally:
+            tx.finish(mock_state)
+
+    def test_a_row_left_on_the_tuple_still_conflicts(self) -> None:
+        # The contrast: reading the final overlay is not a way of skipping the check.
+        mock_state = MockState()
+        deps = DepsRegistry.from_modules(MockDepsModule(state=mock_state)).freeze().resolve()
+        command = ExecutionContext(deps=deps).document.command(GOVERNED)
+        tx = MvccTx.begin(mock_state, serializable=False, read_committed=False)
+        token = _mvcc_tx.set(tx)
+
+        try:
+            asyncio.run(command.create(_FactCreate(root_id="x")))
+
+        finally:
+            _mvcc_tx.reset(token)
+
+        mock_state.documents.setdefault("facts", {})[uuid4()] = {
+            "id": str(uuid4()),
+            "rev": 1,
+            "root_id": "x",
+        }
+
+        try:
+            with pytest.raises(CoreException) as caught:
+                tx.validate(mock_state)
+
+            assert caught.value.code == "core.conflict"
+
+        finally:
+            tx.finish(mock_state)

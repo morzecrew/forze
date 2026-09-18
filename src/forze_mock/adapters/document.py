@@ -268,8 +268,8 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
-    def _mark_guarantee_recheck(self, pk: UUID, row: JsonDict) -> None:
-        """Queue *row* for a commit-time guarantee re-check (a no-op outside a transaction).
+    def _mark_guarantee_recheck(self, pk: UUID) -> None:
+        """Queue *pk* for a commit-time guarantee re-check (a no-op outside a transaction).
 
         The write's own check ran against this transaction's view, which cannot see a
         concurrent transaction's uncommitted rows; re-running it against the committed store at
@@ -282,7 +282,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
         if mvcc is not None:
             ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
-            mvcc.mark_guarantee_recheck(ns, pk, row, self._check_guarantees)
+            mvcc.mark_guarantee_recheck(ns, pk, self._check_guarantees)
 
     # ....................... #
 
