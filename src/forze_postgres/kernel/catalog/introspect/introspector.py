@@ -26,6 +26,7 @@ from .types import (
     PostgresRelationKind,
     PostgresRelationTriggers,
     PostgresType,
+    UniqueIndexInfo,
 )
 from .utils import (
     extract_index_expr_from_indexdef,
@@ -549,6 +550,103 @@ class PostgresIntrospector:
         await self._load_unique_index_columns(schema=schema, relation=relation)
 
         return self.__pk_lane.lookup(key) or ()
+
+    # ....................... #
+
+    async def unique_indexes(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> tuple[UniqueIndexInfo, ...]:
+        """Every UNIQUE index on *relation* that actually enforces writes today.
+
+        The sibling of :meth:`constraint_exists_for_columns`, which answers a different
+        question: that one reports column *sets in index order* for a planner-usable
+        conflict target and drops anything partial. This one describes each index in the terms a
+        declared storage guarantee is checked against, which is why it keeps what the other
+        discards — the predicate, and how nulls compare.
+
+        Three things the catalog distinguishes and a naive query does not:
+
+        * ``indisvalid`` / ``indisready`` / ``indislive``. A ``CREATE UNIQUE INDEX
+          CONCURRENTLY`` that failed leaves an index row behind that enforces nothing; taking
+          it as a satisfied guarantee is the worst possible reading of the catalog, because it
+          is exactly the state a failed migration leaves.
+        * ``INCLUDE`` columns. They sit in ``indkey`` past ``indnkeyatts`` and take no part in
+          uniqueness, so ``UNIQUE (a, b) INCLUDE (updated_at)`` enforces the same property as
+          ``UNIQUE (a, b)`` and has to read as the same set here.
+        * ``indnullsnotdistinct``. Postgres treats nulls as distinct by default, so an ordinary
+          unique index does *not* refuse two rows that share a tuple containing one. Requires
+          Postgres 15 or later; the repository already depends on 16-and-later behaviour
+          elsewhere.
+
+        Expression indexes are skipped: their key is a computed value, not a column, and a
+        guarantee names columns.
+
+        Uncached: it runs once per relation at startup, and a lane would cost more to keep
+        coherent than the query costs to repeat.
+        """
+
+        schema = self.__normalize_schema(schema)
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            WITH rel AS (
+              SELECT c.oid
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = {schema}
+                AND c.relname = {relation}
+              LIMIT 1
+            )
+            SELECT (
+              SELECT COALESCE(array_agg(a.attname), ARRAY[]::text[])
+              FROM unnest(i.indkey[0:i.indnkeyatts - 1]) AS u(attnum)
+              JOIN pg_attribute a
+                ON a.attrelid = i.indrelid
+               AND a.attnum = u.attnum
+               AND NOT a.attisdropped
+              WHERE u.attnum <> 0
+            ) AS columns,
+            pg_get_expr(i.indpred, i.indrelid) AS predicate,
+            i.indnullsnotdistinct AS nulls_not_distinct
+            FROM pg_index i
+            JOIN rel ON rel.oid = i.indrelid
+            WHERE i.indisunique
+              AND i.indisvalid
+              AND i.indisready
+              AND i.indislive
+              AND i.indexprs IS NULL
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        found: list[UniqueIndexInfo] = []
+
+        for row in rows:
+            # Never empty in practice: the query drops expression indexes, so every key
+            # attribute resolves to a real column. No guard for it — an empty set could only
+            # match an empty guarantee, and the vocabulary refuses one at construction.
+            columns = frozenset(str(column) for column in (row.get("columns") or []))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            predicate = row.get("predicate")
+
+            found.append(
+                UniqueIndexInfo(
+                    columns=columns,
+                    predicate=str(predicate) if predicate is not None else None,
+                    nulls_not_distinct=bool(row.get("nulls_not_distinct")),
+                )
+            )
+
+        return tuple(found)
 
     # ....................... #
 

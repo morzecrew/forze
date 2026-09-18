@@ -15,6 +15,7 @@ from uuid import UUID
 
 from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
 from forze.application.contracts.domain import drain_domain_events
+from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow
@@ -58,6 +59,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
         def _check_rev(self, current_rev: int, expected_rev: int | None) -> None: ...
         def _mark_rev_guarded(self, pk: UUID) -> None: ...
+        def _mark_guarantee_recheck(self, pk: UUID) -> None: ...
         def _mark_created(self, pk: UUID) -> None: ...
         def _create_codec(self) -> ModelCodec[D, Any]: ...
         def _domain_codec(self) -> ModelCodec[D, Any]: ...
@@ -71,6 +73,103 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             pagination: PaginationExpression | None = None,
             sorts: QuerySortExpression | None = None,
         ) -> Awaitable[CountlessPage[JsonDict]]: ...
+
+    # ....................... #
+
+    def _write_row(self, store: dict[UUID, JsonDict], pk: UUID, row: JsonDict) -> None:
+        """Put *row* at *pk*, after refusing it if it would break a declared guarantee.
+
+        Every write goes through here, and that is the point. The store is a plain dict and
+        four methods used to assign into it directly; a guarantee checked at one of them is a
+        guarantee three paths ignore, which is the same as not having it. Enforcement attaches
+        to the assignment rather than to the callers, so a write path added later cannot forget
+        it without also failing to store anything.
+
+        The caller holds :attr:`state.lock` — the check and the write have to be one step, or a
+        second writer slips between them and both rows land.
+        """
+
+        self._check_guarantees(store, pk, row)
+        store[pk] = row
+
+        if self.spec.guarantees:
+            self._mark_guarantee_recheck(pk)
+
+    # ....................... #
+
+    def _check_guarantees(
+        self,
+        store: dict[UUID, JsonDict],
+        pk: UUID,
+        row: JsonDict,
+    ) -> None:
+        """Raise if *row* at *pk* would break a declared guarantee, given *store*.
+
+        Split from :meth:`_write_row` for the one caller that cannot check and write in the
+        same step: a set-based update validates the state the whole batch would produce, so it
+        needs the check against a staged store rather than against the live one.
+        """
+
+        for guarantee in self.spec.guarantees:
+            match guarantee:
+                case UniqueTogether():
+                    self._refuse_duplicate(store, pk, row, guarantee)
+
+                case NonOverlapping():
+                    # No mock enforcement yet: the vocabulary declares it, no adapter maps it,
+                    # and reconciliation refuses it before a write can reach here — so an
+                    # unenforced arm is unreachable rather than silently permissive.
+                    raise exc.internal(
+                        f"Document {self.spec.name!r} declares a non_overlapping guarantee, "
+                        "which no store enforces yet. Reconciliation should have refused this "
+                        "at wiring.",
+                    )
+
+    # ....................... #
+
+    def _refuse_duplicate(
+        self,
+        store: dict[UUID, JsonDict],
+        pk: UUID,
+        row: JsonDict,
+        guarantee: UniqueTogether,
+    ) -> None:
+        """Refuse *row* when another row already holds its field tuple.
+
+        ``conflict`` rather than ``validation``, because that is what a real store raises when a
+        unique index rejects an insert, and a caller retrying or reporting a conflict should not
+        have to know which store it was talking to.
+        """
+
+        values = tuple(row.get(field) for field in guarantee.fields)
+
+        if guarantee.skip_null and any(value is None for value in values):
+            return
+
+        matches = self._matcher(guarantee.where)
+
+        if not matches(row):
+            return
+
+        # ponytail: a scan per write, which is O(rows) — fine for an in-memory store and only
+        # paid by a spec that declares a guarantee. An index keyed by the field tuple is the
+        # upgrade if a simulation ever writes enough rows to feel it.
+        for other_pk, other in store.items():
+            if other_pk == pk or not matches(other):
+                continue
+
+            if tuple(other.get(field) for field in guarantee.fields) == values:
+                raise exc.conflict(
+                    f"Document {self.spec.name!r} guarantees at most one row per "
+                    f"({', '.join(guarantee.fields)}); {other_pk} already holds "
+                    f"{values!r}"
+                    + (" among the rows the guarantee selects." if guarantee.where else "."),
+                    details={
+                        "guarantee": guarantee.kind,
+                        "fields": list(guarantee.fields),
+                        "conflicting_id": str(other_pk),
+                    },
+                )
 
     # ....................... #
 
@@ -169,7 +268,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     "Unique violation.",
                     details={"id": str(domain.id)},
                 )
-            store[domain.id] = serialized
+            self._write_row(store, domain.id, serialized)
 
             # Publish-time unique-violation guard: a concurrent transaction may commit the same id
             # between this statement and this transaction's commit; marking the create lets the MVCC
@@ -253,7 +352,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(
                     self._domain_codec().encode_persistence_mapping(domain)
                 )
-                store[domain.id] = serialized
+                self._write_row(store, domain.id, serialized)
                 raw = serialized
         if not return_new:
             return None
@@ -470,7 +569,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             serialized = self._apply_tenant(
                 self._domain_codec().encode_persistence_mapping(updated)
             )
-            self._store()[pk] = serialized
+            self._write_row(self._store(), pk, serialized)
 
             # A rev-guarded write (caller supplied a rev) is the one read-committed must fail on a
             # concurrent same-row commit; a blind write (rev is None) is left to lose silently.
@@ -627,12 +726,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         results: list[R] = []
         mutated: list[D | None] = []
+        staged: dict[UUID, JsonDict] = {}
         n = 0
 
         match = self._matcher(filters)
 
         with self.state.lock:
             store = self._store()
+            merged = dict(store.items())
 
             for pk, raw in list(store.items()):
                 if not match(raw):
@@ -648,12 +749,29 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(
                     self._domain_codec().encode_persistence_mapping(updated)
                 )
-                store[pk] = serialized
+                staged[pk] = serialized
                 mutated.append(updated)
                 n += 1
 
                 if return_new:
                     results.append(self._to_read(serialized))
+
+            # Guarantees are checked against the whole staged result, then published in one
+            # pass. A set-based update is one statement on every real backend: a row that
+            # breaks a guarantee aborts the statement, it does not commit the rows before it.
+            # Checking row by row as the loop went would refuse against a half-applied store
+            # and leave that half behind — so the batch is validated as the state it would
+            # produce, and reaches the store only if all of it passes.
+            merged.update(staged)
+
+            for pk, row in staged.items():
+                self._check_guarantees(merged, pk, row)
+
+            for pk, row in staged.items():
+                store[pk] = row
+
+                if self.spec.guarantees:
+                    self._mark_guarantee_recheck(pk)
 
         await drain_domain_events(
             mutated,
@@ -768,7 +886,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             serialized = self._apply_tenant(
                 self._domain_codec().encode_persistence_mapping(updated)
             )
-            self._store()[pk] = serialized
+            self._write_row(self._store(), pk, serialized)
 
         return self._to_read(serialized) if return_new else None
 
@@ -871,7 +989,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(
                     self._domain_codec().encode_persistence_mapping(current)
                 )
-                self._store()[pk] = serialized
+                self._write_row(self._store(), pk, serialized)
 
             else:
                 updated = current.model_copy(
@@ -885,7 +1003,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(
                     self._domain_codec().encode_persistence_mapping(updated)
                 )
-                self._store()[pk] = serialized
+                self._write_row(self._store(), pk, serialized)
 
             self._mark_rev_guarded(pk)  # delete is rev-guarded
 
@@ -964,7 +1082,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(
                     self._domain_codec().encode_persistence_mapping(current)
                 )
-                self._store()[pk] = serialized
+                self._write_row(self._store(), pk, serialized)
 
             else:
                 updated = current.model_copy(
@@ -978,7 +1096,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(
                     self._domain_codec().encode_persistence_mapping(updated)
                 )
-                self._store()[pk] = serialized
+                self._write_row(self._store(), pk, serialized)
 
             self._mark_rev_guarded(pk)  # restore is rev-guarded
 

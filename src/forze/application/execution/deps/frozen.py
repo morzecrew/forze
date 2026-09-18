@@ -15,6 +15,10 @@ from forze.application.contracts.deps import (
     ProviderStore,
     RoutedDeps,
 )
+from forze.application.contracts.guarantees import (
+    guarantees_of,
+    validate_storage_guarantees,
+)
 from forze.application.execution.tracing import (
     NOOP_RUNTIME_TRACER,
     RuntimeTrace,
@@ -281,6 +285,18 @@ class FrozenDeps:
         try:
             factory = self.store.get_provider(key, route=route)
             result = factory(ctx, spec)
+            # Reconcile what the spec requires of its store against what this adapter says it
+            # enforces, on the raw port rather than a proxy, and before the port is cached or
+            # handed out. Here rather than in `check_wiring` because this is the only place that
+            # holds both halves — and because a refusal raised here reaches the dry run as an
+            # ordinary resolution failure *and* fires in production wiring, where a report field
+            # read only by the checker would not.
+            validate_storage_guarantees(
+                guarantees_of(spec),
+                result,
+                spec_name=str(spec.name),
+                backend=type(result).__module__.split(".")[0],
+            )
             # Innermost (closest to the real port): interceptor chain, then runtime tracing, then the
             # OTel client span, then the resilience port policy outermost (so a fault interceptor's
             # transient error is retryable by the policy, and a retried call gets one OTel span per

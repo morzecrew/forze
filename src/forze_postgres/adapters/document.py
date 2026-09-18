@@ -6,7 +6,7 @@ require_psycopg()
 
 # ....................... #
 
-from typing import TypeVar, final
+from typing import ClassVar, TypeVar, final
 
 import attrs
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
     validate_query_parameters,
 )
+from forze.application.contracts.guarantees import StorageGuaranteeCapabilities
 from forze.application.integrations.document import DocumentAdapter, DocumentCache
 from forze.application.integrations.document.hydration import (
     can_hydrate_read_from_write_domain,
@@ -61,6 +62,23 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
     document_cache: DocumentCache[R]
     """Unified read/write cache semantics for documents."""
+
+    storage_guarantees: ClassVar[StorageGuaranteeCapabilities] = StorageGuaranteeCapabilities(
+        unique_together=True,
+        unique_together_filtered=True,
+        unique_together_skip_null=True,
+    )
+    """What this store enforces, given the index the deployment migrated.
+
+    Every axis here is a unique index: plain for the unfiltered form, partial (``WHERE ...``)
+    for the other two, and a violation of any of them arrives as ``conflict`` through the
+    client's error mapping — the same refusal the in-memory store raises, which is what makes
+    the parity battery meaningful rather than a comparison of two spellings.
+
+    ``non_overlapping`` is absent, and is the one member Postgres could obviously keep (an
+    exclusion constraint over a range type). It stays absent until something maps it, because a
+    capability that reconciles and then does not enforce is worse than one that refuses.
+    """
 
     batch_size: int = 200
     """Chunk size for bulk writes and internal chunked offset reads when pagination omits ``limit``."""

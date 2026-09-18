@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from typing import (
     Any,
+    ClassVar,
     Literal,
     cast,
     final,
@@ -30,6 +31,10 @@ from forze.application.contracts.document import (
     validate_query_parameters,
 )
 from forze.application.contracts.domain import DomainEventDispatcherPort
+from forze.application.contracts.guarantees import (
+    FULL_STORAGE_GUARANTEES,
+    StorageGuaranteeCapabilities,
+)
 from forze.application.contracts.querying import (
     AggregatesExpression,
     CursorPaginationExpression,
@@ -131,6 +136,14 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     Empty for every spec that declares none, which is the overwhelming majority —
     :meth:`_hydrate` returns the document untouched in that case."""
+
+    storage_guarantees: ClassVar[StorageGuaranteeCapabilities] = FULL_STORAGE_GUARANTEES
+    """What this store enforces — the canonical superset, so a simulation sees every rule a
+    deployment does rather than only the ones its backend happens to have.
+
+    Enforced on the write path itself (``_write_row``), not advertised and skipped: what this
+    value claims and what the store refuses are the same list, and the parity battery compares
+    this store's refusal with a real backend's for each member."""
 
     derived_source: MockDerivedSource | None = None
     """Stands in for the relation that produces this spec's *marked* derived fields.
@@ -252,6 +265,24 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 return cast("dict[UUID, JsonDict]", mvcc.view(ns, store))
 
             return store
+
+    # ....................... #
+
+    def _mark_guarantee_recheck(self, pk: UUID) -> None:
+        """Queue *pk* for a commit-time guarantee re-check (a no-op outside a transaction).
+
+        The write's own check ran against this transaction's view, which cannot see a
+        concurrent transaction's uncommitted rows; re-running it against the committed store at
+        commit is what makes a declared uniqueness hold across two transactions, the way a real
+        unique index does. See
+        :attr:`~forze_mock.adapters._mvcc.MvccTx.guarantee_rechecks`.
+        """
+
+        mvcc = current_mvcc_tx()
+
+        if mvcc is not None:
+            ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+            mvcc.mark_guarantee_recheck(ns, pk, self._check_guarantees)
 
     # ....................... #
 

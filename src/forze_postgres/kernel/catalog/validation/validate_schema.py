@@ -1,10 +1,13 @@
 """Compare Pydantic document shapes to Postgres relation columns (startup validation)."""
 
+import re
 from collections.abc import Sequence
 
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
+from forze.application.contracts.querying import collect_filter_field_roots
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze.base.serialization import stored_field_names_for
@@ -91,6 +94,12 @@ class PostgresDocumentSchemaSpec:
 
     conflict_target: tuple[str, ...] | None = None
     """Optional ``ON CONFLICT`` columns for ensure/upsert; ``None`` infers PRIMARY KEY."""
+
+    guarantees: StorageGuarantees = ()
+    """What the spec requires the store to enforce (see :attr:`DocumentSpec.guarantees`).
+
+    Validated against the live catalog: reconciliation at wiring says Postgres *can* keep
+    these, and this says whether the deployment's migration actually did."""
 
     # ....................... #
 
@@ -263,6 +272,198 @@ def _warn_unused_tenant_column(
 # ....................... #
 
 
+async def _require_guarantee_mechanisms(
+    introspector: PostgresIntrospector,
+    spec: PostgresDocumentSchemaSpec,
+) -> None:
+    """Refuse a declared guarantee whose index is not in the database, naming the DDL.
+
+    Reconciliation at wiring proved Postgres *can* keep these; this is the other half — whether
+    this deployment's migration did. Never creates anything: an adapter that issued the DDL
+    would take a lock on a production table nobody asked for, and would hide the missing
+    migration until the next deployment.
+
+    Three ways an index can carry the right columns and still not be the mechanism:
+
+    * it is not partial where the guarantee is filtered, or its predicate does not mention the
+      fields the filter selects on — the case that matters, because a predicate over the wrong
+      column leaves exactly the rows the guarantee covers unconstrained;
+    * it is an ordinary unique index over a nullable column while the guarantee counts nulls as
+      values, which Postgres does not unless the index says ``NULLS NOT DISTINCT``;
+    * it is not valid, ready or live — the state a failed concurrent build leaves.
+
+    What is still not checked is whether the predicate *means* the same as the filter: deciding
+    that two boolean expressions agree is the database's job, not a startup check's. So the
+    column-level comparison is a floor, not a proof, and the docs say so.
+    """
+
+    relation = spec.write_relation or spec.read_relation
+    schema, table = relation
+
+    guarantees = [g for g in spec.guarantees if isinstance(g, UniqueTogether)]
+
+    if not guarantees:
+        # Reconciliation refuses every other member today, so nothing else reaches here.
+        return
+
+    indexes = await introspector.unique_indexes(schema=schema, relation=table)
+    column_types = await introspector.get_column_types(schema=schema, relation=table)
+
+    for guarantee in guarantees:
+        columns = tuple(guarantee.fields)
+        wanted = frozenset(columns)
+        # A filter over a column the index does not mention cannot restrict the guarantee's
+        # rows, so the predicate has to name every field the declaration selects on — and, when
+        # nulls are exempt, every field of the tuple, since that exemption *is* a predicate.
+        predicate_columns = (
+            collect_filter_field_roots(guarantee.where) if guarantee.where else frozenset()
+        )
+
+        if guarantee.skip_null:
+            predicate_columns |= wanted
+
+        nullable = sorted(
+            column
+            for column in columns
+            if column in column_types and not column_types[column].not_null
+        )
+        # Only a nullable column can produce the divergence: Postgres compares two nulls as
+        # distinct, so an ordinary unique index admits a pair of rows the guarantee refuses.
+        # Over NOT NULL columns the ordinary index is exactly the mechanism, and demanding
+        # NULLS NOT DISTINCT there would refuse a correct migration.
+        needs_nulls_not_distinct = bool(nullable) and not guarantee.skip_null
+
+        for index in indexes:
+            if index.columns != wanted:
+                continue
+
+            if predicate_columns:
+                if index.predicate is None:
+                    continue
+
+                if any(
+                    not _predicate_names(index.predicate, column) for column in predicate_columns
+                ):
+                    continue
+
+            elif index.predicate is not None:
+                continue
+
+            if needs_nulls_not_distinct and not index.nulls_not_distinct:
+                continue
+
+            break
+
+        else:
+            raise exc.configuration(
+                _guarantee_refusal(
+                    spec_name=str(spec.name),
+                    schema=schema,
+                    table=table,
+                    columns=columns,
+                    predicate_columns=predicate_columns,
+                    nulls_not_distinct=needs_nulls_not_distinct,
+                    nullable=nullable,
+                ),
+                details={
+                    "document": spec.name,
+                    "relation": f"{schema}.{table}",
+                    "columns": list(columns),
+                },
+            )
+
+
+# ....................... #
+
+
+_LITERAL = re.compile(r"'(?:''|[^'])*'")
+"""A single-quoted SQL string literal, doubled quotes included — stripped before identifiers are
+matched, so a predicate comparing against ``'deleted'`` does not read as naming that column."""
+
+
+def _predicate_names(predicate: str, column: str) -> bool:
+    """Whether *predicate* references *column* as an identifier rather than as a substring.
+
+    ``pg_get_expr`` hands back deparsed SQL and the only question asked of it is which columns it
+    restricts on, so the match is on identifier boundaries after string literals are removed:
+    ``deleted`` must not be satisfied by ``(deleted_at IS NULL)``, and must not be satisfied by
+    ``(label <> 'deleted')`` either.
+
+    Deliberately not a SQL lexer. What this decides is whether the predicate mentions the right
+    column at all — a floor under an index restricted to the wrong rows, never a proof that it
+    restricts to the right ones, since that is expression equivalence and the database's job. A
+    lexer would buy exactness on quoted identifiers with unusual casing for a check that is
+    approximate by construction.
+    """
+
+    bare = _LITERAL.sub("''", predicate)
+
+    return re.search(rf"(?<![A-Za-z0-9_]){re.escape(column)}(?![A-Za-z0-9_])", bare) is not None
+
+
+# ....................... #
+
+
+def _guarantee_refusal(
+    *,
+    spec_name: str,
+    schema: str,
+    table: str,
+    columns: tuple[str, ...],
+    predicate_columns: frozenset[str],
+    nulls_not_distinct: bool,
+    nullable: Sequence[str],
+) -> str:
+    """The message for a guarantee with no index behind it, carrying the DDL that would serve.
+
+    Split out because the refusal is most of the value here: an operator reading it has to be
+    able to write the migration without opening the code, and which index is missing depends on
+    three axes that the caller has already worked out.
+    """
+
+    column_list = ", ".join(columns)
+    filtered = bool(predicate_columns)
+
+    if filtered:
+        ddl = (
+            f"CREATE UNIQUE INDEX CONCURRENTLY ON {schema}.{table} ({column_list}) "
+            f"WHERE <a condition over {', '.join(sorted(predicate_columns))}>;"
+        )
+
+    elif nulls_not_distinct:
+        ddl = f"ALTER TABLE {schema}.{table} ADD UNIQUE NULLS NOT DISTINCT ({column_list});"
+
+    else:
+        ddl = f"ALTER TABLE {schema}.{table} ADD UNIQUE ({column_list});"
+
+    why = " among the rows its filter selects, and " if filtered else ", and "
+    missing = (
+        f"{schema}.{table} has no valid partial unique index on those columns whose predicate "
+        f"mentions {', '.join(sorted(predicate_columns))}"
+        if filtered
+        else f"{schema}.{table} has no valid unique index on those columns"
+    )
+    nulls = (
+        f" declared NULLS NOT DISTINCT — {', '.join(nullable)} is nullable, and Postgres lets "
+        "two rows share a tuple containing a null unless the index says otherwise, while the "
+        "guarantee does not"
+        if nulls_not_distinct
+        else ""
+    )
+
+    return (
+        f"Document {spec_name!r} guarantees at most one row per ({column_list})"
+        + why
+        + missing
+        + nulls
+        + ". The migration is what satisfies a guarantee — nothing here creates one. "
+        f"This would:\n  {ddl}"
+    )
+
+
+# ....................... #
+
+
 async def validate_postgres_document_schemas(
     introspector: PostgresIntrospector,
     specs: Sequence[PostgresDocumentSchemaSpec],
@@ -270,6 +471,8 @@ async def validate_postgres_document_schemas(
     """Assert each spec's relations expose the columns implied by the Pydantic models."""
 
     for spec in specs:
+        await _require_guarantee_mechanisms(introspector, spec)
+
         read_need = frozenset(
             (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)
             - spec.read_omit_fields,
