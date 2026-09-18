@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import attrs
 
 from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
+from forze.application.contracts.querying import collect_filter_field_roots
 from forze.application.contracts.resolution import (
     RelationSpec,
     is_static_relation,
@@ -63,9 +64,17 @@ def _require_guarantee_indexes(
     adapter that built the index would hold a write lock on a collection nobody asked it to
     touch, and would hide the missing migration.
 
-    A filtered guarantee needs a filtered index — ``partialFilterExpression`` for a ``where``,
-    ``sparse`` for ``skip_null``. As on Postgres, what the filter *says* is not compared against
-    the declaration: only that the index covers these fields and is restricted at all.
+    Fields are matched as a *set*: a guarantee is a property of a tuple of values, and
+    ``{tenant_id: 1, email: 1}`` keeps it exactly as ``{email: 1, tenant_id: 1}`` does. Only
+    ordinary ascending/descending keys count — a ``text`` or ``hashed`` index is a different
+    structure over a different value.
+
+    A filtered guarantee needs a ``partialFilterExpression`` naming the fields the filter
+    selects on. A ``sparse`` index does **not** serve there, however close it reads: it skips a
+    document only when every indexed field is missing, still indexes an explicit null, and says
+    nothing about the guarantee's condition. What the filter *means* is still not compared — an
+    expression equivalence is the server's judgement, not a startup check's — so this catches a
+    predicate over the wrong fields and not one that is merely wrong.
     """
 
     for guarantee in spec.guarantees:
@@ -73,39 +82,64 @@ def _require_guarantee_indexes(
             continue
 
         fields = tuple(guarantee.fields)
-        filtered = guarantee.where is not None or guarantee.skip_null
-        found = any(
-            index.unique
-            and tuple(key for key, _ in index.keys) == fields
-            and (index.partial if filtered else not index.partial)
-            for index in indexes
+        wanted = frozenset(fields)
+        predicate_fields = (
+            collect_filter_field_roots(guarantee.where) if guarantee.where else frozenset()
         )
 
-        if found:
-            continue
+        for index in indexes:
+            if not index.unique:
+                continue
 
-        field_list = ", ".join(fields)
-        keys = ", ".join(f"{field}: 1" for field in fields)
-        options = (
-            "{unique: true, partialFilterExpression: {<the guarantee's condition>}}"
-            if filtered
-            else "{unique: true}"
-        )
+            if any(not isinstance(direction, int) for _, direction in index.keys):
+                continue
 
-        raise exc.configuration(
-            f"Document {spec.name!r} guarantees at most one document per ({field_list})"
-            + (" among the documents its filter selects" if filtered else "")
-            + f", and {database}.{collection} has no "
-            + ("partial " if filtered else "")
-            + "unique index on those fields. The migration is what satisfies a guarantee — "
-            f"nothing here creates one. This would:\n"
-            f"  db.{collection}.createIndex({{{keys}}}, {options})",
-            details={
-                "document": spec.name,
-                "collection": f"{database}.{collection}",
-                "fields": list(fields),
-            },
-        )
+            if frozenset(key for key, _ in index.keys) != wanted:
+                continue
+
+            if predicate_fields:
+                if index.partial_filter is None:
+                    continue
+
+                rendered = repr(index.partial_filter)
+
+                if any(field not in rendered for field in predicate_fields):
+                    continue
+
+            elif index.partial_filter is not None or index.sparse:
+                continue
+
+            break
+
+        else:
+            field_list = ", ".join(fields)
+            keys = ", ".join(f"{field}: 1" for field in fields)
+            filtered = bool(predicate_fields)
+            condition = ", ".join(sorted(predicate_fields))
+            options = (
+                f"{{unique: true, partialFilterExpression: {{<a condition over {condition}>}}}}"
+                if filtered
+                else "{unique: true}"
+            )
+
+            raise exc.configuration(
+                f"Document {spec.name!r} guarantees at most one document per ({field_list})"
+                + (" among the documents its filter selects" if filtered else "")
+                + f", and {database}.{collection} has no unique index on those fields"
+                + (
+                    f" with a partialFilterExpression over {condition}"
+                    if filtered
+                    else " covering every document"
+                )
+                + ". The migration is what satisfies a guarantee — nothing here creates one. "
+                f"This would:\n"
+                f"  db.{collection}.createIndex({{{keys}}}, {options})",
+                details={
+                    "document": spec.name,
+                    "collection": f"{database}.{collection}",
+                    "fields": list(fields),
+                },
+            )
 
 
 # ....................... #

@@ -21,6 +21,7 @@ from forze_mongo.execution.document_indexes import (
     mongo_document_index_validation_lifecycle_step,
 )
 from forze_mongo.kernel.client import MongoClient
+from forze_mongo.kernel.introspect import MongoIntrospector
 from forze_mongo.kernel.validate_indexes import MongoDocumentIndexSpec
 from tests.support.execution_context import context_from_deps
 
@@ -102,7 +103,7 @@ class TestMongoStartupValidation:
         coll = await mongo_client.collection(collection, db_name=db_name)
         await coll.create_index([("root_id", 1)], unique=True)
 
-        with pytest.raises(CoreException, match="no partial unique index"):
+        with pytest.raises(CoreException, match="partialFilterExpression"):
             await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
 
     async def test_a_plain_index_satisfies_an_unfiltered_guarantee(
@@ -115,21 +116,67 @@ class TestMongoStartupValidation:
 
         await _validate(mongo_client, (db_name, collection), ONE_EVER)
 
-    async def test_a_sparse_index_counts_as_filtered(
+    async def test_a_sparse_index_does_not_satisfy_a_filtered_guarantee(
         self,
         mongo_client: MongoClient,
     ) -> None:
-        # Mongo's second way of saying "only some documents", and the mechanism `skip_null`
-        # asks for. Reading only `partialFilterExpression` would refuse a correct deployment.
+        # Sparse reads like "only some documents" and is not the same restriction: it skips a
+        # document only when every indexed field is missing, and says nothing at all about the
+        # guarantee's condition. Accepting it would pass a deployment where two current
+        # documents for one fact are perfectly insertable.
         db_name, collection = await _collection(mongo_client)
         coll = await mongo_client.collection(collection, db_name=db_name)
-        await coll.create_index([("supersedes_id", 1)], unique=True, sparse=True)
+        await coll.create_index([("root_id", 1)], unique=True, sparse=True)
+
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+
+    async def test_a_filter_over_other_fields_does_not_count(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # The failure the field comparison exists for: right fields, wrong documents. Two
+        # current-and-unverified documents for one fact fall outside this index entirely.
+        db_name, collection = await _collection(mongo_client)
+        coll = await mongo_client.collection(collection, db_name=db_name)
+        await coll.create_index(
+            [("root_id", 1)],
+            unique=True,
+            partialFilterExpression={"is_verified": True},
+        )
+
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+
+    async def test_a_reversed_compound_index_counts(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # Uniqueness over a tuple does not depend on the order the index lists it in, and a
+        # check that demanded the declared order would fail a correct migration at startup.
+        db_name, collection = await _collection(mongo_client)
+        coll = await mongo_client.collection(collection, db_name=db_name)
+        await coll.create_index([("is_current", 1), ("root_id", 1)], unique=True)
 
         await _validate(
             mongo_client,
             (db_name, collection),
-            UniqueTogether(fields=("supersedes_id",), skip_null=True),
+            UniqueTogether(fields=("root_id", "is_current")),
         )
+
+    async def test_a_sparse_index_does_not_satisfy_an_unfiltered_guarantee(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # The other direction: an unfiltered guarantee covers every document, and a sparse
+        # index leaves out the ones missing the field — so the tuples it does not index are
+        # unconstrained.
+        db_name, collection = await _collection(mongo_client)
+        coll = await mongo_client.collection(collection, db_name=db_name)
+        await coll.create_index([("root_id", 1)], unique=True, sparse=True)
+
+        with pytest.raises(CoreException, match="covering every document"):
+            await _validate(mongo_client, (db_name, collection), ONE_EVER)
 
     async def test_a_member_no_store_maps_is_skipped_rather_than_crashing(
         self,
@@ -150,6 +197,36 @@ class TestMongoStartupValidation:
         ctx = context_from_deps(Deps.plain({MongoClientDepKey: mongo_client}))
 
         await LifecyclePlan.from_steps(step).freeze().startup(ctx)
+
+    async def test_an_index_reports_its_restriction_and_its_sparseness_apart(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # Read off the live server rather than a fixture, because the whole point is that these
+        # are two different index options and only the server settles what it stored.
+        db_name, collection = await _collection(mongo_client)
+        coll = await mongo_client.collection(collection, db_name=db_name)
+        await coll.create_index(
+            [("root_id", 1)],
+            unique=True,
+            partialFilterExpression={"is_current": True},
+            name="filtered",
+        )
+        await coll.create_index([("label", 1)], sparse=True, name="thin")
+
+        introspector = MongoIntrospector(client=mongo_client)
+        indexes = {
+            index.name: index
+            for index in await introspector.list_indexes(
+                database=db_name,
+                collection=collection,
+            )
+        }
+
+        assert indexes["filtered"].partial_filter == {"is_current": True}
+        assert indexes["filtered"].sparse is False
+        assert indexes["thin"].partial_filter is None
+        assert indexes["thin"].sparse is True
 
     async def test_declaring_nothing_validates_nothing(
         self,
