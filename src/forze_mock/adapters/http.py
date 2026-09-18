@@ -29,10 +29,17 @@ from forze.base.primitives import StrKey
 
 # ----------------------- #
 
-HttpHandler = Callable[[BaseModel | None], Any]
+HttpHandler = Callable[[Any], Any]
 """Handler for one operation: receives the (validated) args model or ``None`` and
 returns the response — a ``return_type`` instance, a dict to validate, ``None``
-for an empty body, or an awaitable of any of those."""
+for an empty body, or an awaitable of any of those.
+
+The parameter is ``Any`` because this is the *stored* shape, one dict holding the handlers
+for every operation on every service. What each handler actually accepts is stated where it
+is registered — see :meth:`MockHttpRegistry.on`, which takes the narrower form. Spelling it
+``BaseModel | None`` here refused every handler that named its own args model, since a
+parameter type is contravariant: a function of ``ModelArgs | None`` is not a function of
+``BaseModel | None``."""
 
 
 def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
@@ -47,15 +54,24 @@ def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
 class MockHttpRegistry:
     """Programmable in-memory HTTP responses, keyed by ``(service name, op name)``."""
 
-    _handlers: dict[tuple[str, str], HttpHandler] = attrs.field(factory=dict)
+    _handlers: dict[tuple[str, str], HttpHandler] = attrs.field(
+        factory=dict[tuple[str, str], HttpHandler]
+    )
 
-    def on(
+    def on[In: BaseModel](
         self,
         service: StrKey | str,
         op: StrKey | str,
-        handler: HttpHandler,
+        handler: Callable[[In | None], Any],
     ) -> MockHttpRegistry:
-        """Register *handler* for operation *op* on *service*. Returns self (chainable)."""
+        """Register *handler* for operation *op* on *service*. Returns self (chainable).
+
+        The handler's own parameter type is what ``In`` resolves to, so a handler written
+        against the operation's ``args_type`` is accepted as it stands — one keyed to
+        ``BaseModel | None`` no longer being the only shape that fits. Nothing is checked
+        against the operation's declaration here: the registry is keyed by name and never
+        sees the spec. :class:`MockHttpServiceAdapter` does that check, at the call.
+        """
 
         self._handlers[(str(service), str(op))] = handler
         return self
@@ -79,10 +95,10 @@ class MockHttpServiceAdapter(HttpServicePort):
 
     async def invoke(
         self,
-        op: StrKey,
+        op: StrKey | HttpOperationSpec[Any, Any],
         args: BaseModel | None = None,
-    ) -> BaseModel:
-        operation = self._operation(op)
+    ) -> Any:
+        operation = self.spec.operation(op)
         self._validate_args(operation, args)
 
         handler = self.registry.handler_for(str(self.spec.name), str(operation.name))
@@ -100,16 +116,6 @@ class MockHttpServiceAdapter(HttpServicePort):
             result = await result
 
         return self._coerce(operation, result)
-
-    # ....................... #
-
-    def _operation(self, op: StrKey) -> HttpOperationSpec[Any, Any]:
-        key = str(getattr(op, "value", op))
-
-        if key not in self.spec.operations:
-            raise exc.validation(f"Unknown HTTP operation {key!r} for {self.spec.name!r}")
-
-        return self.spec.operations[key]
 
     # ....................... #
 

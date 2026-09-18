@@ -61,7 +61,7 @@ class HttpOperationSpec(Generic[In, Out]):
     return_type: type[Out]
     """Response model validated from JSON."""
 
-    query_from: frozenset[str] = attrs.field(factory=frozenset)
+    query_from: frozenset[str] = attrs.field(factory=frozenset[str])
     """Request fields serialized as query parameters."""
 
     idempotent: bool = False
@@ -153,3 +153,36 @@ class HttpServiceSpec(BaseSpec):
                     f"HttpServiceSpec {self.name!r}: operation key {key!r} "
                     f"does not match op.name {op.name!r}",
                 )
+
+    # ....................... #
+
+    def operation(self, op: StrKey | HttpOperationSpec[Any, Any]) -> HttpOperationSpec[Any, Any]:
+        """The operation *op* names, whether it arrives as a key or as the spec itself.
+
+        Two forms because callers have two different things in hand. A name is what config
+        and a registry have; the spec object is what carries :attr:`HttpOperationSpec.args_type`
+        and :attr:`HttpOperationSpec.return_type`, and handing it in is what lets those reach
+        the caller's own variable instead of arriving as a bare ``BaseModel``.
+
+        Passing a spec asserts that *this* service declares it. A spec lifted from a sibling
+        service can share a name and declare a different ``return_type``, and the mismatch
+        would surface as a validation failure against the wrong model — or, worse, as a
+        success, if both models happen to accept the payload.
+
+        :raises CoreException: ``validation`` when this service declares no operation under
+            that name, or declares a different one.
+        """
+
+        key = str(op.name) if isinstance(op, HttpOperationSpec) else str(getattr(op, "value", op))
+        declared = self.operations.get(key)
+
+        if declared is None:
+            raise exc.validation(f"Unknown HTTP operation {key!r} for {self.name!r}")
+
+        if isinstance(op, HttpOperationSpec) and declared != op:
+            raise exc.validation(
+                f"HTTP operation {key!r} is not the one {self.name!r} declares: the spec "
+                "passed belongs to another service, or is a stale copy of this one's.",
+            )
+
+        return declared

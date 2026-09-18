@@ -80,9 +80,7 @@ class TestMockHttpResolves:
             "get_quote",
             lambda args: {"symbol": args.symbol, "price": 7.5},
         )
-        result = await _ctx(registry).http.service(SPEC).invoke(
-            "get_quote", QuoteArgs(symbol="X")
-        )
+        result = await _ctx(registry).http.service(SPEC).invoke("get_quote", QuoteArgs(symbol="X"))
         assert result == QuoteResult(symbol="X", price=7.5)
 
     async def test_async_handler_is_awaited(self) -> None:
@@ -108,9 +106,7 @@ class TestMockHttpResolves:
             "get_quote",
             lambda args: ForeignQuote(symbol=args.symbol, price=3.0),
         )
-        result = await _ctx(registry).http.service(SPEC).invoke(
-            "get_quote", QuoteArgs(symbol="Z")
-        )
+        result = await _ctx(registry).http.service(SPEC).invoke("get_quote", QuoteArgs(symbol="Z"))
         assert result == QuoteResult(symbol="Z", price=3.0)
 
     async def test_deterministic_across_calls(self) -> None:
@@ -158,3 +154,64 @@ class TestMockHttpFailsLoud:
         port = _ctx(registry).http.service(SPEC)
         with pytest.raises(CoreException):
             await port.invoke("get_quote", QuoteArgs(symbol="A"))
+
+
+# ....................... #
+
+
+class TestMockHttpTakesTheOperationSpec:
+    """The typed form, which hands the declaration in instead of its name.
+
+    The behaviour is meant to be identical either way — the only difference is what a type
+    checker can say about the result, which no test can assert. What these pin is that the
+    runtime path is the same one and that a spec from elsewhere is refused rather than
+    resolved by its name.
+    """
+
+    async def test_the_declared_spec_invokes_the_same_operation(self) -> None:
+        registry = MockHttpRegistry().on(
+            "pricing",
+            "get_quote",
+            lambda args: QuoteResult(symbol=args.symbol, price=42.0),
+        )
+        port = _ctx(registry).http.service(SPEC)
+
+        result = await port.invoke(SPEC.operations["get_quote"], QuoteArgs(symbol="ABC"))
+
+        assert result == QuoteResult(symbol="ABC", price=42.0)
+
+    async def test_a_bodyless_operation_takes_its_spec(self) -> None:
+        registry = MockHttpRegistry().on("pricing", "ping", lambda _: None)
+
+        result = await _ctx(registry).http.service(SPEC).invoke(SPEC.operations["ping"])
+
+        assert isinstance(result, Pong)
+
+    async def test_a_spec_from_another_service_is_refused(self) -> None:
+        foreign = HttpOperationSpec(
+            name="get_quote",
+            method="GET",
+            path="/quote",
+            args_type=QuoteArgs,
+            return_type=Pong,
+        )
+        registry = MockHttpRegistry().on("pricing", "get_quote", lambda _: None)
+        port = _ctx(registry).http.service(SPEC)
+
+        with pytest.raises(CoreException, match="is not the one 'pricing' declares"):
+            await port.invoke(foreign, QuoteArgs(symbol="ABC"))
+
+    async def test_a_handler_naming_its_own_args_model_is_accepted(self) -> None:
+        # The registered signature, not `BaseModel | None`. It used to be refused by a type
+        # checker on contravariance, which is why every handler above takes the wide form.
+        def handler(args: QuoteArgs | None) -> QuoteResult:
+            assert args is not None
+
+            return QuoteResult(symbol=args.symbol, price=1.0)
+
+        registry = MockHttpRegistry().on("pricing", "get_quote", handler)
+        port = _ctx(registry).http.service(SPEC)
+
+        result = await port.invoke(SPEC.operations["get_quote"], QuoteArgs(symbol="ABC"))
+
+        assert result == QuoteResult(symbol="ABC", price=1.0)

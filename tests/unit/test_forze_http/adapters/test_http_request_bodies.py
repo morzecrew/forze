@@ -441,3 +441,59 @@ class TestDeclaredErrorResponses:
         result = await adapter.invoke("token", TokenArgs(grant_type="authorization_code"))
 
         assert isinstance(result, TokenReply)
+
+
+# ....................... #
+
+
+class TestInvokingByOperationSpec:
+    """The real transport takes the declaration as well as the name.
+
+    Both forms resolve through `HttpServiceSpec.operation`, so what is worth pinning here is
+    that the httpx path really does reach the same request — a contract with two
+    implementations gets the leg in both, not in whichever one was convenient.
+    """
+
+    async def test_the_declared_spec_sends_the_same_request(self) -> None:
+        seen: dict[str, object] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            seen["type"] = request.headers.get("content-type")
+
+            return httpx.Response(200, json={"access_token": "at"})
+
+        spec = _spec()
+        adapter = await _adapter(handler, spec=spec)
+
+        result = await adapter.invoke(
+            spec.operations["token"],
+            TokenArgs(grant_type="authorization_code", code="c"),
+        )
+
+        assert isinstance(result, TokenReply)
+        assert seen["url"] == f"{_BASE}/oauth/token"
+        assert seen["type"] == "application/x-www-form-urlencoded"
+
+    async def test_a_spec_from_another_service_is_refused_before_any_request(self) -> None:
+        calls: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(str(request.url))
+
+            return httpx.Response(200, json={"access_token": "at"})
+
+        foreign = HttpOperationSpec(
+            name="token",
+            method="POST",
+            path="/oauth/token",
+            args_type=TokenArgs,
+            return_type=TokenArgs,
+        )
+        adapter = await _adapter(handler)
+
+        with pytest.raises(CoreException, match="is not the one 'provider' declares"):
+            await adapter.invoke(foreign, TokenArgs(grant_type="x"))
+
+        # The refusal is a wiring error, so nothing may have left the process.
+        assert calls == []

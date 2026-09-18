@@ -1,5 +1,7 @@
 """Tests for HTTP service specs."""
 
+from enum import StrEnum
+
 import pytest
 from pydantic import BaseModel
 
@@ -71,3 +73,73 @@ def test_path_placeholder_fields_validated() -> None:
             args_type=_WrongArgs,
             return_type=_Out,
         )
+
+
+# ....................... #
+
+
+class TestOperationResolution:
+    """`HttpServiceSpec.operation`, which both adapters route their `invoke` through."""
+
+    def _service(self) -> HttpServiceSpec:
+        op = HttpOperationSpec(
+            name="get",
+            method="GET",
+            path="/orders",
+            args_type=None,
+            return_type=_Out,
+        )
+
+        return HttpServiceSpec(name="orders", operations={"get": op})
+
+    def test_a_key_resolves(self) -> None:
+        service = self._service()
+
+        assert service.operation("get") is service.operations["get"]
+
+    def test_a_str_enum_key_resolves(self) -> None:
+        class _Op(StrEnum):
+            GET = "get"
+
+        service = self._service()
+
+        assert service.operation(_Op.GET) is service.operations["get"]
+
+    def test_the_declared_spec_resolves_to_itself(self) -> None:
+        service = self._service()
+        declared = service.operations["get"]
+
+        assert service.operation(declared) is declared
+
+    def test_an_undeclared_key_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="Unknown HTTP operation 'missing'"):
+            self._service().operation("missing")
+
+    def test_a_spec_this_service_does_not_declare_is_refused(self) -> None:
+        # Same name, different return_type: resolving by name alone would validate the
+        # response against `_Args` and either fail confusingly or, on an overlapping
+        # payload, succeed with the wrong model.
+        foreign = HttpOperationSpec(
+            name="get",
+            method="GET",
+            path="/orders",
+            args_type=None,
+            return_type=_Args,
+        )
+
+        with pytest.raises(CoreException, match="is not the one 'orders' declares"):
+            self._service().operation(foreign)
+
+    def test_an_equal_copy_of_the_declared_spec_resolves(self) -> None:
+        # Equality, not identity: a spec rebuilt from the same declaration names the same
+        # operation, and refusing it would make the typed form unusable from a second module.
+        service = self._service()
+        copy = HttpOperationSpec(
+            name="get",
+            method="GET",
+            path="/orders",
+            args_type=None,
+            return_type=_Out,
+        )
+
+        assert service.operation(copy) is service.operations["get"]
