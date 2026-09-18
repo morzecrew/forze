@@ -35,18 +35,21 @@ class _Fact(Document):
     root_id: str
     is_current: bool = True
     label: str = ""
+    supersedes_id: str | None = None
 
 
 class _FactRead(ReadDocument):
     root_id: str
     is_current: bool = True
     label: str = ""
+    supersedes_id: str | None = None
 
 
 class _FactCreate(CreateDocumentCmd):
     root_id: str
     is_current: bool = True
     label: str = ""
+    supersedes_id: str | None = None
 
 
 class _FactUpdate(BaseDTO):
@@ -253,21 +256,46 @@ class TestEveryWritePathIsCovered:
 
 
 class TestSkipNull:
-    async def test_nulls_collide_by_default(self) -> None:
-        guarantee = UniqueTogether(fields=("label",))
-        command = _command(_spec(guarantee))
-        await command.create(_FactCreate(root_id="r1", label=""))
+    """A real ``None``, not an empty string.
+
+    The first version of this class used ``label=""`` and read as though it tested nulls; a
+    sabotage that applied ``skip_null`` unconditionally passed all of it, because no value was
+    ever null. Both directions are pinned below, against a field that can actually hold one.
+    """
+
+    async def test_two_nulls_collide_by_default(self) -> None:
+        # The stricter reading, and the default: two rows with no supersedes_id are two rows
+        # sharing a tuple.
+        command = _command(_spec(UniqueTogether(fields=("supersedes_id",))))
+        await command.create(_FactCreate(root_id="r1"))
 
         with pytest.raises(CoreException, match="at most one row per"):
-            await command.create(_FactCreate(root_id="r2", label=""))
+            await command.create(_FactCreate(root_id="r2"))
 
-    async def test_skip_null_exempts_them(self) -> None:
-        guarantee = UniqueTogether(fields=("label",), skip_null=True)
-        command = _command(_spec(guarantee))
-        await command.create(_FactCreate(root_id="r1", label="x"))
+    async def test_skip_null_exempts_two_nulls(self) -> None:
+        command = _command(_spec(UniqueTogether(fields=("supersedes_id",), skip_null=True)))
+        await command.create(_FactCreate(root_id="r1"))
+        second = await command.create(_FactCreate(root_id="r2"))
+
+        assert second.supersedes_id is None
+
+    async def test_skip_null_still_refuses_two_equal_values(self) -> None:
+        # The other half: exempting nulls must not exempt everything.
+        command = _command(_spec(UniqueTogether(fields=("supersedes_id",), skip_null=True)))
+        await command.create(_FactCreate(root_id="r1", supersedes_id="s1"))
 
         with pytest.raises(CoreException, match="at most one row per"):
-            await command.create(_FactCreate(root_id="r2", label="x"))
+            await command.create(_FactCreate(root_id="r2", supersedes_id="s1"))
+
+    async def test_a_partly_null_tuple_is_exempt_under_skip_null(self) -> None:
+        # One null in a two-field tuple is enough, which is the semantic a partial index gives.
+        command = _command(
+            _spec(UniqueTogether(fields=("root_id", "supersedes_id"), skip_null=True))
+        )
+        await command.create(_FactCreate(root_id="r1"))
+        second = await command.create(_FactCreate(root_id="r1"))
+
+        assert second.root_id == "r1"
 
 
 # ....................... #
