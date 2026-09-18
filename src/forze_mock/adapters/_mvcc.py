@@ -189,6 +189,20 @@ class MvccTx:
     transaction changed since it was read (not merely since this transaction began). A *blind*
     (rev-less, unlocked) write is not claimed, so it silently loses, as read-committed permits.
     Snapshot/serializable ignore claims and conflict on every write regardless."""
+    guarantee_rechecks: list[tuple[str, Any, Any, Any]] = attrs.field(factory=list)
+    """Writes to re-check against the *committed* store at commit, as ``(ns, key, row, check)``.
+
+    A declared storage guarantee is checked when the row is written, and inside a transaction
+    that check sees the transaction's own view — overlay plus snapshot — which by construction
+    excludes a concurrent transaction's uncommitted rows. Two transactions inserting different
+    ids that carry the same guaranteed tuple therefore both pass, and both commit.
+
+    A real store does not behave that way: a unique index is not snapshot-scoped, so the second
+    inserter blocks on the first and then fails. Re-running the write's own check against the
+    live store at commit is what restores that, and it belongs here rather than in
+    :attr:`created` because the conflict is over a *tuple of values*, which this layer cannot
+    see — the check is supplied by the adapter that knows the spec."""
+
     created: dict[str, set[Any]] = attrs.field(factory=dict)
     """Keys this transaction inserted as NEW rows via a plain ``create`` (INSERT). At commit each is
     re-checked against the live store: an id a concurrent committer already published is a unique
@@ -263,6 +277,12 @@ class MvccTx:
 
         self.rev_guarded.setdefault(ns, {}).setdefault(key, version)
 
+    def mark_guarantee_recheck(self, ns: str, key: Any, row: Any, check: Any) -> None:
+        """Record that *row* at *key* in *ns* must be re-checked at commit (see
+        :attr:`guarantee_rechecks`)."""
+
+        self.guarantee_rechecks.append((ns, key, row, check))
+
     def mark_created(self, ns: str, key: Any) -> None:
         """Record that *key* in *ns* was inserted as a NEW row via ``create`` (see :attr:`created`)."""
 
@@ -295,6 +315,25 @@ class MvccTx:
                         details={"id": str(key), "namespace": ns},
                     )
 
+    def _check_guarantee_conflicts(self, state: Any) -> None:
+        # Re-run each buffered write's own guarantee check against the *committed* store, which
+        # now holds whatever concurrent transactions published since this one began. The
+        # in-transaction check could not see them (that is what isolation means), so without
+        # this a declared uniqueness holds within a transaction and not across two — the
+        # in-memory store would permit a pair of rows every real backend's unique index
+        # refuses, and a simulation would attest a property a deployment does not have.
+        #
+        # Before the serialization checks, and raising ``conflict`` rather than
+        # ``serialization_failure``, for the same reason a duplicate id does: a unique
+        # violation is what the backend raises, at every isolation level.
+        for ns, key, row, check in self.guarantee_rechecks:
+            live = state.documents.get(ns)
+
+            if not live:
+                continue
+
+            check(live, key, row)
+
     def validate(self, state: Any) -> None:
         """Raise on a create unique violation or a conflict with a concurrently-committed write.
 
@@ -309,6 +348,7 @@ class MvccTx:
         """
 
         self._check_create_conflicts(state)
+        self._check_guarantee_conflicts(state)
 
         for version, write_sets in state.mvcc_commit_log:
             if version <= self.begin_version:

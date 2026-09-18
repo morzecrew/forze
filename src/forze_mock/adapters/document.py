@@ -268,6 +268,24 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
 
     # ....................... #
 
+    def _mark_guarantee_recheck(self, pk: UUID, row: JsonDict) -> None:
+        """Queue *row* for a commit-time guarantee re-check (a no-op outside a transaction).
+
+        The write's own check ran against this transaction's view, which cannot see a
+        concurrent transaction's uncommitted rows; re-running it against the committed store at
+        commit is what makes a declared uniqueness hold across two transactions, the way a real
+        unique index does. See
+        :attr:`~forze_mock.adapters._mvcc.MvccTx.guarantee_rechecks`.
+        """
+
+        mvcc = current_mvcc_tx()
+
+        if mvcc is not None:
+            ns = partition_namespace(self.require_tenant_if_aware(), self.namespace)
+            mvcc.mark_guarantee_recheck(ns, pk, row, self._check_guarantees)
+
+    # ....................... #
+
     def _mark_rev_guarded(self, pk: UUID) -> None:
         """Claim *pk* for a rev-guarded write on the active MVCC transaction (a no-op outside one).
 
