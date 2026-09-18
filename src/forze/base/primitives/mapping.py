@@ -31,12 +31,12 @@ class MappingConverter:
     different enums contradict each other, and every argument but the first is rejected: a
     class whose fields are individually fine and cannot be passed together.
 
-    Little is given up by writing ``Any``. What the key type caught was nothing — a
-    string-compatible key is the only kind :meth:`to_str_key` and :meth:`to_str_key_frozen`
-    return, and they check that themselves, raising ``TypeError`` on anything else. What it
-    refused was callers, every one of them holding a route-name enum. The narrowing was real
-    but it only ever landed on ``dict[str, V]``, and the *field's* declared type still says
-    what the mapping holds, which is what a reader and a type checker both go by.
+    Writing ``Any`` trades one check for another, in the direction worth having. The key type
+    did catch a genuinely wrong key: ``dict[int, V]`` was refused at the call site, and is now
+    refused at construction instead, by the ``TypeError`` below — later, and still before the
+    object exists. What it refused *wrongly* was correct callers, every one of them holding a
+    route-name enum whose keys are strings. The *field's* declared type still says what the
+    mapping holds, which is what a reader and a type checker both go by.
     """
 
     @staticmethod
