@@ -136,3 +136,25 @@ class TestTheFilterIsComparedByField:
     def test_an_operator_name_is_not_read_as_a_field(self) -> None:
         with pytest.raises(CoreException, match="partialFilterExpression"):
             self._validate({"exists": True}, {"root_id": {"$exists": True}})
+
+    def test_a_field_inside_a_matched_document_is_not_a_restricted_field(self) -> None:
+        # `{metadata: {deleted: true}}` matches documents whose `metadata` equals that whole
+        # document. It says nothing about a top-level `deleted`, and reading it as if it did
+        # accepts an index that does not restrict the rows the guarantee covers.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"deleted": True}, {"metadata": {"deleted": True}})
+
+    def test_a_document_under_an_operator_is_not_descended_into_either(self) -> None:
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"deleted": True}, {"metadata": {"$eq": {"deleted": True}}})
+
+    def test_the_matched_document_still_restricts_its_own_field(self) -> None:
+        # The contrast: the key itself is a restriction, and dropping it with the value would
+        # refuse a correct index.
+        self._validate({"metadata": "x"}, {"metadata": {"kind": "x"}})
+
+    def test_branches_nested_two_operators_deep_still_count(self) -> None:
+        self._validate(
+            {"status": "current"},
+            {"$or": [{"$and": [{"status": "current"}]}, {"status": "draft"}]},
+        )

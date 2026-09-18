@@ -56,9 +56,14 @@ def _filter_field_roots(expression: object) -> frozenset[str]:
 
     Walks the document rather than searching its text: a substring test reads a guarantee
     filtered on ``status`` as satisfied by an index filtered on ``status_code``, which is
-    exactly the wrong-scope acceptance the comparison exists to catch. Operator keys (``$and``,
-    ``$or``, ``$exists``, …) are descended into, not collected, and a dotted path contributes
-    its root the way a filter's own field roots do.
+    exactly the wrong-scope acceptance the comparison exists to catch.
+
+    Only a *key* names a field, and only at the level where a predicate is written. A field
+    key's value is a literal or an operator document — ``{"metadata": {"deleted": true}}``
+    matches documents whose ``metadata`` equals that whole document, and says nothing about a
+    top-level ``deleted`` — so the value is not descended into. An operator key (``$and``,
+    ``$or``, ``$nor``) carries expressions, so its value is. A dotted path contributes its root,
+    the way a filter's own field roots do.
     """
 
     if isinstance(expression, dict):
@@ -72,18 +77,16 @@ def _filter_field_roots(expression: object) -> frozenset[str]:
 
             else:
                 found.add(name.split(".", 1)[0])
-                found |= _filter_field_roots(value)
 
         return frozenset(found)
 
     if isinstance(expression, list | tuple):
-        return (
-            frozenset().union(
-                *(_filter_field_roots(item) for item in expression)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-            )
-            if expression
-            else frozenset()
-        )
+        found = set()
+
+        for item in expression:  # pyright: ignore[reportUnknownVariableType]
+            found |= _filter_field_roots(item)
+
+        return frozenset(found)
 
     return frozenset()
 
