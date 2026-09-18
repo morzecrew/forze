@@ -1,5 +1,6 @@
 """Compare Pydantic document shapes to Postgres relation columns (startup validation)."""
 
+import re
 from collections.abc import Sequence
 
 import attrs
@@ -340,7 +341,9 @@ async def _require_guarantee_mechanisms(
                 if index.predicate is None:
                     continue
 
-                if any(column not in index.predicate for column in predicate_columns):
+                if any(
+                    not _predicate_names(index.predicate, column) for column in predicate_columns
+                ):
                     continue
 
             elif index.predicate is not None:
@@ -368,6 +371,34 @@ async def _require_guarantee_mechanisms(
                     "columns": list(columns),
                 },
             )
+
+
+# ....................... #
+
+
+_LITERAL = re.compile(r"'(?:''|[^'])*'")
+"""A single-quoted SQL string literal, doubled quotes included — stripped before identifiers are
+matched, so a predicate comparing against ``'deleted'`` does not read as naming that column."""
+
+
+def _predicate_names(predicate: str, column: str) -> bool:
+    """Whether *predicate* references *column* as an identifier rather than as a substring.
+
+    ``pg_get_expr`` hands back deparsed SQL and the only question asked of it is which columns it
+    restricts on, so the match is on identifier boundaries after string literals are removed:
+    ``deleted`` must not be satisfied by ``(deleted_at IS NULL)``, and must not be satisfied by
+    ``(label <> 'deleted')`` either.
+
+    Deliberately not a SQL lexer. What this decides is whether the predicate mentions the right
+    column at all — a floor under an index restricted to the wrong rows, never a proof that it
+    restricts to the right ones, since that is expression equivalence and the database's job. A
+    lexer would buy exactness on quoted identifiers with unusual casing for a check that is
+    approximate by construction.
+    """
+
+    bare = _LITERAL.sub("''", predicate)
+
+    return re.search(rf"(?<![A-Za-z0-9_]){re.escape(column)}(?![A-Za-z0-9_])", bare) is not None
 
 
 # ....................... #
