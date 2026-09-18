@@ -616,7 +616,8 @@ class PostgresIntrospector:
         )
 
         return any(
-            tuple(str(column) for column in (row.get("columns") or [])) == columns for row in rows
+            tuple(str(column) for column in (row.get("columns") or [])) == columns  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            for row in rows
         )
 
     # ....................... #
