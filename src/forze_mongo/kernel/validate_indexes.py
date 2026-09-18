@@ -5,7 +5,14 @@ from collections.abc import Sequence
 import attrs
 
 from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
-from forze.application.contracts.querying import collect_filter_field_roots
+from forze.application.contracts.querying import (
+    QueryFilterExpression,
+    collect_filter_field_roots,
+)
+from forze.application.contracts.querying.internal.nodes import QueryAnd, QueryField
+from forze.application.contracts.querying.internal.parse import (
+    QueryFilterExpressionParser,
+)
 from forze.application.contracts.resolution import (
     RelationSpec,
     is_static_relation,
@@ -51,44 +58,90 @@ def _is_id_unique_index(index: MongoIndexInfo) -> bool:
 # ....................... #
 
 
-def _filter_field_roots(expression: object) -> frozenset[str]:
-    """The field names a ``partialFilterExpression`` restricts on.
+def _equalities(expression: object) -> dict[str, object] | None:
+    """The equality constraints a ``partialFilterExpression`` imposes, or ``None``.
 
-    Walks the document rather than searching its text: a substring test reads a guarantee
-    filtered on ``status`` as satisfied by an index filtered on ``status_code``, which is
-    exactly the wrong-scope acceptance the comparison exists to catch.
+    ``None`` means "this is not a plain conjunction of equalities", which is the honest answer
+    for a range, an ``$exists``, an ``$or`` or anything else: whether such an index covers the
+    documents a guarantee selects is an implication between two predicates, and nothing here
+    decides that. The caller refuses what it cannot prove, so ``None`` is a refusal rather than
+    a shrug.
 
-    Only a *key* names a field, and only at the level where a predicate is written. A field
-    key's value is a literal or an operator document — ``{"metadata": {"deleted": true}}``
-    matches documents whose ``metadata`` equals that whole document, and says nothing about a
-    top-level ``deleted`` — so the value is not descended into. An operator key (``$and``,
-    ``$or``, ``$nor``) carries expressions, so its value is. A dotted path contributes its root,
-    the way a filter's own field roots do.
+    ``{"f": v}`` and ``{"f": {"$eq": v}}`` are the same constraint and reduce to the same pair;
+    a top-level ``$and`` is flattened, since it is how a filter with one field per clause is
+    usually written. Everything else gives up.
     """
 
-    if isinstance(expression, dict):
-        found: set[str] = set()
+    if not isinstance(expression, dict):
+        return None
 
-        for key, value in expression.items():  # pyright: ignore[reportUnknownVariableType]
-            name = str(key)
+    found: dict[str, object] = {}
 
-            if name.startswith("$"):
-                found |= _filter_field_roots(value)
+    for key, value in expression.items():  # pyright: ignore[reportUnknownVariableType]
+        name = str(key)
 
-            else:
-                found.add(name.split(".", 1)[0])
+        if name == "$and":
+            if not isinstance(value, list | tuple):
+                return None
 
-        return frozenset(found)
+            for branch in value:  # pyright: ignore[reportUnknownVariableType]
+                nested = _equalities(branch)
 
-    if isinstance(expression, list | tuple):
-        found = set()
+                if nested is None:
+                    return None
 
-        for item in expression:  # pyright: ignore[reportUnknownVariableType]
-            found |= _filter_field_roots(item)
+                found.update(nested)
 
-        return frozenset(found)
+            continue
 
-    return frozenset()
+        if name.startswith("$"):
+            return None
+
+        if isinstance(value, dict):
+            keys = list(value)  # pyright: ignore[reportUnknownArgumentType]
+
+            if keys != ["$eq"]:
+                return None
+
+            found[name] = value["$eq"]  # pyright: ignore[reportUnknownArgumentType]
+
+            continue
+
+        found[name] = value
+
+    return found
+
+
+# ....................... #
+
+
+def _guarantee_equalities(where: QueryFilterExpression) -> dict[str, object] | None:  # type: ignore[valid-type]
+    """The same reduction for a guarantee's own filter, read off the parsed expression.
+
+    Parsed rather than pattern-matched on the raw mapping, so the two sides of the comparison
+    are reduced from the same kind of structure and a shorthand spelling on either side cannot
+    make them differ.
+    """
+
+    parsed = QueryFilterExpressionParser.parse(where)
+    found: dict[str, object] = {}
+
+    # The parser wraps a filter's fields in a conjunction, so anything else at the root — an
+    # `$or`, a negation — is a shape whose document set this does not decide, and the caller
+    # refuses what it cannot prove.
+    if not isinstance(parsed, QueryAnd):
+        return None
+
+    for node in parsed.items:
+        if not isinstance(node, QueryField) or node.op != "$eq":
+            return None
+
+        found[node.name] = node.value
+
+    return found
+
+
+# ....................... #
 
 
 # ....................... #
@@ -112,12 +165,26 @@ def _require_guarantee_indexes(
     ordinary ascending/descending keys count — a ``text`` or ``hashed`` index is a different
     structure over a different value.
 
-    A filtered guarantee needs a ``partialFilterExpression`` naming the fields the filter
-    selects on. A ``sparse`` index does **not** serve there, however close it reads: it skips a
+    A filtered guarantee needs a ``partialFilterExpression`` selecting the same documents. The
+    index's filter and the guarantee's are each reduced to their equality constraints and
+    compared, so an index over the right field and the wrong value — ``{is_current: false}``
+    for a guarantee about current documents — is refused rather than counted.
+
+    Anything that does not reduce that way is refused too, and deliberately: whether an index
+    restricted by a range, an ``$exists`` or an ``$or`` covers the documents a guarantee selects
+    is an implication between two predicates, which nothing here decides. A refusal names the
+    condition the index needs, and a migration written from that message satisfies it. Note that
+    an index covering *more* documents is refused as well, for the reason a plain index is: the
+    extra documents are ones the guarantee meant to leave alone, and constraining them breaks
+    the shape the spec declared.
+
+    Postgres is checked more loosely, and the asymmetry is in the data rather than the effort:
+    ``pg_get_expr`` hands back deparsed SQL, so comparing values there means parsing a
+    dialect, while Mongo stores the filter as a document that can simply be read.
+
+    A ``sparse`` index does **not** serve as a filter, however close it reads: it skips a
     document only when every indexed field is missing, still indexes an explicit null, and says
-    nothing about the guarantee's condition. What the filter *means* is still not compared — an
-    expression equivalence is the server's judgement, not a startup check's — so this catches a
-    predicate over the wrong fields and not one that is merely wrong.
+    nothing about the guarantee's condition.
     """
 
     for guarantee in spec.guarantees:
@@ -128,6 +195,9 @@ def _require_guarantee_indexes(
         wanted = frozenset(fields)
         predicate_fields = (
             collect_filter_field_roots(guarantee.where) if guarantee.where else frozenset()
+        )
+        wanted_filter = (
+            _guarantee_equalities(guarantee.where) if guarantee.where is not None else None
         )
 
         for index in indexes:
@@ -140,11 +210,11 @@ def _require_guarantee_indexes(
             if frozenset(key for key, _ in index.keys) != wanted:
                 continue
 
-            if predicate_fields:
+            if guarantee.where is not None:
                 if index.partial_filter is None:
                     continue
 
-                if not predicate_fields <= _filter_field_roots(index.partial_filter):
+                if wanted_filter is None or _equalities(index.partial_filter) != wanted_filter:
                     continue
 
             elif index.partial_filter is not None or index.sparse:
@@ -157,8 +227,15 @@ def _require_guarantee_indexes(
             keys = ", ".join(f"{field}: 1" for field in fields)
             filtered = bool(predicate_fields)
             condition = ", ".join(sorted(predicate_fields))
+            wanted_json = (
+                "{"
+                + ", ".join(f"{name}: {value!r}" for name, value in sorted(wanted_filter.items()))
+                + "}"
+                if wanted_filter
+                else f"<a condition over {condition}>"
+            )
             options = (
-                f"{{unique: true, partialFilterExpression: {{<a condition over {condition}>}}}}"
+                f"{{unique: true, partialFilterExpression: {wanted_json}}}"
                 if filtered
                 else "{unique: true}"
             )
@@ -168,7 +245,7 @@ def _require_guarantee_indexes(
                 + (" among the documents its filter selects" if filtered else "")
                 + f", and {database}.{collection} has no unique index on those fields"
                 + (
-                    f" with a partialFilterExpression over {condition}"
+                    f" whose partialFilterExpression selects the same documents as {condition}"
                     if filtered
                     else " covering every document"
                 )
