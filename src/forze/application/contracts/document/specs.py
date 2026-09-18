@@ -22,6 +22,7 @@ from ..conformity import (
     validate_materialized_computed,
 )
 from ..crypto import FieldEncryption
+from ..guarantees import StorageGuarantees
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
@@ -206,6 +207,17 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         repr=False,
     )
     """Optional codec overrides; defaults are derived from model types."""
+
+    guarantees: StorageGuarantees = ()
+    """What the store serving this document must enforce, declared as properties of the data.
+
+    A guarantee is reconciled against the resolved adapter's declaration when the port is
+    built, so a backend that cannot keep one refuses at wiring rather than at the first write
+    that would have violated it. Nothing here creates an index or a constraint: the deployment's
+    migration is what satisfies a guarantee, and startup validation is what says whether it did.
+
+    Empty by default, and empty asks for nothing — the reconciliation is inert for a spec that
+    declares no guarantee, which is every spec that has not opted in."""
 
     # ....................... #
 
