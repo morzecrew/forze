@@ -23,10 +23,15 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
     KeyedUpdate,
 )
-from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
+from forze.application.contracts.guarantees import (
+    NonOverlapping,
+    StorageGuaranteeCapabilities,
+    UniqueTogether,
+)
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule
+from forze_mock.adapters.document import MockDocumentAdapter
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
@@ -321,3 +326,26 @@ class TestAnUnenforcedMemberNeverReachesAWrite:
             _command(spec)
 
         assert caught.value.code == "storage_guarantee_unsupported"
+
+    async def test_the_write_path_still_refuses_if_reconciliation_is_bypassed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The arm reconciliation makes unreachable, reached on purpose. A store that declared
+        # a member it does not implement must refuse the write, not store the row — otherwise
+        # the declaration is the only thing keeping the guarantee, and a wrong declaration is
+        # exactly the mistake this arm exists for.
+        monkeypatch.setattr(
+            MockDocumentAdapter,
+            "storage_guarantees",
+            StorageGuaranteeCapabilities(
+                unique_together=True,
+                unique_together_filtered=True,
+                non_overlapping=True,
+            ),
+        )
+        spec = _spec(NonOverlapping(key=("root_id",), period=("label", "supersedes_id")))
+        command = _command(spec)
+
+        with pytest.raises(CoreException, match="which no store enforces yet"):
+            await command.create(_FactCreate(root_id="r1"))
