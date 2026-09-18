@@ -45,6 +45,7 @@ plus per-aggregate policy:
 | `cache` | `CacheSpec \| None` | `None` | read-through [cache](../../data-events/caching.md) for `get` |
 | `sensitive` | `bool` | `False` | read model carries secrets; generated HTTP/MCP surfaces refuse to project it |
 | `codecs` | `DocumentCodecs \| None` | `None` | codec overrides (auto-derived from the model types by default) |
+| `guarantees` | `Sequence[StorageGuarantee]` | `()` | properties the store must enforce at write time (see below) |
 
 `write` is a `DocumentWriteTypes` TypedDict — `domain` (the `Document` subclass),
 `create_cmd`, and an optional `update_cmd`.
@@ -86,6 +87,75 @@ read-back (Postgres, Mongo, and Firestore). Because the value is dropped (not pe
 it is **explicit-only** — never auto-derived — requires a `write` spec, and each name must
 be a defaulted, non-identity domain field. Use it for a domain field that is computed or
 stored elsewhere, not on this table.
+
+### Storage guarantees
+
+A guarantee is a property of the data that the **store** refuses to violate — not something
+the framework checks after the fact. Declare it and a backend that cannot keep it refuses at
+wiring:
+
+```python
+DocumentSpec(
+    name="fact",
+    read=Fact,
+    write={"domain": FactDoc, "create_cmd": CreateFact},
+    guarantees=(
+        UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}}),
+    ),
+)
+```
+
+Two sentences carry the whole doctrine:
+
+- **A guarantee is declared, validated and never created.** Nothing here issues DDL. An adapter
+  that created an index would take a lock on a production table nobody asked it to take, and
+  would hide a missing migration until the next deployment.
+- **Your migration is the thing that satisfies it.** Startup checks that the mechanism is there
+  and prints the statement that would create it.
+
+| Member | Property | Postgres | Mongo | In-memory |
+|--------|----------|----------|-------|-----------|
+| `UniqueTogether(fields=…)` | at most one row per field tuple | unique index | unique index | ✅ |
+| `UniqueTogether(fields=…, where=…)` | …among the rows the filter selects | partial unique index | `partialFilterExpression` | ✅ |
+| `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `sparse` index | ✅ |
+| `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | — | — | — |
+
+`NonOverlapping` is defined and enforced by nothing yet, so every backend refuses a spec that
+declares one. That is deliberate: a capability that reconciles and then fails at the first write
+is worse than one that says no.
+
+Three things happen to a declared guarantee, and a failure at any of them is loud:
+
+1. **Reconciliation**, when the port is built. A backend that cannot keep the guarantee raises
+   `precondition` with code `storage_guarantee_unsupported`, naming which part is missing —
+   "uniqueness over a field tuple" reads differently from "uniqueness restricted to a subset of
+   rows", and they need different fixes. `check_wiring` reports it like any other resolution
+   failure, so CI sees it before production does.
+2. **Validation**, at startup. The live catalog is checked for the index, and the refusal names
+   the DDL. Only the index's *columns* and whether it is restricted are compared — not what its
+   predicate says, which would mean deciding whether two boolean expressions agree.
+3. **Enforcement**, at write time, by the store. A violating write raises `conflict`, from every
+   backend and from the in-memory store alike.
+
+!!! warning "A guarantee with no `where` covers soft-deleted rows too"
+
+    A soft-deleted row is still a row: its tuple stays reserved and no replacement can be
+    created. A spec with soft deletion usually filters the deleted rows out — which also means
+    an un-delete can conflict, and is refused.
+
+#### Guarantee or invariant?
+
+Both can express "one current row per fact", and the question comes up immediately.
+
+| | `SystemInvariant` | Storage guarantee |
+|---|---|---|
+| Declares | a law over a read-set, reduced to one number | a property the store refuses to violate |
+| Enforced by | the framework, in or after the writing transaction | the store, at write time |
+| Detects | a violation that already happened, or prevents it under isolation | prevents it, always |
+| Expresses | anything `SumOf` / `CountAll` can score | uniqueness, non-overlap |
+
+Declaring both is legitimate where the guarantee is the prevention and the invariant is the
+proof — a simulation asserts the invariant over a workload the guarantee is quietly keeping.
 
 ## Query port
 
