@@ -21,7 +21,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
-from forze.application.contracts.guarantees import UniqueTogether
+from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -154,6 +154,30 @@ class TestStartupValidation:
         # The inert case: a table with no unique index at all is fine for a spec that asks
         # for nothing, which is every spec that has not opted in.
         await _validate(pg_client, await _table(pg_client))
+
+    async def test_a_member_no_store_maps_is_skipped_rather_than_crashing(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # Reconciliation refuses `NonOverlapping` today, so validation never meets one — but
+        # it will the moment a store maps it, and the transition must not be a crash on a
+        # member this function does not understand. Reached directly, since the hook takes a
+        # schema spec without going through reconciliation.
+        table = await _table(pg_client)
+        spec = PostgresDocumentSchemaSpec(
+            name="fact",
+            read_model=_Read,
+            read_relation=("public", table),
+            write_domain_model=_Domain,
+            write_create_model=_Create,
+            write_relation=("public", table),
+            bookkeeping_strategy="application",
+            guarantees=(NonOverlapping(key=("root_id",), period=("id", "root_id")),),
+        )
+        intro = PostgresIntrospector(client=pg_client)
+        ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
+
+        await PostgresDocumentSchemaValidationHook(specs=(spec,))(ctx)
 
     async def test_a_partial_index_on_other_columns_does_not_count(
         self,

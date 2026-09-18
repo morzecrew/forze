@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.guarantees import UniqueTogether
+from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
 from forze.application.execution import Deps, LifecyclePlan
 from forze.base.exceptions import CoreException
 from forze_mongo.execution.deps import MongoClientDepKey
@@ -130,6 +130,26 @@ class TestMongoStartupValidation:
             (db_name, collection),
             UniqueTogether(fields=("supersedes_id",), skip_null=True),
         )
+
+    async def test_a_member_no_store_maps_is_skipped_rather_than_crashing(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # As on Postgres: the member arrives when a store maps it, and until then validation
+        # must pass it by rather than read fields it does not have.
+        relation = await _collection(mongo_client)
+        step = mongo_document_index_validation_lifecycle_step(
+            specs=[
+                MongoDocumentIndexSpec(
+                    name="fact",
+                    write_relation=relation,
+                    guarantees=(NonOverlapping(key=("root_id",), period=("a", "b")),),
+                ),
+            ],
+        )
+        ctx = context_from_deps(Deps.plain({MongoClientDepKey: mongo_client}))
+
+        await LifecyclePlan.from_steps(step).freeze().startup(ctx)
 
     async def test_declaring_nothing_validates_nothing(
         self,
