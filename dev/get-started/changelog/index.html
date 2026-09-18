@@ -8614,6 +8614,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>An outbound HTTP reply came back as a bare <code>BaseModel</code>.</strong> <code>HttpServicePort.invoke</code> took the operation's <em>name</em>, and a name cannot carry the <code>args_type</code> and <code>return_type</code> its <code>HttpOperationSpec</code> declares — so every field read off a response was an error under a strict type checker, and a handler that named its own args model was refused by <code>MockHttpRegistry.on</code>. <code>invoke</code> now also takes the operation spec itself (<code>invoke(model_messages, ModelArgs(...))</code>), which resolves through the new <code>HttpServiceSpec.operation</code> and hands back the declared model; passing a spec another service declares is refused rather than resolved by its name. The name form is unchanged, for an operation chosen from config.</p>
+</li>
+<li>
+<p><strong>Two mapping fields on one module could not be passed together.</strong> The <code>MappingConverter</code> converters named a key type variable, and <code>attrs</code> publishes a converter's input as the generated <code>__init__</code> parameter type — so one shared, once-solved key variable made a strict type checker reject every <code>StrEnum</code>-keyed argument but the first, as in <code>PostgresDepsModule(client=…, rw_documents=…, searches=…)</code>. The key is unconstrained now — <code>Mapping</code> is invariant in it, so no named type admits both <code>str</code> and a <code>StrEnum</code> — which moves the one check it did make, against a genuinely non-string key, from the call site to construction.</p>
+</li>
+<li>
 <p><strong>A parallel <abbr title="Deterministic Simulation Testing">DST</abbr> sweep died under a coverage session.</strong> <code>parallel_sweep</code> ran its seeds through a <code>ProcessPoolExecutor</code>, which pickles a private stdlib task class by name; under <code>pytest --cov</code> with a module-level source the parent could no longer resolve that name to the same object and every sweep failed before a worker saw a seed. It runs on a <code>multiprocessing.Pool</code> now, which pickles only the caller's <code>run</code> and the seeds.</p>
 </li>
 <li>

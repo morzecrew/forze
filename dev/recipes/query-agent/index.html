@@ -6524,18 +6524,15 @@ provider. Declare that route as a service and say so:</p>
     <span class="n">tool_call</span><span class="p">:</span> <span class="n">ModelToolCall</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
 
 
-<span class="n">model_service</span> <span class="o">=</span> <span class="n">HttpServiceSpec</span><span class="p">(</span>
-    <span class="n">name</span><span class="o">=</span><span class="s2">"model"</span><span class="p">,</span>
-    <span class="n">operations</span><span class="o">=</span><span class="p">{</span>
-        <span class="s2">"messages"</span><span class="p">:</span> <span class="n">HttpOperationSpec</span><span class="p">(</span>
-            <span class="n">name</span><span class="o">=</span><span class="s2">"messages"</span><span class="p">,</span>
-            <span class="n">method</span><span class="o">=</span><span class="s2">"POST"</span><span class="p">,</span>
-            <span class="n">path</span><span class="o">=</span><span class="s2">"/v1/messages"</span><span class="p">,</span>
-            <span class="n">args_type</span><span class="o">=</span><span class="n">ModelArgs</span><span class="p">,</span>
-            <span class="n">return_type</span><span class="o">=</span><span class="n">ModelReply</span><span class="p">,</span>
-        <span class="p">),</span>
-    <span class="p">},</span>
+<span class="n">model_messages</span> <span class="o">=</span> <span class="n">HttpOperationSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"messages"</span><span class="p">,</span>
+    <span class="n">method</span><span class="o">=</span><span class="s2">"POST"</span><span class="p">,</span>
+    <span class="n">path</span><span class="o">=</span><span class="s2">"/v1/messages"</span><span class="p">,</span>
+    <span class="n">args_type</span><span class="o">=</span><span class="n">ModelArgs</span><span class="p">,</span>
+    <span class="n">return_type</span><span class="o">=</span><span class="n">ModelReply</span><span class="p">,</span>
 <span class="p">)</span>
+
+<span class="n">model_service</span> <span class="o">=</span> <span class="n">HttpServiceSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"model"</span><span class="p">,</span> <span class="n">operations</span><span class="o">=</span><span class="p">{</span><span class="s2">"messages"</span><span class="p">:</span> <span class="n">model_messages</span><span class="p">})</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">model_wiring</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">HttpServiceConfig</span><span class="p">]:</span>
@@ -6580,8 +6577,11 @@ the refusal, which is the part worth pinning.</p>
 <span class="sd">    """</span>
 
     <span class="n">tools</span> <span class="o">=</span> <span class="n">answering_tools</span><span class="p">(</span><span class="n">registry</span><span class="p">)</span>
+    <span class="c1"># The operation, not its name: what comes back is `ModelReply` because that is the</span>
+    <span class="c1"># `return_type` this spec declares. A name would type-check just as well and hand back a</span>
+    <span class="c1"># bare `BaseModel`, leaving the fields below unreachable.</span>
     <span class="n">reply</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">service</span><span class="p">(</span><span class="n">model_service</span><span class="p">)</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span>
-        <span class="s2">"messages"</span><span class="p">,</span>
+        <span class="n">model_messages</span><span class="p">,</span>
         <span class="n">ModelArgs</span><span class="p">(</span>
             <span class="n">question</span><span class="o">=</span><span class="n">question</span><span class="p">,</span>
             <span class="n">tools</span><span class="o">=</span><span class="p">[</span>
@@ -6617,13 +6617,18 @@ the refusal, which is the part worth pinning.</p>
     <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">is_error</span><span class="p">:</span>
         <span class="k">return</span> <span class="sa">f</span><span class="s2">"tool refused: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">"</span>
 
-    <span class="n">hits</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">[</span><span class="s2">"hits"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="p">[]</span>
+    <span class="n">hits</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">[</span><span class="s2">"hits"</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="p">[]</span>
 
     <span class="k">return</span> <span class="s2">"; "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">hit</span><span class="p">)</span> <span class="k">for</span> <span class="n">hit</span> <span class="ow">in</span> <span class="n">hits</span><span class="p">)</span>
 </code></pre></div>
 <p>A production loop keeps going — feed the result back, let the model ask for another tool,
 stop when it answers in prose. Nothing about that shape is the framework's business, and
 the bridge does not try to own it: it dispatches one call at a time and returns.</p>
+<p><code>invoke</code> is handed the operation rather than its name, and that is what makes <code>reply</code> a
+<code>ModelReply</code> here: the declaration carries <code>args_type</code> and <code>return_type</code>, so both reach
+your own variables. Naming the operation <code>"messages"</code> works too and hands back a bare
+<code>BaseModel</code> — the right form when the operation comes from config and there is no
+declaration to point at, and the wrong one when you meant to read a field off the answer.</p>
 <p><code>dispatch_tool_use</code> runs the call through <code>run_operation</code> on the context you pass, so
 tenancy, permissions, the deadline and audit apply exactly as they would to an HTTP
 request for the same operation. A governed failure — a denied permission, a field outside
