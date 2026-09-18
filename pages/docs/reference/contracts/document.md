@@ -117,12 +117,15 @@ Two sentences carry the whole doctrine:
 |--------|----------|----------|-------|-----------|
 | `UniqueTogether(fields=…)` | at most one row per field tuple | unique index | unique index | ✅ |
 | `UniqueTogether(fields=…, where=…)` | …among the rows the filter selects | partial unique index | `partialFilterExpression` | ✅ |
-| `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `sparse` index | ✅ |
+| `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | — | ✅ |
 | `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | — | — | — |
 
 `NonOverlapping` is defined and enforced by nothing yet, so every backend refuses a spec that
-declares one. That is deliberate: a capability that reconciles and then fails at the first write
-is worse than one that says no.
+declares one. Mongo refuses `skip_null` for the same reason: a `sparse` index reads like the
+right mechanism and is not one — it skips a document only when *every* indexed field is missing,
+and it still indexes an explicit null, so the tuple the exemption was meant to let through stays
+in the index and conflicts. A capability that reconciles and then fails at the first write is
+worse than one that says no.
 
 Three things happen to a declared guarantee, and a failure at any of them is loud:
 
@@ -132,10 +135,22 @@ Three things happen to a declared guarantee, and a failure at any of them is lou
    rows", and they need different fixes. `check_wiring` reports it like any other resolution
    failure, so CI sees it before production does.
 2. **Validation**, at startup. The live catalog is checked for the index, and the refusal names
-   the DDL. Only the index's *columns* and whether it is restricted are compared — not what its
-   predicate says, which would mean deciding whether two boolean expressions agree.
+   the DDL. An index counts when it covers the guarantee's fields — as a set, since uniqueness
+   over a tuple does not depend on the order an index lists it in — when it is live and valid,
+   and when its restriction mentions the fields the declaration filters on. What the predicate
+   *means* is not compared: deciding whether two boolean expressions agree is the database's
+   job, so an index filtered on the right column but the wrong value passes. The check is a
+   floor under a forgotten migration, not a proof that the mechanism matches.
 3. **Enforcement**, at write time, by the store. A violating write raises `conflict`, from every
-   backend and from the in-memory store alike.
+   backend and from the in-memory store alike — including across two concurrent transactions,
+   which the in-memory store rechecks at commit because a unique index is not snapshot-scoped.
+
+!!! note "Postgres counts nulls as distinct; a guarantee does not"
+
+    With `skip_null` off, two rows sharing a tuple that holds a null conflict. An ordinary
+    Postgres unique index permits them, so a guarantee over a nullable column asks for
+    `UNIQUE NULLS NOT DISTINCT` and startup refuses the plain index by name. Over `NOT NULL`
+    columns the two readings cannot differ and an ordinary index is exactly the mechanism.
 
 !!! warning "A guarantee with no `where` covers soft-deleted rows too"
 
