@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two mapping fields on one module could not be passed together.** The `MappingConverter` converters named a key type variable, and `attrs` publishes a converter's input as the generated `__init__` parameter type — so one shared, once-solved key variable made a strict type checker reject every `StrEnum`-keyed argument but the first, as in `PostgresDepsModule(client=…, rw_documents=…, searches=…)`. The key is unconstrained now (`Mapping` is invariant in it, so no named type admits both `str` and a `StrEnum`), leaving the runtime key check that was always the real enforcement.
+
 - **A parallel DST sweep died under a coverage session.** `parallel_sweep` ran its seeds through a `ProcessPoolExecutor`, which pickles a private stdlib task class by name; under `pytest --cov` with a module-level source the parent could no longer resolve that name to the same object and every sweep failed before a worker saw a seed. It runs on a `multiprocessing.Pool` now, which pickles only the caller's `run` and the seeds.
 
 - **`HttpAuthConfig` with no token sent `Authorization: Bearer None`.** An optional secret field converted `None` into a `SecretStr` wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on `HttpClientLifecycleStep.auth_token` and Meilisearch's `api_key`, where consumers happened to unwrap defensively.
