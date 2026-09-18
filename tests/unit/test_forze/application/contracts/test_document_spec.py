@@ -325,9 +325,7 @@ def test_lenient_identity_field_rejected() -> None:
         DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"id"})
 
     with pytest.raises(CoreException, match="identity/audit fields"):
-        DocumentSpec(
-            name="users", read=_LenientRead, lenient_read_fields={"last_update_at"}
-        )
+        DocumentSpec(name="users", read=_LenientRead, lenient_read_fields={"last_update_at"})
 
 
 def test_lenient_unknown_field_rejected() -> None:
@@ -354,9 +352,7 @@ def test_lenient_default_factory_warns() -> None:
             lenient_read_fields={"refreshed_at"},
         )
 
-    assert any(
-        e["log_level"] == "warning" and "default_factory" in e["event"] for e in logs
-    )
+    assert any(e["log_level"] == "warning" and "default_factory" in e["event"] for e in logs)
 
 
 def test_lenient_field_rejected_in_query_policy() -> None:
@@ -436,9 +432,7 @@ def _omit_write() -> DocumentWriteTypes:
 
 
 def test_write_omit_field_round_trips() -> None:
-    spec = DocumentSpec(
-        name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"}
-    )
+    spec = DocumentSpec(name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"})
     assert spec.write_omit_fields == frozenset({"label"})
 
 
@@ -450,34 +444,24 @@ def test_write_omit_requires_write_spec() -> None:
 def test_write_omit_required_domain_field_rejected() -> None:
     # ``name`` has no default — it cannot hydrate on read-back.
     with pytest.raises(CoreException, match="has no default"):
-        DocumentSpec(
-            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"name"}
-        )
+        DocumentSpec(name="doc", read=_Read, write=_omit_write(), write_omit_fields={"name"})
 
 
 def test_write_omit_identity_field_rejected() -> None:
     with pytest.raises(CoreException, match="identity/audit fields"):
-        DocumentSpec(
-            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"rev"}
-        )
+        DocumentSpec(name="doc", read=_Read, write=_omit_write(), write_omit_fields={"rev"})
 
 
 def test_write_omit_unknown_field_rejected() -> None:
     with pytest.raises(CoreException, match="not non-computed fields"):
-        DocumentSpec(
-            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"ghost"}
-        )
+        DocumentSpec(name="doc", read=_Read, write=_omit_write(), write_omit_fields={"ghost"})
 
 
 def test_write_omit_warns_silent_drop() -> None:
     with structlog.testing.capture_logs() as logs:
-        DocumentSpec(
-            name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"}
-        )
+        DocumentSpec(name="doc", read=_Read, write=_omit_write(), write_omit_fields={"label"})
 
-    assert any(
-        e["log_level"] == "warning" and "silently dropped" in e["event"] for e in logs
-    )
+    assert any(e["log_level"] == "warning" and "silently dropped" in e["event"] for e in logs)
 
 
 # ----------------------- #
@@ -547,16 +531,12 @@ def test_derived_required_field_accepted() -> None:
     with pytest.raises(CoreException, match="has no default"):
         DocumentSpec(name="orders", read=_DerivedRead, lenient_read_fields={"supplier"})
 
-    spec = DocumentSpec(
-        name="orders", read=_DerivedRead, derived_read_fields=_derived()
-    )
+    spec = DocumentSpec(name="orders", read=_DerivedRead, derived_read_fields=_derived())
     assert sorted(spec.derived_read_fields) == ["supplier"]
 
 
 def test_derived_field_dropped_from_query_axes() -> None:
-    spec = DocumentSpec(
-        name="orders", read=_DerivedRead, derived_read_fields=_derived()
-    )
+    spec = DocumentSpec(name="orders", read=_DerivedRead, derived_read_fields=_derived())
 
     for axis in (
         spec.filterable_fields(),
@@ -585,30 +565,22 @@ def test_derived_unknown_field_rejected() -> None:
             name="orders",
             read=_DerivedRead,
             derived_read_fields={
-                "ghost": DerivedReadField(
-                    source="suppliers", via="supplier_id", field="name"
-                )
+                "ghost": DerivedReadField(source="suppliers", via="supplier_id", field="name")
             },
         )
 
 
 def test_derived_unknown_join_key_rejected() -> None:
     with pytest.raises(CoreException, match="which is not a non-computed field"):
-        DocumentSpec(
-            name="orders", read=_DerivedRead, derived_read_fields=_derived(via="nope")
-        )
+        DocumentSpec(name="orders", read=_DerivedRead, derived_read_fields=_derived(via="nope"))
 
 
 def test_derived_blank_source_rejected() -> None:
     with pytest.raises(CoreException, match="blank source"):
-        DocumentSpec(
-            name="orders", read=_DerivedRead, derived_read_fields=_derived(source="  ")
-        )
+        DocumentSpec(name="orders", read=_DerivedRead, derived_read_fields=_derived(source="  "))
 
     with pytest.raises(CoreException, match="blank source field"):
-        DocumentSpec(
-            name="orders", read=_DerivedRead, derived_read_fields=_derived(field="")
-        )
+        DocumentSpec(name="orders", read=_DerivedRead, derived_read_fields=_derived(field=""))
 
 
 def test_derived_join_key_may_not_itself_be_derived() -> None:
@@ -617,12 +589,8 @@ def test_derived_join_key_may_not_itself_be_derived() -> None:
             name="orders",
             read=_DerivedRead,
             derived_read_fields={
-                "supplier": DerivedReadField(
-                    source="suppliers", via="note", field="name"
-                ),
-                "note": DerivedReadField(
-                    source="suppliers", via="supplier_id", field="code"
-                ),
+                "supplier": DerivedReadField(source="suppliers", via="note", field="name"),
+                "note": DerivedReadField(source="suppliers", via="supplier_id", field="code"),
             },
         )
 
@@ -634,9 +602,7 @@ def test_derived_lenient_overlap_rejected() -> None:
             read=_DerivedRead,
             lenient_read_fields={"note"},
             derived_read_fields={
-                "note": DerivedReadField(
-                    source="suppliers", via="supplier_id", field="name"
-                )
+                "note": DerivedReadField(source="suppliers", via="supplier_id", field="name")
             },
         )
 
@@ -649,9 +615,7 @@ def test_derived_materialized_overlap_rejected() -> None:
             write=_priced_write(),
             materialized={"total"},
             derived_read_fields={
-                "total": DerivedReadField(
-                    source="suppliers", via="id", field="total"
-                )
+                "total": DerivedReadField(source="suppliers", via="id", field="total")
             },
         )
 
@@ -702,9 +666,7 @@ def test_derived_nullable_key_requires_optional() -> None:
             name="orders",
             read=_NullableKeyRead,
             derived_read_fields={
-                "supplier": DerivedReadField(
-                    source="suppliers", via="supplier_id", field="name"
-                )
+                "supplier": DerivedReadField(source="suppliers", via="supplier_id", field="name")
             },
         )
 
@@ -728,9 +690,7 @@ def test_derived_nullable_key_requires_optional() -> None:
 def test_validate_derived_read_fields_accepts_nothing() -> None:
     """The empty case is decided explicitly, matching the leniency sibling."""
 
-    assert (
-        validate_derived_read_fields(model_type=_Read, derived={}, spec_name="doc") is None
-    )
+    assert validate_derived_read_fields(model_type=_Read, derived={}, spec_name="doc") is None
 
 
 def test_derived_none_annotated_key_requires_optional() -> None:
@@ -745,9 +705,7 @@ def test_derived_none_annotated_key_requires_optional() -> None:
             name="orders",
             read=_NoneKeyRead,
             derived_read_fields={
-                "supplier": DerivedReadField(
-                    source="suppliers", via="supplier_id", field="name"
-                )
+                "supplier": DerivedReadField(source="suppliers", via="supplier_id", field="name")
             },
         )
 
@@ -772,9 +730,7 @@ def test_derived_field_may_not_be_settable_on_a_command() -> None:
             read=_JoinRead,
             write=DocumentWriteTypes(domain=_JoinDomain, create_cmd=_JoinCreate),
             derived_read_fields={
-                "supplier": DerivedReadField(
-                    source="suppliers", via="supplier_id", field="name"
-                )
+                "supplier": DerivedReadField(source="suppliers", via="supplier_id", field="name")
             },
         )
 
@@ -846,6 +802,30 @@ def test_a_guarantee_over_a_derived_field_is_refused() -> None:
             derived_read_fields={"supplier_name": None},
             guarantees=(UniqueTogether(fields=("supplier_name",)),),
         )
+
+
+def test_a_guarantee_filter_naming_an_unknown_field_is_refused() -> None:
+    # Worse than the same mistake in `fields`: a filter over a name no row carries selects no
+    # rows, so the uniqueness holds over the empty set and every duplicate it was declared to
+    # refuse is accepted. Nothing ever fails, which is why it has to fail here.
+    with pytest.raises(CoreException, match="does not store"):
+        DocumentSpec(
+            name="orders",
+            read=_Read,
+            write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create),
+            guarantees=(UniqueTogether(fields=("name",), where={"$values": {"nmae": "x"}}),),
+        )
+
+
+def test_a_guarantee_filter_over_a_stored_field_is_accepted() -> None:
+    spec = DocumentSpec(
+        name="orders",
+        read=_Read,
+        write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create),
+        guarantees=(UniqueTogether(fields=("name",), where={"$values": {"name": "x"}}),),
+    )
+
+    assert spec.guarantees
 
 
 def test_a_non_overlap_guarantee_checks_its_key_and_its_period() -> None:

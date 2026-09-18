@@ -23,7 +23,11 @@ from ..conformity import (
 )
 from ..crypto import FieldEncryption
 from ..guarantees import NonOverlapping, StorageGuarantees, UniqueTogether
-from ..querying import QueryFieldPolicy, QuerySortExpression
+from ..querying import (
+    QueryFieldPolicy,
+    QuerySortExpression,
+    collect_filter_field_roots,
+)
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 from .codecs import DocumentCodecs, document_codecs_for_spec
@@ -376,6 +380,15 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             match guarantee:
                 case UniqueTogether():
                     named = frozenset(guarantee.fields)
+                    # The filter is checked with the fields and not after them: a name that is
+                    # not on the row selects no rows at all, so the guarantee holds over the
+                    # empty set and every duplicate it was declared to refuse is accepted. A
+                    # vacuous guarantee is worse than a wrong one — nothing ever fails.
+                    named |= (
+                        collect_filter_field_roots(guarantee.where)
+                        if guarantee.where is not None
+                        else frozenset()
+                    )
 
                 case NonOverlapping():
                     named = frozenset(guarantee.key) | frozenset(guarantee.period)
@@ -384,8 +397,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                 raise exc.configuration(
                     f"Guarantee {guarantee.kind!r} on spec {self.name!r} names "
                     f"{sorted(unknown)}, which this aggregate does not store. A store compares "
-                    "the guarantee's fields on the persisted row; a name that is not there "
-                    "reads as null and quietly changes the property rather than failing.",
+                    "the guarantee's fields on the persisted row and selects its rows with the "
+                    "guarantee's filter; a name that is not there reads as null and quietly "
+                    "changes the property rather than failing.",
                 )
 
     # ....................... #
