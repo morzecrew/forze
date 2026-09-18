@@ -201,6 +201,39 @@ class TestMockHttpTakesTheOperationSpec:
         with pytest.raises(CoreException, match="is not the one 'pricing' declares"):
             await port.invoke(foreign, QuoteArgs(symbol="ABC"))
 
+    async def test_registering_by_spec_keys_under_the_operation_name(self) -> None:
+        # `on` takes the spec so a type checker can tie the handler's parameter to the
+        # declared `args_type`. What it stores is still the name, and getting that wrong
+        # would register the handler where nothing looks for it.
+        def handler(args: QuoteArgs | None) -> QuoteResult:
+            assert args is not None
+
+            return QuoteResult(symbol=args.symbol, price=2.0)
+
+        registry = MockHttpRegistry().on("pricing", SPEC.operations["get_quote"], handler)
+        port = _ctx(registry).http.service(SPEC)
+
+        result = await port.invoke(SPEC.operations["get_quote"], QuoteArgs(symbol="ABC"))
+
+        assert result == QuoteResult(symbol="ABC", price=2.0)
+
+    async def test_registering_by_spec_does_not_check_the_service(self) -> None:
+        # The registry is keyed by two names and never sees the `HttpServiceSpec`, so a
+        # foreign spec registers here; the refusal belongs to the adapter, at the call.
+        foreign = HttpOperationSpec(
+            name="get_quote",
+            method="GET",
+            path="/quote",
+            args_type=QuoteArgs,
+            return_type=Pong,
+        )
+        registry = MockHttpRegistry().on("pricing", foreign, lambda _: None)
+
+        assert registry.handler_for("pricing", "get_quote") is not None
+
+        with pytest.raises(CoreException, match="is not the one 'pricing' declares"):
+            await _ctx(registry).http.service(SPEC).invoke(foreign, QuoteArgs(symbol="A"))
+
     async def test_a_handler_naming_its_own_args_model_is_accepted(self) -> None:
         # The registered signature, not `BaseModel | None`. It used to be refused by a type
         # checker on contravariance, which is why every handler above takes the wide form.

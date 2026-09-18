@@ -13,8 +13,8 @@ injection (raise / delay / malformed response) without touching call sites.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
-from typing import Any, final
+from collections.abc import Awaitable, Callable
+from typing import Any, final, overload
 
 import attrs
 from pydantic import BaseModel
@@ -58,22 +58,44 @@ class MockHttpRegistry:
         factory=dict[tuple[str, str], HttpHandler]
     )
 
+    @overload
     def on[In: BaseModel](
         self,
         service: StrKey | str,
-        op: StrKey | str,
+        op: HttpOperationSpec[In, Any],
         handler: Callable[[In | None], Any],
+    ) -> MockHttpRegistry: ...
+
+    @overload
+    def on(
+        self,
+        service: StrKey | str,
+        op: StrKey | str,
+        handler: Callable[[Any], Any],
+    ) -> MockHttpRegistry: ...
+
+    def on(
+        self,
+        service: StrKey | str,
+        op: StrKey | str | HttpOperationSpec[Any, Any],
+        handler: Callable[[Any], Any],
     ) -> MockHttpRegistry:
         """Register *handler* for operation *op* on *service*. Returns self (chainable).
 
-        The handler's own parameter type is what ``In`` resolves to, so a handler written
-        against the operation's ``args_type`` is accepted as it stands — one keyed to
-        ``BaseModel | None`` no longer being the only shape that fits. Nothing is checked
-        against the operation's declaration here: the registry is keyed by name and never
-        sees the spec. :class:`MockHttpServiceAdapter` does that check, at the call.
+        Naming the operation by its :class:`HttpOperationSpec` is what ties the handler to
+        the declaration: ``In`` is solved from the spec's ``args_type`` *and* from the
+        handler's parameter, so a handler written against the wrong model is refused here
+        rather than receiving a model it cannot read at the call. A key leaves the two
+        unrelated, and is the right form where the operation is chosen at runtime.
+
+        Only the operation is linked, never the service: the registry is keyed by two names
+        and never sees the :class:`HttpServiceSpec`, so a spec from another service still
+        registers. :class:`MockHttpServiceAdapter` is where that is caught, at the call.
         """
 
-        self._handlers[(str(service), str(op))] = handler
+        key = str(op.name) if isinstance(op, HttpOperationSpec) else str(op)
+        self._handlers[(str(service), key)] = handler
+
         return self
 
     def handler_for(self, service: str, op: str) -> HttpHandler | None:
@@ -93,6 +115,24 @@ class MockHttpServiceAdapter(HttpServicePort):
 
     # ....................... #
 
+    @overload
+    def invoke[In: BaseModel, Out: BaseModel](
+        self,
+        op: HttpOperationSpec[In, Out],
+        args: In | None = None,
+    ) -> Awaitable[Out]: ...
+
+    @overload
+    def invoke(
+        self,
+        op: StrKey,
+        args: BaseModel | None = None,
+    ) -> Awaitable[BaseModel]: ...
+
+    # Repeated from the port rather than inherited: this class overrides `invoke`, and an
+    # override replaces the overloads it is declared against. Without them a caller holding
+    # the adapter itself — every test that builds one directly — gets `Any` back where the
+    # same call through the port gives the operation's declared model.
     async def invoke(
         self,
         op: StrKey | HttpOperationSpec[Any, Any],
