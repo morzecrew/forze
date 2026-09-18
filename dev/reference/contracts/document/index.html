@@ -5334,6 +5334,34 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#storage-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Storage guarantees
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Storage guarantees">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#guarantee-or-invariant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Guarantee or invariant?
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6321,6 +6349,34 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#storage-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Storage guarantees
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Storage guarantees">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#guarantee-or-invariant" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Guarantee or invariant?
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6650,6 +6706,12 @@ plus per-aggregate policy:</p>
 <td><code>None</code></td>
 <td>codec overrides (auto-derived from the model types by default)</td>
 </tr>
+<tr>
+<td><code>guarantees</code></td>
+<td><code>Sequence[StorageGuarantee]</code></td>
+<td><code>()</code></td>
+<td>properties the store must enforce at write time (see below)</td>
+</tr>
 </tbody>
 </table>
 <p><code>write</code> is a <code>DocumentWriteTypes</code> TypedDict — <code>domain</code> (the <code>Document</code> subclass),
@@ -6687,6 +6749,140 @@ read-back (Postgres, Mongo, and Firestore). Because the value is dropped (not pe
 it is <strong>explicit-only</strong> — never auto-derived — requires a <code>write</code> spec, and each name must
 be a defaulted, non-identity domain field. Use it for a domain field that is computed or
 stored elsewhere, not on this table.</p>
+<h3 id="storage-guarantees">Storage guarantees<a class="headerlink" href="#storage-guarantees" title="Permanent link">&para;</a></h3>
+<p>A guarantee is a property of the data that the <strong>store</strong> refuses to violate — not something
+the framework checks after the fact. Declare it and a backend that cannot keep it refuses at
+wiring:</p>
+<div class="highlight"><pre><span></span><code><span class="n">DocumentSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"fact"</span><span class="p">,</span>
+    <span class="n">read</span><span class="o">=</span><span class="n">Fact</span><span class="p">,</span>
+    <span class="n">write</span><span class="o">=</span><span class="p">{</span><span class="s2">"domain"</span><span class="p">:</span> <span class="n">FactDoc</span><span class="p">,</span> <span class="s2">"create_cmd"</span><span class="p">:</span> <span class="n">CreateFact</span><span class="p">},</span>
+    <span class="n">guarantees</span><span class="o">=</span><span class="p">(</span>
+        <span class="n">UniqueTogether</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"root_id"</span><span class="p">,),</span> <span class="n">where</span><span class="o">=</span><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"is_current"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}}),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Two sentences carry the whole doctrine:</p>
+<ul>
+<li><strong>A guarantee is declared, validated and never created.</strong> Nothing here issues DDL. An adapter
+  that created an index would take a lock on a production table nobody asked it to take, and
+  would hide a missing migration until the next deployment.</li>
+<li><strong>Your migration is the thing that satisfies it.</strong> Startup checks that the mechanism is there
+  and prints the statement that would create it.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Member</th>
+<th>Property</th>
+<th>Postgres</th>
+<th>Mongo</th>
+<th>In-memory</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UniqueTogether(fields=…)</code></td>
+<td>at most one row per field tuple</td>
+<td>unique index</td>
+<td>unique index</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>UniqueTogether(fields=…, where=…)</code></td>
+<td>…among the rows the filter selects</td>
+<td>partial unique index</td>
+<td><code>partialFilterExpression</code></td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>UniqueTogether(fields=…, skip_null=True)</code></td>
+<td>…exempting tuples holding a null</td>
+<td>partial unique index</td>
+<td>—</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>NonOverlapping(key=…, period=…)</code></td>
+<td>no two rows for one key hold overlapping <a href="../../../core-concepts/domain-layer/#a-period-and-which-end-is-in-force">periods</a></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><code>NonOverlapping</code> is defined and enforced by nothing yet, so every backend refuses a spec that
+declares one. Mongo refuses <code>skip_null</code> for the same reason: a <code>sparse</code> index reads like the
+right mechanism and is not one — it skips a document only when <em>every</em> indexed field is missing,
+and it still indexes an explicit null, so the tuple the exemption was meant to let through stays
+in the index and conflicts. A capability that reconciles and then fails at the first write is
+worse than one that says no.</p>
+<p>Three things happen to a declared guarantee, and a failure at any of them is loud:</p>
+<ol>
+<li><strong>Reconciliation</strong>, when the port is built. A backend that cannot keep the guarantee raises
+   <code>precondition</code> with code <code>storage_guarantee_unsupported</code>, naming which part is missing —
+   "uniqueness over a field tuple" reads differently from "uniqueness restricted to a subset of
+   rows", and they need different fixes. <code>check_wiring</code> reports it like any other resolution
+   failure, so CI sees it before production does.</li>
+<li><strong>Validation</strong>, at startup. The live catalog is checked for the index, and the refusal names
+   the DDL. An index counts when it covers the guarantee's fields — as a set, since uniqueness
+   over a tuple does not depend on the order an index lists it in — when it is live and valid,
+   and when its restriction mentions the fields the declaration filters on. What the predicate
+   <em>means</em> is not compared: deciding whether two boolean expressions agree is the database's
+   job, so an index filtered on the right column but the wrong value passes. The check is a
+   floor under a forgotten migration, not a proof that the mechanism matches.</li>
+<li><strong>Enforcement</strong>, at write time, by the store. A violating write raises <code>conflict</code>, from every
+   backend and from the in-memory store alike — including across two concurrent transactions,
+   which the in-memory store rechecks at commit because a unique index is not snapshot-scoped.</li>
+</ol>
+<div class="admonition note">
+<p class="admonition-title">Postgres counts nulls as distinct; a guarantee does not</p>
+<p>With <code>skip_null</code> off, two rows sharing a tuple that holds a null conflict. An ordinary
+Postgres unique index permits them, so a guarantee over a nullable column asks for
+<code>UNIQUE NULLS NOT DISTINCT</code> and startup refuses the plain index by name. Over <code>NOT NULL</code>
+columns the two readings cannot differ and an ordinary index is exactly the mechanism.</p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">A guarantee with no <code>where</code> covers soft-deleted rows too</p>
+<p>A soft-deleted row is still a row: its tuple stays reserved and no replacement can be
+created. A spec with soft deletion usually filters the deleted rows out — which also means
+an un-delete can conflict, and is refused.</p>
+</div>
+<h4 id="guarantee-or-invariant">Guarantee or invariant?<a class="headerlink" href="#guarantee-or-invariant" title="Permanent link">&para;</a></h4>
+<p>Both can express "one current row per fact", and the question comes up immediately.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th><code>SystemInvariant</code></th>
+<th>Storage guarantee</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Declares</td>
+<td>a law over a read-set, reduced to one number</td>
+<td>a property the store refuses to violate</td>
+</tr>
+<tr>
+<td>Enforced by</td>
+<td>the framework, in or after the writing transaction</td>
+<td>the store, at write time</td>
+</tr>
+<tr>
+<td>Detects</td>
+<td>a violation that already happened, or prevents it under isolation</td>
+<td>prevents it, always</td>
+</tr>
+<tr>
+<td>Expresses</td>
+<td>anything <code>SumOf</code> / <code>CountAll</code> can score</td>
+<td>uniqueness, non-overlap</td>
+</tr>
+</tbody>
+</table>
+<p>Declaring both is legitimate where the guarantee is the prevention and the invariant is the
+proof — a simulation asserts the invariant over a workload the guarantee is quietly keeping.</p>
 <h2 id="query-port">Query port<a class="headerlink" href="#query-port" title="Permanent link">&para;</a></h2>
 <h3 id="fetch-one">Fetch one<a class="headerlink" href="#fetch-one" title="Permanent link">&para;</a></h3>
 <table>

@@ -8577,6 +8577,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A spec can declare what its store must guarantee.</strong> <code>DocumentSpec(..., guarantees=(UniqueTogether(fields=…, where=…, skip_null=…),))</code> states a property of the data, and a backend that cannot keep it refuses when the port is built (<code>storage_guarantee_unsupported</code>). Postgres and Mongo check the live catalog at startup and print the DDL that would satisfy a guarantee, never creating one; <code>forze_mock</code> enforces it in memory, raising the same <code>conflict</code>. <code>NonOverlapping</code> is enforced by nothing and <code>skip_null</code> by nothing on Mongo, so both are refused at wiring.</p>
+</li>
+<li>
 <p><strong>An outbound OAuth2 grant can be acquired, not just stored.</strong> <code>build_authorize_url</code> and <code>read_authorization_callback</code> in <code>forze_identity.oauth</code> cover the redirect and the callback — state compared constant-time first, a provider error never mistaken for a code — and <code>OAuth2TokenClient</code> exchanges the code for the first credential. The same client <em>is</em> the <code>CredentialExchangerPort</code>, so one provider config closes acquisition and every rotation after it; <code>complete_authorization</code> persists before it returns.</p>
 </li>
 <li>
