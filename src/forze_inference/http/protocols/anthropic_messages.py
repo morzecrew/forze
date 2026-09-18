@@ -275,7 +275,8 @@ def _node_check(schema: Mapping[str, Any], where: str) -> list[str]:
     combined = schema.get("allOf")
 
     if isinstance(combined, list) and any(
-        isinstance(member, Mapping) and "$ref" in member for member in combined
+        isinstance(member, Mapping) and "$ref" in member
+        for member in combined  # pyright: ignore[reportUnknownVariableType]
     ):
         found.append(f"{where}: allOf carrying a $ref (the combination is not decoded)")
 
@@ -485,7 +486,7 @@ def _message_text(spec: InferenceSpec[Any, Any], body: Mapping[str, Any]) -> str
 
     texts: list[str] = []
 
-    for block in blocks:
+    for block in blocks:  # pyright: ignore[reportUnknownVariableType]
         if not isinstance(block, Mapping):
             continue
 

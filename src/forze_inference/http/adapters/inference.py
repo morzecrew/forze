@@ -130,8 +130,8 @@ class HttpInferenceAdapter[In: BaseModel, Out: BaseModel](
         # reports no usage rather than failing the call.
         report = getattr(self.protocol, "usage_attributes", None)
 
-        for attribute, value in (report(response) if report is not None else {}).items():
-            usage[attribute] = usage.get(attribute, 0) + value
+        for attribute, value in (report(response) if report is not None else {}).items():  # pyright: ignore[reportUnknownVariableType]
+            usage[attribute] = usage.get(attribute, 0) + value  # pyright: ignore[reportUnknownArgumentType]
 
         return self.protocol.decode_response(
             self.spec,
