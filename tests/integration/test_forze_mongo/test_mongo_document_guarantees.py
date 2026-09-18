@@ -148,6 +148,24 @@ class TestMongoStartupValidation:
         with pytest.raises(CoreException, match="partialFilterExpression"):
             await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
 
+    async def test_a_filter_over_the_right_field_and_the_wrong_value_does_not_count(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # Read back from the server rather than asserted against a fixture, because what is
+        # compared is the filter Mongo actually stored. Two current documents for one fact both
+        # sit outside this index, so the guarantee would not be kept.
+        db_name, collection = await _collection(mongo_client)
+        coll = await mongo_client.collection(collection, db_name=db_name)
+        await coll.create_index(
+            [("root_id", 1)],
+            unique=True,
+            partialFilterExpression={"is_current": False},
+        )
+
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+
     async def test_a_reversed_compound_index_counts(
         self,
         mongo_client: MongoClient,
