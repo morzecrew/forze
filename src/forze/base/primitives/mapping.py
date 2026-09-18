@@ -22,19 +22,21 @@ class MappingConverter:
     admits both ``dict[str, V]`` and ``dict[SomeStrEnum, V]``, because neither is a subtype of
     the other under invariance — not their union either, since a union arm still has to match
     exactly. A key type here therefore refuses a caller's own ``StrEnum``-keyed dictionary,
-    which is the shape a route-name enum produces and the main way these fields are populated.
+    although every key in it is a string.
 
-    Worse, a key type variable *leaks*. ``attrs`` types the generated ``__init__`` parameter
-    from the converter's input, so an unsolved ``K`` is shared by every field on the class that
-    uses the same converter, and one constructor call solves it once. Two fields keyed by two
-    different enums then contradict each other, and every argument but the first is rejected —
-    a class whose fields are individually fine but cannot be passed together.
+    Worse, a key type *variable* leaks. What an ``attrs`` ``__init__`` accepts for a field is
+    whatever its converter accepts, so a type checker reads the generated parameter off the
+    converter's signature — and an unsolved ``K`` there is shared by every field on the class
+    using that converter, then solved once per constructor call. Two fields keyed by two
+    different enums contradict each other, and every argument but the first is rejected: a
+    class whose fields are individually fine and cannot be passed together.
 
-    Nothing is given up by writing ``Any``: :meth:`to_str_key` and :meth:`to_str_key_frozen`
-    already check every key at runtime (:meth:`_validate_input_mapping` raises ``TypeError`` on
-    a key that is not string-compatible), and that check was the only enforcement there ever
-    was, since the static one could not be satisfied. The *field's* declared type still says
-    what the mapping holds, and that is what a reader and a type checker both go by.
+    Little is given up by writing ``Any``. What the key type caught was nothing — a
+    string-compatible key is the only kind :meth:`to_str_key` and :meth:`to_str_key_frozen`
+    return, and they check that themselves, raising ``TypeError`` on anything else. What it
+    refused was callers, every one of them holding a route-name enum. The narrowing was real
+    but it only ever landed on ``dict[str, V]``, and the *field's* declared type still says
+    what the mapping holds, which is what a reader and a type checker both go by.
     """
 
     @staticmethod
@@ -66,6 +68,11 @@ class MappingConverter:
     def to_str_key[V](value: Mapping[Any, V] | None) -> StrKeyMapping[V] | None:
         """*value* with its keys checked to be string-compatible, as a mutable copy.
 
+        The copy is taken first and *it* is what gets checked. Validating the argument and
+        then copying it reads the caller's mapping twice, and a ``Mapping`` promises nothing
+        about answering the same way both times — one that iterated a clean key set for the
+        check and a dirtier one for the copy would store a key nothing ever looked at.
+
         Deliberately **not** overloaded on ``None``. An overload pair would narrow the return
         for a caller that passes a non-``None`` mapping, and it costs more than it pays: the
         ``attrs`` plugin in pyright reads the *last* overload's parameter type for the
@@ -77,9 +84,10 @@ class MappingConverter:
         if value is None:
             return None
 
-        MappingConverter._validate_input_mapping(value)
+        copied = dict(value)
+        MappingConverter._validate_input_mapping(copied)
 
-        return dict(value)
+        return copied
 
     # ....................... #
 
@@ -87,13 +95,15 @@ class MappingConverter:
     def to_str_key_frozen[V](value: Mapping[Any, V] | None) -> StrKeyMapping[V] | None:
         """*value* with its keys checked to be string-compatible, as a read-only view.
 
-        :meth:`to_str_key` plus :meth:`frozen`, and not overloaded on ``None`` for the reason
-        given there. One copy, not two: :meth:`frozen` takes it.
+        :meth:`to_str_key` plus :meth:`frozen`, and not overloaded on ``None`` for the same
+        reason. :meth:`frozen` takes the one copy, and the check reads that copy rather than
+        the caller's mapping, for the reason given there.
         """
 
         if value is None:
             return None
 
-        MappingConverter._validate_input_mapping(value)
+        copied = MappingConverter.frozen(value)
+        MappingConverter._validate_input_mapping(copied)
 
-        return MappingConverter.frozen(value)
+        return copied

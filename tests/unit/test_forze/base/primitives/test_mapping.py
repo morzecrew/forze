@@ -1,7 +1,7 @@
 """The converters, and the signature shape a type checker reads them through."""
 
 import typing
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from enum import StrEnum
 from types import MappingProxyType
 
@@ -13,6 +13,33 @@ from forze.base.primitives import MappingConverter, StrKeyMapping
 # ----------------------- #
 
 CONVERTERS = ("frozen", "to_str_key", "to_str_key_frozen")
+
+
+class ShiftyMapping(Mapping[object, int]):
+    """A mapping that answers differently on its second iteration.
+
+    Legal: ``Mapping`` promises nothing about repeated iteration, and a lazily-backed one
+    (a view over a live registry, a generator materialised on demand) can honestly change.
+    Enough to defeat a converter that checks the argument and then copies it.
+    """
+
+    def __init__(self) -> None:
+        self.rounds = 0
+        self._all: Mapping[object, int] = {"clean": 1, 7: 2}
+
+    def __iter__(self) -> Iterator[object]:
+        self.rounds += 1
+
+        return iter(["clean"] if self.rounds == 1 else self._all)
+
+    def __len__(self) -> int:
+        return 1 if self.rounds <= 1 else len(self._all)
+
+    def __getitem__(self, key: object) -> int:
+        return self._all[key]
+
+
+# ....................... #
 
 
 class RouteName(StrEnum):
@@ -133,6 +160,25 @@ class TestToStrKeyFrozen:
         with pytest.raises(TypeError, match="Expected str-compatible key, got int"):
             MappingConverter.to_str_key_frozen({1: "a"})
 
+    def test_an_empty_mapping_is_not_none(self) -> None:
+        # An explicit empty mapping says something a missing argument does not: this route
+        # set is empty, rather than unconfigured. Collapsing it to `None` would lose that.
+        empty: dict[str, int] = {}
+        converted = MappingConverter.to_str_key_frozen(empty)
+
+        assert converted is not None
+        assert converted == {}
+
+    def test_a_mapping_that_changes_between_iterations_cannot_smuggle_a_key(self) -> None:
+        # The copy is what gets checked, so there is no second reading to disagree with it:
+        # whichever iteration the copy came from, every key in it was looked at. Checking the
+        # argument and copying it afterwards stored `{"clean": 1, 7: 2}` here.
+        converted = MappingConverter.to_str_key_frozen(ShiftyMapping())
+
+        assert converted is not None
+        assert all(isinstance(key, str) for key in converted)
+        assert converted == {"clean": 1}
+
     def test_a_non_string_key_is_refused_through_a_field(self) -> None:
         # The runtime check is the only enforcement there is, so it has to fire where the
         # values actually arrive — `Any` in the signature means the checker will not.
@@ -158,9 +204,20 @@ class TestToStrKey:
         source["b"] = 2
         assert converted == {"a": 1}
 
+    def test_an_empty_mapping_is_not_none(self) -> None:
+        empty: dict[str, int] = {}
+
+        assert MappingConverter.to_str_key(empty) == {}
+
     def test_a_non_string_key_is_refused(self) -> None:
         with pytest.raises(TypeError, match="Expected str-compatible key, got tuple"):
             MappingConverter.to_str_key({("a",): 1})
+
+    def test_a_mapping_that_changes_between_iterations_cannot_smuggle_a_key(self) -> None:
+        converted = MappingConverter.to_str_key(ShiftyMapping())
+
+        assert converted is not None
+        assert all(isinstance(key, str) for key in converted)
 
 
 # ....................... #
