@@ -66,7 +66,12 @@ class UniqueTogether:
     """The field tuple that must be unique. Order is not significant to the property."""
 
     where: QueryFilterExpression | None = None
-    """Which rows the uniqueness applies to; ``None`` means every row."""
+    """Which rows the uniqueness applies to; ``None`` means every row.
+
+    ``None`` includes soft-deleted rows, because a soft-deleted row is still a row: its tuple
+    stays reserved and no replacement can be created. That is occasionally what a consumer
+    wants and usually not, so a spec with soft deletion generally filters the deleted rows out
+    here — which also means an un-delete can conflict, and is refused."""
 
     skip_null: bool = False
     """Whether rows whose tuple contains a null are exempt.

@@ -110,14 +110,18 @@ FULL_STORAGE_GUARANTEES: Final[StorageGuaranteeCapabilities] = StorageGuaranteeC
     unique_together=True,
     unique_together_filtered=True,
     unique_together_skip_null=True,
-    non_overlapping=True,
 )
-"""Every guarantee the vocabulary defines.
+"""Every guarantee that is enforced anywhere today — the in-memory store's declaration.
 
-The in-memory store enforces all of it, which is what makes a guarantee testable under simulation
-instead of only against a live database. It is also the declaration most easily wrong in the
-optimistic direction — a mock that enforced more than a backend would pass a simulation a
-deployment fails — so the batteries compare the two refusals rather than trusting this flag."""
+The mock is the canonical superset, so this is both what it enforces and the ceiling on what a
+spec can usefully declare. It is the declaration most easily wrong in the optimistic direction —
+a mock claiming more than a backend keeps would pass a simulation a deployment fails — so the
+batteries compare the two stores' refusals rather than trusting this value.
+
+:attr:`StorageGuaranteeCapabilities.non_overlapping` is deliberately **absent**. The vocabulary
+defines ``NonOverlapping`` and nothing enforces it yet, so every store refuses a spec that
+declares one, which is the honest answer: the alternative is a capability that reconciles and
+then fails at the first write. It moves here when a store maps it."""
 
 
 # ....................... #
