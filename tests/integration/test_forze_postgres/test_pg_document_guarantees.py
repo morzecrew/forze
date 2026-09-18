@@ -138,7 +138,7 @@ class TestStartupValidation:
         table = await _table(pg_client)
         await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
 
-        with pytest.raises(CoreException, match="no partial unique index"):
+        with pytest.raises(CoreException, match="no valid partial unique index"):
             await _validate(pg_client, table, ONE_CURRENT)
 
     async def test_a_plain_index_satisfies_an_unfiltered_guarantee(
@@ -186,8 +186,206 @@ class TestStartupValidation:
         table = await _table(pg_client)
         await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} (id) WHERE is_current;")
 
-        with pytest.raises(CoreException, match="no partial unique index"):
+        with pytest.raises(CoreException, match="no valid partial unique index"):
             await _validate(pg_client, table, ONE_CURRENT)
+
+    async def test_a_predicate_over_another_column_does_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The failure the column check exists for: the index restricts the right columns to the
+        # wrong rows. Two rows with the same root_id, both current and both unverified, sit
+        # outside this index entirely — so Postgres takes them and the guarantee is a comment.
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD COLUMN is_verified boolean NOT NULL DEFAULT false;"
+        )
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE is_verified;")
+
+        with pytest.raises(CoreException, match="no valid partial unique index"):
+            await _validate(pg_client, table, ONE_CURRENT)
+
+    async def test_a_reversed_compound_index_counts(self, pg_client: PostgresClient) -> None:
+        # `UniqueTogether.fields` says order is not significant to the property, and it is not
+        # significant to the index either: (a, b) and (b, a) refuse exactly the same pairs. A
+        # check that required the declared order would fail a correct migration at startup.
+        table = await _table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (is_current, root_id);")
+
+        await _validate(pg_client, table, UniqueTogether(fields=("root_id", "is_current")))
+
+    async def test_an_include_payload_does_not_disqualify_an_index(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # INCLUDE columns are stored in the index and take no part in uniqueness, so this
+        # enforces the declared property exactly. Reading them as key columns would reject it.
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"CREATE UNIQUE INDEX ON {table} (root_id) INCLUDE (last_update_at);"
+        )
+
+        await _validate(pg_client, table, ONE_EVER)
+
+    async def test_an_invalid_index_does_not_count(self, pg_client: PostgresClient) -> None:
+        # The state a failed migration leaves. A CREATE UNIQUE INDEX CONCURRENTLY over existing
+        # duplicates fails and leaves an invalid index row behind; it enforces nothing on new
+        # writes, so reading it as a satisfied guarantee is the worst reading of the catalog.
+        table = await _table(pg_client)
+
+        await pg_client.execute(f"CREATE UNIQUE INDEX {table}_bad ON {table} (root_id);")
+        # Marked invalid directly rather than through a failed CONCURRENTLY build, which cannot
+        # run inside the test's transaction. The state is what matters: this is the row a
+        # failed concurrent build leaves, and it enforces nothing on new writes.
+        await pg_client.execute(
+            "UPDATE pg_index SET indisvalid = false WHERE indexrelid = %s::regclass;",
+            [f"{table}_bad"],
+        )
+
+        invalid = await pg_client.fetch_all(
+            "SELECT indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid"
+            " WHERE c.relname = %s;",
+            [f"{table}_bad"],
+            row_factory="dict",
+        )
+
+        assert invalid and invalid[0]["indisvalid"] is False, "the index was not marked invalid"
+
+        with pytest.raises(CoreException, match="no valid unique index"):
+            await _validate(pg_client, table, ONE_EVER)
+
+
+# ....................... #
+
+
+class _NullableRead(BaseModel):
+    id: UUID
+    root_id: str | None
+    is_current: bool
+
+
+class _NullableDomain(Document):
+    root_id: str | None = None
+    is_current: bool = True
+
+
+class _NullableCreate(CreateDocumentCmd):
+    root_id: str | None = None
+    is_current: bool = True
+
+
+async def _validate_nullable(
+    pg_client: PostgresClient,
+    table: str,
+    *guarantees: UniqueTogether,
+) -> None:
+    """:func:`_validate` over a model whose guaranteed column may hold a null.
+
+    A separate model because the relation validator that runs first refuses a required field
+    over a nullable column — correctly, and unrelated to what these legs are about.
+    """
+
+    intro = PostgresIntrospector(client=pg_client)
+    ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
+    hook = PostgresDocumentSchemaValidationHook(
+        specs=(
+            PostgresDocumentSchemaSpec(
+                name="fact",
+                read_model=_NullableRead,
+                read_relation=("public", table),
+                write_domain_model=_NullableDomain,
+                write_create_model=_NullableCreate,
+                write_relation=("public", table),
+                bookkeeping_strategy="application",
+                guarantees=guarantees,
+            ),
+        ),
+    )
+
+    await hook(ctx)
+
+
+async def _nullable_table(pg_client: PostgresClient) -> str:
+    name = f"guarantee_null_{uuid4().hex[:12]}"
+
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {name} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            root_id text,
+            is_current boolean NOT NULL
+        );
+        """
+    )
+
+    return name
+
+
+class TestNullsAreValuesUnlessExempted:
+    """`skip_null=False` counts a null as a value; Postgres does not, unless told to.
+
+    The divergence is silent in both directions if unchecked: an ordinary unique index passes
+    validation and then admits two rows sharing a tuple containing a null, which the in-memory
+    store refuses. A parity break that only appears for nullable data is the kind a test suite
+    over non-null fixtures never sees.
+    """
+
+    async def test_an_ordinary_index_over_a_nullable_column_is_refused(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+
+        with pytest.raises(CoreException, match="NULLS NOT DISTINCT"):
+            await _validate_nullable(pg_client, table, ONE_EVER)
+
+    async def test_nulls_not_distinct_satisfies_it(self, pg_client: PostgresClient) -> None:
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE NULLS NOT DISTINCT (root_id);")
+
+        await _validate_nullable(pg_client, table, ONE_EVER)
+
+    async def test_a_not_null_column_needs_no_such_index(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The column cannot hold a null, so the two readings cannot differ and demanding the
+        # stricter index would refuse a correct migration.
+        table = await _table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+
+        await _validate(pg_client, table, ONE_EVER)
+
+    async def test_skip_null_asks_for_a_partial_index_instead(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # With the exemption declared, the mechanism is a predicate that drops the null rows —
+        # so the predicate has to mention the guarantee's own field, not just any field.
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(
+            f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE root_id IS NOT NULL;"
+        )
+
+        await _validate_nullable(
+            pg_client, table, UniqueTogether(fields=("root_id",), skip_null=True)
+        )
+
+    async def test_skip_null_is_not_satisfied_by_a_plain_index(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        table = await _nullable_table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+
+        with pytest.raises(CoreException, match="no valid partial unique index"):
+            await _validate_nullable(
+                pg_client, table, UniqueTogether(fields=("root_id",), skip_null=True)
+            )
 
 
 # ....................... #

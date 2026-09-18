@@ -26,6 +26,7 @@ from .types import (
     PostgresRelationKind,
     PostgresRelationTriggers,
     PostgresType,
+    UniqueIndexInfo,
 )
 from .utils import (
     extract_index_expr_from_indexdef,
@@ -552,31 +553,40 @@ class PostgresIntrospector:
 
     # ....................... #
 
-    async def partial_unique_index_exists(
+    async def unique_indexes(
         self,
         *,
         schema: str | None,
         relation: str,
-        columns: tuple[str, ...],
-    ) -> bool:
-        """Whether a **partial** UNIQUE index covers exactly *columns*.
+    ) -> tuple[UniqueIndexInfo, ...]:
+        """Every UNIQUE index on *relation* that actually enforces writes today.
 
-        The sibling of :meth:`constraint_exists_for_columns`, which deliberately drops partial
-        indexes because a query planner cannot use one for an arbitrary lookup. A declared
-        uniqueness over a subset of rows is satisfied by exactly the kind this finds.
+        The sibling of :meth:`constraint_exists_for_columns`, which answers a different
+        question: that one reports column *sets in index order* for a planner-usable
+        conflict target and drops anything partial. This one describes each index in the terms a
+        declared storage guarantee is checked against, which is why it keeps what the other
+        discards — the predicate, and how nulls compare.
 
-        Only the index's *columns* and the presence of a predicate are checked, never what the
-        predicate says. Comparing a stored ``indpred`` against a filter expression means
-        deciding whether two boolean expressions agree, which is a job for the database and not
-        for a startup check — so this answers "a partial unique index on these columns exists",
-        and a predicate that disagrees with the declaration is a defect this cannot see.
+        Three things the catalog distinguishes and a naive query does not:
 
-        Uncached: it runs once per guarantee at startup, and a lane would cost more to keep
+        * ``indisvalid`` / ``indisready`` / ``indislive``. A ``CREATE UNIQUE INDEX
+          CONCURRENTLY`` that failed leaves an index row behind that enforces nothing; taking
+          it as a satisfied guarantee is the worst possible reading of the catalog, because it
+          is exactly the state a failed migration leaves.
+        * ``INCLUDE`` columns. They sit in ``indkey`` past ``indnkeyatts`` and take no part in
+          uniqueness, so ``UNIQUE (a, b) INCLUDE (updated_at)`` enforces the same property as
+          ``UNIQUE (a, b)`` and has to read as the same set here.
+        * ``indnullsnotdistinct``. Postgres treats nulls as distinct by default, so an ordinary
+          unique index does *not* refuse two rows that share a tuple containing one. Requires
+          Postgres 15 or later; the repository already depends on 16-and-later behaviour
+          elsewhere.
+
+        Expression indexes are skipped: their key is a computed value, not a column, and a
+        guarantee names columns.
+
+        Uncached: it runs once per relation at startup, and a lane would cost more to keep
         coherent than the query costs to repeat.
         """
-
-        if not columns:
-            return False
 
         schema = self.__normalize_schema(schema)
         await self.require_relation(schema=schema, relation=relation)
@@ -592,18 +602,22 @@ class PostgresIntrospector:
               LIMIT 1
             )
             SELECT (
-              SELECT COALESCE(array_agg(a.attname ORDER BY u.ord), ARRAY[]::text[])
-              FROM unnest(i.indkey) WITH ORDINALITY AS u(attnum, ord)
+              SELECT COALESCE(array_agg(a.attname), ARRAY[]::text[])
+              FROM unnest(i.indkey[0:i.indnkeyatts - 1]) AS u(attnum)
               JOIN pg_attribute a
                 ON a.attrelid = i.indrelid
                AND a.attnum = u.attnum
                AND NOT a.attisdropped
               WHERE u.attnum <> 0
-            ) AS columns
+            ) AS columns,
+            pg_get_expr(i.indpred, i.indrelid) AS predicate,
+            i.indnullsnotdistinct AS nulls_not_distinct
             FROM pg_index i
             JOIN rel ON rel.oid = i.indrelid
             WHERE i.indisunique
-              AND i.indpred IS NOT NULL
+              AND i.indisvalid
+              AND i.indisready
+              AND i.indislive
               AND i.indexprs IS NULL
             """
         ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
@@ -615,10 +629,25 @@ class PostgresIntrospector:
             commit=False,
         )
 
-        return any(
-            tuple(str(column) for column in (row.get("columns") or [])) == columns  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-            for row in rows
-        )
+        found: list[UniqueIndexInfo] = []
+
+        for row in rows:
+            columns = frozenset(str(column) for column in (row.get("columns") or []))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+
+            if not columns:
+                continue
+
+            predicate = row.get("predicate")
+
+            found.append(
+                UniqueIndexInfo(
+                    columns=columns,
+                    predicate=str(predicate) if predicate is not None else None,
+                    nulls_not_distinct=bool(row.get("nulls_not_distinct")),
+                )
+            )
+
+        return tuple(found)
 
     # ....................... #
 

@@ -7,6 +7,7 @@ from .types import (
     PostgresRelationCache,
     PostgresRelationKind,
     PostgresType,
+    UniqueIndexInfo,
 )
 
 # ----------------------- #
@@ -20,4 +21,5 @@ __all__ = [
     "PostgresIndexEngine",
     "PostgresRelationCache",
     "PostgresRelationKind",
+    "UniqueIndexInfo",
 ]

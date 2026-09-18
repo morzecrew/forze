@@ -94,3 +94,22 @@ PostgresPrimaryKeyCache = dict[tuple[str, str, str], tuple[str, ...]]
 
 PostgresUniqueColumnSetsCache = dict[tuple[str, str, str], tuple[tuple[str, ...], ...]]
 """Cache keyed by ``(partition, schema, relation)`` holding UNIQUE/PK column sets."""
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class UniqueIndexInfo:
+    """One live UNIQUE index, described in the terms a storage guarantee is checked against.
+
+    Only what the guarantee validation needs, and deliberately not a general index model: the
+    key columns (never the ``INCLUDE`` payload, which does not participate in uniqueness), the
+    predicate as Postgres deparses it, and whether nulls compare equal.
+    """
+
+    columns: frozenset[str]
+    """The index's **key** columns, as a set — order does not change which tuples are unique."""
+
+    predicate: str | None
+    """``pg_get_expr(indpred, …)`` for a partial index, ``None`` for a full one."""
+
+    nulls_not_distinct: bool
+    """Whether the index was built ``NULLS NOT DISTINCT`` — i.e. two nulls conflict."""

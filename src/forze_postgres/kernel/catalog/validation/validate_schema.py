@@ -6,6 +6,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
+from forze.application.contracts.querying import collect_filter_field_roots
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze.base.serialization import stored_field_names_for
@@ -281,61 +282,152 @@ async def _require_guarantee_mechanisms(
     would take a lock on a production table nobody asked for, and would hide the missing
     migration until the next deployment.
 
-    What is checked is the index's *columns* and whether it is partial. The predicate's meaning
-    is not compared against the declaration's filter, because that is deciding whether two
-    boolean expressions agree — the database's job. So this catches a forgotten migration and a
-    plain index where a partial one was needed, and cannot catch a partial index whose predicate
-    says something else.
+    Three ways an index can carry the right columns and still not be the mechanism:
+
+    * it is not partial where the guarantee is filtered, or its predicate does not mention the
+      fields the filter selects on — the case that matters, because a predicate over the wrong
+      column leaves exactly the rows the guarantee covers unconstrained;
+    * it is an ordinary unique index over a nullable column while the guarantee counts nulls as
+      values, which Postgres does not unless the index says ``NULLS NOT DISTINCT``;
+    * it is not valid, ready or live — the state a failed concurrent build leaves.
+
+    What is still not checked is whether the predicate *means* the same as the filter: deciding
+    that two boolean expressions agree is the database's job, not a startup check's. So the
+    column-level comparison is a floor, not a proof, and the docs say so.
     """
 
     relation = spec.write_relation or spec.read_relation
     schema, table = relation
 
-    for guarantee in spec.guarantees:
-        if not isinstance(guarantee, UniqueTogether):
-            # Reconciliation refuses every other member today, so nothing else reaches here.
-            continue
+    guarantees = [g for g in spec.guarantees if isinstance(g, UniqueTogether)]
 
+    if not guarantees:
+        # Reconciliation refuses every other member today, so nothing else reaches here.
+        return
+
+    indexes = await introspector.unique_indexes(schema=schema, relation=table)
+    column_types = await introspector.get_column_types(schema=schema, relation=table)
+
+    for guarantee in guarantees:
         columns = tuple(guarantee.fields)
-        filtered = guarantee.where is not None or guarantee.skip_null
+        wanted = frozenset(columns)
+        # A filter over a column the index does not mention cannot restrict the guarantee's
+        # rows, so the predicate has to name every field the declaration selects on — and, when
+        # nulls are exempt, every field of the tuple, since that exemption *is* a predicate.
+        predicate_columns = (
+            collect_filter_field_roots(guarantee.where) if guarantee.where else frozenset()
+        )
 
-        if filtered:
-            found = await introspector.partial_unique_index_exists(
-                schema=schema,
-                relation=table,
-                columns=columns,
-            )
+        if guarantee.skip_null:
+            predicate_columns |= wanted
+
+        nullable = sorted(
+            column
+            for column in columns
+            if column in column_types and not column_types[column].not_null
+        )
+        # Only a nullable column can produce the divergence: Postgres compares two nulls as
+        # distinct, so an ordinary unique index admits a pair of rows the guarantee refuses.
+        # Over NOT NULL columns the ordinary index is exactly the mechanism, and demanding
+        # NULLS NOT DISTINCT there would refuse a correct migration.
+        needs_nulls_not_distinct = bool(nullable) and not guarantee.skip_null
+
+        for index in indexes:
+            if index.columns != wanted:
+                continue
+
+            if predicate_columns:
+                if index.predicate is None:
+                    continue
+
+                if any(column not in index.predicate for column in predicate_columns):
+                    continue
+
+            elif index.predicate is not None:
+                continue
+
+            if needs_nulls_not_distinct and not index.nulls_not_distinct:
+                continue
+
+            break
+
         else:
-            found = await introspector.constraint_exists_for_columns(
-                schema=schema,
-                relation=table,
-                columns=columns,
+            raise exc.configuration(
+                _guarantee_refusal(
+                    spec_name=str(spec.name),
+                    schema=schema,
+                    table=table,
+                    columns=columns,
+                    predicate_columns=predicate_columns,
+                    nulls_not_distinct=needs_nulls_not_distinct,
+                    nullable=nullable,
+                ),
+                details={
+                    "document": spec.name,
+                    "relation": f"{schema}.{table}",
+                    "columns": list(columns),
+                },
             )
 
-        if found:
-            continue
 
-        column_list = ", ".join(columns)
+# ....................... #
+
+
+def _guarantee_refusal(
+    *,
+    spec_name: str,
+    schema: str,
+    table: str,
+    columns: tuple[str, ...],
+    predicate_columns: frozenset[str],
+    nulls_not_distinct: bool,
+    nullable: Sequence[str],
+) -> str:
+    """The message for a guarantee with no index behind it, carrying the DDL that would serve.
+
+    Split out because the refusal is most of the value here: an operator reading it has to be
+    able to write the migration without opening the code, and which index is missing depends on
+    three axes that the caller has already worked out.
+    """
+
+    column_list = ", ".join(columns)
+    filtered = bool(predicate_columns)
+
+    if filtered:
         ddl = (
             f"CREATE UNIQUE INDEX CONCURRENTLY ON {schema}.{table} ({column_list}) "
-            "WHERE <the guarantee's condition>;"
-            if filtered
-            else f"ALTER TABLE {schema}.{table} ADD UNIQUE ({column_list});"
+            f"WHERE <a condition over {', '.join(sorted(predicate_columns))}>;"
         )
 
-        raise exc.configuration(
-            f"Document {spec.name!r} guarantees at most one row per ({column_list})"
-            + (" among the rows its filter selects" if filtered else "")
-            + f", and {schema}.{table} has no "
-            + ("partial " if filtered else "")
-            + "unique index on those columns. The migration is what satisfies a guarantee — "
-            f"nothing here creates one. This would:\n  {ddl}",
-            details={
-                "document": spec.name,
-                "relation": f"{schema}.{table}",
-                "columns": list(columns),
-            },
-        )
+    elif nulls_not_distinct:
+        ddl = f"ALTER TABLE {schema}.{table} ADD UNIQUE NULLS NOT DISTINCT ({column_list});"
+
+    else:
+        ddl = f"ALTER TABLE {schema}.{table} ADD UNIQUE ({column_list});"
+
+    why = " among the rows its filter selects, and " if filtered else ", and "
+    missing = (
+        f"{schema}.{table} has no valid partial unique index on those columns whose predicate "
+        f"mentions {', '.join(sorted(predicate_columns))}"
+        if filtered
+        else f"{schema}.{table} has no valid unique index on those columns"
+    )
+    nulls = (
+        f" declared NULLS NOT DISTINCT — {', '.join(nullable)} is nullable, and Postgres lets "
+        "two rows share a tuple containing a null unless the index says otherwise, while the "
+        "guarantee does not"
+        if nulls_not_distinct
+        else ""
+    )
+
+    return (
+        f"Document {spec_name!r} guarantees at most one row per ({column_list})"
+        + why
+        + missing
+        + nulls
+        + ". The migration is what satisfies a guarantee — nothing here creates one. "
+        f"This would:\n  {ddl}"
+    )
 
 
 # ....................... #
