@@ -9,6 +9,7 @@ require_mongo()
 
 from typing import (
     Any,
+    ClassVar,
     TypeVar,
     final,
 )
@@ -19,6 +20,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import (
     DocumentSpec,
 )
+from forze.application.contracts.guarantees import StorageGuaranteeCapabilities
 from forze.application.integrations.document import DocumentAdapter, DocumentCache
 from forze.application.integrations.document.hydration import (
     can_hydrate_read_from_write_domain,
@@ -51,6 +53,18 @@ class MongoDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
     write_gw: MongoWriteGateway[D, C, U] | None = attrs.field(default=None)
     """Optional gateway for mutations; ``None`` disables write operations."""
+
+    storage_guarantees: ClassVar[StorageGuaranteeCapabilities] = StorageGuaranteeCapabilities(
+        unique_together=True,
+        unique_together_filtered=True,
+        unique_together_skip_null=True,
+    )
+    """What this store enforces, given the index the deployment created.
+
+    A unique index for the unfiltered form; a ``partialFilterExpression`` for a filtered one,
+    and a sparse index for the null-exempt form. A duplicate-key error surfaces as ``conflict``,
+    matching the in-memory store and the Postgres adapter.
+    """
 
     document_cache: DocumentCache[R]
     """Unified read/write cache semantics for documents."""

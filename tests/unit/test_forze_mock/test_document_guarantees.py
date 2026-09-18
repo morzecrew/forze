@@ -13,6 +13,7 @@ filtered guarantee comes back *inside* it, which is a conflict created by an un-
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -83,8 +84,8 @@ def _erasable_spec(
         read=_ErasableRead,
         write=DocumentWriteTypes(
             domain=_Erasable,
-            create=_ErasableCreate,
-            update=_ErasableUpdate,
+            create_cmd=_ErasableCreate,
+            update_cmd=_ErasableUpdate,
         ),
         guarantees=guarantees,
     )
@@ -96,7 +97,7 @@ def _spec(
     return DocumentSpec[_FactRead, _Fact, _FactCreate, _FactUpdate](
         name="fact",
         read=_FactRead,
-        write=DocumentWriteTypes(domain=_Fact, create=_FactCreate, update=_FactUpdate),
+        write=DocumentWriteTypes(domain=_Fact, create_cmd=_FactCreate, update_cmd=_FactUpdate),
         guarantees=guarantees,
     )
 
@@ -105,7 +106,13 @@ ONE_CURRENT = UniqueTogether(fields=("root_id",), where={"$values": {"is_current
 ONE_EVER = UniqueTogether(fields=("root_id",))
 
 
-def _command(spec: DocumentSpec[_FactRead, _Fact, _FactCreate, _FactUpdate]):
+def _command(spec: DocumentSpec[Any, Any, Any, Any]) -> Any:
+    """The write port for *spec*.
+
+    Typed loosely on purpose: two unrelated aggregates are exercised here (one soft-deletable),
+    and the guarantee under test is the same for both.
+    """
+
     return context_from_modules(MockDepsModule()).doc.command(spec)
 
 
@@ -125,10 +132,12 @@ class TestTheFilteredGuarantee:
         with pytest.raises(CoreException) as caught:
             await command.create(_FactCreate(root_id="r1"))
 
+        details = caught.value.details or {}
+
         assert caught.value.kind.value == "conflict"
         assert str(first.id) in caught.value.summary
-        assert caught.value.details["guarantee"] == "unique_together"
-        assert caught.value.details["fields"] == ["root_id"]
+        assert details["guarantee"] == "unique_together"
+        assert details["fields"] == ["root_id"]
 
     async def test_a_duplicate_outside_the_filter_is_accepted(self) -> None:
         # The whole reason `where` exists: history rows share the tuple and only one of them

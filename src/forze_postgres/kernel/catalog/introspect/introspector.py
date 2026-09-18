@@ -552,6 +552,75 @@ class PostgresIntrospector:
 
     # ....................... #
 
+    async def partial_unique_index_exists(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+        columns: tuple[str, ...],
+    ) -> bool:
+        """Whether a **partial** UNIQUE index covers exactly *columns*.
+
+        The sibling of :meth:`constraint_exists_for_columns`, which deliberately drops partial
+        indexes because a query planner cannot use one for an arbitrary lookup. A declared
+        uniqueness over a subset of rows is satisfied by exactly the kind this finds.
+
+        Only the index's *columns* and the presence of a predicate are checked, never what the
+        predicate says. Comparing a stored ``indpred`` against a filter expression means
+        deciding whether two boolean expressions agree, which is a job for the database and not
+        for a startup check — so this answers "a partial unique index on these columns exists",
+        and a predicate that disagrees with the declaration is a defect this cannot see.
+
+        Uncached: it runs once per guarantee at startup, and a lane would cost more to keep
+        coherent than the query costs to repeat.
+        """
+
+        if not columns:
+            return False
+
+        schema = self.__normalize_schema(schema)
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            WITH rel AS (
+              SELECT c.oid
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = {schema}
+                AND c.relname = {relation}
+              LIMIT 1
+            )
+            SELECT (
+              SELECT COALESCE(array_agg(a.attname ORDER BY u.ord), ARRAY[]::text[])
+              FROM unnest(i.indkey) WITH ORDINALITY AS u(attnum, ord)
+              JOIN pg_attribute a
+                ON a.attrelid = i.indrelid
+               AND a.attnum = u.attnum
+               AND NOT a.attisdropped
+              WHERE u.attnum <> 0
+            ) AS columns
+            FROM pg_index i
+            JOIN rel ON rel.oid = i.indrelid
+            WHERE i.indisunique
+              AND i.indpred IS NOT NULL
+              AND i.indexprs IS NULL
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        return any(
+            tuple(str(column) for column in (row.get("columns") or [])) == columns for row in rows
+        )
+
+    # ....................... #
+
     async def constraint_exists_for_columns(
         self,
         *,

@@ -55,6 +55,7 @@ def postgres_document_schema_spec_for_binding(
             read_omit_fields=spec.resolved_lenient_read_fields,
             tenant_aware=tenant_aware,
             materialized=spec.materialized,
+            guarantees=spec.guarantees,
         )
 
     if not isinstance(config, PostgresDocumentConfig):
@@ -101,6 +102,7 @@ def postgres_document_schema_spec_for_binding(
         bookkeeping_strategy=config.bookkeeping_strategy,
         conflict_target=config.conflict_target,
         materialized=spec.materialized,
+        guarantees=spec.guarantees,
     )
 
 

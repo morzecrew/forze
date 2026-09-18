@@ -5,6 +5,7 @@ from collections.abc import Sequence
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
 from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze.base.serialization import stored_field_names_for
@@ -91,6 +92,12 @@ class PostgresDocumentSchemaSpec:
 
     conflict_target: tuple[str, ...] | None = None
     """Optional ``ON CONFLICT`` columns for ensure/upsert; ``None`` infers PRIMARY KEY."""
+
+    guarantees: StorageGuarantees = ()
+    """What the spec requires the store to enforce (see :attr:`DocumentSpec.guarantees`).
+
+    Validated against the live catalog: reconciliation at wiring says Postgres *can* keep
+    these, and this says whether the deployment's migration actually did."""
 
     # ....................... #
 
@@ -263,6 +270,77 @@ def _warn_unused_tenant_column(
 # ....................... #
 
 
+async def _require_guarantee_mechanisms(
+    introspector: PostgresIntrospector,
+    spec: PostgresDocumentSchemaSpec,
+) -> None:
+    """Refuse a declared guarantee whose index is not in the database, naming the DDL.
+
+    Reconciliation at wiring proved Postgres *can* keep these; this is the other half — whether
+    this deployment's migration did. Never creates anything: an adapter that issued the DDL
+    would take a lock on a production table nobody asked for, and would hide the missing
+    migration until the next deployment.
+
+    What is checked is the index's *columns* and whether it is partial. The predicate's meaning
+    is not compared against the declaration's filter, because that is deciding whether two
+    boolean expressions agree — the database's job. So this catches a forgotten migration and a
+    plain index where a partial one was needed, and cannot catch a partial index whose predicate
+    says something else.
+    """
+
+    relation = spec.write_relation or spec.read_relation
+    schema, table = relation
+
+    for guarantee in spec.guarantees:
+        if not isinstance(guarantee, UniqueTogether):
+            # Reconciliation refuses every other member today, so nothing else reaches here.
+            continue
+
+        columns = tuple(guarantee.fields)
+        filtered = guarantee.where is not None or guarantee.skip_null
+
+        if filtered:
+            found = await introspector.partial_unique_index_exists(
+                schema=schema,
+                relation=table,
+                columns=columns,
+            )
+        else:
+            found = await introspector.constraint_exists_for_columns(
+                schema=schema,
+                relation=table,
+                columns=columns,
+            )
+
+        if found:
+            continue
+
+        column_list = ", ".join(columns)
+        ddl = (
+            f"CREATE UNIQUE INDEX CONCURRENTLY ON {schema}.{table} ({column_list}) "
+            "WHERE <the guarantee's condition>;"
+            if filtered
+            else f"ALTER TABLE {schema}.{table} ADD UNIQUE ({column_list});"
+        )
+
+        raise exc.configuration(
+            f"Document {spec.name!r} guarantees at most one row per ({column_list})"
+            + (" among the rows its filter selects" if filtered else "")
+            + f", and {schema}.{table} has no "
+            + ("partial " if filtered else "")
+            + "unique index on those columns. The migration is what satisfies a guarantee — "
+            f"nothing here creates one. This would:\n  {ddl}",
+            details={
+                "document": spec.name,
+                "relation": f"{schema}.{table}",
+                "columns": list(columns),
+            },
+        )
+
+
+# ....................... #
+
+
 async def validate_postgres_document_schemas(
     introspector: PostgresIntrospector,
     specs: Sequence[PostgresDocumentSchemaSpec],
@@ -270,6 +348,8 @@ async def validate_postgres_document_schemas(
     """Assert each spec's relations expose the columns implied by the Pydantic models."""
 
     for spec in specs:
+        await _require_guarantee_mechanisms(introspector, spec)
+
         read_need = frozenset(
             (stored_field_names_for(spec.read_model, include_computed=False) | spec.materialized)
             - spec.read_omit_fields,
