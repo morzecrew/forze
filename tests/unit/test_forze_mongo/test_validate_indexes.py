@@ -11,6 +11,7 @@ from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.introspect import MongoIndexInfo, MongoIntrospector
 from forze_mongo.kernel.validate_indexes import (
     MongoDocumentIndexSpec,
+    _filter_field_roots,  # pyright: ignore[reportPrivateUsage]
     _require_guarantee_indexes,  # pyright: ignore[reportPrivateUsage]
     validate_mongo_document_indexes,
 )
@@ -152,6 +153,47 @@ class TestTheFilterIsComparedByField:
         # The contrast: the key itself is a restriction, and dropping it with the value would
         # refuse a correct index.
         self._validate({"metadata": "x"}, {"metadata": {"kind": "x"}})
+
+    def test_an_index_over_other_fields_does_not_count(self) -> None:
+        with pytest.raises(CoreException, match="no unique index"):
+            _require_guarantee_indexes(
+                self._spec({"status": "current"}),
+                [
+                    MongoIndexInfo(
+                        name="ix",
+                        keys=(("tenant_id", 1),),
+                        unique=True,
+                        partial_filter={"status": "current"},
+                    )
+                ],
+                database="db",
+                collection="coll",
+            )
+
+    def test_a_special_index_type_does_not_count(self) -> None:
+        # A `text` or `hashed` index is a different structure over a different value; taking one
+        # for a unique tuple index would accept a collection with no such constraint on it.
+        with pytest.raises(CoreException, match="no unique index"):
+            _require_guarantee_indexes(
+                self._spec({"status": "current"}),
+                [
+                    MongoIndexInfo(
+                        name="ix",
+                        keys=(("root_id", "text"),),
+                        unique=True,
+                        partial_filter={"status": "current"},
+                    )
+                ],
+                database="db",
+                collection="coll",
+            )
+
+    def test_a_scalar_where_an_expression_was_expected_names_no_field(self) -> None:
+        # The walk's leaf: a malformed filter contributes nothing rather than raising, so a
+        # shape the server accepted but this does not understand fails closed at the comparison
+        # instead of crashing startup on an unrelated error.
+        assert _filter_field_roots("not-an-expression") == frozenset()
+        assert _filter_field_roots({"$or": ["not-an-expression"]}) == frozenset()
 
     def test_branches_nested_two_operators_deep_still_count(self) -> None:
         self._validate(

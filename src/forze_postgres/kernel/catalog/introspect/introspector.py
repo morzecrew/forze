@@ -632,11 +632,10 @@ class PostgresIntrospector:
         found: list[UniqueIndexInfo] = []
 
         for row in rows:
+            # Never empty in practice: the query drops expression indexes, so every key
+            # attribute resolves to a real column. No guard for it — an empty set could only
+            # match an empty guarantee, and the vocabulary refuses one at construction.
             columns = frozenset(str(column) for column in (row.get("columns") or []))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-
-            if not columns:
-                continue
-
             predicate = row.get("predicate")
 
             found.append(

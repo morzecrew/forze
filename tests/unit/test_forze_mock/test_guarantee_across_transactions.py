@@ -217,6 +217,38 @@ class TestOnlyTheFinalValueOfAKeyIsRechecked:
         finally:
             tx.finish(mock_state)
 
+    def test_a_row_deleted_within_the_transaction_is_not_rechecked(self) -> None:
+        # Nothing lands for the key, so there is nothing to conflict with. Checking it anyway
+        # rejects a transaction over a tuple it does not publish — the same spurious conflict as
+        # a rewritten key, reached through the delete path instead.
+        mock_state = MockState()
+        deps = DepsRegistry.from_modules(MockDepsModule(state=mock_state)).freeze().resolve()
+        command = ExecutionContext(deps=deps).document.command(GOVERNED)
+        tx = MvccTx.begin(mock_state, serializable=False, read_committed=False)
+        token = _mvcc_tx.set(tx)
+
+        async def write_then_drop() -> None:
+            row = await command.create(_FactCreate(root_id="x"))
+            await command.kill(row.id)
+
+        try:
+            asyncio.run(write_then_drop())
+
+        finally:
+            _mvcc_tx.reset(token)
+
+        mock_state.documents.setdefault("facts", {})[uuid4()] = {
+            "id": str(uuid4()),
+            "rev": 1,
+            "root_id": "x",
+        }
+
+        try:
+            tx.validate(mock_state)
+
+        finally:
+            tx.finish(mock_state)
+
     def test_a_row_left_on_the_tuple_still_conflicts(self) -> None:
         # The contrast: reading the final overlay is not a way of skipping the check.
         mock_state = MockState()

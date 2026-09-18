@@ -227,6 +227,19 @@ class TestStartupValidation:
 
         await _validate(pg_client, table, ONE_EVER)
 
+    async def test_a_partial_index_does_not_satisfy_an_unfiltered_guarantee(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The mirror of the filtered case, and the one that leaves rows unconstrained rather
+        # than over-constrained: a guarantee covering every row is not kept by an index that
+        # covers some of them.
+        table = await _table(pg_client)
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE is_current;")
+
+        with pytest.raises(CoreException, match="no valid unique index"):
+            await _validate(pg_client, table, ONE_EVER)
+
     async def test_an_invalid_index_does_not_count(self, pg_client: PostgresClient) -> None:
         # The state a failed migration leaves. A CREATE UNIQUE INDEX CONCURRENTLY over existing
         # duplicates fails and leaves an invalid index row behind; it enforces nothing on new
