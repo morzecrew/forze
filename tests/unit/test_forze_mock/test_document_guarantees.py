@@ -109,6 +109,7 @@ def _spec(
 
 ONE_CURRENT = UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}})
 ONE_EVER = UniqueTogether(fields=("root_id",))
+ONE_LABEL = UniqueTogether(fields=("label",))
 
 
 def _command(spec: DocumentSpec[Any, Any, Any, Any]) -> Any:
@@ -349,3 +350,45 @@ class TestAnUnenforcedMemberNeverReachesAWrite:
 
         with pytest.raises(CoreException, match="which no store enforces yet"):
             await command.create(_FactCreate(root_id="r1"))
+
+
+# ....................... #
+
+
+class TestASetBasedUpdateIsAllOrNothing:
+    """A bulk update that breaks the guarantee leaves the store as it found it.
+
+    On every real backend a set-based update is one statement: the row that violates the index
+    aborts it, and the rows before it do not stay. Writing row by row and refusing partway
+    through would hand the caller a failure over a half-applied store, which is the one outcome
+    no caller can recover from — it does not know how far it got.
+    """
+
+    async def test_a_conflicting_batch_changes_nothing(self) -> None:
+        command = _command(_spec(ONE_LABEL))
+
+        await command.create(_FactCreate(root_id="a", label="x"))
+        await command.create(_FactCreate(root_id="b", label="y"))
+
+        with pytest.raises(CoreException) as caught:
+            # Both rows are current, and the patch gives both of them the same label.
+            await command.update_matching({"$values": {"is_current": True}}, _FactUpdate(label="z"))
+
+        assert caught.value.code == "core.conflict"
+
+        page = await command.project_many(["label"])
+
+        assert sorted(str(row["label"]) for row in page.hits) == ["x", "y"]
+
+    async def test_a_batch_that_keeps_the_guarantee_is_applied(self) -> None:
+        # The contrast: staging is not a way of refusing every bulk update on a guaranteed spec.
+        command = _command(_spec(ONE_LABEL))
+
+        await command.create(_FactCreate(root_id="a", label="x"))
+        await command.create(_FactCreate(root_id="b", label="y", is_current=False))
+
+        await command.update_matching({"$values": {"is_current": True}}, _FactUpdate(label="z"))
+
+        page = await command.project_many(["label"])
+
+        assert sorted(str(row["label"]) for row in page.hits) == ["y", "z"]

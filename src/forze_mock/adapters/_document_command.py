@@ -59,6 +59,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         def _ensure_exists(self, pk: UUID) -> JsonDict: ...
         def _check_rev(self, current_rev: int, expected_rev: int | None) -> None: ...
         def _mark_rev_guarded(self, pk: UUID) -> None: ...
+        def _mark_guarantee_recheck(self, pk: UUID, row: JsonDict) -> None: ...
         def _mark_created(self, pk: UUID) -> None: ...
         def _create_codec(self) -> ModelCodec[D, Any]: ...
         def _domain_codec(self) -> ModelCodec[D, Any]: ...
@@ -88,6 +89,27 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         second writer slips between them and both rows land.
         """
 
+        self._check_guarantees(store, pk, row)
+        store[pk] = row
+
+        if self.spec.guarantees:
+            self._mark_guarantee_recheck(pk, row)
+
+    # ....................... #
+
+    def _check_guarantees(
+        self,
+        store: dict[UUID, JsonDict],
+        pk: UUID,
+        row: JsonDict,
+    ) -> None:
+        """Raise if *row* at *pk* would break a declared guarantee, given *store*.
+
+        Split from :meth:`_write_row` for the one caller that cannot check and write in the
+        same step: a set-based update validates the state the whole batch would produce, so it
+        needs the check against a staged store rather than against the live one.
+        """
+
         for guarantee in self.spec.guarantees:
             match guarantee:
                 case UniqueTogether():
@@ -102,8 +124,6 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                         "which no store enforces yet. Reconciliation should have refused this "
                         "at wiring.",
                     )
-
-        store[pk] = row
 
     # ....................... #
 
@@ -706,12 +726,14 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         results: list[R] = []
         mutated: list[D | None] = []
+        staged: dict[UUID, JsonDict] = {}
         n = 0
 
         match = self._matcher(filters)
 
         with self.state.lock:
             store = self._store()
+            merged = dict(store.items())
 
             for pk, raw in list(store.items()):
                 if not match(raw):
@@ -727,12 +749,29 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 serialized = self._apply_tenant(
                     self._domain_codec().encode_persistence_mapping(updated)
                 )
-                self._write_row(store, pk, serialized)
+                staged[pk] = serialized
                 mutated.append(updated)
                 n += 1
 
                 if return_new:
                     results.append(self._to_read(serialized))
+
+            # Guarantees are checked against the whole staged result, then published in one
+            # pass. A set-based update is one statement on every real backend: a row that
+            # breaks a guarantee aborts the statement, it does not commit the rows before it.
+            # Checking row by row as the loop went would refuse against a half-applied store
+            # and leave that half behind — so the batch is validated as the state it would
+            # produce, and reaches the store only if all of it passes.
+            merged.update(staged)
+
+            for pk, row in staged.items():
+                self._check_guarantees(merged, pk, row)
+
+            for pk, row in staged.items():
+                store[pk] = row
+
+                if self.spec.guarantees:
+                    self._mark_guarantee_recheck(pk, row)
 
         await drain_domain_events(
             mutated,
