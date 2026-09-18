@@ -22,7 +22,7 @@ from ..conformity import (
     validate_materialized_computed,
 )
 from ..crypto import FieldEncryption
-from ..guarantees import StorageGuarantees
+from ..guarantees import NonOverlapping, StorageGuarantees, UniqueTogether
 from ..querying import QueryFieldPolicy, QuerySortExpression
 from ..querying.field_policy import validate_field_policy
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
@@ -270,6 +270,9 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         if self.derived_read_fields:
             self._validate_derived_read_fields()
 
+        if self.guarantees:
+            self._validate_guarantees()
+
         read_fields = self._read_query_fields()
 
         if self.default_sort is not None:
@@ -344,6 +347,46 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             lenient=self.lenient_read_fields,
             spec_name=self.name,
         )
+
+    # ....................... #
+
+    def _validate_guarantees(self) -> None:
+        """Refuse a guarantee naming a field this aggregate does not store.
+
+        A store reads the guarantee's fields off the persisted row, and a name that is not
+        there reads as null — so a misspelling does not fail, it silently changes the property:
+        every row shares one tuple of nulls, which either refuses every write or, under
+        ``skip_null``, exempts all of them. Both are worse than a refusal, and neither is
+        visible in the declaration.
+
+        Checked against the stored fields rather than the read model's full surface, because a
+        derived or lenient field is not on the row a store would compare — no backend could
+        enforce uniqueness over it, and the in-memory store would compare a value the others
+        never see.
+
+        :raises CoreException: ``configuration`` when a guarantee names an unknown field.
+        """
+
+        stored = stored_field_names_for(self.read) - self.resolved_lenient_read_fields
+
+        if self.derived_read_fields:
+            stored -= frozenset(self.derived_read_fields)
+
+        for guarantee in self.guarantees:
+            match guarantee:
+                case UniqueTogether():
+                    named = frozenset(guarantee.fields)
+
+                case NonOverlapping():
+                    named = frozenset(guarantee.key) | frozenset(guarantee.period)
+
+            if unknown := named - stored:
+                raise exc.configuration(
+                    f"Guarantee {guarantee.kind!r} on spec {self.name!r} names "
+                    f"{sorted(unknown)}, which this aggregate does not store. A store compares "
+                    "the guarantee's fields on the persisted row; a name that is not there "
+                    "reads as null and quietly changes the property rather than failing.",
+                )
 
     # ....................... #
 

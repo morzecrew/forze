@@ -134,6 +134,15 @@ class NonOverlapping:
                 "any consumer has asked for.",
             )
 
+        if len(self.period) != 2:
+            raise exc.configuration(
+                f"NonOverlapping period names {len(self.period)} field(s); a period needs "
+                "exactly a start and an end. Checked rather than left to the annotation "
+                "because a declaration read from configuration is a tuple at runtime whatever "
+                "the annotation says, and unpacking it would raise a bare ValueError that no "
+                "configuration handler can classify.",
+            )
+
         start, end = self.period
 
         if start == end:

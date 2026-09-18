@@ -65,6 +65,17 @@ class TestTheVocabularyRefusesNonsense:
         with pytest.raises(CoreException, match="for both endpoints"):
             NonOverlapping(key=("k",), period=("at", "at"))
 
+    @pytest.mark.parametrize("period", [("only",), ("a", "b", "c")])
+    def test_non_overlap_with_the_wrong_number_of_endpoints(
+        self,
+        period: tuple[str, ...],
+    ) -> None:
+        # The annotation says two, and a declaration read from configuration is a tuple at
+        # runtime whatever the annotation says. Unpacked blindly it raises a bare `ValueError`,
+        # which no configuration handler can classify and no operator can act on.
+        with pytest.raises(CoreException, match="exactly a start and an end"):
+            NonOverlapping(key=("k",), period=period)  # type: ignore[arg-type]
+
     def test_a_guarantee_is_frozen(self) -> None:
         with pytest.raises(AttributeError):
             CURRENT_ONLY.fields = ("other",)  # type: ignore[misc]

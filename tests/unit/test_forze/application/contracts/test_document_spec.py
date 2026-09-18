@@ -17,6 +17,7 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
     validate_query_parameters,
 )
+from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
 from forze.application.contracts.querying import QueryFieldPolicy
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
@@ -799,4 +800,59 @@ def test_derived_write_omit_overlap_rejected() -> None:
             write=DocumentWriteTypes(domain=_OmitDomain, create_cmd=_OmitCreate),
             write_omit_fields={"note"},
             derived_read_fields={"note": None},
+        )
+
+
+# ....................... #
+
+
+def test_a_guarantee_naming_an_unknown_field_is_refused() -> None:
+    # A misspelling does not fail at the store, it silently changes the property: every row
+    # reads the missing name as null, so they all share one tuple — which refuses every write,
+    # or under `skip_null` exempts all of them. Caught where the declaration is written, so it
+    # is caught once rather than per backend.
+    with pytest.raises(CoreException, match="does not store"):
+        DocumentSpec(
+            name="orders",
+            read=_Read,
+            write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create),
+            guarantees=(UniqueTogether(fields=("nmae",)),),
+        )
+
+
+def test_a_guarantee_over_a_stored_field_is_accepted() -> None:
+    spec = DocumentSpec(
+        name="orders",
+        read=_Read,
+        write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create),
+        guarantees=(UniqueTogether(fields=("name",)),),
+    )
+
+    assert spec.guarantees
+
+
+def test_a_guarantee_over_a_derived_field_is_refused() -> None:
+    # A derived field is not on the row any store compares, so no backend could enforce
+    # uniqueness over it — and the in-memory store would compare a value the others never see.
+    class _DerivedRead(ReadDocument):
+        name: str
+        supplier_name: str = ""
+
+    with pytest.raises(CoreException, match="does not store"):
+        DocumentSpec(
+            name="orders",
+            read=_DerivedRead,
+            write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create),
+            derived_read_fields={"supplier_name": None},
+            guarantees=(UniqueTogether(fields=("supplier_name",)),),
+        )
+
+
+def test_a_non_overlap_guarantee_checks_its_key_and_its_period() -> None:
+    with pytest.raises(CoreException, match="does not store"):
+        DocumentSpec(
+            name="orders",
+            read=_Read,
+            write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create),
+            guarantees=(NonOverlapping(key=("name",), period=("valid_from", "valid_to")),),
         )
