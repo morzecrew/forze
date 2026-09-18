@@ -110,7 +110,7 @@ class HttpAuthConfig:
             case "api_key" | "header":
                 return {self.header_name: value}
 
-            case "basic":  # pragma: no cover - handled above, kept for exhaustiveness
+            case "basic":  # pragma: no cover - handled above, kept for exhaustiveness  # pyright: ignore[reportUnnecessaryComparison]
                 return {}
 
 

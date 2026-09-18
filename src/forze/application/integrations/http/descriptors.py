@@ -32,7 +32,7 @@ class async_http_op(Generic[In, Out]):
     request: type[In] | None = None
     response: type[Out]
     query_from: frozenset[str] = attrs.field(
-        factory=frozenset,
+        factory=frozenset[str],
         converter=frozenset,
     )
     idempotent: bool = False

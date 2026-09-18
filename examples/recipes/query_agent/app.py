@@ -124,18 +124,15 @@ class ModelReply(BaseModel):
     tool_call: ModelToolCall | None = None
 
 
-model_service = HttpServiceSpec(
-    name="model",
-    operations={
-        "messages": HttpOperationSpec(
-            name="messages",
-            method="POST",
-            path="/v1/messages",
-            args_type=ModelArgs,
-            return_type=ModelReply,
-        ),
-    },
+model_messages = HttpOperationSpec(
+    name="messages",
+    method="POST",
+    path="/v1/messages",
+    args_type=ModelArgs,
+    return_type=ModelReply,
 )
+
+model_service = HttpServiceSpec(name="model", operations={"messages": model_messages})
 
 
 def model_wiring() -> dict[str, HttpServiceConfig]:
@@ -169,8 +166,11 @@ async def answer(question: str, *, ctx: ExecutionContext, registry: FrozenOperat
     """
 
     tools = answering_tools(registry)
+    # The operation, not its name: what comes back is `ModelReply` because that is the
+    # `return_type` this spec declares. A name would type-check just as well and hand back a
+    # bare `BaseModel`, leaving the fields below unreachable.
     reply = await ctx.http.service(model_service).invoke(
-        "messages",
+        model_messages,
         ModelArgs(
             question=question,
             tools=[
@@ -206,7 +206,7 @@ def _render(result: ToolResult) -> str:
     if result.is_error:
         return f"tool refused: {result.content}"
 
-    hits = result.content["hits"] if isinstance(result.content, dict) else []
+    hits: list[Any] = result.content["hits"] if isinstance(result.content, dict) else []
 
     return "; ".join(str(hit) for hit in hits)
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, final
+from typing import Any, final, overload
 
 import attrs
 import httpx
@@ -89,12 +89,30 @@ class HttpServiceAdapter(HttpServicePort):
 
     # ....................... #
 
+    @overload
+    async def invoke[In: BaseModel, Out: BaseModel](
+        self,
+        op: HttpOperationSpec[In, Out],
+        args: In | None = None,
+    ) -> Out: ...
+
+    @overload
     async def invoke(
         self,
         op: StrKey,
         args: BaseModel | None = None,
-    ) -> BaseModel:
-        operation = self._operation(op)
+    ) -> BaseModel: ...
+
+    # Repeated from the port rather than inherited: this class overrides `invoke`, and an
+    # override replaces the overloads it is declared against. Without them a caller holding
+    # the adapter itself gets `Any` back where the same call through the port gives the
+    # operation's declared model.
+    async def invoke(
+        self,
+        op: StrKey | HttpOperationSpec[Any, Any],
+        args: BaseModel | None = None,
+    ) -> Any:
+        operation = self.spec.operation(op)
         path, query, body = request_parts(operation, args)
         site = operation.site or f"http.{self.spec.name}.{operation.name}"
         details: dict[str, Any] = {
@@ -201,16 +219,6 @@ class HttpServiceAdapter(HttpServicePort):
         raise exc.validation(
             f"HTTP operation {operation.name!r} returned an empty body",
         )
-
-    # ....................... #
-
-    def _operation(self, op: StrKey) -> HttpOperationSpec[Any, Any]:
-        key = str(getattr(op, "value", op))
-
-        if key not in self.spec.operations:
-            raise exc.validation(f"Unknown HTTP operation {key!r} for {self.spec.name!r}")
-
-        return self.spec.operations[key]
 
     # ....................... #
 

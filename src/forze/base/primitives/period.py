@@ -52,6 +52,8 @@ _START_CLOSED: frozenset[str] = frozenset({"[)", "[]"})
 _END_CLOSED: frozenset[str] = frozenset({"[]", "(]"})
 """Bounds whose last endpoint is in force."""
 
+# ....................... #
+
 
 def grain_of(value: date) -> tuple[type, bool]:
     """The comparability class of *value*: its type, and whether a ``datetime`` is aware.
@@ -110,7 +112,7 @@ class Period[T: (date, datetime)]:
         # `TypeError` the stdlib would otherwise raise from inside whichever predicate happened
         # to touch the value — past the boundary where a caller can report it.
         for name, endpoint in (("start", self.start), ("end", self.end)):
-            if endpoint is not None and not isinstance(endpoint, date):
+            if endpoint is not None and not isinstance(endpoint, date):  # pyright: ignore[reportUnnecessaryIsInstance]
                 raise exc.validation(
                     f"Period {name} must be a date or a datetime, not {type(endpoint).__name__}."
                 )
@@ -241,7 +243,7 @@ class Period[T: (date, datetime)]:
         return self.start < other.end
 
     def _require_same_grain(self, value: T) -> None:
-        if not isinstance(value, date) or grain_of(value) != grain_of(self.start):
+        if not isinstance(value, date) or grain_of(value) != grain_of(self.start):  # pyright: ignore[reportUnnecessaryIsInstance]
             raise exc.validation(
                 f"Period comparison mixes grains: this period holds "
                 f"{_grain_name(self.start)}, the other value is {_grain_name(value)}."

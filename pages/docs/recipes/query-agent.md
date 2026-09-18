@@ -95,6 +95,12 @@ A production loop keeps going — feed the result back, let the model ask for an
 stop when it answers in prose. Nothing about that shape is the framework's business, and
 the bridge does not try to own it: it dispatches one call at a time and returns.
 
+`invoke` is handed the operation rather than its name, and that is what makes `reply` a
+`ModelReply` here: the declaration carries `args_type` and `return_type`, so both reach
+your own variables. Naming the operation `"messages"` works too and hands back a bare
+`BaseModel` — the right form when the operation comes from config and there is no
+declaration to point at, and the wrong one when you meant to read a field off the answer.
+
 `dispatch_tool_use` runs the call through `run_operation` on the context you pass, so
 tenancy, permissions, the deadline and audit apply exactly as they would to an HTTP
 request for the same operation. A governed failure — a denied permission, a field outside

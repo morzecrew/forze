@@ -35,6 +35,8 @@ _TYPED_KEYWORDS: Final[frozenset[str]] = frozenset({"type", "$ref", "anyOf", "en
 A node carrying none of them says nothing about what the model may answer — `Any` and
 `object` emit a title alone, and a bare `list`'s member schema is `{}`."""
 
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -73,7 +75,7 @@ def schema_violations(
         return []
 
     # isinstance narrows Any to Mapping[Unknown, Unknown]; a JSON schema is str-keyed.
-    schema: Mapping[str, Any] = node
+    schema: Mapping[str, Any] = node  # pyright: ignore[reportUnknownVariableType]
     where = path or "<root>"
     found = [f"{where}: {keyword}" for keyword in sorted(rules.refused & set(schema))]
 
@@ -82,10 +84,10 @@ def schema_violations(
 
     properties = schema.get("properties")
     declared = schema.get("required")
-    required: set[str] = {str(name) for name in declared} if isinstance(declared, list) else set()
+    required: set[str] = {str(name) for name in declared} if isinstance(declared, list) else set()  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
     if isinstance(properties, Mapping):
-        for name, sub_schema in properties.items():
+        for name, sub_schema in properties.items():  # pyright: ignore[reportUnknownVariableType]
             if not rules.optional_properties and name not in required:
                 found.append(f"{path}.{name}: optional (the constraint requires every property)")
 
@@ -127,14 +129,14 @@ def schema_violations(
         options = schema[keyword]
 
         if isinstance(options, list):
-            for position, option in enumerate(options):
+            for position, option in enumerate(options):  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
                 found.extend(schema_violations(option, f"{path}|{position}", rules=rules))
 
     for keyword in sorted((_SCHEMA_MAPS - {"properties"}) & set(schema)):
         definitions = schema.get(keyword)
 
         if isinstance(definitions, Mapping):
-            for name, definition in definitions.items():
+            for name, definition in definitions.items():  # pyright: ignore[reportUnknownVariableType]
                 found.extend(schema_violations(definition, f"${name}", rules=rules))
 
     return found
@@ -180,7 +182,7 @@ def recursive_definitions(schema: Mapping[str, Any]) -> list[str]:
     if not isinstance(definitions, Mapping):
         return []
 
-    edges = {str(name): _referenced(body) for name, body in definitions.items()}
+    edges = {str(name): _referenced(body) for name, body in definitions.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
     recursive: list[str] = []
 
     for name in sorted(edges):
@@ -207,12 +209,12 @@ def _referenced(node: Any) -> list[str]:
     """``$defs`` names *node* refers to, at any depth."""
 
     if isinstance(node, list):
-        return [name for item in node for name in _referenced(item)]
+        return [name for item in node for name in _referenced(item)]  # pyright: ignore[reportUnknownVariableType]
 
     if not isinstance(node, Mapping):
         return []
 
-    schema: Mapping[str, Any] = node
+    schema: Mapping[str, Any] = node  # pyright: ignore[reportUnknownVariableType]
     found: list[str] = []
     reference = schema.get("$ref")
 
@@ -242,15 +244,15 @@ def tighten(node: Any) -> Any:
     if not isinstance(node, Mapping):
         return node
 
-    schema: Mapping[str, Any] = node
+    schema: Mapping[str, Any] = node  # pyright: ignore[reportUnknownVariableType]
     tightened: dict[str, Any] = {}
 
     for key, value in schema.items():
         if key in _SCHEMA_MAPS and isinstance(value, Mapping):
-            tightened[key] = {name: tighten(sub) for name, sub in value.items()}
+            tightened[key] = {name: tighten(sub) for name, sub in value.items()}  # pyright: ignore[reportUnknownVariableType]
 
         elif key in _SCHEMA_LISTS and isinstance(value, list):
-            tightened[key] = [tighten(item) for item in value]
+            tightened[key] = [tighten(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
 
         elif key in _SCHEMA_VALUED:
             tightened[key] = tighten(value)

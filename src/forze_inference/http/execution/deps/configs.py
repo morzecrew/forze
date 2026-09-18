@@ -57,6 +57,8 @@ _GENERATION_FIELDS = ("prompt", "output_mode", "temperature", "max_output_tokens
 prompt on a KServe route is a wiring mistake, and silently dropping it would send the model
 a request the operator believes was shaped by it."""
 
+# ....................... #
+
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -168,7 +170,7 @@ class HttpInferenceConfig(TenantAwareIntegrationConfig):
         # passes as a number (it is an int), and a fractional cap reaches
         # `itertools.batched`, which takes integers only.
         if self.temperature is not None and (
-            isinstance(self.temperature, bool) or not isinstance(self.temperature, (int, float))
+            isinstance(self.temperature, bool) or not isinstance(self.temperature, (int, float))  # pyright: ignore[reportUnnecessaryIsInstance]
         ):
             raise exc.configuration(
                 f"HttpInferenceConfig.temperature must be a number, got "

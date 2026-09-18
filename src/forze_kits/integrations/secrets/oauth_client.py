@@ -408,7 +408,7 @@ class OAuth2TokenClient:
         """
 
         declared = (error.details or {}).get(RESPONSE_ERROR_DETAIL)
-        code = declared.get("error") if isinstance(declared, Mapping) else None
+        code = declared.get("error") if isinstance(declared, Mapping) else None  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
 
         if not isinstance(code, str) or code not in _PERMANENT_ERRORS:
             return error
