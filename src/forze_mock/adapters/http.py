@@ -13,7 +13,7 @@ injection (raise / delay / malformed response) without touching call sites.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any, final, overload
 
 import attrs
@@ -42,6 +42,25 @@ parameter type is contravariant: a function of ``ModelArgs | None`` is not a fun
 ``BaseModel | None``."""
 
 
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class _Registration:
+    """One handler, and the declaration it was registered against if it named one.
+
+    Keeping the spec is what closes the door a name leaves open: registration keys by
+    ``(service, op name)``, so a handler type-checked against a *foreign* declaration lands
+    under the local operation's name and would be handed the local args model — the very
+    mismatch taking the spec was meant to prevent, arriving from the other side. The adapter
+    compares the two before it calls anything.
+    """
+
+    handler: HttpHandler
+    declared: HttpOperationSpec[Any, Any] | None
+
+
+# ....................... #
+
+
 def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
     return not any(field_info.is_required() for field_info in return_type.model_fields.values())
 
@@ -54,8 +73,8 @@ def _return_type_allows_empty(return_type: type[BaseModel]) -> bool:
 class MockHttpRegistry:
     """Programmable in-memory HTTP responses, keyed by ``(service name, op name)``."""
 
-    _handlers: dict[tuple[str, str], HttpHandler] = attrs.field(
-        factory=dict[tuple[str, str], HttpHandler]
+    _handlers: dict[tuple[str, str], _Registration] = attrs.field(
+        factory=dict[tuple[str, str], _Registration]
     )
 
     @overload
@@ -88,18 +107,29 @@ class MockHttpRegistry:
         rather than receiving a model it cannot read at the call. A key leaves the two
         unrelated, and is the right form where the operation is chosen at runtime.
 
-        Only the operation is linked, never the service: the registry is keyed by two names
-        and never sees the :class:`HttpServiceSpec`, so a spec from another service still
-        registers. :class:`MockHttpServiceAdapter` is where that is caught, at the call.
+        The registry never sees the :class:`HttpServiceSpec`, so it cannot tell whether the
+        spec belongs to the service named here — it keeps the spec instead, and
+        :class:`MockHttpServiceAdapter` compares it against the operation it resolved before
+        handing the handler anything.
         """
 
-        key = str(op.name) if isinstance(op, HttpOperationSpec) else str(op)
-        self._handlers[(str(service), key)] = handler
+        declared = op if isinstance(op, HttpOperationSpec) else None
+        key = str(declared.name) if declared is not None else str(op)
+        self._handlers[(str(service), key)] = _Registration(handler=handler, declared=declared)
 
         return self
 
     def handler_for(self, service: str, op: str) -> HttpHandler | None:
-        return self._handlers.get((service, op))
+        registration = self._handlers.get((service, op))
+
+        return None if registration is None else registration.handler
+
+    def declared_for(self, service: str, op: str) -> HttpOperationSpec[Any, Any] | None:
+        """The declaration a spec-based registration kept, or ``None`` for a keyed one."""
+
+        registration = self._handlers.get((service, op))
+
+        return None if registration is None else registration.declared
 
 
 # ....................... #
@@ -116,18 +146,18 @@ class MockHttpServiceAdapter(HttpServicePort):
     # ....................... #
 
     @overload
-    def invoke[In: BaseModel, Out: BaseModel](
+    async def invoke[In: BaseModel, Out: BaseModel](
         self,
         op: HttpOperationSpec[In, Out],
         args: In | None = None,
-    ) -> Awaitable[Out]: ...
+    ) -> Out: ...
 
     @overload
-    def invoke(
+    async def invoke(
         self,
         op: StrKey,
         args: BaseModel | None = None,
-    ) -> Awaitable[BaseModel]: ...
+    ) -> BaseModel: ...
 
     # Repeated from the port rather than inherited: this class overrides `invoke`, and an
     # override replaces the overloads it is declared against. Without them a caller holding
@@ -142,6 +172,16 @@ class MockHttpServiceAdapter(HttpServicePort):
         self._validate_args(operation, args)
 
         handler = self.registry.handler_for(str(self.spec.name), str(operation.name))
+        declared = self.registry.declared_for(str(self.spec.name), str(operation.name))
+
+        if declared is not None and declared != operation:
+            raise exc.validation(
+                f"MockHttpService {self.spec.name!r}: the handler for operation "
+                f"{operation.name!r} was registered against a different declaration, so it "
+                "would be handed a model it was not written for. Register it against this "
+                "service's own operation, or by name if that is deliberate.",
+                code="mock.http.handler_declaration_mismatch",
+            )
 
         if handler is None:
             raise exc.configuration(

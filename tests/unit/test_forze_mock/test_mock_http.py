@@ -234,6 +234,35 @@ class TestMockHttpTakesTheOperationSpec:
         with pytest.raises(CoreException, match="is not the one 'pricing' declares"):
             await _ctx(registry).http.service(SPEC).invoke(foreign, QuoteArgs(symbol="A"))
 
+    async def test_a_handler_registered_by_a_foreign_spec_is_never_called(self) -> None:
+        # The gap the spec form would otherwise leave: registration keys by name, so a
+        # handler type-checked against a *foreign* declaration lands under the local one
+        # and is then handed the local args model — the exact mismatch taking the spec was
+        # meant to prevent, arriving by a different door. Invoked by the local name here,
+        # which is the path the adapter's own foreign-spec refusal does not cover.
+        called: list[object] = []
+
+        foreign = HttpOperationSpec(
+            name="get_quote",
+            method="GET",
+            path="/quote",
+            args_type=Pong,
+            return_type=QuoteResult,
+        )
+
+        def handler(args: Pong | None) -> QuoteResult:
+            called.append(args)
+
+            return QuoteResult(symbol="never", price=0.0)
+
+        registry = MockHttpRegistry().on("pricing", foreign, handler)
+        port = _ctx(registry).http.service(SPEC)
+
+        with pytest.raises(CoreException, match="registered against a different declaration"):
+            await port.invoke("get_quote", QuoteArgs(symbol="ABC"))
+
+        assert called == []
+
     async def test_a_handler_naming_its_own_args_model_is_accepted(self) -> None:
         # The registered signature, not `BaseModel | None`. It used to be refused by a type
         # checker on contravariance, which is why every handler above takes the wide form.

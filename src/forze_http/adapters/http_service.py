@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
 from typing import Any, final, overload
 
 import attrs
@@ -91,18 +90,18 @@ class HttpServiceAdapter(HttpServicePort):
     # ....................... #
 
     @overload
-    def invoke[In: BaseModel, Out: BaseModel](
+    async def invoke[In: BaseModel, Out: BaseModel](
         self,
         op: HttpOperationSpec[In, Out],
         args: In | None = None,
-    ) -> Awaitable[Out]: ...
+    ) -> Out: ...
 
     @overload
-    def invoke(
+    async def invoke(
         self,
         op: StrKey,
         args: BaseModel | None = None,
-    ) -> Awaitable[BaseModel]: ...
+    ) -> BaseModel: ...
 
     # Repeated from the port rather than inherited: this class overrides `invoke`, and an
     # override replaces the overloads it is declared against. Without them a caller holding
