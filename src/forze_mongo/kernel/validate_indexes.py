@@ -51,6 +51,46 @@ def _is_id_unique_index(index: MongoIndexInfo) -> bool:
 # ....................... #
 
 
+def _filter_field_roots(expression: object) -> frozenset[str]:
+    """The field names a ``partialFilterExpression`` restricts on.
+
+    Walks the document rather than searching its text: a substring test reads a guarantee
+    filtered on ``status`` as satisfied by an index filtered on ``status_code``, which is
+    exactly the wrong-scope acceptance the comparison exists to catch. Operator keys (``$and``,
+    ``$or``, ``$exists``, …) are descended into, not collected, and a dotted path contributes
+    its root the way a filter's own field roots do.
+    """
+
+    if isinstance(expression, dict):
+        found: set[str] = set()
+
+        for key, value in expression.items():  # pyright: ignore[reportUnknownVariableType]
+            name = str(key)
+
+            if name.startswith("$"):
+                found |= _filter_field_roots(value)
+
+            else:
+                found.add(name.split(".", 1)[0])
+                found |= _filter_field_roots(value)
+
+        return frozenset(found)
+
+    if isinstance(expression, list | tuple):
+        return (
+            frozenset().union(
+                *(_filter_field_roots(item) for item in expression)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            )
+            if expression
+            else frozenset()
+        )
+
+    return frozenset()
+
+
+# ....................... #
+
+
 def _require_guarantee_indexes(
     spec: MongoDocumentIndexSpec,
     indexes: Sequence[MongoIndexInfo],
@@ -101,9 +141,7 @@ def _require_guarantee_indexes(
                 if index.partial_filter is None:
                     continue
 
-                rendered = repr(index.partial_filter)
-
-                if any(field not in rendered for field in predicate_fields):
+                if not predicate_fields <= _filter_field_roots(index.partial_filter):
                     continue
 
             elif index.partial_filter is not None or index.sparse:

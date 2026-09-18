@@ -5,11 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from forze.application.contracts.guarantees import UniqueTogether
+from forze.base.exceptions import CoreException
 from forze_mongo.adapters.document import MongoDocumentAdapter
 from forze_mongo.kernel.client import MongoClient
-from forze_mongo.kernel.introspect import MongoIntrospector
+from forze_mongo.kernel.introspect import MongoIndexInfo, MongoIntrospector
 from forze_mongo.kernel.validate_indexes import (
     MongoDocumentIndexSpec,
+    _require_guarantee_indexes,  # pyright: ignore[reportPrivateUsage]
     validate_mongo_document_indexes,
 )
 
@@ -75,3 +77,62 @@ class TestWhatMongoDeclaresItCanKeep:
             )
             == ()
         )
+
+
+# ....................... #
+
+
+class TestTheFilterIsComparedByField:
+    """A `partialFilterExpression` is matched on the fields it names, not on its text.
+
+    The text reading is the one that fails quietly: it accepts an index restricted to the wrong
+    documents whenever the wrong field's name happens to contain the right one, which is common
+    enough in real schemas (`status` / `status_code`, `deleted` / `deleted_at`) to be the
+    default outcome rather than an edge case.
+    """
+
+    @staticmethod
+    def _spec(where: dict[str, object]) -> MongoDocumentIndexSpec:
+        return MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(UniqueTogether(fields=("root_id",), where={"$values": where}),),
+        )
+
+    @staticmethod
+    def _index(partial_filter: dict[str, object] | None) -> MongoIndexInfo:
+        return MongoIndexInfo(
+            name="ix",
+            keys=(("root_id", 1),),
+            unique=True,
+            partial_filter=partial_filter,
+        )
+
+    def _validate(self, where: dict[str, object], partial_filter: dict[str, object]) -> None:
+        _require_guarantee_indexes(
+            self._spec(where),
+            [self._index(partial_filter)],
+            database="db",
+            collection="coll",
+        )
+
+    def test_a_longer_field_name_containing_the_declared_one_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"status": "current"}, {"status_code": "current"})
+
+    def test_the_declared_field_itself_counts(self) -> None:
+        self._validate({"status": "current"}, {"status": "current"})
+
+    def test_a_field_under_an_operator_counts(self) -> None:
+        # `$and` is a Mongo operator, not a field; its branches carry the fields.
+        self._validate(
+            {"status": "current"},
+            {"$and": [{"status": {"$eq": "current"}}, {"tenant_id": {"$exists": True}}]},
+        )
+
+    def test_a_dotted_path_contributes_its_root(self) -> None:
+        self._validate({"meta": "x"}, {"meta.kind": "x"})
+
+    def test_an_operator_name_is_not_read_as_a_field(self) -> None:
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"exists": True}, {"root_id": {"$exists": True}})
