@@ -23,3 +23,11 @@ class MongoIndexInfo:
 
     unique: bool = attrs.field(default=False)
     """Whether the index enforces uniqueness."""
+
+    partial: bool = attrs.field(default=False)
+    """Whether the index covers only some documents.
+
+    True for a ``partialFilterExpression`` and for a ``sparse`` index, which are Mongo's two
+    ways of saying the same thing a Postgres ``WHERE`` clause says: this uniqueness applies to
+    a subset. Read so a declared *filtered* guarantee is not satisfied by a plain unique index,
+    which would refuse every row the guarantee meant to allow."""

@@ -37,6 +37,7 @@ def mongo_document_index_spec_for_binding(
     return MongoDocumentIndexSpec(
         name=name,
         write_relation=config.write,
+        guarantees=spec.guarantees,
     )
 
 

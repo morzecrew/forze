@@ -4,11 +4,13 @@ from collections.abc import Sequence
 
 import attrs
 
+from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
 from forze.application.contracts.resolution import (
     RelationSpec,
     is_static_relation,
     require_static_relation,
 )
+from forze.base.exceptions import exc
 
 from ._logger import logger
 from .introspect import MongoIndexInfo, MongoIntrospector
@@ -26,6 +28,12 @@ class MongoDocumentIndexSpec:
     write_relation: RelationSpec
     """Write collection ``(database, collection)``."""
 
+    guarantees: StorageGuarantees = ()
+    """What the spec requires the store to enforce (see :attr:`DocumentSpec.guarantees`).
+
+    Reconciliation at wiring said Mongo can keep these; this says whether the deployment
+    created the index."""
+
 
 # ....................... #
 
@@ -37,6 +45,67 @@ def _format_index_keys(keys: tuple[tuple[str, int | str], ...]) -> str:
 
 def _is_id_unique_index(index: MongoIndexInfo) -> bool:
     return index.unique and index.keys == (("_id", 1),)
+
+
+# ....................... #
+
+
+def _require_guarantee_indexes(
+    spec: MongoDocumentIndexSpec,
+    indexes: Sequence[MongoIndexInfo],
+    *,
+    database: str,
+    collection: str,
+) -> None:
+    """Refuse a declared guarantee with no index behind it, naming the index that would serve.
+
+    The Mongo half of the same rule Postgres follows: declared, validated, never created. An
+    adapter that built the index would hold a write lock on a collection nobody asked it to
+    touch, and would hide the missing migration.
+
+    A filtered guarantee needs a filtered index — ``partialFilterExpression`` for a ``where``,
+    ``sparse`` for ``skip_null``. As on Postgres, what the filter *says* is not compared against
+    the declaration: only that the index covers these fields and is restricted at all.
+    """
+
+    for guarantee in spec.guarantees:
+        if not isinstance(guarantee, UniqueTogether):
+            continue
+
+        fields = tuple(guarantee.fields)
+        filtered = guarantee.where is not None or guarantee.skip_null
+        found = any(
+            index.unique
+            and tuple(key for key, _ in index.keys) == fields
+            and (index.partial if filtered else not index.partial)
+            for index in indexes
+        )
+
+        if found:
+            continue
+
+        field_list = ", ".join(fields)
+        keys = ", ".join(f"{field}: 1" for field in fields)
+        options = (
+            "{unique: true, partialFilterExpression: {<the guarantee's condition>}}"
+            if filtered
+            else "{unique: true}"
+        )
+
+        raise exc.configuration(
+            f"Document {spec.name!r} guarantees at most one document per ({field_list})"
+            + (" among the documents its filter selects" if filtered else "")
+            + f", and {database}.{collection} has no "
+            + ("partial " if filtered else "")
+            + "unique index on those fields. The migration is what satisfies a guarantee — "
+            f"nothing here creates one. This would:\n"
+            f"  db.{collection}.createIndex({{{keys}}}, {options})",
+            details={
+                "document": spec.name,
+                "collection": f"{database}.{collection}",
+                "fields": list(fields),
+            },
+        )
 
 
 # ....................... #
@@ -69,6 +138,13 @@ async def validate_mongo_document_indexes(
             omit_hint="Omit mongo_document_index_validation_lifecycle_step for this route.",
         )
         indexes = await introspector.list_indexes(
+            database=database,
+            collection=collection,
+        )
+
+        _require_guarantee_indexes(
+            spec,
+            indexes,
             database=database,
             collection=collection,
         )

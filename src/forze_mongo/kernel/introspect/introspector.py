@@ -87,5 +87,6 @@ def _parse_index_info(doc: dict[str, object]) -> MongoIndexInfo:
     # ``"vector"``); ``int(v)`` would crash on those, so keep non-int verbatim.
     keys = tuple((str(k), v if isinstance(v, int) else str(v)) for k, v in key_doc.items())
     unique = bool(doc.get("unique", False))
+    partial = bool(doc.get("partialFilterExpression")) or bool(doc.get("sparse", False))
 
-    return MongoIndexInfo(name=name, keys=keys, unique=unique)
+    return MongoIndexInfo(name=name, keys=keys, unique=unique, partial=partial)
