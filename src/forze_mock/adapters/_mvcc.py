@@ -347,7 +347,31 @@ class MvccTx:
             if row is _TOMBSTONE:
                 continue
 
-            check(live, key, row)
+            check(self._published(ns, state), key, row)
+
+    def _published(self, ns: str, state: Any) -> dict[Any, Any]:
+        """The namespace as it will look once this transaction commits.
+
+        The committed rows with this transaction's own overlay laid over them, which is the state
+        the check has to judge — not the committed rows alone. A transaction that moves one row
+        out of a guarantee's scope and another into it is the ordinary shape of a correction, and
+        against the committed store alone the row being *replaced* is still there, so the
+        replacement reads as a duplicate of something that is on its way out.
+
+        Concurrency is unaffected: a row a concurrent transaction published since this one began
+        is in the committed store, so it is in here too, and a genuine duplicate is still caught.
+        """
+
+        merged = dict(state.documents.get(ns) or {})
+
+        for key, value in (self.overlays.get(ns) or {}).items():
+            if value is _TOMBSTONE:
+                merged.pop(key, None)
+
+            else:
+                merged[key] = value
+
+        return merged
 
     def validate(self, state: Any) -> None:
         """Raise on a create unique violation or a conflict with a concurrently-committed write.

@@ -70,6 +70,11 @@ from forze_kits.aggregates.soft_deletion import (
     soft_delete_wiring,
 )
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
+from forze_kits.aggregates.versioned import (
+    VersionedKernelOp,
+    VersionedPolicy,
+    versioned_wiring,
+)
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.integrations.search import SearchRebuildReport, rebuild_search_index
@@ -90,7 +95,14 @@ C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 
 # Write ops an aggregate's laws hang off — the result carries the read model to scope them by.
-_WRITE_OPS = (DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE)
+_WRITE_OPS: tuple[StrKey, ...] = (
+    DocumentKernelOp.CREATE,
+    DocumentKernelOp.UPDATE,
+    # A correction is a write like any other, and the law a versioned aggregate most wants — at
+    # most one current version per fact — is one it could break. Absent from the registry when
+    # the kit is not versioned, and the binding skips a key that is not there.
+    VersionedKernelOp.CORRECT,
+)
 
 # Ops that stage domain events (so the outbox flush belongs there). ``@event_emitter`` fires only on
 # ``Document.update``, so a generated CREATE never stages — flushing it would just mark the route
@@ -177,6 +189,15 @@ class AggregateKit(Generic[R, D, C, U]):
     blob (a ``storage_key`` field, an upload-then-create lifecycle) is the author's, via the escape
     hatch. Its ``name`` must differ from the document ``spec.name`` (its ``list``/``delete`` ops
     would otherwise collide)."""
+
+    versioned: VersionedPolicy | None = None
+    """Wire correction lineage: current-only reads, `correct`, `history` and `as_of`.
+
+    Requires the versioning mixins on the domain and update-command models, and requires the spec
+    to declare both storage guarantees — a versioned aggregate's correctness rests on them rather
+    than on its own write path, so the kit refuses to build one that could reach a store without
+    them. The policy carries the spec for the correction records, which is the author's: its
+    relation and route are facts only they hold."""
 
     invariants: tuple[SystemInvariant, ...] = attrs.field(factory=tuple)
     """Cross-aggregate laws enforced preventively on the write ops (scope params read off the result)."""
@@ -437,9 +458,17 @@ class AggregateKit(Generic[R, D, C, U]):
         ns = spec.default_namespace
 
         soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
+        versioned = versioned_wiring(spec, self.versioned) if self.versioned is not None else None
+
         mappers: DocumentMappers[Any, Any, Any, Any] = (
             soft.read_mappers() if soft is not None else DocumentMappers()
         )
+
+        if versioned is not None:
+            # After soft-delete, so a kit composing both restricts reads to rows that are current
+            # *and* not deleted — each mapper conjoins into the filter the previous one produced.
+            mappers = versioned.read_mappers(mappers)
+
         reg = build_document_registry(spec, mappers=mappers)
 
         if self.search is not None:
@@ -459,6 +488,17 @@ class AggregateKit(Generic[R, D, C, U]):
             reg = soft.bind(reg, tx_route=tx_route, ns=ns)
             if self.search is not None:
                 reg = self._sync_soft_delete_to_search(reg, ns=ns, tx_route=tx_route)
+
+        if versioned is not None:
+            reg = versioned.bind(reg, ns=ns)
+            # The correction writes four times across two aggregates; without one transaction a
+            # failure between them leaves a fact with two current versions or none.
+            reg = (
+                reg.bind(ns.key(VersionedKernelOp.CORRECT))
+                .bind_tx()
+                .set_route(tx_route)
+                .finish(deep=True)
+            )
 
         reg = self._attach_invariants(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_outbox_flush(reg, ns=ns, tx_route=tx_route)
