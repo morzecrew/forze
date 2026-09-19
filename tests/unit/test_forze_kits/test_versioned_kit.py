@@ -10,6 +10,7 @@ while the read mapper is unattached would pass a unit test and fail a deployment
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -17,12 +18,18 @@ import pytest
 from forze import build_runtime
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.invariants import CountAll, ReadSet, SystemInvariant
+from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import ReadDocument
 from forze_kits.aggregates import AggregateKit
-from forze_kits.aggregates.document.dto import DocumentIdDTO, ListRequestDTO
+from forze_kits.aggregates.document.dto import (
+    DocumentIdDTO,
+    DocumentIdRevDTO,
+    ListRequestDTO,
+)
 from forze_kits.aggregates.document.operations import DocumentKernelOp
+from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
 from forze_kits.aggregates.versioned import (
     ONE_CURRENT_VERSION,
     ONE_SUCCESSOR,
@@ -32,6 +39,7 @@ from forze_kits.aggregates.versioned import (
     VersionedKernelOp,
     VersionedPolicy,
 )
+from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze_kits.domain.versioned import (
     CorrectionDoc,
     CreateCmdWithVersioningFields,
@@ -453,14 +461,40 @@ class TestTheInvariantWatchesTheCorrection:
     most able to break the law, since it is the only one that writes two rows.
     """
 
-    def test_it_binds_to_the_correction_op(self) -> None:
+    @staticmethod
+    def _isolation(reg: Any, op: Any) -> Any:
+        """The isolation floor an op's transaction runs at.
+
+        The signal that a law is *bound*, rather than merely present: preventive enforcement is
+        correct only at or above the law's `required_isolation`, so binding one raises the write
+        to it. The presence of a plan proves nothing — every operation has one.
+        """
+
+        return reg.plans[_key(op)].tx.isolation
+
+    @pytest.mark.parametrize(
+        "op", [DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE, VersionedKernelOp.CORRECT]
+    )
+    def test_the_kit_carries_the_law_without_an_author_declaring_it(self, op: Any) -> None:
+        # §1: the kit declares two storage guarantees *and one invariant*. Left to the author it
+        # is a control that silently does not exist — nothing about a kit missing it looks
+        # different until a path outside the handlers leaves a second current row.
+        assert self._isolation(_kit().registry(tx_route=_TX), op) is IsolationLevel.SERIALIZABLE
+
+    @pytest.mark.parametrize("op", [DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE])
+    def test_an_unversioned_kit_carries_no_law(self, op: Any) -> None:
+        # The contrast, and the reason it is needed: every operation has a plan, so "a plan
+        # exists" is not evidence of anything. An unbound write has no isolation floor at all.
+        reg = AggregateKit(spec=READINGS).registry(tx_route=_TX)
+
+        assert self._isolation(reg, op) is None
+
+    def test_an_author_law_is_added_to_it_rather_than_replacing_it(self) -> None:
         reg = AggregateKit(spec=READINGS, versioned=POLICY, invariants=(ONE_HEAD,)).registry(
             tx_route=_TX
         )
 
-        # A law bound to an op makes it transactional at the law's isolation floor; an unbound
-        # op has no plan of its own.
-        assert _key(VersionedKernelOp.CORRECT) in reg.plans
+        assert self._isolation(reg, VersionedKernelOp.CORRECT) is IsolationLevel.SERIALIZABLE
 
     async def test_a_correction_still_passes_under_the_law(self) -> None:
         # The contrast that keeps the binding from being a way of refusing every correction.
@@ -475,3 +509,92 @@ class TestTheInvariantWatchesTheCorrection:
             second = await _correct(reg, ctx, first, kwh=120)
 
         assert second.version == 2
+
+
+# ....................... #
+
+
+class _BothDoc(DocWithVersioning, SoftDeletionMixin):
+    meter: str
+
+
+class _BothCreate(CreateCmdWithVersioningFields):
+    meter: str
+
+
+class _BothUpdate(UpdateCmdWithVersioning, SoftDeletionMixin):
+    meter: str | None = None
+
+
+class _BothRead(ReadDocument):
+    meter: str
+    root_id: Any = None
+    version: int = 1
+    supersedes_id: Any = None
+    is_current: bool = True
+    superseded_at: Any = None
+    is_deleted: bool = False
+
+
+BOTH = DocumentSpec(
+    name="both",
+    read=_BothRead,
+    write=DocumentWriteTypes(
+        domain=_BothDoc, create_cmd=_BothCreate, update_cmd=_BothUpdate
+    ),
+    guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+)
+
+
+class TestComposedWithSoftDeletion:
+    """Both arms guard GET, and only the last one bound actually runs.
+
+    Neither arm's own battery can see this: soft-delete's passes without versioning and
+    versioning's passes without soft-delete. The composition is where the guard goes missing, so
+    the composition is where it has to be pinned.
+    """
+
+    async def test_a_soft_deleted_row_is_still_refused(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
+            tx_route=_TX
+        )
+        key = BOTH.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await run_operation(
+                reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="m"), ctx
+            )
+            await run_operation(
+                reg,
+                key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=row.id, rev=row.rev),
+                ctx,
+            )
+
+            with pytest.raises(CoreException) as caught:
+                await run_operation(
+                    reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx
+                )
+
+        assert caught.value.kind is ExceptionKind.NOT_FOUND
+
+    async def test_a_live_current_row_still_reads(self) -> None:
+        # The contrast: two guards on one handler must not refuse everything.
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
+            tx_route=_TX
+        )
+        key = BOTH.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await run_operation(
+                reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="m"), ctx
+            )
+            got = await run_operation(
+                reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx
+            )
+
+        assert got.meter == "m"

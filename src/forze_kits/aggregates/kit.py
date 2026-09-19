@@ -73,6 +73,7 @@ from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.aggregates.versioned import (
     VersionedKernelOp,
     VersionedPolicy,
+    single_current_head,
     versioned_wiring,
 )
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
@@ -647,10 +648,10 @@ class AggregateKit(Generic[R, D, C, U]):
         ns: Any,
         tx_route: StrKey,
     ) -> OperationRegistry:
-        if not self.invariants:
+        if not self._laws():
             return reg
 
-        enforcements = tuple(self._enforcement(law) for law in self.invariants)
+        enforcements = tuple(self._enforcement(law) for law in self._laws())
 
         for op in _WRITE_OPS:
             key = ns.key(op)
@@ -683,6 +684,22 @@ class AggregateKit(Generic[R, D, C, U]):
                 )
 
         return reg
+
+    # ....................... #
+
+    def _laws(self) -> tuple[SystemInvariant, ...]:
+        """The author's declared laws, plus the one a versioned aggregate carries with it.
+
+        `single_current_head` is not an application policy — it restates the invariant the
+        correction command already maintains, so an author who had to remember it would lose the
+        detective control without seeing any difference until a path outside the kit's handlers
+        left a second current row.
+        """
+
+        if self.versioned is None:
+            return self.invariants
+
+        return (*self.invariants, single_current_head(self.spec))
 
     # ....................... #
 

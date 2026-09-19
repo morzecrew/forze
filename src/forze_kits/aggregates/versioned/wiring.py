@@ -26,6 +26,7 @@ from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.document.dto import DocumentIdDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.document.value_objects import DocumentDTOs, DocumentMappers
+from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
 from forze_kits.domain.versioned.constants import IS_CURRENT_FIELD
 from forze_kits.mapping import PydanticPipelineMapperFactory
 
@@ -79,6 +80,10 @@ class CurrentVersionGet[R: BaseModel](Handler[DocumentIdDTO, R]):
     A superseded row is still addressable, which is the point of correcting rather than
     overwriting; what it is not is the answer to "give me this fact". Reaching an old version is
     what ``history`` and ``as_of`` are for, and both name the fact rather than the version.
+
+    Also rejects a soft-deleted row, because this handler *replaces* the one soft-delete
+    installs rather than running after it — an aggregate composing both arms would otherwise
+    serve deleted rows, with nothing in either arm's own tests to show it.
     """
 
     doc: DocumentQueryPort[R]
@@ -94,6 +99,12 @@ class CurrentVersionGet[R: BaseModel](Handler[DocumentIdDTO, R]):
                 "This version of the fact was superseded — read the fact's current version, or "
                 "its history.",
             )
+
+        # Soft deletion, when the aggregate composes both. This override replaces the one
+        # soft-delete installed, so without re-checking here the guard is silently dropped and a
+        # deleted row is served — the two arms agree on GET and only the last one to bind runs.
+        if getattr(row, SOFT_DELETE_FIELD, False):
+            raise exc.not_found("Document was deleted")
 
         return row
 

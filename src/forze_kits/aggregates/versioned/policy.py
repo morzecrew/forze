@@ -6,6 +6,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.guarantees import UniqueTogether
+from forze.application.contracts.invariants import CountAll, ReadSet, SystemInvariant
 from forze.base.exceptions import exc
 from forze_kits.domain.versioned.constants import (
     IS_CURRENT_FIELD,
@@ -31,6 +32,36 @@ defect in the hand-rolled code this kit replaces."""
 
 REQUIRED_GUARANTEES = (ONE_CURRENT_VERSION, ONE_SUCCESSOR)
 """Both, together. The kit's correctness rests on them rather than on its own write path."""
+
+
+# ....................... #
+
+
+def single_current_head(spec: DocumentSpec[Any, Any, Any, Any]) -> SystemInvariant:
+    """The law a versioned aggregate declares: at most one current version per fact.
+
+    The guarantee is what *prevents* a second current row; this is what *notices* one, and the
+    two are not redundant. A guarantee is enforced by the store and only on the rows it indexes,
+    so a path that wrote outside the kit's handlers — a migration, a repair script, a direct
+    update — can leave a state the index never saw. The law is the detective control for exactly
+    that, and it is also what the simulation oracle compiles, so the property is checked under
+    interleaving as well as at each write.
+
+    Declared by the kit rather than left to the author because it is not an application policy:
+    it restates the same invariant the kit's own write path maintains, and an author who forgot
+    to write it would lose the control without ever seeing a difference.
+    """
+
+    return SystemInvariant(
+        name="single_current_head",
+        read_set=ReadSet(
+            spec=spec,
+            scope_keys=(ROOT_ID_FIELD,),
+            where={"$values": {IS_CURRENT_FIELD: True}},
+        ),
+        aggregate=CountAll(),
+        holds=lambda n: n <= 1,
+    )
 
 
 # ....................... #

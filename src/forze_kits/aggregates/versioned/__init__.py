@@ -10,6 +10,7 @@ from .policy import (
     ONE_SUCCESSOR,
     REQUIRED_GUARANTEES,
     VersionedPolicy,
+    single_current_head,
 )
 from .wiring import VersionedWiring, current_versions_only_mapper, versioned_wiring
 
@@ -33,4 +34,5 @@ __all__ = [
     "ONE_CURRENT_VERSION",
     "ONE_SUCCESSOR",
     "REQUIRED_GUARANTEES",
+    "single_current_head",
 ]
