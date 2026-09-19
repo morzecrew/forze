@@ -115,6 +115,13 @@ commit and every chain walker picks whichever row it saw first.
     when *every* indexed field is missing. Reconciliation refuses when the port is built rather
     than letting the chain fork later.
 
+**The kit declares the law, so your writes run serializable.** `single_current_head` — at most one
+current version per fact — comes with `versioned=`, and it is the detective control for a path
+that reached the rows outside the kit's handlers. Enforcing it preventively is only correct at
+`SERIALIZABLE`, so the kit raises every write on the aggregate to that floor and **fails closed**
+if the wired transaction manager does not report it. That is a deployment requirement, not a
+default you can lower.
+
 A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
 route, its encryption policy and its retention are facts only you hold. Its create command must be
 `CreateCorrectionCmd`.
