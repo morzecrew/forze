@@ -158,21 +158,20 @@ class MockState:
     idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]] = attrs.field(factory=dict)
     rotating_credential_locks: StripedAsyncLocks = attrs.field(factory=StripedAsyncLocks)
 
-    write_serialization_loop: Any = attrs.field(default=None)
-    """The event loop :attr:`write_serialization` was built on, or ``None`` before the first.
-
-    An :class:`asyncio.Lock` belongs to the loop it was first awaited on, and a simulation runs
-    each attempt on a loop of its own while the state carrying the locks outlives them all. So
-    the table is rebuilt when the loop changes — locks from a finished loop can have no waiters
-    and reusing one raises rather than serializing."""
-
-    write_serialization: dict[int, asyncio.Lock] = attrs.field(factory=dict)
-    """Owner key → the lock serializing writes for it (see ``SerializedBy``).
+    write_serialization: dict[Any, dict[int, asyncio.Lock]] = attrs.field(factory=dict)
+    """Event loop → owner key → the lock serializing writes for it (see ``SerializedBy``).
 
     One lock per key rather than a striped pool: striping collapses distinct owners onto a
     shared lock, and an aggregate declaring this is entitled to have two *different* owners
     proceed at once — a simulation over a striped pool would attest a serialization the
-    deployment does not have and hide the contention it does."""
+    deployment does not have and hide the contention it does.
+
+    Keyed by loop rather than rebuilt when the loop changes, because an
+    :class:`asyncio.Lock` belongs to the loop it was awaited on and a simulation gives each
+    attempt its own while this state outlives them all. Rebuilding on change would let a second
+    loop clear a table the first is still holding locks in, which is the one outcome worse than
+    not serializing: two writers for one owner, both believing they hold it. A loop's table is
+    dropped once the loop is closed, so the table is bounded by the owners one loop saw."""
     """Per-credential single-flight for the rotating-credential store.
 
     Lives on the state rather than the adapter so that per-scope store instances — the

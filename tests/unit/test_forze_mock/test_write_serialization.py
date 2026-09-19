@@ -234,4 +234,32 @@ class TestTheLockIsReleasedByTheTransaction:
             row = await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner="o1"))
 
         assert row.owner == "o1"
-        assert all(not lock.locked() for lock in state.write_serialization.values())
+        assert all(
+            not lock.locked()
+            for table in state.write_serialization.values()
+            for lock in table.values()
+        )
+
+
+# ....................... #
+
+
+class TestASetBasedUpdateLocksEveryOwnerItSelects:
+    async def test_two_owners_in_one_filter_are_both_held(self) -> None:
+        # One statement, every lock it needs: a set-based update that selected two owners and
+        # held only one would leave the other open for the length of its own transaction.
+        state = MockState()
+        ctx = _ctx(state)
+        plain = ctx.doc.command(_spec())
+        await plain.create(_BookingCreate(owner="o1", label="sweep"))
+        second = await plain.create(_BookingCreate(owner="o2", label="sweep"))
+
+        async def sweep(inner: Any) -> None:
+            await inner.doc.command(_spec(BY_OWNER)).update_matching(
+                {"$values": {"label": "sweep"}}, _BookingUpdate(label="swept")
+            )
+
+        async def touch_second(inner: Any) -> None:
+            await inner.doc.command(_spec(BY_OWNER)).touch(second.id)
+
+        assert not await _observed_overlap(state, sweep, touch_second)
