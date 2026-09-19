@@ -39,36 +39,36 @@ from tests.support.execution_context import context_from_modules
 
 
 class _Fact(Document):
-    root_id: str
+    root_id: str | None = None
     is_current: bool = True
     label: str = ""
     supersedes_id: str | None = None
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
 class _FactRead(ReadDocument):
-    root_id: str
+    root_id: str | None = None
     is_current: bool = True
     label: str = ""
     supersedes_id: str | None = None
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
 class _FactCreate(CreateDocumentCmd):
-    root_id: str
+    root_id: str | None
     is_current: bool = True
     label: str = ""
     supersedes_id: str | None = None
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
 class _FactUpdate(BaseDTO):
     is_current: bool | None = None
     label: str | None = None
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
@@ -407,14 +407,10 @@ class TestPeriodsUnderOneKeyDoNotOverlap:
 
         assert row.valid_to == date(2025, 12, 31)
 
-    async def test_a_row_with_no_start_is_not_constrained(self) -> None:
-        # The reading the backend's range expression gives it: a null lower bound is not a
-        # period, so two of them are not two overlapping periods.
-        command = _command(_spec(NO_OVERLAP))
-        await command.create(_FactCreate(root_id="r1"))
-        row = await command.create(_FactCreate(root_id="r1"))
-
-        assert row.valid_from is None
+    # A row with no start used to be read here as carrying no period, which is not what a
+    # store does with a null lower bound: it reads "in force since always" and refuses
+    # everything overlapping. The two could not be made to agree, so the declaration is refused
+    # at the spec instead — see the temporal kit's battery for that leg.
 
     async def test_an_update_into_an_overlap_is_refused(self) -> None:
         # The guarantee is checked on every write path, not just the one that inserts.

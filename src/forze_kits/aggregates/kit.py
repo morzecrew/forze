@@ -75,6 +75,7 @@ from forze_kits.aggregates.temporal import (
     TemporalPolicy,
     temporal_facade,
     temporal_wiring,
+    versioned_temporal_facade,
 )
 from forze_kits.aggregates.versioned import (
     VersionedFacade,
@@ -345,6 +346,14 @@ class AggregateKit(Generic[R, D, C, U]):
         """
 
         registry = self.registry(tx_route=tx_route)
+
+        if self.temporal is not None and self.versioned is not None:
+            # Both arms declared: the front door has to carry both, or the kit's own facade
+            # drops half of what the aggregate advertises.
+            return cast(
+                "OperationFacadeFactory[DocumentFacade[R, C, U]]",
+                versioned_temporal_facade(runtime, registry, self.spec),
+            )
 
         if self.temporal is not None:
             # Same reasoning as the versioned arm below, and the same cast for the same reason.

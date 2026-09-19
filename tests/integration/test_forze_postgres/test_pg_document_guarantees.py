@@ -16,6 +16,7 @@ refusals are compared, rather than asserted separately in files that never meet.
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -53,21 +54,21 @@ class _Read(BaseModel):
     id: UUID
     root_id: str
     is_current: bool
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
 class _Domain(Document):
     root_id: str
     is_current: bool = True
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
 class _Create(CreateDocumentCmd):
     root_id: str
     is_current: bool = True
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
@@ -384,6 +385,25 @@ class TestStartupValidation:
 
         assert "WHERE (<a condition over is_current>)" in caught.value.summary
 
+    async def test_extra_key_columns_do_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # An extra scalar key column *weakens* the constraint: two rows must now match on that
+        # column too before they conflict, so a pair the declaration refuses is accepted.
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD COLUMN tenant_id text NOT NULL DEFAULT 't';"
+        )
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(tenant_id WITH =, root_id WITH =, daterange(valid_from, valid_to, '[]') WITH &&);"
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP)
+
     async def test_a_constraint_over_another_key_does_not_count(
         self,
         pg_client: PostgresClient,
@@ -494,16 +514,46 @@ class _NullableRead(BaseModel):
     id: UUID
     root_id: str | None
     is_current: bool
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
 
 
 class _NullableDomain(Document):
     root_id: str | None = None
     is_current: bool = True
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
+
+
+class _NullableReadDoc(ReadDocument):
+    root_id: str | None = None
+    is_current: bool = True
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
 
 
 class _NullableCreate(CreateDocumentCmd):
     root_id: str | None = None
     is_current: bool = True
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
+
+
+class _NullableUpdate(BaseDTO):
+    is_current: bool | None = None
+
+
+def _nullable_spec(
+    *guarantees: UniqueTogether | NonOverlapping,
+) -> DocumentSpec[Any, _NullableDomain, _NullableCreate, _NullableUpdate]:
+    return DocumentSpec[Any, _NullableDomain, _NullableCreate, _NullableUpdate](
+        name="fact",
+        read=_NullableReadDoc,
+        write=DocumentWriteTypes(
+            domain=_NullableDomain, create_cmd=_NullableCreate, update_cmd=_NullableUpdate
+        ),
+        guarantees=guarantees,
+    )
 
 
 async def _validate_nullable(
@@ -548,7 +598,9 @@ async def _nullable_table(pg_client: PostgresClient) -> str:
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
             root_id text,
-            is_current boolean NOT NULL
+            is_current boolean NOT NULL,
+            valid_from date NOT NULL DEFAULT '2026-01-01',
+            valid_to date
         );
         """
     )
@@ -626,7 +678,7 @@ class TestNullsAreValuesUnlessExempted:
 class _FactRead(ReadDocument):
     root_id: str
     is_current: bool = True
-    valid_from: date | None = None
+    valid_from: date = date(2026, 1, 1)
     valid_to: date | None = None
 
 
@@ -643,7 +695,6 @@ def _spec(
         write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create, update_cmd=_FactUpdate),
         guarantees=guarantees or (ONE_CURRENT,),
     )
-
 
 
 class TestMockAndPostgresRefuseTheSameWay:
@@ -731,6 +782,39 @@ class TestMockAndPostgresRefuseTheSameWay:
 
         assert from_mock.value.kind is from_postgres.value.kind
         assert from_mock.value.kind.value == "conflict"
+
+    async def test_neither_store_conflicts_on_a_null_key(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # An exclusion constraint compares key parts with `=`, and `NULL = NULL` is unknown
+        # rather than true — so two rows with a null key and overlapping periods both land. The
+        # in-memory store used to refuse them, which is a mock stricter than the backend.
+        table = await _nullable_table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+
+        for start, end in (("2026-01-01", "2026-06-30"), ("2026-03-01", "2026-09-30")):
+            await pg_client.execute(
+                f"INSERT INTO {table} (id, rev, created_at, last_update_at, root_id,"
+                " is_current, valid_from, valid_to)"
+                " VALUES (%s, 1, now(), now(), NULL, true, %s, %s);",
+                [uuid4(), start, end],
+            )
+
+        command = context_from_modules(MockDepsModule()).doc.command(_nullable_spec(NO_OVERLAP))
+        await command.create(
+            _NullableCreate(valid_from=date(2026, 1, 1), valid_to=date(2026, 6, 30))
+        )
+        row = await command.create(
+            _NullableCreate(valid_from=date(2026, 3, 1), valid_to=date(2026, 9, 30))
+        )
+
+        rows = await pg_client.fetch_all(
+            f"SELECT count(*) AS n FROM {table};", [], row_factory="dict", commit=False
+        )
+
+        assert rows[0]["n"] == 2
+        assert row.root_id is None
 
     async def test_both_stores_agree_on_the_touching_boundary(
         self,

@@ -506,7 +506,7 @@ async def _require_overlap_mechanisms(
 
     Four ways a constraint can exist and still not be the mechanism:
 
-    * it does not cover every key field, so rows the guarantee separates are compared — or not
+    * its key columns are not exactly the declared key, so rows the guarantee separates are compared — or not
       compared — by something other than the declaration;
     * its range expression is not built over both period fields, in that order — an inverted
       range cannot even be constructed, so every ordinary row fails to insert while the catalog
@@ -550,7 +550,11 @@ async def _require_overlap_mechanisms(
         )
 
         for constraint in constraints:
-            if not key <= constraint.columns:
+            # Equality, not containment: an extra scalar key column *weakens* the constraint,
+            # because two rows then have to match on that column too before they conflict. A
+            # constraint over (tenant_id, root_id) lets two rows share a root_id across tenants,
+            # which is exactly what a guarantee keyed on root_id alone says cannot happen.
+            if key != constraint.columns:
                 continue
 
             if guarantee.bounds not in _range_over(constraint.definition, (start, end)):

@@ -1,5 +1,10 @@
 from .dto import EffectiveOnDTO, TimelineDTO
-from .facades import TemporalFacade, temporal_facade
+from .facades import (
+    TemporalFacade,
+    VersionedTemporalFacade,
+    temporal_facade,
+    versioned_temporal_facade,
+)
 from .factories import build_temporal_registry
 from .handlers import EffectiveOn, Timeline
 from .operations import TemporalKernelOp
@@ -17,7 +22,9 @@ __all__ = [
     "EffectiveOn",
     "Timeline",
     "TemporalFacade",
+    "VersionedTemporalFacade",
     "temporal_facade",
+    "versioned_temporal_facade",
     "TemporalWiring",
     "temporal_wiring",
     "build_temporal_registry",

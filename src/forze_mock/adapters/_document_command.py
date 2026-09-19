@@ -216,6 +216,12 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         key = tuple(row.get(field) for field in guarantee.key)
 
+        # A null in the key never conflicts, because the mechanism behind this guarantee
+        # compares key parts with `=` and `NULL = NULL` is unknown, not true. A store that
+        # treated two nulls as the same owner would refuse a pair every real backend accepts.
+        if any(value is None for value in key):
+            return
+
         # ponytail: a scan per write, as `_refuse_duplicate` does and for the same reasons — an
         # index keyed by the key tuple is the upgrade if a simulation ever writes enough rows.
         for other_pk, other in store.items():

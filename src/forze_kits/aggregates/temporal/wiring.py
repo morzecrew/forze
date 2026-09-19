@@ -76,9 +76,10 @@ def temporal_wiring(
 ) -> TemporalWiring:
     """Build the reusable temporal-validity wiring for *spec*.
 
-    Refuses at construction on two counts, each of which would otherwise surface as a wrong
+    Refuses at construction on three counts, each of which would otherwise surface as a wrong
     answer rather than an error: a spec that does not declare the matching non-overlap
-    guarantee, and a domain model whose convention differs from the policy's.
+    guarantee, a writable spec whose domain model does not carry the validity mixin, and a
+    domain model whose convention differs from the policy's.
 
     Nothing here checks that the read model exposes the validity dates or the key. That is not
     an oversight and not a gap: a temporal aggregate must declare the guarantee, the guarantee
@@ -113,9 +114,21 @@ def _assert_bounds_agree(
     if spec.write is None:
         return
 
-    declared = getattr(spec.write["domain"], "temporal_bounds", None)
+    domain = spec.write["domain"]
+    declared = getattr(domain, "temporal_bounds", None)
 
-    if declared is None or declared == policy.bounds:
+    if declared is None:
+        raise exc.configuration(
+            f"Document {spec.name!r} is declared temporal and its domain model "
+            f"{domain.__name__!r} does not carry the validity mixin. The mixin is not decoration: "
+            "it is what freezes `valid_from`, refuses a period in force on no day, and tells the "
+            "write path which convention this aggregate uses — and an update patch carries one "
+            "endpoint while the stored row carries the other, so nothing else sees the period a "
+            "write produces. Without it the declaration reads as a rule and enforces none of it.",
+            details={"document": str(spec.name), "domain": domain.__name__},
+        )
+
+    if declared == policy.bounds:
         return
 
     raise exc.configuration(

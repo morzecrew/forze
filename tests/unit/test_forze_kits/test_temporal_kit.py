@@ -19,7 +19,7 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.application.contracts.guarantees import NonOverlapping
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze.domain.models import BaseDTO, ReadDocument
+from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document.dto import DocumentIdRevDTO, DocumentUpdateDTO, ListRequestDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
@@ -1012,3 +1012,106 @@ class TestAReadOnlyAggregateCanBeDated:
         )
 
         assert temporal_wiring(read_only, POLICY).policy is POLICY
+
+
+# ....................... #
+
+
+class TestWhatTheDeclarationRefusesAtConstruction:
+    """Three ways a temporal aggregate could be declared and then not behave like one."""
+
+    async def test_bounds_outside_the_vocabulary_are_refused(self) -> None:
+        # The annotation closes the set for a type checker and closes nothing for a value read
+        # from configuration, which would reach the reads and the guarantee as two answers.
+        with pytest.raises(CoreException) as caught:
+            TemporalPolicy(key=("employee_id",), bounds="><")  # type: ignore[arg-type]
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    async def test_a_writable_domain_without_the_mixin_is_refused(self) -> None:
+        # Without the mixin nothing freezes `valid_from`, nothing refuses a period in force on
+        # no day, and nothing knows the convention — the declaration would read as a rule and
+        # enforce none of it.
+        class Bare(Document):
+            employee_id: str
+            hours: int
+            valid_from: date
+            valid_to: date | None = None
+
+        spec = DocumentSpec[ContractRead, Any, ContractCreate, ContractUpdate](
+            name="contracts",
+            read=ContractRead,
+            write=DocumentWriteTypes(
+                domain=Bare, create_cmd=ContractCreate, update_cmd=ContractUpdate
+            ),
+            guarantees=(NO_OVERLAP,),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            AggregateKit(spec=spec, temporal=POLICY).registry(tx_route=_TX)
+
+        assert "validity mixin" in caught.value.summary
+
+    async def test_a_nullable_period_start_is_refused(self) -> None:
+        # A store reads a null lower bound as "in force since always" and refuses everything
+        # overlapping it; the in-memory store cannot say that, so the declaration is refused
+        # rather than enforced two different ways.
+        class OpenStart(ReadDocument):
+            employee_id: str
+            hours: int
+            valid_from: date | None = None
+            valid_to: date | None = None
+
+        with pytest.raises(CoreException) as caught:
+            DocumentSpec[Any, Contract, ContractCreate, ContractUpdate](
+                name="contracts",
+                read=OpenStart,
+                write=DocumentWriteTypes(
+                    domain=Contract, create_cmd=ContractCreate, update_cmd=ContractUpdate
+                ),
+                guarantees=(NO_OVERLAP,),
+            )
+
+        assert "no beginning" in caught.value.summary
+
+
+# ....................... #
+
+
+class TestTheFrontDoorCarriesBothArms:
+    async def test_a_bitemporal_kit_exposes_lineage_and_validity_together(self) -> None:
+        # `facade()` is what most callers reach for. Returning either arm's facade drops the
+        # other arm's operations from the surface the aggregate advertises.
+        runtime = build_runtime(MockDepsModule())
+        kit = AggregateKit(
+            spec=BITEMPORAL,
+            temporal=POLICY,
+            versioned=VersionedPolicy(corrections=CORRECTIONS),
+        )
+        facade = kit.facade(runtime)
+
+        async with runtime.scope():
+            row = await facade().create(
+                BitemporalCreate(
+                    employee_id="e1",
+                    hours=40,
+                    valid_from=date(2026, 1, 1),
+                    valid_to=date(2026, 3, 31),
+                )
+            )
+            corrected = await facade().correct(  # type: ignore[attr-defined]
+                CorrectDocumentDTO(
+                    id=row.id,
+                    expected_version=row.version,
+                    dto=BitemporalUpdate(hours=35),
+                    reason="payroll misread the contract",
+                )
+            )
+            in_force = await facade().effective_on(  # type: ignore[attr-defined]
+                EffectiveOnDTO(key={"employee_id": "e1"}, on=date(2026, 2, 1))
+            )
+            chain = await facade().history(FactIdDTO(root_id=row.root_id))  # type: ignore[attr-defined]
+
+        assert corrected.version == 2
+        assert in_force.hours == 35
+        assert len(list(chain.hits)) == 2

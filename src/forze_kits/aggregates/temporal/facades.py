@@ -15,6 +15,8 @@ from forze.application.execution.operations.facade import (
 from forze.domain.models import BaseDTO
 from forze_kits.aggregates.document.facades import DocumentFacade
 
+from ..versioned.handlers import CorrectDocument, FactAsOf, FactHistory
+from ..versioned.operations import VersionedKernelOp
 from .handlers import EffectiveOn, Timeline
 from .operations import TemporalKernelOp
 
@@ -59,6 +61,71 @@ class TemporalFacade(DocumentFacade[R, C, U], Generic[R, C, U]):
 # ....................... #
 
 
+@namespaced_facade
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class VersionedTemporalFacade(DocumentFacade[R, C, U], Generic[R, C, U]):
+    """Both arms on one surface: when the fact applied, and how it was corrected.
+
+    Declared flat rather than by inheriting the two facades, because each of them is a slotted
+    attrs class and a class with two such bases has no consistent layout. The five operations
+    are therefore listed again here — a short duplication, and the alternative is a front door
+    that silently drops half of what the aggregate declared.
+    """
+
+    correct = facade_op(
+        VersionedKernelOp.CORRECT,
+        uc=CorrectDocument[R, Any, C, Any],
+    )
+    """Supersede the current version of a fact with a corrected one."""
+
+    history = facade_op(
+        VersionedKernelOp.HISTORY,
+        uc=FactHistory[R],
+    )
+    """Every version of a fact, oldest first."""
+
+    as_of = facade_op(
+        VersionedKernelOp.AS_OF,
+        uc=FactAsOf[Any],
+    )
+    """The version of a fact that was current at an instant."""
+
+    effective_on = facade_op(
+        TemporalKernelOp.EFFECTIVE_ON,
+        uc=EffectiveOn[Any],
+    )
+    """The row in force for one key on a given day."""
+
+    timeline = facade_op(
+        TemporalKernelOp.TIMELINE,
+        uc=Timeline[Any],
+    )
+    """Every row for one key whose period meets a window, earliest first."""
+
+
+# ....................... #
+
+
+def versioned_temporal_facade(
+    runtime: ExecutionRuntime,
+    registry: FrozenOperationRegistry,
+    spec: DocumentSpec[R, Any, C, U],
+    *,
+    namespace: StrKeyNamespace | None = None,
+) -> OperationFacadeFactory[VersionedTemporalFacade[R, C, U]]:
+    """Build a per-call :class:`VersionedTemporalFacade` factory bound to *runtime*'s context."""
+
+    return OperationFacadeFactory(
+        type=VersionedTemporalFacade,
+        registry=registry,
+        ctx_factory=runtime.get_context,
+        ns=namespace if namespace is not None else spec.default_namespace,
+    )
+
+
+# ....................... #
+
+
 def temporal_facade(
     runtime: ExecutionRuntime,
     registry: FrozenOperationRegistry,
@@ -83,4 +150,9 @@ def temporal_facade(
 
 # ....................... #
 
-__all__ = ["TemporalFacade", "temporal_facade"]
+__all__ = [
+    "TemporalFacade",
+    "VersionedTemporalFacade",
+    "temporal_facade",
+    "versioned_temporal_facade",
+]

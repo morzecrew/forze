@@ -1,6 +1,6 @@
 """What an author declares to make an aggregate effective-dated."""
 
-from typing import Any, final
+from typing import Any, final, get_args
 
 import attrs
 
@@ -39,6 +39,15 @@ class TemporalPolicy:
     ``"[)"``, which tiles."""
 
     def __attrs_post_init__(self) -> None:
+        if self.bounds not in get_args(Bounds):
+            raise exc.configuration(
+                f"TemporalPolicy bounds {self.bounds!r} is not one of "
+                f"{', '.join(repr(value) for value in get_args(Bounds))}. The annotation closes "
+                "that set for a type checker and nothing closes it for a value read from "
+                "configuration — which would reach the reads as a comparison quietly picking "
+                "one side, and the guarantee as a convention no store can be asked for.",
+            )
+
         if not self.key:
             raise exc.configuration(
                 "TemporalPolicy names no key field. Without one the aggregate asserts that no "
