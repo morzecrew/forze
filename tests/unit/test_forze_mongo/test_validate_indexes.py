@@ -1,8 +1,12 @@
 """Unit tests for Mongo document index validation."""
 
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
+from bson import Decimal128
 
 from forze.application.contracts.guarantees import UniqueTogether
 from forze.base.exceptions import CoreException
@@ -11,7 +15,10 @@ from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.introspect import MongoIndexInfo, MongoIntrospector
 from forze_mongo.kernel.validate_indexes import (
     MongoDocumentIndexSpec,
-    _filter_field_roots,  # pyright: ignore[reportPrivateUsage]
+    _bson_key,  # pyright: ignore[reportPrivateUsage]
+    _equalities,  # pyright: ignore[reportPrivateUsage]
+    _guarantee_equalities,  # pyright: ignore[reportPrivateUsage]
+    _mongosh,  # pyright: ignore[reportPrivateUsage]
     _require_guarantee_indexes,  # pyright: ignore[reportPrivateUsage]
     validate_mongo_document_indexes,
 )
@@ -83,13 +90,15 @@ class TestWhatMongoDeclaresItCanKeep:
 # ....................... #
 
 
-class TestTheFilterIsComparedByField:
-    """A `partialFilterExpression` is matched on the fields it names, not on its text.
+class TestTheFilterIsComparedBySelectedDocuments:
+    """A `partialFilterExpression` counts when it selects the documents the guarantee covers.
 
-    The text reading is the one that fails quietly: it accepts an index restricted to the wrong
-    documents whenever the wrong field's name happens to contain the right one, which is common
-    enough in real schemas (`status` / `status_code`, `deleted` / `deleted_at`) to be the
-    default outcome rather than an edge case.
+    Two weaker readings were tried first and both accept an index that does not keep the
+    guarantee: matching the filter's *text* takes `status_code` for `status`, and matching its
+    *field names* takes `{is_current: false}` for a guarantee about current documents. What has
+    to agree is the document set, so the two filters are reduced to their equality constraints
+    and compared — and anything that does not reduce that way is refused rather than guessed at,
+    because whether it covers the guarantee's documents is an implication between predicates.
     """
 
     @staticmethod
@@ -110,8 +119,21 @@ class TestTheFilterIsComparedByField:
         )
 
     def _validate(self, where: dict[str, object], partial_filter: dict[str, object]) -> None:
+        self._validate_where({"$values": where}, partial_filter)
+
+    def _validate_where(
+        self,
+        where: dict[str, object],
+        partial_filter: dict[str, object],
+    ) -> None:
+        """:meth:`_validate` for a filter that is not a plain ``$values`` map."""
+
         _require_guarantee_indexes(
-            self._spec(where),
+            MongoDocumentIndexSpec(
+                name="fact",
+                write_relation=("db", "coll"),
+                guarantees=(UniqueTogether(fields=("root_id",), where=where),),
+            ),
             [self._index(partial_filter)],
             database="db",
             collection="coll",
@@ -124,15 +146,41 @@ class TestTheFilterIsComparedByField:
     def test_the_declared_field_itself_counts(self) -> None:
         self._validate({"status": "current"}, {"status": "current"})
 
-    def test_a_field_under_an_operator_counts(self) -> None:
-        # `$and` is a Mongo operator, not a field; its branches carry the fields.
-        self._validate(
-            {"status": "current"},
-            {"$and": [{"status": {"$eq": "current"}}, {"tenant_id": {"$exists": True}}]},
-        )
+    def test_a_wrong_value_on_the_right_field_is_refused(self) -> None:
+        # The failure the field-name reading could not see: the index restricts exactly the
+        # column the guarantee filters on, to the opposite value, so every document the
+        # guarantee covers is outside the index and duplicates are insertable.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"is_current": True}, {"is_current": False})
 
-    def test_a_dotted_path_contributes_its_root(self) -> None:
-        self._validate({"meta": "x"}, {"meta.kind": "x"})
+    def test_the_operator_spelling_of_the_same_equality_counts(self) -> None:
+        # `{f: v}` and `{f: {$eq: v}}` are one constraint; refusing the second would fail a
+        # correct migration over a spelling the server treats as identical.
+        self._validate({"status": "current"}, {"$and": [{"status": {"$eq": "current"}}]})
+
+    def test_an_extra_restriction_is_refused(self) -> None:
+        # A document the guarantee covers but the index skips — one with no `tenant_id` — can be
+        # duplicated, so an index narrower than the declaration does not keep it.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate(
+                {"status": "current"},
+                {"$and": [{"status": "current"}, {"tenant_id": {"$exists": True}}]},
+            )
+
+    def test_a_broader_restriction_is_refused_too(self) -> None:
+        # Sound for the guarantee and wrong for the aggregate: an index over current *and* draft
+        # documents refuses a second draft, which the declaration deliberately allows. The same
+        # reason a plain unique index does not satisfy a filtered guarantee.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate(
+                {"status": "current"},
+                {"$or": [{"status": "current"}, {"status": "draft"}]},
+            )
+
+    def test_a_dotted_path_is_not_the_field_it_starts_with(self) -> None:
+        # `meta.kind == "x"` selects different documents from `meta == "x"`.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"meta": "x"}, {"meta.kind": "x"})
 
     def test_an_operator_name_is_not_read_as_a_field(self) -> None:
         with pytest.raises(CoreException, match="partialFilterExpression"):
@@ -141,18 +189,13 @@ class TestTheFilterIsComparedByField:
     def test_a_field_inside_a_matched_document_is_not_a_restricted_field(self) -> None:
         # `{metadata: {deleted: true}}` matches documents whose `metadata` equals that whole
         # document. It says nothing about a top-level `deleted`, and reading it as if it did
-        # accepts an index that does not restrict the rows the guarantee covers.
+        # accepts an index that does not restrict the documents the guarantee covers.
         with pytest.raises(CoreException, match="partialFilterExpression"):
             self._validate({"deleted": True}, {"metadata": {"deleted": True}})
 
     def test_a_document_under_an_operator_is_not_descended_into_either(self) -> None:
         with pytest.raises(CoreException, match="partialFilterExpression"):
             self._validate({"deleted": True}, {"metadata": {"$eq": {"deleted": True}}})
-
-    def test_the_matched_document_still_restricts_its_own_field(self) -> None:
-        # The contrast: the key itself is a restriction, and dropping it with the value would
-        # refuse a correct index.
-        self._validate({"metadata": "x"}, {"metadata": {"kind": "x"}})
 
     def test_an_index_over_other_fields_does_not_count(self) -> None:
         with pytest.raises(CoreException, match="no unique index"):
@@ -188,15 +231,334 @@ class TestTheFilterIsComparedByField:
                 collection="coll",
             )
 
-    def test_a_scalar_where_an_expression_was_expected_names_no_field(self) -> None:
-        # The walk's leaf: a malformed filter contributes nothing rather than raising, so a
-        # shape the server accepted but this does not understand fails closed at the comparison
-        # instead of crashing startup on an unrelated error.
-        assert _filter_field_roots("not-an-expression") == frozenset()
-        assert _filter_field_roots({"$or": ["not-an-expression"]}) == frozenset()
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "not-an-expression",
+            {"$or": [{"a": 1}]},
+            {"a": {"$gt": 1}},
+            {"$and": "not-a-list"},
+        ],
+    )
+    def test_what_does_not_reduce_to_equalities_says_so(self, expression: object) -> None:
+        # `None`, not an empty map: "no constraints" and "constraints I cannot compare" are
+        # different answers, and only the first would ever match a guarantee's own filter.
+        assert _equalities(expression) is None
 
-    def test_branches_nested_two_operators_deep_still_count(self) -> None:
-        self._validate(
-            {"status": "current"},
-            {"$or": [{"$and": [{"status": "current"}]}, {"status": "draft"}]},
+    def test_a_matched_document_is_a_value_like_any_other(self) -> None:
+        assert _equalities({"metadata": {"deleted": True}}) is None
+
+    @pytest.mark.parametrize(
+        "where",
+        [
+            {"$or": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]},
+            {"$values": {"a": {"$gt": 1}}},
+        ],
+    )
+    def test_a_guarantee_filter_that_is_not_plain_equalities_says_so(
+        self,
+        where: dict[str, object],
+    ) -> None:
+        # The same answer from the declaration's side: a guarantee whose own filter is a
+        # disjunction or a range has no equality map to compare, so no index can be proven to
+        # cover it and every one of them is refused.
+        assert _guarantee_equalities(where) is None
+
+    def test_a_guarantee_filter_of_plain_equalities_reduces(self) -> None:
+        # Reduced to typed keys rather than raw values, so the comparison cannot be fooled by
+        # Python equalities the server does not share.
+        assert _guarantee_equalities({"$values": {"a": 1, "b": "x"}}) == {
+            "a": ("number", 1.0),
+            "b": ("str", "x"),
+        }
+
+    def test_a_boolean_is_not_the_number_one(self) -> None:
+        # Python compares `True == 1`; Mongo does not. An index filtered `{is_current: 1}`
+        # indexes none of the documents a guarantee filtered `{is_current: true}` selects, so
+        # reading the two as the same filter accepts an index that enforces nothing for them.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"is_current": True}, {"is_current": 1})
+
+    def test_numeric_widths_are_the_same_value(self) -> None:
+        # The other direction, and the reason a number's key carries no width: Mongo compares an
+        # int and a double by value, so refusing this would fail a correct index.
+        self._validate({"count": 1}, {"count": 1.0})
+
+    def test_two_numbers_one_double_cannot_tell_apart_stay_apart(self) -> None:
+        # `float(9007199254740993)` is `9007199254740992.0`, so normalising through a double to
+        # make the widths comparable would read these as one value — and the index then excludes
+        # every document the guarantee selects. Python compares int to float exactly, which is
+        # why the key carries the value rather than a cast of it.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"seq": 9007199254740993}, {"seq": 9007199254740992.0})
+
+    @pytest.mark.parametrize(
+        "partial_filter",
+        [
+            {"$and": [{"active": False}, {"active": True}]},
+            {"$and": [{"active": True}, {"active": {"$eq": False}}]},
+        ],
+    )
+    def test_a_filter_naming_one_field_twice_is_refused(
+        self,
+        partial_filter: dict[str, object],
+    ) -> None:
+        # The filter selects no documents at all, so the index enforces nothing. Letting the
+        # later constraint overwrite the earlier one reduces it to a plausible single equality —
+        # which is how an index over nothing comes to satisfy a guarantee.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"active": True}, partial_filter)
+
+    @pytest.mark.parametrize(
+        "partial_filter",
+        [
+            {"$and": [{"active": True}], "active": False},
+            {"$and": [{"active": True}], "active": {"$eq": False}},
+        ],
+    )
+    def test_a_conflict_between_a_branch_and_a_sibling_field_is_refused(
+        self,
+        partial_filter: dict[str, object],
+    ) -> None:
+        # `$and` alongside a plain field is a legal filter, so the contradiction can straddle
+        # the two rather than sitting inside one conjunction.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"active": True}, partial_filter)
+
+    def test_the_same_constraint_twice_is_not_a_conflict(self) -> None:
+        self._validate({"active": True}, {"$and": [{"active": True}, {"active": {"$eq": True}}]})
+
+    def test_a_guarantee_filter_written_as_an_explicit_and_counts(self) -> None:
+        # An explicit `$and` nests one conjunction per branch, and reading only the outer level
+        # refuses a filter the author is entitled to write.
+        self._validate_where(
+            {"$and": [{"$values": {"a": 1}}, {"$values": {"b": 2}}]},
+            {"a": 1, "b": 2},
         )
+
+    def test_a_null_test_is_an_equality_against_null(self) -> None:
+        # The parser spells it `$null` and Mongo spells it `{f: null}`; they select the same
+        # documents, so refusing the index would fail a correct migration.
+        self._validate_where(
+            {"$values": {"supersedes_id": None}},
+            {"supersedes_id": None},
+        )
+
+    def test_a_guarantee_whose_filter_cannot_be_compared_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            _require_guarantee_indexes(
+                MongoDocumentIndexSpec(
+                    name="fact",
+                    write_relation=("db", "coll"),
+                    guarantees=(
+                        UniqueTogether(
+                            fields=("root_id",),
+                            where={"$values": {"status": {"$gt": "a"}}},
+                        ),
+                    ),
+                ),
+                [
+                    MongoIndexInfo(
+                        name="ix",
+                        keys=(("root_id", 1),),
+                        unique=True,
+                        partial_filter={"status": {"$gt": "a"}},
+                    )
+                ],
+                database="db",
+                collection="coll",
+            )
+
+
+# ....................... #
+
+
+class TestTheRefusalPrintsAMigrationThatWouldWork:
+    """The message is the whole value of a startup refusal, so it has to be runnable.
+
+    An operator reading "guarantee not satisfied" with a statement that does not satisfy it is
+    worse off than one reading nothing: they run it, startup fails again, and the message is
+    what they now distrust.
+    """
+
+    @staticmethod
+    def _refusal(where: object, indexes: list[MongoIndexInfo] | None = None) -> str:
+        spec = MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(UniqueTogether(fields=("root_id",), where=where),),  # type: ignore[arg-type]
+        )
+
+        with pytest.raises(CoreException) as caught:
+            _require_guarantee_indexes(spec, indexes or [], database="db", collection="coll")
+
+        return caught.value.summary
+
+    def test_a_boolean_is_printed_as_mongosh_spells_it(self) -> None:
+        # `repr` writes `True`, which mongosh rejects. The printed statement has to be one an
+        # operator can paste.
+        message = self._refusal({"$values": {"is_current": True}})
+
+        assert "partialFilterExpression: {is_current: true}" in message
+        assert "True" not in message
+
+    def test_a_null_is_printed_as_null(self) -> None:
+        assert "{supersedes_id: null}" in self._refusal({"$values": {"supersedes_id": None}})
+
+    def test_a_string_is_quoted(self) -> None:
+        assert '{status: "current"}' in self._refusal({"$values": {"status": "current"}})
+
+    def test_a_whole_number_keeps_its_integer_spelling(self) -> None:
+        assert "{tier: 2}" in self._refusal({"$values": {"tier": 2}})
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(0.5, "{ratio: 0.5}"), (2.0, "{ratio: 2}")],
+    )
+    def test_a_fractional_number_keeps_its_fraction(
+        self,
+        value: float,
+        expected: str,
+    ) -> None:
+        # A whole double still prints as an integer, which mongosh stores as a double anyway;
+        # a fractional one has to survive, or the printed statement filters on another value.
+        assert expected in self._refusal({"$values": {"ratio": value}})
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("is_current", "{is_current: true}"),
+            ("effective-date", '{"effective-date": true}'),
+            ("a.b", '{"a.b": true}'),
+            ("$weird", "{$weird: true}"),
+        ],
+    )
+    def test_a_field_name_is_quoted_only_where_it_has_to_be(
+        self,
+        field: str,
+        expected: str,
+    ) -> None:
+        # `effective-date` is a legal Mongo field and not a legal JavaScript identifier, so
+        # printing it bare hands over a statement that does not parse. Bare elsewhere, because
+        # that is how the statement is written by hand.
+        assert expected in self._refusal({"$values": {field: True}})
+
+    def test_an_index_key_name_is_quoted_the_same_way(self) -> None:
+        # The filter's field names were quoted and the index key names beside them were not, so
+        # the same statement still did not parse. One rule, both halves.
+        spec = MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(UniqueTogether(fields=("effective-date",), where={"$values": {"x": 1}}),),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            _require_guarantee_indexes(spec, [], database="db", collection="coll")
+
+        assert 'createIndex({"effective-date": 1}' in " ".join(caught.value.summary.split())
+
+    def test_two_not_a_numbers_are_one_value(self) -> None:
+        # Mongo matches a `{x: NaN}` filter against the documents whose `x` is NaN, which IEEE
+        # equality cannot express — left raw, two distinct NaN objects never compare equal, so
+        # no index could ever satisfy such a guarantee and the same constraint written twice
+        # would read as a contradiction.
+        assert _bson_key(float("nan")) == _bson_key(float("nan"))
+
+    def test_a_non_finite_filter_still_gets_its_migration(self) -> None:
+        # The diagnostic path has to survive every value the declaration admits: `int(nan)`
+        # raises, so rendering it there replaced an actionable refusal with a stack trace at
+        # startup — the one moment the message is what an operator has.
+        assert "{ratio: NaN}" in self._refusal({"$values": {"ratio": float("nan")}})
+
+    def test_a_filter_naming_no_field_still_asks_for_a_partial_index(self) -> None:
+        # The validation requires a partialFilterExpression whenever `where` is set, so a
+        # message suggesting a plain unique index would send the operator to a migration that
+        # leaves startup failing.
+        message = self._refusal({"$and": []})
+
+        assert "partialFilterExpression" in message
+
+    def test_an_unfiltered_guarantee_still_asks_for_a_plain_index(self) -> None:
+        # The contrast: the fix above must not make every refusal ask for a partial index.
+        message = self._refusal(None)
+
+        assert "partialFilterExpression" not in message
+        assert "{unique: true}" in message
+
+
+# ....................... #
+
+
+class TestEveryValueShapeSurvivesTheRoundTrip:
+    """A guarantee's filter can hold more than booleans, and the message has to print all of it.
+
+    Each of these reaches the refusal an operator reads, so a shape that renders as a Python
+    literal there is a statement that does not run — the failure the boolean case already
+    showed, in the value types a schema reaches for next.
+    """
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (["a", 1], '["a", 1]'),
+            (datetime(2026, 9, 19, tzinfo=UTC), 'ISODate("2026-09-19T00:00:00+00:00")'),
+            (date(2026, 9, 19), 'ISODate("2026-09-19T00:00:00+00:00")'),
+            (datetime(2026, 9, 19), 'ISODate("2026-09-19T00:00:00+00:00")'),
+            (
+                UUID("00000000-0000-0000-0000-00000000002a"),
+                '"00000000-0000-0000-0000-00000000002a"',
+            ),
+            (9007199254740993, 'Long("9007199254740993")'),
+            (Decimal("9.99"), 'Decimal128("9.99")'),
+            (float("nan"), "NaN"),
+            (float("inf"), "Infinity"),
+            (float("-inf"), "-Infinity"),
+        ],
+    )
+    def test_it_renders_as_mongosh_spells_it(self, value: object, expected: str) -> None:
+        # A bare literal is not always safe: mongosh reads a plain number as a double, so an
+        # integer past 2**53 and a Decimal each have to be spelled as the type that holds them,
+        # or the index the operator creates filters on a different value than the one printed.
+        assert _mongosh(_bson_key(value)) == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        [["a", 1], datetime(2026, 9, 19, tzinfo=UTC)],
+    )
+    def test_a_value_is_not_its_own_rendering(self, value: object) -> None:
+        # The comparison is over these keys, so a type reducing to its own rendering would make
+        # an index filtered by the string satisfy a guarantee filtered by the value.
+        assert _bson_key(value) == _bson_key(value)
+        assert _bson_key(value) != _bson_key(str(value))
+
+    @pytest.mark.parametrize(
+        ("stored", "declared"),
+        [
+            (
+                "00000000-0000-0000-0000-00000000002a",
+                UUID("00000000-0000-0000-0000-00000000002a"),
+            ),
+            (Decimal128("9.99"), Decimal("9.99")),
+            (datetime(2026, 9, 19, tzinfo=UTC), date(2026, 9, 19)),
+            (datetime(2026, 9, 19, tzinfo=UTC), datetime(2026, 9, 19)),
+            (
+                datetime(2026, 9, 19, 12, 30, 0, 123000, tzinfo=UTC),
+                datetime(2026, 9, 19, 12, 30, 0, 123567, tzinfo=UTC),
+            ),
+            (Decimal128("NaN"), float("nan")),
+            # A *signaling* NaN is one Decimal128 round-trips, and converting one to a float
+            # raises — so the reduction has to reach it without going through `math.isnan`.
+            (Decimal128(Decimal("sNaN")), float("nan")),
+            (Decimal("sNaN"), Decimal("NaN")),
+        ],
+    )
+    def test_what_this_adapter_stores_reduces_to_what_a_spec_declares(
+        self,
+        stored: object,
+        declared: object,
+    ) -> None:
+        # The two exceptions to the rule above, and they are storage facts rather than BSON
+        # ones: this adapter writes a UUID as its canonical string and a Decimal as a
+        # Decimal128, so an index filter read back from the server carries the stored spelling
+        # while the guarantee carries the domain one. Telling them apart refuses a correct index.
+        assert _bson_key(stored) == _bson_key(declared)

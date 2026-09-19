@@ -136,11 +136,14 @@ Three things happen to a declared guarantee, and a failure at any of them is lou
    failure, so CI sees it before production does.
 2. **Validation**, at startup. The live catalog is checked for the index, and the refusal names
    the DDL. An index counts when it covers the guarantee's fields — as a set, since uniqueness
-   over a tuple does not depend on the order an index lists it in — when it is live and valid,
-   and when its restriction mentions the fields the declaration filters on. What the predicate
-   *means* is not compared: deciding whether two boolean expressions agree is the database's
-   job, so an index filtered on the right column but the wrong value passes. The check is a
-   floor under a forgotten migration, not a proof that the mechanism matches.
+   over a tuple does not depend on the order an index lists it in — and when it is live and
+   valid. How closely its *restriction* is compared differs by backend, and the difference is in
+   the data rather than the effort: Mongo stores a `partialFilterExpression` as a document, so
+   the two filters are reduced to their equality constraints and must select the same documents,
+   and anything that does not reduce that way is refused rather than guessed at. Postgres hands
+   back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
+   the right column and the wrong value passes there. Neither is a proof that the mechanism
+   matches; on Postgres it is a floor under a forgotten migration.
 3. **Enforcement**, at write time, by the store. A violating write raises `conflict`, from every
    backend and from the in-memory store alike — including across two concurrent transactions,
    which the in-memory store rechecks at commit because a unique index is not snapshot-scoped.
