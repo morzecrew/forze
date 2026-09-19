@@ -6,6 +6,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.guarantees import NonOverlapping
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import Bounds
 from forze_kits.domain.temporal.constants import VALIDITY_PERIOD
@@ -47,21 +48,31 @@ class TemporalPolicy:
 
     # ....................... #
 
-    @property
-    def guarantee(self) -> NonOverlapping:
+    def guarantee(self, *, where: QueryFilterExpression | None = None) -> NonOverlapping:
         """The property the store must keep for this aggregate to mean anything.
 
         Built from the policy rather than written out by the author, so the convention the reads
         use and the convention the store enforces are the same value and cannot drift.
+
+        *where* is what the aggregate's other arms narrow the property to. An aggregate that
+        also keeps its lineage restricts it to the current versions: a correction writes a
+        successor carrying its predecessor's period, so unfiltered the two overlap and every
+        correction is refused, while filtered the property still says what it meant — nothing in
+        force now overlaps anything else in force now.
         """
 
-        return NonOverlapping(key=self.key, period=VALIDITY_PERIOD, bounds=self.bounds)
+        return NonOverlapping(key=self.key, period=VALIDITY_PERIOD, bounds=self.bounds, where=where)
 
 
 # ....................... #
 
 
-def assert_guarantee(spec: DocumentSpec[Any, Any, Any, Any], policy: TemporalPolicy) -> None:
+def assert_guarantee(
+    spec: DocumentSpec[Any, Any, Any, Any],
+    policy: TemporalPolicy,
+    *,
+    where: QueryFilterExpression | None = None,
+) -> None:
     """Refuse a temporal aggregate whose spec does not declare the non-overlap guarantee.
 
     The kit's correctness rests on the store, not on its own write path: a read-then-insert
@@ -75,19 +86,28 @@ def assert_guarantee(spec: DocumentSpec[Any, Any, Any, Any], policy: TemporalPol
     :raises CoreException: ``configuration`` when the guarantee is absent or differs.
     """
 
-    wanted = policy.guarantee
+    wanted = policy.guarantee(where=where)
 
     if any(declared == wanted for declared in spec.guarantees):
         return
+
+    restriction = f", where={where!r}" if where is not None else ""
+    because = (
+        " The filter is not optional either: this aggregate also keeps its lineage, and a "
+        "correction writes a successor carrying its predecessor's period — unfiltered, the two "
+        "overlap and every correction is refused."
+        if where is not None
+        else ""
+    )
 
     raise exc.configuration(
         f"Document {spec.name!r} is declared temporal over {list(policy.key)} with bounds "
         f"{policy.bounds!r}, so its store must guarantee that no two of its rows under one key "
         "hold overlapping periods — and the spec does not declare it. Add it to the spec:\n"
         f"  guarantees = (NonOverlapping(key={policy.key!r}, period={VALIDITY_PERIOD!r}, "
-        f"bounds={policy.bounds!r}),)\n"
+        f"bounds={policy.bounds!r}{restriction}),)\n"
         "Without it the aggregate's reads are asking for the one row in force on a day, from a "
-        "store that permits several.",
+        "store that permits several." + because,
         details={"document": str(spec.name), "key": list(policy.key)},
     )
 

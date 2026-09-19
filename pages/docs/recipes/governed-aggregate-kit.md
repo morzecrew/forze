@@ -193,12 +193,29 @@ zero days: nothing would read the row and nothing would conflict with it. Ending
 day it started means deleting it, so the write is refused rather than stored — on the domain
 model, so a repair script meets it too.
 
-`temporal` is not bitemporal, and cannot be composed with `versioned` yet — declaring both is
-refused at build. A correction inserts a successor carrying its predecessor's validity dates,
-because it corrects what the row says rather than when it applied; two rows under one key then
-hold the same period and the non-overlap guarantee refuses the correction. The composition needs
-a non-overlap guarantee restricted to current versions, which the vocabulary does not have. Until
-it does, an aggregate records either when a fact applied or how it was corrected, not both.
+**Composed with `versioned`, the guarantee is scoped to the current versions.** That pair is the
+bitemporal case — when the fact applied, and when you asserted it — and it needs the filtered
+form, because a correction writes a successor carrying its predecessor's dates. Over every row
+those two overlap and the correction is refused; over the rows in force the property still says
+what it meant. Declare it with the filter and the kit wires both arms:
+
+```python
+guarantees = (
+    NonOverlapping(
+        key=("employee_id",),
+        period=("valid_from", "valid_to"),
+        bounds="[]",
+        where={"$values": {"is_current": True}},
+    ),
+    ...  # the two the versioned arm requires
+)
+```
+
+The kit refuses the unfiltered form on such an aggregate rather than letting its first
+correction fail, and the dated reads scope themselves the same way — `effective_on` answers with
+the version in force, never one that has since been corrected. On Postgres the mechanism is
+`EXCLUDE ... WHERE (...)`, and startup checks the predicate names the fields the filter selects
+on, exactly as it does for a partial unique index.
 
 ## What it emits — separately
 

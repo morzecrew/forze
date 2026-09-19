@@ -72,6 +72,7 @@ def temporal_wiring(
     policy: TemporalPolicy,
     *,
     restrict: tuple[QueryFilterExpression, ...] = (),
+    where: QueryFilterExpression | None = None,
 ) -> TemporalWiring:
     """Build the reusable temporal-validity wiring for *spec*.
 
@@ -86,7 +87,7 @@ def temporal_wiring(
     check here could only fire for a spec that cannot be built.
     """
 
-    assert_guarantee(spec, policy)
+    assert_guarantee(spec, policy, where=where)
     _assert_bounds_agree(spec, policy)
 
     return TemporalWiring(spec=spec, policy=policy, restrict=restrict)

@@ -35,6 +35,7 @@ from forze_kits.aggregates.versioned import (
     ONE_CURRENT_VERSION,
     ONE_SUCCESSOR,
     CorrectDocumentDTO,
+    FactIdDTO,
     VersionedKernelOp,
     VersionedPolicy,
 )
@@ -57,6 +58,12 @@ _TX = "mock"
 
 POLICY = TemporalPolicy(key=("employee_id",), bounds="[]")
 NO_OVERLAP = NonOverlapping(key=("employee_id",), period=("valid_from", "valid_to"), bounds="[]")
+NO_OVERLAP_WHILE_CURRENT = NonOverlapping(
+    key=("employee_id",),
+    period=("valid_from", "valid_to"),
+    bounds="[]",
+    where={"$values": {"is_current": True}},
+)
 
 
 class Contract(DocWithTemporal):
@@ -837,23 +844,19 @@ BITEMPORAL = DocumentSpec[BitemporalRead, BitemporalContract, BitemporalCreate, 
         create_cmd=BitemporalCreate,
         update_cmd=BitemporalUpdate,
     ),
-    guarantees=(NO_OVERLAP, ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+    guarantees=(NO_OVERLAP_WHILE_CURRENT, ONE_CURRENT_VERSION, ONE_SUCCESSOR),
 )
 
 
-class TestTheBitemporalCaseIsRefusedForNow:
-    """Validity and lineage on one aggregate: refused, loudly, rather than wired and broken.
+class TestTheBitemporalCase:
+    """Validity and lineage on one aggregate: when the fact applied, and when we asserted it.
 
-    The two arms answer different questions and ought to compose — when the fact applied, and
-    when we asserted it. They do not yet, and the reason is not a wiring detail: a correction
-    inserts a successor carrying its **predecessor's dates**, because it corrects what the row
-    says rather than when it applied. Two rows under one key then hold the same period, and the
-    non-overlap guarantee refuses the correction.
-
-    What the composition needs is a non-overlap guarantee restricted to current versions — the
-    filtered form the uniqueness member already has and this one does not. Until the vocabulary
-    grows it, the declaration is refused at build: an aggregate whose every correction fails is
-    worse than one that says so before it runs.
+    The two axes are independent and the kit keeps them so. What makes them compose is that the
+    non-overlap guarantee is scoped to the **current** versions: a correction writes a successor
+    carrying its predecessor's period — it corrects what the row says, not when it applied — so
+    over every row the two overlap and the correction would be refused. Over the rows in force,
+    the property still says what it meant, and history holds as many overlapping periods as it
+    was ever told.
     """
 
     @staticmethod
@@ -864,25 +867,82 @@ class TestTheBitemporalCaseIsRefusedForNow:
             versioned=VersionedPolicy(corrections=CORRECTIONS),
         )
 
-    async def test_declaring_both_is_refused(self) -> None:
-        with pytest.raises(CoreException) as caught:
-            self._kit()
+    @staticmethod
+    async def _seed_and_correct(reg: Any, ctx: Any) -> tuple[Any, Any]:
+        key = BITEMPORAL.default_namespace.key
+        first = await run_operation(
+            reg,
+            key(DocumentKernelOp.CREATE),
+            BitemporalCreate(
+                employee_id="e1",
+                hours=40,
+                valid_from=date(2026, 1, 1),
+                valid_to=date(2026, 3, 31),
+            ),
+            ctx,
+        )
+        corrected = await run_operation(
+            reg,
+            key(VersionedKernelOp.CORRECT),
+            CorrectDocumentDTO(
+                id=first.id,
+                expected_version=first.version,
+                dto=BitemporalUpdate(hours=35),
+                reason="payroll misread the contract",
+            ),
+            ctx,
+        )
 
-        assert caught.value.kind is ExceptionKind.CONFIGURATION
-        assert "current versions" in caught.value.summary
+        return first, corrected
 
-    async def test_the_refusal_is_what_a_correction_would_have_hit(self) -> None:
-        # The defect the refusal stands in for, reproduced through the lineage arm alone: the
-        # successor carries the predecessor's period, and the guarantee refuses it.
+    async def test_a_fact_can_be_corrected_and_still_be_dated(self) -> None:
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(
-            spec=BITEMPORAL, versioned=VersionedPolicy(corrections=CORRECTIONS)
-        ).registry(tx_route=_TX)
+        reg = self._kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            _, corrected = await self._seed_and_correct(reg, ctx)
+            row = await run_operation(
+                reg,
+                BITEMPORAL.default_namespace.key(TemporalKernelOp.EFFECTIVE_ON),
+                EffectiveOnDTO(key={"employee_id": "e1"}, on=date(2026, 2, 1)),
+                ctx,
+            )
+
+        # The correction landed, and the dated read answers with the version in force, once.
+        assert (corrected.version, corrected.hours) == (2, 35)
+        assert (row.version, row.hours) == (2, 35)
+
+    async def test_history_keeps_the_period_the_unfiltered_rule_would_refuse(self) -> None:
+        # The point of scoping the guarantee: two rows under one key hold the *same* period,
+        # which is legal precisely because only one of them is in force.
+        runtime = build_runtime(MockDepsModule())
+        reg = self._kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first, _ = await self._seed_and_correct(reg, ctx)
+            chain = await run_operation(
+                reg,
+                BITEMPORAL.default_namespace.key(VersionedKernelOp.HISTORY),
+                FactIdDTO(root_id=first.root_id),
+                ctx,
+            )
+
+        periods = [(r.version, r.valid_from, r.valid_to) for r in chain.hits]
+
+        assert len(periods) == 2
+        assert periods[0][1:] == periods[1][1:], "the successor did not inherit the period"
+
+    async def test_an_overlap_between_two_facts_in_force_is_still_refused(self) -> None:
+        # The other half: scoping the guarantee must not weaken it for the rows in force.
+        runtime = build_runtime(MockDepsModule())
+        reg = self._kit().registry(tx_route=_TX)
         key = BITEMPORAL.default_namespace.key
 
         async with runtime.scope():
             ctx = runtime.get_context()
-            first = await run_operation(
+            await run_operation(
                 reg,
                 key(DocumentKernelOp.CREATE),
                 BitemporalCreate(
@@ -897,18 +957,43 @@ class TestTheBitemporalCaseIsRefusedForNow:
             with pytest.raises(CoreException) as caught:
                 await run_operation(
                     reg,
-                    key(VersionedKernelOp.CORRECT),
-                    CorrectDocumentDTO(
-                        id=first.id,
-                        expected_version=first.version,
-                        dto=BitemporalUpdate(hours=35),
-                        reason="payroll misread the contract",
+                    key(DocumentKernelOp.CREATE),
+                    BitemporalCreate(
+                        employee_id="e1",
+                        hours=20,
+                        valid_from=date(2026, 3, 1),
+                        valid_to=date(2026, 5, 1),
                     ),
                     ctx,
                 )
 
         assert caught.value.kind is ExceptionKind.CONFLICT
-        assert "overlapping periods" in caught.value.summary
+
+    async def test_the_unfiltered_guarantee_is_refused_for_this_aggregate(self) -> None:
+        # Declaring the plain form on a versioned-and-dated aggregate is the defect the scoping
+        # exists to prevent, so the kit names the filter the spec is missing.
+        unscoped = DocumentSpec[
+            BitemporalRead, BitemporalContract, BitemporalCreate, BitemporalUpdate
+        ](
+            name="contracts",
+            read=BitemporalRead,
+            write=DocumentWriteTypes(
+                domain=BitemporalContract,
+                create_cmd=BitemporalCreate,
+                update_cmd=BitemporalUpdate,
+            ),
+            guarantees=(NO_OVERLAP, ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            AggregateKit(
+                spec=unscoped,
+                temporal=POLICY,
+                versioned=VersionedPolicy(corrections=CORRECTIONS),
+            ).registry(tx_route=_TX)
+
+        assert "is_current" in caught.value.summary
+        assert "every correction is refused" in caught.value.summary
 
 
 # ....................... #

@@ -426,30 +426,69 @@ Named here and nowhere near the contract: a guarantee declares a property, and w
 makes the mechanism available is this backend's business."""
 
 
-def _range_bounds(definition: str) -> frozenset[str]:
-    """Every bounds convention the range constructors in *definition* ask for.
+def _range_over(definition: str, period: tuple[str, str]) -> frozenset[str]:
+    """The bounds conventions of the range constructors built over *period*, in that order.
 
-    A two-argument constructor contributes ``"[)"``, which is Postgres's documented default and
-    the reason a correct migration need not spell it. A constructor whose third argument is not
-    one of the four literals contributes nothing, so it cannot satisfy any declaration — the
-    fail-closed half, since an expression this cannot read is one whose convention is unknown.
+    Order matters and is checked: ``daterange(valid_to, valid_from, '[]')`` names both declared
+    fields and is a different expression — an inverted range is empty, so the constraint it
+    builds excludes nothing while the catalog shows an exclusion constraint over the right
+    columns.
+
+    A two-argument constructor contributes ``"[)"``, Postgres's documented default and the
+    reason a correct migration need not spell it. A constructor whose third argument is not one
+    of the four literals contributes nothing, so it satisfies no declaration — the fail-closed
+    half, since an expression this cannot read is one whose convention is unknown.
     """
 
+    start, end = period
     found: set[str] = set()
 
     for args, _ in _RANGE_CALL.findall(definition):
         parts = [part.strip() for part in args.split(",")]
 
-        if len(parts) >= 3:
-            match = _BOUNDS_LITERAL.search(parts[2])
+        if len(parts) < 2 or not _is_column(parts[0], start) or not _is_column(parts[1], end):
+            continue
 
-            if match is not None:
-                found.add(match.group(1))
-
-        elif len(parts) == 2:
+        if len(parts) == 2:
             found.add("[)")
+            continue
+
+        match = _BOUNDS_LITERAL.search(parts[2])
+
+        if match is not None:
+            found.add(match.group(1))
 
     return frozenset(found)
+
+
+_CONSTRAINT_WHERE = re.compile(r"\)\s+WHERE\s+(.+)$", re.DOTALL)
+"""The trailing predicate of a deparsed partial EXCLUDE constraint, if it carries one."""
+
+
+def _constraint_predicate(definition: str) -> str | None:
+    """The ``WHERE`` predicate of a partial EXCLUDE constraint, or ``None`` for a full one.
+
+    Read off the deparsed text because the catalog keeps an exclusion constraint's predicate
+    nowhere a validator can reach structurally: ``conbin`` is the whole expression tree and
+    ``pg_get_constraintdef`` is what renders it.
+    """
+
+    match = _CONSTRAINT_WHERE.search(definition)
+
+    return match.group(1).strip() if match is not None else None
+
+
+def _is_column(argument: str, column: str) -> bool:
+    """Whether *argument* is *column* itself rather than an expression mentioning it.
+
+    ``pg_get_constraintdef`` deparses a bare column reference as the bare name, optionally cast.
+    Anything else — a function call, an arithmetic expression, a literal — is something this
+    check does not interpret, and an argument it cannot read is one the guarantee cannot claim.
+    """
+
+    bare = argument.split("::", 1)[0].strip().strip('"')
+
+    return bare == column
 
 
 # ....................... #
@@ -469,7 +508,14 @@ async def _require_overlap_mechanisms(
 
     * it does not cover every key field, so rows the guarantee separates are compared — or not
       compared — by something other than the declaration;
-    * its range expression does not mention both period fields;
+    * its range expression is not built over both period fields, in that order — an inverted
+      range cannot even be constructed, so every ordinary row fails to insert while the catalog
+      shows a constraint over the right columns;
+    * it is not partial where the guarantee is filtered, or its predicate does not mention the
+      fields the filter selects on — the case that matters, because a predicate over the wrong
+      column leaves exactly the rows the guarantee covers unconstrained. A constraint partial
+      where the declaration is not counts for nothing either: it covers fewer rows than the
+      property claims;
     * it carries a **different bounds convention** than the declaration. The two conventions
       differ on exactly one day, which is the day a boundary bug lives on, so a ``'[]'``
       declaration validated against a ``'[)'`` constraint is the failure this check exists for.
@@ -494,14 +540,31 @@ async def _require_overlap_mechanisms(
         key = frozenset(guarantee.key)
         start, end = guarantee.period
 
+        # A filter over a column the constraint does not restrict on cannot narrow the rows it
+        # covers, so the predicate has to name every field the declaration selects on — the
+        # same floor the uniqueness pass puts under a partial index.
+        predicate_columns = (
+            collect_filter_field_roots(guarantee.where)
+            if guarantee.where is not None
+            else frozenset()
+        )
+
         for constraint in constraints:
             if not key <= constraint.columns:
                 continue
 
-            if not all(_predicate_names(constraint.definition, field) for field in (start, end)):
+            if guarantee.bounds not in _range_over(constraint.definition, (start, end)):
                 continue
 
-            if guarantee.bounds not in _range_bounds(constraint.definition):
+            predicate = _constraint_predicate(constraint.definition)
+
+            if predicate_columns:
+                if predicate is None or any(
+                    not _predicate_names(predicate, column) for column in predicate_columns
+                ):
+                    continue
+
+            elif predicate is not None:
                 continue
 
             break
@@ -560,10 +623,17 @@ def _overlap_refusal(
     key_list = ", ".join(guarantee.key)
     start, end = guarantee.period
     key_elements = ", ".join(f"{field} WITH =" for field in guarantee.key)
+    predicate_columns = (
+        sorted(collect_filter_field_roots(guarantee.where)) if guarantee.where is not None else []
+    )
+    restriction = (
+        f" WHERE (<a condition over {', '.join(predicate_columns)}>)" if predicate_columns else ""
+    )
 
     ddl = (
         f"ALTER TABLE {schema}.{table} ADD EXCLUDE USING gist ("
-        f"{key_elements}, {range_fn}({start}, {end}, '{guarantee.bounds}') WITH &&);"
+        f"{key_elements}, {range_fn}({start}, {end}, '{guarantee.bounds}') WITH &&)"
+        f"{restriction};"
     )
 
     extension = (
@@ -573,13 +643,15 @@ def _overlap_refusal(
         else ""
     )
 
+    among = f" among the rows {', '.join(predicate_columns)} selects" if predicate_columns else ""
+
     return (
         f"Document {spec_name!r} guarantees no two rows per ({key_list}) hold overlapping "
-        f"periods over ({start}, {end}) with bounds {guarantee.bounds!r}, and {schema}.{table} "
-        "has no EXCLUDE constraint that keeps it. A constraint carrying a different "
-        "bounds convention does not count: the two disagree on exactly one boundary value, "
-        "which is the one a reader would trust it for. The migration is what satisfies a "
-        f"guarantee — nothing here creates one. This would:\n{extension}  {ddl}"
+        f"periods over ({start}, {end}) with bounds {guarantee.bounds!r}{among}, and "
+        f"{schema}.{table} has no EXCLUDE constraint that keeps it. A constraint carrying a "
+        "different bounds convention does not count: the two disagree on exactly one boundary "
+        "value, which is the one a reader would trust it for. The migration is what satisfies "
+        f"a guarantee — nothing here creates one. This would:\n{extension}  {ddl}"
     )
 
 

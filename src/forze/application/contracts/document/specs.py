@@ -392,6 +392,14 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
                 case NonOverlapping():
                     named = frozenset(guarantee.key) | frozenset(guarantee.period)
+                    # Same reasoning as the filtered uniqueness above: a filter over a field
+                    # the row does not carry selects nothing, so the guarantee holds over the
+                    # empty set and every overlap it was declared to refuse is accepted.
+                    named |= (
+                        collect_filter_field_roots(guarantee.where)
+                        if guarantee.where is not None
+                        else frozenset()
+                    )
 
             if unknown := named - stored:
                 raise exc.configuration(

@@ -209,6 +209,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if period is None:
             return
 
+        matches = self._matcher(guarantee.where)
+
+        if not matches(row):
+            return
+
         key = tuple(row.get(field) for field in guarantee.key)
 
         # ponytail: a scan per write, as `_refuse_duplicate` does and for the same reasons — an
@@ -217,7 +222,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if other_pk == pk:
                 continue
 
-            if tuple(other.get(field) for field in guarantee.key) != key:
+            if tuple(other.get(field) for field in guarantee.key) != key or not matches(other):
                 continue
 
             other_period = self._period_of(other, guarantee)
@@ -228,7 +233,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             raise exc.conflict(
                 f"Document {self.spec.name!r} guarantees no two rows per "
                 f"({', '.join(guarantee.key)}) hold overlapping periods; {other_pk} already "
-                f"holds {other_period} for {key!r}, which overlaps {period}.",
+                f"holds {other_period} for {key!r}, which overlaps {period}"
+                + (" among the rows the guarantee selects." if guarantee.where else "."),
                 details={
                     "guarantee": guarantee.kind,
                     "key": list(guarantee.key),

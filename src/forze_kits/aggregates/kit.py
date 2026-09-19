@@ -301,20 +301,6 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"(ensure_index) publishes facetable fields as filterable attributes.",
             )
 
-        if self.temporal is not None and self.versioned is not None:
-            raise exc.configuration(
-                "AggregateKit composes temporal with versioned, and the two cannot hold "
-                "together yet. A correction inserts a successor carrying its predecessor's "
-                "validity dates — it corrects what the row says, not when it applied — so the "
-                "non-overlap guarantee sees two rows under one key holding the same period and "
-                "refuses every correction the aggregate makes.\n"
-                "What the composition needs is a non-overlap guarantee restricted to current "
-                "versions, the way the lineage arm already restricts its own uniqueness. The "
-                "vocabulary has no filtered form of it, so the combination is refused rather "
-                "than wired into an aggregate whose first correction fails.",
-                details={"document": str(self.spec.name)},
-            )
-
         if (
             self.versioned is not None
             and self.search is not None
@@ -637,7 +623,12 @@ class AggregateKit(Generic[R, D, C, U]):
             mappers = versioned.mappers(mappers)
 
         temporal = (
-            temporal_wiring(spec, self.temporal, restrict=self._read_restrictions())
+            temporal_wiring(
+                spec,
+                self.temporal,
+                restrict=self._read_restrictions(),
+                where=self._temporal_scope(),
+            )
             if self.temporal is not None
             else None
         )
@@ -704,9 +695,9 @@ class AggregateKit(Generic[R, D, C, U]):
         would answer "what is in force on that day" with a row it hides from its own list, its
         own get and its own search.
 
-        Versioning is not here because it cannot reach here: composing it with effective dating
-        is refused at construction, so a current-version restriction would be a branch nothing
-        can take. It belongs with whatever lifts that refusal.
+        Versioning is here for the same reason, and for one more: an aggregate that keeps its
+        lineage scopes its non-overlap guarantee to the current versions, so a dated read that
+        did not scope the same way would answer from rows the store never compared.
         """
 
         restrictions: list[QueryFilterExpression] = []
@@ -714,7 +705,27 @@ class AggregateKit(Generic[R, D, C, U]):
         if self.soft_delete:
             restrictions.append({"$values": {SOFT_DELETE_FIELD: False}})
 
+        if self.versioned is not None:
+            restrictions.append({"$values": {IS_CURRENT_FIELD: True}})
+
         return tuple(restrictions)
+
+    # ....................... #
+
+    def _temporal_scope(self) -> QueryFilterExpression | None:
+        """Which rows the non-overlap guarantee covers on this aggregate.
+
+        Every row, unless the aggregate also keeps its lineage. A correction writes a successor
+        carrying its predecessor's period — it corrects what a row says, not when it applied —
+        so over every row the two overlap and the correction is refused. Over the current
+        versions the property still says what it meant, and history is free to hold as many
+        overlapping periods as it was ever told.
+        """
+
+        if self.versioned is None:
+            return None
+
+        return {"$values": {IS_CURRENT_FIELD: True}}
 
     # ....................... #
 

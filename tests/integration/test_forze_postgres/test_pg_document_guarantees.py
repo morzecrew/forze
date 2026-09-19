@@ -41,6 +41,12 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 ONE_CURRENT = UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}})
 ONE_EVER = UniqueTogether(fields=("root_id",))
 NO_OVERLAP = NonOverlapping(key=("root_id",), period=("valid_from", "valid_to"), bounds="[]")
+NO_OVERLAP_WHILE_CURRENT = NonOverlapping(
+    key=("root_id",),
+    period=("valid_from", "valid_to"),
+    bounds="[]",
+    where={"$values": {"is_current": True}},
+)
 
 
 class _Read(BaseModel):
@@ -114,13 +120,37 @@ async def _validate(
 # ....................... #
 
 
-async def _exclude(pg_client: PostgresClient, table: str, *, bounds: str) -> None:
+async def _insert_period(
+    pg_client: PostgresClient,
+    table: str,
+    *,
+    start: str,
+    end: str | None,
+) -> None:
+    """One row under key ``r1`` holding the given period."""
+
+    await pg_client.execute(
+        f"INSERT INTO {table} (id, rev, created_at, last_update_at, root_id, is_current,"
+        " valid_from, valid_to) VALUES (%s, 1, now(), now(), 'r1', true, %s, %s);",
+        [uuid4(), start, end],
+    )
+
+
+async def _exclude(
+    pg_client: PostgresClient,
+    table: str,
+    *,
+    bounds: str,
+    where: str | None = None,
+) -> None:
     """Add the constraint a non-overlap guarantee over (valid_from, valid_to) asks for."""
+
+    restriction = f" WHERE ({where})" if where is not None else ""
 
     await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
     await pg_client.execute(
         f"ALTER TABLE {table} ADD EXCLUDE USING gist "
-        f"(root_id WITH =, daterange(valid_from, valid_to, '{bounds}') WITH &&);"
+        f"(root_id WITH =, daterange(valid_from, valid_to, '{bounds}') WITH &&){restriction};"
     )
 
 
@@ -257,6 +287,102 @@ class TestStartupValidation:
 
         with pytest.raises(CoreException, match="no EXCLUDE constraint"):
             await _validate(pg_client, table, NO_OVERLAP)
+
+    async def test_an_inverted_range_does_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The constraint names both declared fields, in the wrong order. An inverted range is
+        # empty, `&&` never matches an empty range, and so the constraint excludes nothing —
+        # while the catalog shows an exclusion constraint over exactly the right columns.
+        table = await _table(pg_client)
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(root_id WITH =, daterange(valid_to, valid_from, '[]') WITH &&);"
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP)
+
+    async def test_the_inverted_constraint_refuses_every_ordinary_row(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The reason the order check is not pedantry, and it is worse than it looked: an
+        # inverted range is not merely empty, it cannot be constructed. Every row whose period
+        # runs forwards fails on insert, so the constraint does not weaken the guarantee — it
+        # breaks the relation, at the first write rather than at startup.
+        table = await _table(pg_client)
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(root_id WITH =, daterange(valid_to, valid_from, '[]') WITH &&);"
+        )
+
+        with pytest.raises(CoreException):
+            await _insert_period(pg_client, table, start="2026-01-01", end="2026-06-30")
+
+    async def test_a_filtered_guarantee_wants_a_partial_constraint(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The bitemporal shape against the real mechanism: the constraint covers only the rows
+        # in force, so a corrected version may keep its predecessor's period.
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]", where="is_current")
+
+        await _validate(pg_client, table, NO_OVERLAP_WHILE_CURRENT)
+
+    async def test_a_full_constraint_does_not_satisfy_a_filtered_guarantee(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # It covers *more* rows than the declaration, which is not the same property: it
+        # refuses the correction the filter exists to permit.
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP_WHILE_CURRENT)
+
+    async def test_a_partial_constraint_does_not_satisfy_a_full_guarantee(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The mirror, and the one that leaves rows unconstrained: a guarantee over every row is
+        # not kept by a constraint covering some of them.
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]", where="is_current")
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP)
+
+    async def test_a_predicate_over_another_column_does_not_count_either(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The failure the column check exists for, on this member too: the constraint restricts
+        # the right columns to the wrong rows, so the rows the guarantee covers are free.
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD COLUMN is_verified boolean NOT NULL DEFAULT false;"
+        )
+        await _exclude(pg_client, table, bounds="[]", where="is_verified")
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP_WHILE_CURRENT)
+
+    async def test_the_filtered_refusal_names_the_where_clause(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        table = await _table(pg_client)
+
+        with pytest.raises(CoreException) as caught:
+            await _validate(pg_client, table, NO_OVERLAP_WHILE_CURRENT)
+
+        assert "WHERE (<a condition over is_current>)" in caught.value.summary
 
     async def test_a_constraint_over_another_key_does_not_count(
         self,
@@ -518,21 +644,6 @@ def _spec(
         guarantees=guarantees or (ONE_CURRENT,),
     )
 
-
-async def _insert_period(
-    pg_client: PostgresClient,
-    table: str,
-    *,
-    start: str,
-    end: str | None,
-) -> None:
-    """One row under key ``r1`` holding the given period."""
-
-    await pg_client.execute(
-        f"INSERT INTO {table} (id, rev, created_at, last_update_at, root_id, is_current,"
-        " valid_from, valid_to) VALUES (%s, 1, now(), now(), 'r1', true, %s, %s);",
-        [uuid4(), start, end],
-    )
 
 
 class TestMockAndPostgresRefuseTheSameWay:

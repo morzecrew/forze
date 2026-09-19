@@ -16,10 +16,12 @@ DDL, including the bounds the declaration asked for.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from uuid import uuid4
 
 import pytest
+from testcontainers.postgres import PostgresContainer
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.guarantees import NonOverlapping
@@ -37,7 +39,7 @@ from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.catalog.validation.validate_schema import (
     PostgresDocumentSchemaSpec,
 )
-from forze_postgres.kernel.client.client import PostgresClient
+from forze_postgres.kernel.client.client import PostgresClient, PostgresConfig
 from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -331,47 +333,79 @@ class TestTheReadsAgainstTheRealStore:
 # ....................... #
 
 
-class TestNeitherWriterHasToCheckFirst:
-    """Two overlapping writes issued back to back leave exactly one row.
+class TestTwoWritersRaceForOnePeriod:
+    """Two transactions, two connections, overlapping periods, neither reading first.
 
-    What this pins is that **no writer reads before writing** — neither call looks for a
-    conflicting period, and the store refuses the second anyway. That is the whole reason the
-    rule is declared rather than implemented: a read-then-insert check in the kit would accept
-    both under interleaving, which is the accepted race in every hand-rolled version of this.
+    This is the case the declared guarantee exists for and the one a read-then-insert check in
+    the kit cannot survive: both writers open, both decide they conflict with nothing, and only
+    the constraint stands between them and two overlapping contracts for one employee.
 
-    Deliberately *not* a two-connection race. These two writes share one client, so they
-    serialize, and a test asserting "exactly one survived" would pass on a sequential store
-    too. The interleaved case is Postgres's own property, which §6 of the design leaves to
-    Postgres; what is testable here is that the kit never asks.
+    The interleaving is *observed*, not assumed. The recorded order shows both transactions
+    open before either commits, and the second writer's insert blocking — a leg that only
+    asserted "exactly one row survived" would pass against a store that serialised the two.
     """
 
-    async def test_the_second_write_is_refused_without_anyone_looking(
+    async def test_the_loser_blocks_then_is_refused(
         self,
         pg_client: PostgresClient,
+        postgres_container: PostgresContainer,
     ) -> None:
         table = await _table(pg_client)
-        ctx = _ctx(pg_client, table)
+        url = postgres_container.get_connection_url().replace(
+            "postgresql+psycopg://", "postgresql://"
+        )
+        second = PostgresClient()
+        await second.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=2))
 
-        async def _write(start: date, end: date) -> bool:
+        order: list[str] = []
+
+        async def writer(
+            client: PostgresClient,
+            name: str,
+            start: str,
+            end: str,
+            hold: float,
+        ) -> bool:
             try:
-                await _add(ctx, table, employee="e1", hours=1, start=start, end=end)
+                async with client.transaction():
+                    order.append(f"{name}:begin")
+                    await client.execute(
+                        f"INSERT INTO {table} (id, rev, created_at, last_update_at,"
+                        " employee_id, hours, valid_from, valid_to)"
+                        " VALUES (%s, 1, now(), now(), 'e1', 1, %s, %s);",
+                        [uuid4(), start, end],
+                    )
+                    order.append(f"{name}:inserted")
+                    await asyncio.sleep(hold)
+
+                return True
 
             except CoreException:
+                order.append(f"{name}:refused")
+
                 return False
 
-            return True
+        try:
+            results = await asyncio.gather(
+                writer(pg_client, "A", "2026-01-01", "2026-06-30", 0.5),
+                writer(second, "B", "2026-03-01", "2026-09-30", 0.0),
+            )
 
-        results = [
-            await _write(date(2026, 1, 1), date(2026, 6, 30)),
-            await _write(date(2026, 3, 1), date(2026, 9, 30)),
-        ]
+            rows = await pg_client.fetch_all(
+                f"SELECT count(*) AS n FROM {table};", [], row_factory="dict", commit=False
+            )
 
-        rows = await pg_client.fetch_all(
-            f"SELECT count(*) AS n FROM {table};", [], row_factory="dict", commit=False
-        )
+        finally:
+            await second.close()
 
         assert results == [True, False]
         assert rows[0]["n"] == 1
+
+        # Both open before either finishes, and the loser never reaches "inserted": it is
+        # waiting on the constraint, which is what makes this a race rather than a sequence.
+        assert order[:2] == ["A:begin", "B:begin"], order
+        assert "B:inserted" not in order, order
+        assert order[-1] == "B:refused", order
 
 
 # ....................... #
