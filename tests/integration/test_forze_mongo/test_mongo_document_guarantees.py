@@ -9,6 +9,8 @@ every superseded document the guarantee meant to allow.
 
 from __future__ import annotations
 
+import json
+import re
 from uuid import uuid4
 
 import pytest
@@ -165,6 +167,58 @@ class TestMongoStartupValidation:
 
         with pytest.raises(CoreException, match="partialFilterExpression"):
             await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+
+    async def test_a_numeric_one_does_not_serve_a_boolean_filter(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # Read back from the server, because the claim is about what Mongo stores and how it
+        # compares: a boolean and a number are different BSON types, so this index covers none
+        # of the documents the guarantee selects and two current facts are insertable.
+        db_name, collection = await _collection(mongo_client)
+        coll = await mongo_client.collection(collection, db_name=db_name)
+        await coll.create_index(
+            [("root_id", 1)],
+            unique=True,
+            partialFilterExpression={"is_current": 1},
+        )
+
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+
+    async def test_the_printed_migration_creates_an_index_that_validates(
+        self,
+        mongo_client: MongoClient,
+    ) -> None:
+        # The refusal's whole value is that an operator can act on it, and the only proof of
+        # that is running what it printed. Parsed out of the message rather than rebuilt here,
+        # so a message that drifts from the check fails this leg.
+        db_name, collection = await _collection(mongo_client)
+
+        with pytest.raises(CoreException) as caught:
+            await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+
+        # The summary wraps, so the statement is read out of the whole message rather than off
+        # one line.
+        statement = " ".join(caught.value.summary.split())
+
+        assert "partialFilterExpression: {is_current: true}" in statement
+
+        found = re.search(r"partialFilterExpression: (\{.*?\})", statement)
+
+        assert found is not None, statement
+
+        # mongosh writes bare keys; everything else in the literal is already JSON.
+        filter_json = re.sub(r"([{,]\s*)([A-Za-z_][\w.]*):", r'\1"\2":', found.group(1))
+
+        coll = await mongo_client.collection(collection, db_name=db_name)
+        await coll.create_index(
+            [("root_id", 1)],
+            unique=True,
+            partialFilterExpression=json.loads(filter_json),
+        )
+
+        await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
 
     async def test_a_reversed_compound_index_counts(
         self,

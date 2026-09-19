@@ -1,6 +1,9 @@
 """Validate Mongo write-collection indexes for document ensure/upsert."""
 
+import json
 from collections.abc import Sequence
+from datetime import datetime
+from decimal import Decimal
 
 import attrs
 
@@ -58,6 +61,98 @@ def _is_id_unique_index(index: MongoIndexInfo) -> bool:
 # ....................... #
 
 
+def _bson_key(value: object) -> object:
+    """A comparison key that tells BSON types apart the way the server does.
+
+    Python compares ``True == 1`` and Mongo does not: a boolean and a number are different BSON
+    types, so an index filtered ``{is_current: 1}`` indexes none of the documents a guarantee
+    filtered ``{is_current: true}`` selects. Comparing the raw values reads those two filters as
+    the same one, which is the false acceptance this exists to stop.
+
+    Numeric *widths* go the other way — Mongo compares an int, a long and a double by value —
+    so those collapse to one key rather than being told apart.
+    """
+
+    if isinstance(value, bool):
+        return ("bool", value)
+
+    if isinstance(value, int | float | Decimal):
+        return ("number", float(value))
+
+    if value is None:
+        return ("null", None)
+
+    if isinstance(value, list | tuple):
+        return ("array", tuple(_bson_key(item) for item in value))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+
+    return (type(value).__name__, value)
+
+
+# ....................... #
+
+
+def _mongosh(key: object) -> str:
+    """Render a reduced constraint key as the literal ``mongosh`` would take.
+
+    Rendered from the *reduced* key rather than the raw value, so the migration the refusal
+    prints is written in the same terms the comparison uses — a message that says one thing and
+    a check that wants another is worse than no message. ``repr`` is not usable here: it spells
+    a boolean ``True``, which ``mongosh`` does not accept.
+    """
+
+    match key:
+        case ("bool", value):
+            return "true" if value else "false"
+
+        case ("number", float() as value):
+            return str(int(value)) if value.is_integer() else str(value)
+
+        case ("null", _):
+            return "null"
+
+        case ("str", value):
+            return json.dumps(value)
+
+        case ("array", tuple() as items):
+            return "[" + ", ".join(_mongosh(item) for item in items) + "]"  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+
+        case ("datetime", datetime() as value):
+            return f'ISODate("{value.isoformat()}")'
+
+        case (_, value):
+            return json.dumps(str(value))
+
+        case _:  # pragma: no cover - every key is a two-element tuple
+            return json.dumps(str(key))
+
+
+# ....................... #
+
+
+def _merge(found: dict[str, object], name: str, key: object) -> bool:
+    """Record the reduced constraint *key* for *name*, refusing a second, different one.
+
+    A filter can name one field twice — ``{"$and": [{"f": false}, {"f": true}]}`` is a legal
+    ``partialFilterExpression`` — and it then selects **no** documents at all, so the index
+    enforces nothing. Letting the later constraint overwrite the earlier one reduces that filter
+    to a plausible-looking single equality, which is how an index that indexes nothing comes to
+    satisfy a guarantee.
+
+    :returns: ``False`` when the field already carries a different value, which every caller
+        turns into a refusal.
+    """
+
+    if name in found and found[name] != key:
+        return False
+
+    found[name] = key
+
+    return True
+
+
+# ....................... #
+
+
 def _equalities(expression: object) -> dict[str, object] | None:
     """The equality constraints a ``partialFilterExpression`` imposes, or ``None``.
 
@@ -65,11 +160,12 @@ def _equalities(expression: object) -> dict[str, object] | None:
     for a range, an ``$exists``, an ``$or`` or anything else: whether such an index covers the
     documents a guarantee selects is an implication between two predicates, and nothing here
     decides that. The caller refuses what it cannot prove, so ``None`` is a refusal rather than
-    a shrug.
+    a shrug — and a filter naming one field twice with different values is refused the same way,
+    since it selects nothing.
 
     ``{"f": v}`` and ``{"f": {"$eq": v}}`` are the same constraint and reduce to the same pair;
-    a top-level ``$and`` is flattened, since it is how a filter with one field per clause is
-    usually written. Everything else gives up.
+    ``$and`` is flattened at any depth, since it is how a filter with one field per clause is
+    usually written. Values are reduced to :func:`_bson_key`, not kept raw.
     """
 
     if not isinstance(expression, dict):
@@ -90,7 +186,9 @@ def _equalities(expression: object) -> dict[str, object] | None:
                 if nested is None:
                     return None
 
-                found.update(nested)
+                for nested_name, nested_key in nested.items():
+                    if not _merge(found, nested_name, nested_key):
+                        return None
 
             continue
 
@@ -103,11 +201,13 @@ def _equalities(expression: object) -> dict[str, object] | None:
             if keys != ["$eq"]:
                 return None
 
-            found[name] = value["$eq"]  # pyright: ignore[reportUnknownArgumentType]
+            if not _merge(found, name, _bson_key(value["$eq"])):  # pyright: ignore[reportUnknownArgumentType]
+                return None
 
             continue
 
-        found[name] = value
+        if not _merge(found, name, _bson_key(value)):
+            return None
 
     return found
 
@@ -121,27 +221,37 @@ def _guarantee_equalities(where: QueryFilterExpression) -> dict[str, object] | N
     Parsed rather than pattern-matched on the raw mapping, so the two sides of the comparison
     are reduced from the same kind of structure and a shorthand spelling on either side cannot
     make them differ.
+
+    Conjunctions nest — an explicit ``$and`` wraps one ``QueryAnd`` per branch — so they are
+    flattened rather than read one level deep, which would refuse a filter the author is
+    entitled to write. A null test reduces to an equality against ``None``: the parser spells it
+    ``$null`` and Mongo spells it ``{f: null}``, and they select the same documents. The
+    negative form does not reduce, since a ``partialFilterExpression`` cannot say "not null".
     """
 
     parsed = QueryFilterExpressionParser.parse(where)
     found: dict[str, object] = {}
 
-    # The parser wraps a filter's fields in a conjunction, so anything else at the root — an
-    # `$or`, a negation — is a shape whose document set this does not decide, and the caller
-    # refuses what it cannot prove.
-    if not isinstance(parsed, QueryAnd):
+    def collect(node: object) -> bool:
+        match node:
+            case QueryAnd(items):
+                return all(collect(item) for item in items)
+
+            case QueryField(name, op, value) if op == "$eq":
+                return _merge(found, name, _bson_key(value))
+
+            case QueryField(name, op, value) if op == "$null" and value is True:
+                return _merge(found, name, _bson_key(None))
+
+            case _:
+                return False
+
+    # Anything else at the root — an `$or`, a negation, a range — is a shape whose document set
+    # this does not decide, and the caller refuses what it cannot prove.
+    if not collect(parsed):
         return None
 
-    for node in parsed.items:
-        if not isinstance(node, QueryField) or node.op != "$eq":
-            return None
-
-        found[node.name] = node.value
-
     return found
-
-
-# ....................... #
 
 
 # ....................... #
@@ -225,14 +335,20 @@ def _require_guarantee_indexes(
         else:
             field_list = ", ".join(fields)
             keys = ", ".join(f"{field}: 1" for field in fields)
-            filtered = bool(predicate_fields)
-            condition = ", ".join(sorted(predicate_fields))
+            # What the *validation* asks for, not what the filter happens to mention: a filter
+            # naming no field at all still needs a partialFilterExpression, and a message that
+            # suggested a plain index for one would send an operator to a migration that leaves
+            # startup failing.
+            filtered = guarantee.where is not None
+            condition = ", ".join(sorted(predicate_fields)) or "its filter"
             wanted_json = (
                 "{"
-                + ", ".join(f"{name}: {value!r}" for name, value in sorted(wanted_filter.items()))
+                + ", ".join(
+                    f"{name}: {_mongosh(key)}" for name, key in sorted(wanted_filter.items())
+                )
                 + "}"
                 if wanted_filter
-                else f"<a condition over {condition}>"
+                else f"<a condition selecting the same documents as {condition}>"
             )
             options = (
                 f"{{unique: true, partialFilterExpression: {wanted_json}}}"
