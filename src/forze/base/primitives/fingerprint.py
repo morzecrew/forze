@@ -261,10 +261,11 @@ def advisory_lock_key(*parts: object) -> int:
     change between versions, and a key that shifts on upgrade means a rolling deployment where
     old and new nodes do not contend.
 
-    Each part is length-prefixed and tagged, so the encoding is injective: ``("ab", "c")`` and
-    ``("a", "bc")`` are different keys, and so are ``(None,)`` and ``("",)``. A caller passing a
-    spec name, a tenant and an owner therefore cannot collide with another passing the same
-    strings in another arrangement.
+    Each part is length-prefixed, type-tagged and presence-tagged, so the encoding is
+    injective: ``("ab", "c")`` and ``("a", "bc")`` are different keys, so are ``(None,)`` and
+    ``("",)``, and so are ``(1,)`` and ``("1",)``. A caller passing a spec name, a tenant and an
+    owner cannot collide with another passing the same values in another arrangement, or with
+    one passing them in another type.
 
     :param parts: The key's components, in a fixed order the caller chooses.
     :returns: A signed 64-bit integer, which is the width a lock key is usually taken in.
@@ -277,8 +278,16 @@ def advisory_lock_key(*parts: object) -> int:
             digest.update(_ADVISORY_PART_ABSENT)
             continue
 
+        # The type travels with the value: rendering both through `str` would give the integer
+        # 1 and the string "1" one key, and an aggregate keyed on an id that is a UUID in one
+        # caller and its text in another would serialize them against each other by accident —
+        # or, worse, not, depending on which way the collision fell.
+        kind = type(part).__name__.encode("utf-8")
         raw = str(part).encode("utf-8")
+
         digest.update(_ADVISORY_PART_PRESENT)
+        digest.update(len(kind).to_bytes(8, "big"))
+        digest.update(kind)
         digest.update(len(raw).to_bytes(8, "big"))
         digest.update(raw)
 
