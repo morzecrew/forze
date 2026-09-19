@@ -6799,7 +6799,7 @@ wiring:</p>
 <td><code>UniqueTogether(fields=…, skip_null=True)</code></td>
 <td>…exempting tuples holding a null</td>
 <td>partial unique index</td>
-<td>—</td>
+<td><code>partialFilterExpression</code> with <code>$type</code></td>
 <td>✅</td>
 </tr>
 <tr>
@@ -6812,11 +6812,12 @@ wiring:</p>
 </tbody>
 </table>
 <p><code>NonOverlapping</code> is defined and enforced by nothing yet, so every backend refuses a spec that
-declares one. Mongo refuses <code>skip_null</code> for the same reason: a <code>sparse</code> index reads like the
-right mechanism and is not one — it skips a document only when <em>every</em> indexed field is missing,
-and it still indexes an explicit null, so the tuple the exemption was meant to let through stays
-in the index and conflicts. A capability that reconciles and then fails at the first write is
-worse than one that says no.</p>
+declares one — a capability that reconciles and then fails at the first write is worse than one
+that says no.</p>
+<p>On Mongo the null exemption is a <code>partialFilterExpression</code> naming each field's stored BSON type,
+not a <code>sparse</code> index: sparse skips a document only when <em>every</em> indexed field is missing and still
+indexes an explicit null, so the tuples the exemption was meant to let through would collide under
+it. Startup refuses a sparse index offered for a <code>skip_null</code> guarantee.</p>
 <p>Three things happen to a declared guarantee, and a failure at any of them is loud:</p>
 <ol>
 <li><strong>Reconciliation</strong>, when the port is built. A backend that cannot keep the guarantee raises

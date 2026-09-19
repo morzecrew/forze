@@ -4206,6 +4206,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#correcting-a-fact-instead-of-overwriting-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Correcting a fact instead of overwriting it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-emits-separately" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6272,6 +6283,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#correcting-a-fact-instead-of-overwriting-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Correcting a fact instead of overwriting it
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-emits-separately" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6541,12 +6563,68 @@ cross-record invariant, and event-relaying:</p>
   spec must declare <code>is_deleted</code> in <code>facetable_fields</code> (which <code>ensure_index</code> provisions as
   a filterable attribute on external indexes); the kit fails closed at construction
   otherwise.</li>
+<li><strong><code>versioned</code></strong> — correction lineage: the aggregate stops being overwritten and starts being
+  <em>corrected</em>. See <a href="#correcting-a-fact-instead-of-overwriting-it">Correcting a fact instead of overwriting it</a>.</li>
 <li><strong><code>invariants</code></strong> — each <a href="../../writing-operation/system-invariants/"><code>SystemInvariant</code></a> is enforced
   <em>preventively</em> inside the write transaction, at the isolation floor it needs, so a
   write that would break the law is rolled back.</li>
 <li><strong><code>outbox</code></strong> — the <a href="../transactional-outbox/">transactional outbox</a> wiring: the in-tx
   flush, the domain-event → outbox bridge, and the relay step, from one <code>OutboxEmit</code>.</li>
 </ul>
+<h2 id="correcting-a-fact-instead-of-overwriting-it">Correcting a fact instead of overwriting it<a class="headerlink" href="#correcting-a-fact-instead-of-overwriting-it" title="Permanent link">&para;</a></h2>
+<p>A regulated ledger is not allowed to overwrite a fact. <code>versioned=VersionedPolicy(...)</code> makes the
+aggregate keep every assertion it ever made: the old value stays readable, the new one says what
+it replaced, and somebody's name is on the change.</p>
+<div class="highlight"><pre><span></span><code><span class="n">AggregateKit</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">readings</span><span class="p">,</span>                                   <span class="c1"># domain + update cmd on the versioning mixins</span>
+    <span class="n">versioned</span><span class="o">=</span><span class="n">VersionedPolicy</span><span class="p">(</span><span class="n">corrections</span><span class="o">=</span><span class="n">corrections_spec</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>It adds five fields — <code>root_id</code>, <code>version</code>, <code>supersedes_id</code>, <code>is_current</code>, <code>superseded_at</code> — and
+three operations. <code>correct(id, expected_version, patch, reason)</code> retires the current version and
+inserts a successor carrying the predecessor's values with your patch over them, recording who and
+why in one transaction. <code>history(root_id)</code> returns the chain oldest-first; <code>as_of(root_id, at)</code>
+returns the version that was current at an instant. Every generated read stays on current
+versions, so an aggregate that opted in reads like one that never did.</p>
+<p>The generated <code>update</code> stops being a way to change what a fact says. It refuses a patch touching
+any field the row asserts, and leaves exactly two writes reaching a version: the one that retires
+it, and soft deletion, which hides a row without contradicting it. The refusal is on the domain
+model rather than on the operation, so a repair script or a hand-written handler meets it too.</p>
+<p>Three things are worth knowing before you declare it.</p>
+<p><strong>"Current" is a stored flag, not a derived anti-join.</strong> <code>NOT EXISTS (SELECT 1 FROM t s WHERE
+s.supersedes_id = t.id)</code> is the obvious way to express it and the wrong one: an index cannot see an
+anti-join and neither can a <code>SystemInvariant</code>, both of which read a column. The flag is redundant
+state on purpose, and the price is that every write must go through the kit's handlers.</p>
+<p><strong>The index that protects it is your migration to write.</strong> The kit refuses to build unless the
+spec declares both guarantees, and startup refuses a deployment whose indexes are missing, naming
+the DDL:</p>
+<div class="highlight"><pre><span></span><code><span class="n">guarantees</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">UniqueTogether</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"root_id"</span><span class="p">,),</span> <span class="n">where</span><span class="o">=</span><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"is_current"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}}),</span>
+    <span class="n">UniqueTogether</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"supersedes_id"</span><span class="p">,),</span> <span class="n">skip_null</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>One current version per fact, and one successor per predecessor. The second is what stops two
+concurrent corrections forking the chain, and it is not optional — without it both corrections
+commit and every chain walker picks whichever row it saw first.</p>
+<div class="admonition note">
+<p class="admonition-title">On Mongo, <code>sparse</code> is not the index you want</p>
+<p>The second guarantee exempts the first versions, whose <code>supersedes_id</code> is null — and a
+<code>sparse</code> unique index does <strong>not</strong> do that: it skips a document only when every indexed field
+is missing, and it still indexes an explicit null, so two first versions collide under it.
+The exemption is a <code>partialFilterExpression</code> naming what the field <em>is</em>
+(<code>{supersedes_id: {$type: "string"}}</code>), which is how a partial filter says "not null" given it
+admits no negation. Startup checks for that specifically and refuses a sparse index offered in
+its place, printing the statement that would work.</p>
+</div>
+<p><strong>The kit declares the law, so your writes run serializable.</strong> <code>single_current_head</code> — at most one
+current version per fact — comes with <code>versioned=</code>, and it is the detective control for a path
+that reached the rows outside the kit's handlers. Enforcing it preventively is only correct at
+<code>SERIALIZABLE</code>, so the kit raises every write on the aggregate to that floor and <strong>fails closed</strong>
+if the wired transaction manager does not report it. That is a deployment requirement, not a
+default you can lower.</p>
+<p>A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
+route, its encryption policy and its retention are facts only you hold. Its create command must be
+<code>CreateCorrectionCmd</code>.</p>
 <h2 id="what-it-emits-separately">What it emits — separately<a class="headerlink" href="#what-it-emits-separately" title="Permanent link">&para;</a></h2>
 <p>The kit never returns a coupled god-object. It emits the app-layer registry, the typed
 facade, and the domain-event bridges as distinct artifacts; which store backs it stays
@@ -6625,6 +6703,10 @@ See <a href="../../dst/overview/">Deterministic Simulation Testing</a> for the f
   surface is bespoke — <code>StoredFileKitSpec</code>'s <code>upload</code>/<code>download</code>/<code>delete</code> are a create-then-upload
   lifecycle, a cross-port join, and a status-based delete, with no plain <code>create</code>/<code>update</code> at
   all — hand-wire it (as <code>StoredFileKitSpec</code> does); the kit's generated CRUD would only get in the way.</li>
+<li><strong><code>versioned=</code> is not an audit log, and not bitemporal.</strong> A <code>Correction</code> records one
+  aggregate's lineage — who changed this fact and why — not cross-aggregate who-did-what. And it
+  versions <em>assertions about a fact</em>, not the period the fact applies to; validity over time is a
+  separate declaration that composes with this one.</li>
 <li><strong>It does not couple to a backend.</strong> <code>registry()</code> / <code>facade()</code> are backend-agnostic;
   you wire the store yourself. No <code>AggregateKit(...).build_everything(client)</code>.</li>
 <li><strong><code>storage=</code> gives the blob ops, not the join.</strong> Declaring an object-storage bucket
