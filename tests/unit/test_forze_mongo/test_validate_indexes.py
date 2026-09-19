@@ -663,6 +663,37 @@ class TestTheExemptionRefusesWhatItCannotCheck:
                 self._spec(None), [self._index()], database="db", collection="coll"
             )
 
+    def test_a_filtered_exemption_is_not_accepted_on_its_filter_alone(self) -> None:
+        """The refusal above passes for a weaker reason than it looks.
+
+        With only `skip_null` there is nothing to compare either way, so an unverifiable
+        exemption and a missing index are indistinguishable. Add a `where` and they part: the
+        filter's equalities *can* be checked, and an index matching only those keeps half the
+        guarantee while exempting nothing. That is the index this has to refuse.
+        """
+
+        spec = MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(
+                UniqueTogether(
+                    fields=("pointer",),
+                    where={"$values": {"live": True}},
+                    skip_null=True,
+                ),
+            ),
+            read_model=None,
+        )
+        index = MongoIndexInfo(
+            name="ix",
+            keys=(("pointer", 1),),
+            unique=True,
+            partial_filter={"live": True},
+        )
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(spec, [index], database="db", collection="coll")
+
     def test_a_field_absent_from_the_read_model_is_a_refusal(self) -> None:
         class Model(BaseModel):
             other: str = ""
