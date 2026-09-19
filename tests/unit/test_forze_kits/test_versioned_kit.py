@@ -18,6 +18,7 @@ import pytest
 from forze import build_runtime
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.invariants import CountAll, ReadSet, SystemInvariant
+from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -26,6 +27,7 @@ from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document.dto import (
     DocumentIdDTO,
     DocumentIdRevDTO,
+    DocumentUpdateDTO,
     ListRequestDTO,
 )
 from forze_kits.aggregates.document.operations import DocumentKernelOp
@@ -49,7 +51,7 @@ from forze_kits.domain.versioned import (
     DocWithVersioning,
     UpdateCmdWithVersioning,
 )
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockStateDepKey
 
 # ----------------------- #
 
@@ -771,3 +773,198 @@ class TestTheFacadeAndTheInertCases:
         reg = build_versioned_registry(read_only, POLICY)
 
         assert reg.operation_keys() == frozenset()
+
+
+# ....................... #
+
+
+class TestOrdinaryWritesCannotForgeLineage:
+    """The generated UPDATE accepts the kit's own update command, lineage fields included.
+
+    That command carries `is_current` because the correction's retire write needs it — and the
+    same command is what the boundary accepts, so a caller could retire the only version of a
+    fact through an ordinary update: no successor, no correction record, and a fact left with no
+    current version at all. Which is the thing the aggregate exists to prevent.
+    """
+
+    async def test_an_update_cannot_retire_a_version(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await _create(reg, ctx, "m-1", 100)
+
+            await run_operation(
+                reg,
+                _key(DocumentKernelOp.UPDATE),
+                DocumentUpdateDTO(
+                    id=row.id, rev=row.rev, dto=ReadingUpdate(is_current=False)
+                ),
+                ctx,
+            )
+
+            page = await run_operation(reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
+
+        # The fact still has its current version: the lineage field was dropped, not honoured.
+        assert [r.version for r in page.hits] == [1]
+
+    async def test_the_rest_of_the_patch_still_applies(self) -> None:
+        # The contrast: dropping the lineage fields must not drop the update.
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await _create(reg, ctx, "m-1", 100)
+
+            await run_operation(
+                reg,
+                _key(DocumentKernelOp.UPDATE),
+                DocumentUpdateDTO(
+                    id=row.id, rev=row.rev, dto=ReadingUpdate(kwh=7, is_current=False)
+                ),
+                ctx,
+            )
+
+            page = await run_operation(reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
+
+        assert [(r.kwh, r.is_current) for r in page.hits] == [(7, True)]
+
+
+# ....................... #
+
+
+class TestTheReadModelMustExposeWhatTheKitReads:
+    @staticmethod
+    def _spec(read: type, create: type = ReadingCreate) -> DocumentSpec:
+        return DocumentSpec(
+            name="readings",
+            read=read,
+            write=DocumentWriteTypes(
+                domain=Reading, create_cmd=create, update_cmd=ReadingUpdate
+            ),
+            guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+        )
+
+    def test_a_read_model_without_the_lineage_fields_is_refused(self) -> None:
+        """The three lineage fields no guarantee names, so nothing else would catch them.
+
+        Three of the five are already covered — `root_id`, `supersedes_id` and `is_current`
+        appear in the guarantees, and `DocumentSpec` refuses a guarantee naming a field the
+        aggregate does not store. `version` and `superseded_at` appear in neither, so this is
+        the only check that sees them: without `version` the expected-version comparison has
+        nothing to compare, and a stale correction reads as fresh.
+        """
+
+        class Partial(ReadDocument):
+            meter: str
+            kwh: int = 0
+            root_id: UUID
+            supersedes_id: UUID | None = None
+            is_current: bool = True
+
+        with pytest.raises(CoreException, match="does not expose"):
+            AggregateKit(spec=self._spec(Partial), versioned=POLICY).registry(tx_route=_TX)
+
+    def test_a_persisted_field_missing_from_the_read_model_is_refused(self) -> None:
+        # A correction builds the successor from the predecessor's *read model*, so a field
+        # persisted through the create command but not exposed there would silently fall back to
+        # the command's default — the fact would quietly lose what it asserted.
+        class HiddenCreate(CreateCmdWithVersioningFields):
+            meter: str
+            kwh: int = 0
+            secret: str = ""
+
+        with pytest.raises(CoreException, match="without exposing"):
+            AggregateKit(
+                spec=self._spec(ReadingRead, HiddenCreate), versioned=POLICY
+            ).registry(tx_route=_TX)
+
+    def test_the_declared_shape_builds(self) -> None:
+        assert _kit().registry(tx_route=_TX) is not None
+
+
+# ....................... #
+
+
+class TestAsOfSpansTheHandover:
+    async def test_no_instant_between_two_versions_is_unaccounted(self) -> None:
+        """A correction writes the retirement before the successor exists.
+
+        `superseded_at` is when the retirement was recorded; the successor's `created_at` is a
+        moment later. Reading the window from the first leaves the interval between the two
+        writes matching no version, so a report asks what a fact said and is told it did not
+        exist. The window comes from the chain instead.
+        """
+
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            second = await _correct(reg, ctx, first, kwh=120)
+
+            # The instant the predecessor was retired — before the successor was written.
+            chain = await run_operation(
+                reg, _key(VersionedKernelOp.HISTORY), FactIdDTO(root_id=first.root_id), ctx
+            )
+            retired_at = chain.hits[0].superseded_at
+
+            assert retired_at is not None
+            assert retired_at <= second.created_at
+
+            answered = await run_operation(
+                reg,
+                _key(VersionedKernelOp.AS_OF),
+                FactAsOfDTO(root_id=first.root_id, at=retired_at),
+                ctx,
+            )
+
+        # Whichever side of the handover it falls on, some version answers for it.
+        assert answered.version in (1, 2)
+
+
+# ....................... #
+
+
+SEARCH = SearchSpec(
+    name="readings_index",
+    model_type=ReadingRead,
+    fields=["meter"],
+    facetable_fields={"is_current"},
+)
+
+
+class TestComposedWithSearch:
+    """An index carries every version, so both halves of search have to know about lineage.
+
+    The sync binds CREATE, UPDATE and KILL — and a correction is none of them, so without an
+    explicit binding the index keeps the superseded version and never learns about its
+    replacement. And a query that did not restrict to current versions would answer with facts
+    that have since been corrected, because the superseded rows are in the index precisely
+    because the sync put them there.
+    """
+
+    def test_an_index_that_cannot_filter_current_is_refused(self) -> None:
+        blind = SearchSpec(name="blind", model_type=ReadingRead, fields=["meter"])
+
+        with pytest.raises(CoreException, match="must be able to filter"):
+            AggregateKit(spec=READINGS, versioned=POLICY, search=blind)
+
+    async def test_a_correction_reaches_the_index(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        kit = AggregateKit(spec=READINGS, versioned=POLICY, search=SEARCH)
+        reg = kit.registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            second = await _correct(reg, ctx, first, kwh=120)
+
+            index = ctx.deps.provide(MockStateDepKey).documents.get("readings_index", {})
+
+        # The successor is indexed. Without the binding the index holds only the superseded
+        # version, and a search answers with a fact that has been corrected.
+        assert second.id in index

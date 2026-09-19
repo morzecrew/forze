@@ -141,6 +141,11 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
         root_id = getattr(predecessor, ROOT_ID_FIELD)
         version = int(getattr(predecessor, VERSION_FIELD))
 
+        # One clock read for both sides of the handover: the predecessor's end and the
+        # successor's start are the same instant by definition, and two reads leave a gap in
+        # which `as_of` matches neither version and reports the fact never existed.
+        at = utcnow()
+
         upd_cls = cast(type[U], UpdateCmdWithVersioning)
         # Rev-guarded on the predecessor as it was read: the version check above settles the
         # lineage race, and this settles the ordinary one — a concurrent writer that touched the
@@ -148,7 +153,7 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
         await self.doc.update(
             pk=args.id,
             rev=int(getattr(predecessor, REV_FIELD)),
-            dto=upd_cls(is_current=False, superseded_at=utcnow()),
+            dto=upd_cls(is_current=False, superseded_at=at),
         )
 
         successor = await self.doc.create(
@@ -306,22 +311,33 @@ class FactAsOf[Out: ReadDocument](Handler[FactAsOfDTO, Out]):
     async def __call__(self, args: FactAsOfDTO) -> Out:
         """Return the version current at *args.at*.
 
-        The window is half-open — current from ``created_at`` inclusive until ``superseded_at``
-        exclusive — so consecutive versions tile and an instant equal to a correction's timestamp
-        belongs to the successor, never to both.
+        A version's window runs from its own ``created_at`` until its **successor's**, half-open,
+        so consecutive versions tile exactly and an instant equal to a correction belongs to the
+        successor alone.
+
+        Deliberately not ``superseded_at``: that records when the retirement was *written*, which
+        is a moment before the successor is inserted. Reading the window from it leaves the
+        interval between the two writes matching no version at all, so a report asks what a fact
+        said at an instant and is told the fact did not exist.
 
         :param args: The fact and the instant.
         :returns: The version current then.
         :raises CoreException: ``not_found`` when the fact had no version at that instant.
         """
 
-        page = await self.query.find_many(filters=_of_fact(args.root_id))
+        page = await self.query.find_page(
+            filters=_of_fact(args.root_id),
+            sorts={VERSION_FIELD: "asc"},
+        )
+        chain = list(page.hits)
 
-        for row in page.hits:
-            created_at = row.created_at
-            superseded_at = getattr(row, SUPERSEDED_AT_FIELD, None)
+        for position, row in enumerate(chain):
+            if row.created_at > args.at:
+                continue
 
-            if created_at <= args.at and (superseded_at is None or args.at < superseded_at):
+            successor = chain[position + 1] if position + 1 < len(chain) else None
+
+            if successor is None or args.at < successor.created_at:
                 return row
 
         raise exc.not_found(

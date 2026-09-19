@@ -445,6 +445,15 @@ def _wanted_constraints(
         return None
 
     for field in guarantee.fields:
+        pinned = found.get(field)
+
+        # A field the filter already pins to a non-null value needs no type predicate: that
+        # equality excludes nulls on its own, and adding one would read as a contradiction and
+        # refuse a declaration that is perfectly satisfiable. An equality to *null* is the
+        # opposite — it selects exactly the rows the exemption drops — so it is left to collide.
+        if isinstance(pinned, tuple) and pinned[0] == "eq" and pinned[1] != ("null", None):
+            continue
+
         declared = read_model.model_fields.get(field)
 
         if declared is None:

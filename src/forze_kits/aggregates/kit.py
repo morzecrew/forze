@@ -73,10 +73,12 @@ from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.aggregates.versioned import (
     VersionedKernelOp,
     VersionedPolicy,
+    current_versions_only_mapper,
     single_current_head,
     versioned_wiring,
 )
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
+from forze_kits.domain.versioned.constants import IS_CURRENT_FIELD
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.integrations.search import SearchRebuildReport, rebuild_search_index
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
@@ -109,6 +111,32 @@ _WRITE_OPS: tuple[StrKey, ...] = (
 # ``Document.update``, so a generated CREATE never stages — flushing it would just mark the route
 # flushed and poison a later stage in the same task.
 _EMIT_OPS = (DocumentKernelOp.UPDATE,)
+
+
+def _compose_mappers(first: Any, second: Any) -> Any:
+    """A mapper factory running *first* then *second*, or *second* alone when there is none.
+
+    The mapper slots are shared between the arms a kit composes, so an arm that assigned its own
+    would drop the one before it — and each mapper conjoins into the filter the previous one
+    produced, which is what makes stacking them mean "both restrictions".
+    """
+
+    if first is None:
+        return second
+
+    def _factory(ctx: Any) -> Any:
+        before = first(ctx)
+        after = second(ctx)
+
+        async def _map(source: Any) -> Any:
+            return await after(await before(source))
+
+        return _map
+
+    return _factory
+
+
+# ....................... #
 
 
 @final
@@ -247,6 +275,19 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"to filter {SOFT_DELETE_FIELD!r}. Declare it on the search spec "
                 f"(facetable_fields={{{SOFT_DELETE_FIELD!r}}}); external-index provisioning "
                 f"(ensure_index) publishes facetable fields as filterable attributes.",
+            )
+
+        if (
+            self.versioned is not None
+            and self.search is not None
+            and IS_CURRENT_FIELD not in self.search.facetable_fields
+        ):
+            raise exc.configuration(
+                f"AggregateKit composes versioned with search {self.search.name!r}, so the "
+                f"kit's search query ops return only current versions — the index must be able "
+                f"to filter {IS_CURRENT_FIELD!r}. Declare it on the search spec "
+                f"(facetable_fields={{{IS_CURRENT_FIELD!r}}}); an index that cannot filter it "
+                "would answer with facts that have since been corrected.",
             )
 
     # ....................... #
@@ -459,16 +500,20 @@ class AggregateKit(Generic[R, D, C, U]):
         ns = spec.default_namespace
 
         soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
-        versioned = versioned_wiring(spec, self.versioned) if self.versioned is not None else None
+        versioned = (
+            versioned_wiring(spec, self.versioned, soft_deleted=self.soft_delete)
+            if self.versioned is not None
+            else None
+        )
 
         mappers: DocumentMappers[Any, Any, Any, Any] = (
             soft.read_mappers() if soft is not None else DocumentMappers()
         )
 
         if versioned is not None:
-            # After soft-delete, so a kit composing both restricts reads to rows that are current
-            # *and* not deleted — each mapper conjoins into the filter the previous one produced.
-            mappers = versioned.read_mappers(mappers)
+            # After soft-delete, and composing with it rather than replacing it: the two arms
+            # share the list-family mapper slots, so a kit declaring both has to apply both.
+            mappers = versioned.mappers(mappers)
 
         reg = build_document_registry(spec, mappers=mappers)
 
@@ -492,14 +537,20 @@ class AggregateKit(Generic[R, D, C, U]):
 
         if versioned is not None:
             reg = versioned.bind(reg, ns=ns)
-            # The correction writes four times across two aggregates; without one transaction a
-            # failure between them leaves a fact with two current versions or none.
-            reg = (
-                reg.bind(ns.key(VersionedKernelOp.CORRECT))
-                .bind_tx()
-                .set_route(tx_route)
-                .finish(deep=True)
-            )
+
+            if ns.key(VersionedKernelOp.CORRECT) in reg.operation_keys():
+                # The correction writes four times across two aggregates; without one
+                # transaction a failure between them leaves a fact with two current versions
+                # or none.
+                reg = (
+                    reg.bind(ns.key(VersionedKernelOp.CORRECT))
+                    .bind_tx()
+                    .set_route(tx_route)
+                    .finish(deep=True)
+                )
+
+                if self.search is not None:
+                    reg = self._sync_correction_to_search(reg, ns=ns, tx_route=tx_route)
 
         reg = self._attach_invariants(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_outbox_flush(reg, ns=ns, tx_route=tx_route)
@@ -514,6 +565,37 @@ class AggregateKit(Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _sync_correction_to_search(
+        self,
+        reg: OperationRegistry,
+        *,
+        ns: Any,
+        tx_route: StrKey,
+    ) -> OperationRegistry:
+        """Index the successor a correction produced, as a write of any other kind would be.
+
+        The document sync binds ``CREATE``/``UPDATE``/``KILL``, and a correction is none of
+        them — so without this the index keeps the superseded version and never learns about its
+        replacement, and a search returns a fact that has been corrected. The step is the same
+        upsert those ops use, reading the written read model off the result, which is what
+        ``correct`` returns.
+        """
+
+        if self.search is None:  # pragma: no cover - guarded at the call site
+            return reg
+
+        steps = SearchSyncSteps(search=self.search)
+
+        return (
+            reg.bind(ns.key(VersionedKernelOp.CORRECT))
+            .bind_tx()
+            .set_route(tx_route)
+            .after_commit(steps.upsert_on_write())
+            .finish(deep=True)
+        )
+
+    # ....................... #
+
     def _search_mappers(self) -> SearchMappers[Any]:
         """The kit's search request mappers — soft-delete exclusion on every query op.
 
@@ -524,14 +606,33 @@ class AggregateKit(Generic[R, D, C, U]):
         ``build_search_registry`` / ``bind_search_sync`` users are unaffected either way.
         """
 
-        if not self.soft_delete:
-            return SearchMappers()
+        mappers: SearchMappers[Any] = SearchMappers()
 
-        return SearchMappers(
-            search=exclude_soft_deleted_mapper,
-            projected_search=exclude_soft_deleted_mapper,
-            cursor_search=exclude_soft_deleted_mapper,
-            projected_search_cursor=exclude_soft_deleted_mapper,
+        if self.soft_delete:
+            mappers = SearchMappers(
+                search=exclude_soft_deleted_mapper,
+                projected_search=exclude_soft_deleted_mapper,
+                cursor_search=exclude_soft_deleted_mapper,
+                projected_search_cursor=exclude_soft_deleted_mapper,
+            )
+
+        if self.versioned is None:
+            return mappers
+
+        # Same reason as the document list family: an index carries every version, so a search
+        # that did not restrict to current ones would answer with facts that have been
+        # corrected — and the superseded rows are in the index precisely because the sync above
+        # puts them there.
+        return attrs.evolve(
+            mappers,
+            search=_compose_mappers(mappers.search, current_versions_only_mapper),
+            projected_search=_compose_mappers(
+                mappers.projected_search, current_versions_only_mapper
+            ),
+            cursor_search=_compose_mappers(mappers.cursor_search, current_versions_only_mapper),
+            projected_search_cursor=_compose_mappers(
+                mappers.projected_search_cursor, current_versions_only_mapper
+            ),
         )
 
     # ....................... #

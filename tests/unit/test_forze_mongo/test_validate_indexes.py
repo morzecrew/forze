@@ -23,6 +23,7 @@ from forze_mongo.kernel.validate_indexes import (
     _guarantee_equalities,  # pyright: ignore[reportPrivateUsage]
     _mongosh,  # pyright: ignore[reportPrivateUsage]
     _require_guarantee_indexes,  # pyright: ignore[reportPrivateUsage]
+    _wanted_constraints,  # pyright: ignore[reportPrivateUsage]
     validate_mongo_document_indexes,
 )
 
@@ -739,3 +740,51 @@ class TestTheExemptionRefusesWhatItCannotCheck:
             _require_guarantee_indexes(
                 self._spec(Model), [index], database="db", collection="coll"
             )
+
+
+# ....................... #
+
+
+class TestAFilterThatAlreadyExcludesNulls:
+    """A `where` equality on a field the exemption also covers is not a contradiction.
+
+    Pinning a field to a non-null value excludes nulls by itself, so adding a type predicate on
+    top reads as two constraints on one field and refuses a declaration that is perfectly
+    satisfiable — and the index an operator would write for it is the one with the equality.
+    """
+
+    @staticmethod
+    def _model() -> type[BaseModel]:
+        class Model(BaseModel):
+            pointer: UUID | None = None
+            live: bool = True
+
+        return Model
+
+    def test_a_non_null_equality_stands_in_for_the_type_predicate(self) -> None:
+        guarantee = UniqueTogether(
+            fields=("pointer",), where={"$values": {"pointer": "x"}}, skip_null=True
+        )
+
+        assert _wanted_constraints(guarantee, self._model()) == {
+            "pointer": ("eq", ("str", "x"))
+        }
+
+    def test_an_equality_to_null_does_not(self) -> None:
+        # The opposite case: a filter pinning the field *to* null selects exactly the rows the
+        # exemption drops, so the two genuinely contradict and the declaration is refused.
+        guarantee = UniqueTogether(
+            fields=("pointer",), where={"$values": {"pointer": None}}, skip_null=True
+        )
+
+        assert _wanted_constraints(guarantee, self._model()) is None
+
+    def test_a_field_outside_the_filter_still_needs_its_predicate(self) -> None:
+        guarantee = UniqueTogether(
+            fields=("pointer",), where={"$values": {"live": True}}, skip_null=True
+        )
+
+        assert _wanted_constraints(guarantee, self._model()) == {
+            "live": ("eq", ("bool", True)),
+            "pointer": ("type", frozenset({"string"})),
+        }

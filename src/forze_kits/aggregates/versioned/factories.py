@@ -65,6 +65,11 @@ def build_versioned_registry(
         return OperationRegistry()
 
     corrections = policy.corrections
+    # The *inbound* patch type, which a caller may have overridden — publishing the spec's own
+    # update command would advertise and validate against a type the boundary never sends.
+    update_dto = (
+        dtos.update if dtos is not None and dtos.update is not None else spec.write["update_cmd"]
+    )
 
     reg = OperationRegistry(
         handlers={
@@ -87,7 +92,7 @@ def build_versioned_registry(
     return reg.set_descriptors(
         {
             VersionedKernelOp.CORRECT: OperationDescriptor(
-                input_type=_parametrized(CorrectDocumentDTO, spec.write["update_cmd"]),
+                input_type=_parametrized(CorrectDocumentDTO, update_dto),
                 output_type=spec.read,
                 description="Supersede the current version of a fact with a corrected one.",
                 sensitive=spec.sensitive,
