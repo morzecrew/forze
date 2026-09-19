@@ -371,6 +371,9 @@ def _assert_read_model(spec: DocumentSpec[Any, Any, Any, Any]) -> None:
     if spec.write is None:
         return
 
+    # `write_omit_fields` needs no subtracting here: a spec may only omit a field its *read*
+    # model declares, so an omitted field is in `read_fields` already and can never be counted
+    # lost.
     carried = stored_field_names_for(spec.write["create_cmd"]) - _KIT_OWNED_FIELDS
     lost = sorted(carried - read_fields)
 

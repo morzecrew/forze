@@ -638,21 +638,45 @@ class AggregateKit(Generic[R, D, C, U]):
 
         The document sync binds ``CREATE``/``UPDATE``/``KILL``, and a correction is none of
         them — so without this the index keeps the superseded version and never learns about its
-        replacement, and a search returns a fact that has been corrected. The step is the same
-        upsert those ops use, reading the written read model off the result, which is what
-        ``correct`` returns.
+        replacement, and a search returns a fact that has been corrected.
+
+        **Both** rows, not only the successor. The predecessor was indexed while it was current,
+        so its entry still says so; re-indexing only the new version leaves the old one in the
+        index claiming to be current, which the read-side restriction cannot filter out because
+        it reads that same stale value. It is removed instead — the kit's search reads are
+        restricted to current versions anyway, so a superseded row has no business being there,
+        and removal needs no re-read.
         """
 
         if self.search is None:  # pragma: no cover - guarded at the call site
             return reg
 
+        key = ns.key(VersionedKernelOp.CORRECT)
+
+        if self.search_delivery is not None:
+            # Durable delivery: stage a marker per row inside the correction's own transaction,
+            # nothing staged on rollback. Two markers, because a correction touches two rows —
+            # the consumer re-reads each row's committed state, so the successor is indexed and
+            # the predecessor's entry follows whatever it now says.
+            wiring = self.search_sync_wiring()
+
+            return (
+                reg.bind(key)
+                .bind_tx()
+                .set_route(tx_route)
+                .on_success(wiring.stage_on_write())
+                .on_success(wiring.stage_on_target())
+                .finish(deep=True)
+            )
+
         steps = SearchSyncSteps(search=self.search)
 
         return (
-            reg.bind(ns.key(VersionedKernelOp.CORRECT))
+            reg.bind(key)
             .bind_tx()
             .set_route(tx_route)
             .after_commit(steps.upsert_on_write())
+            .after_commit(steps.delete_on_kill(step_id="search_sync_superseded"))
             .finish(deep=True)
         )
 

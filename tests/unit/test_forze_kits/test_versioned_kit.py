@@ -908,6 +908,30 @@ class TestTheReadModelMustExposeWhatTheKitReads:
         with pytest.raises(CoreException, match="does not expose"):
             AggregateKit(spec=self._spec(Partial), versioned=POLICY).registry(tx_route=_TX)
 
+    def test_a_write_omitted_field_cannot_be_counted_lost(self) -> None:
+        """A field omitted from writes is on the read model by construction.
+
+        So the carry check needs no special case for it: `write_omit_fields` may only name a
+        field the read model declares, which is exactly the set the check compares against. A
+        spec naming one it does not declare is refused before the kit ever sees it.
+        """
+
+        class OmittedCreate(CreateCmdWithVersioningFields):
+            meter: str
+            kwh: int = 0
+            scratch: str = ""
+
+        with pytest.raises(CoreException, match="not non-computed fields on the read model"):
+            DocumentSpec(
+                name="readings",
+                read=ReadingRead,
+                write=DocumentWriteTypes(
+                    domain=Reading, create_cmd=OmittedCreate, update_cmd=ReadingUpdate
+                ),
+                write_omit_fields={"scratch"},
+                guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+            )
+
     def test_a_persisted_field_missing_from_the_read_model_is_refused(self) -> None:
         # A correction builds the successor from the predecessor's *read model*, so a field
         # persisted through the create command but not exposed there would silently fall back to
@@ -1055,6 +1079,29 @@ class TestComposedWithSearch:
             )
 
         assert [hit.id for hit in page.hits] == [live.id]
+
+    async def test_the_superseded_version_leaves_the_index(self) -> None:
+        """Indexing only the successor leaves the old entry claiming to be current.
+
+        The predecessor was indexed while it *was* current, so its entry still says so — and the
+        read-side restriction cannot filter it out, because it reads that same stale value. A
+        search would answer with a fact that has been corrected.
+        """
+
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(spec=READINGS, versioned=POLICY, search=SEARCH).registry(
+            tx_route=_TX
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            second = await _correct(reg, ctx, first, kwh=120)
+
+            index = ctx.deps.provide(MockStateDepKey).documents.get("readings_index", {})
+
+        assert second.id in index
+        assert first.id not in index
 
     async def test_a_correction_reaches_the_index(self) -> None:
         runtime = build_runtime(MockDepsModule())
