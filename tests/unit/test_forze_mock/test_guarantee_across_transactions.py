@@ -249,6 +249,40 @@ class TestOnlyTheFinalValueOfAKeyIsRechecked:
         finally:
             tx.finish(mock_state)
 
+    def test_a_row_deleted_and_its_tuple_reused_in_one_transaction(self) -> None:
+        """Delete a row and write another carrying its tuple, in one transaction.
+
+        The commit-time check judges the state the commit will produce, which means laying the
+        overlay over the committed rows — and a hard delete has to *remove* one there, not merely
+        fail to add it. Without that the deleted row is still in the merged view and the
+        replacement reads as a duplicate of something that is on its way out.
+        """
+
+        mock_state = MockState()
+        deps = DepsRegistry.from_modules(MockDepsModule(state=mock_state)).freeze().resolve()
+        command = ExecutionContext(deps=deps).document.command(GOVERNED)
+
+        existing = asyncio.run(command.create(_FactCreate(root_id="x")))
+
+        tx = MvccTx.begin(mock_state, serializable=False, read_committed=False)
+        token = _mvcc_tx.set(tx)
+
+        async def replace() -> None:
+            await command.kill(existing.id)
+            await command.create(_FactCreate(root_id="x"))
+
+        try:
+            asyncio.run(replace())
+
+        finally:
+            _mvcc_tx.reset(token)
+
+        try:
+            tx.validate(mock_state)
+
+        finally:
+            tx.finish(mock_state)
+
     def test_a_row_left_on_the_tuple_still_conflicts(self) -> None:
         # The contrast: reading the final overlay is not a way of skipping the check.
         mock_state = MockState()

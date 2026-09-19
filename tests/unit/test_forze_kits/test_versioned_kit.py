@@ -38,6 +38,8 @@ from forze_kits.aggregates.versioned import (
     FactIdDTO,
     VersionedKernelOp,
     VersionedPolicy,
+    build_versioned_registry,
+    versioned_facade,
 )
 from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze_kits.domain.versioned import (
@@ -598,3 +600,174 @@ class TestComposedWithSoftDeletion:
             )
 
         assert got.meter == "m"
+
+
+# ....................... #
+
+
+class TestTheRestrictionSurvivesACallersFilter:
+    """The list restriction has two branches and a caller's filter takes the other one.
+
+    With no filters the mapper returns the restriction alone; with filters it conjoins. A leg
+    that only ever lists unfiltered exercises the first branch and leaves the second — the one a
+    real caller hits — unproven.
+    """
+
+    async def test_a_filtered_list_still_hides_superseded_versions(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            await _correct(reg, ctx, first, kwh=120)
+            await _create(reg, ctx, "m-2", 500)
+
+            page = await run_operation(
+                reg,
+                _key(DocumentKernelOp.LIST),
+                ListRequestDTO(filters={"$values": {"meter": "m-1"}}),
+                ctx,
+            )
+
+        assert [row.kwh for row in page.hits] == [120]
+
+    async def test_the_callers_filter_is_still_applied(self) -> None:
+        # The contrast: conjoining must not swallow what the caller asked for.
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await _create(reg, ctx, "m-1", 100)
+            await _create(reg, ctx, "m-2", 500)
+
+            page = await run_operation(
+                reg,
+                _key(DocumentKernelOp.LIST),
+                ListRequestDTO(filters={"$values": {"meter": "m-2"}}),
+                ctx,
+            )
+
+        assert [row.meter for row in page.hits] == ["m-2"]
+
+
+# ....................... #
+
+
+class TestAWrongVersionOnACurrentRow:
+    async def test_it_is_a_conflict_naming_the_version(self) -> None:
+        """The version check, reached on a row that *is* current.
+
+        The stale-caller leg cannot prove this one: by the time a caller's version is stale the
+        row it read has usually been superseded, so the not-current check fires first and the
+        version comparison is never reached. A caller working from a stale cache passes a wrong
+        number for a row that is still current, and that is the case this pins.
+        """
+
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+
+            with pytest.raises(CoreException) as caught:
+                await run_operation(
+                    reg,
+                    _key(VersionedKernelOp.CORRECT),
+                    CorrectDocumentDTO(
+                        id=first.id,
+                        expected_version=7,
+                        dto=ReadingUpdate(kwh=120),
+                        reason="stale cache",
+                    ),
+                    ctx,
+                )
+
+        assert caught.value.kind is ExceptionKind.CONFLICT
+        assert caught.value.details.get("version") == 1
+        assert caught.value.details.get("expected_version") == 7
+
+
+# ....................... #
+
+
+class TestASupersededVersionIsNotWritable:
+    async def test_an_update_to_a_superseded_row_is_refused(self) -> None:
+        """A corrected fact is history, and history does not get edited in place.
+
+        The mixin's guard is the last line against a path that reached the row directly — a
+        repair script, a bulk update, a hand-written handler. Without it the chain says one
+        thing and the row says another, with nothing to show which is right.
+        """
+
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            await _correct(reg, ctx, first, kwh=120)
+
+            with pytest.raises(CoreException) as caught:
+                await ctx.doc.command(READINGS).update(
+                    pk=first.id, rev=first.rev + 1, dto=ReadingUpdate(kwh=999)
+                )
+
+        assert caught.value.kind is ExceptionKind.DOMAIN
+
+    async def test_the_current_version_is_still_writable(self) -> None:
+        # The contrast: the guard is about superseded rows, not about updates.
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            updated = await ctx.doc.command(READINGS).update(
+                pk=first.id, rev=first.rev, dto=ReadingUpdate(kwh=111)
+            )
+
+        assert updated.kwh == 111
+
+
+# ....................... #
+
+
+class TestTheFacadeAndTheInertCases:
+    async def test_the_facade_reaches_the_lineage_ops(self) -> None:
+        # The facade is the surface §5.3 promises; a registry that carries the ops while the
+        # facade cannot reach them delivers half of it.
+        runtime = build_runtime(MockDepsModule())
+        kit = _kit()
+        facade = versioned_facade(runtime, kit.registry(tx_route=_TX), READINGS)
+
+        async with runtime.scope():
+            row = await facade().create(ReadingCreate(meter="m-1", kwh=100))
+            corrected = await facade().correct(
+                CorrectDocumentDTO(
+                    id=row.id,
+                    expected_version=row.version,
+                    dto=ReadingUpdate(kwh=120),
+                    reason="meter misread",
+                )
+            )
+            chain = await facade().history(FactIdDTO(root_id=row.root_id))
+
+        assert corrected.version == 2
+        assert [r.version for r in chain.hits] == [1, 2]
+
+    def test_a_spec_without_update_support_gets_no_lineage_ops(self) -> None:
+        # Correcting a fact means writing one, so an aggregate that cannot be updated has
+        # nothing to correct — the ops are absent rather than present and broken.
+        read_only = DocumentSpec(
+            name="readings",
+            read=ReadingRead,
+            write=DocumentWriteTypes(domain=Reading, create_cmd=ReadingCreate),
+            guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+        )
+
+        reg = build_versioned_registry(read_only, POLICY)
+
+        assert reg.operation_keys() == frozenset()
