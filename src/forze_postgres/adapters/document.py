@@ -67,17 +67,16 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
         unique_together=True,
         unique_together_filtered=True,
         unique_together_skip_null=True,
+        non_overlapping=True,
     )
-    """What this store enforces, given the index the deployment migrated.
+    """What this store enforces, given the index or constraint the deployment migrated.
 
-    Every axis here is a unique index: plain for the unfiltered form, partial (``WHERE ...``)
-    for the other two, and a violation of any of them arrives as ``conflict`` through the
-    client's error mapping — the same refusal the in-memory store raises, which is what makes
-    the parity battery meaningful rather than a comparison of two spellings.
-
-    ``non_overlapping`` is absent, and is the one member Postgres could obviously keep (an
-    exclusion constraint over a range type). It stays absent until something maps it, because a
-    capability that reconciles and then does not enforce is worse than one that refuses.
+    The three uniqueness axes are a unique index: plain for the unfiltered form, partial
+    (``WHERE ...``) for the other two. Non-overlap is an exclusion constraint over a range
+    type, which is a different mechanism for the same kind of promise — and a violation of any
+    of them arrives as ``conflict`` through the client's error mapping, the same refusal the
+    in-memory store raises, which is what makes the parity battery meaningful rather than a
+    comparison of two spellings.
     """
 
     batch_size: int = 200

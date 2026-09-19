@@ -110,6 +110,7 @@ FULL_STORAGE_GUARANTEES: Final[StorageGuaranteeCapabilities] = StorageGuaranteeC
     unique_together=True,
     unique_together_filtered=True,
     unique_together_skip_null=True,
+    non_overlapping=True,
 )
 """Every guarantee that is enforced anywhere today — the in-memory store's declaration.
 
@@ -118,10 +119,8 @@ spec can usefully declare. It is the declaration most easily wrong in the optimi
 a mock claiming more than a backend keeps would pass a simulation a deployment fails — so the
 batteries compare the two stores' refusals rather than trusting this value.
 
-:attr:`StorageGuaranteeCapabilities.non_overlapping` is deliberately **absent**. The vocabulary
-defines ``NonOverlapping`` and nothing enforces it yet, so every store refuses a spec that
-declares one, which is the honest answer: the alternative is a capability that reconciles and
-then fails at the first write. It moves here when a store maps it."""
+A member arrives here when a store maps it, never before: a capability that reconciles and then
+does not enforce is worse than one that refuses."""
 
 
 # ....................... #

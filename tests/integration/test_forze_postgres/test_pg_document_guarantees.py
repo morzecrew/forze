@@ -15,6 +15,7 @@ refusals are compared, rather than asserted separately in files that never meet.
 
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID, uuid4
 
 import pytest
@@ -39,22 +40,29 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 ONE_CURRENT = UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}})
 ONE_EVER = UniqueTogether(fields=("root_id",))
+NO_OVERLAP = NonOverlapping(key=("root_id",), period=("valid_from", "valid_to"), bounds="[]")
 
 
 class _Read(BaseModel):
     id: UUID
     root_id: str
     is_current: bool
+    valid_from: date | None = None
+    valid_to: date | None = None
 
 
 class _Domain(Document):
     root_id: str
     is_current: bool = True
+    valid_from: date | None = None
+    valid_to: date | None = None
 
 
 class _Create(CreateDocumentCmd):
     root_id: str
     is_current: bool = True
+    valid_from: date | None = None
+    valid_to: date | None = None
 
 
 async def _table(pg_client: PostgresClient) -> str:
@@ -68,7 +76,9 @@ async def _table(pg_client: PostgresClient) -> str:
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
             root_id text NOT NULL,
-            is_current boolean NOT NULL
+            is_current boolean NOT NULL,
+            valid_from date,
+            valid_to date
         );
         """
     )
@@ -79,7 +89,7 @@ async def _table(pg_client: PostgresClient) -> str:
 async def _validate(
     pg_client: PostgresClient,
     table: str,
-    *guarantees: UniqueTogether,
+    *guarantees: UniqueTogether | NonOverlapping,
 ) -> None:
     intro = PostgresIntrospector(client=pg_client)
     ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
@@ -99,6 +109,19 @@ async def _validate(
     )
 
     await hook(ctx)
+
+
+# ....................... #
+
+
+async def _exclude(pg_client: PostgresClient, table: str, *, bounds: str) -> None:
+    """Add the constraint a non-overlap guarantee over (valid_from, valid_to) asks for."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+    await pg_client.execute(
+        f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+        f"(root_id WITH =, daterange(valid_from, valid_to, '{bounds}') WITH &&);"
+    )
 
 
 # ....................... #
@@ -155,29 +178,59 @@ class TestStartupValidation:
         # for nothing, which is every spec that has not opted in.
         await _validate(pg_client, await _table(pg_client))
 
-    async def test_a_member_no_store_maps_is_skipped_rather_than_crashing(
+    async def test_a_missing_exclusion_constraint_refuses_and_names_the_ddl(
         self,
         pg_client: PostgresClient,
     ) -> None:
-        # Reconciliation refuses `NonOverlapping` today, so validation never meets one — but
-        # it will the moment a store maps it, and the transition must not be a crash on a
-        # member this function does not understand. Reached directly, since the hook takes a
-        # schema spec without going through reconciliation.
         table = await _table(pg_client)
-        spec = PostgresDocumentSchemaSpec(
-            name="fact",
-            read_model=_Read,
-            read_relation=("public", table),
-            write_domain_model=_Domain,
-            write_create_model=_Create,
-            write_relation=("public", table),
-            bookkeeping_strategy="application",
-            guarantees=(NonOverlapping(key=("root_id",), period=("id", "root_id")),),
-        )
-        intro = PostgresIntrospector(client=pg_client)
-        ctx = context_from_deps(Deps.plain({PostgresIntrospectorDepKey: intro}))
 
-        await PostgresDocumentSchemaValidationHook(specs=(spec,))(ctx)
+        with pytest.raises(CoreException) as caught:
+            await _validate(pg_client, table, NO_OVERLAP)
+
+        message = caught.value.summary
+
+        assert "EXCLUDE USING gist" in message
+        assert "daterange(valid_from, valid_to, '[]')" in message
+        assert table in message
+        assert "The migration is what satisfies a guarantee" in message
+
+    async def test_a_present_exclusion_constraint_passes(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+
+        await _validate(pg_client, table, NO_OVERLAP)
+
+    async def test_a_constraint_with_other_bounds_does_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The check this pass exists for. `[)` and `[]` agree about every day but one, and the
+        # day they disagree about is the boundary — so a constraint built on the other
+        # convention leaves exactly the case a reader would trust the guarantee for.
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[)")
+
+        with pytest.raises(CoreException) as caught:
+            await _validate(pg_client, table, NO_OVERLAP)
+
+        assert "bounds" in caught.value.summary
+
+    async def test_a_constraint_over_another_key_does_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        table = await _table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD COLUMN other text NOT NULL DEFAULT '';")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(other WITH =, daterange(valid_from, valid_to, '[]') WITH &&);"
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP)
 
     async def test_a_partial_index_on_other_columns_does_not_count(
         self,
@@ -290,7 +343,7 @@ class _NullableCreate(CreateDocumentCmd):
 async def _validate_nullable(
     pg_client: PostgresClient,
     table: str,
-    *guarantees: UniqueTogether,
+    *guarantees: UniqueTogether | NonOverlapping,
 ) -> None:
     """:func:`_validate` over a model whose guaranteed column may hold a null.
 
@@ -407,18 +460,38 @@ class TestNullsAreValuesUnlessExempted:
 class _FactRead(ReadDocument):
     root_id: str
     is_current: bool = True
+    valid_from: date | None = None
+    valid_to: date | None = None
 
 
 class _FactUpdate(BaseDTO):
     is_current: bool | None = None
 
 
-def _spec() -> DocumentSpec[_FactRead, _Domain, _Create, _FactUpdate]:
+def _spec(
+    *guarantees: UniqueTogether | NonOverlapping,
+) -> DocumentSpec[_FactRead, _Domain, _Create, _FactUpdate]:
     return DocumentSpec[_FactRead, _Domain, _Create, _FactUpdate](
         name="fact",
         read=_FactRead,
         write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create, update_cmd=_FactUpdate),
-        guarantees=(ONE_CURRENT,),
+        guarantees=guarantees or (ONE_CURRENT,),
+    )
+
+
+async def _insert_period(
+    pg_client: PostgresClient,
+    table: str,
+    *,
+    start: str,
+    end: str | None,
+) -> None:
+    """One row under key ``r1`` holding the given period."""
+
+    await pg_client.execute(
+        f"INSERT INTO {table} (id, rev, created_at, last_update_at, root_id, is_current,"
+        " valid_from, valid_to) VALUES (%s, 1, now(), now(), 'r1', true, %s, %s);",
+        [uuid4(), start, end],
     )
 
 
@@ -480,3 +553,74 @@ class TestMockAndPostgresRefuseTheSameWay:
         row = await command.create(_Create(root_id="r1", is_current=False))
 
         assert row.is_current is False
+
+    async def test_both_stores_refuse_an_overlap_the_same_way(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The parity leg for the other member, and the one that found the divergence: an
+        # exclusion violation used to reach the caller as `precondition` while the in-memory
+        # store raised `conflict`, so the same violated declaration answered with two kinds.
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+        await _insert_period(pg_client, table, start="2026-01-01", end="2026-03-31")
+
+        with pytest.raises(CoreException) as from_postgres:
+            await _insert_period(pg_client, table, start="2026-03-01", end="2026-05-01")
+
+        command = context_from_modules(MockDepsModule()).doc.command(_spec(NO_OVERLAP))
+        await command.create(
+            _Create(root_id="r1", valid_from=date(2026, 1, 1), valid_to=date(2026, 3, 31))
+        )
+
+        with pytest.raises(CoreException) as from_mock:
+            await command.create(
+                _Create(root_id="r1", valid_from=date(2026, 3, 1), valid_to=date(2026, 5, 1))
+            )
+
+        assert from_mock.value.kind is from_postgres.value.kind
+        assert from_mock.value.kind.value == "conflict"
+
+    async def test_both_stores_agree_on_the_touching_boundary(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The day the two bounds conventions disagree about, asked of both stores under `[]`.
+        # A mock reading the shared endpoint as excluded would accept a row Postgres refuses,
+        # and every simulation over a contract ledger would be answering a different question.
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+        await _insert_period(pg_client, table, start="2026-01-01", end="2026-04-01")
+
+        with pytest.raises(CoreException) as from_postgres:
+            await _insert_period(pg_client, table, start="2026-04-01", end="2026-06-01")
+
+        command = context_from_modules(MockDepsModule()).doc.command(_spec(NO_OVERLAP))
+        await command.create(
+            _Create(root_id="r1", valid_from=date(2026, 1, 1), valid_to=date(2026, 4, 1))
+        )
+
+        with pytest.raises(CoreException) as from_mock:
+            await command.create(
+                _Create(root_id="r1", valid_from=date(2026, 4, 1), valid_to=date(2026, 6, 1))
+            )
+
+        assert from_mock.value.kind is from_postgres.value.kind
+
+    async def test_neither_store_refuses_a_period_that_ended_first(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The over-strict direction: consecutive non-touching periods are legal in both.
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+        await _insert_period(pg_client, table, start="2026-06-01", end=None)
+        await _insert_period(pg_client, table, start="2025-01-01", end="2025-12-31")
+
+        command = context_from_modules(MockDepsModule()).doc.command(_spec(NO_OVERLAP))
+        await command.create(_Create(root_id="r1", valid_from=date(2026, 6, 1)))
+        row = await command.create(
+            _Create(root_id="r1", valid_from=date(2025, 1, 1), valid_to=date(2025, 12, 31))
+        )
+
+        assert row.valid_to == date(2025, 12, 31)

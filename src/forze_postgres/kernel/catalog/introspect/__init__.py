@@ -1,5 +1,6 @@
 from .introspector import PostgresIntrospector
 from .types import (
+    ExclusionConstraintInfo,
     PostgresColumnCache,
     PostgresColumnTypes,
     PostgresIndexCache,
@@ -13,6 +14,7 @@ from .types import (
 # ----------------------- #
 
 __all__ = [
+    "ExclusionConstraintInfo",
     "PostgresColumnCache",
     "PostgresColumnTypes",
     "PostgresType",

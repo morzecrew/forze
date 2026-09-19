@@ -113,3 +113,29 @@ class UniqueIndexInfo:
 
     nulls_not_distinct: bool
     """Whether the index was built ``NULLS NOT DISTINCT`` — i.e. two nulls conflict."""
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class ExclusionConstraintInfo:
+    """One live EXCLUDE constraint, described in the terms a non-overlap guarantee is checked
+    against.
+
+    Postgres deparses the whole constraint rather than handing back its elements separately, so
+    what travels here is the definition text plus the columns the catalog does name. The
+    definition is what the bounds check reads: a range expression carries its convention as a
+    literal argument, and nothing else in the catalog records it.
+
+    No validity flag, unlike :class:`UniqueIndexInfo`: Postgres refuses ``NOT VALID`` on an
+    EXCLUDE constraint ("EXCLUDE constraints cannot be marked NOT VALID") and has no concurrent
+    build for one, so ``convalidated`` is true for every row this can return. A check on it
+    would be a branch nothing can reach.
+    """
+
+    name: str
+    """The constraint's name, for the refusal message."""
+
+    columns: frozenset[str]
+    """The plain columns the constraint references — its expression operands are not here."""
+
+    definition: str
+    """``pg_get_constraintdef``: the whole ``EXCLUDE USING … (… WITH …)`` text."""
