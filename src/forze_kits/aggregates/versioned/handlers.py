@@ -12,6 +12,9 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
 from forze.domain.constants import ID_FIELD, REV_FIELD
+
+CREATED_AT_FIELD = "created_at"
+"""When a version was written, which is when it became the fact's current assertion."""
 from forze.domain.models import BaseDTO, ReadDocument
 from forze_kits.domain.versioned.constants import (
     IS_CURRENT_FIELD,
@@ -25,7 +28,7 @@ from forze_kits.domain.versioned.models import (
     DocWithVersioning,
     UpdateCmdWithVersioning,
 )
-from forze_kits.dto.paginated import Paginated
+from forze_kits.dto.paginated import Paginated, Pagination
 
 from .dto import CorrectDocumentDTO, FactAsOfDTO, FactIdDTO
 
@@ -286,6 +289,7 @@ class FactHistory[Out: BM](Handler[FactIdDTO, Paginated[Out]]):
         page = await self.query.find_page(
             filters=_of_fact(args.root_id),
             sorts={VERSION_FIELD: "asc"},
+            pagination=args.to_offset_expression(),
         )
 
         return Paginated.from_page(page)
@@ -325,20 +329,21 @@ class FactAsOf[Out: ReadDocument](Handler[FactAsOfDTO, Out]):
         :raises CoreException: ``not_found`` when the fact had no version at that instant.
         """
 
+        # The latest version created at or before the instant, which *is* the one in force
+        # then: any later version was created after it and so had not replaced this one yet.
+        # One row rather than the chain, because a chain has no bound but the number of
+        # corrections and the store's implicit cap would truncate a long one — leaving this to
+        # answer from a partial history without knowing it had.
         page = await self.query.find_page(
-            filters=_of_fact(args.root_id),
-            sorts={VERSION_FIELD: "asc"},
+            filters={
+                "$and": [_of_fact(args.root_id), {"$values": {CREATED_AT_FIELD: {"$lte": args.at}}}]
+            },
+            sorts={VERSION_FIELD: "desc"},
+            pagination=Pagination(page=1, size=1).to_offset_expression(),
         )
-        chain = list(page.hits)
 
-        for position, row in enumerate(chain):
-            if row.created_at > args.at:
-                continue
-
-            successor = chain[position + 1] if position + 1 < len(chain) else None
-
-            if successor is None or args.at < successor.created_at:
-                return row
+        for row in page.hits:
+            return row
 
         raise exc.not_found(
             f"No version of this fact was current at {args.at.isoformat()}.",

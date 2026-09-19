@@ -584,6 +584,46 @@ class TestComposedWithSoftDeletion:
 
         assert caught.value.kind is ExceptionKind.NOT_FOUND
 
+    async def test_list_hides_a_row_that_is_current_and_deleted(self) -> None:
+        # The other half of the shared mapper slot, and the one the composition actually broke:
+        # the versioned list mapper replaced soft deletion's, so a deleted row that was still
+        # the current version came back in every list.
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
+            tx_route=_TX
+        )
+        key = BOTH.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await run_operation(
+                reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="m"), ctx
+            )
+            await run_operation(
+                reg,
+                key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=row.id, rev=row.rev),
+                ctx,
+            )
+            page = await run_operation(reg, key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
+
+        assert page.hits == []
+
+    async def test_list_still_returns_a_live_current_row(self) -> None:
+        # The contrast: stacking two restrictions must not exclude everything.
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
+            tx_route=_TX
+        )
+        key = BOTH.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await run_operation(reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="m"), ctx)
+            page = await run_operation(reg, key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
+
+        assert [r.meter for r in page.hits] == ["m"]
+
     async def test_a_live_current_row_still_reads(self) -> None:
         # The contrast: two guards on one handler must not refuse everything.
         runtime = build_runtime(MockDepsModule())
@@ -884,6 +924,19 @@ class TestTheReadModelMustExposeWhatTheKitReads:
     def test_the_declared_shape_builds(self) -> None:
         assert _kit().registry(tx_route=_TX) is not None
 
+    def test_a_read_only_spec_has_no_create_command_to_check(self) -> None:
+        # Nothing is persisted through a create command there, so there is nothing that could be
+        # lost when a correction rebuilds the fact — the check has to pass it by rather than
+        # read a command that is not declared.
+        read_only = DocumentSpec(
+            name="readings",
+            read=ReadingRead,
+            write=None,
+            guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+        )
+
+        assert AggregateKit(spec=read_only, versioned=POLICY).registry(tx_route=_TX)
+
 
 # ....................... #
 
@@ -953,6 +1006,55 @@ class TestComposedWithSearch:
         with pytest.raises(CoreException, match="must be able to filter"):
             AggregateKit(spec=READINGS, versioned=POLICY, search=blind)
 
+    async def test_search_reads_stack_both_restrictions(self) -> None:
+        """With soft deletion composed too, both restrictions have to reach the query.
+
+        The search mappers already carry an exclusion, so the current-version restriction has to
+        run after it rather than replace it — the same shared-slot problem the document list
+        family has, and invisible unless a search actually runs.
+        """
+
+        from forze_kits.aggregates.search import SearchKernelOp, SearchRequestDTO
+
+        both_index = SearchSpec(
+            name="both_index",
+            model_type=_BothRead,
+            fields=["meter"],
+            facetable_fields={"is_current", "is_deleted"},
+        )
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(
+            spec=BOTH, soft_delete=True, versioned=POLICY, search=both_index
+        ).registry(tx_route=_TX)
+        key = BOTH.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            live = await run_operation(
+                reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="live"), ctx
+            )
+            ghost = await run_operation(
+                reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="ghost"), ctx
+            )
+            await run_operation(
+                reg,
+                key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=ghost.id, rev=ghost.rev),
+                ctx,
+            )
+
+            index = ctx.deps.provide(MockStateDepKey).documents.get("both_index", {})
+            index[ghost.id] = {**index.get(ghost.id, {}), "is_deleted": True}
+
+            page = await run_operation(
+                reg,
+                both_index.default_namespace.key(SearchKernelOp.TYPED),
+                SearchRequestDTO(),
+                ctx,
+            )
+
+        assert [hit.id for hit in page.hits] == [live.id]
+
     async def test_a_correction_reaches_the_index(self) -> None:
         runtime = build_runtime(MockDepsModule())
         kit = AggregateKit(spec=READINGS, versioned=POLICY, search=SEARCH)
@@ -968,3 +1070,72 @@ class TestComposedWithSearch:
         # The successor is indexed. Without the binding the index holds only the superseded
         # version, and a search answers with a fact that has been corrected.
         assert second.id in index
+
+
+# ....................... #
+
+
+class TestALongChainIsStillAnswerable:
+    """A chain is bounded only by the number of corrections, and the store caps an open read.
+
+    `find_many`-style reads carry an implicit cap that truncates with a warning the caller never
+    sees — so a read that walked the chain would answer from a partial history without knowing
+    it had. `as_of` asks for one row and `history` paginates.
+    """
+
+    async def test_as_of_answers_from_one_row_not_the_chain(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await _create(reg, ctx, "m-1", 0)
+            first_at = row.created_at
+
+            for step in range(1, 12):
+                row = await _correct(reg, ctx, row, kwh=step)
+
+            earliest = await run_operation(
+                reg,
+                _key(VersionedKernelOp.AS_OF),
+                FactAsOfDTO(root_id=row.root_id, at=first_at),
+                ctx,
+            )
+            latest = await run_operation(
+                reg,
+                _key(VersionedKernelOp.AS_OF),
+                FactAsOfDTO(root_id=row.root_id, at=row.created_at),
+                ctx,
+            )
+
+        # The oldest version is still reachable at the far end of a long chain, and the newest
+        # answers for the present.
+        assert earliest.version == 1
+        assert latest.version == 12
+
+    async def test_history_pages_through_the_chain(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await _create(reg, ctx, "m-1", 0)
+
+            for step in range(1, 6):
+                row = await _correct(reg, ctx, row, kwh=step)
+
+            first = await run_operation(
+                reg,
+                _key(VersionedKernelOp.HISTORY),
+                FactIdDTO(root_id=row.root_id, page=1, size=2),
+                ctx,
+            )
+            second = await run_operation(
+                reg,
+                _key(VersionedKernelOp.HISTORY),
+                FactIdDTO(root_id=row.root_id, page=2, size=2),
+                ctx,
+            )
+
+        assert [r.version for r in first.hits] == [1, 2]
+        assert [r.version for r in second.hits] == [3, 4]
