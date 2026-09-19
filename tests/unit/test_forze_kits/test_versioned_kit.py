@@ -19,6 +19,7 @@ from forze import build_runtime
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.invariants import CountAll, ReadSet, SystemInvariant
 from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -1139,3 +1140,91 @@ class TestALongChainIsStillAnswerable:
 
         assert [r.version for r in first.hits] == [1, 2]
         assert [r.version for r in second.hits] == [3, 4]
+
+
+# ....................... #
+
+
+class TestTheSecondAggregateIsAdvertised:
+    """A correction writes two aggregates, and only one of them is in the author's own code.
+
+    An application provisions storage from the advertised inventory, so a route the kit wired
+    behind the author's back and did not declare is a route that simply does not exist in the
+    deployment — discovered the first time somebody corrects a fact, which is exactly the
+    failure `spec_contributions` and `backend_requirements` exist to prevent.
+    """
+
+    def test_the_corrections_spec_is_contributed(self) -> None:
+        names = {str(entry.spec.name) for entry in _kit().spec_contributions().freeze().entries}
+
+        assert str(READINGS.name) in names
+        assert str(CORRECTIONS.name) in names
+
+    def test_the_corrections_route_is_reported(self) -> None:
+        assert _kit().backend_requirements().corrections_route == CORRECTIONS.name
+
+    def test_it_contributes_alongside_the_other_arms(self) -> None:
+        # The corrections spec joins the inventory rather than displacing what else the kit
+        # wired — a versioned aggregate with a blob bucket advertises both.
+        kit = AggregateKit(
+            spec=READINGS,
+            versioned=POLICY,
+            storage=StorageSpec(name="readings_blobs"),
+        )
+        names = {str(entry.spec.name) for entry in kit.spec_contributions().freeze().entries}
+
+        assert {str(READINGS.name), str(CORRECTIONS.name), "readings_blobs"} <= names
+
+    def test_an_unversioned_kit_reports_neither(self) -> None:
+        # The contrast: the second route rides with versioning, not with every kit.
+        plain = AggregateKit(spec=READINGS)
+
+        assert plain.backend_requirements().corrections_route is None
+        assert {
+            str(entry.spec.name) for entry in plain.spec_contributions().freeze().entries
+        } == {str(READINGS.name)}
+
+
+# ....................... #
+
+
+class TestTheFacadeReachesWhatTheKitComposed:
+    async def test_the_kits_own_facade_carries_the_lineage_operations(self) -> None:
+        """`kit.facade()` is the surface most callers use.
+
+        Handing back a plain document facade there leaves `correct`, `history` and `as_of` in
+        the registry and unreachable from the kit's own API — the feature configured and then
+        hidden behind the accessor that is supposed to expose it.
+        """
+
+        runtime = build_runtime(MockDepsModule())
+        facade = _kit().facade(runtime, tx_route=_TX)
+
+        async with runtime.scope():
+            row = await facade().create(ReadingCreate(meter="m-1", kwh=100))
+            corrected = await facade().correct(
+                CorrectDocumentDTO(
+                    id=row.id,
+                    expected_version=row.version,
+                    dto=ReadingUpdate(kwh=120),
+                    reason="meter misread",
+                )
+            )
+
+        assert corrected.version == 2
+
+    async def test_the_precisely_typed_accessor_returns_the_same_surface(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        facade = _kit().lineage_facade(runtime, tx_route=_TX)
+
+        async with runtime.scope():
+            row = await facade().create(ReadingCreate(meter="m-1", kwh=100))
+            chain = await facade().history(FactIdDTO(root_id=row.root_id))
+
+        assert [r.version for r in chain.hits] == [1]
+
+    def test_it_refuses_without_a_versioning_policy(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+
+        with pytest.raises(CoreException, match="requires a versioning policy"):
+            AggregateKit(spec=READINGS).lineage_facade(runtime, tx_route=_TX)

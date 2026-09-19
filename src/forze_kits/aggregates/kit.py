@@ -19,7 +19,7 @@ operations — the designed path for the lifecycle a generic scaffold cannot der
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, final
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -71,10 +71,12 @@ from forze_kits.aggregates.soft_deletion import (
 )
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
 from forze_kits.aggregates.versioned import (
+    VersionedFacade,
     VersionedKernelOp,
     VersionedPolicy,
     current_versions_only_mapper,
     single_current_head,
+    versioned_facade,
     versioned_wiring,
 )
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
@@ -172,6 +174,12 @@ class BackendRequirements:
 
     crypto_required: bool
     """Whether a keyring (``CryptoDepsModule``) is required — the spec declares field encryption."""
+
+    corrections_route: StrKey | None = None
+    """Route the correction records must be wired under, or ``None`` without ``versioned``.
+
+    A second ``rw_documents`` entry: a correction writes two aggregates, and the record is the
+    one an author is least likely to anticipate, since nothing in their own code names it."""
 
 
 @final
@@ -312,9 +320,50 @@ class AggregateKit(Generic[R, D, C, U]):
         *,
         tx_route: StrKey = "default",
     ) -> OperationFacadeFactory[DocumentFacade[R, C, U]]:
-        """A per-call, precisely-typed :class:`DocumentFacade` factory over the composed registry."""
+        """A per-call, precisely-typed document facade over the composed registry.
 
-        return document_facade(runtime, self.registry(tx_route=tx_route), self.spec)
+        A :class:`~forze_kits.aggregates.versioned.VersionedFacade` when the kit declares
+        ``versioned``, which is a ``DocumentFacade`` with ``correct``, ``history`` and ``as_of``
+        on it — a facade without them would leave the lineage operations in the registry and
+        unreachable from the kit's own surface, which is the one most callers use.
+        """
+
+        registry = self.registry(tx_route=tx_route)
+
+        if self.versioned is not None:
+            # A `VersionedFacade` *is* a `DocumentFacade`, so every caller of this method keeps
+            # working and gains the lineage operations; the cast is only because
+            # `OperationFacadeFactory` is invariant in its facade type. A caller who wants those
+            # operations to be *visible* to a type checker asks for `lineage_facade()`.
+            return cast(
+                "OperationFacadeFactory[DocumentFacade[R, C, U]]",
+                versioned_facade(runtime, registry, self.spec),
+            )
+
+        return document_facade(runtime, registry, self.spec)
+
+    # ....................... #
+
+    def lineage_facade(
+        self,
+        runtime: ExecutionRuntime,
+        *,
+        tx_route: StrKey = "default",
+    ) -> OperationFacadeFactory[VersionedFacade[R, C, U]]:
+        """A per-call :class:`VersionedFacade` factory (requires ``versioned``).
+
+        The precisely-typed counterpart of :meth:`facade`, which hands back the same object
+        under the wider type. Named for what it adds rather than for the config field, matching
+        :meth:`storage_facade`.
+        """
+
+        if self.versioned is None:
+            raise exc.precondition(
+                "AggregateKit.lineage_facade requires a versioning policy (versioned=…) on the "
+                "kit — without one there is no correction lineage to reach.",
+            )
+
+        return versioned_facade(runtime, self.registry(tx_route=tx_route), self.spec)
 
     # ....................... #
 
@@ -445,6 +494,16 @@ class AggregateKit(Generic[R, D, C, U]):
 
         registry = SpecRegistry().register(self.spec, source=SpecSource.KIT)
 
+        if self.versioned is not None:
+            # A correction writes a second aggregate, on its own route. Leaving it out means an
+            # application provisioning from the advertised inventory omits that route entirely,
+            # and the omission surfaces the first time somebody corrects a fact rather than at
+            # startup — which is the whole reason this method exists.
+            # Registered without an edge: the only edge kind is ``REBUILDS_FROM``, and a
+            # correction record is not derived from the document — it is a record *about* a
+            # change to it, which nothing can reconstruct from the rows.
+            registry.register(self.versioned.corrections, source=SpecSource.KIT)
+
         if self.storage is not None:
             registry.register(self.storage, source=SpecSource.KIT)
 
@@ -491,6 +550,9 @@ class AggregateKit(Generic[R, D, C, U]):
             storage_route=self.storage.name if self.storage is not None else None,
             outbox_route=self.outbox.spec.name if self.outbox is not None else None,
             crypto_required=self.spec.encryption is not None,
+            corrections_route=(
+                self.versioned.corrections.name if self.versioned is not None else None
+            ),
         )
 
     # ....................... #
