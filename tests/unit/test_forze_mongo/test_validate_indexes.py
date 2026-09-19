@@ -688,6 +688,9 @@ class TestTheExemptionRefusesWhatItCannotCheck:
             {"pointer": {"$type": 2}},  # an alias that is not a name
             {"pointer": {"$type": ["string", 7]}},
             {"$and": [{"pointer": {"$type": "string"}}, {"pointer": {"$type": "int"}}]},
+            # The contradiction straddling a branch and a sibling field, which is where the
+            # two constraints meet through a different path than two branches do.
+            {"$and": [{"pointer": {"$type": "int"}}], "pointer": {"$type": "string"}},
         ],
     )
     def test_an_index_whose_type_clause_cannot_be_read_is_refused(
