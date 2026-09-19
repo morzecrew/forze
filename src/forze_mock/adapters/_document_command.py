@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+import asyncio
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -15,11 +16,16 @@ from uuid import UUID
 
 from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
 from forze.application.contracts.domain import drain_domain_events
-from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
+from forze.application.contracts.guarantees import (
+    NonOverlapping,
+    SerializedBy,
+    UniqueTogether,
+)
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, Period, utcnow
+from forze.base.primitives import JsonDict, Period, advisory_lock_key, utcnow
 from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze_mock.adapters._mvcc import current_mvcc_tx
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
 
@@ -250,6 +256,105 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _serialized_by(self) -> SerializedBy | None:
+        """This spec's write-serialization declaration, if it makes one."""
+
+        for guarantee in self.spec.guarantees:
+            if isinstance(guarantee, SerializedBy):
+                return guarantee
+
+        return None
+
+    # ....................... #
+
+    def _owner_keys(self, guarantee: SerializedBy, rows: Sequence[Any]) -> list[int]:
+        """The lock keys *rows* contend on, sorted and without repeats.
+
+        Spec and tenant are part of every key, so two aggregates that happen to key on the same
+        value do not wait on each other and two tenants never do. Sorted, because a call writing
+        several owners that took them in encounter order would deadlock against another call
+        writing the same owners in the other one.
+
+        A row is either an inbound payload or a stored mapping, so the owner is read off
+        whichever it is.
+        """
+
+        tenant = self.require_tenant_if_aware() if self.tenant_aware else None
+        keys: set[int] = set()
+
+        for row in rows:
+            if row is None:
+                continue
+
+            values = [
+                row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
+                for field in guarantee.key
+            ]
+            keys.add(advisory_lock_key(str(self.spec.name), tenant, *values))
+
+        return sorted(keys)
+
+    # ....................... #
+
+    async def _serialize_writes(self, *rows: Any) -> None:
+        """Hold this aggregate's per-owner write lock for every owner *rows* touch.
+
+        Taken here rather than around the store assignment, and held until the transaction ends
+        rather than until the write returns: what a caller needs serialized is its own
+        read-then-write, and a lock released at the write leaves exactly the gap between them
+        open.
+
+        Outside a transaction the lock is taken and released around the single write, which is
+        what a transaction-scoped lock does for a statement that is its own transaction.
+        """
+
+        guarantee = self._serialized_by()
+
+        if guarantee is None:
+            return
+
+        mvcc = current_mvcc_tx()
+        loop = asyncio.get_running_loop()
+
+        if self.state.write_serialization_loop is not loop:
+            # A lock belongs to the loop it was awaited on, and a simulation gives each attempt
+            # its own while the state outlives them. Reusing one from a finished loop raises
+            # instead of serializing, so the table is rebuilt rather than carried over.
+            self.state.write_serialization.clear()
+            self.state.write_serialization_loop = loop
+
+        for key in self._owner_keys(guarantee, rows):
+            if mvcc is not None and key in mvcc.write_locks:
+                continue
+
+            lock = self.state.write_serialization.setdefault(key, asyncio.Lock())
+            await lock.acquire()
+
+            if mvcc is None:
+                lock.release()
+
+            else:
+                mvcc.write_locks[key] = lock
+
+    # ....................... #
+
+    async def _serialize_stored(self, *pks: UUID) -> None:
+        """The same, for a write addressed by primary key.
+
+        The owner is on the stored row rather than in the call, so it is read first. Reading
+        before the lock is taken is not a race the lock could have closed: a row whose owner
+        changes under us was written by a transaction holding the lock for *both* owners.
+        """
+
+        if self._serialized_by() is None:
+            return
+
+        store = self._store()
+
+        await self._serialize_writes(*(store.get(pk) for pk in pks))
+
+    # ....................... #
+
     def _ensure_writable(self) -> None:
         """Reject writes inside a strict read-only mock transaction.
 
@@ -335,6 +440,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self._ensure_writable()
         domain = self._build_domain(payload, id)
         serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
+        await self._serialize_writes(serialized)
 
         with self.state.lock:
             store = self._store()
@@ -420,6 +526,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def ensure(self, id: UUID, payload: C, *, return_new: bool = True) -> R | None:
         self._ensure_writable()
         domain = self._build_domain(payload, id)
+        await self._serialize_writes(
+            self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
+        )
 
         with self.state.lock:
             store = self._store()
@@ -509,6 +618,18 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         # same id cannot both observe "absent" and race into duplicate creates.
         # The delegated store mutation happens synchronously before any await
         # suspension point, so async tasks cannot interleave either.
+        #
+        # Which is also why the owner locks are taken *here*: the delegated call would
+        # otherwise await for one while holding the state lock, and every other writer in the
+        # process would wait behind a lock nobody can release. Both arms' owners are taken,
+        # since which arm runs is decided inside the section.
+        await self._serialize_stored(id)
+        await self._serialize_writes(
+            self._apply_tenant(
+                self._domain_codec().encode_persistence_mapping(self._build_domain(create, id))
+            )
+        )
+
         with self.state.lock:
             if id in self._store():
                 rev = self._to_domain(dict(self._store()[id])).rev
@@ -633,6 +754,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             cast(Any, dto),
             exclude={"computed_fields": True, "unset": True},
         )
+        # Both sides: a patch that moves a row to another owner has to hold the owner it is
+        # leaving as well as the one it is joining, or a reader of either sees half the move.
+        await self._serialize_stored(pk)
+        await self._serialize_writes(patch)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -808,6 +933,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         match = self._matcher(filters)
 
+        # Every owner the filter selects, before the section rather than inside it: a set-based
+        # update is one statement on a real store and takes every lock it needs up front. The
+        # rows are read twice — once to find the owners, once under the lock to build the batch
+        # — and a row that joins the filter in between is a row a concurrent writer added while
+        # holding the lock for its owner, which this call then waits for.
+        if self._serialized_by() is not None:
+            await self._serialize_writes(
+                *(raw for raw in list(self._store().values()) if match(raw)), patch
+            )
+
         with self.state.lock:
             store = self._store()
             merged = dict(store.items())
@@ -954,6 +1089,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
         self._ensure_writable()
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -1009,6 +1145,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def kill(self, pk: UUID) -> None:
         self._ensure_writable()
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             _ = self._ensure_exists(pk)
@@ -1056,6 +1193,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
+
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -1149,6 +1288,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
+
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))

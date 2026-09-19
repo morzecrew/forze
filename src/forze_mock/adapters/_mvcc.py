@@ -189,6 +189,19 @@ class MvccTx:
     transaction changed since it was read (not merely since this transaction began). A *blind*
     (rev-less, unlocked) write is not claimed, so it silently loses, as read-committed permits.
     Snapshot/serializable ignore claims and conflict on every write regardless."""
+    write_locks: dict[int, Any] = attrs.field(factory=dict)
+    """Per-owner write locks this transaction holds, as ``{key: lock}``.
+
+    Held from the first write to a serialized aggregate until the transaction ends, which is
+    what makes a handler's own read-then-write correct: releasing at the write would leave the
+    gap between the two open, and that gap is the race the declaration exists to close.
+
+    One entry per key, so a transaction writing the same owner twice waits once. Taken in
+    sorted order where a single call writes several owners; across calls the order is the
+    caller's, and two transactions taking two owners in opposite orders wait on each other —
+    the deadlock a real advisory lock also permits, and which the store it models resolves by
+    aborting one. Here the operation's deadline is what ends it."""
+
     guarantee_rechecks: dict[tuple[str, Any], Any] = attrs.field(factory=dict)
     """Keys to re-check against the *committed* store at commit, as ``{(ns, key): check}``.
 
@@ -242,11 +255,20 @@ class MvccTx:
     def finish(self, state: Any) -> None:
         """Deregister this transaction and prune the commit log below the oldest in-flight one.
 
-        Called once on transaction end (commit or abort). An entry only matters to a
+        Called once on transaction end (commit or abort), which is also where the per-owner
+        write locks are released — commit or rollback, no path that forgets. An entry only
+        matters to a
         transaction whose begin-version precedes it, so once no in-flight transaction began
         before an entry, the entry can never be consulted again and is dropped — keeping the
         log bounded and ``validate`` from degrading to O(commits) per call across a run.
         """
+
+        # Before anything else: a writer waiting on one of these has nothing to do with this
+        # transaction's bookkeeping, and an exception raised below would strand it for good.
+        for lock in self.write_locks.values():
+            lock.release()
+
+        self.write_locks.clear()
 
         state.mvcc_active.remove(self.begin_version)
         horizon = min(state.mvcc_active) if state.mvcc_active else state.mvcc_version

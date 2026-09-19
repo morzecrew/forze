@@ -157,6 +157,22 @@ class MockState:
     cache_bodies: dict[str, dict[tuple[str, str], Any]] = attrs.field(factory=dict)
     idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]] = attrs.field(factory=dict)
     rotating_credential_locks: StripedAsyncLocks = attrs.field(factory=StripedAsyncLocks)
+
+    write_serialization_loop: Any = attrs.field(default=None)
+    """The event loop :attr:`write_serialization` was built on, or ``None`` before the first.
+
+    An :class:`asyncio.Lock` belongs to the loop it was first awaited on, and a simulation runs
+    each attempt on a loop of its own while the state carrying the locks outlives them all. So
+    the table is rebuilt when the loop changes — locks from a finished loop can have no waiters
+    and reusing one raises rather than serializing."""
+
+    write_serialization: dict[int, asyncio.Lock] = attrs.field(factory=dict)
+    """Owner key → the lock serializing writes for it (see ``SerializedBy``).
+
+    One lock per key rather than a striped pool: striping collapses distinct owners onto a
+    shared lock, and an aggregate declaring this is entitled to have two *different* owners
+    proceed at once — a simulation over a striped pool would attest a serialization the
+    deployment does not have and hide the contention it does."""
     """Per-credential single-flight for the rotating-credential store.
 
     Lives on the state rather than the adapter so that per-scope store instances — the
