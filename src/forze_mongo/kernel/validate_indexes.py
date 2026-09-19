@@ -374,9 +374,20 @@ def _equalities(expression: object) -> dict[str, object] | None:
                 # The one non-equality this understands, because it is the only way a partial
                 # filter can say "not null" — Mongo admits no negation there.
                 aliases = value["$type"]  # pyright: ignore[reportUnknownVariableType]
-                named = (aliases,) if isinstance(aliases, str) else tuple(aliases)  # pyright: ignore[reportUnknownArgumentType]
 
-                if not all(isinstance(alias, str) for alias in named):  # pyright: ignore[reportUnknownVariableType]
+                # A `$type` value is a name or a list of them. Anything else — a BSON type
+                # *number*, which the server also accepts — is a shape this does not read, and
+                # reading it wrong would accept an index over the wrong documents.
+                if isinstance(aliases, str):
+                    named: tuple[object, ...] = (aliases,)
+
+                elif isinstance(aliases, list | tuple):
+                    named = tuple(aliases)  # pyright: ignore[reportUnknownArgumentType]
+
+                else:
+                    return None
+
+                if not all(isinstance(alias, str) for alias in named):
                     return None
 
                 if not _merge(found, name, ("type", frozenset(named))):

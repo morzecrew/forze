@@ -2,11 +2,13 @@
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import IntEnum, StrEnum
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 from bson import Decimal128
+from pydantic import BaseModel
 
 from forze.application.contracts.guarantees import UniqueTogether
 from forze.base.exceptions import CoreException
@@ -16,6 +18,7 @@ from forze_mongo.kernel.introspect import MongoIndexInfo, MongoIntrospector
 from forze_mongo.kernel.validate_indexes import (
     MongoDocumentIndexSpec,
     _bson_key,  # pyright: ignore[reportPrivateUsage]
+    _bson_types,  # pyright: ignore[reportPrivateUsage]
     _equalities,  # pyright: ignore[reportPrivateUsage]
     _guarantee_equalities,  # pyright: ignore[reportPrivateUsage]
     _mongosh,  # pyright: ignore[reportPrivateUsage]
@@ -562,3 +565,143 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
         # Decimal128, so an index filter read back from the server carries the stored spelling
         # while the guarantee carries the domain one. Telling them apart refuses a correct index.
         assert _bson_key(stored) == _bson_key(declared)
+
+
+# ....................... #
+
+
+class _Colour(StrEnum):
+    RED = "red"
+
+
+class _Tier(IntEnum):
+    GOLD = 1
+
+
+class TestNamingAFieldsStoredType:
+    """The null exemption is expressed by naming what a field *is*, so the naming must be right.
+
+    Every answer here is either a type this adapter demonstrably writes, or a refusal. There is
+    no default: guessing would index the wrong documents, and an index over the wrong documents
+    is a guarantee that silently is not kept.
+    """
+
+    @pytest.mark.parametrize(
+        ("annotation", "expected"),
+        [
+            (str, ("string",)),
+            (UUID, ("string",)),  # written as its canonical string
+            (bool, ("bool",)),  # a bool is an int in Python and is not in BSON
+            (int, ("int", "long")),  # which one depends on magnitude
+            (float, ("double",)),
+            (Decimal, ("decimal",)),  # written as a Decimal128
+            (datetime, ("date",)),
+            (date, ("date",)),
+            (bytes, ("binData",)),
+            (UUID | None, ("string",)),  # the optional wrapper is stripped
+            (str | int, ("string", "int", "long")),
+            (list[str], ("array",)),
+            (_Colour, ("string",)),
+            (_Tier, ("int", "long")),
+        ],
+    )
+    def test_it_names_what_the_adapter_writes(
+        self,
+        annotation: object,
+        expected: tuple[str, ...],
+    ) -> None:
+        assert _bson_types(annotation) == expected
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            None,  # an unannotated field
+            object,  # nothing this can name
+            dict[str, int],  # a stored document, whose fields are not the guarantee's
+            UUID | object,  # one unresolvable arm poisons the union
+        ],
+    )
+    def test_it_refuses_what_it_cannot_name(self, annotation: object) -> None:
+        assert _bson_types(annotation) is None
+
+
+# ....................... #
+
+
+class TestTheExemptionRefusesWhatItCannotCheck:
+    @staticmethod
+    def _spec(read_model: object) -> MongoDocumentIndexSpec:
+        return MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(UniqueTogether(fields=("pointer",), skip_null=True),),
+            read_model=read_model,  # type: ignore[arg-type]
+        )
+
+    @staticmethod
+    def _index() -> MongoIndexInfo:
+        return MongoIndexInfo(
+            name="ix",
+            keys=(("pointer", 1),),
+            unique=True,
+            partial_filter={"pointer": {"$type": "string"}},
+        )
+
+    def test_a_matching_index_is_accepted(self) -> None:
+        class Model(BaseModel):
+            pointer: UUID | None = None
+
+        _require_guarantee_indexes(
+            self._spec(Model), [self._index()], database="db", collection="coll"
+        )
+
+    def test_no_read_model_is_a_refusal(self) -> None:
+        # Without it the exemption cannot be stated at all, so the index cannot be checked —
+        # and an unverifiable guarantee is refused rather than assumed kept.
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(None), [self._index()], database="db", collection="coll"
+            )
+
+    def test_a_field_absent_from_the_read_model_is_a_refusal(self) -> None:
+        class Model(BaseModel):
+            other: str = ""
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(Model), [self._index()], database="db", collection="coll"
+            )
+
+    def test_an_unnameable_type_is_a_refusal(self) -> None:
+        class Model(BaseModel):
+            model_config = {"arbitrary_types_allowed": True}
+            pointer: object = None
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(Model), [self._index()], database="db", collection="coll"
+            )
+
+    @pytest.mark.parametrize(
+        "partial_filter",
+        [
+            {"pointer": {"$type": 2}},  # an alias that is not a name
+            {"pointer": {"$type": ["string", 7]}},
+            {"$and": [{"pointer": {"$type": "string"}}, {"pointer": {"$type": "int"}}]},
+        ],
+    )
+    def test_an_index_whose_type_clause_cannot_be_read_is_refused(
+        self,
+        partial_filter: dict[str, object],
+    ) -> None:
+        class Model(BaseModel):
+            pointer: UUID | None = None
+
+        index = MongoIndexInfo(
+            name="ix", keys=(("pointer", 1),), unique=True, partial_filter=partial_filter
+        )
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(Model), [index], database="db", collection="coll"
+            )
