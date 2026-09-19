@@ -457,6 +457,13 @@ class TestTheRefusalPrintsAMigrationThatWouldWork:
 
         assert 'createIndex({"effective-date": 1}' in " ".join(caught.value.summary.split())
 
+    def test_two_not_a_numbers_are_one_value(self) -> None:
+        # Mongo matches a `{x: NaN}` filter against the documents whose `x` is NaN, which IEEE
+        # equality cannot express — left raw, two distinct NaN objects never compare equal, so
+        # no index could ever satisfy such a guarantee and the same constraint written twice
+        # would read as a contradiction.
+        assert _bson_key(float("nan")) == _bson_key(float("nan"))
+
     def test_a_non_finite_filter_still_gets_its_migration(self) -> None:
         # The diagnostic path has to survive every value the declaration admits: `int(nan)`
         # raises, so rendering it there replaced an actionable refusal with a stack trace at
@@ -534,6 +541,11 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
             (Decimal128("9.99"), Decimal("9.99")),
             (datetime(2026, 9, 19, tzinfo=UTC), date(2026, 9, 19)),
             (datetime(2026, 9, 19, tzinfo=UTC), datetime(2026, 9, 19)),
+            (
+                datetime(2026, 9, 19, 12, 30, 0, 123000, tzinfo=UTC),
+                datetime(2026, 9, 19, 12, 30, 0, 123567, tzinfo=UTC),
+            ),
+            (Decimal128("NaN"), float("nan")),
         ],
     )
     def test_what_this_adapter_stores_reduces_to_what_a_spec_declares(

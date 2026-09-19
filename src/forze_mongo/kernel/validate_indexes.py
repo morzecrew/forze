@@ -98,14 +98,26 @@ def _bson_key(value: object) -> object:
         return ("str", str(value))
 
     if isinstance(value, Decimal128):
-        return ("number", value.to_decimal())
+        return _bson_key(value.to_decimal())
+
+    # Every not-a-number is one value to Mongo: a `{x: NaN}` filter matches the documents whose
+    # `x` is NaN, which IEEE equality cannot express — two NaNs are never equal in Python, so
+    # without a sentinel such a guarantee could never be satisfied by any index, and the same
+    # constraint written twice would read as a contradiction.
+    if isinstance(value, float | Decimal) and isnan(value):
+        return ("number", "NaN")
 
     # Both spellings of an instant reduce to the one the server hands back: BSON has no
     # date-only type and no naive datetime, the client reads with ``tz_aware=True``, so a date
     # is stored as UTC midnight and a naive datetime as UTC. Keying a `date` apart from the
     # `datetime` it becomes would refuse the very index the printed migration creates.
     if isinstance(value, datetime):
-        return ("datetime", value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC))
+        instant = value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+
+        # BSON keeps milliseconds, so the server truncates anything finer. Comparing at the
+        # declaration's precision refuses the index it stored, and printing at that precision
+        # asks for a migration whose own value comes back different.
+        return ("datetime", instant.replace(microsecond=instant.microsecond // 1000 * 1000))
 
     if isinstance(value, date):
         return ("datetime", datetime(value.year, value.month, value.day, tzinfo=UTC))
@@ -164,10 +176,10 @@ def _mongosh(key: object) -> str:
             # store a double and read back as a different value.
             return f'Decimal128("{value}")'
 
-        case ("number", float() as value):
-            if isnan(value):
-                return "NaN"
+        case ("number", "NaN"):
+            return "NaN"
 
+        case ("number", float() as value):
             if isinf(value):
                 return "Infinity" if value > 0 else "-Infinity"
 

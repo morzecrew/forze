@@ -230,6 +230,13 @@ class TestMongoStartupValidation:
             (date(2026, 9, 19), 'ISODate("2026-09-19T00:00:00+00:00")'),
             (datetime(2026, 9, 19, 12, 30, tzinfo=UTC), 'ISODate("2026-09-19T12:30:00+00:00")'),
             (
+                # Finer than BSON keeps: the server truncates to milliseconds, so a declaration
+                # carrying microseconds has to be compared and printed at what will be stored.
+                datetime(2026, 9, 19, 12, 30, 0, 123567, tzinfo=UTC),
+                'ISODate("2026-09-19T12:30:00.123000+00:00")',
+            ),
+            (datetime(2026, 9, 19, 12, 30), 'ISODate("2026-09-19T12:30:00+00:00")'),
+            (
                 UUID("00000000-0000-0000-0000-00000000002a"),
                 '"00000000-0000-0000-0000-00000000002a"',
             ),
