@@ -57,11 +57,67 @@ Each concern is opt-in and independently useful on its own:
   spec must declare `is_deleted` in `facetable_fields` (which `ensure_index` provisions as
   a filterable attribute on external indexes); the kit fails closed at construction
   otherwise.
+- **`versioned`** — correction lineage: the aggregate stops being overwritten and starts being
+  *corrected*. See [Correcting a fact instead of overwriting it](#correcting-a-fact-instead-of-overwriting-it).
 - **`invariants`** — each [`SystemInvariant`](../writing-operation/system-invariants.md) is enforced
   *preventively* inside the write transaction, at the isolation floor it needs, so a
   write that would break the law is rolled back.
 - **`outbox`** — the [transactional outbox](transactional-outbox.md) wiring: the in-tx
   flush, the domain-event → outbox bridge, and the relay step, from one `OutboxEmit`.
+
+## Correcting a fact instead of overwriting it
+
+A regulated ledger is not allowed to overwrite a fact. `versioned=VersionedPolicy(...)` makes the
+aggregate keep every assertion it ever made: the old value stays readable, the new one says what
+it replaced, and somebody's name is on the change.
+
+```python
+AggregateKit(
+    spec=readings,                                   # domain + update cmd on the versioning mixins
+    versioned=VersionedPolicy(corrections=corrections_spec),
+)
+```
+
+It adds five fields — `root_id`, `version`, `supersedes_id`, `is_current`, `superseded_at` — and
+three operations. `correct(id, expected_version, patch, reason)` retires the current version and
+inserts a successor carrying the predecessor's values with your patch over them, recording who and
+why in one transaction. `history(root_id)` returns the chain oldest-first; `as_of(root_id, at)`
+returns the version that was current at an instant. Every generated read stays on current
+versions, so an aggregate that opted in reads like one that never did.
+
+Three things are worth knowing before you declare it.
+
+**"Current" is a stored flag, not a derived anti-join.** `NOT EXISTS (SELECT 1 FROM t s WHERE
+s.supersedes_id = t.id)` is the obvious way to express it and the wrong one: an index cannot see an
+anti-join and neither can a `SystemInvariant`, both of which read a column. The flag is redundant
+state on purpose, and the price is that every write must go through the kit's handlers.
+
+**The index that protects it is your migration to write.** The kit refuses to build unless the
+spec declares both guarantees, and startup refuses a deployment whose indexes are missing, naming
+the DDL:
+
+```python
+guarantees = (
+    UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}}),
+    UniqueTogether(fields=("supersedes_id",), skip_null=True),
+)
+```
+
+One current version per fact, and one successor per predecessor. The second is what stops two
+concurrent corrections forking the chain, and it is not optional — without it both corrections
+commit and every chain walker picks whichever row it saw first.
+
+!!! warning "A versioned aggregate needs Postgres or the in-memory store"
+
+    Mongo cannot keep the second guarantee. `skip_null` exempts the first versions, whose
+    `supersedes_id` is null, and Mongo has no mechanism for that exemption — a `sparse` index
+    reads like one and is not, since it still indexes an explicit null and skips a document only
+    when *every* indexed field is missing. Reconciliation refuses when the port is built rather
+    than letting the chain fork later.
+
+A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
+route, its encryption policy and its retention are facts only you hold. Its create command must be
+`CreateCorrectionCmd`.
 
 ## What it emits — separately
 
@@ -139,6 +195,10 @@ See [Deterministic Simulation Testing](../dst/overview.md) for the full model.
   surface is bespoke — `StoredFileKitSpec`'s `upload`/`download`/`delete` are a create-then-upload
   lifecycle, a cross-port join, and a status-based delete, with no plain `create`/`update` at
   all — hand-wire it (as `StoredFileKitSpec` does); the kit's generated CRUD would only get in the way.
+- **`versioned=` is not an audit log, and not bitemporal.** A `Correction` records one
+  aggregate's lineage — who changed this fact and why — not cross-aggregate who-did-what. And it
+  versions *assertions about a fact*, not the period the fact applies to; validity over time is a
+  separate declaration that composes with this one.
 - **It does not couple to a backend.** `registry()` / `facade()` are backend-agnostic;
   you wire the store yourself. No `AggregateKit(...).build_everything(client)`.
 - **`storage=` gives the blob ops, not the join.** Declaring an object-storage bucket
