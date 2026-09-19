@@ -8,8 +8,9 @@ test and fail a deployment.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -30,8 +31,22 @@ from forze_kits.aggregates.temporal import (
     TimelineDTO,
     temporal_facade,
 )
+from forze_kits.aggregates.versioned import (
+    ONE_CURRENT_VERSION,
+    ONE_SUCCESSOR,
+    CorrectDocumentDTO,
+    VersionedKernelOp,
+    VersionedPolicy,
+)
 from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze_kits.domain.temporal import CreateCmdWithTemporalFields, DocWithTemporal
+from forze_kits.domain.versioned import (
+    CorrectionDoc,
+    CreateCmdWithVersioningFields,
+    CreateCorrectionCmd,
+    DocWithVersioning,
+    UpdateCmdWithVersioning,
+)
 from forze_mock import MockDepsModule
 
 pytestmark = [pytest.mark.asyncio]
@@ -511,9 +526,7 @@ class TestTheDatedReadsSeeWhatTheOtherArmsHide:
 
     async def test_a_soft_deleted_row_is_not_in_force(self) -> None:
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=DELETABLE, soft_delete=True, temporal=POLICY).registry(
-            tx_route=_TX
-        )
+        reg = AggregateKit(spec=DELETABLE, soft_delete=True, temporal=POLICY).registry(tx_route=_TX)
         key = DELETABLE.default_namespace.key
 
         async with runtime.scope():
@@ -561,9 +574,7 @@ class TestTheDatedReadsSeeWhatTheOtherArmsHide:
     async def test_the_same_row_is_in_force_before_it_is_deleted(self) -> None:
         # The contrast: the restriction excludes deleted rows, not every row.
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=DELETABLE, soft_delete=True, temporal=POLICY).registry(
-            tx_route=_TX
-        )
+        reg = AggregateKit(spec=DELETABLE, soft_delete=True, temporal=POLICY).registry(tx_route=_TX)
         key = DELETABLE.default_namespace.key
 
         async with runtime.scope():
@@ -700,3 +711,219 @@ class TestTheDeclarationRefusesWhatItCannotServe:
             page = await run_operation(reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
 
         assert len(list(page.hits)) == 2
+
+
+# ....................... #
+
+
+class TestTheKitsOwnFrontDoor:
+    """The accessors most callers use, which the handler-level batteries never touch."""
+
+    async def test_the_plain_facade_carries_the_dated_reads(self) -> None:
+        # `facade()` is the surface an author reaches for first; a kit that left the reads in
+        # the registry and out of that facade would deliver half the declaration.
+        runtime = build_runtime(MockDepsModule())
+        facade = _kit().facade(runtime)
+
+        async with runtime.scope():
+            await facade().create(
+                ContractCreate(
+                    employee_id="e1",
+                    hours=40,
+                    valid_from=date(2026, 1, 1),
+                    valid_to=date(2026, 3, 31),
+                )
+            )
+            row = await facade().effective_on(  # type: ignore[attr-defined]
+                EffectiveOnDTO(key={"employee_id": "e1"}, on=date(2026, 2, 1))
+            )
+
+        assert row.hours == 40
+
+    async def test_validity_facade_is_the_precisely_typed_one(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        facade = _kit().validity_facade(runtime)
+
+        async with runtime.scope():
+            await facade().create(
+                ContractCreate(
+                    employee_id="e1",
+                    hours=40,
+                    valid_from=date(2026, 1, 1),
+                    valid_to=date(2026, 3, 31),
+                )
+            )
+            page = await facade().timeline(
+                TimelineDTO(
+                    key={"employee_id": "e1"}, start=date(2026, 1, 1), end=date(2026, 12, 31)
+                )
+            )
+
+        assert len(list(page.hits)) == 1
+
+    async def test_validity_facade_without_the_policy_is_refused(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        plain = AggregateKit(spec=CONTRACTS)
+
+        with pytest.raises(CoreException) as caught:
+            plain.validity_facade(runtime)
+
+        assert caught.value.kind is ExceptionKind.PRECONDITION
+
+    async def test_a_policy_with_no_key_is_refused(self) -> None:
+        # Without a key the aggregate asserts that no two rows in the whole relation overlap,
+        # which is one timeline for every record it holds.
+        with pytest.raises(CoreException) as caught:
+            TemporalPolicy(key=())
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    async def test_a_model_without_the_mixin_is_left_alone(self) -> None:
+        # A domain model that never declared a convention states nothing to disagree with, so
+        # the bounds check has nothing to compare and must not invent a mismatch.
+        from forze_kits.aggregates.temporal.wiring import temporal_wiring
+
+        assert temporal_wiring(CONTRACTS, POLICY) is not None
+
+
+# ....................... #
+
+
+class BitemporalContract(DocWithTemporal, DocWithVersioning):
+    employee_id: str
+    hours: int
+
+
+class BitemporalRead(ReadDocument):
+    employee_id: str
+    hours: int
+    valid_from: date
+    valid_to: date | None = None
+    root_id: UUID
+    version: int = 1
+    supersedes_id: UUID | None = None
+    is_current: bool = True
+    superseded_at: datetime | None = None
+
+
+class BitemporalCreate(CreateCmdWithTemporalFields, CreateCmdWithVersioningFields):
+    employee_id: str
+    hours: int
+
+
+class BitemporalUpdate(UpdateCmdWithVersioning):
+    hours: int | None = None
+
+
+class CorrectionRead(ReadDocument):
+    root_id: UUID
+    from_id: UUID
+    to_id: UUID
+    actor_id: UUID | None = None
+    reason: str
+
+
+CORRECTIONS = DocumentSpec(
+    name="contract_corrections",
+    read=CorrectionRead,
+    write=DocumentWriteTypes(domain=CorrectionDoc, create_cmd=CreateCorrectionCmd),
+)
+
+BITEMPORAL = DocumentSpec[BitemporalRead, BitemporalContract, BitemporalCreate, BitemporalUpdate](
+    name="contracts",
+    read=BitemporalRead,
+    write=DocumentWriteTypes(
+        domain=BitemporalContract,
+        create_cmd=BitemporalCreate,
+        update_cmd=BitemporalUpdate,
+    ),
+    guarantees=(NO_OVERLAP, ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+)
+
+
+class TestTheBitemporalCaseIsRefusedForNow:
+    """Validity and lineage on one aggregate: refused, loudly, rather than wired and broken.
+
+    The two arms answer different questions and ought to compose — when the fact applied, and
+    when we asserted it. They do not yet, and the reason is not a wiring detail: a correction
+    inserts a successor carrying its **predecessor's dates**, because it corrects what the row
+    says rather than when it applied. Two rows under one key then hold the same period, and the
+    non-overlap guarantee refuses the correction.
+
+    What the composition needs is a non-overlap guarantee restricted to current versions — the
+    filtered form the uniqueness member already has and this one does not. Until the vocabulary
+    grows it, the declaration is refused at build: an aggregate whose every correction fails is
+    worse than one that says so before it runs.
+    """
+
+    @staticmethod
+    def _kit() -> AggregateKit[Any, Any, Any, Any]:
+        return AggregateKit(
+            spec=BITEMPORAL,
+            temporal=POLICY,
+            versioned=VersionedPolicy(corrections=CORRECTIONS),
+        )
+
+    async def test_declaring_both_is_refused(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            self._kit()
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert "current versions" in caught.value.summary
+
+    async def test_the_refusal_is_what_a_correction_would_have_hit(self) -> None:
+        # The defect the refusal stands in for, reproduced through the lineage arm alone: the
+        # successor carries the predecessor's period, and the guarantee refuses it.
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(
+            spec=BITEMPORAL, versioned=VersionedPolicy(corrections=CORRECTIONS)
+        ).registry(tx_route=_TX)
+        key = BITEMPORAL.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await run_operation(
+                reg,
+                key(DocumentKernelOp.CREATE),
+                BitemporalCreate(
+                    employee_id="e1",
+                    hours=40,
+                    valid_from=date(2026, 1, 1),
+                    valid_to=date(2026, 3, 31),
+                ),
+                ctx,
+            )
+
+            with pytest.raises(CoreException) as caught:
+                await run_operation(
+                    reg,
+                    key(VersionedKernelOp.CORRECT),
+                    CorrectDocumentDTO(
+                        id=first.id,
+                        expected_version=first.version,
+                        dto=BitemporalUpdate(hours=35),
+                        reason="payroll misread the contract",
+                    ),
+                    ctx,
+                )
+
+        assert caught.value.kind is ExceptionKind.CONFLICT
+        assert "overlapping periods" in caught.value.summary
+
+
+# ....................... #
+
+
+class TestAReadOnlyAggregateCanBeDated:
+    async def test_a_spec_with_no_write_side_wires(self) -> None:
+        # A view-backed effective-dated aggregate: nothing writes it, so there is no domain
+        # model to read a convention off, and the bounds check must not reach for one.
+        from forze_kits.aggregates.temporal.wiring import temporal_wiring
+
+        read_only = DocumentSpec[ContractRead, Contract, ContractCreate, ContractUpdate](
+            name="contracts",
+            read=ContractRead,
+            guarantees=(NO_OVERLAP,),
+        )
+
+        assert temporal_wiring(read_only, POLICY).policy is POLICY

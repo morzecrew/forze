@@ -193,8 +193,12 @@ zero days: nothing would read the row and nothing would conflict with it. Ending
 day it started means deleting it, so the write is refused rather than stored — on the domain
 model, so a repair script meets it too.
 
-`temporal` is not bitemporal on its own. When the fact applies is here; when you asserted it, and
-who corrected it, is `versioned`. Declaring both is the bitemporal case.
+`temporal` is not bitemporal, and cannot be composed with `versioned` yet — declaring both is
+refused at build. A correction inserts a successor carrying its predecessor's validity dates,
+because it corrects what the row says rather than when it applied; two rows under one key then
+hold the same period and the non-overlap guarantee refuses the correction. The composition needs
+a non-overlap guarantee restricted to current versions, which the vocabulary does not have. Until
+it does, an aggregate records either when a fact applied or how it was corrected, not both.
 
 ## What it emits — separately
 

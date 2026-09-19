@@ -218,6 +218,46 @@ class TestStartupValidation:
 
         assert "bounds" in caught.value.summary
 
+    async def test_a_two_argument_range_reads_as_the_default_convention(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # `daterange(a, b)` is `[)` by Postgres's own definition, so a migration that omits the
+        # literal is a correct migration for a `[)` guarantee and must not be refused for
+        # spelling it the shorter way.
+        table = await _table(pg_client)
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(root_id WITH =, daterange(valid_from, valid_to) WITH &&);"
+        )
+
+        await _validate(
+            pg_client,
+            table,
+            NonOverlapping(key=("root_id",), period=("valid_from", "valid_to"), bounds="[)"),
+        )
+
+    async def test_a_constraint_over_other_period_columns_does_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The detection branch: the constraint carries the right key and the right convention
+        # over the *wrong* dates, so the periods the guarantee is about are unconstrained while
+        # the catalog shows an exclusion constraint that looks like the mechanism.
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD COLUMN other_from date, ADD COLUMN other_to date;"
+        )
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(root_id WITH =, daterange(other_from, other_to, '[]') WITH &&);"
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP)
+
     async def test_a_constraint_over_another_key_does_not_count(
         self,
         pg_client: PostgresClient,

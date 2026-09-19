@@ -301,6 +301,20 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"(ensure_index) publishes facetable fields as filterable attributes.",
             )
 
+        if self.temporal is not None and self.versioned is not None:
+            raise exc.configuration(
+                "AggregateKit composes temporal with versioned, and the two cannot hold "
+                "together yet. A correction inserts a successor carrying its predecessor's "
+                "validity dates — it corrects what the row says, not when it applied — so the "
+                "non-overlap guarantee sees two rows under one key holding the same period and "
+                "refuses every correction the aggregate makes.\n"
+                "What the composition needs is a non-overlap guarantee restricted to current "
+                "versions, the way the lineage arm already restricts its own uniqueness. The "
+                "vocabulary has no filtered form of it, so the combination is refused rather "
+                "than wired into an aggregate whose first correction fails.",
+                details={"document": str(self.spec.name)},
+            )
+
         if (
             self.versioned is not None
             and self.search is not None
@@ -684,20 +698,21 @@ class AggregateKit(Generic[R, D, C, U]):
     def _read_restrictions(self) -> tuple[QueryFilterExpression, ...]:
         """What the other arms exclude from every read, for the arms that do not use mappers.
 
-        Soft deletion and versioning install their exclusions on the shared *mapper* slots, so
-        every generated read inherits them by construction. The dated reads build their own
-        filter and inherit nothing — which is a silent divergence rather than a loud one: a
-        composed aggregate would answer "what is in force on that day" with a row it hides from
-        its own list, its own get and its own search.
+        Soft deletion installs its exclusion on the shared *mapper* slots, so every generated
+        read inherits it by construction. The dated reads build their own filter and inherit
+        nothing — which is a silent divergence rather than a loud one: a composed aggregate
+        would answer "what is in force on that day" with a row it hides from its own list, its
+        own get and its own search.
+
+        Versioning is not here because it cannot reach here: composing it with effective dating
+        is refused at construction, so a current-version restriction would be a branch nothing
+        can take. It belongs with whatever lifts that refusal.
         """
 
         restrictions: list[QueryFilterExpression] = []
 
         if self.soft_delete:
             restrictions.append({"$values": {SOFT_DELETE_FIELD: False}})
-
-        if self.versioned is not None:
-            restrictions.append({"$values": {IS_CURRENT_FIELD: True}})
 
         return tuple(restrictions)
 
