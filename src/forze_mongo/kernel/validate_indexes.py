@@ -5,11 +5,15 @@ import re
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import Enum
 from math import isinf, isnan
+from types import NoneType, UnionType
+from typing import Any, Final, Union, get_args, get_origin
 from uuid import UUID
 
 import attrs
 from bson import Decimal128
+from pydantic import BaseModel
 
 from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
 from forze.application.contracts.querying import (
@@ -48,6 +52,13 @@ class MongoDocumentIndexSpec:
 
     Reconciliation at wiring said Mongo can keep these; this says whether the deployment
     created the index."""
+
+    read_model: type[BaseModel] | None = None
+    """The aggregate's read model, for the fields a ``skip_null`` guarantee names.
+
+    Mongo excludes nulls from an index by naming what the field *is* rather than what it is not,
+    so the check has to know each field's stored BSON type — and the annotation is where that
+    comes from. ``None`` leaves a ``skip_null`` guarantee unverifiable, which is a refusal."""
 
 
 # ....................... #
@@ -182,6 +193,16 @@ def _mongosh(key: object) -> str:
             # store a double and read back as a different value.
             return f'Decimal128("{value}")'
 
+        case ("eq", inner):
+            return _mongosh(inner)
+
+        case ("type", frozenset() as aliases):
+            named = sorted(str(alias) for alias in aliases)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+
+            return (
+                "{$type: " + (json.dumps(named[0]) if len(named) == 1 else json.dumps(named)) + "}"
+            )
+
         case ("number", "NaN"):
             return "NaN"
 
@@ -207,6 +228,74 @@ def _mongosh(key: object) -> str:
 
         case _:  # pragma: no cover - every scalar a filter admits is handled above
             return json.dumps(str(key))
+
+
+# ....................... #
+
+
+_BSON_TYPES: Final[dict[Any, tuple[str, ...]]] = {
+    str: ("string",),
+    UUID: ("string",),  # this adapter writes a UUID as its canonical string
+    bool: ("bool",),  # before int: a bool is an int in Python and is not in BSON
+    int: ("int", "long"),  # which one depends on magnitude, so both are the field's type
+    float: ("double",),
+    Decimal: ("decimal",),  # stored as a Decimal128
+    datetime: ("date",),
+    date: ("date",),
+    bytes: ("binData",),
+}
+"""What this adapter stores a Python type as, in BSON type aliases.
+
+Read off the write gateway's own coercion rather than from BSON in general: a ``UUID`` is written
+as a string here and a ``Decimal`` as a ``Decimal128``, so the predicate that excludes nulls has
+to name what is actually on disk."""
+
+
+def _bson_types(annotation: Any) -> tuple[str, ...] | None:
+    """The BSON type aliases a field's non-null values can have, or ``None`` if undecidable.
+
+    ``None`` is a refusal, not a default. The alias set is how a ``skip_null`` guarantee excludes
+    nulls from its index — Mongo has no "not null" predicate a partial filter accepts — so a type
+    this cannot name is a guarantee it cannot express, and saying so beats indexing the wrong
+    documents.
+    """
+
+    if annotation is None:
+        return None
+
+    origin = get_origin(annotation)
+
+    if origin is UnionType or origin is Union:
+        found: list[str] = []
+
+        for arm in get_args(annotation):
+            if arm is NoneType:
+                continue
+
+            aliases = _bson_types(arm)
+
+            if aliases is None:
+                return None
+
+            found.extend(aliases)
+
+        return tuple(dict.fromkeys(found)) or None
+
+    if origin in (list, tuple, set, frozenset, Sequence):
+        return ("array",)
+
+    for python_type, aliases in _BSON_TYPES.items():
+        if annotation is python_type:
+            return aliases
+
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        # A `StrEnum` stores as its string; an `IntEnum` as a number. Read the member type
+        # rather than the class, which is what lands on disk.
+        for base in (str, int):
+            if issubclass(annotation, base):
+                return _BSON_TYPES[base]
+
+    return None
 
 
 # ....................... #
@@ -281,15 +370,101 @@ def _equalities(expression: object) -> dict[str, object] | None:
         if isinstance(value, dict):
             keys = list(value)  # pyright: ignore[reportUnknownArgumentType]
 
+            if keys == ["$type"]:
+                # The one non-equality this understands, because it is the only way a partial
+                # filter can say "not null" — Mongo admits no negation there.
+                aliases = value["$type"]  # pyright: ignore[reportUnknownVariableType]
+
+                # A `$type` value is a name or a list of them. Anything else — a BSON type
+                # *number*, which the server also accepts — is a shape this does not read, and
+                # reading it wrong would accept an index over the wrong documents.
+                if isinstance(aliases, str):
+                    named: tuple[object, ...] = (aliases,)
+
+                elif isinstance(aliases, list | tuple):
+                    named = tuple(aliases)  # pyright: ignore[reportUnknownArgumentType]
+
+                else:
+                    return None
+
+                if not all(isinstance(alias, str) for alias in named):
+                    return None
+
+                if not _merge(found, name, ("type", frozenset(named))):
+                    return None
+
+                continue
+
             if keys != ["$eq"]:
                 return None
 
-            if not _merge(found, name, _bson_key(value["$eq"])):  # pyright: ignore[reportUnknownArgumentType]
+            if not _merge(found, name, ("eq", _bson_key(value["$eq"]))):  # pyright: ignore[reportUnknownArgumentType]
                 return None
 
             continue
 
-        if not _merge(found, name, _bson_key(value)):
+        if not _merge(found, name, ("eq", _bson_key(value))):
+            return None
+
+    return found
+
+
+# ....................... #
+
+
+def _wanted_constraints(
+    guarantee: UniqueTogether,
+    read_model: type[BaseModel] | None,
+) -> dict[str, object] | None:
+    """What the index's partial filter has to say, for this guarantee to be kept.
+
+    The declaration's own equalities, plus — when nulls are exempt — a type predicate per field of
+    the tuple. That predicate is how the exemption is expressed at all: a partial filter admits no
+    negation, and ``sparse`` does not serve, since it skips a document only when *every* indexed
+    field is missing and still indexes an explicit null. Naming the type a non-null value has
+    excludes exactly the rows ``skip_null`` exempts, and for a compound tuple the conjunction
+    indexes a document only when all of its fields are non-null — which is the same rule.
+
+    ``None`` when the requirement cannot be stated, which the caller turns into a refusal.
+    """
+
+    found: dict[str, object] = {}
+
+    if guarantee.where is not None:
+        equalities = _guarantee_equalities(guarantee.where)
+
+        if equalities is None:
+            return None
+
+        found.update(equalities)
+
+    if not guarantee.skip_null:
+        return found or None if guarantee.where is not None else None
+
+    if read_model is None:
+        return None
+
+    for field in guarantee.fields:
+        pinned = found.get(field)
+
+        # A field the filter already pins to a non-null value needs no type predicate: that
+        # equality excludes nulls on its own, and adding one would read as a contradiction and
+        # refuse a declaration that is perfectly satisfiable. An equality to *null* is the
+        # opposite — it selects exactly the rows the exemption drops — so it is left to collide.
+        if isinstance(pinned, tuple) and pinned[0] == "eq" and pinned[1] != ("null", None):
+            continue
+
+        declared = read_model.model_fields.get(field)
+
+        if declared is None:
+            return None
+
+        aliases = _bson_types(declared.annotation)
+
+        if aliases is None:
+            return None
+
+        if not _merge(found, field, ("type", frozenset(aliases))):
             return None
 
     return found
@@ -321,10 +496,10 @@ def _guarantee_equalities(where: QueryFilterExpression) -> dict[str, object] | N
                 return all(collect(item) for item in items)
 
             case QueryField(name, op, value) if op == "$eq":
-                return _merge(found, name, _bson_key(value))
+                return _merge(found, name, ("eq", _bson_key(value)))
 
             case QueryField(name, op, value) if op == "$null" and value is True:
-                return _merge(found, name, _bson_key(None))
+                return _merge(found, name, ("eq", _bson_key(None)))
 
             case _:
                 return False
@@ -389,9 +564,7 @@ def _require_guarantee_indexes(
         predicate_fields = (
             collect_filter_field_roots(guarantee.where) if guarantee.where else frozenset()
         )
-        wanted_filter = (
-            _guarantee_equalities(guarantee.where) if guarantee.where is not None else None
-        )
+        wanted_filter = _wanted_constraints(guarantee, spec.read_model)
 
         for index in indexes:
             if not index.unique:
@@ -403,7 +576,7 @@ def _require_guarantee_indexes(
             if frozenset(key for key, _ in index.keys) != wanted:
                 continue
 
-            if guarantee.where is not None:
+            if guarantee.where is not None or guarantee.skip_null:
                 if index.partial_filter is None:
                     continue
 
@@ -422,8 +595,16 @@ def _require_guarantee_indexes(
             # naming no field at all still needs a partialFilterExpression, and a message that
             # suggested a plain index for one would send an operator to a migration that leaves
             # startup failing.
-            filtered = guarantee.where is not None
-            condition = ", ".join(sorted(predicate_fields)) or "its filter"
+            filtered = guarantee.where is not None or guarantee.skip_null
+            condition = (
+                ", ".join(
+                    sorted(
+                        predicate_fields
+                        | (wanted or frozenset() if guarantee.skip_null else frozenset())
+                    )
+                )
+                or "its filter"
+            )
             wanted_json = (
                 "{"
                 + ", ".join(

@@ -57,11 +57,81 @@ Each concern is opt-in and independently useful on its own:
   spec must declare `is_deleted` in `facetable_fields` (which `ensure_index` provisions as
   a filterable attribute on external indexes); the kit fails closed at construction
   otherwise.
+- **`versioned`** — correction lineage: the aggregate stops being overwritten and starts being
+  *corrected*. See [Correcting a fact instead of overwriting it](#correcting-a-fact-instead-of-overwriting-it).
 - **`invariants`** — each [`SystemInvariant`](../writing-operation/system-invariants.md) is enforced
   *preventively* inside the write transaction, at the isolation floor it needs, so a
   write that would break the law is rolled back.
 - **`outbox`** — the [transactional outbox](transactional-outbox.md) wiring: the in-tx
   flush, the domain-event → outbox bridge, and the relay step, from one `OutboxEmit`.
+
+## Correcting a fact instead of overwriting it
+
+A regulated ledger is not allowed to overwrite a fact. `versioned=VersionedPolicy(...)` makes the
+aggregate keep every assertion it ever made: the old value stays readable, the new one says what
+it replaced, and somebody's name is on the change.
+
+```python
+AggregateKit(
+    spec=readings,                                   # domain + update cmd on the versioning mixins
+    versioned=VersionedPolicy(corrections=corrections_spec),
+)
+```
+
+It adds five fields — `root_id`, `version`, `supersedes_id`, `is_current`, `superseded_at` — and
+three operations. `correct(id, expected_version, patch, reason)` retires the current version and
+inserts a successor carrying the predecessor's values with your patch over them, recording who and
+why in one transaction. `history(root_id)` returns the chain oldest-first; `as_of(root_id, at)`
+returns the version that was current at an instant. Every generated read stays on current
+versions, so an aggregate that opted in reads like one that never did.
+
+The generated `update` stops being a way to change what a fact says. It refuses a patch touching
+any field the row asserts, and leaves exactly two writes reaching a version: the one that retires
+it, and soft deletion, which hides a row without contradicting it. The refusal is on the domain
+model rather than on the operation, so a repair script or a hand-written handler meets it too.
+
+Three things are worth knowing before you declare it.
+
+**"Current" is a stored flag, not a derived anti-join.** `NOT EXISTS (SELECT 1 FROM t s WHERE
+s.supersedes_id = t.id)` is the obvious way to express it and the wrong one: an index cannot see an
+anti-join and neither can a `SystemInvariant`, both of which read a column. The flag is redundant
+state on purpose, and the price is that every write must go through the kit's handlers.
+
+**The index that protects it is your migration to write.** The kit refuses to build unless the
+spec declares both guarantees, and startup refuses a deployment whose indexes are missing, naming
+the DDL:
+
+```python
+guarantees = (
+    UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}}),
+    UniqueTogether(fields=("supersedes_id",), skip_null=True),
+)
+```
+
+One current version per fact, and one successor per predecessor. The second is what stops two
+concurrent corrections forking the chain, and it is not optional — without it both corrections
+commit and every chain walker picks whichever row it saw first.
+
+!!! note "On Mongo, `sparse` is not the index you want"
+
+    The second guarantee exempts the first versions, whose `supersedes_id` is null — and a
+    `sparse` unique index does **not** do that: it skips a document only when every indexed field
+    is missing, and it still indexes an explicit null, so two first versions collide under it.
+    The exemption is a `partialFilterExpression` naming what the field *is*
+    (`{supersedes_id: {$type: "string"}}`), which is how a partial filter says "not null" given it
+    admits no negation. Startup checks for that specifically and refuses a sparse index offered in
+    its place, printing the statement that would work.
+
+**The kit declares the law, so your writes run serializable.** `single_current_head` — at most one
+current version per fact — comes with `versioned=`, and it is the detective control for a path
+that reached the rows outside the kit's handlers. Enforcing it preventively is only correct at
+`SERIALIZABLE`, so the kit raises every write on the aggregate to that floor and **fails closed**
+if the wired transaction manager does not report it. That is a deployment requirement, not a
+default you can lower.
+
+A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
+route, its encryption policy and its retention are facts only you hold. Its create command must be
+`CreateCorrectionCmd`.
 
 ## What it emits — separately
 
@@ -139,6 +209,10 @@ See [Deterministic Simulation Testing](../dst/overview.md) for the full model.
   surface is bespoke — `StoredFileKitSpec`'s `upload`/`download`/`delete` are a create-then-upload
   lifecycle, a cross-port join, and a status-based delete, with no plain `create`/`update` at
   all — hand-wire it (as `StoredFileKitSpec` does); the kit's generated CRUD would only get in the way.
+- **`versioned=` is not an audit log, and not bitemporal.** A `Correction` records one
+  aggregate's lineage — who changed this fact and why — not cross-aggregate who-did-what. And it
+  versions *assertions about a fact*, not the period the fact applies to; validity over time is a
+  separate declaration that composes with this one.
 - **It does not couple to a backend.** `registry()` / `facade()` are backend-agnostic;
   you wire the store yourself. No `AggregateKit(...).build_everything(client)`.
 - **`storage=` gives the blob ops, not the join.** Declaring an object-storage bucket

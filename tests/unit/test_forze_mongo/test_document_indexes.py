@@ -76,6 +76,9 @@ class TestMongoDocumentIndexSpecForBinding:
         assert built == MongoDocumentIndexSpec(
             name="items",
             write_relation=("db", "wcol"),
+            # Carried so a `skip_null` guarantee can be checked at all: the exemption is
+            # expressed by naming each field's stored BSON type, which the annotation supplies.
+            read_model=spec.read,
         )
 
 

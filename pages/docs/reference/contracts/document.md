@@ -117,15 +117,17 @@ Two sentences carry the whole doctrine:
 |--------|----------|----------|-------|-----------|
 | `UniqueTogether(fields=…)` | at most one row per field tuple | unique index | unique index | ✅ |
 | `UniqueTogether(fields=…, where=…)` | …among the rows the filter selects | partial unique index | `partialFilterExpression` | ✅ |
-| `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | — | ✅ |
+| `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `partialFilterExpression` with `$type` | ✅ |
 | `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | — | — | — |
 
 `NonOverlapping` is defined and enforced by nothing yet, so every backend refuses a spec that
-declares one. Mongo refuses `skip_null` for the same reason: a `sparse` index reads like the
-right mechanism and is not one — it skips a document only when *every* indexed field is missing,
-and it still indexes an explicit null, so the tuple the exemption was meant to let through stays
-in the index and conflicts. A capability that reconciles and then fails at the first write is
-worse than one that says no.
+declares one — a capability that reconciles and then fails at the first write is worse than one
+that says no.
+
+On Mongo the null exemption is a `partialFilterExpression` naming each field's stored BSON type,
+not a `sparse` index: sparse skips a document only when *every* indexed field is missing and still
+indexes an explicit null, so the tuples the exemption was meant to let through would collide under
+it. Startup refuses a sparse index offered for a `skip_null` guarantee.
 
 Three things happen to a declared guarantee, and a failure at any of them is loud:
 

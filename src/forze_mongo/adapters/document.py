@@ -57,6 +57,7 @@ class MongoDocumentAdapter(DocumentAdapter[R, D, C, U]):
     storage_guarantees: ClassVar[StorageGuaranteeCapabilities] = StorageGuaranteeCapabilities(
         unique_together=True,
         unique_together_filtered=True,
+        unique_together_skip_null=True,
     )
     """What this store enforces, given the index the deployment created.
 
@@ -64,13 +65,12 @@ class MongoDocumentAdapter(DocumentAdapter[R, D, C, U]):
     A duplicate-key error surfaces as ``conflict``, matching the in-memory store and the
     Postgres adapter.
 
-    ``unique_together_skip_null`` is absent because Mongo has no mechanism for it. A sparse
-    index is the obvious candidate and does something else: it skips a document only when
-    *every* indexed field is missing, and it still indexes an explicit null — so a tuple
-    holding one stays in the index and conflicts, which is what the exemption exists to
-    prevent. A ``partialFilterExpression`` cannot close the gap either, since the operators it
-    admits cannot say "not null". Refusing at wiring is the only honest answer: a capability
-    that reconciles and then does not enforce is worse than one that refuses.
+    The null exemption is a ``partialFilterExpression`` naming what each field of the tuple
+    *is* — ``{field: {$type: "string"}}`` — which is how a partial filter says "not null", since
+    it admits no negation. Not ``sparse``, which reads like the mechanism and is not: it skips a
+    document only when *every* indexed field is missing and still indexes an explicit null, so
+    the rows the exemption exists to let through would collide. Startup validation checks for
+    the type predicate specifically and refuses a sparse index offered in its place.
     """
 
     document_cache: DocumentCache[R]

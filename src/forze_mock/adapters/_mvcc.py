@@ -332,6 +332,11 @@ class MvccTx:
         # Before the serialization checks, and raising ``conflict`` rather than
         # ``serialization_failure``, for the same reason a duplicate id does: a unique
         # violation is what the backend raises, at every isolation level.
+        # One merged view per namespace, not per key: the merge copies the whole namespace, and
+        # the loop runs once per re-checked key — a batch write into a large namespace would pay
+        # for that copy on every row. Nothing here mutates either side, so the view is stable.
+        published: dict[str, dict[Any, Any]] = {}
+
         for (ns, key), check in self.guarantee_rechecks.items():
             live = state.documents.get(ns)
 
@@ -347,7 +352,34 @@ class MvccTx:
             if row is _TOMBSTONE:
                 continue
 
-            check(live, key, row)
+            if ns not in published:
+                published[ns] = self._published(ns, state)
+
+            check(published[ns], key, row)
+
+    def _published(self, ns: str, state: Any) -> dict[Any, Any]:
+        """The namespace as it will look once this transaction commits.
+
+        The committed rows with this transaction's own overlay laid over them, which is the state
+        the check has to judge — not the committed rows alone. A transaction that moves one row
+        out of a guarantee's scope and another into it is the ordinary shape of a correction, and
+        against the committed store alone the row being *replaced* is still there, so the
+        replacement reads as a duplicate of something that is on its way out.
+
+        Concurrency is unaffected: a row a concurrent transaction published since this one began
+        is in the committed store, so it is in here too, and a genuine duplicate is still caught.
+        """
+
+        merged = dict(state.documents.get(ns) or {})
+
+        for key, value in (self.overlays.get(ns) or {}).items():
+            if value is _TOMBSTONE:
+                merged.pop(key, None)
+
+            else:
+                merged[key] = value
+
+        return merged
 
     def validate(self, state: Any) -> None:
         """Raise on a create unique violation or a conflict with a concurrently-committed write.

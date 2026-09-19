@@ -2,11 +2,13 @@
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import IntEnum, StrEnum
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 from bson import Decimal128
+from pydantic import BaseModel
 
 from forze.application.contracts.guarantees import UniqueTogether
 from forze.base.exceptions import CoreException
@@ -16,10 +18,12 @@ from forze_mongo.kernel.introspect import MongoIndexInfo, MongoIntrospector
 from forze_mongo.kernel.validate_indexes import (
     MongoDocumentIndexSpec,
     _bson_key,  # pyright: ignore[reportPrivateUsage]
+    _bson_types,  # pyright: ignore[reportPrivateUsage]
     _equalities,  # pyright: ignore[reportPrivateUsage]
     _guarantee_equalities,  # pyright: ignore[reportPrivateUsage]
     _mongosh,  # pyright: ignore[reportPrivateUsage]
     _require_guarantee_indexes,  # pyright: ignore[reportPrivateUsage]
+    _wanted_constraints,  # pyright: ignore[reportPrivateUsage]
     validate_mongo_document_indexes,
 )
 
@@ -62,19 +66,19 @@ class TestWhatMongoDeclaresItCanKeep:
     been refused — so the claim is pinned here rather than read off the docstring.
     """
 
-    def test_skip_null_is_not_claimed(self) -> None:
-        # Mongo has no mechanism for it. A sparse index skips a document only when *every*
-        # indexed field is missing and still indexes an explicit null, so a tuple holding one
-        # stays in the index and conflicts — the opposite of the exemption. A
-        # `partialFilterExpression` cannot say "not null" either.
-        assert MongoDocumentAdapter.storage_guarantees.unique_together_skip_null is False
+    def test_skip_null_is_claimed(self) -> None:
+        # Not through `sparse`, which reads like the mechanism and is not — it still indexes an
+        # explicit null. Through a `partialFilterExpression` naming what the field *is*, which
+        # is how a partial filter says "not null" given it admits no negation.
+        assert MongoDocumentAdapter.storage_guarantees.unique_together_skip_null is True
 
-    def test_a_skip_null_guarantee_is_refused_by_name(self) -> None:
-        unmet = MongoDocumentAdapter.storage_guarantees.unmet(
-            UniqueTogether(fields=("supersedes_id",), skip_null=True)
+    def test_a_skip_null_guarantee_is_met(self) -> None:
+        assert (
+            MongoDocumentAdapter.storage_guarantees.unmet(
+                UniqueTogether(fields=("supersedes_id",), skip_null=True)
+            )
+            == ()
         )
-
-        assert unmet == ("exempting rows whose tuple holds a null (`skip_null`)",)
 
     def test_the_filtered_form_is_claimed(self) -> None:
         # The contrast: the refusal above is about `skip_null`, not about Mongo being unable to
@@ -268,8 +272,8 @@ class TestTheFilterIsComparedBySelectedDocuments:
         # Reduced to typed keys rather than raw values, so the comparison cannot be fooled by
         # Python equalities the server does not share.
         assert _guarantee_equalities({"$values": {"a": 1, "b": "x"}}) == {
-            "a": ("number", 1.0),
-            "b": ("str", "x"),
+            "a": ("eq", ("number", 1)),
+            "b": ("eq", ("str", "x")),
         }
 
     def test_a_boolean_is_not_the_number_one(self) -> None:
@@ -562,3 +566,225 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
         # Decimal128, so an index filter read back from the server carries the stored spelling
         # while the guarantee carries the domain one. Telling them apart refuses a correct index.
         assert _bson_key(stored) == _bson_key(declared)
+
+
+# ....................... #
+
+
+class _Colour(StrEnum):
+    RED = "red"
+
+
+class _Tier(IntEnum):
+    GOLD = 1
+
+
+class TestNamingAFieldsStoredType:
+    """The null exemption is expressed by naming what a field *is*, so the naming must be right.
+
+    Every answer here is either a type this adapter demonstrably writes, or a refusal. There is
+    no default: guessing would index the wrong documents, and an index over the wrong documents
+    is a guarantee that silently is not kept.
+    """
+
+    @pytest.mark.parametrize(
+        ("annotation", "expected"),
+        [
+            (str, ("string",)),
+            (UUID, ("string",)),  # written as its canonical string
+            (bool, ("bool",)),  # a bool is an int in Python and is not in BSON
+            (int, ("int", "long")),  # which one depends on magnitude
+            (float, ("double",)),
+            (Decimal, ("decimal",)),  # written as a Decimal128
+            (datetime, ("date",)),
+            (date, ("date",)),
+            (bytes, ("binData",)),
+            (UUID | None, ("string",)),  # the optional wrapper is stripped
+            (str | int, ("string", "int", "long")),
+            (list[str], ("array",)),
+            (_Colour, ("string",)),
+            (_Tier, ("int", "long")),
+        ],
+    )
+    def test_it_names_what_the_adapter_writes(
+        self,
+        annotation: object,
+        expected: tuple[str, ...],
+    ) -> None:
+        assert _bson_types(annotation) == expected
+
+    @pytest.mark.parametrize(
+        "annotation",
+        [
+            None,  # an unannotated field
+            object,  # nothing this can name
+            dict[str, int],  # a stored document, whose fields are not the guarantee's
+            UUID | object,  # one unresolvable arm poisons the union
+        ],
+    )
+    def test_it_refuses_what_it_cannot_name(self, annotation: object) -> None:
+        assert _bson_types(annotation) is None
+
+
+# ....................... #
+
+
+class TestTheExemptionRefusesWhatItCannotCheck:
+    @staticmethod
+    def _spec(read_model: object) -> MongoDocumentIndexSpec:
+        return MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(UniqueTogether(fields=("pointer",), skip_null=True),),
+            read_model=read_model,  # type: ignore[arg-type]
+        )
+
+    @staticmethod
+    def _index() -> MongoIndexInfo:
+        return MongoIndexInfo(
+            name="ix",
+            keys=(("pointer", 1),),
+            unique=True,
+            partial_filter={"pointer": {"$type": "string"}},
+        )
+
+    def test_a_matching_index_is_accepted(self) -> None:
+        class Model(BaseModel):
+            pointer: UUID | None = None
+
+        _require_guarantee_indexes(
+            self._spec(Model), [self._index()], database="db", collection="coll"
+        )
+
+    def test_no_read_model_is_a_refusal(self) -> None:
+        # Without it the exemption cannot be stated at all, so the index cannot be checked —
+        # and an unverifiable guarantee is refused rather than assumed kept.
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(None), [self._index()], database="db", collection="coll"
+            )
+
+    def test_a_filtered_exemption_is_not_accepted_on_its_filter_alone(self) -> None:
+        """The refusal above passes for a weaker reason than it looks.
+
+        With only `skip_null` there is nothing to compare either way, so an unverifiable
+        exemption and a missing index are indistinguishable. Add a `where` and they part: the
+        filter's equalities *can* be checked, and an index matching only those keeps half the
+        guarantee while exempting nothing. That is the index this has to refuse.
+        """
+
+        spec = MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(
+                UniqueTogether(
+                    fields=("pointer",),
+                    where={"$values": {"live": True}},
+                    skip_null=True,
+                ),
+            ),
+            read_model=None,
+        )
+        index = MongoIndexInfo(
+            name="ix",
+            keys=(("pointer", 1),),
+            unique=True,
+            partial_filter={"live": True},
+        )
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(spec, [index], database="db", collection="coll")
+
+    def test_a_field_absent_from_the_read_model_is_a_refusal(self) -> None:
+        class Model(BaseModel):
+            other: str = ""
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(Model), [self._index()], database="db", collection="coll"
+            )
+
+    def test_an_unnameable_type_is_a_refusal(self) -> None:
+        class Model(BaseModel):
+            model_config = {"arbitrary_types_allowed": True}
+            pointer: object = None
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(Model), [self._index()], database="db", collection="coll"
+            )
+
+    @pytest.mark.parametrize(
+        "partial_filter",
+        [
+            {"pointer": {"$type": 2}},  # an alias that is not a name
+            {"pointer": {"$type": ["string", 7]}},
+            {"$and": [{"pointer": {"$type": "string"}}, {"pointer": {"$type": "int"}}]},
+            # The contradiction straddling a branch and a sibling field, which is where the
+            # two constraints meet through a different path than two branches do.
+            {"$and": [{"pointer": {"$type": "int"}}], "pointer": {"$type": "string"}},
+        ],
+    )
+    def test_an_index_whose_type_clause_cannot_be_read_is_refused(
+        self,
+        partial_filter: dict[str, object],
+    ) -> None:
+        class Model(BaseModel):
+            pointer: UUID | None = None
+
+        index = MongoIndexInfo(
+            name="ix", keys=(("pointer", 1),), unique=True, partial_filter=partial_filter
+        )
+
+        with pytest.raises(CoreException):
+            _require_guarantee_indexes(
+                self._spec(Model), [index], database="db", collection="coll"
+            )
+
+
+# ....................... #
+
+
+class TestAFilterThatAlreadyExcludesNulls:
+    """A `where` equality on a field the exemption also covers is not a contradiction.
+
+    Pinning a field to a non-null value excludes nulls by itself, so adding a type predicate on
+    top reads as two constraints on one field and refuses a declaration that is perfectly
+    satisfiable — and the index an operator would write for it is the one with the equality.
+    """
+
+    @staticmethod
+    def _model() -> type[BaseModel]:
+        class Model(BaseModel):
+            pointer: UUID | None = None
+            live: bool = True
+
+        return Model
+
+    def test_a_non_null_equality_stands_in_for_the_type_predicate(self) -> None:
+        guarantee = UniqueTogether(
+            fields=("pointer",), where={"$values": {"pointer": "x"}}, skip_null=True
+        )
+
+        assert _wanted_constraints(guarantee, self._model()) == {
+            "pointer": ("eq", ("str", "x"))
+        }
+
+    def test_an_equality_to_null_does_not(self) -> None:
+        # The opposite case: a filter pinning the field *to* null selects exactly the rows the
+        # exemption drops, so the two genuinely contradict and the declaration is refused.
+        guarantee = UniqueTogether(
+            fields=("pointer",), where={"$values": {"pointer": None}}, skip_null=True
+        )
+
+        assert _wanted_constraints(guarantee, self._model()) is None
+
+    def test_a_field_outside_the_filter_still_needs_its_predicate(self) -> None:
+        guarantee = UniqueTogether(
+            fields=("pointer",), where={"$values": {"live": True}}, skip_null=True
+        )
+
+        assert _wanted_constraints(guarantee, self._model()) == {
+            "live": ("eq", ("bool", True)),
+            "pointer": ("type", frozenset({"string"})),
+        }

@@ -19,7 +19,7 @@ operations — the designed path for the lifecycle a generic scaffold cannot der
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, final
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -70,7 +70,17 @@ from forze_kits.aggregates.soft_deletion import (
     soft_delete_wiring,
 )
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
+from forze_kits.aggregates.versioned import (
+    VersionedFacade,
+    VersionedKernelOp,
+    VersionedPolicy,
+    current_versions_only_mapper,
+    single_current_head,
+    versioned_facade,
+    versioned_wiring,
+)
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
+from forze_kits.domain.versioned.constants import IS_CURRENT_FIELD
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.integrations.search import SearchRebuildReport, rebuild_search_index
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
@@ -90,12 +100,45 @@ C = TypeVar("C", bound=BaseDTO, default=BaseDTO)
 U = TypeVar("U", bound=BaseDTO, default=BaseDTO)
 
 # Write ops an aggregate's laws hang off — the result carries the read model to scope them by.
-_WRITE_OPS = (DocumentKernelOp.CREATE, DocumentKernelOp.UPDATE)
+_WRITE_OPS: tuple[StrKey, ...] = (
+    DocumentKernelOp.CREATE,
+    DocumentKernelOp.UPDATE,
+    # A correction is a write like any other, and the law a versioned aggregate most wants — at
+    # most one current version per fact — is one it could break. Absent from the registry when
+    # the kit is not versioned, and the binding skips a key that is not there.
+    VersionedKernelOp.CORRECT,
+)
 
 # Ops that stage domain events (so the outbox flush belongs there). ``@event_emitter`` fires only on
 # ``Document.update``, so a generated CREATE never stages — flushing it would just mark the route
 # flushed and poison a later stage in the same task.
 _EMIT_OPS = (DocumentKernelOp.UPDATE,)
+
+
+def _compose_mappers(first: Any, second: Any) -> Any:
+    """A mapper factory running *first* then *second*, or *second* alone when there is none.
+
+    The mapper slots are shared between the arms a kit composes, so an arm that assigned its own
+    would drop the one before it — and each mapper conjoins into the filter the previous one
+    produced, which is what makes stacking them mean "both restrictions".
+    """
+
+    if first is None:
+        return second
+
+    def _factory(ctx: Any) -> Any:
+        before = first(ctx)
+        after = second(ctx)
+
+        async def _map(source: Any) -> Any:
+            return await after(await before(source))
+
+        return _map
+
+    return _factory
+
+
+# ....................... #
 
 
 @final
@@ -131,6 +174,12 @@ class BackendRequirements:
 
     crypto_required: bool
     """Whether a keyring (``CryptoDepsModule``) is required — the spec declares field encryption."""
+
+    corrections_route: StrKey | None = None
+    """Route the correction records must be wired under, or ``None`` without ``versioned``.
+
+    A second ``rw_documents`` entry: a correction writes two aggregates, and the record is the
+    one an author is least likely to anticipate, since nothing in their own code names it."""
 
 
 @final
@@ -177,6 +226,15 @@ class AggregateKit(Generic[R, D, C, U]):
     blob (a ``storage_key`` field, an upload-then-create lifecycle) is the author's, via the escape
     hatch. Its ``name`` must differ from the document ``spec.name`` (its ``list``/``delete`` ops
     would otherwise collide)."""
+
+    versioned: VersionedPolicy | None = None
+    """Wire correction lineage: current-only reads, `correct`, `history` and `as_of`.
+
+    Requires the versioning mixins on the domain and update-command models, and requires the spec
+    to declare both storage guarantees — a versioned aggregate's correctness rests on them rather
+    than on its own write path, so the kit refuses to build one that could reach a store without
+    them. The policy carries the spec for the correction records, which is the author's: its
+    relation and route are facts only they hold."""
 
     invariants: tuple[SystemInvariant, ...] = attrs.field(factory=tuple)
     """Cross-aggregate laws enforced preventively on the write ops (scope params read off the result)."""
@@ -227,6 +285,19 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"(ensure_index) publishes facetable fields as filterable attributes.",
             )
 
+        if (
+            self.versioned is not None
+            and self.search is not None
+            and IS_CURRENT_FIELD not in self.search.facetable_fields
+        ):
+            raise exc.configuration(
+                f"AggregateKit composes versioned with search {self.search.name!r}, so the "
+                f"kit's search query ops return only current versions — the index must be able "
+                f"to filter {IS_CURRENT_FIELD!r}. Declare it on the search spec "
+                f"(facetable_fields={{{IS_CURRENT_FIELD!r}}}); an index that cannot filter it "
+                "would answer with facts that have since been corrected.",
+            )
+
     # ....................... #
 
     def build_unfrozen(self, *, tx_route: StrKey = "default") -> OperationRegistry:
@@ -249,9 +320,50 @@ class AggregateKit(Generic[R, D, C, U]):
         *,
         tx_route: StrKey = "default",
     ) -> OperationFacadeFactory[DocumentFacade[R, C, U]]:
-        """A per-call, precisely-typed :class:`DocumentFacade` factory over the composed registry."""
+        """A per-call, precisely-typed document facade over the composed registry.
 
-        return document_facade(runtime, self.registry(tx_route=tx_route), self.spec)
+        A :class:`~forze_kits.aggregates.versioned.VersionedFacade` when the kit declares
+        ``versioned``, which is a ``DocumentFacade`` with ``correct``, ``history`` and ``as_of``
+        on it — a facade without them would leave the lineage operations in the registry and
+        unreachable from the kit's own surface, which is the one most callers use.
+        """
+
+        registry = self.registry(tx_route=tx_route)
+
+        if self.versioned is not None:
+            # A `VersionedFacade` *is* a `DocumentFacade`, so every caller of this method keeps
+            # working and gains the lineage operations; the cast is only because
+            # `OperationFacadeFactory` is invariant in its facade type. A caller who wants those
+            # operations to be *visible* to a type checker asks for `lineage_facade()`.
+            return cast(
+                "OperationFacadeFactory[DocumentFacade[R, C, U]]",
+                versioned_facade(runtime, registry, self.spec),
+            )
+
+        return document_facade(runtime, registry, self.spec)
+
+    # ....................... #
+
+    def lineage_facade(
+        self,
+        runtime: ExecutionRuntime,
+        *,
+        tx_route: StrKey = "default",
+    ) -> OperationFacadeFactory[VersionedFacade[R, C, U]]:
+        """A per-call :class:`VersionedFacade` factory (requires ``versioned``).
+
+        The precisely-typed counterpart of :meth:`facade`, which hands back the same object
+        under the wider type. Named for what it adds rather than for the config field, matching
+        :meth:`storage_facade`.
+        """
+
+        if self.versioned is None:
+            raise exc.precondition(
+                "AggregateKit.lineage_facade requires a versioning policy (versioned=…) on the "
+                "kit — without one there is no correction lineage to reach.",
+            )
+
+        return versioned_facade(runtime, self.registry(tx_route=tx_route), self.spec)
 
     # ....................... #
 
@@ -382,6 +494,16 @@ class AggregateKit(Generic[R, D, C, U]):
 
         registry = SpecRegistry().register(self.spec, source=SpecSource.KIT)
 
+        if self.versioned is not None:
+            # A correction writes a second aggregate, on its own route. Leaving it out means an
+            # application provisioning from the advertised inventory omits that route entirely,
+            # and the omission surfaces the first time somebody corrects a fact rather than at
+            # startup — which is the whole reason this method exists.
+            # Registered without an edge: the only edge kind is ``REBUILDS_FROM``, and a
+            # correction record is not derived from the document — it is a record *about* a
+            # change to it, which nothing can reconstruct from the rows.
+            registry.register(self.versioned.corrections, source=SpecSource.KIT)
+
         if self.storage is not None:
             registry.register(self.storage, source=SpecSource.KIT)
 
@@ -428,6 +550,9 @@ class AggregateKit(Generic[R, D, C, U]):
             storage_route=self.storage.name if self.storage is not None else None,
             outbox_route=self.outbox.spec.name if self.outbox is not None else None,
             crypto_required=self.spec.encryption is not None,
+            corrections_route=(
+                self.versioned.corrections.name if self.versioned is not None else None
+            ),
         )
 
     # ....................... #
@@ -437,9 +562,21 @@ class AggregateKit(Generic[R, D, C, U]):
         ns = spec.default_namespace
 
         soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
+        versioned = (
+            versioned_wiring(spec, self.versioned, soft_deleted=self.soft_delete)
+            if self.versioned is not None
+            else None
+        )
+
         mappers: DocumentMappers[Any, Any, Any, Any] = (
             soft.read_mappers() if soft is not None else DocumentMappers()
         )
+
+        if versioned is not None:
+            # After soft-delete, and composing with it rather than replacing it: the two arms
+            # share the list-family mapper slots, so a kit declaring both has to apply both.
+            mappers = versioned.mappers(mappers)
+
         reg = build_document_registry(spec, mappers=mappers)
 
         if self.search is not None:
@@ -460,6 +597,23 @@ class AggregateKit(Generic[R, D, C, U]):
             if self.search is not None:
                 reg = self._sync_soft_delete_to_search(reg, ns=ns, tx_route=tx_route)
 
+        if versioned is not None:
+            reg = versioned.bind(reg, ns=ns)
+
+            if ns.key(VersionedKernelOp.CORRECT) in reg.operation_keys():
+                # The correction writes four times across two aggregates; without one
+                # transaction a failure between them leaves a fact with two current versions
+                # or none.
+                reg = (
+                    reg.bind(ns.key(VersionedKernelOp.CORRECT))
+                    .bind_tx()
+                    .set_route(tx_route)
+                    .finish(deep=True)
+                )
+
+                if self.search is not None:
+                    reg = self._sync_correction_to_search(reg, ns=ns, tx_route=tx_route)
+
         reg = self._attach_invariants(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_outbox_flush(reg, ns=ns, tx_route=tx_route)
 
@@ -473,6 +627,61 @@ class AggregateKit(Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _sync_correction_to_search(
+        self,
+        reg: OperationRegistry,
+        *,
+        ns: Any,
+        tx_route: StrKey,
+    ) -> OperationRegistry:
+        """Index the successor a correction produced, as a write of any other kind would be.
+
+        The document sync binds ``CREATE``/``UPDATE``/``KILL``, and a correction is none of
+        them — so without this the index keeps the superseded version and never learns about its
+        replacement, and a search returns a fact that has been corrected.
+
+        **Both** rows, not only the successor. The predecessor was indexed while it was current,
+        so its entry still says so; re-indexing only the new version leaves the old one in the
+        index claiming to be current, which the read-side restriction cannot filter out because
+        it reads that same stale value. It is removed instead — the kit's search reads are
+        restricted to current versions anyway, so a superseded row has no business being there,
+        and removal needs no re-read.
+        """
+
+        if self.search is None:  # pragma: no cover - guarded at the call site
+            return reg
+
+        key = ns.key(VersionedKernelOp.CORRECT)
+
+        if self.search_delivery is not None:
+            # Durable delivery: stage a marker per row inside the correction's own transaction,
+            # nothing staged on rollback. Two markers, because a correction touches two rows —
+            # the consumer re-reads each row's committed state, so the successor is indexed and
+            # the predecessor's entry follows whatever it now says.
+            wiring = self.search_sync_wiring()
+
+            return (
+                reg.bind(key)
+                .bind_tx()
+                .set_route(tx_route)
+                .on_success(wiring.stage_on_write())
+                .on_success(wiring.stage_on_target())
+                .finish(deep=True)
+            )
+
+        steps = SearchSyncSteps(search=self.search)
+
+        return (
+            reg.bind(key)
+            .bind_tx()
+            .set_route(tx_route)
+            .after_commit(steps.upsert_on_write())
+            .after_commit(steps.delete_on_kill(step_id="search_sync_superseded"))
+            .finish(deep=True)
+        )
+
+    # ....................... #
+
     def _search_mappers(self) -> SearchMappers[Any]:
         """The kit's search request mappers — soft-delete exclusion on every query op.
 
@@ -483,14 +692,33 @@ class AggregateKit(Generic[R, D, C, U]):
         ``build_search_registry`` / ``bind_search_sync`` users are unaffected either way.
         """
 
-        if not self.soft_delete:
-            return SearchMappers()
+        mappers: SearchMappers[Any] = SearchMappers()
 
-        return SearchMappers(
-            search=exclude_soft_deleted_mapper,
-            projected_search=exclude_soft_deleted_mapper,
-            cursor_search=exclude_soft_deleted_mapper,
-            projected_search_cursor=exclude_soft_deleted_mapper,
+        if self.soft_delete:
+            mappers = SearchMappers(
+                search=exclude_soft_deleted_mapper,
+                projected_search=exclude_soft_deleted_mapper,
+                cursor_search=exclude_soft_deleted_mapper,
+                projected_search_cursor=exclude_soft_deleted_mapper,
+            )
+
+        if self.versioned is None:
+            return mappers
+
+        # Same reason as the document list family: an index carries every version, so a search
+        # that did not restrict to current ones would answer with facts that have been
+        # corrected — and the superseded rows are in the index precisely because the sync above
+        # puts them there.
+        return attrs.evolve(
+            mappers,
+            search=_compose_mappers(mappers.search, current_versions_only_mapper),
+            projected_search=_compose_mappers(
+                mappers.projected_search, current_versions_only_mapper
+            ),
+            cursor_search=_compose_mappers(mappers.cursor_search, current_versions_only_mapper),
+            projected_search_cursor=_compose_mappers(
+                mappers.projected_search_cursor, current_versions_only_mapper
+            ),
         )
 
     # ....................... #
@@ -607,10 +835,10 @@ class AggregateKit(Generic[R, D, C, U]):
         ns: Any,
         tx_route: StrKey,
     ) -> OperationRegistry:
-        if not self.invariants:
+        if not self._laws():
             return reg
 
-        enforcements = tuple(self._enforcement(law) for law in self.invariants)
+        enforcements = tuple(self._enforcement(law) for law in self._laws())
 
         for op in _WRITE_OPS:
             key = ns.key(op)
@@ -643,6 +871,22 @@ class AggregateKit(Generic[R, D, C, U]):
                 )
 
         return reg
+
+    # ....................... #
+
+    def _laws(self) -> tuple[SystemInvariant, ...]:
+        """The author's declared laws, plus the one a versioned aggregate carries with it.
+
+        `single_current_head` is not an application policy — it restates the invariant the
+        correction command already maintains, so an author who had to remember it would lose the
+        detective control without seeing any difference until a path outside the kit's handlers
+        left a second current row.
+        """
+
+        if self.versioned is None:
+            return self.invariants
+
+        return (*self.invariants, single_current_head(self.spec))
 
     # ....................... #
 
