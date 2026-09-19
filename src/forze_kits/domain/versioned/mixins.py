@@ -14,7 +14,7 @@ from forze.domain.validation import update_validator
 from .constants import (
     ALLOWED_ORDINARY_DIFF_KEYS,
     ALLOWED_SUPERSEDE_DIFF_KEYS,
-    IS_CURRENT_FIELD,
+    LINEAGE_DIFF_KEYS,
 )
 
 # ----------------------- #
@@ -50,26 +50,43 @@ class VersionedMixin(CoreModel):
     # ....................... #
 
     @update_validator
-    def _validate_versioning(before: Self, _: Self, diff: JsonDict) -> None:
+    def _validate_versioning(before: Self, after: Self, diff: JsonDict) -> None:
         """Refuse any write that edits what a version asserts, on a current row or an old one.
 
         A version is an assertion someone made about the fact, and the aggregate's whole offer is
         that such an assertion is replaced by a successor rather than rewritten: an update that
         changes one in place leaves no earlier value, no successor and nothing recording that
-        anyone changed it. Two writes are not assertions and pass — the one that retires a
-        predecessor, and soft deletion, which hides a row without contradicting it.
+        anyone changed it. Two writes are not assertions and pass — the one that retires the
+        version in force, stamped with when it stopped being so, and soft deletion, which hides
+        a row without contradicting it.
 
         The guard sits on the model rather than on the generated operation because a repair
         script, a bulk update or a hand-written handler reaches the row without passing one.
         """
 
         keys = set(diff.keys())
-        superseding = IS_CURRENT_FIELD in keys and keys <= ALLOWED_SUPERSEDE_DIFF_KEYS
+        lineage = keys & LINEAGE_DIFF_KEYS
+        # The transition, not the field names: a write naming `is_current` is as easily one that
+        # returns a replaced version to force as one that retires the version in force.
+        superseding = (
+            bool(lineage)
+            and keys <= ALLOWED_SUPERSEDE_DIFF_KEYS
+            and before.is_current
+            and after.is_current is False
+            and after.superseded_at is not None
+        )
 
         if not before.is_current and not superseding:
             raise exc.domain(
                 "Cannot update a superseded version of a fact — correct the current version "
                 "instead, which records the change and leaves this one readable.",
+            )
+
+        if lineage and not superseding:
+            raise exc.domain(
+                "Cannot set a version's lineage fields directly — the only write that may is "
+                "the one retiring the version in force, which leaves it no longer current and "
+                "stamped with when it stopped being so.",
             )
 
         if not keys <= ALLOWED_ORDINARY_DIFF_KEYS:

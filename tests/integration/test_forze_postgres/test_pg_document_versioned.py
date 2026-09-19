@@ -26,6 +26,7 @@ import pytest
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import utcnow
 from forze.domain.models import ReadDocument
 from forze_kits.aggregates.versioned import (
     ONE_CURRENT_VERSION,
@@ -133,9 +134,7 @@ async def _tables(pg_client: PostgresClient) -> tuple[str, str]:
         """
     )
     # The two guarantees, as the migration an operator writes.
-    await pg_client.execute(
-        f"CREATE UNIQUE INDEX ON {readings} (root_id) WHERE is_current;"
-    )
+    await pg_client.execute(f"CREATE UNIQUE INDEX ON {readings} (root_id) WHERE is_current;")
     await pg_client.execute(
         f"CREATE UNIQUE INDEX ON {readings} (supersedes_id) WHERE supersedes_id IS NOT NULL;"
     )
@@ -199,9 +198,7 @@ def _correct_handler(ctx: ExecutionContext, readings: str, corrections: str) -> 
 
 
 class TestACorrectionAgainstPostgres:
-    async def test_it_supersedes_under_the_real_indexes(
-        self, pg_client: PostgresClient
-    ) -> None:
+    async def test_it_supersedes_under_the_real_indexes(self, pg_client: PostgresClient) -> None:
         readings, corrections = await _tables(pg_client)
         ctx = _ctx(pg_client, readings, corrections)
         spec = _spec(readings)
@@ -235,9 +232,7 @@ class TestACorrectionAgainstPostgres:
         assert [row["is_current"] for row in rows] == [False, True]
         assert rows[0]["superseded_at"] is not None
 
-        records = await pg_client.fetch_all(
-            f"SELECT reason FROM {corrections}", row_factory="dict"
-        )
+        records = await pg_client.fetch_all(f"SELECT reason FROM {corrections}", row_factory="dict")
 
         assert [row["reason"] for row in records] == ["meter misread"]
 
@@ -262,9 +257,7 @@ class TestACorrectionAgainstPostgres:
             # The successor, while the predecessor is still current — the order §5.2 reads as
             # natural and the index forbids.
             await cmd.create(
-                ReadingCreate(
-                    meter="m-1", kwh=120, root_id=fact, version=2, supersedes_id=fact
-                ),
+                ReadingCreate(meter="m-1", kwh=120, root_id=fact, version=2, supersedes_id=fact),
                 id=uuid4(),
             )
 
@@ -286,7 +279,9 @@ class TestACorrectionAgainstPostgres:
         fact = uuid4()
         await cmd.create(ReadingCreate(meter="m-1", kwh=100, root_id=fact, version=1), id=fact)
         # Retire it, so the first guarantee is not what refuses the second insert.
-        await cmd.update(pk=fact, rev=1, dto=ReadingUpdate(is_current=False))
+        await cmd.update(
+            pk=fact, rev=1, dto=ReadingUpdate(is_current=False, superseded_at=utcnow())
+        )
         await cmd.create(
             ReadingCreate(meter="m-1", kwh=120, root_id=fact, version=2, supersedes_id=fact),
             id=uuid4(),
@@ -294,9 +289,7 @@ class TestACorrectionAgainstPostgres:
 
         with pytest.raises(CoreException) as caught:
             await cmd.create(
-                ReadingCreate(
-                    meter="m-1", kwh=130, root_id=fact, version=2, supersedes_id=fact
-                ),
+                ReadingCreate(meter="m-1", kwh=130, root_id=fact, version=2, supersedes_id=fact),
                 id=uuid4(),
             )
 
@@ -313,9 +306,7 @@ class TestACorrectionAgainstPostgres:
 
         for _ in range(3):
             fact = uuid4()
-            await cmd.create(
-                ReadingCreate(meter="m", kwh=1, root_id=fact, version=1), id=fact
-            )
+            await cmd.create(ReadingCreate(meter="m", kwh=1, root_id=fact, version=1), id=fact)
 
         rows = await pg_client.fetch_all(f"SELECT id FROM {readings}", row_factory="dict")
 
@@ -363,9 +354,7 @@ class TestAMissingMigrationIsABootFailure:
         self, pg_client: PostgresClient
     ) -> None:
         readings, _ = await _tables(pg_client)
-        await pg_client.execute(
-            f"DROP INDEX {readings}_root_id_idx;"
-        )
+        await pg_client.execute(f"DROP INDEX {readings}_root_id_idx;")
 
         with pytest.raises(CoreException) as caught:
             await self._validate(pg_client, readings)
@@ -376,9 +365,7 @@ class TestAMissingMigrationIsABootFailure:
         assert "root_id" in message
         assert "The migration is what satisfies a guarantee" in message
 
-    async def test_a_dropped_successor_index_refuses_too(
-        self, pg_client: PostgresClient
-    ) -> None:
+    async def test_a_dropped_successor_index_refuses_too(self, pg_client: PostgresClient) -> None:
         # Both guarantees are load-bearing, so both are checked; validating only the first
         # would leave the fork the second exists to prevent.
         readings, _ = await _tables(pg_client)
@@ -414,23 +401,17 @@ class TestBothStoresRefuseTheSameWay:
 
         with pytest.raises(CoreException) as from_postgres:
             await pg_ctx.doc.command(spec).create(
-                ReadingCreate(
-                    meter="m-1", kwh=120, root_id=fact, version=2, supersedes_id=fact
-                ),
+                ReadingCreate(meter="m-1", kwh=120, root_id=fact, version=2, supersedes_id=fact),
                 id=uuid4(),
             )
 
         mock_ctx = context_from_modules(MockDepsModule())
         mock_cmd = mock_ctx.doc.command(spec)
-        await mock_cmd.create(
-            ReadingCreate(meter="m-1", kwh=100, root_id=fact, version=1), id=fact
-        )
+        await mock_cmd.create(ReadingCreate(meter="m-1", kwh=100, root_id=fact, version=1), id=fact)
 
         with pytest.raises(CoreException) as from_mock:
             await mock_cmd.create(
-                ReadingCreate(
-                    meter="m-1", kwh=120, root_id=fact, version=2, supersedes_id=fact
-                ),
+                ReadingCreate(meter="m-1", kwh=120, root_id=fact, version=2, supersedes_id=fact),
                 id=uuid4(),
             )
 

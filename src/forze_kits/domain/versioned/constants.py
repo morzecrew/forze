@@ -26,6 +26,12 @@ see an anti-join, which is how the pattern this kit replaces went wrong twice.""
 SUPERSEDED_AT_FIELD: Final = "superseded_at"
 """When this row stopped being current, or null while it is."""
 
+LINEAGE_DIFF_KEYS: Final = frozenset({IS_CURRENT_FIELD, SUPERSEDED_AT_FIELD})
+"""The two fields that say whether a version is in force, and since when it is not.
+
+Writing either is claiming a version changed hands, which only the write that supersedes it may
+claim — naming the field is not the same as performing the transition."""
+
 ALLOWED_SUPERSEDE_DIFF_KEYS: Final = frozenset(
     {
         IS_CURRENT_FIELD,

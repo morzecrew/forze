@@ -809,6 +809,53 @@ class TestTheFacadeAndTheInertCases:
 # ....................... #
 
 
+class TestOnlyARealRetirementCountsAsOne:
+    """The exemption is for the write that retires a version, not for any write naming the field.
+
+    Classifying on the field alone lets the flag be written in the other direction: a superseded
+    row set back to current is an old assertion returned to force, with the successor that
+    replaced it still sitting in the chain. A transaction that also retires the real head leaves
+    the fact with exactly one current version, so the invariant is satisfied and the history is
+    still wrong.
+    """
+
+    async def test_a_superseded_row_cannot_be_made_current_again(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            await _correct(reg, ctx, first, kwh=120)
+
+            with pytest.raises(CoreException) as caught:
+                await ctx.doc.command(READINGS).update(
+                    pk=first.id, rev=first.rev + 1, dto=ReadingUpdate(is_current=True)
+                )
+
+        assert caught.value.kind is ExceptionKind.DOMAIN
+
+    async def test_retiring_a_version_must_say_when(self) -> None:
+        # Half a retirement: the row stops being current and nothing records when, so every
+        # reader of the chain sees a version that was never in force and never replaced.
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await _create(reg, ctx, "m-1", 100)
+
+            with pytest.raises(CoreException) as caught:
+                await ctx.doc.command(READINGS).update(
+                    pk=row.id, rev=row.rev, dto=ReadingUpdate(is_current=False)
+                )
+
+        assert caught.value.kind is ExceptionKind.DOMAIN
+
+
+# ....................... #
+
+
 class TestAnOrdinaryUpdateCannotOverwriteAFact:
     """The generated UPDATE must not rewrite what a current version asserts.
 
