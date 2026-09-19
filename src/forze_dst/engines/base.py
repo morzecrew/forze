@@ -76,11 +76,22 @@ def attempt_and_minimize(
 
     minimal = minimize(workload, lambda subset: bool(check(run_subset(subset), sim.invariants)))
     final_history = run_subset(minimal)
+    violations = tuple(check(final_history, sim.invariants))
+
+    if not violations:
+        # The minimized workload reproduced while it was being minimized and not on the replay
+        # that follows, which happens wherever a run leaves state the next one reads: the
+        # candidate that still failed and the replay of it are different runs against a store
+        # that has moved. Reporting it anyway would hand back a counterexample carrying no
+        # violations — an object that says a property broke and cannot say which — so the
+        # report falls back to the attempt that *did* fail, unminimized and reproducible.
+        minimal, final_history = list(workload), history
+        violations = tuple(check(final_history, sim.invariants))
 
     return ViolationReport(
         seed=seed,
         schedule_seed=schedule_seed,
-        violations=tuple(check(final_history, sim.invariants)),
+        violations=violations,
         workload=format_workload(minimal),
         history=final_history,
         registry_fingerprint=sim.fingerprint(),
