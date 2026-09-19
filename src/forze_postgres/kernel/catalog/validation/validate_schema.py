@@ -416,6 +416,9 @@ parenthesis and a naive scan ends the argument list inside ``'[)'``. Nested *cal
 match on purpose: a constructor whose arguments are themselves expressions is one this refuses
 to interpret rather than half-parse."""
 
+_OVERLAPS_AFTER = re.compile(r"\s+WITH\s+&&")
+"""The operator an exclusion constraint's range element must carry to mean "overlaps"."""
+
 _BOUNDS_LITERAL = re.compile(r"'(\[\)|\[\]|\(\]|\(\))'")
 """The four bounds conventions, as Postgres spells them in a range constructor's third argument."""
 
@@ -424,6 +427,21 @@ BTREE_GIST: Final[str] = "btree_gist"
 
 Named here and nowhere near the contract: a guarantee declares a property, and which extension
 makes the mechanism available is this backend's business."""
+
+
+def _key_elements_compare_equal(definition: str, key: frozenset[str]) -> bool:
+    """Whether every key column appears as its own ``<column> WITH =`` element.
+
+    The catalog names an exclusion constraint's plain columns and not the operator attached to
+    each, so this reads the deparsed text. It matters: a key element compared with anything
+    other than ``=`` groups different rows than the declaration does, and a constraint that
+    merely *mentions* the column would pass a check that only looked at names.
+    """
+
+    return all(
+        re.search(rf"(?<![A-Za-z0-9_]){re.escape(column)}\s+WITH\s+=", definition) is not None
+        for column in key
+    )
 
 
 def _range_over(definition: str, period: tuple[str, str]) -> frozenset[str]:
@@ -443,20 +461,26 @@ def _range_over(definition: str, period: tuple[str, str]) -> frozenset[str]:
     start, end = period
     found: set[str] = set()
 
-    for args, _ in _RANGE_CALL.findall(definition):
-        parts = [part.strip() for part in args.split(",")]
+    for call in _RANGE_CALL.finditer(definition):
+        parts = [part.strip() for part in call.group(1).split(",")]
 
         if len(parts) < 2 or not _is_column(parts[0], start) or not _is_column(parts[1], end):
+            continue
+
+        # The overlap operator, not merely a range over the right columns: a range element
+        # compared with `=` refuses two *identical* periods and takes every other overlapping
+        # pair, which is a different property wearing this one's columns.
+        if not _OVERLAPS_AFTER.match(definition, call.end()):
             continue
 
         if len(parts) == 2:
             found.add("[)")
             continue
 
-        match = _BOUNDS_LITERAL.search(parts[2])
+        literal = _BOUNDS_LITERAL.search(parts[2])
 
-        if match is not None:
-            found.add(match.group(1))
+        if literal is not None:
+            found.add(literal.group(1))
 
     return frozenset(found)
 
@@ -506,7 +530,8 @@ async def _require_overlap_mechanisms(
 
     Four ways a constraint can exist and still not be the mechanism:
 
-    * its key columns are not exactly the declared key, so rows the guarantee separates are compared — or not
+    * its key columns are not exactly the declared key, or one of them is compared with an
+      operator other than ``=``, so rows the guarantee separates are compared — or not
       compared — by something other than the declaration;
     * its range expression is not built over both period fields, in that order — an inverted
       range cannot even be constructed, so every ordinary row fails to insert while the catalog
@@ -554,7 +579,9 @@ async def _require_overlap_mechanisms(
             # because two rows then have to match on that column too before they conflict. A
             # constraint over (tenant_id, root_id) lets two rows share a root_id across tenants,
             # which is exactly what a guarantee keyed on root_id alone says cannot happen.
-            if key != constraint.columns:
+            if key != constraint.columns or not _key_elements_compare_equal(
+                constraint.definition, key
+            ):
                 continue
 
             if guarantee.bounds not in _range_over(constraint.definition, (start, end)):

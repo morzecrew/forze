@@ -404,6 +404,39 @@ class TestStartupValidation:
         with pytest.raises(CoreException, match="no EXCLUDE constraint"):
             await _validate(pg_client, table, NO_OVERLAP)
 
+    async def test_a_range_element_that_does_not_overlap_does_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # The columns, the order and the bounds are all right and the operator is not: `=` on
+        # the range refuses two *identical* periods and takes every other overlapping pair,
+        # which is a different property wearing this one's columns.
+        table = await _table(pg_client)
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(root_id WITH =, daterange(valid_from, valid_to, '[]') WITH =);"
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP)
+
+    async def test_a_key_element_compared_with_another_operator_does_not_count(
+        self,
+        pg_client: PostgresClient,
+    ) -> None:
+        # `<>` on the key groups the opposite rows: it conflicts where the declaration says two
+        # rows are unrelated, and lets through every pair the declaration is about.
+        table = await _table(pg_client)
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            f"(root_id WITH <>, daterange(valid_from, valid_to, '[]') WITH &&);"
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, NO_OVERLAP)
+
     async def test_a_constraint_over_another_key_does_not_count(
         self,
         pg_client: PostgresClient,

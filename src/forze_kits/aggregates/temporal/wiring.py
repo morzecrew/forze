@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, final
 import attrs
 
 from forze.base.exceptions import exc
+from forze_kits.domain.temporal.mixins import TemporalMixin
 
 from .factories import build_temporal_registry
 from .policy import TemporalPolicy, assert_guarantee
@@ -115,12 +116,11 @@ def _assert_bounds_agree(
         return
 
     domain = spec.write["domain"]
-    declared = getattr(domain, "temporal_bounds", None)
 
-    if declared is None:
+    if not (isinstance(domain, type) and issubclass(domain, TemporalMixin)):
         raise exc.configuration(
             f"Document {spec.name!r} is declared temporal and its domain model "
-            f"{domain.__name__!r} does not carry the validity mixin. The mixin is not decoration: "
+            f"{getattr(domain, '__name__', domain)!r} does not carry the validity mixin. The mixin is not decoration: "
             "it is what freezes `valid_from`, refuses a period in force on no day, and tells the "
             "write path which convention this aggregate uses — and an update patch carries one "
             "endpoint while the stored row carries the other, so nothing else sees the period a "
@@ -128,8 +128,10 @@ def _assert_bounds_agree(
             details={"document": str(spec.name), "domain": domain.__name__},
         )
 
-    if declared == policy.bounds:
+    if domain.temporal_bounds == policy.bounds:
         return
+
+    declared = domain.temporal_bounds
 
     raise exc.configuration(
         f"Document {spec.name!r} declares bounds {policy.bounds!r} on its temporal policy and "

@@ -119,7 +119,12 @@ class NonOverlapping:
     """Discriminator, for the reconciliation and the refusal messages."""
 
     key: tuple[str, ...]
-    """The fields whose rows must not overlap each other. Rows differing here never conflict."""
+    """The fields whose rows must not overlap each other. Rows differing here never conflict.
+
+    A row holding a null in the key conflicts with nothing, including another null: the
+    property compares keys for equality, and a null is not equal to anything under the
+    comparison every store implements. A key that must group its nulls is a key that should not
+    be nullable."""
 
     period: tuple[str, str]
     """The start and end fields, in that order. The end field may hold null for an open period."""
