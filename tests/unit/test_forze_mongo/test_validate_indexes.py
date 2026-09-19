@@ -278,9 +278,17 @@ class TestTheFilterIsComparedBySelectedDocuments:
             self._validate({"is_current": True}, {"is_current": 1})
 
     def test_numeric_widths_are_the_same_value(self) -> None:
-        # The other direction, and the reason the keys are not just `(type, value)`: Mongo
-        # compares an int and a double by value, so refusing this would fail a correct index.
+        # The other direction, and the reason a number's key carries no width: Mongo compares an
+        # int and a double by value, so refusing this would fail a correct index.
         self._validate({"count": 1}, {"count": 1.0})
+
+    def test_two_numbers_one_double_cannot_tell_apart_stay_apart(self) -> None:
+        # `float(9007199254740993)` is `9007199254740992.0`, so normalising through a double to
+        # make the widths comparable would read these as one value — and the index then excludes
+        # every document the guarantee selects. Python compares int to float exactly, which is
+        # why the key carries the value rather than a cast of it.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"seq": 9007199254740993}, {"seq": 9007199254740992.0})
 
     @pytest.mark.parametrize(
         "partial_filter",
@@ -296,6 +304,22 @@ class TestTheFilterIsComparedBySelectedDocuments:
         # The filter selects no documents at all, so the index enforces nothing. Letting the
         # later constraint overwrite the earlier one reduces it to a plausible single equality —
         # which is how an index over nothing comes to satisfy a guarantee.
+        with pytest.raises(CoreException, match="partialFilterExpression"):
+            self._validate({"active": True}, partial_filter)
+
+    @pytest.mark.parametrize(
+        "partial_filter",
+        [
+            {"$and": [{"active": True}], "active": False},
+            {"$and": [{"active": True}], "active": {"$eq": False}},
+        ],
+    )
+    def test_a_conflict_between_a_branch_and_a_sibling_field_is_refused(
+        self,
+        partial_filter: dict[str, object],
+    ) -> None:
+        # `$and` alongside a plain field is a legal filter, so the contradiction can straddle
+        # the two rather than sitting inside one conjunction.
         with pytest.raises(CoreException, match="partialFilterExpression"):
             self._validate({"active": True}, partial_filter)
 
@@ -384,6 +408,38 @@ class TestTheRefusalPrintsAMigrationThatWouldWork:
 
     def test_a_whole_number_keeps_its_integer_spelling(self) -> None:
         assert "{tier: 2}" in self._refusal({"$values": {"tier": 2}})
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(0.5, "{ratio: 0.5}"), (2.0, "{ratio: 2}")],
+    )
+    def test_a_fractional_number_keeps_its_fraction(
+        self,
+        value: float,
+        expected: str,
+    ) -> None:
+        # A whole double still prints as an integer, which mongosh stores as a double anyway;
+        # a fractional one has to survive, or the printed statement filters on another value.
+        assert expected in self._refusal({"$values": {"ratio": value}})
+
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            ("is_current", "{is_current: true}"),
+            ("effective-date", '{"effective-date": true}'),
+            ("a.b", '{"a.b": true}'),
+            ("$weird", "{$weird: true}"),
+        ],
+    )
+    def test_a_field_name_is_quoted_only_where_it_has_to_be(
+        self,
+        field: str,
+        expected: str,
+    ) -> None:
+        # `effective-date` is a legal Mongo field and not a legal JavaScript identifier, so
+        # printing it bare hands over a statement that does not parse. Bare elsewhere, because
+        # that is how the statement is written by hand.
+        assert expected in self._refusal({"$values": {field: True}})
 
     def test_a_filter_naming_no_field_still_asks_for_a_partial_index(self) -> None:
         # The validation requires a partialFilterExpression whenever `where` is set, so a

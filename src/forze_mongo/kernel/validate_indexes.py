@@ -1,6 +1,7 @@
 """Validate Mongo write-collection indexes for document ensure/upsert."""
 
 import json
+import re
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
@@ -61,6 +62,10 @@ def _is_id_unique_index(index: MongoIndexInfo) -> bool:
 # ....................... #
 
 
+_IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+"""A field name ``mongosh`` takes as a bare object key; anything else is quoted."""
+
+
 def _bson_key(value: object) -> object:
     """A comparison key that tells BSON types apart the way the server does.
 
@@ -69,15 +74,17 @@ def _bson_key(value: object) -> object:
     filtered ``{is_current: true}`` selects. Comparing the raw values reads those two filters as
     the same one, which is the false acceptance this exists to stop.
 
-    Numeric *widths* go the other way — Mongo compares an int, a long and a double by value —
-    so those collapse to one key rather than being told apart.
+    Numeric *widths* go the other way — Mongo compares an int, a long and a double by value — so
+    those share a tag and are left to Python's own numeric comparison, which is exact. Casting
+    them to ``float`` to make them comparable would undo the point: ``9007199254740993`` and
+    ``9007199254740992.0`` are different values that one double cannot tell apart.
     """
 
     if isinstance(value, bool):
         return ("bool", value)
 
     if isinstance(value, int | float | Decimal):
-        return ("number", float(value))
+        return ("number", value)
 
     if value is None:
         return ("null", None)
@@ -86,6 +93,21 @@ def _bson_key(value: object) -> object:
         return ("array", tuple(_bson_key(item) for item in value))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
     return (type(value).__name__, value)
+
+
+# ....................... #
+
+
+def _mongosh_field(name: str) -> str:
+    """Render a field name as a ``mongosh`` object key.
+
+    Bare where it can be, because that is how the statement is written by hand and an operator
+    reads it more easily, and quoted where it must be: a field named ``effective-date`` is legal
+    in Mongo and not a legal JavaScript identifier, so printing it bare hands over a statement
+    that does not parse.
+    """
+
+    return name if _IDENTIFIER.fullmatch(name) else json.dumps(name)
 
 
 # ....................... #
@@ -104,8 +126,11 @@ def _mongosh(key: object) -> str:
         case ("bool", value):
             return "true" if value else "false"
 
-        case ("number", float() as value):
-            return str(int(value)) if value.is_integer() else str(value)
+        case ("number", int() as value):
+            return str(value)
+
+        case ("number", float() | Decimal() as value):
+            return str(int(value)) if value == int(value) else str(value)
 
         case ("null", _):
             return "null"
@@ -344,7 +369,8 @@ def _require_guarantee_indexes(
             wanted_json = (
                 "{"
                 + ", ".join(
-                    f"{name}: {_mongosh(key)}" for name, key in sorted(wanted_filter.items())
+                    f"{_mongosh_field(name)}: {_mongosh(key)}"
+                    for name, key in sorted(wanted_filter.items())
                 )
                 + "}"
                 if wanted_filter
