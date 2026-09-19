@@ -22,7 +22,12 @@ from ..conformity import (
     validate_materialized_computed,
 )
 from ..crypto import FieldEncryption
-from ..guarantees import NonOverlapping, StorageGuarantees, UniqueTogether
+from ..guarantees import (
+    NonOverlapping,
+    SerializedBy,
+    StorageGuarantees,
+    UniqueTogether,
+)
 from ..querying import (
     QueryFieldPolicy,
     QuerySortExpression,
@@ -435,6 +440,13 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                         if guarantee.where is not None
                         else frozenset()
                     )
+
+                case SerializedBy():
+                    # The key is read off the row being written to decide which writes contend,
+                    # so a name that is not there reads as null for every row and serializes
+                    # the whole relation against itself — a different property, and a far more
+                    # expensive one, arrived at silently.
+                    named = frozenset(guarantee.key)
 
                 case NonOverlapping():
                     named = frozenset(guarantee.key) | frozenset(guarantee.period)

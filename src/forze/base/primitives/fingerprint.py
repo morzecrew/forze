@@ -238,3 +238,48 @@ def connection_string_fingerprint(dsn: str) -> str:
         ],
         secret=[parsed.password],
     )
+
+
+# ....................... #
+
+_ADVISORY_PART_ABSENT = b"\x00"
+"""Tag for a part that is not there, so ``None`` and ``""`` are different keys."""
+
+_ADVISORY_PART_PRESENT = b"\x01"
+"""Tag for a part that carries a value."""
+
+
+def advisory_lock_key(*parts: object) -> int:
+    """A stable 64-bit lock key for *parts*, equal in every process and every release.
+
+    A digest rather than :func:`hash`, which is salted per interpreter: two workers deriving a
+    key for the same owner would take *different* keys and serialize against nobody, which is
+    the one deployment such a lock exists for. Salting is invisible inside a single process, so
+    the property is pinned by comparing subprocesses rather than by reading the code.
+
+    Not a database's own hashing function either — ``hashtext`` is undocumented and free to
+    change between versions, and a key that shifts on upgrade means a rolling deployment where
+    old and new nodes do not contend.
+
+    Each part is length-prefixed and tagged, so the encoding is injective: ``("ab", "c")`` and
+    ``("a", "bc")`` are different keys, and so are ``(None,)`` and ``("",)``. A caller passing a
+    spec name, a tenant and an owner therefore cannot collide with another passing the same
+    strings in another arrangement.
+
+    :param parts: The key's components, in a fixed order the caller chooses.
+    :returns: A signed 64-bit integer, which is the width a lock key is usually taken in.
+    """
+
+    digest = hashlib.blake2b(digest_size=8)
+
+    for part in parts:
+        if part is None:
+            digest.update(_ADVISORY_PART_ABSENT)
+            continue
+
+        raw = str(part).encode("utf-8")
+        digest.update(_ADVISORY_PART_PRESENT)
+        digest.update(len(raw).to_bytes(8, "big"))
+        digest.update(raw)
+
+    return int.from_bytes(digest.digest(), "big", signed=True)
