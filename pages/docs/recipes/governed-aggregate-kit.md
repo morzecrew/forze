@@ -85,6 +85,11 @@ why in one transaction. `history(root_id)` returns the chain oldest-first; `as_o
 returns the version that was current at an instant. Every generated read stays on current
 versions, so an aggregate that opted in reads like one that never did.
 
+The generated `update` stops being a way to change what a fact says. It refuses a patch touching
+any field the row asserts, and leaves exactly two writes reaching a version: the one that retires
+it, and soft deletion, which hides a row without contradicting it. The refusal is on the domain
+model rather than on the operation, so a repair script or a hand-written handler meets it too.
+
 Three things are worth knowing before you declare it.
 
 **"Current" is a stored flag, not a derived anti-join.** `NOT EXISTS (SELECT 1 FROM t s WHERE

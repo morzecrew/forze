@@ -11,7 +11,11 @@ from forze.base.primitives import JsonDict
 from forze.domain.models import CoreModel
 from forze.domain.validation import update_validator
 
-from .constants import ALLOWED_SUPERSEDE_DIFF_KEYS, IS_CURRENT_FIELD
+from .constants import (
+    ALLOWED_ORDINARY_DIFF_KEYS,
+    ALLOWED_SUPERSEDE_DIFF_KEYS,
+    IS_CURRENT_FIELD,
+)
 
 # ----------------------- #
 
@@ -24,7 +28,8 @@ class VersionedMixin(CoreModel):
     outset rather than after the first correction.
 
     A superseded row stays readable and stays addressable — that is the whole point of correcting
-    rather than overwriting — so the only update it accepts is the one that retired it.
+    rather than overwriting — so the only update it accepts is the one that retired it. A current
+    row is no more editable: what a version asserts is replaced by a successor, never rewritten.
     """
 
     root_id: UUID = Field(frozen=True)
@@ -46,12 +51,16 @@ class VersionedMixin(CoreModel):
 
     @update_validator
     def _validate_versioning(before: Self, _: Self, diff: JsonDict) -> None:
-        """Refuse a write to a superseded row, except the write that superseded it.
+        """Refuse any write that edits what a version asserts, on a current row or an old one.
 
-        A corrected fact is history: something that edits an old version is either bypassing the
-        correction command or repairing the record in place, and both are what this kit exists to
-        make impossible. The retiring write itself is allowed through, since it is the write that
-        creates the superseded state.
+        A version is an assertion someone made about the fact, and the aggregate's whole offer is
+        that such an assertion is replaced by a successor rather than rewritten: an update that
+        changes one in place leaves no earlier value, no successor and nothing recording that
+        anyone changed it. Two writes are not assertions and pass — the one that retires a
+        predecessor, and soft deletion, which hides a row without contradicting it.
+
+        The guard sits on the model rather than on the generated operation because a repair
+        script, a bulk update or a hand-written handler reaches the row without passing one.
         """
 
         keys = set(diff.keys())
@@ -61,6 +70,12 @@ class VersionedMixin(CoreModel):
             raise exc.domain(
                 "Cannot update a superseded version of a fact — correct the current version "
                 "instead, which records the change and leaves this one readable.",
+            )
+
+        if not keys <= ALLOWED_ORDINARY_DIFF_KEYS:
+            raise exc.domain(
+                "Cannot overwrite what a version of a fact asserts — correct it instead, which "
+                "writes the new value as the next version and leaves this one readable.",
             )
 
 

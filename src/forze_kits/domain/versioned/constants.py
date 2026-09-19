@@ -3,6 +3,7 @@
 from typing import Final
 
 from forze.domain.constants import LAST_UPDATE_AT_FIELD
+from forze_kits.domain.soft_deletion.constants import ALLOWED_SOFT_DELETE_DIFF_KEYS
 
 # ----------------------- #
 
@@ -36,3 +37,11 @@ ALLOWED_SUPERSEDE_DIFF_KEYS: Final = frozenset(
 
 Narrow on purpose: retiring a predecessor is the one legitimate write to a row that is not current,
 and it touches nothing a reader of that version would see differently."""
+
+ALLOWED_ORDINARY_DIFF_KEYS: Final = ALLOWED_SUPERSEDE_DIFF_KEYS | ALLOWED_SOFT_DELETE_DIFF_KEYS
+"""The only fields an ordinary update may change on a version, current or not.
+
+Everything else a version carries is what it asserts about the fact, and an assertion is replaced
+by a successor rather than edited — that is the whole of what the aggregate offers. Retirement and
+soft deletion are in because neither changes the assertion: one records that a later version says
+something else, the other that the row is hidden from ordinary reads."""

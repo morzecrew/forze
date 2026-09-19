@@ -23,6 +23,7 @@ from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.transaction import IsolationLevel
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import utcnow
 from forze.domain.models import ReadDocument
 from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document.dto import (
@@ -544,9 +545,7 @@ class _BothRead(ReadDocument):
 BOTH = DocumentSpec(
     name="both",
     read=_BothRead,
-    write=DocumentWriteTypes(
-        domain=_BothDoc, create_cmd=_BothCreate, update_cmd=_BothUpdate
-    ),
+    write=DocumentWriteTypes(domain=_BothDoc, create_cmd=_BothCreate, update_cmd=_BothUpdate),
     guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
 )
 
@@ -561,9 +560,7 @@ class TestComposedWithSoftDeletion:
 
     async def test_a_soft_deleted_row_is_still_refused(self) -> None:
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
-            tx_route=_TX
-        )
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(tx_route=_TX)
         key = BOTH.default_namespace.key
 
         async with runtime.scope():
@@ -579,9 +576,7 @@ class TestComposedWithSoftDeletion:
             )
 
             with pytest.raises(CoreException) as caught:
-                await run_operation(
-                    reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx
-                )
+                await run_operation(reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx)
 
         assert caught.value.kind is ExceptionKind.NOT_FOUND
 
@@ -590,9 +585,7 @@ class TestComposedWithSoftDeletion:
         # the versioned list mapper replaced soft deletion's, so a deleted row that was still
         # the current version came back in every list.
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
-            tx_route=_TX
-        )
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(tx_route=_TX)
         key = BOTH.default_namespace.key
 
         async with runtime.scope():
@@ -613,9 +606,7 @@ class TestComposedWithSoftDeletion:
     async def test_list_still_returns_a_live_current_row(self) -> None:
         # The contrast: stacking two restrictions must not exclude everything.
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
-            tx_route=_TX
-        )
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(tx_route=_TX)
         key = BOTH.default_namespace.key
 
         async with runtime.scope():
@@ -628,9 +619,7 @@ class TestComposedWithSoftDeletion:
     async def test_a_live_current_row_still_reads(self) -> None:
         # The contrast: two guards on one handler must not refuse everything.
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(
-            tx_route=_TX
-        )
+        reg = AggregateKit(spec=BOTH, soft_delete=True, versioned=POLICY).registry(tx_route=_TX)
         key = BOTH.default_namespace.key
 
         async with runtime.scope():
@@ -638,9 +627,7 @@ class TestComposedWithSoftDeletion:
             row = await run_operation(
                 reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="m"), ctx
             )
-            got = await run_operation(
-                reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx
-            )
+            got = await run_operation(reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx)
 
         assert got.meter == "m"
 
@@ -760,19 +747,22 @@ class TestASupersededVersionIsNotWritable:
 
         assert caught.value.kind is ExceptionKind.DOMAIN
 
-    async def test_the_current_version_is_still_writable(self) -> None:
-        # The contrast: the guard is about superseded rows, not about updates.
+    async def test_the_write_that_retires_a_version_is_accepted(self) -> None:
+        # The contrast: the one write that reaches a row without asserting anything about the
+        # fact passes, which is what lets a correction retire its predecessor at all.
         runtime = build_runtime(MockDepsModule())
         reg = _kit().registry(tx_route=_TX)
 
         async with runtime.scope():
             ctx = runtime.get_context()
             first = await _create(reg, ctx, "m-1", 100)
-            updated = await ctx.doc.command(READINGS).update(
-                pk=first.id, rev=first.rev, dto=ReadingUpdate(kwh=111)
+            retired = await ctx.doc.command(READINGS).update(
+                pk=first.id,
+                rev=first.rev,
+                dto=ReadingUpdate(is_current=False, superseded_at=utcnow()),
             )
 
-        assert updated.kwh == 111
+        assert retired.is_current is False
 
 
 # ....................... #
@@ -819,6 +809,52 @@ class TestTheFacadeAndTheInertCases:
 # ....................... #
 
 
+class TestAnOrdinaryUpdateCannotOverwriteAFact:
+    """The generated UPDATE must not rewrite what a current version asserts.
+
+    The kit exists so that a changed reading becomes a second version with a correction record
+    behind it. An UPDATE that edits the current row in place delivers the opposite — the old
+    value is gone, the chain says the fact was only ever asserted once, and nothing records that
+    anyone changed it.
+    """
+
+    async def test_a_business_field_cannot_be_updated_in_place(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await _create(reg, ctx, "m-1", 100)
+
+            with pytest.raises(CoreException) as caught:
+                await run_operation(
+                    reg,
+                    _key(DocumentKernelOp.UPDATE),
+                    DocumentUpdateDTO(id=row.id, rev=row.rev, dto=ReadingUpdate(kwh=999)),
+                    ctx,
+                )
+
+            page = await run_operation(reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
+
+        assert caught.value.kind is ExceptionKind.DOMAIN
+        assert [(r.version, r.kwh) for r in page.hits] == [(1, 100)]
+
+    async def test_the_same_change_through_correct_is_accepted(self) -> None:
+        # The contrast: the guard refuses the path, not the change.
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await _create(reg, ctx, "m-1", 100)
+            corrected = await _correct(reg, ctx, row, kwh=999)
+
+        assert (corrected.version, corrected.kwh) == (2, 999)
+
+
+# ....................... #
+
+
 class TestOrdinaryWritesCannotForgeLineage:
     """The generated UPDATE accepts the kit's own update command, lineage fields included.
 
@@ -839,9 +875,7 @@ class TestOrdinaryWritesCannotForgeLineage:
             await run_operation(
                 reg,
                 _key(DocumentKernelOp.UPDATE),
-                DocumentUpdateDTO(
-                    id=row.id, rev=row.rev, dto=ReadingUpdate(is_current=False)
-                ),
+                DocumentUpdateDTO(id=row.id, rev=row.rev, dto=ReadingUpdate(is_current=False)),
                 ctx,
             )
 
@@ -850,8 +884,9 @@ class TestOrdinaryWritesCannotForgeLineage:
         # The fact still has its current version: the lineage field was dropped, not honoured.
         assert [r.version for r in page.hits] == [1]
 
-    async def test_the_rest_of_the_patch_still_applies(self) -> None:
-        # The contrast: dropping the lineage fields must not drop the update.
+    async def test_a_patch_that_also_edits_the_fact_is_refused(self) -> None:
+        # Dropping the lineage fields is not a way to smuggle the rest past the guard: what is
+        # left is still an in-place edit of a current assertion.
         runtime = build_runtime(MockDepsModule())
         reg = _kit().registry(tx_route=_TX)
 
@@ -859,18 +894,20 @@ class TestOrdinaryWritesCannotForgeLineage:
             ctx = runtime.get_context()
             row = await _create(reg, ctx, "m-1", 100)
 
-            await run_operation(
-                reg,
-                _key(DocumentKernelOp.UPDATE),
-                DocumentUpdateDTO(
-                    id=row.id, rev=row.rev, dto=ReadingUpdate(kwh=7, is_current=False)
-                ),
-                ctx,
-            )
+            with pytest.raises(CoreException) as caught:
+                await run_operation(
+                    reg,
+                    _key(DocumentKernelOp.UPDATE),
+                    DocumentUpdateDTO(
+                        id=row.id, rev=row.rev, dto=ReadingUpdate(kwh=7, is_current=False)
+                    ),
+                    ctx,
+                )
 
             page = await run_operation(reg, _key(DocumentKernelOp.LIST), ListRequestDTO(), ctx)
 
-        assert [(r.kwh, r.is_current) for r in page.hits] == [(7, True)]
+        assert caught.value.kind is ExceptionKind.DOMAIN
+        assert [(r.kwh, r.is_current) for r in page.hits] == [(100, True)]
 
 
 # ....................... #
@@ -882,9 +919,7 @@ class TestTheReadModelMustExposeWhatTheKitReads:
         return DocumentSpec(
             name="readings",
             read=read,
-            write=DocumentWriteTypes(
-                domain=Reading, create_cmd=create, update_cmd=ReadingUpdate
-            ),
+            write=DocumentWriteTypes(domain=Reading, create_cmd=create, update_cmd=ReadingUpdate),
             guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
         )
 
@@ -942,9 +977,9 @@ class TestTheReadModelMustExposeWhatTheKitReads:
             secret: str = ""
 
         with pytest.raises(CoreException, match="without exposing"):
-            AggregateKit(
-                spec=self._spec(ReadingRead, HiddenCreate), versioned=POLICY
-            ).registry(tx_route=_TX)
+            AggregateKit(spec=self._spec(ReadingRead, HiddenCreate), versioned=POLICY).registry(
+                tx_route=_TX
+            )
 
     def test_the_declared_shape_builds(self) -> None:
         assert _kit().registry(tx_route=_TX) is not None
@@ -1089,9 +1124,7 @@ class TestComposedWithSearch:
         """
 
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=READINGS, versioned=POLICY, search=SEARCH).registry(
-            tx_route=_TX
-        )
+        reg = AggregateKit(spec=READINGS, versioned=POLICY, search=SEARCH).registry(tx_route=_TX)
 
         async with runtime.scope():
             ctx = runtime.get_context()
@@ -1227,9 +1260,9 @@ class TestTheSecondAggregateIsAdvertised:
         plain = AggregateKit(spec=READINGS)
 
         assert plain.backend_requirements().corrections_route is None
-        assert {
-            str(entry.spec.name) for entry in plain.spec_contributions().freeze().entries
-        } == {str(READINGS.name)}
+        assert {str(entry.spec.name) for entry in plain.spec_contributions().freeze().entries} == {
+            str(READINGS.name)
+        }
 
 
 # ....................... #
