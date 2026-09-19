@@ -332,6 +332,11 @@ class MvccTx:
         # Before the serialization checks, and raising ``conflict`` rather than
         # ``serialization_failure``, for the same reason a duplicate id does: a unique
         # violation is what the backend raises, at every isolation level.
+        # One merged view per namespace, not per key: the merge copies the whole namespace, and
+        # the loop runs once per re-checked key — a batch write into a large namespace would pay
+        # for that copy on every row. Nothing here mutates either side, so the view is stable.
+        published: dict[str, dict[Any, Any]] = {}
+
         for (ns, key), check in self.guarantee_rechecks.items():
             live = state.documents.get(ns)
 
@@ -347,7 +352,10 @@ class MvccTx:
             if row is _TOMBSTONE:
                 continue
 
-            check(self._published(ns, state), key, row)
+            if ns not in published:
+                published[ns] = self._published(ns, state)
+
+            check(published[ns], key, row)
 
     def _published(self, ns: str, state: Any) -> dict[Any, Any]:
         """The namespace as it will look once this transaction commits.
