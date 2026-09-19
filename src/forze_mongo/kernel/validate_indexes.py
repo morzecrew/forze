@@ -3,10 +3,13 @@
 import json
 import re
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from math import isinf, isnan
+from uuid import UUID
 
 import attrs
+from bson import Decimal128
 
 from forze.application.contracts.guarantees import StorageGuarantees, UniqueTogether
 from forze.application.contracts.querying import (
@@ -65,6 +68,10 @@ def _is_id_unique_index(index: MongoIndexInfo) -> bool:
 _IDENTIFIER = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 """A field name ``mongosh`` takes as a bare object key; anything else is quoted."""
 
+_EXACT_IN_A_DOUBLE = 2**53
+"""Above this an integer is not exactly representable as a double, so a bare numeric literal in
+``mongosh`` would round it to a different value."""
+
 
 def _bson_key(value: object) -> object:
     """A comparison key that tells BSON types apart the way the server does.
@@ -82,6 +89,16 @@ def _bson_key(value: object) -> object:
 
     if isinstance(value, bool):
         return ("bool", value)
+
+    # What this adapter *stores*, not what BSON could hold: a UUID is written as its canonical
+    # string and a Decimal as a Decimal128 (see the write gateway's storage mapping), so an
+    # index filter read back from the server carries the stored spelling while a guarantee
+    # carries the domain one. Keying them apart would refuse a correct index.
+    if isinstance(value, UUID):
+        return ("str", str(value))
+
+    if isinstance(value, Decimal128):
+        return ("number", value.to_decimal())
 
     if isinstance(value, int | float | Decimal):
         return ("number", value)
@@ -127,10 +144,24 @@ def _mongosh(key: object) -> str:
             return "true" if value else "false"
 
         case ("number", int() as value):
-            return str(value)
+            # `mongosh` reads a bare number as a double, which silently rounds anything a
+            # double cannot hold — and the index the operator then creates filters on a
+            # different value than the one printed, so validation refuses it again.
+            return str(value) if abs(value) < _EXACT_IN_A_DOUBLE else f'Long("{value}")'
 
-        case ("number", float() | Decimal() as value):
-            return str(int(value)) if value == int(value) else str(value)
+        case ("number", Decimal() as value):
+            # Stored as a Decimal128, so the statement has to create one; a bare literal would
+            # store a double and read back as a different value.
+            return f'Decimal128("{value}")'
+
+        case ("number", float() as value):
+            if isnan(value):
+                return "NaN"
+
+            if isinf(value):
+                return "Infinity" if value > 0 else "-Infinity"
+
+            return str(int(value)) if value.is_integer() else str(value)
 
         case ("null", _):
             return "null"
@@ -141,13 +172,12 @@ def _mongosh(key: object) -> str:
         case ("array", tuple() as items):
             return "[" + ", ".join(_mongosh(item) for item in items) + "]"  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
-        case ("datetime", datetime() as value):
+        case ("datetime" | "date", datetime() | date() as value):
+            # Mongo has no date-only type; a date is stored as midnight. Rendering one as a
+            # quoted string would print a statement creating an index over strings.
             return f'ISODate("{value.isoformat()}")'
 
-        case (_, value):
-            return json.dumps(str(value))
-
-        case _:  # pragma: no cover - every key is a two-element tuple
+        case _:  # pragma: no cover - every scalar a filter admits is handled above
             return json.dumps(str(key))
 
 
@@ -359,7 +389,7 @@ def _require_guarantee_indexes(
 
         else:
             field_list = ", ".join(fields)
-            keys = ", ".join(f"{field}: 1" for field in fields)
+            keys = ", ".join(f"{_mongosh_field(field)}: 1" for field in fields)
             # What the *validation* asks for, not what the filter happens to mention: a filter
             # naming no field at all still needs a partialFilterExpression, and a message that
             # suggested a plain index for one would send an operator to a migration that leaves

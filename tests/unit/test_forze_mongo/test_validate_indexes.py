@@ -1,10 +1,12 @@
 """Unit tests for Mongo document index validation."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
+from bson import Decimal128
 
 from forze.application.contracts.guarantees import UniqueTogether
 from forze.base.exceptions import CoreException
@@ -441,6 +443,26 @@ class TestTheRefusalPrintsAMigrationThatWouldWork:
         # that is how the statement is written by hand.
         assert expected in self._refusal({"$values": {field: True}})
 
+    def test_an_index_key_name_is_quoted_the_same_way(self) -> None:
+        # The filter's field names were quoted and the index key names beside them were not, so
+        # the same statement still did not parse. One rule, both halves.
+        spec = MongoDocumentIndexSpec(
+            name="fact",
+            write_relation=("db", "coll"),
+            guarantees=(UniqueTogether(fields=("effective-date",), where={"$values": {"x": 1}}),),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            _require_guarantee_indexes(spec, [], database="db", collection="coll")
+
+        assert 'createIndex({"effective-date": 1}' in " ".join(caught.value.summary.split())
+
+    def test_a_non_finite_filter_still_gets_its_migration(self) -> None:
+        # The diagnostic path has to survive every value the declaration admits: `int(nan)`
+        # raises, so rendering it there replaced an actionable refusal with a stack trace at
+        # startup — the one moment the message is what an operator has.
+        assert "{ratio: NaN}" in self._refusal({"$values": {"ratio": float("nan")}})
+
     def test_a_filter_naming_no_field_still_asks_for_a_partial_index(self) -> None:
         # The validation requires a partialFilterExpression whenever `where` is set, so a
         # message suggesting a plain unique index would send the operator to a migration that
@@ -473,25 +495,51 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
         [
             (["a", 1], '["a", 1]'),
             (datetime(2026, 9, 19, tzinfo=UTC), 'ISODate("2026-09-19T00:00:00+00:00")'),
+            (date(2026, 9, 19), 'ISODate("2026-09-19")'),
             (
                 UUID("00000000-0000-0000-0000-00000000002a"),
                 '"00000000-0000-0000-0000-00000000002a"',
             ),
+            (9007199254740993, 'Long("9007199254740993")'),
+            (Decimal("9.99"), 'Decimal128("9.99")'),
+            (float("nan"), "NaN"),
+            (float("inf"), "Infinity"),
+            (float("-inf"), "-Infinity"),
         ],
     )
     def test_it_renders_as_mongosh_spells_it(self, value: object, expected: str) -> None:
+        # A bare literal is not always safe: mongosh reads a plain number as a double, so an
+        # integer past 2**53 and a Decimal each have to be spelled as the type that holds them,
+        # or the index the operator creates filters on a different value than the one printed.
         assert _mongosh(_bson_key(value)) == expected
 
     @pytest.mark.parametrize(
         "value",
-        [
-            ["a", 1],
-            datetime(2026, 9, 19, tzinfo=UTC),
-            UUID("00000000-0000-0000-0000-00000000002a"),
-        ],
+        [["a", 1], datetime(2026, 9, 19, tzinfo=UTC)],
     )
-    def test_it_compares_equal_to_itself_and_not_to_its_string(self, value: object) -> None:
-        # The comparison is over these keys, so a type that reduced to its own rendering would
-        # make an index filtered by the string satisfy a guarantee filtered by the value.
+    def test_a_value_is_not_its_own_rendering(self, value: object) -> None:
+        # The comparison is over these keys, so a type reducing to its own rendering would make
+        # an index filtered by the string satisfy a guarantee filtered by the value.
         assert _bson_key(value) == _bson_key(value)
         assert _bson_key(value) != _bson_key(str(value))
+
+    @pytest.mark.parametrize(
+        ("stored", "declared"),
+        [
+            (
+                "00000000-0000-0000-0000-00000000002a",
+                UUID("00000000-0000-0000-0000-00000000002a"),
+            ),
+            (Decimal128("9.99"), Decimal("9.99")),
+        ],
+    )
+    def test_what_this_adapter_stores_reduces_to_what_a_spec_declares(
+        self,
+        stored: object,
+        declared: object,
+    ) -> None:
+        # The two exceptions to the rule above, and they are storage facts rather than BSON
+        # ones: this adapter writes a UUID as its canonical string and a Decimal as a
+        # Decimal128, so an index filter read back from the server carries the stored spelling
+        # while the guarantee carries the domain one. Telling them apart refuses a correct index.
+        assert _bson_key(stored) == _bson_key(declared)
