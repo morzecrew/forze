@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Final
 
 import attrs
 from pydantic import BaseModel
@@ -26,7 +26,7 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.descriptors import OperationDescriptor
 from forze.application.execution.operations.planning import OperationPlan
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import utcnow, uuid7
 from forze.domain.models import ReadDocument
 from forze_dst import OperationCase, Simulation, SimulationConfig, Strategy
@@ -133,6 +133,14 @@ def _seed(state: MockState, spec: DocumentSpec[Any, Any, Any, Any]) -> None:
     }
 
 
+_EXPECTED_REFUSALS: Final = frozenset(
+    {
+        (ExceptionKind.CONFLICT, "core.conflict"),
+        (ExceptionKind.PRECONDITION, "revision_mismatch"),
+    }
+)
+"""The refusals the race is meant to produce; anything else is a defect wearing their clothes."""
+
 # ....................... #
 
 
@@ -143,13 +151,18 @@ class _Correct(Handler[Correct, None]):
     Both arms read the current version themselves rather than being handed one, which is what
     makes them race: two writers can read the same current row before either has retired it.
 
-    A refusal is a success here — the guarantee doing its job — so ``CoreException`` is swallowed
-    and the invariant judges the rows, not the calls.
+    A refusal is a success here — the guarantee doing its job — so the refusals the race is meant
+    to produce are swallowed and the invariant judges the rows, not the calls. Only those: every
+    other refusal lands in :attr:`unexpected` for the leg to fail on, because a wiring or storage
+    fault reaching this handler is indistinguishable from a won race once it is swallowed, and
+    ``no_unexpected_error`` cannot see it either — a declared ``CoreException`` is an expected
+    outcome as far as the engine is concerned.
     """
 
     ctx: ExecutionContext
     spec: DocumentSpec[ReadingRead, Reading, ReadingCreate, ReadingUpdate]
     through_kit: bool
+    unexpected: list[str]
 
     async def __call__(self, args: Correct) -> None:
         query = self.ctx.doc.query(self.spec)
@@ -200,7 +213,14 @@ class _Correct(Handler[Correct, None]):
                 dto=ReadingUpdate(is_current=False, superseded_at=utcnow()),
             )
 
-        except CoreException:
+        except CoreException as caught:
+            # Only the losing side of the race is expected: a guarantee or a version check
+            # refusing the correction, or the rev guard finding the predecessor already moved.
+            # Catching every kind would let a wiring or storage fault read as a refusal the
+            # workload meant to provoke, and an invariant never sees what the workload swallowed.
+            if (caught.kind, caught.code) not in _EXPECTED_REFUSALS:
+                self.unexpected.append(f"{caught.kind}/{caught.code}")
+
             return
 
 
@@ -243,11 +263,16 @@ def _registry(
     spec: DocumentSpec[ReadingRead, Reading, ReadingCreate, ReadingUpdate],
     *,
     through_kit: bool,
+    unexpected: list[str],
 ) -> Any:
     plan = OperationPlan().bind_tx().set_route(_TX).finish(deep=False)
 
     return OperationRegistry(
-        handlers={"correct": lambda ctx: _Correct(ctx=ctx, spec=spec, through_kit=through_kit)},
+        handlers={
+            "correct": lambda ctx: _Correct(
+                ctx=ctx, spec=spec, through_kit=through_kit, unexpected=unexpected
+            )
+        },
         plans={"correct": plan},
         descriptors={
             "correct": OperationDescriptor(
@@ -259,16 +284,17 @@ def _registry(
     ).freeze()
 
 
-def _run(*, governed: bool) -> tuple[Any, MockState]:
+def _run(*, governed: bool) -> tuple[Any, MockState, list[str]]:
     spec = _spec(governed=governed)
     state = MockState()
     _seed(state, spec)
+    unexpected: list[str] = []
 
     def deps() -> Sequence[DepsModule]:
         return [MockDepsModule(state=state)]
 
     simulation = Simulation(
-        operations=_registry(spec, through_kit=governed),
+        operations=_registry(spec, through_kit=governed, unexpected=unexpected),
         deps=deps,
         invariants=[_one_current_version(state, spec), inv.no_unexpected_error()],
     )
@@ -284,7 +310,7 @@ def _run(*, governed: bool) -> tuple[Any, MockState]:
         cases=[OperationCase(op="correct", inputs=lambda rng: Correct(kwh=rng.randrange(1000)))],
     )
 
-    return report, state
+    return report, state, unexpected
 
 
 # ----------------------- #
@@ -292,9 +318,12 @@ def _run(*, governed: bool) -> tuple[Any, MockState]:
 
 class TestTwoCorrectionsOfOneFact:
     def test_only_one_leaves_a_current_version(self) -> None:
-        report, state = _run(governed=True)
+        report, state, unexpected = _run(governed=True)
 
         assert report is None, f"the guarantee should have held, got {report}"
+        assert unexpected == [], (
+            f"the workload was refused for reasons the race cannot produce: {unexpected}"
+        )
 
         # Not vacuous: a run where every correction refused would also leave one current row.
         # The chain has to have grown, or this leg says nothing about corrections at all.
@@ -305,7 +334,11 @@ class TestTwoCorrectionsOfOneFact:
     def test_the_hand_rolled_shape_forks_the_chain(self) -> None:
         # The contrast. If this passed, the writers never raced and the run above proved nothing
         # — and it is also the defect the kit exists to replace, reproduced.
-        report, _ = _run(governed=False)
+        report, _, unexpected = _run(governed=False)
+
+        assert unexpected == [], (
+            f"the workload was refused for reasons the race cannot produce: {unexpected}"
+        )
 
         assert report is not None, (
             "the ungoverned spec must leave two current versions — if it does not, the workload "
