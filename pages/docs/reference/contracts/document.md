@@ -118,11 +118,17 @@ Two sentences carry the whole doctrine:
 | `UniqueTogether(fields=…)` | at most one row per field tuple | unique index | unique index | ✅ |
 | `UniqueTogether(fields=…, where=…)` | …among the rows the filter selects | partial unique index | `partialFilterExpression` | ✅ |
 | `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `partialFilterExpression` with `$type` | ✅ |
-| `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | — | — | — |
+| `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | `EXCLUDE USING gist` | — | ✅ |
+| `NonOverlapping(key=…, period=…, where=…)` | …among the rows the filter selects | `EXCLUDE … WHERE (…)` | — | ✅ |
 
-`NonOverlapping` is defined and enforced by nothing yet, so every backend refuses a spec that
-declares one — a capability that reconciles and then fails at the first write is worse than one
-that says no.
+Mongo refuses `NonOverlapping`, and will keep refusing it: non-overlap is a comparison *between*
+two rows rather than a property of one row's fields, so unlike filtered uniqueness there is no
+partial index that expresses it.
+
+The period's start field must be non-null. A store reads a null lower bound as "in force since
+always" and refuses everything overlapping it, and the in-memory store has no way to say the
+same — so the declaration is refused rather than enforced two different ways. A null in the
+*key* conflicts with nothing, including another null, because the comparison is equality.
 
 On Mongo the null exemption is a `partialFilterExpression` naming each field's stored BSON type,
 not a `sparse` index: sparse skips a document only when *every* indexed field is missing and still
@@ -136,6 +142,13 @@ Three things happen to a declared guarantee, and a failure at any of them is lou
    "uniqueness over a field tuple" reads differently from "uniqueness restricted to a subset of
    rows", and they need different fixes. `check_wiring` reports it like any other resolution
    failure, so CI sees it before production does.
+For a non-overlap guarantee startup checks more than the columns: the constraint's key must be
+*exactly* the declared key (an extra column weakens it — two rows would have to match on that
+one too before they conflict), each key element must be compared with `=`, the range must be
+built over the period's two fields in that order, and it must carry the declared bounds and the
+`&&` operator. A constraint with the right columns and `=` on the range refuses two *identical*
+periods and takes every other overlapping pair.
+
 2. **Validation**, at startup. The live catalog is checked for the index, and the refusal names
    the DDL. An index counts when it covers the guarantee's fields — as a set, since uniqueness
    over a tuple does not depend on the order an index lists it in — and when it is live and
