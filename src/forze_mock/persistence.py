@@ -126,7 +126,6 @@ _LIVE_FIELDS: Final = frozenset(
         "_MockState__tx_serializer",
         "rotating_credential_locks",
         "write_serialization",
-        "write_serialization_loop",
     }
 )
 """The state's machinery rather than its data: a re-entrant lock, the strict-transaction

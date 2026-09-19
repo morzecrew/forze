@@ -256,18 +256,22 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     # ....................... #
 
-    def _serialized_by(self) -> SerializedBy | None:
-        """This spec's write-serialization declaration, if it makes one."""
+    def _serialized_by(self) -> tuple[SerializedBy, ...]:
+        """Every write-serialization declaration this spec makes.
 
-        for guarantee in self.spec.guarantees:
-            if isinstance(guarantee, SerializedBy):
-                return guarantee
+        All of them, not the first: a spec may serialize on more than one axis, and honouring
+        one while ignoring the rest leaves the others reading as rules nothing keeps.
+        """
 
-        return None
+        return tuple(g for g in self.spec.guarantees if isinstance(g, SerializedBy))
 
     # ....................... #
 
-    def _owner_keys(self, guarantee: SerializedBy, rows: Sequence[Any]) -> list[int]:
+    def _owner_keys(
+        self,
+        guarantees: Sequence[SerializedBy],
+        rows: Sequence[Any],
+    ) -> list[int]:
         """The lock keys *rows* contend on, sorted and without repeats.
 
         Spec and tenant are part of every key, so two aggregates that happen to key on the same
@@ -282,15 +286,18 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         tenant = self.require_tenant_if_aware() if self.tenant_aware else None
         keys: set[int] = set()
 
-        for row in rows:
-            if row is None:
-                continue
+        for guarantee in guarantees:
+            for row in rows:
+                if row is None:
+                    continue
 
-            values = [
-                row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
-                for field in guarantee.key
-            ]
-            keys.add(advisory_lock_key(str(self.spec.name), tenant, *values))
+                values = [
+                    row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
+                    for field in guarantee.key
+                ]
+                # The axis is in the key, so two declarations over different fields do not
+                # collide and a row is not serialized against itself twice.
+                keys.add(advisory_lock_key(str(self.spec.name), tenant, *guarantee.key, *values))
 
         return sorted(keys)
 
@@ -308,26 +315,18 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         what a transaction-scoped lock does for a statement that is its own transaction.
         """
 
-        guarantee = self._serialized_by()
+        guarantees = self._serialized_by()
 
-        if guarantee is None:
+        if not guarantees:
             return
 
         mvcc = current_mvcc_tx()
-        loop = asyncio.get_running_loop()
 
-        if self.state.write_serialization_loop is not loop:
-            # A lock belongs to the loop it was awaited on, and a simulation gives each attempt
-            # its own while the state outlives them. Reusing one from a finished loop raises
-            # instead of serializing, so the table is rebuilt rather than carried over.
-            self.state.write_serialization.clear()
-            self.state.write_serialization_loop = loop
-
-        for key in self._owner_keys(guarantee, rows):
+        for key in self._owner_keys(guarantees, rows):
             if mvcc is not None and key in mvcc.write_locks:
                 continue
 
-            lock = self.state.write_serialization.setdefault(key, asyncio.Lock())
+            lock = self._lock_for(key)
             await lock.acquire()
 
             if mvcc is None:
@@ -335,6 +334,25 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
             else:
                 mvcc.write_locks[key] = lock
+
+    # ....................... #
+
+    def _lock_for(self, key: int) -> asyncio.Lock:
+        """The lock for *key* on the running loop, creating the loop's table on first use.
+
+        Per loop rather than one table rebuilt when the loop changes: a lock belongs to the
+        loop it was awaited on, and clearing a table a live loop still holds locks in would
+        hand two writers for one owner a lock each. Tables whose loop has closed are dropped,
+        so what is retained is the owners one live loop has seen.
+        """
+
+        loop = asyncio.get_running_loop()
+        tables = self.state.write_serialization
+
+        for finished in [entry for entry in tables if entry.is_closed()]:
+            del tables[finished]
+
+        return tables.setdefault(loop, {}).setdefault(key, asyncio.Lock())
 
     # ....................... #
 
@@ -346,7 +364,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         changes under us was written by a transaction holding the lock for *both* owners.
         """
 
-        if self._serialized_by() is None:
+        if not self._serialized_by():
             return
 
         store = self._store()
@@ -934,14 +952,24 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         match = self._matcher(filters)
 
         # Every owner the filter selects, before the section rather than inside it: a set-based
-        # update is one statement on a real store and takes every lock it needs up front. The
-        # rows are read twice — once to find the owners, once under the lock to build the batch
-        # — and a row that joins the filter in between is a row a concurrent writer added while
-        # holding the lock for its owner, which this call then waits for.
-        if self._serialized_by() is not None:
-            await self._serialize_writes(
-                *(raw for raw in list(self._store().values()) if match(raw)), patch
-            )
+        # update is one statement on a real store and takes every lock it needs up front.
+        #
+        # Re-scanned until the set stops growing, because taking a lock is an await: a writer
+        # holding another owner's lock can commit a row into this filter while this call is
+        # waiting, and that row's owner was never in the first scan. Each pass can only find
+        # owners committed by a transaction that has since ended, so the set converges.
+        if self._serialized_by():
+            seen: set[int] = set()
+
+            while True:
+                rows = [raw for raw in list(self._store().values()) if match(raw)]
+                wanted = set(self._owner_keys(self._serialized_by(), [*rows, patch]))
+
+                if wanted <= seen:
+                    break
+
+                seen |= wanted
+                await self._serialize_writes(*rows, patch)
 
         with self.state.lock:
             store = self._store()
