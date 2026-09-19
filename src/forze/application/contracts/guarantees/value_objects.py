@@ -31,7 +31,7 @@ from ..querying import QueryFilterExpression
 
 # ----------------------- #
 
-GuaranteeKind = Literal["unique_together", "non_overlapping"]
+GuaranteeKind = Literal["unique_together", "non_overlapping", "serialized_by"]
 """The vocabulary, as a closed set of names.
 
 Names rather than classes because the refusals, the capability flags and the per-adapter mappings
@@ -170,7 +170,58 @@ class NonOverlapping:
 
 # ....................... #
 
-StorageGuarantee = UniqueTogether | NonOverlapping
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class SerializedBy:
+    """Writes to this spec for one :attr:`key` value do not interleave.
+
+    The one member that is about *write ordering* rather than a property of stored rows, and it
+    lives here because everything around it would otherwise be built twice: the capability
+    declaration, the reconciliation and the wiring refusal are the same machinery a uniqueness
+    declaration uses, and a second way to say "the store must do this" is what this vocabulary
+    exists to prevent.
+
+    Still a property, not a mechanism. What is declared is that two writes for one key never
+    run at once; whether a backend reaches for an advisory lock, a row lock or a queue is its
+    own affair, and nothing here names one.
+
+    It serializes; it does not validate. A handler whose own check is only correct when no other
+    writer is running becomes correct under this declaration — but the declaration itself
+    refuses nothing. Where the rule can also be a hard stop, that is a second guarantee beside
+    this one, and the two are independent.
+
+    :raises CoreException: ``configuration`` when no field is named, or when a field is named
+        twice — a duplicate changes nothing and reads as a wider key than it is.
+    """
+
+    kind: GuaranteeKind = attrs.field(default="serialized_by", init=False)
+    """Discriminator, for the reconciliation and the refusal messages."""
+
+    key: tuple[str, ...]
+    """The fields whose value identifies the owner writes are serialized by."""
+
+    def __attrs_post_init__(self) -> None:
+        if not self.key:
+            raise exc.configuration(
+                "SerializedBy names no field. Serializing by nothing is serializing every "
+                "write to the relation against every other, which is a different property and "
+                "one no consumer has asked for.",
+            )
+
+        duplicates = sorted({name for name in self.key if self.key.count(name) > 1})
+
+        if duplicates:
+            raise exc.configuration(
+                f"SerializedBy names {', '.join(repr(name) for name in duplicates)} more than "
+                "once. A repeated field changes nothing about which writes contend and reads "
+                "as a wider key than it is.",
+            )
+
+
+# ....................... #
+
+StorageGuarantee = UniqueTogether | NonOverlapping | SerializedBy
 """One member of the vocabulary.
 
 A closed union rather than a base class: the reconciliation, each adapter's mapping and the mock's

@@ -42,6 +42,7 @@ from .entropy_source import (
     secure_token_urlsafe,
 )
 from .fingerprint import (
+    advisory_lock_key,
     build_routing_fingerprint,
     combine_fingerprint,
     connection_string_fingerprint,
@@ -89,6 +90,7 @@ from .uuid import uuid4, uuid7
 # ----------------------- #
 
 __all__ = [
+    "advisory_lock_key",
     "utcnow",
     "monotonic",
     "DEFAULT_DRIVER_DEADLINE_GRACE",

@@ -29,6 +29,7 @@ from forze.base.exceptions import exc
 from .value_objects import (
     GuaranteeKind,
     NonOverlapping,
+    SerializedBy,
     StorageGuarantee,
     StorageGuarantees,
     UniqueTogether,
@@ -70,6 +71,9 @@ class StorageGuaranteeCapabilities:
 
     non_overlapping: bool = False
     """Whether non-overlap of periods per key is enforced."""
+
+    serialized_by: bool = False
+    """Whether writes for one key can be kept from interleaving."""
 
     non_overlapping_filtered: bool = False
     """Whether non-overlap can be restricted to a *subset* of rows.
@@ -115,6 +119,9 @@ class StorageGuaranteeCapabilities:
 
                 return tuple(missing)
 
+            case SerializedBy():
+                return () if self.serialized_by else ("serializing writes per key",)
+
 
 # ....................... #
 
@@ -124,6 +131,7 @@ FULL_STORAGE_GUARANTEES: Final[StorageGuaranteeCapabilities] = StorageGuaranteeC
     unique_together_skip_null=True,
     non_overlapping=True,
     non_overlapping_filtered=True,
+    serialized_by=True,
 )
 """Every guarantee that is enforced anywhere today — the in-memory store's declaration.
 
