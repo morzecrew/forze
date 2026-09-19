@@ -41,6 +41,7 @@ from forze_kits.aggregates.versioned import (
 )
 from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze_kits.domain.temporal import CreateCmdWithTemporalFields, DocWithTemporal
+from forze_kits.domain.temporal.mixins import TemporalMixin
 from forze_kits.domain.versioned import (
     CorrectionDoc,
     CreateCmdWithVersioningFields,
@@ -785,12 +786,14 @@ class TestTheKitsOwnFrontDoor:
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
 
-    async def test_a_model_without_the_mixin_is_left_alone(self) -> None:
-        # A domain model that never declared a convention states nothing to disagree with, so
-        # the bounds check has nothing to compare and must not invent a mismatch.
+    async def test_a_model_carrying_the_mixin_and_the_policy_agrees(self) -> None:
+        # The contrast to the refusals above, and it has to use a model that really carries the
+        # mixin: asserting this with a model that inherits it anyway would pass whatever the
+        # check did.
         from forze_kits.aggregates.temporal.wiring import temporal_wiring
 
-        assert temporal_wiring(CONTRACTS, POLICY) is not None
+        assert issubclass(Contract, TemporalMixin)
+        assert temporal_wiring(CONTRACTS, POLICY).policy is POLICY
 
 
 # ....................... #
@@ -1115,3 +1118,25 @@ class TestTheFrontDoorCarriesBothArms:
         assert corrected.version == 2
         assert in_force.hours == 35
         assert len(list(chain.hits)) == 2
+
+
+# ....................... #
+
+
+class TestAnInvertedPeriodIsADomainRefusal:
+    async def test_it_raises_domain_rather_than_the_value_objects_validation(self) -> None:
+        # The kind matters as much as the refusal: a caller of this aggregate classifies a
+        # domain error, and the period value object would answer `validation` with a message
+        # about endpoints rather than about validity.
+        with pytest.raises(CoreException) as caught:
+            Contract(
+                employee_id="e1",
+                hours=40,
+                valid_from=date(2026, 6, 1),
+                valid_to=date(2026, 1, 1),
+            )
+
+        details = caught.value.details or {}
+
+        assert caught.value.kind is ExceptionKind.DOMAIN
+        assert details["valid_to"] == "2026-01-01"

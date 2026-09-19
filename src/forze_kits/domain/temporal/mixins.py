@@ -58,6 +58,20 @@ class TemporalMixin(CoreModel):
         the port without passing an operation at all.
         """
 
+        # Checked before `Period` is built, because building one over an inverted pair raises
+        # `validation` from the value object — a different kind, carrying none of the detail a
+        # caller of this aggregate needs, for a case this validator's own docstring claims.
+        if self.valid_to is not None and self.valid_to < self.valid_from:
+            raise exc.domain(
+                f"Validity ends before it starts: valid_to {self.valid_to.isoformat()} "
+                f"precedes valid_from {self.valid_from.isoformat()}. A period like that is in "
+                "force on no day, so nothing reads it and nothing conflicts with it.",
+                details={
+                    "valid_from": self.valid_from.isoformat(),
+                    "valid_to": self.valid_to.isoformat(),
+                },
+            )
+
         if not Period(self.valid_from, self.valid_to, self.temporal_bounds).is_empty:
             return self
 

@@ -398,14 +398,21 @@ class TestTwoWritersRaceForOnePeriod:
         finally:
             await second.close()
 
-        assert results == [True, False]
+        # Which writer wins is the scheduler's business and not the property: what matters is
+        # that exactly one did. Asserting a particular winner would make this leg fail on the
+        # run where the other one got there first.
+        assert sorted(results) == [False, True], order
         assert rows[0]["n"] == 1
 
-        # Both open before either finishes, and the loser never reaches "inserted": it is
-        # waiting on the constraint, which is what makes this a race rather than a sequence.
+        # Both transactions open before either finishes, and the loser never reaches
+        # "inserted" — it is blocked on the constraint, which is what makes this a race rather
+        # than a sequence.
         assert order[:2] == ["A:begin", "B:begin"], order
-        assert "B:inserted" not in order, order
-        assert order[-1] == "B:refused", order
+
+        loser = "A" if results[0] is False else "B"
+
+        assert f"{loser}:inserted" not in order, order
+        assert order[-1] == f"{loser}:refused", order
 
 
 # ....................... #
