@@ -168,6 +168,30 @@ SEEDED_PATHS: dict[str, Callable[[Any, Any], Awaitable[None]]] = {
 }
 
 
+class TestEveryFreshWritePathTakesIt:
+    """The paths that carry their own row, rather than naming one already stored."""
+
+    @pytest.mark.parametrize("name", sorted(WRITE_PATHS))
+    async def test_it_serializes(self, name: str) -> None:
+        state = MockState()
+        path = WRITE_PATHS[name]
+
+        def body(pk: UUID) -> Callable[[Any], Awaitable[None]]:
+            async def run(inner: Any) -> None:
+                await path(inner.doc.command(_spec(BY_OWNER)), pk)
+
+            return run
+
+        # Distinct ids, same owner: both writes are legal and the only thing measured is
+        # whether they overlapped.
+        assert not await _observed_overlap(state, body(uuid4()), body(uuid4())), (
+            f"{name} did not serialize"
+        )
+
+
+# ....................... #
+
+
 class TestEveryWritePathAddressedByKeyTakesIt:
     """The same question for the writes that name a row rather than carry one.
 
@@ -263,3 +287,23 @@ class TestASetBasedUpdateLocksEveryOwnerItSelects:
             await inner.doc.command(_spec(BY_OWNER)).touch(second.id)
 
         assert not await _observed_overlap(state, sweep, touch_second)
+
+
+# ....................... #
+
+
+class TestTheKeyDoesNotCollapseTypes:
+    def test_an_integer_and_its_text_are_different_keys(self) -> None:
+        # Both render to "1"; an aggregate keyed on an id that is an integer in one caller and
+        # its text in another would otherwise serialize them against each other by accident.
+        assert advisory_lock_key("a", None, 1) != advisory_lock_key("a", None, "1")
+
+    def test_a_uuid_and_its_text_are_different_keys(self) -> None:
+        owner = uuid4()
+
+        assert advisory_lock_key("a", None, owner) != advisory_lock_key("a", None, str(owner))
+
+    def test_the_same_value_is_still_the_same_key(self) -> None:
+        owner = uuid4()
+
+        assert advisory_lock_key("a", None, owner) == advisory_lock_key("a", None, owner)
