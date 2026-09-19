@@ -546,6 +546,10 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
                 datetime(2026, 9, 19, 12, 30, 0, 123567, tzinfo=UTC),
             ),
             (Decimal128("NaN"), float("nan")),
+            # A *signaling* NaN is one Decimal128 round-trips, and converting one to a float
+            # raises — so the reduction has to reach it without going through `math.isnan`.
+            (Decimal128(Decimal("sNaN")), float("nan")),
+            (Decimal("sNaN"), Decimal("NaN")),
         ],
     )
     def test_what_this_adapter_stores_reduces_to_what_a_spec_declares(

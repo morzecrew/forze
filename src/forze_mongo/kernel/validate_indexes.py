@@ -104,7 +104,13 @@ def _bson_key(value: object) -> object:
     # `x` is NaN, which IEEE equality cannot express — two NaNs are never equal in Python, so
     # without a sentinel such a guarantee could never be satisfied by any index, and the same
     # constraint written twice would read as a contradiction.
-    if isinstance(value, float | Decimal) and isnan(value):
+    # `Decimal.is_nan()` rather than `math.isnan` for the decimal arm: a *signaling* NaN is one
+    # a Decimal128 round-trips, and converting one to a float raises — which would abort
+    # validation on a value the declaration admits instead of reducing it.
+    if isinstance(value, Decimal) and value.is_nan():
+        return ("number", "NaN")
+
+    if isinstance(value, float) and isnan(value):
         return ("number", "NaN")
 
     # Both spellings of an instant reduce to the one the server hands back: BSON has no
