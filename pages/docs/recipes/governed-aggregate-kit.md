@@ -107,13 +107,15 @@ One current version per fact, and one successor per predecessor. The second is w
 concurrent corrections forking the chain, and it is not optional — without it both corrections
 commit and every chain walker picks whichever row it saw first.
 
-!!! warning "A versioned aggregate needs Postgres or the in-memory store"
+!!! note "On Mongo, `sparse` is not the index you want"
 
-    Mongo cannot keep the second guarantee. `skip_null` exempts the first versions, whose
-    `supersedes_id` is null, and Mongo has no mechanism for that exemption — a `sparse` index
-    reads like one and is not, since it still indexes an explicit null and skips a document only
-    when *every* indexed field is missing. Reconciliation refuses when the port is built rather
-    than letting the chain fork later.
+    The second guarantee exempts the first versions, whose `supersedes_id` is null — and a
+    `sparse` unique index does **not** do that: it skips a document only when every indexed field
+    is missing, and it still indexes an explicit null, so two first versions collide under it.
+    The exemption is a `partialFilterExpression` naming what the field *is*
+    (`{supersedes_id: {$type: "string"}}`), which is how a partial filter says "not null" given it
+    admits no negation. Startup checks for that specifically and refuses a sparse index offered in
+    its place, printing the statement that would work.
 
 **The kit declares the law, so your writes run serializable.** `single_current_head` — at most one
 current version per fact — comes with `versioned=`, and it is the detective control for a path

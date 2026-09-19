@@ -18,7 +18,8 @@ the two refusals are compared, rather than asserted separately in files that nev
 
 from __future__ import annotations
 
-from uuid import uuid4
+from datetime import datetime
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -74,19 +75,19 @@ class ReadingUpdate(UpdateCmdWithVersioning):
 class ReadingRead(ReadDocument):
     meter: str
     kwh: int = 0
-    root_id: object = None
+    root_id: UUID
     version: int = 1
-    supersedes_id: object = None
+    supersedes_id: UUID | None = None
     is_current: bool = True
-    superseded_at: object = None
+    superseded_at: datetime | None = None
 
 
 class CorrectionRead(ReadDocument):
-    root_id: object = None
-    from_id: object = None
-    to_id: object = None
-    actor_id: object = None
-    reason: str = ""
+    root_id: UUID
+    from_id: UUID
+    to_id: UUID
+    actor_id: UUID | None = None
+    reason: str
 
 
 def _spec(name: str) -> DocumentSpec[ReadingRead, Reading, ReadingCreate, ReadingUpdate]:

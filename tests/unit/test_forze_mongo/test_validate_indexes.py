@@ -62,19 +62,19 @@ class TestWhatMongoDeclaresItCanKeep:
     been refused — so the claim is pinned here rather than read off the docstring.
     """
 
-    def test_skip_null_is_not_claimed(self) -> None:
-        # Mongo has no mechanism for it. A sparse index skips a document only when *every*
-        # indexed field is missing and still indexes an explicit null, so a tuple holding one
-        # stays in the index and conflicts — the opposite of the exemption. A
-        # `partialFilterExpression` cannot say "not null" either.
-        assert MongoDocumentAdapter.storage_guarantees.unique_together_skip_null is False
+    def test_skip_null_is_claimed(self) -> None:
+        # Not through `sparse`, which reads like the mechanism and is not — it still indexes an
+        # explicit null. Through a `partialFilterExpression` naming what the field *is*, which
+        # is how a partial filter says "not null" given it admits no negation.
+        assert MongoDocumentAdapter.storage_guarantees.unique_together_skip_null is True
 
-    def test_a_skip_null_guarantee_is_refused_by_name(self) -> None:
-        unmet = MongoDocumentAdapter.storage_guarantees.unmet(
-            UniqueTogether(fields=("supersedes_id",), skip_null=True)
+    def test_a_skip_null_guarantee_is_met(self) -> None:
+        assert (
+            MongoDocumentAdapter.storage_guarantees.unmet(
+                UniqueTogether(fields=("supersedes_id",), skip_null=True)
+            )
+            == ()
         )
-
-        assert unmet == ("exempting rows whose tuple holds a null (`skip_null`)",)
 
     def test_the_filtered_form_is_claimed(self) -> None:
         # The contrast: the refusal above is about `skip_null`, not about Mongo being unable to
@@ -268,8 +268,8 @@ class TestTheFilterIsComparedBySelectedDocuments:
         # Reduced to typed keys rather than raw values, so the comparison cannot be fooled by
         # Python equalities the server does not share.
         assert _guarantee_equalities({"$values": {"a": 1, "b": "x"}}) == {
-            "a": ("number", 1.0),
-            "b": ("str", "x"),
+            "a": ("eq", ("number", 1)),
+            "b": ("eq", ("str", "x")),
         }
 
     def test_a_boolean_is_not_the_number_one(self) -> None:
