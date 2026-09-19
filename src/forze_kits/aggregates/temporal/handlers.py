@@ -1,5 +1,6 @@
 """The two effective-dated reads, and the filters that must agree with `Period`."""
 
+from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
@@ -88,12 +89,19 @@ def effective_on_filter(
     values: dict[str, Any],
     on: date,
     bounds: Bounds,
+    restrict: Sequence[QueryFilterExpression] = (),
 ) -> QueryFilterExpression:
     """Rows under *values* whose period is in force on *on*.
 
     This is :meth:`~forze.base.primitives.Period.contains` expressed in the filter language, and
     the two are pinned against each other: the store answering one way while the value object
     answers the other is a row a caller believed in force that no read returns.
+
+    *restrict* carries what the aggregate's **other** arms exclude — soft-deleted rows, rows
+    that are not the current version. These reads build their own filter rather than passing
+    through the mapper the generated reads share, so an arm's restriction reaches them only by
+    being conjoined here; without it a composed aggregate answers "what is in force" with a row
+    it hides from every other read.
     """
 
     return {
@@ -101,6 +109,7 @@ def effective_on_filter(
             _key_filter(key, values),
             {"$values": {VALID_FROM_FIELD: _at_or_before(on, inclusive=bounds[0] == "[")}},
             _still_open(_at_or_after(on, inclusive=bounds[1] == "]")),
+            *restrict,
         ]
     }
 
@@ -114,6 +123,7 @@ def timeline_filter(
     start: date,
     end: date | None,
     bounds: Bounds,
+    restrict: Sequence[QueryFilterExpression] = (),
 ) -> QueryFilterExpression:
     """Rows under *values* whose period meets the window ``start``–``end``.
 
@@ -149,6 +159,7 @@ def timeline_filter(
     clauses: list[QueryFilterExpression] = [
         _key_filter(key, values),
         _still_open(_at_or_after(start, inclusive=touching)),
+        *restrict,
     ]
 
     if end is not None:
@@ -177,6 +188,9 @@ class EffectiveOn[Out: ReadDocument](Handler[EffectiveOnDTO, Out]):
     policy: TemporalPolicy
     """The key and the convention this aggregate declared."""
 
+    restrict: tuple[QueryFilterExpression, ...] = ()
+    """What the aggregate's other arms exclude from every read."""
+
     # ....................... #
 
     async def __call__(self, args: EffectiveOnDTO) -> Out:
@@ -189,7 +203,7 @@ class EffectiveOn[Out: ReadDocument](Handler[EffectiveOnDTO, Out]):
 
         page = await self.query.find_page(
             filters=effective_on_filter(
-                self.policy.key, dict(args.key), args.on, self.policy.bounds
+                self.policy.key, dict(args.key), args.on, self.policy.bounds, self.restrict
             ),
             sorts={VALID_FROM_FIELD: "desc"},
             pagination=Pagination(page=1, size=1).to_offset_expression(),
@@ -222,6 +236,9 @@ class Timeline[Out: ReadDocument](Handler[TimelineDTO, Paginated[Out]]):
     policy: TemporalPolicy
     """The key and the convention this aggregate declared."""
 
+    restrict: tuple[QueryFilterExpression, ...] = ()
+    """What the aggregate's other arms exclude from every read."""
+
     # ....................... #
 
     async def __call__(self, args: TimelineDTO) -> Paginated[Out]:
@@ -233,7 +250,12 @@ class Timeline[Out: ReadDocument](Handler[TimelineDTO, Paginated[Out]]):
 
         page = await self.query.find_page(
             filters=timeline_filter(
-                self.policy.key, dict(args.key), args.start, args.end, self.policy.bounds
+                self.policy.key,
+                dict(args.key),
+                args.start,
+                args.end,
+                self.policy.bounds,
+                self.restrict,
             ),
             sorts={VALID_FROM_FIELD: "asc"},
             pagination=args.to_offset_expression(),

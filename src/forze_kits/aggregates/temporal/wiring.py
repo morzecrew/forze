@@ -13,6 +13,7 @@ from .policy import TemporalPolicy, assert_guarantee
 
 if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec
+    from forze.application.contracts.querying import QueryFilterExpression
     from forze.application.execution.operations.registry import OperationRegistry
     from forze.base.primitives import StrKeyNamespace
 
@@ -36,12 +37,19 @@ class TemporalWiring:
     policy: TemporalPolicy
     """The key a period is scoped by, and which endpoints are in force."""
 
+    restrict: tuple[QueryFilterExpression, ...] = ()
+    """What the aggregate's other arms exclude from every read.
+
+    The dated reads build their own filter instead of passing through the mapper the generated
+    reads share, so nothing reaches them implicitly: a composed aggregate has to hand its
+    restrictions over, or it answers "what is in force" with a row it hides everywhere else."""
+
     # ....................... #
 
     def ops(self, *, ns: StrKeyNamespace | None = None) -> OperationRegistry:
         """The EFFECTIVE_ON + TIMELINE reads."""
 
-        return build_temporal_registry(self.spec, self.policy, ns=ns)
+        return build_temporal_registry(self.spec, self.policy, restrict=self.restrict, ns=ns)
 
     # ....................... #
 
@@ -62,6 +70,8 @@ class TemporalWiring:
 def temporal_wiring(
     spec: DocumentSpec[Any, Any, Any, Any],
     policy: TemporalPolicy,
+    *,
+    restrict: tuple[QueryFilterExpression, ...] = (),
 ) -> TemporalWiring:
     """Build the reusable temporal-validity wiring for *spec*.
 
@@ -79,7 +89,7 @@ def temporal_wiring(
     assert_guarantee(spec, policy)
     _assert_bounds_agree(spec, policy)
 
-    return TemporalWiring(spec=spec, policy=policy)
+    return TemporalWiring(spec=spec, policy=policy, restrict=restrict)
 
 
 # ....................... #

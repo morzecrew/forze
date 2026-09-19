@@ -20,8 +20,9 @@ from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, ReadDocument
 from forze_kits.aggregates import AggregateKit
-from forze_kits.aggregates.document.dto import DocumentUpdateDTO, ListRequestDTO
+from forze_kits.aggregates.document.dto import DocumentIdRevDTO, DocumentUpdateDTO, ListRequestDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
+from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
 from forze_kits.aggregates.temporal import (
     EffectiveOnDTO,
     TemporalKernelOp,
@@ -29,6 +30,7 @@ from forze_kits.aggregates.temporal import (
     TimelineDTO,
     temporal_facade,
 )
+from forze_kits.domain.soft_deletion import SoftDeletionMixin
 from forze_kits.domain.temporal import CreateCmdWithTemporalFields, DocWithTemporal
 from forze_mock import MockDepsModule
 
@@ -79,8 +81,58 @@ CONTRACTS = DocumentSpec[ContractRead, Contract, ContractCreate, ContractUpdate]
 )
 
 
+class DeletableContract(DocWithTemporal, SoftDeletionMixin):
+    employee_id: str
+    hours: int
+
+
+class DeletableRead(ReadDocument):
+    employee_id: str
+    hours: int
+    valid_from: date
+    valid_to: date | None = None
+    is_deleted: bool = False
+
+
+class DeletableCreate(CreateCmdWithTemporalFields):
+    employee_id: str
+    hours: int
+
+
+DELETABLE = DocumentSpec[DeletableRead, DeletableContract, DeletableCreate, ContractUpdate](
+    name="contracts",
+    read=DeletableRead,
+    write=DocumentWriteTypes(
+        domain=DeletableContract, create_cmd=DeletableCreate, update_cmd=ContractUpdate
+    ),
+    guarantees=(NO_OVERLAP,),
+)
+
+
 def _kit() -> AggregateKit[ContractRead, Contract, ContractCreate, ContractUpdate]:
     return AggregateKit(spec=CONTRACTS, temporal=POLICY)
+
+
+def _half_open_kit() -> AggregateKit[Any, Any, Any, Any]:
+    """A kit whose convention excludes the end day, where a same-day period covers nothing."""
+
+    return AggregateKit(
+        spec=DocumentSpec[ContractRead, HalfOpenContract, ContractCreate, ContractUpdate](
+            name="contracts",
+            read=ContractRead,
+            write=DocumentWriteTypes(
+                domain=HalfOpenContract,
+                create_cmd=ContractCreate,
+                update_cmd=ContractUpdate,
+            ),
+            guarantees=(
+                NonOverlapping(
+                    key=("employee_id",), period=("valid_from", "valid_to"), bounds="[)"
+                ),
+            ),
+        ),
+        temporal=TemporalPolicy(key=("employee_id",), bounds="[)"),
+    )
 
 
 def _key(op: object) -> str:
@@ -381,23 +433,8 @@ class TestTheStoreKeepsTheRuleTheReadsAssume:
 
 class TestAPeriodInForceOnNoDay:
     async def test_a_create_of_an_empty_period_is_refused(self) -> None:
-        half_open = TemporalPolicy(key=("employee_id",), bounds="[)")
-        spec = DocumentSpec[ContractRead, HalfOpenContract, ContractCreate, ContractUpdate](
-            name="contracts",
-            read=ContractRead,
-            write=DocumentWriteTypes(
-                domain=HalfOpenContract,
-                create_cmd=ContractCreate,
-                update_cmd=ContractUpdate,
-            ),
-            guarantees=(
-                NonOverlapping(
-                    key=("employee_id",), period=("valid_from", "valid_to"), bounds="[)"
-                ),
-            ),
-        )
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=spec, temporal=half_open).registry(tx_route=_TX)
+        reg = _half_open_kit().registry(tx_route=_TX)
 
         async with runtime.scope():
             ctx = runtime.get_context()
@@ -432,23 +469,8 @@ class TestAPeriodInForceOnNoDay:
     async def test_an_update_cannot_shrink_a_row_into_one(self) -> None:
         # The other write path. A row edited into a period covering no day is as unreadable as
         # one created that way.
-        half_open = TemporalPolicy(key=("employee_id",), bounds="[)")
-        spec = DocumentSpec[ContractRead, HalfOpenContract, ContractCreate, ContractUpdate](
-            name="contracts",
-            read=ContractRead,
-            write=DocumentWriteTypes(
-                domain=HalfOpenContract,
-                create_cmd=ContractCreate,
-                update_cmd=ContractUpdate,
-            ),
-            guarantees=(
-                NonOverlapping(
-                    key=("employee_id",), period=("valid_from", "valid_to"), bounds="[)"
-                ),
-            ),
-        )
         runtime = build_runtime(MockDepsModule())
-        reg = AggregateKit(spec=spec, temporal=half_open).registry(tx_route=_TX)
+        reg = _half_open_kit().registry(tx_route=_TX)
 
         async with runtime.scope():
             ctx = runtime.get_context()
@@ -473,6 +495,98 @@ class TestAPeriodInForceOnNoDay:
                     ),
                     ctx,
                 )
+
+
+# ....................... #
+
+
+class TestTheDatedReadsSeeWhatTheOtherArmsHide:
+    """A composed aggregate must not answer "in force" with a row it hides everywhere else.
+
+    Soft deletion and versioning install their exclusions on the mapper slots the *generated*
+    reads share. These two reads build their own filter, so they inherit nothing — and a read
+    that returns a soft-deleted contract, or a version that has since been corrected, is worse
+    than one that does not exist: every other read in the aggregate disagrees with it.
+    """
+
+    async def test_a_soft_deleted_row_is_not_in_force(self) -> None:
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(spec=DELETABLE, soft_delete=True, temporal=POLICY).registry(
+            tx_route=_TX
+        )
+        key = DELETABLE.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await run_operation(
+                reg,
+                key(DocumentKernelOp.CREATE),
+                DeletableCreate(
+                    employee_id="e1",
+                    hours=40,
+                    valid_from=date(2026, 1, 1),
+                    valid_to=date(2026, 3, 31),
+                ),
+                ctx,
+            )
+            await run_operation(
+                reg,
+                key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=row.id, rev=row.rev),
+                ctx,
+            )
+
+            with pytest.raises(CoreException) as caught:
+                await run_operation(
+                    reg,
+                    key(TemporalKernelOp.EFFECTIVE_ON),
+                    EffectiveOnDTO(key={"employee_id": "e1"}, on=date(2026, 2, 1)),
+                    ctx,
+                )
+
+            page = await run_operation(
+                reg,
+                key(TemporalKernelOp.TIMELINE),
+                TimelineDTO(
+                    key={"employee_id": "e1"},
+                    start=date(2026, 1, 1),
+                    end=date(2026, 12, 31),
+                ),
+                ctx,
+            )
+
+        assert caught.value.kind is ExceptionKind.NOT_FOUND
+        assert list(page.hits) == []
+
+    async def test_the_same_row_is_in_force_before_it_is_deleted(self) -> None:
+        # The contrast: the restriction excludes deleted rows, not every row.
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(spec=DELETABLE, soft_delete=True, temporal=POLICY).registry(
+            tx_route=_TX
+        )
+        key = DELETABLE.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await run_operation(
+                reg,
+                key(DocumentKernelOp.CREATE),
+                DeletableCreate(
+                    employee_id="e1",
+                    hours=40,
+                    valid_from=date(2026, 1, 1),
+                    valid_to=date(2026, 3, 31),
+                ),
+                ctx,
+            )
+            row = await run_operation(
+                reg,
+                key(TemporalKernelOp.EFFECTIVE_ON),
+                EffectiveOnDTO(key={"employee_id": "e1"}, on=date(2026, 2, 1)),
+                ctx,
+            )
+
+        assert row.hours == 40
 
 
 # ....................... #

@@ -622,7 +622,11 @@ class AggregateKit(Generic[R, D, C, U]):
             # share the list-family mapper slots, so a kit declaring both has to apply both.
             mappers = versioned.mappers(mappers)
 
-        temporal = temporal_wiring(spec, self.temporal) if self.temporal is not None else None
+        temporal = (
+            temporal_wiring(spec, self.temporal, restrict=self._read_restrictions())
+            if self.temporal is not None
+            else None
+        )
 
         reg = build_document_registry(spec, mappers=mappers)
 
@@ -674,6 +678,28 @@ class AggregateKit(Generic[R, D, C, U]):
             reg = type(reg).merge(reg, self.extra_ops)
 
         return reg
+
+    # ....................... #
+
+    def _read_restrictions(self) -> tuple[QueryFilterExpression, ...]:
+        """What the other arms exclude from every read, for the arms that do not use mappers.
+
+        Soft deletion and versioning install their exclusions on the shared *mapper* slots, so
+        every generated read inherits them by construction. The dated reads build their own
+        filter and inherit nothing — which is a silent divergence rather than a loud one: a
+        composed aggregate would answer "what is in force on that day" with a row it hides from
+        its own list, its own get and its own search.
+        """
+
+        restrictions: list[QueryFilterExpression] = []
+
+        if self.soft_delete:
+            restrictions.append({"$values": {SOFT_DELETE_FIELD: False}})
+
+        if self.versioned is not None:
+            restrictions.append({"$values": {IS_CURRENT_FIELD: True}})
+
+        return tuple(restrictions)
 
     # ....................... #
 

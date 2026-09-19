@@ -276,3 +276,32 @@ class TestAnEmptyWindowIsRefused:
 
     async def test_the_same_window_is_fine_when_its_endpoints_are_in_force(self) -> None:
         assert timeline_filter(KEY, {"owner": OWNER}, _d(3), _d(3), "[]")
+
+
+# ....................... #
+
+
+class TestTheDdlNamesTheRightRangeType:
+    """The printed migration has to construct a range over the column it names.
+
+    A `daterange` over a `timestamptz` column is a statement that does not run, and a refusal
+    carrying a statement that does not run is worse than one carrying none: it sends an operator
+    to the database to find out.
+    """
+
+    def test_each_column_type_gets_its_constructor(self) -> None:
+        from forze_postgres.kernel.catalog.introspect import PostgresType
+        from forze_postgres.kernel.catalog.validation.validate_schema import _range_function
+
+        def _t(base: str) -> PostgresType:
+            return PostgresType(base=base, is_array=False, not_null=False)
+
+        assert _range_function(_t("date")) == "daterange"
+        assert _range_function(_t("timestamptz")) == "tstzrange"
+        assert _range_function(_t("timestamp with time zone")) == "tstzrange"
+        assert _range_function(_t("timestamp")) == "tsrange"
+
+    def test_an_unknown_column_falls_back_to_the_grain_the_kit_writes(self) -> None:
+        from forze_postgres.kernel.catalog.validation.validate_schema import _range_function
+
+        assert _range_function(None) == "daterange"

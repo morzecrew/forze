@@ -3,6 +3,7 @@
 from typing import Any
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
@@ -33,6 +34,7 @@ def build_temporal_registry(
     spec: DocumentSpec[Any, Any, Any, Any],
     policy: TemporalPolicy,
     *,
+    restrict: tuple[QueryFilterExpression, ...] = (),
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
     """Build the two effective-dated reads for *spec*.
@@ -42,6 +44,7 @@ def build_temporal_registry(
 
     :param spec: The temporal document specification.
     :param policy: The key a period is scoped by, and the convention.
+    :param restrict: What the aggregate's other arms exclude from every read.
     :param ns: Optional namespace.
     :returns: Operation registry with EFFECTIVE_ON and TIMELINE.
     """
@@ -53,10 +56,12 @@ def build_temporal_registry(
             ns.key(TemporalKernelOp.EFFECTIVE_ON): lambda ctx: EffectiveOn(
                 query=ctx.doc.query(spec),
                 policy=policy,
+                restrict=restrict,
             ),
             ns.key(TemporalKernelOp.TIMELINE): lambda ctx: Timeline(
                 query=ctx.doc.query(spec),
                 policy=policy,
+                restrict=restrict,
             ),
         },
     )
