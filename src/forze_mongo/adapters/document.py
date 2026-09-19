@@ -71,6 +71,14 @@ class MongoDocumentAdapter(DocumentAdapter[R, D, C, U]):
     document only when *every* indexed field is missing and still indexes an explicit null, so
     the rows the exemption exists to let through would collide. Startup validation checks for
     the type predicate specifically and refuses a sparse index offered in its place.
+
+    ``non_overlapping`` is absent, and stays absent. Mongo has no exclusion constraint, and
+    unlike the uniqueness members this one is not expressible as a partial unique index: it is
+    a pairwise comparison between rows, not a property of one row's fields. So a spec declaring
+    it is refused here rather than served by a store that does not keep it — an effective-dated
+    aggregate whose overlap rule is unenforced is the defect the aggregate exists to prevent,
+    wearing a framework's name. A named consumer would reopen it with a different mechanism: a
+    pre-write range query under a serialized write, which is a different declaration.
     """
 
     document_cache: DocumentCache[R]

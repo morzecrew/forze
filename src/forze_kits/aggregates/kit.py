@@ -70,6 +70,12 @@ from forze_kits.aggregates.soft_deletion import (
     soft_delete_wiring,
 )
 from forze_kits.aggregates.storage import StorageFacade, build_storage_registry
+from forze_kits.aggregates.temporal import (
+    TemporalFacade,
+    TemporalPolicy,
+    temporal_facade,
+    temporal_wiring,
+)
 from forze_kits.aggregates.versioned import (
     VersionedFacade,
     VersionedKernelOp,
@@ -236,6 +242,16 @@ class AggregateKit(Generic[R, D, C, U]):
     them. The policy carries the spec for the correction records, which is the author's: its
     relation and route are facts only they hold."""
 
+    temporal: TemporalPolicy | None = None
+    """Wire effective dating: `valid_from` / `valid_to`, `effective_on` and `timeline`.
+
+    Requires the validity mixins on the domain and create-command models, and requires the spec
+    to declare the matching non-overlap guarantee — "the row in force on a day" is a well-formed
+    question only where the store refuses to hold two of them, and a read-then-insert check in
+    the kit could not be correct under concurrency. The policy carries the key a period is
+    scoped by and which endpoints are in force; the reads and the guarantee both read it, so
+    they cannot disagree."""
+
     invariants: tuple[SystemInvariant, ...] = attrs.field(factory=tuple)
     """Cross-aggregate laws enforced preventively on the write ops (scope params read off the result)."""
 
@@ -330,6 +346,13 @@ class AggregateKit(Generic[R, D, C, U]):
 
         registry = self.registry(tx_route=tx_route)
 
+        if self.temporal is not None:
+            # Same reasoning as the versioned arm below, and the same cast for the same reason.
+            return cast(
+                "OperationFacadeFactory[DocumentFacade[R, C, U]]",
+                temporal_facade(runtime, registry, self.spec),
+            )
+
         if self.versioned is not None:
             # A `VersionedFacade` *is* a `DocumentFacade`, so every caller of this method keeps
             # working and gains the lineage operations; the cast is only because
@@ -364,6 +387,28 @@ class AggregateKit(Generic[R, D, C, U]):
             )
 
         return versioned_facade(runtime, self.registry(tx_route=tx_route), self.spec)
+
+    # ....................... #
+
+    def validity_facade(
+        self,
+        runtime: ExecutionRuntime,
+        *,
+        tx_route: StrKey = "default",
+    ) -> OperationFacadeFactory[TemporalFacade[R, C, U]]:
+        """A per-call :class:`TemporalFacade` factory (requires ``temporal``).
+
+        The precisely-typed counterpart of :meth:`facade` for the effective-dated reads, beside
+        :meth:`lineage_facade` and for the same reason.
+        """
+
+        if self.temporal is None:
+            raise exc.precondition(
+                "AggregateKit.validity_facade requires a temporal policy (temporal=…) on the "
+                "kit — without one there are no effective-dated reads to reach.",
+            )
+
+        return temporal_facade(runtime, self.registry(tx_route=tx_route), self.spec)
 
     # ....................... #
 
@@ -577,6 +622,8 @@ class AggregateKit(Generic[R, D, C, U]):
             # share the list-family mapper slots, so a kit declaring both has to apply both.
             mappers = versioned.mappers(mappers)
 
+        temporal = temporal_wiring(spec, self.temporal) if self.temporal is not None else None
+
         reg = build_document_registry(spec, mappers=mappers)
 
         if self.search is not None:
@@ -613,6 +660,9 @@ class AggregateKit(Generic[R, D, C, U]):
 
                 if self.search is not None:
                     reg = self._sync_correction_to_search(reg, ns=ns, tx_route=tx_route)
+
+        if temporal is not None:
+            reg = temporal.bind(reg, ns=ns)
 
         reg = self._attach_invariants(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_outbox_flush(reg, ns=ns, tx_route=tx_route)
