@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import json
 import re
-from uuid import uuid4
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from uuid import UUID, uuid4
 
 import pytest
+from bson import Decimal128
 
 from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
 from forze.application.execution import Deps, LifecyclePlan
@@ -33,6 +36,36 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 ONE_CURRENT = UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}})
 ONE_EVER = UniqueTogether(fields=("root_id",))
+
+
+def _mongosh_literal(rendered: str) -> dict[str, object]:
+    """Parse the one-field object the refusal printed, the way ``mongosh`` would read it.
+
+    Written out rather than reusing the renderer's own helpers: a parser that shared code with
+    the thing under test would agree with it by construction, which is the opposite of what
+    this leg is for.
+    """
+
+    inner = rendered.strip().removeprefix("{").removesuffix("}").strip()
+    name, _, literal = inner.partition(":")
+    literal = literal.strip()
+
+    if found := re.fullmatch(r'(Long|Decimal128|ISODate)\("(.*)"\)', literal):
+        kind, raw = found.groups()
+
+        if kind == "Long":
+            value: object = int(raw)
+
+        elif kind == "Decimal128":
+            value = Decimal128(raw)
+
+        else:
+            value = datetime.fromisoformat(raw)
+
+    else:
+        value = json.loads(literal)
+
+    return {name.strip().strip('"'): value}
 
 
 async def _collection(mongo_client: MongoClient) -> tuple[str, str]:
@@ -186,39 +219,64 @@ class TestMongoStartupValidation:
         with pytest.raises(CoreException, match="partialFilterExpression"):
             await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
 
+    @pytest.mark.parametrize(
+        ("value", "literal"),
+        [
+            (True, "true"),
+            ("current", '"current"'),
+            (7, "7"),
+            (9007199254740993, 'Long("9007199254740993")'),
+            (Decimal("9.99"), 'Decimal128("9.99")'),
+            (date(2026, 9, 19), 'ISODate("2026-09-19T00:00:00+00:00")'),
+            (datetime(2026, 9, 19, 12, 30, tzinfo=UTC), 'ISODate("2026-09-19T12:30:00+00:00")'),
+            (
+                UUID("00000000-0000-0000-0000-00000000002a"),
+                '"00000000-0000-0000-0000-00000000002a"',
+            ),
+            (None, "null"),
+        ],
+    )
     async def test_the_printed_migration_creates_an_index_that_validates(
         self,
         mongo_client: MongoClient,
+        value: object,
+        literal: str,
     ) -> None:
-        # The refusal's whole value is that an operator can act on it, and the only proof of
-        # that is running what it printed. Parsed out of the message rather than rebuilt here,
-        # so a message that drifts from the check fails this leg.
+        """Run what the refusal printed, then validate again.
+
+        The refusal's whole value is that an operator can act on it, and the only proof of that
+        is running the statement. Over every value type a filter admits rather than one of
+        them: a boolean round-trips under almost any rendering, so a leg that only covered
+        booleans passed while a large integer was being rounded to a different value and a
+        `date` was creating an index the next startup refused.
+
+        The statement is parsed out of the message rather than rebuilt here, so a message that
+        drifts from the check fails this leg.
+        """
+
         db_name, collection = await _collection(mongo_client)
+        guarantee = UniqueTogether(fields=("root_id",), where={"$values": {"marker": value}})
 
         with pytest.raises(CoreException) as caught:
-            await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+            await _validate(mongo_client, (db_name, collection), guarantee)
 
-        # The summary wraps, so the statement is read out of the whole message rather than off
-        # one line.
+        # The summary wraps, so the statement is read out of the whole message.
         statement = " ".join(caught.value.summary.split())
 
-        assert "partialFilterExpression: {is_current: true}" in statement
+        assert f"partialFilterExpression: {{marker: {literal}}}" in statement, statement
 
         found = re.search(r"partialFilterExpression: (\{.*?\})", statement)
 
         assert found is not None, statement
 
-        # mongosh writes bare keys; everything else in the literal is already JSON.
-        filter_json = re.sub(r"([{,]\s*)([A-Za-z_][\w.]*):", r'\1"\2":', found.group(1))
-
         coll = await mongo_client.collection(collection, db_name=db_name)
         await coll.create_index(
             [("root_id", 1)],
             unique=True,
-            partialFilterExpression=json.loads(filter_json),
+            partialFilterExpression=_mongosh_literal(found.group(1)),
         )
 
-        await _validate(mongo_client, (db_name, collection), ONE_CURRENT)
+        await _validate(mongo_client, (db_name, collection), guarantee)
 
     async def test_a_reversed_compound_index_counts(
         self,

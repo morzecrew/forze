@@ -495,7 +495,8 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
         [
             (["a", 1], '["a", 1]'),
             (datetime(2026, 9, 19, tzinfo=UTC), 'ISODate("2026-09-19T00:00:00+00:00")'),
-            (date(2026, 9, 19), 'ISODate("2026-09-19")'),
+            (date(2026, 9, 19), 'ISODate("2026-09-19T00:00:00+00:00")'),
+            (datetime(2026, 9, 19), 'ISODate("2026-09-19T00:00:00+00:00")'),
             (
                 UUID("00000000-0000-0000-0000-00000000002a"),
                 '"00000000-0000-0000-0000-00000000002a"',
@@ -531,6 +532,8 @@ class TestEveryValueShapeSurvivesTheRoundTrip:
                 UUID("00000000-0000-0000-0000-00000000002a"),
             ),
             (Decimal128("9.99"), Decimal("9.99")),
+            (datetime(2026, 9, 19, tzinfo=UTC), date(2026, 9, 19)),
+            (datetime(2026, 9, 19, tzinfo=UTC), datetime(2026, 9, 19)),
         ],
     )
     def test_what_this_adapter_stores_reduces_to_what_a_spec_declares(

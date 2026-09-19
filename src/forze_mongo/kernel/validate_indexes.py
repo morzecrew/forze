@@ -3,7 +3,7 @@
 import json
 import re
 from collections.abc import Sequence
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from math import isinf, isnan
 from uuid import UUID
@@ -100,6 +100,16 @@ def _bson_key(value: object) -> object:
     if isinstance(value, Decimal128):
         return ("number", value.to_decimal())
 
+    # Both spellings of an instant reduce to the one the server hands back: BSON has no
+    # date-only type and no naive datetime, the client reads with ``tz_aware=True``, so a date
+    # is stored as UTC midnight and a naive datetime as UTC. Keying a `date` apart from the
+    # `datetime` it becomes would refuse the very index the printed migration creates.
+    if isinstance(value, datetime):
+        return ("datetime", value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC))
+
+    if isinstance(value, date):
+        return ("datetime", datetime(value.year, value.month, value.day, tzinfo=UTC))
+
     if isinstance(value, int | float | Decimal):
         return ("number", value)
 
@@ -172,9 +182,9 @@ def _mongosh(key: object) -> str:
         case ("array", tuple() as items):
             return "[" + ", ".join(_mongosh(item) for item in items) + "]"  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
 
-        case ("datetime" | "date", datetime() | date() as value):
-            # Mongo has no date-only type; a date is stored as midnight. Rendering one as a
-            # quoted string would print a statement creating an index over strings.
+        case ("datetime", datetime() as value):
+            # The instant as it will be stored, so the statement creates the value the
+            # comparison then reads back — a quoted string would create an index over strings.
             return f'ISODate("{value.isoformat()}")'
 
         case _:  # pragma: no cover - every scalar a filter admits is handled above
