@@ -6805,27 +6805,47 @@ wiring:</p>
 <tr>
 <td><code>NonOverlapping(key=…, period=…)</code></td>
 <td>no two rows for one key hold overlapping <a href="../../../core-concepts/domain-layer/#a-period-and-which-end-is-in-force">periods</a></td>
+<td><code>EXCLUDE USING gist</code></td>
 <td>—</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>NonOverlapping(key=…, period=…, where=…)</code></td>
+<td>…among the rows the filter selects</td>
+<td><code>EXCLUDE … WHERE (…)</code></td>
 <td>—</td>
-<td>—</td>
+<td>✅</td>
 </tr>
 </tbody>
 </table>
-<p><code>NonOverlapping</code> is defined and enforced by nothing yet, so every backend refuses a spec that
-declares one — a capability that reconciles and then fails at the first write is worse than one
-that says no.</p>
+<p>Mongo refuses <code>NonOverlapping</code>, and will keep refusing it: non-overlap is a comparison <em>between</em>
+two rows rather than a property of one row's fields, so unlike filtered uniqueness there is no
+partial index that expresses it.</p>
+<p>The period's start field must be non-null. A store reads a null lower bound as "in force since
+always" and refuses everything overlapping it, and the in-memory store has no way to say the
+same — so the declaration is refused rather than enforced two different ways. A null in the
+<em>key</em> conflicts with nothing, including another null, because the comparison is equality.</p>
 <p>On Mongo the null exemption is a <code>partialFilterExpression</code> naming each field's stored BSON type,
 not a <code>sparse</code> index: sparse skips a document only when <em>every</em> indexed field is missing and still
 indexes an explicit null, so the tuples the exemption was meant to let through would collide under
 it. Startup refuses a sparse index offered for a <code>skip_null</code> guarantee.</p>
 <p>Three things happen to a declared guarantee, and a failure at any of them is loud:</p>
 <ol>
-<li><strong>Reconciliation</strong>, when the port is built. A backend that cannot keep the guarantee raises
+<li>
+<p><strong>Reconciliation</strong>, when the port is built. A backend that cannot keep the guarantee raises
    <code>precondition</code> with code <code>storage_guarantee_unsupported</code>, naming which part is missing —
    "uniqueness over a field tuple" reads differently from "uniqueness restricted to a subset of
    rows", and they need different fixes. <code>check_wiring</code> reports it like any other resolution
-   failure, so CI sees it before production does.</li>
-<li><strong>Validation</strong>, at startup. The live catalog is checked for the index, and the refusal names
+   failure, so CI sees it before production does.
+For a non-overlap guarantee startup checks more than the columns: the constraint's key must be
+<em>exactly</em> the declared key (an extra column weakens it — two rows would have to match on that
+one too before they conflict), each key element must be compared with <code>=</code>, the range must be
+built over the period's two fields in that order, and it must carry the declared bounds and the
+<code>&amp;&amp;</code> operator. A constraint with the right columns and <code>=</code> on the range refuses two <em>identical</em>
+periods and takes every other overlapping pair.</p>
+</li>
+<li>
+<p><strong>Validation</strong>, at startup. The live catalog is checked for the index, and the refusal names
    the DDL. An index counts when it covers the guarantee's fields — as a set, since uniqueness
    over a tuple does not depend on the order an index lists it in — and when it is live and
    valid. How closely its <em>restriction</em> is compared differs by backend, and the difference is in
@@ -6834,7 +6854,8 @@ it. Startup refuses a sparse index offered for a <code>skip_null</code> guarante
    and anything that does not reduce that way is refused rather than guessed at. Postgres hands
    back a deparsed SQL predicate, so only the columns it restricts on are checked — an index on
    the right column and the wrong value passes there. Neither is a proof that the mechanism
-   matches; on Postgres it is a floor under a forgotten migration.</li>
+   matches; on Postgres it is a floor under a forgotten migration.</p>
+</li>
 <li><strong>Enforcement</strong>, at write time, by the store. A violating write raises <code>conflict</code>, from every
    backend and from the in-memory store alike — including across two concurrent transactions,
    which the in-memory store rechecks at commit because a unique index is not snapshot-scoped.</li>

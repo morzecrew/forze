@@ -4217,6 +4217,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reading-what-applied-on-a-day" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reading what applied on a day
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-emits-separately" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6294,6 +6305,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#reading-what-applied-on-a-day" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reading what applied on a day
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-emits-separately" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6565,6 +6587,9 @@ cross-record invariant, and event-relaying:</p>
   otherwise.</li>
 <li><strong><code>versioned</code></strong> — correction lineage: the aggregate stops being overwritten and starts being
   <em>corrected</em>. See <a href="#correcting-a-fact-instead-of-overwriting-it">Correcting a fact instead of overwriting it</a>.</li>
+<li><strong><code>temporal</code></strong> — effective dating: the aggregate gains a validity period, and the question
+  "which row applied on day D" stops being a scan. See
+  <a href="#reading-what-applied-on-a-day">Reading what applied on a day</a>.</li>
 <li><strong><code>invariants</code></strong> — each <a href="../../writing-operation/system-invariants/"><code>SystemInvariant</code></a> is enforced
   <em>preventively</em> inside the write transaction, at the isolation floor it needs, so a
   write that would break the law is rolled back.</li>
@@ -6625,6 +6650,70 @@ default you can lower.</p>
 <p>A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
 route, its encryption policy and its retention are facts only you hold. Its create command must be
 <code>CreateCorrectionCmd</code>.</p>
+<h2 id="reading-what-applied-on-a-day">Reading what applied on a day<a class="headerlink" href="#reading-what-applied-on-a-day" title="Permanent link">&para;</a></h2>
+<p>Contracts, price lists, tax rates and consent records are one shape: a key, a period, a payload,
+and the rule that two periods for one key may not overlap. <code>temporal=TemporalPolicy(...)</code> declares
+it once.</p>
+<div class="highlight"><pre><span></span><code><span class="n">AggregateKit</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">contracts</span><span class="p">,</span>                                  <span class="c1"># domain + create cmd on the validity mixins</span>
+    <span class="n">temporal</span><span class="o">=</span><span class="n">TemporalPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="p">(</span><span class="s2">"employee_id"</span><span class="p">,),</span> <span class="n">bounds</span><span class="o">=</span><span class="s2">"[]"</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>It adds <code>valid_from</code> and a nullable <code>valid_to</code>, and two reads. <code>effective_on(key, on)</code> returns the
+one row in force that day, or <code>not_found</code>. <code>timeline(key, start, end)</code> returns every row whose
+period meets the window, earliest first, as a page — a month is one query rather than thirty.</p>
+<p>Three things are worth knowing before you declare it.</p>
+<p><strong><code>valid_to</code> means what the declaration says it means, and nothing else.</strong> <code>bounds="[]"</code> puts both
+endpoints in force, which is what "valid through 31 March" means to the person who typed it;
+<code>bounds="[)"</code> excludes the end, which is what tiles cleanly at a day or instant grain. The same
+value is read by <code>effective_on</code>, by <code>timeline</code> and by the guarantee the store enforces, so they
+cannot disagree — and the domain model carries it too, as <code>temporal_bounds</code>, because an update
+that moves an end date carries no start date and only the model sees the period the write
+produces. The kit refuses to build when the two disagree.</p>
+<p><code>None</code> is open-ended, never a sentinel date. A <code>9999-12-31</code> simplifies one predicate and then lies
+in every export, report and column a human reads.</p>
+<p><strong>The non-overlap rule is the store's, and the constraint is your migration to write.</strong> The kit
+refuses to build unless the spec declares the guarantee, and startup refuses a deployment whose
+constraint is missing, naming the DDL:</p>
+<div class="highlight"><pre><span></span><code><span class="n">guarantees</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">NonOverlapping</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="p">(</span><span class="s2">"employee_id"</span><span class="p">,),</span> <span class="n">period</span><span class="o">=</span><span class="p">(</span><span class="s2">"valid_from"</span><span class="p">,</span> <span class="s2">"valid_to"</span><span class="p">),</span> <span class="n">bounds</span><span class="o">=</span><span class="s2">"[]"</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>A read-then-insert check in the kit could not be correct: two writers each see no conflict and
+both insert. On Postgres the mechanism is an exclusion constraint over a range type, and startup
+checks the <strong>bounds</strong> it was built with as well as its columns — <code>[]</code> and <code>[)</code> agree about every
+day but the boundary, which is the day a guarantee is read for.</p>
+<div class="admonition warning">
+<p class="admonition-title">Mongo refuses an effective-dated aggregate, deliberately</p>
+<p>Non-overlap is a pairwise comparison between rows, not a property of one row's fields, so
+unlike filtered uniqueness it is not expressible as a partial index. Mongo has no mechanism
+for it, so the guarantee is unsatisfiable there and wiring fails closed rather than serving
+an aggregate whose declared rule nothing keeps.</p>
+</div>
+<p><strong>A period in force on no day is refused.</strong> Under <code>bounds="[)"</code>, <code>1 March</code> to <code>1 March</code> covers
+zero days: nothing would read the row and nothing would conflict with it. Ending a record on the
+day it started means deleting it, so the write is refused rather than stored — on the domain
+model, so a repair script meets it too.</p>
+<p><strong>Composed with <code>versioned</code>, the guarantee is scoped to the current versions.</strong> That pair is the
+bitemporal case — when the fact applied, and when you asserted it — and it needs the filtered
+form, because a correction writes a successor carrying its predecessor's dates. Over every row
+those two overlap and the correction is refused; over the rows in force the property still says
+what it meant. Declare it with the filter and the kit wires both arms:</p>
+<div class="highlight"><pre><span></span><code><span class="n">guarantees</span> <span class="o">=</span> <span class="p">(</span>
+    <span class="n">NonOverlapping</span><span class="p">(</span>
+        <span class="n">key</span><span class="o">=</span><span class="p">(</span><span class="s2">"employee_id"</span><span class="p">,),</span>
+        <span class="n">period</span><span class="o">=</span><span class="p">(</span><span class="s2">"valid_from"</span><span class="p">,</span> <span class="s2">"valid_to"</span><span class="p">),</span>
+        <span class="n">bounds</span><span class="o">=</span><span class="s2">"[]"</span><span class="p">,</span>
+        <span class="n">where</span><span class="o">=</span><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"is_current"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}},</span>
+    <span class="p">),</span>
+    <span class="o">...</span>  <span class="c1"># the two the versioned arm requires</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The kit refuses the unfiltered form on such an aggregate rather than letting its first
+correction fail, and the dated reads scope themselves the same way — <code>effective_on</code> answers with
+the version in force, never one that has since been corrected. On Postgres the mechanism is
+<code>EXCLUDE ... WHERE (...)</code>, and startup checks the predicate names the fields the filter selects
+on, exactly as it does for a partial unique index.</p>
 <h2 id="what-it-emits-separately">What it emits — separately<a class="headerlink" href="#what-it-emits-separately" title="Permanent link">&para;</a></h2>
 <p>The kit never returns a coupled god-object. It emits the app-layer registry, the typed
 facade, and the domain-event bridges as distinct artifacts; which store backs it stays
