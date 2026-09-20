@@ -92,11 +92,17 @@ class TestWhatAStoreCannotKeep:
         assert FULL_STORAGE_GUARANTEES.unmet(ANY_ROW) == ()
         assert FULL_STORAGE_GUARANTEES.unmet(NULLABLE) == ()
 
-    def test_non_overlap_is_kept_by_nothing_yet(self) -> None:
-        # Declared in the vocabulary, mapped by no store — so every store refuses it, which
-        # is the honest answer until one maps it. A capability that reconciled and then failed
-        # at the first write would be the dishonest one.
-        assert FULL_STORAGE_GUARANTEES.unmet(NO_OVERLAP) == ("non-overlap of periods per key",)
+    def test_non_overlap_is_kept_too(self) -> None:
+        # The in-memory store enforces it, so the superset keeps it. A member arrives in this
+        # value only once a store maps it: one that reconciled and then failed at the first
+        # write would be worse than one that refused.
+        assert FULL_STORAGE_GUARANTEES.unmet(NO_OVERLAP) == ()
+
+    def test_a_store_without_it_names_the_axis(self) -> None:
+        # The refusal Mongo and every other unmapped store still gives.
+        assert StorageGuaranteeCapabilities().unmet(NO_OVERLAP) == (
+            "non-overlap of periods per key",
+        )
 
     def test_a_store_with_nothing_names_every_axis(self) -> None:
         unmet = StorageGuaranteeCapabilities().unmet(CURRENT_ONLY)
@@ -175,7 +181,9 @@ class TestReconciliation:
 
     def test_the_refusal_carries_the_spec_and_backend_as_details(self) -> None:
         with pytest.raises(CoreException) as caught:
-            validate_storage_guarantees((NO_OVERLAP,), _Full(), spec_name="shift", backend="mock")
+            validate_storage_guarantees(
+                (NO_OVERLAP,), _Bare(), spec_name="shift", backend="void"
+            )
 
         assert caught.value.details["spec"] == "shift"
-        assert caught.value.details["backend"] == "mock"
+        assert caught.value.details["backend"] == "void"

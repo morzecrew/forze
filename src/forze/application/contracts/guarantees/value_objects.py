@@ -103,7 +103,8 @@ class UniqueTogether:
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class NonOverlapping:
-    """No two rows sharing :attr:`key` hold overlapping periods.
+    """No two rows sharing :attr:`key` hold overlapping periods, among the rows :attr:`where`
+    selects.
 
     "Overlapping" is :class:`~forze.base.primitives.Period`'s definition and :attr:`bounds` is
     its convention, so the guarantee and the predicate a caller uses to check the same thing
@@ -118,13 +119,28 @@ class NonOverlapping:
     """Discriminator, for the reconciliation and the refusal messages."""
 
     key: tuple[str, ...]
-    """The fields whose rows must not overlap each other. Rows differing here never conflict."""
+    """The fields whose rows must not overlap each other. Rows differing here never conflict.
+
+    A row holding a null in the key conflicts with nothing, including another null: the
+    property compares keys for equality, and a null is not equal to anything under the
+    comparison every store implements. A key that must group its nulls is a key that should not
+    be nullable."""
 
     period: tuple[str, str]
     """The start and end fields, in that order. The end field may hold null for an open period."""
 
     bounds: Bounds = "[)"
     """Which endpoints are in force (:data:`~forze.base.primitives.Bounds`)."""
+
+    where: QueryFilterExpression | None = None
+    """Which rows the non-overlap applies to; ``None`` means every row.
+
+    The filtered form is what an aggregate keeping its own history needs. A correction writes a
+    successor carrying its predecessor's period — it corrects what a row says, not when it
+    applied — so under the unfiltered reading the predecessor and its replacement overlap and
+    the correction is refused. Restricted to the rows that are current, the two coexist and the
+    property still says what it meant: nothing in force now overlaps anything else in force
+    now."""
 
     def __attrs_post_init__(self) -> None:
         if not self.key:

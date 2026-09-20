@@ -1,7 +1,7 @@
 """Specifications for document models and storage layout."""
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, get_args
 
 import attrs
 from pydantic import BaseModel
@@ -34,6 +34,20 @@ from .codecs import DocumentCodecs, document_codecs_for_spec
 from .write_types import DocumentWriteTypes
 
 # ----------------------- #
+
+
+def _admits_none(annotation: object) -> bool:
+    """Whether *annotation* accepts ``None`` — an optional field, however it is spelled.
+
+    Walks the union rather than matching ``T | None`` textually, so an alias, a nested union
+    and ``Optional[T]`` all read the same.
+    """
+
+    if annotation is None or annotation is type(None):
+        return True
+
+    return any(arg is type(None) for arg in get_args(annotation))
+
 
 R = TypeVar("R", bound=BaseModel)
 
@@ -354,6 +368,38 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _refuse_nullable_period_start(self, guarantee: NonOverlapping) -> None:
+        """Refuse a non-overlap guarantee whose period can begin with a null.
+
+        A store reads a null lower bound as *unbounded below* — the row has been in force since
+        always — and refuses anything overlapping it. The in-memory store cannot say that:
+        :class:`~forze.base.primitives.Period` models an open end and not an open start, so it
+        would read the same row as carrying no period at all and accept the pair.
+
+        That is the divergence the whole convention exists to prevent, so the declaration is
+        refused rather than enforced two different ways. The aggregate mixins make the start
+        non-null already; this catches a hand-written spec.
+
+        :raises CoreException: ``configuration`` naming the field.
+        """
+
+        start = guarantee.period[0]
+        field = self.read.model_fields.get(start)
+
+        if field is None or not _admits_none(field.annotation):
+            return
+
+        raise exc.configuration(
+            f"Guarantee {guarantee.kind!r} on spec {self.name!r} begins its period at {start!r}, "
+            "which may hold a null. A store reads that as a period with no beginning and "
+            "refuses everything overlapping it; the in-memory store has no way to say the same, "
+            "so the two would disagree about exactly those rows. Make the field non-null, or "
+            "drop the guarantee and accept that nothing prevents the overlap.",
+            details={"spec": str(self.name), "field": start},
+        )
+
+    # ....................... #
+
     def _validate_guarantees(self) -> None:
         """Refuse a guarantee naming a field this aggregate does not store.
 
@@ -392,6 +438,15 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
                 case NonOverlapping():
                     named = frozenset(guarantee.key) | frozenset(guarantee.period)
+                    self._refuse_nullable_period_start(guarantee)
+                    # Same reasoning as the filtered uniqueness above: a filter over a field
+                    # the row does not carry selects nothing, so the guarantee holds over the
+                    # empty set and every overlap it was declared to refuse is accepted.
+                    named |= (
+                        collect_filter_field_roots(guarantee.where)
+                        if guarantee.where is not None
+                        else frozenset()
+                    )
 
             if unknown := named - stored:
                 raise exc.configuration(

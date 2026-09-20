@@ -59,6 +59,9 @@ Each concern is opt-in and independently useful on its own:
   otherwise.
 - **`versioned`** — correction lineage: the aggregate stops being overwritten and starts being
   *corrected*. See [Correcting a fact instead of overwriting it](#correcting-a-fact-instead-of-overwriting-it).
+- **`temporal`** — effective dating: the aggregate gains a validity period, and the question
+  "which row applied on day D" stops being a scan. See
+  [Reading what applied on a day](#reading-what-applied-on-a-day).
 - **`invariants`** — each [`SystemInvariant`](../writing-operation/system-invariants.md) is enforced
   *preventively* inside the write transaction, at the isolation floor it needs, so a
   write that would break the law is rolled back.
@@ -132,6 +135,87 @@ default you can lower.
 A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
 route, its encryption policy and its retention are facts only you hold. Its create command must be
 `CreateCorrectionCmd`.
+
+## Reading what applied on a day
+
+Contracts, price lists, tax rates and consent records are one shape: a key, a period, a payload,
+and the rule that two periods for one key may not overlap. `temporal=TemporalPolicy(...)` declares
+it once.
+
+```python
+AggregateKit(
+    spec=contracts,                                  # domain + create cmd on the validity mixins
+    temporal=TemporalPolicy(key=("employee_id",), bounds="[]"),
+)
+```
+
+It adds `valid_from` and a nullable `valid_to`, and two reads. `effective_on(key, on)` returns the
+one row in force that day, or `not_found`. `timeline(key, start, end)` returns every row whose
+period meets the window, earliest first, as a page — a month is one query rather than thirty.
+
+Three things are worth knowing before you declare it.
+
+**`valid_to` means what the declaration says it means, and nothing else.** `bounds="[]"` puts both
+endpoints in force, which is what "valid through 31 March" means to the person who typed it;
+`bounds="[)"` excludes the end, which is what tiles cleanly at a day or instant grain. The same
+value is read by `effective_on`, by `timeline` and by the guarantee the store enforces, so they
+cannot disagree — and the domain model carries it too, as `temporal_bounds`, because an update
+that moves an end date carries no start date and only the model sees the period the write
+produces. The kit refuses to build when the two disagree.
+
+`None` is open-ended, never a sentinel date. A `9999-12-31` simplifies one predicate and then lies
+in every export, report and column a human reads.
+
+**The non-overlap rule is the store's, and the constraint is your migration to write.** The kit
+refuses to build unless the spec declares the guarantee, and startup refuses a deployment whose
+constraint is missing, naming the DDL:
+
+```python
+guarantees = (
+    NonOverlapping(key=("employee_id",), period=("valid_from", "valid_to"), bounds="[]"),
+)
+```
+
+A read-then-insert check in the kit could not be correct: two writers each see no conflict and
+both insert. On Postgres the mechanism is an exclusion constraint over a range type, and startup
+checks the **bounds** it was built with as well as its columns — `[]` and `[)` agree about every
+day but the boundary, which is the day a guarantee is read for.
+
+!!! warning "Mongo refuses an effective-dated aggregate, deliberately"
+
+    Non-overlap is a pairwise comparison between rows, not a property of one row's fields, so
+    unlike filtered uniqueness it is not expressible as a partial index. Mongo has no mechanism
+    for it, so the guarantee is unsatisfiable there and wiring fails closed rather than serving
+    an aggregate whose declared rule nothing keeps.
+
+**A period in force on no day is refused.** Under `bounds="[)"`, `1 March` to `1 March` covers
+zero days: nothing would read the row and nothing would conflict with it. Ending a record on the
+day it started means deleting it, so the write is refused rather than stored — on the domain
+model, so a repair script meets it too.
+
+**Composed with `versioned`, the guarantee is scoped to the current versions.** That pair is the
+bitemporal case — when the fact applied, and when you asserted it — and it needs the filtered
+form, because a correction writes a successor carrying its predecessor's dates. Over every row
+those two overlap and the correction is refused; over the rows in force the property still says
+what it meant. Declare it with the filter and the kit wires both arms:
+
+```python
+guarantees = (
+    NonOverlapping(
+        key=("employee_id",),
+        period=("valid_from", "valid_to"),
+        bounds="[]",
+        where={"$values": {"is_current": True}},
+    ),
+    ...  # the two the versioned arm requires
+)
+```
+
+The kit refuses the unfiltered form on such an aggregate rather than letting its first
+correction fail, and the dated reads scope themselves the same way — `effective_on` answers with
+the version in force, never one that has since been corrected. On Postgres the mechanism is
+`EXCLUDE ... WHERE (...)`, and startup checks the predicate names the fields the filter selects
+on, exactly as it does for a partial unique index.
 
 ## What it emits — separately
 

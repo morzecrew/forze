@@ -13,6 +13,7 @@ filtered guarantee comes back *inside* it, which is a conflict created by an un-
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from uuid import uuid4
 
@@ -38,29 +39,37 @@ from tests.support.execution_context import context_from_modules
 
 
 class _Fact(Document):
-    root_id: str
+    root_id: str | None = None
     is_current: bool = True
     label: str = ""
     supersedes_id: str | None = None
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
 
 
 class _FactRead(ReadDocument):
-    root_id: str
+    root_id: str | None = None
     is_current: bool = True
     label: str = ""
     supersedes_id: str | None = None
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
 
 
 class _FactCreate(CreateDocumentCmd):
-    root_id: str
+    root_id: str | None
     is_current: bool = True
     label: str = ""
     supersedes_id: str | None = None
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
 
 
 class _FactUpdate(BaseDTO):
     is_current: bool | None = None
     label: str | None = None
+    valid_from: date = date(2026, 1, 1)
+    valid_to: date | None = None
 
 
 class _Erasable(Document):
@@ -108,6 +117,7 @@ def _spec(
 
 
 ONE_CURRENT = UniqueTogether(fields=("root_id",), where={"$values": {"is_current": True}})
+NO_OVERLAP = NonOverlapping(key=("root_id",), period=("valid_from", "valid_to"), bounds="[]")
 ONE_EVER = UniqueTogether(fields=("root_id",))
 ONE_LABEL = UniqueTogether(fields=("label",))
 
@@ -316,40 +326,108 @@ class TestSkipNull:
 # ....................... #
 
 
-class TestAnUnenforcedMemberNeverReachesAWrite:
-    async def test_declaring_non_overlapping_refuses_at_resolution(self) -> None:
-        # Nothing maps it yet, so reconciliation must stop it before a write path meets an
-        # arm it cannot serve. This is what keeps the unenforced arm unreachable rather than
-        # silently permissive.
-        spec = _spec(NonOverlapping(key=("root_id",), period=("label", "root_id")))
+class TestPeriodsUnderOneKeyDoNotOverlap:
+    """The other member, enforced in memory so a simulation can run the rule at all.
+
+    The comparison is :class:`~forze.base.primitives.Period`'s, which is the point of the value
+    object existing: the store refusing a write and a caller asking "do these overlap" have to
+    answer with the same predicate, or a row the caller believed impossible is one the store
+    accepted.
+    """
+
+    async def test_an_overlapping_period_under_the_same_key_is_refused(self) -> None:
+        command = _command(_spec(NO_OVERLAP))
+        first = await command.create(
+            _FactCreate(root_id="r1", valid_from=date(2026, 1, 1), valid_to=date(2026, 3, 31))
+        )
 
         with pytest.raises(CoreException) as caught:
-            _command(spec)
+            await command.create(
+                _FactCreate(root_id="r1", valid_from=date(2026, 3, 1), valid_to=date(2026, 5, 1))
+            )
 
-        assert caught.value.code == "storage_guarantee_unsupported"
+        details = caught.value.details or {}
 
-    async def test_the_write_path_still_refuses_if_reconciliation_is_bypassed(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        # The arm reconciliation makes unreachable, reached on purpose. A store that declared
-        # a member it does not implement must refuse the write, not store the row — otherwise
-        # the declaration is the only thing keeping the guarantee, and a wrong declaration is
-        # exactly the mistake this arm exists for.
-        monkeypatch.setattr(
-            MockDocumentAdapter,
-            "storage_guarantees",
-            StorageGuaranteeCapabilities(
-                unique_together=True,
-                unique_together_filtered=True,
-                non_overlapping=True,
-            ),
+        assert caught.value.kind.value == "conflict"
+        assert str(first.id) in caught.value.summary
+        assert details["guarantee"] == "non_overlapping"
+        assert details["key"] == ["root_id"]
+
+    async def test_a_period_under_another_key_never_conflicts(self) -> None:
+        command = _command(_spec(NO_OVERLAP))
+        await command.create(
+            _FactCreate(root_id="r1", valid_from=date(2026, 1, 1), valid_to=date(2026, 3, 31))
         )
-        spec = _spec(NonOverlapping(key=("root_id",), period=("label", "supersedes_id")))
-        command = _command(spec)
+        row = await command.create(
+            _FactCreate(root_id="r2", valid_from=date(2026, 1, 1), valid_to=date(2026, 3, 31))
+        )
 
-        with pytest.raises(CoreException, match="which no store enforces yet"):
-            await command.create(_FactCreate(root_id="r1"))
+        assert row.root_id == "r2"
+
+    async def test_the_declared_bounds_decide_the_touching_case(self) -> None:
+        # The one day the two conventions disagree about, which is the whole reason the
+        # convention is declared rather than assumed: under `[]` the shared endpoint is in
+        # force on both sides and they collide; under `[)` they tile.
+        closed = _command(_spec(NO_OVERLAP))
+        await closed.create(
+            _FactCreate(root_id="r1", valid_from=date(2026, 1, 1), valid_to=date(2026, 4, 1))
+        )
+
+        with pytest.raises(CoreException):
+            await closed.create(
+                _FactCreate(root_id="r1", valid_from=date(2026, 4, 1), valid_to=date(2026, 6, 1))
+            )
+
+        half_open = _command(
+            _spec(NonOverlapping(key=("root_id",), period=("valid_from", "valid_to")))
+        )
+        await half_open.create(
+            _FactCreate(root_id="r1", valid_from=date(2026, 1, 1), valid_to=date(2026, 4, 1))
+        )
+        row = await half_open.create(
+            _FactCreate(root_id="r1", valid_from=date(2026, 4, 1), valid_to=date(2026, 6, 1))
+        )
+
+        assert row.valid_from == date(2026, 4, 1)
+
+    async def test_an_open_period_conflicts_with_everything_after_it(self) -> None:
+        # `None` is open-ended, not "no period": a row still in force covers every later one.
+        command = _command(_spec(NO_OVERLAP))
+        await command.create(_FactCreate(root_id="r1", valid_from=date(2026, 1, 1)))
+
+        with pytest.raises(CoreException):
+            await command.create(_FactCreate(root_id="r1", valid_from=date(2030, 1, 1)))
+
+    async def test_an_open_period_accepts_what_ended_before_it(self) -> None:
+        command = _command(_spec(NO_OVERLAP))
+        await command.create(_FactCreate(root_id="r1", valid_from=date(2026, 6, 1)))
+        row = await command.create(
+            _FactCreate(root_id="r1", valid_from=date(2025, 1, 1), valid_to=date(2025, 12, 31))
+        )
+
+        assert row.valid_to == date(2025, 12, 31)
+
+    # A row with no start used to be read here as carrying no period, which is not what a
+    # store does with a null lower bound: it reads "in force since always" and refuses
+    # everything overlapping. The two could not be made to agree, so the declaration is refused
+    # at the spec instead — see the temporal kit's battery for that leg.
+
+    async def test_an_update_into_an_overlap_is_refused(self) -> None:
+        # The guarantee is checked on every write path, not just the one that inserts.
+        command = _command(_spec(NO_OVERLAP))
+        await command.create(
+            _FactCreate(root_id="r1", valid_from=date(2026, 1, 1), valid_to=date(2026, 3, 31))
+        )
+        mover = await command.create(
+            _FactCreate(root_id="r1", valid_from=date(2026, 6, 1), valid_to=date(2026, 7, 1))
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await command.update(
+                pk=mover.id, rev=mover.rev, dto=_FactUpdate(valid_from=date(2026, 2, 1))
+            )
+
+        assert caught.value.kind.value == "conflict"
 
 
 # ....................... #

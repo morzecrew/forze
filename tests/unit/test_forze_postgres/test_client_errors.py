@@ -89,7 +89,7 @@ class TestPsycopgErrorHandlerBranches:
         ("exc_factory", "expected_kind"),
         [
             (lambda: errors.UniqueViolation(), ExceptionKind.CONFLICT),
-            (lambda: errors.ExclusionViolation(), ExceptionKind.PRECONDITION),
+            (lambda: errors.ExclusionViolation(), ExceptionKind.CONFLICT),
             (lambda: errors.CheckViolation(), ExceptionKind.PRECONDITION),
             (lambda: errors.NotNullViolation(), ExceptionKind.PRECONDITION),
             (lambda: errors.StringDataRightTruncation(), ExceptionKind.PRECONDITION),

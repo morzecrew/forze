@@ -71,6 +71,13 @@ class StorageGuaranteeCapabilities:
     non_overlapping: bool = False
     """Whether non-overlap of periods per key is enforced."""
 
+    non_overlapping_filtered: bool = False
+    """Whether non-overlap can be restricted to a *subset* of rows.
+
+    Separate from :attr:`non_overlapping` for the reason :attr:`unique_together_filtered` is
+    separate: they are different capabilities, and a store with the unfiltered kind and no way
+    to restrict it would otherwise pass reconciliation and fail at the first write."""
+
     # ....................... #
 
     def unmet(self, guarantee: StorageGuarantee) -> tuple[str, ...]:
@@ -101,7 +108,12 @@ class StorageGuaranteeCapabilities:
                 return tuple(missing)
 
             case NonOverlapping():
-                return () if self.non_overlapping else ("non-overlap of periods per key",)
+                missing = [] if self.non_overlapping else ["non-overlap of periods per key"]
+
+                if guarantee.where is not None and not self.non_overlapping_filtered:
+                    missing.append("non-overlap restricted to a subset of rows (`where`)")
+
+                return tuple(missing)
 
 
 # ....................... #
@@ -110,6 +122,8 @@ FULL_STORAGE_GUARANTEES: Final[StorageGuaranteeCapabilities] = StorageGuaranteeC
     unique_together=True,
     unique_together_filtered=True,
     unique_together_skip_null=True,
+    non_overlapping=True,
+    non_overlapping_filtered=True,
 )
 """Every guarantee that is enforced anywhere today — the in-memory store's declaration.
 
@@ -118,10 +132,8 @@ spec can usefully declare. It is the declaration most easily wrong in the optimi
 a mock claiming more than a backend keeps would pass a simulation a deployment fails — so the
 batteries compare the two stores' refusals rather than trusting this value.
 
-:attr:`StorageGuaranteeCapabilities.non_overlapping` is deliberately **absent**. The vocabulary
-defines ``NonOverlapping`` and nothing enforces it yet, so every store refuses a spec that
-declares one, which is the honest answer: the alternative is a capability that reconciles and
-then fails at the first write. It moves here when a store maps it."""
+A member arrives here when a store maps it, never before: a capability that reconciles and then
+does not enforce is worse than one that refuses."""
 
 
 # ....................... #

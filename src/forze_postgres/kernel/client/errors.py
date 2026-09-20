@@ -112,8 +112,13 @@ def _psycopg_eh(  # skipcq: PY-R1000
             )
 
         case errors.ExclusionViolation():
-            # e.g. gist exclusion constraints (overlaps, etc.)
-            return CoreException.precondition(
+            # `conflict`, beside the unique violation above and for the same reason: an
+            # exclusion constraint is the mechanism behind a declared non-overlap guarantee, and
+            # both refusals say another row already holds what this write asked for. Retrying
+            # with a different period can succeed, which is what `conflict` means to a caller
+            # and `precondition` does not — and the in-memory store raises `conflict` for the
+            # same violated declaration, so the two would otherwise disagree on kind.
+            return CoreException.conflict(
                 "Constraint violation (exclusion).",
                 details=details,
             )

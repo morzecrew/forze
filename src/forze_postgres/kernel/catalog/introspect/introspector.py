@@ -20,6 +20,7 @@ from forze.base.primitives import CachedInflightLane, CacheLane, InflightLane, J
 from forze_postgres.kernel.client import PostgresClientPort
 
 from .types import (
+    ExclusionConstraintInfo,
     PostgresColumnTypes,
     PostgresIndexEngine,
     PostgresIndexInfo,
@@ -647,6 +648,87 @@ class PostgresIntrospector:
             )
 
         return tuple(found)
+
+    # ....................... #
+
+    async def exclusion_constraints(
+        self,
+        *,
+        schema: str | None,
+        relation: str,
+    ) -> tuple[ExclusionConstraintInfo, ...]:
+        """Every EXCLUDE constraint on *relation*.
+
+        The non-overlap sibling of :meth:`unique_indexes`, and shaped differently for a reason
+        the catalog forces: an exclusion constraint's elements are expressions, so ``conkey``
+        names only the plain columns among them and the range expression appears nowhere as
+        structured data. ``pg_get_constraintdef`` is therefore the only place the bounds
+        convention is recorded, and the validation reads it as text.
+
+        No validity column: Postgres refuses ``NOT VALID`` on an EXCLUDE constraint and offers
+        no concurrent build for one, so the invalid-index trap :meth:`unique_indexes` guards
+        against has no counterpart here.
+
+        Uncached, for the same reason as :meth:`unique_indexes` — once per relation at startup.
+        """
+
+        schema = self.__normalize_schema(schema)
+        await self.require_relation(schema=schema, relation=relation)
+
+        stmt = sql.SQL(
+            """
+            SELECT c.conname AS name,
+                   pg_get_constraintdef(c.oid) AS definition,
+                   (
+                     SELECT COALESCE(array_agg(a.attname), ARRAY[]::text[])
+                     FROM unnest(c.conkey) AS u(attnum)
+                     JOIN pg_attribute a
+                       ON a.attrelid = c.conrelid
+                      AND a.attnum = u.attnum
+                      AND NOT a.attisdropped
+                   ) AS columns
+            FROM pg_constraint c
+            JOIN pg_class t ON t.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = t.relnamespace
+            WHERE c.contype = 'x'
+              AND n.nspname = {schema}
+              AND t.relname = {relation}
+            """
+        ).format(schema=sql.Placeholder(), relation=sql.Placeholder())
+
+        rows = await self.client.fetch_all(
+            stmt,
+            [schema, relation],
+            row_factory="dict",
+            commit=False,
+        )
+
+        return tuple(
+            ExclusionConstraintInfo(
+                name=str(row.get("name")),
+                columns=frozenset(str(column) for column in (row.get("columns") or [])),  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+                definition=str(row.get("definition") or ""),
+            )
+            for row in rows
+        )
+
+    # ....................... #
+
+    async def extension_installed(self, *, name: str) -> bool:
+        """Whether extension *name* is installed in this database.
+
+        Asked separately from the constraint because the two failures want different fixes: a
+        missing constraint is a migration that was not written, a missing extension is one that
+        cannot be written until an administrator installs it.
+        """
+
+        stmt = sql.SQL("SELECT 1 FROM pg_extension WHERE extname = {name} LIMIT 1").format(
+            name=sql.Placeholder()
+        )
+
+        rows = await self.client.fetch_all(stmt, [name], row_factory="dict", commit=False)
+
+        return bool(rows)
 
     # ....................... #
 

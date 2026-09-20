@@ -18,7 +18,7 @@ from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, utcnow
+from forze.base.primitives import JsonDict, Period, utcnow
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
@@ -116,14 +116,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                     self._refuse_duplicate(store, pk, row, guarantee)
 
                 case NonOverlapping():
-                    # No mock enforcement yet: the vocabulary declares it, no adapter maps it,
-                    # and reconciliation refuses it before a write can reach here — so an
-                    # unenforced arm is unreachable rather than silently permissive.
-                    raise exc.internal(
-                        f"Document {self.spec.name!r} declares a non_overlapping guarantee, "
-                        "which no store enforces yet. Reconciliation should have refused this "
-                        "at wiring.",
-                    )
+                    self._refuse_overlap(store, pk, row, guarantee)
 
     # ....................... #
 
@@ -170,6 +163,90 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                         "conflicting_id": str(other_pk),
                     },
                 )
+
+    # ....................... #
+
+    def _period_of(self, row: JsonDict, guarantee: NonOverlapping) -> Period[Any] | None:
+        """*row*'s period, or ``None`` when it does not hold one.
+
+        A row missing its start is not a row the guarantee constrains — the same reading the
+        backend's range expression gives it, where a null lower bound is not a period at all.
+        The end is read as written: ``None`` is an open period, which
+        :class:`~forze.base.primitives.Period` already means by it.
+        """
+
+        start, end = guarantee.period
+        lower = row.get(start)
+
+        if lower is None:
+            return None
+
+        return Period(lower, row.get(end), guarantee.bounds)
+
+    # ....................... #
+
+    def _refuse_overlap(
+        self,
+        store: dict[UUID, JsonDict],
+        pk: UUID,
+        row: JsonDict,
+        guarantee: NonOverlapping,
+    ) -> None:
+        """Refuse *row* when another row under the same key holds a period overlapping its own.
+
+        ``conflict`` for the reason :meth:`_refuse_duplicate` gives: it is what a store raises
+        when an exclusion constraint rejects a write, and a caller should not have to know which
+        store answered.
+
+        The comparison is :class:`~forze.base.primitives.Period`'s, never a hand-written pair of
+        inequalities — the guarantee names that predicate, so the store enforcing it and the
+        caller checking the same thing cannot drift apart over what a boundary or an open end
+        means.
+        """
+
+        period = self._period_of(row, guarantee)
+
+        if period is None:
+            return
+
+        matches = self._matcher(guarantee.where)
+
+        if not matches(row):
+            return
+
+        key = tuple(row.get(field) for field in guarantee.key)
+
+        # A null in the key never conflicts, because the mechanism behind this guarantee
+        # compares key parts with `=` and `NULL = NULL` is unknown, not true. A store that
+        # treated two nulls as the same owner would refuse a pair every real backend accepts.
+        if any(value is None for value in key):
+            return
+
+        # ponytail: a scan per write, as `_refuse_duplicate` does and for the same reasons — an
+        # index keyed by the key tuple is the upgrade if a simulation ever writes enough rows.
+        for other_pk, other in store.items():
+            if other_pk == pk:
+                continue
+
+            if tuple(other.get(field) for field in guarantee.key) != key or not matches(other):
+                continue
+
+            other_period = self._period_of(other, guarantee)
+
+            if other_period is None or not period.overlaps(other_period):
+                continue
+
+            raise exc.conflict(
+                f"Document {self.spec.name!r} guarantees no two rows per "
+                f"({', '.join(guarantee.key)}) hold overlapping periods; {other_pk} already "
+                f"holds {other_period} for {key!r}, which overlaps {period}"
+                + (" among the rows the guarantee selects." if guarantee.where else "."),
+                details={
+                    "guarantee": guarantee.kind,
+                    "key": list(guarantee.key),
+                    "conflicting_id": str(other_pk),
+                },
+            )
 
     # ....................... #
 
