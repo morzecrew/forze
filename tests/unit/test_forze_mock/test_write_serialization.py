@@ -35,8 +35,6 @@ from forze_mock.adapters._mvcc import StatementLocks
 from forze_mock.adapters.tx import MockJournalTxManagerAdapter
 from tests.support.execution_context import context_from_modules
 
-pytestmark = [pytest.mark.asyncio]
-
 # ----------------------- #
 
 BY_OWNER = SerializedBy(key=("owner",))
