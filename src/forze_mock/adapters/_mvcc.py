@@ -272,11 +272,7 @@ class MvccTx:
 
         # Before anything else: a writer waiting on one of these has nothing to do with this
         # transaction's bookkeeping, and an exception raised below would strand it for good.
-        for key, lock in self.write_locks.items():
-            state.write_serialization.release(key)
-            lock.release()
-
-        self.write_locks.clear()
+        release_write_locks(self, state)
 
         state.mvcc_active.remove(self.begin_version)
         horizon = min(state.mvcc_active) if state.mvcc_active else state.mvcc_version
@@ -518,6 +514,36 @@ class MvccTx:
                     dict.__setitem__(  # pyright: ignore[reportUnknownMemberType]
                         live, key, value
                     )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class StatementLocks:
+    """The per-owner write locks one write outside a transaction holds.
+
+    Such a write is a transaction of one statement, and it contends the way one does: it holds
+    every owner it touches at once, and another transaction deciding whether to wait on it has
+    to be able to see it — what it holds and what it is waiting for — or a cycle through it is a
+    hang nobody detects. Shaped like :class:`MvccTx`'s own two fields so either can be read.
+    """
+
+    write_locks: dict[int, Any] = attrs.field(factory=dict)
+    waiting_for: int | None = attrs.field(default=None)
+
+
+# ....................... #
+
+
+def release_write_locks(holder: MvccTx | StatementLocks, state: Any) -> None:
+    """Give back every per-owner write lock *holder* took, and forget that it held them."""
+
+    for key, lock in holder.write_locks.items():
+        state.write_serialization.release(key)
+        lock.release()
+
+    holder.write_locks.clear()
 
 
 # ....................... #

@@ -31,6 +31,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import advisory_lock_key, utcnow
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters._mvcc import StatementLocks
 from forze_mock.adapters.tx import MockJournalTxManagerAdapter
 from tests.support.execution_context import context_from_modules
 
@@ -473,3 +474,252 @@ class TestTwoTransactionsWantingEachOthersOwners:
         await asyncio.wait_for(asyncio.gather(writer(0), writer(1)), timeout=5)
 
         assert sorted(outcomes) == ["0:ok", "1:ok"]
+
+
+# ....................... #
+
+
+def _key_of(owner: str) -> int:
+    """The lock key the adapter derives for *owner* under `BY_OWNER` on `bookings`."""
+
+    return advisory_lock_key("bookings", None, "owner", owner)
+
+
+def _owner_pair(*, destination_last: bool) -> tuple[str, str]:
+    """A source and destination owner whose keys sort in the order asked for.
+
+    Locks are taken in key order, and each defect these pin shows only when the owner that
+    matters is the one taken second.
+    """
+
+    source = "src"
+
+    for candidate in (f"dst{index}" for index in range(100)):
+        if (_key_of(candidate) > _key_of(source)) is destination_last:
+            return source, candidate
+
+    raise AssertionError("no destination in that order")  # pragma: no cover
+
+
+def _owners_where_destination_sorts_last() -> tuple[str, str]:
+    return _owner_pair(destination_last=True)
+
+
+def _owners_where_destination_sorts_first() -> tuple[str, str]:
+    return _owner_pair(destination_last=False)
+
+
+class TestAWriteOutsideATransactionWaitsForEveryOwner:
+    """Outside a transaction a write holds nothing afterwards — but it still has to wait.
+
+    Every owner it touches must be free at the moment it lands, and a write can touch more than
+    one: an update touches the owner it leaves and the one it joins. Waiting on only the first
+    in key order lets a move land in an owner a transaction is still holding.
+    """
+
+    async def test_a_move_into_a_held_owner_waits_for_it(self) -> None:
+        state = MockState()
+        ctx = _ctx(state)
+        plain = ctx.doc.command(_spec())
+        source, destination = _owners_where_destination_sorts_last()
+        row = await plain.create(_BookingCreate(owner=source))
+
+        held = asyncio.Event()
+        order: list[str] = []
+
+        async def holder() -> None:
+            async with _tx(state).transaction():
+                await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner=destination))
+                held.set()
+                await asyncio.sleep(0.05)
+                order.append("holder:done")
+
+        async def mover() -> None:
+            await held.wait()
+            # No transaction: the destination is the second key in order.
+            await ctx.doc.command(_spec(BY_OWNER)).update(
+                row.id, row.rev, _BookingUpdate(owner=destination)
+            )
+            order.append("mover:moved")
+
+        await asyncio.wait_for(asyncio.gather(holder(), mover()), timeout=5)
+
+        assert order == ["holder:done", "mover:moved"], order
+
+    async def test_the_first_owner_stays_held_while_the_write_waits_for_the_next(self) -> None:
+        # Waiting on every owner is half of it; holding them at once is the other. A write that
+        # gives each owner back as soon as it has it leaves the first one free while it waits
+        # for the second, and a transaction taking the first then has the move land inside it.
+        state = MockState()
+        ctx = _ctx(state)
+        source, destination = _owners_where_destination_sorts_last()
+        row = await ctx.doc.command(_spec()).create(_BookingCreate(owner=source))
+
+        held = asyncio.Event()
+        order: list[str] = []
+
+        async def holder() -> None:
+            async with _tx(state).transaction():
+                await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner=destination))
+                held.set()
+                await asyncio.sleep(0.05)
+
+        async def mover() -> None:
+            await held.wait()
+            await ctx.doc.command(_spec(BY_OWNER)).update(
+                row.id, row.rev, _BookingUpdate(owner=destination)
+            )
+            order.append("mover:moved")
+
+        async def taker() -> None:
+            await held.wait()
+            await asyncio.sleep(0.01)
+            async with _tx(state).transaction():
+                await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner=source))
+                order.append("taker:in")
+                await asyncio.sleep(0.1)
+                order.append("taker:out")
+
+        await asyncio.wait_for(asyncio.gather(holder(), mover(), taker()), timeout=5)
+
+        assert order == ["mover:moved", "taker:in", "taker:out"], order
+
+    @pytest.mark.parametrize("destination_last", [False, True])
+    async def test_an_upsert_racing_a_delete_still_upserts(self, destination_last: bool) -> None:
+        # The upsert decides its arm inside a section and delegates; if it takes its owners in
+        # separate calls, or gives them back before the delegated write, the delegated call
+        # waits inside the section it already decided in. A delete landing there turns the
+        # upsert into "not found" — a result the operation does not have.
+        #
+        # Both orders, because each exposes a different half: destination first, a delete lands
+        # while the upsert waits and the upsert must see it gone and create; destination last,
+        # the delete queues behind the upsert and must still be queued when the upsert writes.
+        state = MockState()
+        ctx = _ctx(state)
+        source, destination = _owner_pair(destination_last=destination_last)
+        row = await ctx.doc.command(_spec()).create(_BookingCreate(owner=source))
+
+        held = asyncio.Event()
+
+        async def holder() -> None:
+            async with _tx(state).transaction():
+                await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner=destination))
+                held.set()
+                await asyncio.sleep(0.05)
+
+        async def upserter() -> Any:
+            await held.wait()
+            return await ctx.doc.command(_spec(BY_OWNER)).upsert(
+                row.id, _BookingCreate(owner=source), _BookingUpdate(owner=destination)
+            )
+
+        async def deleter() -> None:
+            await held.wait()
+            await asyncio.sleep(0.01)
+            await ctx.doc.command(_spec(BY_OWNER)).kill(row.id)
+
+        results = await asyncio.wait_for(
+            asyncio.gather(holder(), upserter(), deleter(), return_exceptions=True), timeout=5
+        )
+
+        assert not [r for r in results if isinstance(r, BaseException)], results
+
+        if destination_last:
+            # The upsert held the row's owner while it waited: it moved the row, then the delete
+            # took it.
+            assert results[1].owner == destination
+            assert row.id not in state.documents["bookings"]
+
+        else:
+            # The delete got in while the upsert waited, and the upsert saw the row gone.
+            assert results[1].owner == source
+            assert row.id in state.documents["bookings"]
+
+    async def test_a_cycle_through_a_write_outside_a_transaction_is_refused(self) -> None:
+        # A write outside a transaction still holds one owner while it waits for the next. A
+        # transaction that then wants the first owner closes a cycle through it, and only a
+        # holder the cycle check can see — what it holds and what it waits for — is refused
+        # instead of hanging both.
+        state = MockState()
+        ctx = _ctx(state)
+        first, second = _owner_pair(destination_last=True)
+        row = await ctx.doc.command(_spec()).create(_BookingCreate(owner=first))
+
+        held = asyncio.Event()
+
+        async def transaction() -> None:
+            async with _tx(state).transaction():
+                command = ctx.doc.command(_spec(BY_OWNER))
+                await command.create(_BookingCreate(owner=second))
+                held.set()
+                await asyncio.sleep(0.02)
+                await command.create(_BookingCreate(owner=first))
+
+        async def mover() -> Any:
+            await held.wait()
+            return await ctx.doc.command(_spec(BY_OWNER)).update(
+                row.id, row.rev, _BookingUpdate(owner=second)
+            )
+
+        refused, moved = await asyncio.wait_for(
+            asyncio.gather(transaction(), mover(), return_exceptions=True), timeout=2
+        )
+
+        assert isinstance(refused, CoreException), refused
+        assert refused.kind is ExceptionKind.CONFLICT
+        assert moved.owner == second
+
+    async def test_a_chain_through_a_key_just_given_back_is_not_a_cycle(self) -> None:
+        # Between a release and the woken waiter resuming, the waiter still says it waits for a
+        # key nobody holds. Nothing closes a cycle through a free key, so the walk stops there
+        # instead of reading the holder that is not there. Driven directly: the window is one
+        # scheduler step wide and no ordering of tasks lands in it reliably.
+        state = MockState()
+        port = _ctx(state).doc.command(_spec(BY_OWNER))
+        state.write_serialization.hold(1, StatementLocks(waiting_for=2))
+
+        port._refuse_lock_cycle(StatementLocks(write_locks={3: None}), 1)
+
+        with pytest.raises(CoreException) as caught:
+            port._refuse_lock_cycle(StatementLocks(write_locks={2: None}), 1)
+
+        assert caught.value.kind is ExceptionKind.CONFLICT
+
+    async def test_a_row_that_changes_owner_while_the_write_waits_is_held_by_its_new_one(
+        self,
+    ) -> None:
+        # The owner is read off the stored row before the wait. A transaction holding both
+        # owners can move the row meanwhile; once it commits, the row's owner is one this write
+        # never took — and another transaction may be holding it.
+        state = MockState()
+        ctx = _ctx(state)
+        row = await ctx.doc.command(_spec()).create(_BookingCreate(owner="old"))
+
+        moving = asyncio.Event()
+        order: list[str] = []
+
+        async def mover() -> None:
+            async with _tx(state).transaction():
+                command = ctx.doc.command(_spec(BY_OWNER))
+                # "new" first, so it is released first and the next holder of "new" wakes
+                # before the waiting delete does.
+                await command.create(_BookingCreate(owner="new"))
+                await command.update(row.id, row.rev, _BookingUpdate(owner="new"))
+                moving.set()
+                await asyncio.sleep(0.02)
+
+        async def next_holder() -> None:
+            await moving.wait()
+            async with _tx(state).transaction():
+                await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner="new"))
+                await asyncio.sleep(0.05)
+                order.append("holder:done")
+
+        async def deleter() -> None:
+            await moving.wait()
+            await ctx.doc.command(_spec(BY_OWNER)).kill(row.id)
+            order.append("delete:done")
+
+        await asyncio.wait_for(asyncio.gather(mover(), next_holder(), deleter()), timeout=5)
+
+        assert order == ["holder:done", "delete:done"], order
