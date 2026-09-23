@@ -189,6 +189,13 @@ class MvccTx:
     transaction changed since it was read (not merely since this transaction began). A *blind*
     (rev-less, unlocked) write is not claimed, so it silently loses, as read-committed permits.
     Snapshot/serializable ignore claims and conflict on every write regardless."""
+    waiting_for: int | None = attrs.field(default=None)
+    """The owner key this transaction is blocked on, or ``None`` while it is running.
+
+    Published so another transaction can see it before it waits: two transactions each holding
+    what the other wants would otherwise sit there until an operation deadline fires, and the
+    store this models detects the cycle and aborts one of them instead."""
+
     write_locks: dict[int, Any] = attrs.field(factory=dict)
     """Per-owner write locks this transaction holds, as ``{key: lock}``.
 
@@ -198,9 +205,9 @@ class MvccTx:
 
     One entry per key, so a transaction writing the same owner twice waits once. Taken in
     sorted order where a single call writes several owners; across calls the order is the
-    caller's, and two transactions taking two owners in opposite orders wait on each other —
-    the deadlock a real advisory lock also permits, and which the store it models resolves by
-    aborting one. Here the operation's deadline is what ends it."""
+    caller's, so two transactions can still take two owners in opposite orders. That cycle is
+    detected before the second wait begins and one side is refused, which is what the store
+    this models does rather than leaving both blocked."""
 
     guarantee_rechecks: dict[tuple[str, Any], Any] = attrs.field(factory=dict)
     """Keys to re-check against the *committed* store at commit, as ``{(ns, key): check}``.
@@ -265,7 +272,8 @@ class MvccTx:
 
         # Before anything else: a writer waiting on one of these has nothing to do with this
         # transaction's bookkeeping, and an exception raised below would strand it for good.
-        for lock in self.write_locks.values():
+        for key, lock in self.write_locks.items():
+            state.write_serialization.release(key)
             lock.release()
 
         self.write_locks.clear()

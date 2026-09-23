@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import pytest
 
+from forze.application.contracts.crypto import FieldEncryption
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.guarantees import (
     FULL_STORAGE_GUARANTEES,
     GUARANTEE_UNSUPPORTED,
@@ -18,6 +20,7 @@ from forze.application.contracts.guarantees import (
     validate_storage_guarantees,
 )
 from forze.base.exceptions import CoreException
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters.document import MockDocumentAdapter
 from forze_mongo.adapters.document import MongoDocumentAdapter
 from forze_postgres.adapters.document import PostgresDocumentAdapter
@@ -25,6 +28,25 @@ from forze_postgres.adapters.document import PostgresDocumentAdapter
 # ----------------------- #
 
 BY_OWNER = SerializedBy(key=("employee_id",))
+
+
+class _Read(ReadDocument):
+    employee_id: str
+    note: str = ""
+
+
+class _Domain(Document):
+    employee_id: str
+    note: str = ""
+
+
+class _Create(CreateDocumentCmd):
+    employee_id: str
+    note: str = ""
+
+
+class _Update(BaseDTO):
+    note: str | None = None
 
 
 class _Port:
@@ -84,3 +106,41 @@ class TestTheDeclarationRefusesWhatCannotBeAKey:
     def test_a_repeated_field_is_refused(self) -> None:
         with pytest.raises(CoreException, match="more than once"):
             SerializedBy(key=("employee_id", "employee_id"))
+
+
+# ....................... #
+
+
+class TestAnEncryptedOwnerCannotBeSerializedBy:
+    """Serializing by a sealed field would serialize nothing at all.
+
+    Each write seals its value under its own nonce, so two rows for one owner hold different
+    bytes — and a key derived from the stored value would put the two writers on different
+    locks. The declaration would read as a rule and keep none of it, which is why it is refused
+    where a sort key or an indexed content field naming a sealed column already is.
+    """
+
+    def test_a_sealed_key_field_is_refused(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            DocumentSpec[_Read, _Domain, _Create, _Update](
+                name="shifts",
+                read=_Read,
+                write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create, update_cmd=_Update),
+                guarantees=(BY_OWNER,),
+                encryption=FieldEncryption(encrypted="employee_id"),
+            )
+
+        assert "serializes writes by" in caught.value.summary
+        assert "employee_id" in caught.value.summary
+
+    def test_encrypting_another_field_is_fine(self) -> None:
+        # The contrast: the refusal is about the key, not about encryption.
+        spec = DocumentSpec[_Read, _Domain, _Create, _Update](
+            name="shifts",
+            read=_Read,
+            write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create, update_cmd=_Update),
+            guarantees=(BY_OWNER,),
+            encryption=FieldEncryption(encrypted="note"),
+        )
+
+        assert spec.guarantees == (BY_OWNER,)

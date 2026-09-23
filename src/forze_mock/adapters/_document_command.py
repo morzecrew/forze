@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
@@ -326,33 +325,75 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if mvcc is not None and key in mvcc.write_locks:
                 continue
 
-            lock = self._lock_for(key)
-            await lock.acquire()
+            lock = self.state.write_serialization.for_key(key)
+
+            if mvcc is not None and lock.locked():
+                self._refuse_lock_cycle(mvcc, key)
 
             if mvcc is None:
-                lock.release()
+                async with lock:
+                    return
 
-            else:
-                mvcc.write_locks[key] = lock
+            mvcc.waiting_for = key
+
+            try:
+                await lock.acquire()
+
+            finally:
+                mvcc.waiting_for = None
+
+            mvcc.write_locks[key] = lock
+            self.state.write_serialization.hold(key, mvcc)
 
     # ....................... #
 
-    def _lock_for(self, key: int) -> asyncio.Lock:
-        """The lock for *key* on the running loop, creating the loop's table on first use.
+    def _refuse_lock_cycle(self, mvcc: Any, key: int) -> None:
+        """Refuse a wait that would close a cycle, instead of joining one.
 
-        Per loop rather than one table rebuilt when the loop changes: a lock belongs to the
-        loop it was awaited on, and clearing a table a live loop still holds locks in would
-        hand two writers for one owner a lock each. Tables whose loop has closed are dropped,
-        so what is retained is the owners one live loop has seen.
+        Walks from whoever holds *key* to whatever that transaction is itself waiting for, and
+        on to its holder. A chain arriving back at a key this transaction already holds is a
+        deadlock: neither side can release first, and without this both would sit there until
+        an operation deadline fired — a hang where the store being modelled detects the cycle
+        and aborts one transaction.
+
+        Refused on the side about to *join* the cycle, which is the side that can still give up
+        without having blocked anyone.
+
+        :raises CoreException: ``conflict`` naming the owner.
         """
 
-        loop = asyncio.get_running_loop()
-        tables = self.state.write_serialization
+        holders = self.state.write_serialization
+        seen: set[int] = set()
+        cursor: int | None = key
 
-        for finished in [entry for entry in tables if entry.is_closed()]:
-            del tables[finished]
+        while cursor is not None and cursor not in seen:
+            seen.add(cursor)
+            holder = holders.holder_of(cursor)
 
-        return tables.setdefault(loop, {}).setdefault(key, asyncio.Lock())
+            if holder is None or holder is mvcc:
+                return
+
+            if any(held in mvcc.write_locks for held in (holder.waiting_for,) if held):
+                raise exc.conflict(
+                    "Two transactions want each other's owners, so neither can finish. One is "
+                    "refused rather than both waiting: retrying it after the other commits "
+                    "takes the owners in one order and succeeds.",
+                    details={"key": str(key)},
+                )
+
+            cursor = holder.waiting_for
+
+    # ....................... #
+
+    def _destination(self, stored: Any, patch: Mapping[str, Any]) -> JsonDict:
+        """The row *patch* produces when applied to *stored*.
+
+        The patch alone is not the destination: a partial one names some of a composite key and
+        leaves the rest, which would read as null and derive a key no row can share — a lock on
+        an owner that does not exist, held while the real destination went unheld.
+        """
+
+        return {**(dict(stored) if isinstance(stored, Mapping) else {}), **dict(patch)}
 
     # ....................... #
 
@@ -774,8 +815,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         )
         # Both sides: a patch that moves a row to another owner has to hold the owner it is
         # leaving as well as the one it is joining, or a reader of either sees half the move.
-        await self._serialize_stored(pk)
-        await self._serialize_writes(patch)
+        # The destination is the patch applied to the row it lands on, never the patch alone —
+        # a partial patch names part of a composite key and the rest would read as null.
+        if self._serialized_by():
+            stored = self._store().get(pk)
+            await self._serialize_writes(stored, self._destination(stored, patch))
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -963,13 +1007,16 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
             while True:
                 rows = [raw for raw in list(self._store().values()) if match(raw)]
-                wanted = set(self._owner_keys(self._serialized_by(), [*rows, patch]))
+                # Each row and where the patch would move it — the same reason the single-row
+                # update takes both, over every row the filter selects.
+                sides = [side for raw in rows for side in (raw, self._destination(raw, patch))]
+                wanted = set(self._owner_keys(self._serialized_by(), sides))
 
                 if wanted <= seen:
                     break
 
                 seen |= wanted
-                await self._serialize_writes(*rows, patch)
+                await self._serialize_writes(*sides)
 
         with self.state.lock:
             store = self._store()

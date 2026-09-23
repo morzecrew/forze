@@ -3,11 +3,16 @@
 import binascii
 import hashlib
 from collections.abc import Iterable, Sequence
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
+from uuid import UUID
 
 import orjson
 from pydantic import SecretStr
+
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -249,6 +254,60 @@ _ADVISORY_PART_PRESENT = b"\x01"
 """Tag for a part that carries a value."""
 
 
+def _advisory_bytes(part: object) -> bytes:
+    """*part* as bytes that are the same in every process and every release.
+
+    A closed set of types, each with one spelling that cannot vary: ``repr`` and ``str`` are
+    not stable enough to key a lock on. Two equal dictionaries with different insertion orders
+    render differently, a container's ``repr`` carries its class name, and a float's shortest
+    representation has changed between releases — any of which would give two writes for one
+    logical owner two different locks, and let them run at once.
+
+    A value outside the set is refused rather than guessed at. A key this cannot encode is a
+    key whose two writers might not collide, which is the failure the declaration exists to
+    remove.
+
+    :raises CoreException: ``configuration`` naming the type.
+    """
+
+    match part:
+        case bool():
+            # Before `int`, which it subclasses: `True` and `1` are different owners.
+            return b"\x01" if part else b"\x00"
+
+        case int():
+            return part.to_bytes((part.bit_length() + 8) // 8 + 1, "big", signed=True)
+
+        case str():
+            return part.encode("utf-8")
+
+        case bytes():
+            return part
+
+        case UUID():
+            return part.bytes
+
+        case Decimal():
+            # Normalised, so `1.0` and `1.00` are one owner rather than two — they compare
+            # equal, and a store asked to serialize by one would not tell them apart.
+            return format(part.normalize(), "f").encode("utf-8")
+
+        case datetime():
+            return part.isoformat().encode("utf-8")
+
+        case date():
+            return part.isoformat().encode("utf-8")
+
+    raise exc.configuration(
+        f"A lock key cannot be derived from {type(part).__module__}.{type(part).__qualname__}: "
+        "it has no rendering guaranteed to be identical in another process or another release, "
+        "and two writers deriving different bytes for one owner would not contend at all. Key "
+        "by a value the store itself compares — a string, an integer, a UUID, a decimal, a "
+        "date or an instant.",
+        details={"type": f"{type(part).__module__}.{type(part).__qualname__}"},
+    )
+
+
 def advisory_lock_key(*parts: object) -> int:
     """A stable 64-bit lock key for *parts*, equal in every process and every release.
 
@@ -261,14 +320,14 @@ def advisory_lock_key(*parts: object) -> int:
     change between versions, and a key that shifts on upgrade means a rolling deployment where
     old and new nodes do not contend.
 
-    Each part is length-prefixed, type-tagged and presence-tagged, so the encoding is
-    injective: ``("ab", "c")`` and ``("a", "bc")`` are different keys, so are ``(None,)`` and
-    ``("",)``, and so are ``(1,)`` and ``("1",)``. A caller passing a spec name, a tenant and an
-    owner cannot collide with another passing the same values in another arrangement, or with
-    one passing them in another type.
+    Each part carries its **fully qualified type** and a canonical encoding of its value, both
+    length-prefixed, so the encoding is injective: ``("ab", "c")`` and ``("a", "bc")`` differ,
+    ``(None,)`` and ``("",)`` differ, ``(1,)`` and ``("1",)`` differ, and two same-named classes
+    from different modules differ. A value :func:`_advisory_bytes` cannot encode is refused.
 
     :param parts: The key's components, in a fixed order the caller chooses.
     :returns: A signed 64-bit integer, which is the width a lock key is usually taken in.
+    :raises CoreException: ``configuration`` when a part has no canonical encoding.
     """
 
     digest = hashlib.blake2b(digest_size=8)
@@ -278,12 +337,8 @@ def advisory_lock_key(*parts: object) -> int:
             digest.update(_ADVISORY_PART_ABSENT)
             continue
 
-        # The type travels with the value: rendering both through `str` would give the integer
-        # 1 and the string "1" one key, and an aggregate keyed on an id that is a UUID in one
-        # caller and its text in another would serialize them against each other by accident —
-        # or, worse, not, depending on which way the collision fell.
-        kind = type(part).__name__.encode("utf-8")
-        raw = str(part).encode("utf-8")
+        kind = f"{type(part).__module__}.{type(part).__qualname__}".encode()
+        raw = _advisory_bytes(part)
 
         digest.update(_ADVISORY_PART_PRESENT)
         digest.update(len(kind).to_bytes(8, "big"))

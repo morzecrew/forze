@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import date
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -25,7 +27,8 @@ from forze.application.contracts.document import (
     KeyedUpdate,
 )
 from forze.application.contracts.guarantees import SerializedBy
-from forze.base.primitives import advisory_lock_key
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import advisory_lock_key, utcnow
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters.tx import MockJournalTxManagerAdapter
@@ -258,11 +261,7 @@ class TestTheLockIsReleasedByTheTransaction:
             row = await ctx.doc.command(_spec(BY_OWNER)).create(_BookingCreate(owner="o1"))
 
         assert row.owner == "o1"
-        assert all(
-            not lock.locked()
-            for table in state.write_serialization.values()
-            for lock in table.values()
-        )
+        assert state.write_serialization.held() == ()
 
 
 # ....................... #
@@ -292,7 +291,102 @@ class TestASetBasedUpdateLocksEveryOwnerItSelects:
 # ....................... #
 
 
+BY_OWNER_AND_SLOT = SerializedBy(key=("owner", "label"))
+
+
+class TestAPartialPatchStillLocksWhereItLands:
+    """A patch names part of a composite key; the rest comes from the row it lands on.
+
+    Derived from the patch alone the missing half reads as null, so the destination key belongs
+    to an owner no row has — a lock taken on nothing while the owner the row actually moves to
+    goes unheld, and another writer for that owner proceeds beside it.
+    """
+
+    async def test_the_destination_of_a_partial_patch_is_serialized(self) -> None:
+        state = MockState()
+        ctx = _ctx(state)
+        plain = ctx.doc.command(_spec())
+        moving = await plain.create(_BookingCreate(owner="o1", label="before"))
+
+        async def move(inner: Any) -> None:
+            # Names `label` only: `owner` has to come from the stored row.
+            await inner.doc.command(_spec(BY_OWNER_AND_SLOT)).update(
+                moving.id, moving.rev, _BookingUpdate(label="after")
+            )
+
+        async def write_destination(inner: Any) -> None:
+            await inner.doc.command(_spec(BY_OWNER_AND_SLOT)).create(
+                _BookingCreate(owner="o1", label="after")
+            )
+
+        assert not await _observed_overlap(state, move, write_destination)
+
+    async def test_an_unrelated_destination_still_proceeds(self) -> None:
+        # The contrast: the merge must not serialize against owners the patch never reaches.
+        state = MockState()
+        ctx = _ctx(state)
+        plain = ctx.doc.command(_spec())
+        moving = await plain.create(_BookingCreate(owner="o1", label="before"))
+
+        async def move(inner: Any) -> None:
+            await inner.doc.command(_spec(BY_OWNER_AND_SLOT)).update(
+                moving.id, moving.rev, _BookingUpdate(label="after")
+            )
+
+        async def elsewhere(inner: Any) -> None:
+            await inner.doc.command(_spec(BY_OWNER_AND_SLOT)).create(
+                _BookingCreate(owner="o2", label="unrelated")
+            )
+
+        assert await _observed_overlap(state, move, elsewhere)
+
+
+# ....................... #
+
+
+class TestTheKeyRefusesWhatItCannotEncodeStably:
+    """A value with no canonical rendering is refused, not guessed at.
+
+    Two writers deriving different bytes for one logical owner would not contend at all, which
+    is the failure the declaration exists to remove — so a type whose rendering can vary
+    between processes or releases is turned away at the key.
+    """
+
+    def test_a_mapping_is_refused(self) -> None:
+        # Equal dictionaries with different insertion orders render differently.
+        with pytest.raises(CoreException) as caught:
+            advisory_lock_key("a", None, {"x": 1})
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert "no rendering guaranteed to be identical" in caught.value.summary
+
+    def test_a_sequence_is_refused(self) -> None:
+        with pytest.raises(CoreException):
+            advisory_lock_key("a", None, [1, 2])
+
+    def test_an_arbitrary_object_is_refused(self) -> None:
+        class _Owner:
+            def __str__(self) -> str:
+                return "o1"
+
+        with pytest.raises(CoreException):
+            advisory_lock_key("a", None, _Owner())
+
+    def test_every_supported_type_encodes(self) -> None:
+        # The contrast: the refusal is about what a store cannot compare, not about everything.
+        for value in ("o1", b"o1", 1, True, uuid4(), Decimal("1.5"), date.today(), utcnow()):
+            assert isinstance(advisory_lock_key("a", None, value), int)
+
+
+# ....................... #
+
+
 class TestTheKeyDoesNotCollapseTypes:
+    def test_bytes_and_text_with_the_same_bytes_differ(self) -> None:
+        # The case the type tag is actually load-bearing for: both encode to the same bytes,
+        # so only the type travelling with the value keeps them apart.
+        assert advisory_lock_key("a", None, b"o1") != advisory_lock_key("a", None, "o1")
+
     def test_an_integer_and_its_text_are_different_keys(self) -> None:
         # Both render to "1"; an aggregate keyed on an id that is an integer in one caller and
         # its text in another would otherwise serialize them against each other by accident.
@@ -307,3 +401,75 @@ class TestTheKeyDoesNotCollapseTypes:
         owner = uuid4()
 
         assert advisory_lock_key("a", None, owner) == advisory_lock_key("a", None, owner)
+
+
+# ....................... #
+
+
+class TestTwoTransactionsWantingEachOthersOwners:
+    """A cycle is refused, not waited on.
+
+    Locks are sorted within a call, so one call cannot invert against itself. Across calls the
+    order is the caller's: a transaction can take `o1` then ask for `o2` while another holds
+    `o2` and asks for `o1`. Neither can release first, and the locks live until the transaction
+    ends — so without detection both sit there until an operation deadline fires, which in a
+    test is a hang rather than a failure.
+
+    The store this models detects the cycle and aborts one. So does this.
+    """
+
+    async def test_one_side_is_refused(self) -> None:
+        state = MockState()
+        ctx = _ctx(state)
+        took_first = [asyncio.Event(), asyncio.Event()]
+        outcomes: list[str] = []
+
+        async def writer(index: int, first: str, second: str) -> None:
+            tx = _tx(state)
+
+            try:
+                async with tx.transaction():
+                    cmd = ctx.doc.command(_spec(BY_OWNER))
+                    await cmd.create(_BookingCreate(owner=first))
+                    took_first[index].set()
+                    # Both hold one owner before either asks for the other's.
+                    await took_first[1 - index].wait()
+                    await cmd.create(_BookingCreate(owner=second))
+
+                outcomes.append(f"{index}:ok")
+
+            except CoreException:
+                outcomes.append(f"{index}:refused")
+
+        await asyncio.wait_for(
+            asyncio.gather(writer(0, "o1", "o2"), writer(1, "o2", "o1")),
+            timeout=5,
+        )
+
+        # Exactly one gave way; the other finished. A hang would have tripped the timeout.
+        assert sorted(outcomes) == ["0:ok", "1:refused"] or sorted(outcomes) == [
+            "0:refused",
+            "1:ok",
+        ], outcomes
+        assert state.write_serialization.held() == ()
+
+    async def test_the_same_two_owners_in_one_order_both_succeed(self) -> None:
+        # The contrast: the refusal is about the cycle, not about two transactions sharing
+        # owners. Taken in the same order they queue and both commit.
+        state = MockState()
+        ctx = _ctx(state)
+        outcomes: list[str] = []
+
+        async def writer(index: int) -> None:
+            tx = _tx(state)
+
+            async with tx.transaction():
+                cmd = ctx.doc.command(_spec(BY_OWNER))
+                await cmd.create(_BookingCreate(owner="o1"))
+                await cmd.create(_BookingCreate(owner="o2"))
+
+            outcomes.append(f"{index}:ok")
+
+        await asyncio.wait_for(asyncio.gather(writer(0), writer(1)), timeout=5)
+
+        assert sorted(outcomes) == ["0:ok", "1:ok"]
