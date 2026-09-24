@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`HttpAuthConfig` with no token sent `Authorization: Bearer None`.** An optional secret field converted `None` into a `SecretStr` wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on `HttpClientLifecycleStep.auth_token` and Meilisearch's `api_key`, where consumers happened to unwrap defensively.
 
+### Security
+
+- **Two principals using one idempotency key no longer share its claim.** A claim is scoped to the tenant and the acting principal — the subject, on a delegated call — so a caller reusing another's key runs its own operation instead of being served that caller's stored result, and is never refused for it. Every shipped store scopes through the new `ClaimPrincipalMixin`; a custom store should inherit it and wire `principal_provider`, and one that cannot scope is named in a warning when an operation resolves it. **Breaking:** stored keys change shape, so a key claimed before the upgrade does not replay after it — drain the dedup window across the deploy, or accept that a retry spanning it runs again. An `encrypt_result` record sealed before the upgrade no longer opens.
+
 ## [0.7.0] - 2026-09-10
 
 ### Added

@@ -28,7 +28,11 @@ from uuid import UUID, uuid4
 import pytest
 from psycopg import sql
 
-from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
+from forze.application.contracts.idempotency import (
+    IdempotencyRecord,
+    IdempotencySpec,
+    scoped_claim_key,
+)
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.adapters.idempotency import (
     _PROBE_COOLDOWN,  # pyright: ignore[reportPrivateUsage]
@@ -326,7 +330,7 @@ class TestTheColumnArrivingUnderARunningProcess:
             sql.SQL("SELECT owner FROM {table} WHERE idem_key = {key}").format(
                 table=sql.Identifier("public", table), key=sql.Placeholder()
             ),
-            ["after-migration"],
+            [scoped_claim_key(None, "after-migration")],
             row_factory="tuple",
         )
 
@@ -363,7 +367,7 @@ class TestTheColumnArrivingUnderARunningProcess:
             sql.SQL("SELECT owner FROM {table} WHERE idem_key = {key}").format(
                 table=sql.Identifier("public", table), key=sql.Placeholder()
             ),
-            ["second"],
+            [scoped_claim_key(None, "second")],
             row_factory="tuple",
         )
 
@@ -427,7 +431,7 @@ class TestRoutedDeployments:
             sql.SQL("SELECT owner FROM {table} WHERE idem_key = {key}").format(
                 table=sql.Identifier("public", table), key=sql.Placeholder()
             ),
-            ["b-after"],
+            [scoped_claim_key(None, "b-after")],
             row_factory="tuple",
         )
 

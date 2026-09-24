@@ -32,6 +32,25 @@ transaction, and the handler.
   middleware. No key → no dedup; the operation just runs.
 - The **same key with a different payload** is a conflict — a key can't be reused
   for a different request.
+- A key **belongs to the caller**. A claim is scoped to the tenant and the
+  authenticated principal — the subject, on a delegated call — so two callers who
+  pick the same key never meet: each runs its own operation and replays its own
+  result, and neither is told the other used it. Calls with no authenticated
+  principal share one anonymous space of their own.
+
+Two identities ride on a claim, and they answer different questions:
+
+| | Question | Effect |
+|---|---|---|
+| **Principal** | whose key is it? | another caller's key behaves as unused |
+| **Owner** (the invocation) | who may finish it? | a claim reclaimed by a duplicate cannot be completed by the one that lost it |
+
+Keys stored before claims were scoped to a principal have a different shape, so a
+key claimed before that upgrade does not replay after it: a retry that spans the
+deploy runs again. Drain the dedup window across the deploy if that matters.
+Every shipped store scopes its claims; a store of your own should inherit
+`ClaimPrincipalMixin` and wire `principal_provider`, and one that does not is
+named in a warning when an operation resolves it.
 
 ## Wiring
 

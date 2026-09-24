@@ -196,7 +196,7 @@ async def test_a_reclaim_clears_the_previous_result(mongo_client: MongoClient) -
 
     doc = await mongo_client.find_one(
         await mongo_client.collection(coll_name),
-        {"_id": store._doc_id(OP, key, None)},
+        {"_id": store._doc_id(OP, store.claim_key(key), None)},
     )
 
     assert doc is not None
@@ -222,9 +222,9 @@ async def test_a_document_without_an_expiry_is_reclaimable(mongo_client: MongoCl
     await mongo_client.insert_one(
         coll,
         {
-            "_id": store._doc_id(OP, key, None),
+            "_id": store._doc_id(OP, store.claim_key(key), None),
             "op": OP,
-            "idem_key": key,
+            "idem_key": store.claim_key(key),
             "payload_hash": HASH_A,
             "status": "pending",
         },
@@ -363,9 +363,9 @@ async def test_a_document_without_an_owner_is_committable(mongo_client: MongoCli
 
     await coll.insert_one(
         {
-            "_id": f"{len(OP)}:{OP}|{key}",
+            "_id": store._doc_id(OP, store.claim_key(key), None),
             "op": OP,
-            "idem_key": key,
+            "idem_key": store.claim_key(key),
             "payload_hash": HASH_A,
             "tenant_id": None,
             "status": "pending",

@@ -1,9 +1,11 @@
-"""Claim ownership: which invocation holds an in-progress idempotency claim."""
+"""Claim ownership: whose key a claim is, and which invocation holds it in progress."""
 
 from collections.abc import Callable
 from uuid import UUID
 
 import attrs
+
+from ..authn import AuthnIdentity
 
 # ----------------------- #
 
@@ -53,3 +55,67 @@ class ClaimOwnerMixin:
             return None
 
         return self.owner_provider()
+
+
+# ....................... #
+
+
+def scoped_claim_key(principal_id: UUID | None, key: str) -> str:
+    """The key a claim is stored under: the caller's *key*, scoped to who is acting.
+
+    A client generates its idempotency key, so nothing makes it unique across callers, and two
+    principals who pick the same one must never meet — the second would be served the first's
+    result. So the principal is part of the stored key, and **every** key is scoped: one with
+    no principal carries a marker of its own rather than going in raw, because a raw key could
+    be chosen to equal another principal's scoped one.
+
+    The two forms are told apart by their first character, and a principal's id has a fixed
+    length, so nothing the caller puts in *key* can reach into the part that says whose it is.
+    """
+
+    if principal_id is None:
+        return f"a:{key}"
+
+    return f"p:{principal_id}:{key}"
+
+
+# ....................... #
+
+
+# Non-slotted for the same reason as ``ClaimOwnerMixin``.
+@attrs.define(slots=False, kw_only=True, frozen=True)
+class ClaimPrincipalMixin:
+    """Mixin scoping a store's claims to the principal the operation acts for.
+
+    ``begin`` / ``commit`` / ``fail`` identify a claim by ``op``, key and payload hash, none of
+    which says *whose* key it is. Two principals in one tenant submitting the same key would
+    share one claim: with different arguments the second gets ``conflict`` — which tells it the
+    key is someone else's — and with identical arguments it is served the first principal's
+    stored result.
+
+    The principal is delivered the way the tenant and the owner are — a callable injected at
+    wiring, so no port signature changes — and each store passes the caller's key through
+    :meth:`claim_key` before using it, so a key in use by another principal behaves as unused.
+
+    Unlike the owner fence this does **not** degrade to the previous behaviour when nothing is
+    wired: an unscoped claim is exactly the defect. A store without a provider, or a call with
+    no authenticated principal, scopes its keys to the anonymous space, which no principal's
+    claim ever matches.
+    """
+
+    principal_provider: Callable[[], AuthnIdentity | None] | None = attrs.field(default=None)
+    """Callable yielding the current invocation's identity (wired like ``tenant_provider``)."""
+
+    # ....................... #
+
+    def claim_key(self, key: str) -> str:
+        """*key* as this store holds it, scoped to the principal acting now.
+
+        Keyed on the **subject** (``principal_id``), not the actor of a delegated call: an
+        idempotency key protects the effect on the subject's data, so an agent retrying a
+        user's request replays it rather than running it again.
+        """
+
+        identity = self.principal_provider() if self.principal_provider is not None else None
+
+        return scoped_claim_key(identity.principal_id if identity is not None else None, key)

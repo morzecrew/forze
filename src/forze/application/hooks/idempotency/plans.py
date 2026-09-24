@@ -35,6 +35,32 @@ from ._state import (
 
 # ----------------------- #
 
+_WARNED_UNSCOPED: set[str] = set()
+"""Spec names already warned about, so a store that cannot scope is named once per process."""
+
+
+def _warn_if_unscoped(port: IdempotencyPort, spec_name: str) -> None:
+    """Warn once when *port* cannot keep two principals' keys apart.
+
+    Read through ``getattr`` so a port wrapped for tracing or interception still answers: a
+    store without the attribute does not scope at all, and one whose provider is unwired puts
+    every caller in the anonymous space — the shared key the scope exists to remove.
+    """
+
+    if getattr(port, "principal_provider", None) is not None or spec_name in _WARNED_UNSCOPED:
+        return
+
+    _WARNED_UNSCOPED.add(spec_name)
+    logger.warning(
+        "Idempotency store for spec %r does not scope claims to a principal: two callers "
+        "using one key share its claim, and one can be served the other's result. Use a "
+        "store with ClaimPrincipalMixin and wire principal_provider.",
+        spec_name,
+    )
+
+
+# ....................... #
+
 
 def _hash_args(args: Any) -> str:
     """Stable fingerprint of normalized operation arguments."""
@@ -94,6 +120,7 @@ class IdempotencyWrap(MiddlewareFactory):
         """Resolve the idempotency port for *ctx*, sealing results when the spec opts in."""
 
         port = ctx.idempotency(self.spec)
+        _warn_if_unscoped(port, str(self.spec.name))
 
         if self.spec.encrypt_result:
             port = encrypting_idempotency_port(
@@ -102,6 +129,7 @@ class IdempotencyWrap(MiddlewareFactory):
                     ctx.deps.provide(KeyringDepKey) if ctx.deps.exists(KeyringDepKey) else None
                 ),
                 tenant_provider=ctx.inv_ctx.get_tenant,
+                principal_provider=ctx.inv_ctx.get_authn,
                 spec_name=str(self.spec.name),
             )
 
