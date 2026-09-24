@@ -6816,8 +6816,24 @@ wiring:</p>
 <td>—</td>
 <td>✅</td>
 </tr>
+<tr>
+<td><code>SerializedBy(key=…)</code></td>
+<td>two writes for one key never run at once</td>
+<td>—</td>
+<td>—</td>
+<td>✅</td>
+</tr>
 </tbody>
 </table>
+<p><code>SerializedBy</code> is the one member about write <em>ordering</em> rather than about stored rows. It says
+two writes for one key never run at once — the rule that otherwise lives in whichever writer
+remembered to take a lock, and holds until somebody adds the next writer. The in-memory store
+keeps it; no backend with a connection maps it yet, so a spec declaring it is wireable under
+simulation and refused everywhere else.</p>
+<p>It <strong>serializes, it does not validate</strong>, and the difference is worth stating twice: the lock is
+taken before the <em>write</em>, so a handler that reads, decides, and then writes still made its
+decision on an unprotected read. What the declaration removes is two writes landing at once;
+making a read-then-write atomic is a different property, and reads are never serialized by this.</p>
 <p>Mongo refuses <code>NonOverlapping</code>, and will keep refusing it: non-overlap is a comparison <em>between</em>
 two rows rather than a property of one row's fields, so unlike filtered uniqueness there is no
 partial index that expresses it.</p>
