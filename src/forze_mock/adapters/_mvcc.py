@@ -189,6 +189,26 @@ class MvccTx:
     transaction changed since it was read (not merely since this transaction began). A *blind*
     (rev-less, unlocked) write is not claimed, so it silently loses, as read-committed permits.
     Snapshot/serializable ignore claims and conflict on every write regardless."""
+    waiting_for: int | None = attrs.field(default=None)
+    """The owner key this transaction is blocked on, or ``None`` while it is running.
+
+    Published so another transaction can see it before it waits: two transactions each holding
+    what the other wants would otherwise sit there until an operation deadline fires, and the
+    store this models detects the cycle and aborts one of them instead."""
+
+    write_locks: dict[int, Any] = attrs.field(factory=dict)
+    """Per-owner write locks this transaction holds, as ``{key: lock}``.
+
+    Held from the first write to a serialized aggregate until the transaction ends, which is
+    what makes a handler's own read-then-write correct: releasing at the write would leave the
+    gap between the two open, and that gap is the race the declaration exists to close.
+
+    One entry per key, so a transaction writing the same owner twice waits once. Taken in
+    sorted order where a single call writes several owners; across calls the order is the
+    caller's, so two transactions can still take two owners in opposite orders. That cycle is
+    detected before the second wait begins and one side is refused, which is what the store
+    this models does rather than leaving both blocked."""
+
     guarantee_rechecks: dict[tuple[str, Any], Any] = attrs.field(factory=dict)
     """Keys to re-check against the *committed* store at commit, as ``{(ns, key): check}``.
 
@@ -242,11 +262,17 @@ class MvccTx:
     def finish(self, state: Any) -> None:
         """Deregister this transaction and prune the commit log below the oldest in-flight one.
 
-        Called once on transaction end (commit or abort). An entry only matters to a
+        Called once on transaction end (commit or abort), which is also where the per-owner
+        write locks are released — commit or rollback, no path that forgets. An entry only
+        matters to a
         transaction whose begin-version precedes it, so once no in-flight transaction began
         before an entry, the entry can never be consulted again and is dropped — keeping the
         log bounded and ``validate`` from degrading to O(commits) per call across a run.
         """
+
+        # Before anything else: a writer waiting on one of these has nothing to do with this
+        # transaction's bookkeeping, and an exception raised below would strand it for good.
+        release_write_locks(self, state)
 
         state.mvcc_active.remove(self.begin_version)
         horizon = min(state.mvcc_active) if state.mvcc_active else state.mvcc_version
@@ -488,6 +514,36 @@ class MvccTx:
                     dict.__setitem__(  # pyright: ignore[reportUnknownMemberType]
                         live, key, value
                     )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True)
+class StatementLocks:
+    """The per-owner write locks one write outside a transaction holds.
+
+    Such a write is a transaction of one statement, and it contends the way one does: it holds
+    every owner it touches at once, and another transaction deciding whether to wait on it has
+    to be able to see it — what it holds and what it is waiting for — or a cycle through it is a
+    hang nobody detects. Shaped like :class:`MvccTx`'s own two fields so either can be read.
+    """
+
+    write_locks: dict[int, Any] = attrs.field(factory=dict)
+    waiting_for: int | None = attrs.field(default=None)
+
+
+# ....................... #
+
+
+def release_write_locks(holder: MvccTx | StatementLocks, state: Any) -> None:
+    """Give back every per-owner write lock *holder* took, and forget that it held them."""
+
+    for key, lock in holder.write_locks.items():
+        state.write_serialization.release(key)
+        lock.release()
+
+    holder.write_locks.clear()
 
 
 # ....................... #

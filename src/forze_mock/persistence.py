@@ -125,10 +125,11 @@ _LIVE_FIELDS: Final = frozenset(
         "_MockState__lock",
         "_MockState__tx_serializer",
         "rotating_credential_locks",
+        "write_serialization",
     }
 )
 """The state's machinery rather than its data: a re-entrant lock, the strict-transaction
-serializer, and the rotating-credential stripe table.
+serializer, the rotating-credential stripe table and the per-owner write locks.
 
 A new process builds its own, so a restore leaves them alone entirely — rebuilding a lock
 table mid-flight would hand the next caller a different lock than the one a waiter is on."""

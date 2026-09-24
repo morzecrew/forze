@@ -120,6 +120,18 @@ Two sentences carry the whole doctrine:
 | `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `partialFilterExpression` with `$type` | ✅ |
 | `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | `EXCLUDE USING gist` | — | ✅ |
 | `NonOverlapping(key=…, period=…, where=…)` | …among the rows the filter selects | `EXCLUDE … WHERE (…)` | — | ✅ |
+| `SerializedBy(key=…)` | two writes for one key never run at once | — | — | ✅ |
+
+`SerializedBy` is the one member about write *ordering* rather than about stored rows. It says
+two writes for one key never run at once — the rule that otherwise lives in whichever writer
+remembered to take a lock, and holds until somebody adds the next writer. The in-memory store
+keeps it; no backend with a connection maps it yet, so a spec declaring it is wireable under
+simulation and refused everywhere else.
+
+It **serializes, it does not validate**, and the difference is worth stating twice: the lock is
+taken before the *write*, so a handler that reads, decides, and then writes still made its
+decision on an unprotected read. What the declaration removes is two writes landing at once;
+making a read-then-write atomic is a different property, and reads are never serialized by this.
 
 Mongo refuses `NonOverlapping`, and will keep refusing it: non-overlap is a comparison *between*
 two rows rather than a property of one row's fields, so unlike filtered uniqueness there is no

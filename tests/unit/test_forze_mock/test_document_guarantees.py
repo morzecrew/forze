@@ -26,13 +26,11 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.guarantees import (
     NonOverlapping,
-    StorageGuaranteeCapabilities,
     UniqueTogether,
 )
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule
-from forze_mock.adapters.document import MockDocumentAdapter
 from tests.support.execution_context import context_from_modules
 
 # ----------------------- #

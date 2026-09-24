@@ -13,6 +13,7 @@ from .capabilities import (
 from .value_objects import (
     GuaranteeKind,
     NonOverlapping,
+    SerializedBy,
     StorageGuarantee,
     StorageGuarantees,
     UniqueTogether,
@@ -27,6 +28,7 @@ __all__ = [
     "GuaranteeEnforcing",
     "GuaranteeKind",
     "NonOverlapping",
+    "SerializedBy",
     "StorageGuarantee",
     "StorageGuaranteeCapabilities",
     "StorageGuarantees",

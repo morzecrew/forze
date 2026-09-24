@@ -22,7 +22,12 @@ from ..conformity import (
     validate_materialized_computed,
 )
 from ..crypto import FieldEncryption
-from ..guarantees import NonOverlapping, StorageGuarantees, UniqueTogether
+from ..guarantees import (
+    NonOverlapping,
+    SerializedBy,
+    StorageGuarantees,
+    UniqueTogether,
+)
 from ..querying import (
     QueryFieldPolicy,
     QuerySortExpression,
@@ -368,6 +373,39 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _refuse_sealed_key(self, guarantee: SerializedBy) -> None:
+        """Refuse serializing writes by a field whose stored value is ciphertext.
+
+        Two rows carrying the same owner do not carry the same bytes once the field is sealed —
+        an authenticated encryption scheme gives each write its own nonce — so a key derived
+        from the stored value would differ per row and the two writers would contend with
+        nobody. The declaration would read as a rule and serialize nothing.
+
+        The same guard sort keys and indexed content fields already get, for the same reason:
+        a role that needs to *compare* values cannot be filled by ciphertext.
+
+        :raises CoreException: ``configuration`` naming the sealed fields.
+        """
+
+        if self.encryption is None:
+            return
+
+        sealed = self.encryption.sealed_fields_in(guarantee.key)
+
+        if not sealed:
+            return
+
+        raise exc.configuration(
+            f"Guarantee {guarantee.kind!r} on spec {self.name!r} serializes writes by "
+            f"{sorted(sealed)}, which this aggregate stores encrypted. Each write seals its "
+            "value under its own nonce, so two rows for one owner hold different bytes and a "
+            "key derived from them would put the two writers on different locks — the "
+            "declaration would serialize nothing. Key by a field stored in the clear.",
+            details={"spec": str(self.name), "sealed": sorted(sealed)},
+        )
+
+    # ....................... #
+
     def _refuse_nullable_period_start(self, guarantee: NonOverlapping) -> None:
         """Refuse a non-overlap guarantee whose period can begin with a null.
 
@@ -435,6 +473,14 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                         if guarantee.where is not None
                         else frozenset()
                     )
+
+                case SerializedBy():
+                    # The key is read off the row being written to decide which writes contend,
+                    # so a name that is not there reads as null for every row and serializes
+                    # the whole relation against itself — a different property, and a far more
+                    # expensive one, arrived at silently.
+                    named = frozenset(guarantee.key)
+                    self._refuse_sealed_key(guarantee)
 
                 case NonOverlapping():
                     named = frozenset(guarantee.key) | frozenset(guarantee.period)
