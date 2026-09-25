@@ -44,7 +44,11 @@ class EncryptingIdempotencyPort:
     cipher: BytesCipherPort
     tenant_provider: Callable[[], TenantIdentity | None]
     principal_provider: Callable[[], AuthnIdentity | None] | None = None
-    """The acting identity, which the AAD binds through the claim's scoped key."""
+    """The acting identity, which the AAD binds through the claim's scoped key.
+
+    Left unset, the wrapped store's own provider is used: the binding has to name whoever the
+    store scopes the claim to, or a result copied from one principal's claim into another's
+    opens for the second."""
 
     # ....................... #
 
@@ -93,7 +97,8 @@ class EncryptingIdempotencyPort:
         # The key as the store holds it, so the binding follows the claim's identity: a result
         # sealed for one principal does not open for another, nor under the unscoped binding
         # records had before claims were scoped.
-        identity = self.principal_provider() if self.principal_provider is not None else None
+        provider = self.principal_provider or getattr(self.inner, "principal_provider", None)
+        identity = provider() if provider is not None else None
         scoped = scoped_claim_key(identity.principal_id if identity is not None else None, key)
         record_id = f"{len(op)}:{op}:{scoped}"
         return payload_aad(IDEMPOTENCY_PAYLOAD_DOMAIN, tenant_id, record_id)

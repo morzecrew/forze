@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -137,6 +138,32 @@ async def test_a_result_sealed_for_one_principal_does_not_open_for_another() -> 
 
     with pytest.raises(CoreException):
         await as_(bob).begin("op", "k", "h")
+
+
+@attrs.define(slots=True)
+class _ScopedFakeStore(_FakeStore):
+    """A store that scopes its claims to a principal, the way every shipped one does."""
+
+    principal_provider: Callable[[], AuthnIdentity | None] | None = None
+
+
+@pytest.mark.asyncio
+async def test_a_wrapper_given_no_provider_binds_the_stores_principal() -> None:
+    # Built directly around a scoped store, with no provider of its own, the wrapper must still
+    # bind whoever the store scopes to — or a record copied from one principal's claim into
+    # another's opens for the second. The fake keeps both under one key to stand for the copy.
+    alice = AuthnIdentity(principal_id=uuid4())
+    bob = AuthnIdentity(principal_id=uuid4())
+    acting = [alice]
+    store = _ScopedFakeStore(principal_provider=lambda: acting[0])
+    port = EncryptingIdempotencyPort(inner=store, cipher=_keyring(), tenant_provider=lambda: None)
+
+    await port.commit("op", "k", "h", IdempotencyRecord(result=b"alice's"))
+
+    acting[0] = bob
+
+    with pytest.raises(CoreException):
+        await port.begin("op", "k", "h")
 
 
 @pytest.mark.asyncio
