@@ -759,6 +759,7 @@ class ConfigurableMockIdempotency(_MockFactoryBase):
             tenant_aware=cfg.tenant_aware if cfg else False,
             tenant_provider=_tenant_provider(context),
             owner_provider=context.inv_ctx.get_execution_id,
+            principal_provider=context.inv_ctx.get_authn,
         )
 
 

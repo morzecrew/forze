@@ -12,6 +12,7 @@ import attrs
 
 from forze.application.contracts.idempotency import (
     ClaimOwnerMixin,
+    ClaimPrincipalMixin,
     IdempotencyPort,
     IdempotencyRecord,
 )
@@ -40,7 +41,9 @@ class _MockIdemEntry:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MockIdempotencyAdapter(MockTenancyMixin, ClaimOwnerMixin, IdempotencyPort):
+class MockIdempotencyAdapter(
+    MockTenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixin, IdempotencyPort
+):
     """In-memory idempotency adapter.
 
     Mirrors the Redis adapter's TTL semantics: both *pending* claims and
@@ -137,6 +140,8 @@ class MockIdempotencyAdapter(MockTenancyMixin, ClaimOwnerMixin, IdempotencyPort)
         if not key:
             return None
 
+        key = self.claim_key(key)
+
         now = utcnow()
 
         with self.state.lock:
@@ -171,6 +176,8 @@ class MockIdempotencyAdapter(MockTenancyMixin, ClaimOwnerMixin, IdempotencyPort)
     ) -> None:
         if not key:
             return
+
+        key = self.claim_key(key)
 
         now = utcnow()
 
@@ -235,6 +242,8 @@ class MockIdempotencyAdapter(MockTenancyMixin, ClaimOwnerMixin, IdempotencyPort)
     ) -> None:
         if not key:
             return
+
+        key = self.claim_key(key)
 
         now = utcnow()
 

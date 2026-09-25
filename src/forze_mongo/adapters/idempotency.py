@@ -17,6 +17,7 @@ from pymongo.asynchronous.collection import AsyncCollection
 
 from forze.application.contracts.idempotency import (
     ClaimOwnerMixin,
+    ClaimPrincipalMixin,
     IdempotencyPort,
     IdempotencyRecord,
     IdempotencySpec,
@@ -39,7 +40,7 @@ _DONE: Final[str] = "done"
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class MongoIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
+class MongoIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixin, IdempotencyPort):
     """Mongo-backed co-located idempotency store (``commits_in_transaction``).
 
     :meth:`commit` runs on the caller's session — the auto-injected ``on_success`` hook
@@ -150,6 +151,8 @@ class MongoIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     ) -> IdempotencyRecord | None:
         if not key:
             return None
+
+        key = self.claim_key(key)
 
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
@@ -299,6 +302,8 @@ class MongoIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
         if not key:
             return
 
+        key = self.claim_key(key)
+
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()
         now = utcnow()
@@ -341,6 +346,8 @@ class MongoIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     ) -> None:
         if not key:
             return
+
+        key = self.claim_key(key)
 
         coll = await self._collection()
         tenant_id = self.require_tenant_if_aware()

@@ -39,6 +39,14 @@ they agree about it either.
 12. A claim reclaimed by another invocation cannot be completed or released by the one
     that lost it — the ownership fence, which needs an owner wired on both stores.
 13. A second ``commit`` for a key that already completed is refused, not an overwrite.
+14. Two principals using one key never meet: with identical arguments the second executes
+    rather than being served the first's record, and with different arguments neither is
+    refused. The first of these is the disclosure the principal scope exists to close.
+15. A caller with no principal and a caller with one never share a claim, in either
+    direction — including when the anonymous caller's key is chosen to spell the other's
+    stored form.
+16. A delegated call is scoped to its subject: an agent acting for a user replays the user's
+    claim rather than running it again.
 
 Check 12 is the one that used to be impossible. Two duplicates of one request carry the
 same ``op``, key and ``payload_hash``, so an operation that outlived its window and found
@@ -75,7 +83,12 @@ from uuid import UUID, uuid4
 import attrs
 import pytest
 
-from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.idempotency import (
+    IdempotencyPort,
+    IdempotencyRecord,
+    scoped_claim_key,
+)
 from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
@@ -118,6 +131,9 @@ class IdempotencyHarness:
     ``IdempotencySpec.ttl``. The ownership check additionally needs two stores that are
     *different invocations*, which is what the owner argument supplies; passing ``None``
     models a store wired without a provider.
+
+    A leg supplies it; a check never calls it — it takes :meth:`store_as`, which scopes the
+    store to the same principal as :attr:`store`.
     """
 
     min_ttl: timedelta = timedelta(milliseconds=50)
@@ -138,6 +154,11 @@ class IdempotencyHarness:
     the fenced path a deployment runs: a fence that refused its own owner's ``commit``
     would fail check 2 here, not only the ownership check."""
 
+    principal: UUID = attrs.field(factory=uuid4)
+    """The principal :attr:`store` acts for. Wired for the same reason as :attr:`owner`: a
+    deployment's factory supplies one, so checks 2–4 pin today's same-caller contract on
+    the scoped path rather than on the anonymous one."""
+
     # ....................... #
 
     @property
@@ -149,7 +170,42 @@ class IdempotencyHarness:
         into an assertion about two anonymous stores.
         """
 
-        return self.store_for(self.ttl, self.owner)
+        return self.store_as(self.ttl, self.owner)
+
+    def store_as(self, ttl: timedelta, owner: UUID | None) -> IdempotencyPort:
+        """A store over the same state with its own window and owner, acting for :attr:`principal`.
+
+        What a check takes when it needs a second window or a second invocation — never
+        :attr:`store_for` directly. A store minted bare acts for nobody, so its claims live in
+        another space than :attr:`store`'s, and a check comparing the two passes whether or not
+        the property it names holds.
+        """
+
+        return as_principal(self.store_for(ttl, owner), self.principal)
+
+
+def as_principal(
+    store: IdempotencyPort,
+    principal: UUID | None,
+    *,
+    actor: UUID | None = None,
+) -> IdempotencyPort:
+    """*store* acting for *principal* (``None`` — no one), optionally through *actor*.
+
+    Every store is an attrs class carrying the principal mixin, so the scope is swapped the
+    way a factory sets it rather than through a per-store seam each leg would have to add.
+    """
+
+    if principal is None:
+        identity = None
+
+    else:
+        identity = AuthnIdentity(
+            principal_id=principal,
+            actor=AuthnIdentity(principal_id=actor) if actor is not None else None,
+        )
+
+    return attrs.evolve(store, principal_provider=lambda: identity)  # type: ignore[misc]
 
 
 Check = Callable[[IdempotencyHarness], Any]
@@ -331,7 +387,7 @@ async def check_a_lapsed_claim_is_reclaimable(h: IdempotencyHarness) -> None:
     released does not hold its key until someone intervenes."""
 
     key = h.key()
-    short = h.store_for(h.min_ttl, h.owner)
+    short = h.store_as(h.min_ttl, h.owner)
 
     assert await short.begin(OP, key, HASH_A) is None, h.backend
     await _sleep_past(h.min_ttl)
@@ -347,7 +403,7 @@ async def check_a_lapsed_record_re_executes(h: IdempotencyHarness) -> None:
     """
 
     key = h.key()
-    short = h.store_for(h.min_ttl, h.owner)
+    short = h.store_as(h.min_ttl, h.owner)
 
     assert await short.begin(OP, key, HASH_A) is None, h.backend
     await short.commit(OP, key, HASH_A, _record())
@@ -379,8 +435,8 @@ async def check_a_reclaimed_claim_is_not_the_previous_owners_to_finish(
     key = h.key()
     other = uuid4()
 
-    lapsing = h.store_for(h.min_ttl, h.owner)
-    reclaimer = h.store_for(h.ttl, other)
+    lapsing = h.store_as(h.min_ttl, h.owner)
+    reclaimer = h.store_as(h.ttl, other)
 
     assert await lapsing.begin(OP, key, HASH_A) is None, h.backend
     await _sleep_past(h.min_ttl)
@@ -400,6 +456,74 @@ async def check_a_reclaimed_claim_is_not_the_previous_owners_to_finish(
     assert ei.value.kind == ExceptionKind.CONFLICT, h.backend
 
 
+async def check_two_principals_with_one_key_never_meet(h: IdempotencyHarness) -> None:
+    """Principal B reusing principal A's key executes its own operation.
+
+    Identical arguments are the case that matters: without the scope B is served A's stored
+    record, which is A's data. Different arguments are the other half: without it B is
+    refused, and the refusal tells B the key is someone else's.
+    """
+
+    key = h.key()
+    first = as_principal(h.store, uuid4())
+    second = as_principal(h.store, uuid4())
+
+    assert await first.begin(OP, key, HASH_A) is None, h.backend
+    await first.commit(OP, key, HASH_A, _record(RESULT_A))
+
+    assert await second.begin(OP, key, HASH_A) is None, h.backend
+    await second.commit(OP, key, HASH_A, _record(RESULT_B))
+
+    replayed_first = await first.begin(OP, key, HASH_A)
+    replayed_second = await second.begin(OP, key, HASH_A)
+
+    assert replayed_first is not None and replayed_first.result == RESULT_A, h.backend
+    assert replayed_second is not None and replayed_second.result == RESULT_B, h.backend
+
+    other_key = h.key()
+    third = as_principal(h.store, uuid4())
+
+    assert await first.begin(OP, other_key, HASH_A) is None, h.backend
+    assert await third.begin(OP, other_key, HASH_B) is None, h.backend
+
+
+async def check_the_anonymous_space_meets_no_principal(h: IdempotencyHarness) -> None:
+    """A claim taken with no principal and one taken with a principal never match.
+
+    Both directions, and the adversarial one: an anonymous caller choosing its key to be a
+    principal's *stored* form must land in its own space, not on that principal's record.
+    """
+
+    principal = uuid4()
+    named = as_principal(h.store, principal)
+    anonymous = as_principal(h.store, None)
+
+    key = h.key()
+    assert await anonymous.begin(OP, key, HASH_A) is None, h.backend
+    assert await named.begin(OP, key, HASH_A) is None, h.backend
+
+    key = h.key()
+    assert await named.begin(OP, key, HASH_A) is None, h.backend
+    await named.commit(OP, key, HASH_A, _record(RESULT_A))
+
+    assert await anonymous.begin(OP, key, HASH_A) is None, h.backend
+    assert await anonymous.begin(OP, scoped_claim_key(principal, key), HASH_A) is None, h.backend
+
+
+async def check_a_delegated_call_is_scoped_to_its_subject(h: IdempotencyHarness) -> None:
+    """An agent acting for a user replays the user's claim instead of executing again."""
+
+    key = h.key()
+    user = uuid4()
+
+    assert await as_principal(h.store, user).begin(OP, key, HASH_A) is None, h.backend
+    await as_principal(h.store, user).commit(OP, key, HASH_A, _record(RESULT_A))
+
+    replayed = await as_principal(h.store, user, actor=uuid4()).begin(OP, key, HASH_A)
+
+    assert replayed is not None and replayed.result == RESULT_A, h.backend
+
+
 # ....................... #
 
 IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
@@ -416,4 +540,7 @@ IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
     check_a_lapsed_claim_is_reclaimable,
     check_a_lapsed_record_re_executes,
     check_a_reclaimed_claim_is_not_the_previous_owners_to_finish,
+    check_two_principals_with_one_key_never_meet,
+    check_the_anonymous_space_meets_no_principal,
+    check_a_delegated_call_is_scoped_to_its_subject,
 )

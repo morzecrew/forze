@@ -21,13 +21,13 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 |-------|------|---------|---------|
 | `name` | `str \| StrEnum` | required | store namespace |
 | `ttl` | `timedelta` | `24h` | how long a completed result is remembered |
-| `encrypt_result` | `bool` | `False` | seal the cached result at rest (AAD binds tenant + op:key; needs a keyring) |
+| `encrypt_result` | `bool` | `False` | seal the cached result at rest (AAD binds tenant, principal and op:key; needs a keyring) |
 
 The port lifecycle the wrap drives:
 
 | Method | Notes |
 |--------|-------|
-| `begin(...)` | claim `(operation, key, payload-hash)`; returns the stored result if already complete |
+| `begin(...)` | claim `(operation, key, payload-hash)` for the calling principal; returns the stored result if already complete |
 | `commit(...)` | store the encoded result on success |
 | `fail(...)` | release the claim so a retry can re-run |
 

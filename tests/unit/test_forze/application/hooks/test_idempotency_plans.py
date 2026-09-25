@@ -6,17 +6,26 @@ import os
 import subprocess
 import sys
 import textwrap
+from unittest.mock import patch
+from uuid import UUID, uuid4
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.crypto import KeyringDepKey
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.idempotency import IdempotencySpec
+from forze.application.contracts.idempotency import IdempotencySpec, scoped_claim_key
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations.registry import OperationRegistry
-from forze.application.hooks.idempotency import IdempotencyWrap
+from forze.application.hooks.idempotency import IdempotencyWrap, plans
+from forze.application.integrations.crypto import payload_aad
+from forze.application.integrations.idempotency.encryption import IDEMPOTENCY_PAYLOAD_DOMAIN
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockState
+from forze_mock.adapters.idempotency import MockIdempotencyAdapter
+from forze_mock.execution.factories import ConfigurableMockIdempotency
 from forze_mock.execution.keys import MockStateDepKey
 from tests.support.execution_context import context_from_modules
 
@@ -173,6 +182,122 @@ class TestIdempotencyWrapDirect:
 
         assert calls == 1
         assert result.value == 8  # returned despite the record-write failure
+
+
+# ....................... #
+
+
+class TestTheKeyIsTheCallersOwn:
+    """Through the hook and the store the factory wires, as a deployment runs them.
+
+    The store-level battery hands each store its principal; this is where the factory and the
+    hook have to supply it, so a provider left unwired is caught here and nowhere else.
+    """
+
+    async def test_a_second_principal_with_the_same_key_executes_its_own_operation(self) -> None:
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+        calls = 0
+
+        async def handler(args: _Args) -> _Result:
+            nonlocal calls
+            calls += 1
+            return _Result(value=args.n * 10 + calls)
+
+        results: list[int] = []
+
+        for principal in (uuid4(), uuid4()):
+            with (
+                ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=principal)),
+                ctx.inv_ctx.bind_idempotency("shared-key"),
+            ):
+                results.append((await mw(handler, _Args(n=1))).value)
+
+        # Identical arguments, one key: the second caller ran its own operation and got its
+        # own answer, not the first caller's stored one.
+        assert calls == 2
+        assert results == [11, 12]
+
+    async def test_the_same_principal_still_replays(self) -> None:
+        ctx = _ctx()
+        mw = IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(ctx)
+        calls = 0
+
+        async def handler(args: _Args) -> _Result:
+            nonlocal calls
+            calls += 1
+            return _Result(value=args.n)
+
+        identity = AuthnIdentity(principal_id=uuid4())
+
+        for _ in range(2):
+            with (
+                ctx.inv_ctx.bind_identity(authn=identity),
+                ctx.inv_ctx.bind_idempotency("mine"),
+            ):
+                await mw(handler, _Args(n=3))
+
+        assert calls == 1
+
+    async def test_a_sealed_result_is_bound_to_its_principal(self) -> None:
+        # With both principals scoped by the store, a hook that forgot to hand the wrapper
+        # its provider would still pass the two tests above; the binding is only visible in
+        # the ciphertext, so that is what is opened here.
+        ctx = _ctx()
+        spec = IdempotencySpec(name="idem-sealed", encrypt_result=True)
+        mw = IdempotencyWrap(op="op", spec=spec, result_type=_Result)(ctx)
+        principal = uuid4()
+
+        async def handler(args: _Args) -> _Result:
+            return _Result(value=args.n)
+
+        with (
+            ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=principal)),
+            ctx.inv_ctx.bind_idempotency("sealed"),
+        ):
+            await mw(handler, _Args(n=4))
+
+        state = ctx.deps.provide(MockStateDepKey)
+        (_status, _hash, entry), = state.idempotency.values()
+        sealed = entry.record.result
+        keyring = ctx.deps.provide(KeyringDepKey)
+
+        def aad(principal_id: UUID | None) -> bytes:
+            scoped = scoped_claim_key(principal_id, "sealed")
+            return payload_aad(IDEMPOTENCY_PAYLOAD_DOMAIN, None, f"{len('op')}:op:{scoped}")
+
+        assert await keyring.decrypt(sealed, aad=aad(principal)) == b'{"value":4}'
+
+        with pytest.raises(CoreException):
+            await keyring.decrypt(sealed, aad=aad(None))
+
+
+class TestAStoreThatCannotScopeIsNamed:
+    def test_a_store_with_no_principal_wired_is_warned_about_once(self) -> None:
+        ctx = _ctx()
+        unscoped = MockIdempotencyAdapter(state=MockState(), namespace="plain")
+        plain = attrs.evolve(unscoped, principal_provider=None)
+        spec = IdempotencySpec(name="idem-unscoped")
+
+        with (
+            patch.object(plans, "logger") as logger,
+            patch.object(plans, "_WARNED_UNSCOPED", set()),
+            patch.object(ConfigurableMockIdempotency, "__call__", lambda *_: plain),
+        ):
+            IdempotencyWrap(op="op", spec=spec, result_type=_Result)(ctx)
+            IdempotencyWrap(op="op", spec=spec, result_type=_Result)(ctx)
+
+        assert logger.warning.call_count == 1
+        assert "idem-unscoped" in logger.warning.call_args.args
+
+    def test_the_shipped_store_is_not(self) -> None:
+        with (
+            patch.object(plans, "logger") as logger,
+            patch.object(plans, "_WARNED_UNSCOPED", set()),
+        ):
+            IdempotencyWrap(op="op", spec=_SPEC, result_type=_Result)(_ctx())
+
+        logger.warning.assert_not_called()
 
 
 # ....................... #

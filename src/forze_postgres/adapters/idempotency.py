@@ -9,6 +9,7 @@ from psycopg import sql
 
 from forze.application.contracts.idempotency import (
     ClaimOwnerMixin,
+    ClaimPrincipalMixin,
     IdempotencyPort,
     IdempotencyRecord,
     IdempotencySpec,
@@ -72,7 +73,7 @@ operation, and capped for the same reason the cooldown is.
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
+class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixin, IdempotencyPort):
     """Postgres-backed co-located idempotency store (``commits_in_transaction``).
 
     :meth:`commit` runs on the caller's transaction connection — the auto-injected
@@ -335,6 +336,8 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
         if not key:
             return None
 
+        key = self.claim_key(key)
+
         table = await self._table()
         owner_column, owner_value, owner_update = self._owner_insert(
             await self._has_owner_column(table)
@@ -422,6 +425,8 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
         if not key:
             return
 
+        key = self.claim_key(key)
+
         table = await self._table()
         owner_sql, owner_params = self._owner_predicate(await self._has_owner_column(table))
 
@@ -466,6 +471,8 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, IdempotencyPort):
     ) -> None:
         if not key:
             return
+
+        key = self.claim_key(key)
 
         table = await self._table()
         owner_sql, owner_params = self._owner_predicate(await self._has_owner_column(table))
