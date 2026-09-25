@@ -39,6 +39,7 @@ from forze.application.integrations.storage.client import (
 from forze_s3.execution.deps.configs import S3ServerSideEncryption, S3StorageConfig
 from forze_s3.execution.deps.module import S3DepsModule
 from forze_s3.kernel.client import S3Client, S3Config
+from tests.support.docker import MINIO_IMAGE
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -61,7 +62,7 @@ def sse_minio_container():
         pytest.skip("Docker is required for S3 SSE integration tests")
 
     container = MinioContainer(
-        image="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
+        image=MINIO_IMAGE,
         port=9000,
         access_key=MINIO_ROOT_USER,
         secret_key=MINIO_ROOT_PASSWORD,
