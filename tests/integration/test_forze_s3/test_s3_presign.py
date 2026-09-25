@@ -1,4 +1,4 @@
-"""Live MinIO round-trips for S3 presigned URLs.
+"""Live round-trips for S3 presigned URLs, on RustFS and floci.
 
 The point of presigning is that the application leaves the data path: every
 transfer below goes over **plain HTTP with no credentials** — only the signed
@@ -91,7 +91,7 @@ async def test_presigned_upload_rejects_unbound_content_type(
     if s3_backend.name == "floci":
         # Emulator infidelity, not an adapter concern: floci (1.5.32) does not
         # verify signed headers on presigned PUTs, so the mismatched upload is
-        # accepted. Real S3 and MinIO reject it; the MinIO leg asserts the
+        # accepted. Real S3 and RustFS reject it; the RustFS leg asserts the
         # property on every run.
         pytest.skip("floci does not enforce SigV4 signed-header binding")
 
@@ -123,7 +123,7 @@ async def test_presigned_download_url_expires(
         # Emulator infidelity, not an adapter concern: floci's presigned-URL
         # verification is immature (floci-io/floci#1841) and its expiry
         # enforcement proved environment-dependent — a 1s-expiry URL dies
-        # locally but never expires on CI runners. MinIO asserts the property
+        # locally but never expires on CI runners. RustFS asserts the property
         # on every run.
         pytest.skip("floci presigned-URL expiry enforcement is unreliable")
 
