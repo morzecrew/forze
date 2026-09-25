@@ -374,7 +374,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         Refused on the side about to *join* the cycle, which is the side that can still give up
         without having blocked anyone.
 
-        :raises CoreException: ``conflict`` naming the owner.
+        :raises CoreException: ``concurrency`` naming the owner — the kind Postgres gives the
+            same cycle when it detects the deadlock, so a caller's retry policy treats both alike.
         """
 
         holders = self.state.write_serialization
@@ -389,7 +390,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 return
 
             if other.waiting_for in holder.write_locks:
-                raise exc.conflict(
+                raise exc.concurrency(
                     "Two writers want each other's owners, so neither can finish. One is "
                     "refused rather than both waiting: retrying it after the other finishes "
                     "takes the owners in one order and succeeds.",
