@@ -131,6 +131,9 @@ class IdempotencyHarness:
     ``IdempotencySpec.ttl``. The ownership check additionally needs two stores that are
     *different invocations*, which is what the owner argument supplies; passing ``None``
     models a store wired without a provider.
+
+    A leg supplies it; a check never calls it — it takes :meth:`store_as`, which scopes the
+    store to the same principal as :attr:`store`.
     """
 
     min_ttl: timedelta = timedelta(milliseconds=50)
@@ -167,7 +170,18 @@ class IdempotencyHarness:
         into an assertion about two anonymous stores.
         """
 
-        return as_principal(self.store_for(self.ttl, self.owner), self.principal)
+        return self.store_as(self.ttl, self.owner)
+
+    def store_as(self, ttl: timedelta, owner: UUID | None) -> IdempotencyPort:
+        """A store over the same state with its own window and owner, acting for :attr:`principal`.
+
+        What a check takes when it needs a second window or a second invocation — never
+        :attr:`store_for` directly. A store minted bare acts for nobody, so its claims live in
+        another space than :attr:`store`'s, and a check comparing the two passes whether or not
+        the property it names holds.
+        """
+
+        return as_principal(self.store_for(ttl, owner), self.principal)
 
 
 def as_principal(
@@ -373,7 +387,7 @@ async def check_a_lapsed_claim_is_reclaimable(h: IdempotencyHarness) -> None:
     released does not hold its key until someone intervenes."""
 
     key = h.key()
-    short = h.store_for(h.min_ttl, h.owner)
+    short = h.store_as(h.min_ttl, h.owner)
 
     assert await short.begin(OP, key, HASH_A) is None, h.backend
     await _sleep_past(h.min_ttl)
@@ -389,7 +403,7 @@ async def check_a_lapsed_record_re_executes(h: IdempotencyHarness) -> None:
     """
 
     key = h.key()
-    short = h.store_for(h.min_ttl, h.owner)
+    short = h.store_as(h.min_ttl, h.owner)
 
     assert await short.begin(OP, key, HASH_A) is None, h.backend
     await short.commit(OP, key, HASH_A, _record())
@@ -421,8 +435,8 @@ async def check_a_reclaimed_claim_is_not_the_previous_owners_to_finish(
     key = h.key()
     other = uuid4()
 
-    lapsing = h.store_for(h.min_ttl, h.owner)
-    reclaimer = h.store_for(h.ttl, other)
+    lapsing = h.store_as(h.min_ttl, h.owner)
+    reclaimer = h.store_as(h.ttl, other)
 
     assert await lapsing.begin(OP, key, HASH_A) is None, h.backend
     await _sleep_past(h.min_ttl)
