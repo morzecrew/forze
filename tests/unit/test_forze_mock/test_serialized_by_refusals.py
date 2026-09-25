@@ -58,28 +58,26 @@ class _Port:
 
 
 class TestWhoClaimsIt:
-    def test_the_in_memory_store_does(self) -> None:
-        assert MockDocumentAdapter.storage_guarantees.serialized_by is True
+    @pytest.mark.parametrize(
+        "adapter", [MockDocumentAdapter, PostgresDocumentAdapter], ids=["mock", "postgres"]
+    )
+    def test_a_store_with_a_mechanism_does(self, adapter: type) -> None:
+        # Postgres through a transaction-scoped advisory lock; the mapping and this flag moved
+        # together, which is what keeps the declaration from becoming a comment.
+        assert adapter.storage_guarantees.serialized_by is True
         assert FULL_STORAGE_GUARANTEES.unmet(BY_OWNER) == ()
 
-    @pytest.mark.parametrize(
-        "adapter", [PostgresDocumentAdapter, MongoDocumentAdapter], ids=["postgres", "mongo"]
-    )
-    def test_no_integration_adapter_does_yet(self, adapter: type) -> None:
-        # When one maps it, this leg is the one that has to change — which is the point: the
-        # capability and the mapping move together or the declaration becomes a comment.
-        assert adapter.storage_guarantees.serialized_by is False
+    def test_mongo_does_not(self) -> None:
+        # No advisory-lock primitive, so the declaration is refused rather than ignored.
+        assert MongoDocumentAdapter.storage_guarantees.serialized_by is False
 
-    @pytest.mark.parametrize(
-        "adapter", [PostgresDocumentAdapter, MongoDocumentAdapter], ids=["postgres", "mongo"]
-    )
-    def test_the_refusal_names_the_axis(self, adapter: type) -> None:
+    def test_the_refusal_names_the_axis(self) -> None:
         with pytest.raises(CoreException) as caught:
             validate_storage_guarantees(
                 (BY_OWNER,),
-                _Port(adapter.storage_guarantees),
+                _Port(MongoDocumentAdapter.storage_guarantees),
                 spec_name="shifts",
-                backend="integration",
+                backend="mongo",
             )
 
         assert caught.value.code == GUARANTEE_UNSUPPORTED

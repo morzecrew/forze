@@ -7,8 +7,8 @@ require_psycopg()
 # ....................... #
 
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager, nullcontext
 from functools import partial
 from typing import Any, LiteralString, cast, final, get_args
 from uuid import UUID
@@ -17,6 +17,7 @@ import attrs
 from psycopg import sql
 
 from forze.application.contracts.document import domains_from_create_payloads
+from forze.application.contracts.guarantees import SerializedBy
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
 from forze.application.execution.resilience import default_resilience_executor
@@ -25,7 +26,7 @@ from forze.application.integrations.persistence import (
     HistoryOccMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, OnceCell
+from forze.base.primitives import JsonDict, OnceCell, advisory_lock_key
 from forze.base.serialization import ModelCodec
 from forze.domain.constants import ID_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, Document
@@ -133,6 +134,12 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     with ``precondition`` instead — narrow the filter or paginate. ``None`` disables the
     cap (accept the unbounded snapshot). Default one million."""
 
+    serialized_by: tuple[SerializedBy, ...] = attrs.field(default=())
+    """The spec's ``SerializedBy`` declarations: whose writes this gateway keeps apart."""
+
+    serialization_scope: str = attrs.field(default="")
+    """The spec's name, which every lock key carries so two aggregates never contend."""
+
     _conflict_target_cell: OnceCell[tuple[str, ...]] = attrs.field(
         factory=OnceCell,
         init=False,
@@ -181,6 +188,71 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         async with self.client.transaction():
             yield
+
+    # ....................... #
+
+    async def _serialize(self, touched: Callable[[], Awaitable[Sequence[Any]]]) -> None:
+        """Hold the per-owner advisory lock for every owner a write touches, until it commits.
+
+        Called inside the write's transaction: ``pg_advisory_xact_lock`` is released by commit or
+        rollback, so no path can forget it, and a write outside a caller's transaction runs in
+        the one :meth:`_write_tx` opens — held until that write lands. Keys are taken sorted, so
+        two calls writing the same owners queue rather than deadlock; a cycle across calls is
+        Postgres's to detect, and it refuses one side as ``concurrency``.
+
+        *touched* names the rows the write touches — what it inserts, what it changes and where
+        the change moves them — and is asked again after every wait: a row can change owner, or
+        be committed into a filter, while this call waits, and the owner it has then was never in
+        the first answer. Advisory locks are re-entrant within a session, so a method that
+        delegates to another re-takes its owners without waiting.
+        """
+
+        if not self.serialized_by:
+            return
+
+        stmt = sql.SQL("SELECT pg_advisory_xact_lock({})").format(sql.Placeholder())
+        held: set[int] = set()
+
+        while wanted := sorted(self._owner_keys(await touched()) - held):
+            for key in wanted:
+                await self.client.execute(stmt, [key])
+                held.add(key)
+
+    async def _serialize_rows(self, rows: Sequence[Any]) -> None:
+        """:meth:`_serialize` for rows the write already has — the ones it inserts."""
+
+        async def fixed() -> Sequence[Any]:
+            return rows
+
+        await self._serialize(fixed)
+
+    def _owner_keys(self, rows: Sequence[Any]) -> set[int]:
+        """The lock keys *rows* contend on — derived as the in-memory store derives them."""
+
+        tenant = self.require_tenant_if_aware() if self.tenant_aware else None
+        keys: set[int] = set()
+
+        for guarantee in self.serialized_by:
+            for row in rows:
+                values = [
+                    row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
+                    for field in guarantee.key
+                ]
+                keys.add(
+                    advisory_lock_key(self.serialization_scope, tenant, *guarantee.key, *values)
+                )
+
+        return keys
+
+    def _moved(self, current: D, patch: JsonDict | None) -> D:
+        """Where *patch* moves *current* — the destination a write holds beside its origin."""
+
+        if patch is None:
+            return current
+
+        moved, _ = current.update(patch, materialized=self.read_codec.materialized)
+
+        return moved
 
     # ....................... #
 
@@ -250,6 +322,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     async def create(self, payload: C, *, id: UUID | None = None) -> D:
         async with self._write_tx():
             model = self._from_create_dto(payload, id)
+            await self._serialize_rows([model])
             insert_data_raw = await self._encode_domain_one(model)
             insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
@@ -294,6 +367,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             col_idents: list[sql.Composable] | None = None
             row_template: sql.Composable | None = None
             payload_batches: list[list[JsonDict]] = []
+            created: list[D] = []
 
             async def _insert_batch(batch: Sequence[JsonDict]) -> list[JsonDict]:
                 nonlocal keys, col_idents, row_template
@@ -329,6 +403,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             for offset in range(0, len(payloads), batch_size):
                 payload_batch = payloads[offset : offset + batch_size]
                 models = domains_from_create_payloads(self.create_codec, payload_batch)
+                created.extend(models)
                 insert_data_raw = await self._encode_domain_many(models)
                 insert_data = await self.adapt_many_payload_for_write(
                     insert_data_raw,
@@ -350,6 +425,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     )
 
                 payload_batches.append(list(insert_data))
+
+            await self._serialize_rows(created)
 
             batch_results = await gather_db_work(
                 self.client,
@@ -379,6 +456,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         async with self._write_tx():
             model = self._from_create_dto(payload, id)
+            await self._serialize_rows([model])
             insert_data_raw = await self._encode_domain_one(model)
             insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
@@ -509,6 +587,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
                 return ordered
 
+            if self.serialized_by:
+                await self._serialize_rows(
+                    domains_from_create_payloads(self.create_codec, payloads, ids)
+                )
+
             out: list[D] = []
 
             for offset in range(0, len(payloads), batch_size):
@@ -557,6 +640,13 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         async with self._write_tx():
             model = self._from_create_dto(create, id)
+
+            # The create's owner and the stored row's; the update arm, if it runs, takes the
+            # owner it moves the row to itself.
+            async def touched() -> Sequence[Any]:
+                return [model, *await self._fetch_domains_by_pks([model.id], missing_ok=True)]
+
+            await self._serialize(touched)
             insert_data_raw = await self._encode_domain_one(model)
             insert_data = await self.adapt_payload_for_write(insert_data_raw, create=True)
 
@@ -618,6 +708,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 if isinstance(v, UUID):
                     return v
                 return UUID(str(v))
+
+            if self.serialized_by:
+                creating = domains_from_create_payloads(self.create_codec, creates, ids)
+
+                async def touched() -> Sequence[Any]:
+                    stored = await self._fetch_domains_by_pks(list(ids), missing_ok=True)
+                    return [*creating, *stored]
+
+                await self._serialize(touched)
 
             async def _upsert_batch(
                 batch: Sequence[JsonDict],
@@ -761,6 +860,12 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         async with self._write_tx():
+
+            async def touched() -> Sequence[Any]:
+                stored = await self.read_gw.get(pk)
+                return [stored, self._moved(stored, update)]
+
+            await self._serialize(touched)
             current = await self.read_gw.get(pk)
 
             if update is not None:
@@ -943,6 +1048,18 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             raise exc.precondition("Primary keys must be unique")
 
         async with self._write_tx():
+
+            async def touched() -> Sequence[Any]:
+                stored = await self.read_gw.get_many(pks)
+
+                if updates is None:
+                    return stored
+
+                moved = [self._moved(c, u) for c, u in zip(stored, updates, strict=True)]
+
+                return [*stored, *moved]
+
+            await self._serialize(touched)
             currents = await self.read_gw.get_many(pks)
 
             groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = defaultdict(list)
@@ -1163,21 +1280,35 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 id_stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
                 id_params.append(cap + 1)
 
-            id_rows = await self.client.fetch_all(
-                id_stmt,
-                id_params,
-                row_factory="dict",
-                commit=False,
-            )
-
-            if cap is not None and len(id_rows) > cap:
-                raise exc.precondition(
-                    f"update_matching would touch more than {cap} rows; narrow the "
-                    "filter or paginate (or raise/disable update_matching_max_rows).",
-                    code="core.document.update_matching_too_broad",
+            async def matching_ids() -> list[UUID]:
+                id_rows = await self.client.fetch_all(
+                    id_stmt,
+                    id_params,
+                    row_factory="dict",
+                    commit=False,
                 )
 
-            ids = [_pk_from_row(r) for r in id_rows]
+                if cap is not None and len(id_rows) > cap:
+                    raise exc.precondition(
+                        f"update_matching would touch more than {cap} rows; narrow the "
+                        "filter or paginate (or raise/disable update_matching_max_rows).",
+                        code="core.document.update_matching_too_broad",
+                    )
+
+                return [_pk_from_row(r) for r in id_rows]
+
+            ids = await matching_ids()
+
+            # Every owner the filter selects and every owner the patch would move a row to.
+            # The set updated is the one the last pass read, whose owners are all held.
+            async def touched() -> Sequence[Any]:
+                nonlocal ids
+                ids = await matching_ids()
+                stored = await self._fetch_domains_by_pks(ids, missing_ok=True)
+
+                return [*stored, *(self._moved(d, update_data) for d in stored)]
+
+            await self._serialize(touched)
 
             total = 0
             out_domains: list[D] = []
@@ -1232,7 +1363,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             where=where_sql,
         )
 
-        n = await self.client.execute(stmt, params, return_rowcount=True)
+        # A plain delete is one statement; a serialized one has to hold its owner across the
+        # read that names it, which takes a transaction.
+        async with self._write_tx() if self.serialized_by else nullcontext():
+
+            async def touched() -> Sequence[Any]:
+                return await self._fetch_domains_by_pks([pk], missing_ok=True)
+
+            await self._serialize(touched)
+            n = await self.client.execute(stmt, params, return_rowcount=True)
 
         if n == 0:
             raise exc.not_found(f"Record not found: {pk}")
@@ -1252,6 +1391,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             raise exc.precondition("Primary keys must be unique")
 
         async with self._write_tx():
+
+            async def touched() -> Sequence[Any]:
+                return await self._fetch_domains_by_pks(list(pks), missing_ok=True)
+
+            await self._serialize(touched)
             where_sql = sql.SQL("{pk} = ANY({ids})").format(
                 pk=self.ident_pk(),
                 ids=sql.Placeholder(),

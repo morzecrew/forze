@@ -120,13 +120,19 @@ Two sentences carry the whole doctrine:
 | `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `partialFilterExpression` with `$type` | ✅ |
 | `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | `EXCLUDE USING gist` | — | ✅ |
 | `NonOverlapping(key=…, period=…, where=…)` | …among the rows the filter selects | `EXCLUDE … WHERE (…)` | — | ✅ |
-| `SerializedBy(key=…)` | two writes for one key never run at once | — | — | ✅ |
+| `SerializedBy(key=…)` | two writes for one key never run at once | `pg_advisory_xact_lock` | — | ✅ |
 
 `SerializedBy` is the one member about write *ordering* rather than about stored rows. It says
 two writes for one key never run at once — the rule that otherwise lives in whichever writer
-remembered to take a lock, and holds until somebody adds the next writer. The in-memory store
-keeps it; no backend with a connection maps it yet, so a spec declaring it is wireable under
-simulation and refused everywhere else.
+remembered to take a lock, and holds until somebody adds the next writer.
+
+On Postgres every write takes a transaction-scoped advisory lock per owner before it writes, held
+until the transaction ends — so there is nothing to migrate. A write outside a transaction runs in
+one of its own, so its lock still covers it. A write that names a row by id reads the row first to
+learn its owner, which is one extra query, paid only by a spec that declares this. Two
+transactions that each hold the owner the other wants are a deadlock Postgres detects: one is
+refused as `concurrency`, which is retryable, and the in-memory store refuses the same cycle the
+same way. Mongo has no advisory-lock mechanism and refuses the declaration.
 
 It **serializes, it does not validate**, and the difference is worth stating twice: the lock is
 taken before the *write*, so a handler that reads, decides, and then writes still made its
