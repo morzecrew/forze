@@ -11,6 +11,8 @@ tar members rather than on paths, and none of them needs a container to exercise
 
 from __future__ import annotations
 
+import asyncio
+
 import io
 import tarfile
 from datetime import timedelta
@@ -359,6 +361,43 @@ class TestWaitingForAnOwedOomFlag:
 
         assert state["OOMKilled"] is False
         assert engine.calls == 1
+
+
+class _StallsThenFails:
+    """An engine whose first inspect answers and whose repeats hang or fail."""
+
+    def __init__(self, repeat: str) -> None:
+        self.calls = 0
+        self.repeat = repeat
+
+    async def inspect(self, container: str) -> dict[str, object]:
+        self.calls += 1
+
+        if self.calls == 1:
+            return {"OOMKilled": False, "first": True}
+
+        if self.repeat == "hang":
+            await asyncio.sleep(3600)
+
+        raise RuntimeError("daemon went away")
+
+
+class TestTheOwedFlagCannotCostTheResult:
+    @pytest.mark.parametrize("repeat", ["hang", "fail"])
+    async def test_a_repeat_that_hangs_or_fails_keeps_the_state_already_read(
+        self, repeat: str
+    ) -> None:
+        # The run's outcome is already known; waiting for a better label must neither hold it
+        # past the wait's own limit nor turn it into an exception.
+        box = _sandbox(memory_ceiling=1024)
+        state = await asyncio.wait_for(
+            box._state_after(  # pyright: ignore[reportPrivateUsage]
+                _StallsThenFails(repeat), "c", 137, None, SandboxRequest(command=("true",))  # pyright: ignore[reportArgumentType]
+            ),
+            timeout=3,
+        )
+
+        assert state == {"OOMKilled": False, "first": True}
 
 
 class TestReadingHowARunEnded:

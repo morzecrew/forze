@@ -521,7 +521,16 @@ class ContainerSandbox:
 
         while not state.get("OOMKilled") and monotonic() < deadline:
             await asyncio.sleep(_OOM_FLAG_POLL)
-            state = await engine.inspect(container)
+
+            # The outcome is already known and this only improves its label, so a repeat that
+            # stalls or fails keeps the state already read rather than holding or losing it.
+            try:
+                state = await asyncio.wait_for(
+                    engine.inspect(container), timeout=max(deadline - monotonic(), 0.0)
+                )
+
+            except Exception:
+                return state
 
         return state
 
