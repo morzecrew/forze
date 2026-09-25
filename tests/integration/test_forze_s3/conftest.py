@@ -1,14 +1,14 @@
 """Pytest configuration for forze_s3 integration tests.
 
-The suite runs against an implementation matrix — MinIO and floci-S3, two
+The suite runs against an implementation matrix — RustFS and floci-S3, two
 independent implementations of the S3 wire protocol — so nothing here quietly
 specializes to one server's behavior (multipart/ETag composition, ranged
 reads, listing pagination, conditional writes). A divergence between backends
 is a finding to fix in the adapter or declare, never to special-case per
 backend in ``src/``. See ``tests/support/floci.py`` for the floci rationale.
 
-The SSE suite (``test_s3_sse.py``) stays MinIO-only by design: its fixture
-bootstraps MinIO's built-in KMS, which is server-specific setup.
+The SSE suite (``test_s3_sse.py``) stays RustFS-only by design: its fixture
+configures RustFS's master key and static KMS, which is server-specific setup.
 """
 
 import shutil
@@ -25,14 +25,13 @@ import pytest_asyncio
 pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
-from testcontainers.minio import MinioContainer
 
 from forze_s3.kernel.client import S3Client, S3Config
-from tests.support.docker import MINIO_IMAGE
 from tests.support.floci import FlociContainer
+from tests.support.rustfs import RustfsContainer
 
-MINIO_ROOT_USER = "minioadmin"
-MINIO_ROOT_PASSWORD = "minioadmin"
+S3_ACCESS_KEY = "minioadmin"
+S3_SECRET_KEY = "minioadmin"
 
 
 class S3Backend(NamedTuple):
@@ -58,24 +57,25 @@ def _wait_http_ok(url: str, *, timeout_s: float = 60) -> None:
     raise RuntimeError(f"S3 backend did not become healthy in time: {url}")
 
 
-@pytest.fixture(scope="session", params=["minio", "floci"])
+@pytest.fixture(scope="session", params=["rustfs", "floci"])
 def s3_backend(request: pytest.FixtureRequest) -> Iterator[S3Backend]:
     """One S3 implementation per param; every test runs against both."""
 
     if shutil.which("docker") is None:
         pytest.skip("Docker is required for S3 integration tests")
 
-    if request.param == "minio":
-        with MinioContainer(
-            image=MINIO_IMAGE,
+    if request.param == "rustfs":
+        with RustfsContainer(
             port=9000,
-            access_key=MINIO_ROOT_USER,
-            secret_key=MINIO_ROOT_PASSWORD,
+            access_key=S3_ACCESS_KEY,
+            secret_key=S3_SECRET_KEY,
         ) as container:
-            endpoint = f"http://{container.get_container_host_ip()}:{container.get_exposed_port(9000)}"
+            endpoint = (
+                f"http://{container.get_container_host_ip()}:{container.get_exposed_port(9000)}"
+            )
             _wait_http_ok(f"{endpoint}/minio/health/live")
 
-            yield S3Backend("minio", endpoint, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD)
+            yield S3Backend("rustfs", endpoint, S3_ACCESS_KEY, S3_SECRET_KEY)
 
     else:
         with FlociContainer() as floci:

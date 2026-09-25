@@ -1,6 +1,6 @@
 """End-to-end lake / lakehouse reads through the DuckDB lifecycle hook.
 
-* Parquet on MinIO (S3) with credentials resolved from the secrets backend via a
+* Parquet on S3 (RustFS) with credentials resolved from the secrets backend via a
   :class:`~forze.application.contracts.secrets.SecretRef` — the adapter-preferred path.
 * Delta Lake table read from a local directory — the lakehouse path (gated on ``deltalake``).
 
@@ -31,8 +31,8 @@ from forze_duckdb.execution.deps import DuckDbClientDepKey
 from forze_duckdb.execution.lifecycle.pool import DuckDbStartupHook
 from forze_kits.adapters.secrets import MappingSecrets
 from tests.integration.test_forze_duckdb.conftest import (
-    MINIO_ROOT_PASSWORD,
-    MINIO_ROOT_USER,
+    S3_ACCESS_KEY,
+    S3_SECRET_KEY,
 )
 
 # ----------------------- #
@@ -65,26 +65,26 @@ def _write_events_parquet(path: Path) -> None:
 # ----------------------- #
 
 
-async def test_parquet_on_minio_via_secret_ref(
-    minio_container: tuple[Any, str],
+async def test_parquet_on_s3_via_secret_ref(
+    s3_container: tuple[Any, str],
     tmp_path: Path,
 ) -> None:
-    container, endpoint = minio_container
+    container, endpoint = s3_container
     bucket = f"forze-duckdb-{uuid4().hex[:12]}"
 
-    minio = container.get_client()
-    minio.make_bucket(bucket)
+    client = container.get_client()
+    client.make_bucket(bucket)
 
     local = tmp_path / "events.parquet"
     _write_events_parquet(local)
-    minio.fput_object(bucket, "events.parquet", str(local))
+    client.fput_object(bucket, "events.parquet", str(local))
 
     secrets = MappingSecrets(
         data={
             "lake/s3": json.dumps(
                 {
-                    "access_key_id": MINIO_ROOT_USER,
-                    "secret_access_key": MINIO_ROOT_PASSWORD,
+                    "access_key_id": S3_ACCESS_KEY,
+                    "secret_access_key": S3_SECRET_KEY,
                     "endpoint": endpoint,
                     "url_style": "path",
                     "use_ssl": False,
@@ -166,9 +166,7 @@ async def test_local_iceberg_table_read(tmp_path: Path) -> None:
         warehouse=f"file://{warehouse}",
     )
     catalog.create_namespace("ns")
-    data = pa.table(
-        {"day": ["a", "b", "c"], "total": pa.array([10, 20, 30], type=pa.int64())}
-    )
+    data = pa.table({"day": ["a", "b", "c"], "total": pa.array([10, 20, 30], type=pa.int64())})
     table = catalog.create_table("ns.events", schema=data.schema)
     table.append(data)
 

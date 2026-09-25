@@ -1,4 +1,4 @@
-"""Pytest configuration for forze_duckdb integration tests (object storage via MinIO)."""
+"""Pytest configuration for forze_duckdb integration tests (object storage via RustFS)."""
 
 import shutil
 import time
@@ -11,26 +11,24 @@ pytest.importorskip("duckdb")
 pytest.importorskip("pyarrow")
 pytest.importorskip("testcontainers")
 
-from testcontainers.minio import MinioContainer
 
-from tests.support.docker import MINIO_IMAGE
+from tests.support.rustfs import RustfsContainer
 
-MINIO_ROOT_USER = "minioadmin"
-MINIO_ROOT_PASSWORD = "minioadmin"
+S3_ACCESS_KEY = "minioadmin"
+S3_SECRET_KEY = "minioadmin"
 
 
 @pytest.fixture(scope="session")
-def minio_container():
-    """Start a MinIO container and yield ``(container, host:port endpoint)``."""
+def s3_container():
+    """Start a RustFS container and yield ``(container, host:port endpoint)``."""
 
     if shutil.which("docker") is None:
         pytest.skip("Docker is required for DuckDB object-storage integration tests")
 
-    with MinioContainer(
-        image=MINIO_IMAGE,
+    with RustfsContainer(
         port=9000,
-        access_key=MINIO_ROOT_USER,
-        secret_key=MINIO_ROOT_PASSWORD,
+        access_key=S3_ACCESS_KEY,
+        secret_key=S3_SECRET_KEY,
     ) as container:
         host = container.get_container_host_ip()
         port = container.get_exposed_port(9000)
@@ -47,6 +45,6 @@ def minio_container():
             except (urllib.error.URLError, TimeoutError, OSError):
                 time.sleep(0.5)
         else:
-            raise RuntimeError("MinIO container did not become healthy in time")
+            raise RuntimeError("RustFS container did not become healthy in time")
 
         yield container, endpoint

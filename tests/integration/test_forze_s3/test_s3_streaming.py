@@ -1,11 +1,11 @@
-"""Integration tests (MinIO) for bounded-memory streaming object storage.
+"""Integration tests (RustFS and floci) for bounded-memory streaming object storage.
 
 Exercises the real S3 path end-to-end: ``upload_stream`` drives a native multipart
 upload (app-provided ``UploadPart`` bytes, then ``CompleteMultipartUpload``),
 ``download_stream`` reads it back via ranged GETs, and ``download_range`` over a
 client-side-encrypted (chunked-AEAD) object fetches and decrypts only the covering
 chunks. Covers both the encrypted and plaintext routes and a genuine multi-part
-upload (MinIO enforces the 5 MiB minimum non-final part).
+upload (S3 requires 5 MiB for every part but the last).
 """
 
 from collections.abc import AsyncIterator
@@ -196,7 +196,7 @@ async def test_s3_streamed_encrypted_multipart(
     s3_client: S3Client, s3_bucket: str
 ) -> None:
     """>8 MiB forces a genuine multi-part upload: a non-final ``UploadPart`` (>= 5 MiB,
-    MinIO-enforced) plus the final part, assembled by ``CompleteMultipartUpload``."""
+    the S3 minimum) plus the final part, assembled by ``CompleteMultipartUpload``."""
 
     ctx = _encrypted_ctx(s3_client, s3_bucket)
     spec = StorageSpec(name=s3_bucket)
