@@ -448,7 +448,7 @@ STORAGE_DIVERGENCES: tuple[PlaneDivergence, ...] = (
         ),
         probe=(
             "tests/integration/test_forze_s3/test_s3_storage_conformance.py::"
-            "test_storage_battery[minio-check_copying_onto_the_same_key_is_refused]"
+            "test_storage_battery[rustfs-check_copying_onto_the_same_key_is_refused]"
         ),
     ),
     PlaneDivergence(

@@ -1,8 +1,8 @@
-"""Integration tests (MinIO) for resumable multipart upload sessions.
+"""Integration tests (RustFS and floci) for resumable multipart upload sessions.
 
 Full real flow through the public ``StorageUploadSessionPort``: begin →
 presign N parts → PUT each part directly via httpx **in parallel** (each
-non-last part >= 5 MiB, as MinIO enforces the S3 minimum) → collect ETags →
+non-last part >= 5 MiB, the S3 minimum) → collect ETags →
 complete → download the assembled object == concatenation. Plus resume
 (upload 2 of 3, list, upload the 3rd, complete) and abort.
 """
@@ -25,7 +25,7 @@ from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
-# MinIO enforces the S3 5 MiB minimum for every part except the last.
+# S3 requires 5 MiB for every part except the last.
 MIB = 1024 * 1024
 PART_SIZE = 5 * MIB
 

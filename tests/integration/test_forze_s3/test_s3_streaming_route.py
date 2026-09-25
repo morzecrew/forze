@@ -1,4 +1,4 @@
-"""Integration test (MinIO): the generated FastAPI streaming download route end-to-end.
+"""Integration test (RustFS and floci): the generated FastAPI streaming download route end-to-end.
 
 Proves the bounded-memory route works against a real backend — a plain ``GET`` streams a
 larger-than-one-part object back via the adapter's ranged-GET loop (never buffering the whole

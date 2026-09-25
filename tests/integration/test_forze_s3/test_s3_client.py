@@ -126,7 +126,7 @@ async def test_sequential_operations_reuse_single_aiobotocore_client(
 async def test_s3_include_tags_guarantee_on_head_and_list(
     s3_client: S3Client, s3_bucket: str
 ) -> None:
-    """MinIO supports the tagging API: ``include_tags=True`` round-trips tags."""
+    """The server supports the tagging API: ``include_tags=True`` round-trips tags."""
 
     tags_by_key = {
         "tagged/a.txt": {"env": "dev", "team": "core"},

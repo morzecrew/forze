@@ -265,4 +265,4 @@ STORAGE_BATTERY: tuple[Check, ...] = (
     check_unconditional_overwrite_creates_a_missing_object,
     check_conditional_overwrite_of_a_missing_object_fails,
 )
-"""Every check. The mock runs them as a unit test; S3 (twice — MinIO and floci) and GCS live."""
+"""Every check. The mock runs them as a unit test; S3 (twice — RustFS and floci) and GCS live."""

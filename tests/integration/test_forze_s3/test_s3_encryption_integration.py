@@ -1,4 +1,4 @@
-"""Integration test: S3 client-side encryption end-to-end (MinIO + keyring)."""
+"""Integration test: S3 client-side encryption end-to-end (RustFS and floci + keyring)."""
 
 import pytest
 

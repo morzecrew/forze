@@ -12,26 +12,24 @@ import pytest_asyncio
 pytest.importorskip("aioboto3")
 pytest.importorskip("testcontainers")
 
-from testcontainers.minio import MinioContainer
 
 from forze_s3.kernel.client import S3Client, S3Config
-from tests.support.docker import MINIO_IMAGE
+from tests.support.rustfs import RustfsContainer
 
-MINIO_ROOT_USER = "minioadmin"
-MINIO_ROOT_PASSWORD = "minioadmin"
+S3_ACCESS_KEY = "minioadmin"
+S3_SECRET_KEY = "minioadmin"
 
 
 @pytest.fixture(scope="session")
-def minio_container():
-    """Start a MinIO container for S3 performance tests."""
+def s3_container():
+    """Start a RustFS container for S3 performance tests."""
     if shutil.which("docker") is None:
         pytest.skip("Docker is required for S3 performance tests")
 
-    with MinioContainer(
-        image=MINIO_IMAGE,
+    with RustfsContainer(
         port=9000,
-        access_key=MINIO_ROOT_USER,
-        secret_key=MINIO_ROOT_PASSWORD,
+        access_key=S3_ACCESS_KEY,
+        secret_key=S3_SECRET_KEY,
     ) as container:
         endpoint = f"http://{container.get_container_host_ip()}:{container.get_exposed_port(9000)}"
 
@@ -46,26 +44,28 @@ def minio_container():
             except (urllib.error.URLError, TimeoutError, OSError):
                 time.sleep(0.5)
         else:
-            raise RuntimeError("MinIO container did not become healthy in time")
+            raise RuntimeError("RustFS container did not become healthy in time")
 
         yield container, endpoint
 
 
 @pytest_asyncio.fixture(scope="function")
-async def s3_client(minio_container):
-    """Provide an initialized S3 client connected to MinIO."""
-    _container, endpoint = minio_container
+async def s3_client(s3_container):
+    """Provide an initialized S3 client connected to RustFS."""
+    _container, endpoint = s3_container
 
     client = S3Client()
     config = S3Config(s3={"addressing_style": "path"})
     await client.initialize(
         endpoint=endpoint,
-        access_key_id=MINIO_ROOT_USER,
-        secret_access_key=MINIO_ROOT_PASSWORD,
+        access_key_id=S3_ACCESS_KEY,
+        secret_access_key=S3_SECRET_KEY,
         config=config,
     )
 
-    return client
+    yield client
+
+    await client.close()
 
 
 @pytest_asyncio.fixture(scope="function")
