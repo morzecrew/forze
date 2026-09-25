@@ -15,6 +15,7 @@ pytest.importorskip("testcontainers")
 from testcontainers.minio import MinioContainer
 
 from forze_s3.kernel.client import S3Client, S3Config
+from tests.support.docker import MINIO_IMAGE
 
 MINIO_ROOT_USER = "minioadmin"
 MINIO_ROOT_PASSWORD = "minioadmin"
@@ -27,7 +28,7 @@ def minio_container():
         pytest.skip("Docker is required for S3 performance tests")
 
     with MinioContainer(
-        image="quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z",
+        image=MINIO_IMAGE,
         port=9000,
         access_key=MINIO_ROOT_USER,
         secret_key=MINIO_ROOT_PASSWORD,
