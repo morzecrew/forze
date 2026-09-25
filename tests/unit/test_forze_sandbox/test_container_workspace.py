@@ -320,6 +320,47 @@ class TestNarrowingCeilings:
         assert memory == 2048
 
 
+class _FlagsLate:
+    """An engine whose daemon reports the exit before it has recorded the OOM."""
+
+    def __init__(self, flagged_after: int) -> None:
+        self.calls = 0
+        self.flagged_after = flagged_after
+
+    async def inspect(self, container: str) -> dict[str, object]:
+        self.calls += 1
+        return {"OOMKilled": self.calls > self.flagged_after}
+
+
+class TestWaitingForAnOwedOomFlag:
+    async def test_a_kill_under_a_memory_ceiling_waits_for_the_flag(self) -> None:
+        box = _sandbox(memory_ceiling=1024)
+        engine = _FlagsLate(flagged_after=2)
+        state = await box._state_after(  # pyright: ignore[reportPrivateUsage]
+            engine, "c", 137, None, SandboxRequest(command=("true",))  # pyright: ignore[reportArgumentType]
+        )
+
+        assert state["OOMKilled"] is True
+        assert engine.calls == 3
+
+    @pytest.mark.parametrize(
+        ("status", "killed", "memory_ceiling"),
+        [(1, None, 1024), (137, "timeout", 1024), (137, None, None)],
+        ids=["not-a-sigkill", "the-adapter-killed-it", "no-memory-ceiling"],
+    )
+    async def test_nothing_else_waits(
+        self, status: int, killed: str | None, memory_ceiling: int | None
+    ) -> None:
+        box = _sandbox(memory_ceiling=memory_ceiling) if memory_ceiling else _sandbox()
+        engine = _FlagsLate(flagged_after=5)
+        state = await box._state_after(  # pyright: ignore[reportPrivateUsage]
+            engine, "c", status, killed, SandboxRequest(command=("true",))  # pyright: ignore[reportArgumentType]
+        )
+
+        assert state["OOMKilled"] is False
+        assert engine.calls == 1
+
+
 class TestReadingHowARunEnded:
     def test_the_deadline_outranks_whatever_the_container_reported(self) -> None:
         box = _sandbox(memory_ceiling=1024)
@@ -366,7 +407,7 @@ class TestReadingHowARunEnded:
         )
 
         assert outcome == "exited"
-        assert detail == "limits in force: memory=4096, nofile=32"
+        assert detail == "exit status 1; limits in force: memory=4096, nofile=32"
 
     def test_an_init_that_could_not_exec_is_a_spawn_failure(self) -> None:
         # The init process always starts, so 127 alone says nothing: without the marker a

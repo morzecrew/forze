@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A container sandbox run killed at its memory ceiling could come back as `exited`.** The daemon can report the exit before it records the OOM, and the adapter read its `OOMKilled` flag at once. A run the kernel killed outright under a memory ceiling now waits briefly for the flag, and a non-zero exit's detail names its exit status.
+
 - **An outbound HTTP reply came back as a bare `BaseModel`.** `HttpServicePort.invoke` took the operation's *name*, and a name cannot carry the `args_type` and `return_type` its `HttpOperationSpec` declares — so every field read off a response was an error under a strict type checker, and a handler that named its own args model was refused by `MockHttpRegistry.on`. `invoke` now also takes the operation spec itself (`invoke(model_messages, ModelArgs(...))`), which resolves through the new `HttpServiceSpec.operation` and hands back the declared model; passing a spec another service declares is refused rather than resolved by its name. The name form is unchanged, for an operation chosen from config.
 
 - **Two mapping fields on one module could not be passed together.** The `MappingConverter` converters named a key type variable, and `attrs` publishes a converter's input as the generated `__init__` parameter type — so one shared, once-solved key variable made a strict type checker reject every `StrEnum`-keyed argument but the first, as in `PostgresDepsModule(client=…, rw_documents=…, searches=…)`. The key is unconstrained now — `Mapping` is invariant in it, so no named type admits both `str` and a `StrEnum` — which moves the one check it did make, against a genuinely non-string key, from the call site to construction.

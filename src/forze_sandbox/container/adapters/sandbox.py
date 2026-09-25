@@ -84,6 +84,14 @@ _SIGXCPU_STATUS: Final = 128 + int(getattr(signal, "SIGXCPU", 24))
 _SIGKILL_STATUS: Final = 128 + int(signal.SIGKILL)
 """Exit status of a child something killed outright."""
 
+_OOM_FLAG_WAIT: Final = 1.0
+"""How long a SIGKILL under a memory ceiling waits for the daemon to flag the OOM.
+
+The kernel's kill and the daemon's ``OOMKilled`` reach the daemon as two events, and the exit
+can be reported before the OOM is: inspecting at once reads a memory kill as a plain exit."""
+
+_OOM_FLAG_POLL: Final = 0.05
+
 _STAGE_MODE: Final = 0o755
 """Mode for staged directories; files land one bit less permissive."""
 
@@ -317,7 +325,7 @@ class ContainerSandbox:
                     yield SandboxEvent(kind=kind, text=mask_text(text, secrets))
 
             status, killed = await self._status_of(engine, container, killed, deadline)
-            state = await engine.inspect(container)
+            state = await self._state_after(engine, container, status, killed, request)
             outcome, detail = self._ended_by(
                 status, state, killed, request, budget, captured["stderr"].peek()
             )
@@ -476,9 +484,46 @@ class ContainerSandbox:
             return "killed_resource", f"exceeded its {cpu['Soft']}s cpu ceiling"
 
         if status != 0 and (memory is not None or ulimits):
-            return "exited", "limits in force: " + ", ".join(_names(memory, ulimits))
+            return "exited", f"exit status {status}; limits in force: " + ", ".join(
+                _names(memory, ulimits)
+            )
 
         return "exited", None
+
+    # ....................... #
+
+    async def _state_after(
+        self,
+        engine: ContainerEngine,
+        container: str,
+        status: int,
+        killed: Literal["timeout"] | None,
+        request: SandboxRequest,
+    ) -> Mapping[str, object]:
+        """The container's final state, waiting briefly for an OOM flag that is owed.
+
+        Only a run the kernel killed outright under a memory ceiling — not by this adapter — can
+        be owed one, so every other run pays nothing.
+        """
+
+        state = await engine.inspect(container)
+        memory, _ = self._ceilings(request)
+
+        if (
+            state.get("OOMKilled")
+            or killed is not None
+            or status != _SIGKILL_STATUS
+            or memory is None
+        ):
+            return state
+
+        deadline = monotonic() + _OOM_FLAG_WAIT
+
+        while not state.get("OOMKilled") and monotonic() < deadline:
+            await asyncio.sleep(_OOM_FLAG_POLL)
+            state = await engine.inspect(container)
+
+        return state
 
     # ....................... #
 
