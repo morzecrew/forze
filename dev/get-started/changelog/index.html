@@ -757,6 +757,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -819,7 +830,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -1163,7 +1174,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7370,6 +7381,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7432,7 +7454,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7776,7 +7798,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8641,6 +8663,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>HttpAuthConfig</code> with no token sent <code>Authorization: Bearer None</code>.</strong> An optional secret field converted <code>None</code> into a <code>SecretStr</code> wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on <code>HttpClientLifecycleStep.auth_token</code> and Meilisearch's <code>api_key</code>, where consumers happened to unwrap defensively.</p>
 </li>
 </ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Two principals using one idempotency key no longer share its claim.</strong> A claim is scoped to the tenant and the acting principal — the subject, on a delegated call — so a caller reusing another's key runs its own operation instead of being served that caller's stored result, and is never refused for it. Every shipped store scopes through the new <code>ClaimPrincipalMixin</code>; a custom store should inherit it and wire <code>principal_provider</code>, and one that cannot scope is named in a warning when an operation resolves it. <strong>Breaking:</strong> stored keys change shape, so a key claimed before the upgrade does not replay after it — drain the dedup window across the deploy, or accept that a retry spanning it runs again. An <code>encrypt_result</code> record sealed before the upgrade no longer opens.</li>
+</ul>
 <h2 id="070-2026-09-10"><a href="https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0">0.7.0</a> - 2026-09-10<a class="headerlink" href="#070-2026-09-10" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
@@ -8759,7 +8785,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A durable run or schedule registered for a tenant nothing is bound to now lands where that tenant looks for it.</strong> The relation came from the binding while the tag and the scoped id came from the argument, so on a per-tenant relation the row was written somewhere nobody reads and the schedule never fired.</p>
 </li>
 </ul>
-<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>A bound tenant can no longer reach another tenant's durable run.</strong> <code>begin</code>, <code>renew</code>, <code>load</code> and the terminal writes enforced no tenant; they now reach the bound tenant's runs and untagged ones. Postgres, Mongo and the mock.</p>
@@ -10167,7 +10193,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_temporal</code> and <code>forze[mcp]</code> workflow sandbox</strong> — the sandbox runner passes <code>beartype</code> and <code>coverage</code> through, fixing circular-import failures and a coverage-induced test hang.</p>
 </li>
 </ul>
-<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
+<h3 id="security_2">Security<a class="headerlink" href="#security_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Password change revokes existing sessions (breaking by default)</strong> — <code>change_password</code> revokes all sessions (refresh families plus session-bound access JWTs); opt out explicitly, and missing session ports fail at startup.</p>

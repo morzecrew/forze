@@ -6355,7 +6355,7 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <td><code>encrypt_result</code></td>
 <td><code>bool</code></td>
 <td><code>False</code></td>
-<td>seal the cached result at rest (<abbr title="Additional Authenticated Data">AAD</abbr> binds tenant + op:key; needs a keyring)</td>
+<td>seal the cached result at rest (<abbr title="Additional Authenticated Data">AAD</abbr> binds tenant, principal and op:key; needs a keyring)</td>
 </tr>
 </tbody>
 </table>
@@ -6370,7 +6370,7 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <tbody>
 <tr>
 <td><code>begin(...)</code></td>
-<td>claim <code>(operation, key, payload-hash)</code>; returns the stored result if already complete</td>
+<td>claim <code>(operation, key, payload-hash)</code> for the calling principal; returns the stored result if already complete</td>
 </tr>
 <tr>
 <td><code>commit(...)</code></td>

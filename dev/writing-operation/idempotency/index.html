@@ -6408,7 +6408,40 @@ transaction, and the handler.</p>
   middleware. No key → no dedup; the operation just runs.</li>
 <li>The <strong>same key with a different payload</strong> is a conflict — a key can't be reused
   for a different request.</li>
+<li>A key <strong>belongs to the caller</strong>. A claim is scoped to the tenant and the
+  authenticated principal — the subject, on a delegated call — so two callers who
+  pick the same key never meet: each runs its own operation and replays its own
+  result, and neither is told the other used it. Calls with no authenticated
+  principal share one anonymous space of their own.</li>
 </ul>
+<p>Two identities ride on a claim, and they answer different questions:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Question</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Principal</strong></td>
+<td>whose key is it?</td>
+<td>another caller's key behaves as unused</td>
+</tr>
+<tr>
+<td><strong>Owner</strong> (the invocation)</td>
+<td>who may finish it?</td>
+<td>a claim reclaimed by a duplicate cannot be completed by the one that lost it</td>
+</tr>
+</tbody>
+</table>
+<p>Keys stored before claims were scoped to a principal have a different shape, so a
+key claimed before that upgrade does not replay after it: a retry that spans the
+deploy runs again. Drain the dedup window across the deploy if that matters.
+Every shipped store scopes its claims; a store of your own should inherit
+<code>ClaimPrincipalMixin</code> and wire <code>principal_provider</code>, and one that does not is
+named in a warning when an operation resolves it.</p>
 <h2 id="wiring">Wiring<a class="headerlink" href="#wiring" title="Permanent link">&para;</a></h2>
 <p>Declare an <code>IdempotencySpec</code> (it carries a TTL for how long a result is
 remembered) and register an idempotency adapter — commonly <a href="../../integrations/redis/">Redis</a> —
