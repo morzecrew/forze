@@ -152,6 +152,13 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
 
+        if self.serialized_by and not self.serialization_scope:
+            # Every lock key carries the scope; without one, two aggregates keyed on the same
+            # value would wait on each other for no reason the declaration states.
+            raise exc.configuration(
+                "Serializing writes needs the spec's name as the lock scope; got none."
+            )
+
         if self.client is not self.read_gw.client:
             raise exc.internal(
                 "Client mismatch. Write gateway and nested read gateway must use the same client."
