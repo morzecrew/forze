@@ -1304,7 +1304,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
                 return [_pk_from_row(r) for r in id_rows]
 
-            ids = await matching_ids()
+            ids: list[UUID] = []
 
             # Every owner the filter selects and every owner the patch would move a row to.
             # The set updated is the one the last pass read, whose owners are all held.
@@ -1315,7 +1315,11 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
                 return [*stored, *(self._moved(d, update_data) for d in stored)]
 
-            await self._serialize(touched)
+            if self.serialized_by:
+                await self._serialize(touched)
+
+            else:
+                ids = await matching_ids()
 
             total = 0
             out_domains: list[D] = []
