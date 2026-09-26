@@ -59,6 +59,17 @@ def _program(source: str, **request: object) -> SandboxRequest:
     )
 
 
+def _why(result: SandboxResult) -> str:
+    """What a run that should have been an OOM kill says about itself, for the failure message.
+
+    The detail carries the exit status and the ceilings in force, and stderr carries a Python
+    ``MemoryError`` if the allocation was refused rather than charged — the two fates this suite
+    has to tell apart when CI disagrees with a local run.
+    """
+
+    return f"detail={result.detail!r} stderr_tail={result.stderr.text[-600:]!r}"
+
+
 def _grows_to(mebibytes: int) -> str:
     """A program that charges *mebibytes* of memory a chunk at a time, touching every page.
 
@@ -356,7 +367,7 @@ class TestCeilingsTheDaemonWatches:
             _program(_grows_to(512))
         )
 
-        assert result.outcome == "killed_oom"
+        assert result.outcome == "killed_oom", _why(result)
         assert result.detail is not None
 
     async def test_a_cpu_over_run_names_the_ceiling_that_ended_it(
@@ -417,7 +428,7 @@ class TestCeilingsTheDaemonWatches:
             )
         )
 
-        assert result.outcome == "killed_oom", result.detail
+        assert result.outcome == "killed_oom", _why(result)
 
     async def test_the_same_program_runs_out_when_only_the_route_s_ceiling_applies(
         self, ctx: ExecutionContext
