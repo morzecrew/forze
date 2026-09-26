@@ -9,6 +9,7 @@ row the owner's read put there must still be refused to anyone else.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -17,7 +18,7 @@ import pytest_asyncio
 
 psycopg = pytest.importorskip("psycopg")
 
-from forze.application.contracts.cache import CacheDepKey, CacheSpec
+from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -26,7 +27,6 @@ from forze.application.contracts.document import (
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from forze_postgres.execution.deps import ConfigurablePostgresDocument, postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresDocumentConfig
 from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
@@ -39,61 +39,56 @@ from tests.support.owned_reads_conformance import (
     Check,
     OwnedCreate,
     OwnedReadsHarness,
+    mock_read_cache,
     owned_spec,
 )
 
 # ----------------------- #
 
 
-async def _context(pg_client: PostgresClient, *, cached: bool) -> tuple[ExecutionContext, Any, MockState]:
+async def _context(
+    pg_client: PostgresClient,
+    *,
+    cached: bool,
+) -> tuple[ExecutionContext, Any, Callable[[UUID], Awaitable[bool]]]:
     table = f"owned_{uuid4().hex[:12]}"
     await pg_client.execute(OWNED_DDL.format(table=table))
 
-    spec = owned_spec(
-        f"doc_{table}",
-        **({"cache": CacheSpec(name=f"cache_{table}")} if cached else {}),
-    )
-    factory = ConfigurablePostgresDocument(
+    cache = CacheSpec(name=f"cache_{table}")
+    cache_deps, cache_holds = mock_read_cache(cache)
+    spec = owned_spec(f"doc_{table}", **({"cache": cache} if cached else {}))
+    factory: ConfigurablePostgresDocument[Any, Any, Any, Any] = ConfigurablePostgresDocument(
         config=PostgresDocumentConfig(
             read=("public", table),
             write=("public", table),
             bookkeeping_strategy="application",
         )
     )
-    state = MockState()
-
-    def _cache(ctx: ExecutionContext, cache_spec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cache_spec.name)
-
     ctx = context_from_deps(
         Deps.plain(
             {
-                MockStateDepKey: state,
+                **cache_deps,
                 PostgresClientDepKey: pg_client,
                 PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
                 DocumentQueryDepKey: factory,
                 DocumentCommandDepKey: factory,
-                CacheDepKey: _cache,
             }
         ).merge(Deps.routed({TransactionManagerDepKey: {"main": postgres_txmanager}}))
     )
 
-    return ctx, spec, state
+    return ctx, spec, cache_holds
 
 
 @pytest_asyncio.fixture(params=["uncached", "cached"])
 async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> OwnedReadsHarness:
     cached = request.param == "cached"
-    ctx, spec, state = await _context(pg_client, cached=cached)
-
-    async def _cache_holds(pk: UUID) -> bool:
-        return any(key[0] == str(pk) for key in state.cache_bodies.get(spec.cache.name, {}))
+    ctx, spec, cache_holds = await _context(pg_client, cached=cached)
 
     return OwnedReadsHarness(
         query=ctx.doc.query(spec),
         command=ctx.doc.command(spec),
         spec_name=str(spec.name),
-        cache_holds=_cache_holds if cached else None,
+        cache_holds=cache_holds if cached else None,
     )
 
 

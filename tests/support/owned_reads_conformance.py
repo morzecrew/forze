@@ -29,7 +29,9 @@ from uuid import UUID, uuid4
 import attrs
 import pytest
 
+from forze.application.contracts.cache import CacheDepKey, CacheSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes, OwnedBy
+from forze.application.execution import ExecutionContext
 from forze.base.exceptions import (
     CoreException,
     DenialPosture,
@@ -38,6 +40,7 @@ from forze.base.exceptions import (
     error_envelope,
 )
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 
 # ----------------------- #
 
@@ -87,6 +90,20 @@ CREATE TABLE {table} (
 )
 """
 """Postgres table for :class:`OwnedDoc` (``{table}`` is the relation name)."""
+
+
+def mock_read_cache(cache: CacheSpec) -> tuple[dict[Any, Any], Callable[[UUID], Awaitable[bool]]]:
+    """An in-memory read cache for a real backend: its deps, and whether it holds a pk."""
+
+    state = MockState()
+
+    def _factory(ctx: ExecutionContext, spec: CacheSpec) -> MockCacheAdapter:
+        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=spec.name)
+
+    async def _holds(pk: UUID) -> bool:
+        return any(key[0] == str(pk) for key in state.cache_bodies.get(cache.name, {}))
+
+    return {MockStateDepKey: state, CacheDepKey: _factory}, _holds
 
 
 # ....................... #

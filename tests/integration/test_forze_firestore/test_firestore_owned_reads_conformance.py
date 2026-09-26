@@ -6,25 +6,25 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from typing import Any
 
 import pytest
 
 pytest.importorskip("google.cloud.firestore")
 
-from forze.application.contracts.cache import CacheDepKey, CacheSpec
+from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps
 from forze_firestore.execution.deps import ConfigurableFirestoreDocument
 from forze_firestore.execution.deps.configs import FirestoreDocumentConfig
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
-from forze_mock import MockCacheAdapter, MockState, MockStateDepKey
 from tests.support.execution_context import context_from_deps
 from tests.support.owned_reads_conformance import (
     OWNED_READS_BATTERY,
     Check,
     OwnedReadsHarness,
+    mock_read_cache,
     owned_spec,
 )
 
@@ -38,39 +38,31 @@ def harness(
     unique_collection: str,
 ) -> OwnedReadsHarness:
     cached = request.param == "cached"
-    cache_spec = CacheSpec(name=f"cache_{unique_collection}")
-    spec = owned_spec(f"doc_{unique_collection}", **({"cache": cache_spec} if cached else {}))
-    factory = ConfigurableFirestoreDocument(
+    cache = CacheSpec(name=f"cache_{unique_collection}")
+    cache_deps, cache_holds = mock_read_cache(cache)
+    spec = owned_spec(f"doc_{unique_collection}", **({"cache": cache} if cached else {}))
+    factory: ConfigurableFirestoreDocument[Any, Any, Any, Any] = ConfigurableFirestoreDocument(
         config=FirestoreDocumentConfig(
             read=("(default)", unique_collection),
             write=("(default)", unique_collection),
         ),
     )
-    state = MockState()
-
-    def _cache(ctx: ExecutionContext, cspec: CacheSpec) -> MockCacheAdapter:
-        return MockCacheAdapter(state=ctx.deps.provide(MockStateDepKey), namespace=cspec.name)
-
     ctx = context_from_deps(
         Deps.plain(
             {
-                MockStateDepKey: state,
+                **cache_deps,
                 FirestoreClientDepKey: firestore_client,
                 DocumentQueryDepKey: factory,
                 DocumentCommandDepKey: factory,
-                CacheDepKey: _cache,
             }
         )
     )
-
-    async def _cache_holds(pk: UUID) -> bool:
-        return any(key[0] == str(pk) for key in state.cache_bodies.get(cache_spec.name, {}))
 
     return OwnedReadsHarness(
         query=ctx.doc.query(spec),
         command=ctx.doc.command(spec),
         spec_name=str(spec.name),
-        cache_holds=_cache_holds if cached else None,
+        cache_holds=cache_holds if cached else None,
     )
 
 
