@@ -27,6 +27,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import clamp
 
 from ..._logger import logger
+from ._base import DocumentNotFoundTagging
 from ._command import DocumentCommandMixin
 from ._limits import (
     DEFAULT_MAX_CHUNKED_COMMAND_PAGES,
@@ -46,6 +47,7 @@ from .cache import DocumentCache
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class DocumentAdapter(
+    DocumentNotFoundTagging,
     DocumentQueryMixin[R],
     DocumentCommandMixin[R, D, C, U],
     DocumentQueryPort[R],

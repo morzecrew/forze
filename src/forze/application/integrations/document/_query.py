@@ -1,11 +1,11 @@
 """Document query port methods."""
 
 from collections.abc import AsyncGenerator, Sequence
-from typing import Generic, cast
+from typing import Any, Generic, cast
 from uuid import UUID
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
-from forze.application.contracts.document import RowLockMode
+from forze.application.contracts.document import DocumentSpec, OwnedBy, RowLockMode
 from forze.application.contracts.document.gateways import DocumentReadGatewayPort
 from forze.application.contracts.querying import (
     AggregatesExpression,
@@ -32,6 +32,7 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
 
     read_gw: DocumentReadGatewayPort[R]
     document_cache: DocumentCache[R]
+    spec: DocumentSpec[R, Any, Any, Any]
 
     # ....................... #
 
@@ -39,27 +40,53 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
         self,
         pk: UUID,
         *,
+        owned_by: OwnedBy | None = None,
         for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> R:
-        """Fetch a single document by primary key, using the cache when available."""
+        """Fetch a single document by primary key, using the cache when available.
+
+        A locking read (``for_update``) always goes to the database: a cached copy cannot hold a
+        row lock. On a direct read ``owned_by`` goes into the database predicate, so a foreign
+        row is neither returned nor locked. A read through the cache (keyed by pk alone) fetches
+        by pk and checks the row before returning it.
+        """
 
         if not self.document_cache.id_rev_capable():
             raise exc.internal(
                 f"Cannot get document of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
             )
 
-        if not self.document_cache.read_through_eligible(
+        if owned_by is not None:
+            owned_by.check(self.spec)
+
+        async def fetch(lock: RowLockMode) -> R:
+            if owned_by is None:
+                return await self.read_gw.get(pk, for_update=lock)
+
+            row = await self.read_gw.find(owned_by.filter(pk), for_update=lock)
+
+            if row is None:
+                raise exc.not_found(f"Record not found: {pk}")
+
+            return row
+
+        if for_update or not self.document_cache.read_through_eligible(
             skip_cache=skip_cache,
             return_fields=None,
         ):
-            return await self.read_gw.get(pk, for_update=for_update)
+            return await fetch(for_update)
 
-        return await self.document_cache.get_read_through(
+        row = await self.document_cache.get_read_through(
             pk,
-            fetch_on_cache_fault=lambda: self.read_gw.get(pk, for_update=for_update),
+            fetch_on_cache_fault=lambda: fetch(False),
             fetch_on_miss_without_lock=lambda: self.read_gw.get(pk),
         )
+
+        if owned_by is not None and not owned_by.owns(row):
+            raise exc.not_found(f"Record not found: {pk}")
+
+        return row
 
     # ....................... #
 
@@ -67,9 +94,24 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
         self,
         pks: Sequence[UUID],
         *,
+        owned_by: OwnedBy | None = None,
         skip_cache: bool = False,
     ) -> Sequence[R]:
-        """Fetch multiple documents by primary key with cache-aware batching."""
+        """Fetch multiple documents by primary key with cache-aware batching.
+
+        With ``owned_by``, a missing or foreign id fails the whole call with one summary that
+        names no id, and the owner is checked on the rows read (no lock is taken, so checking
+        after the read reveals nothing a predicate would hide).
+        """
+
+        if owned_by is None:
+            return await self._get_many(pks, skip_cache=skip_cache)
+
+        owned_by.check(self.spec)
+
+        return await owned_by.read_batch(self._get_many(pks, skip_cache=skip_cache))
+
+    async def _get_many(self, pks: Sequence[UUID], *, skip_cache: bool) -> Sequence[R]:
 
         if not pks:
             return []

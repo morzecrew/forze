@@ -14,7 +14,7 @@ from .deps import (
 from .gateways import DocumentReadGatewayPort, DocumentWriteGatewayPort
 from .ports import BaseDocumentPort, DocumentCommandPort, DocumentQueryPort
 from .specs import DocumentSpec, validate_query_parameters
-from .value_objects import KeyedCreate, KeyedUpdate, RowLockMode, UpsertItem
+from .value_objects import KeyedCreate, KeyedUpdate, OwnedBy, RowLockMode, UpsertItem
 from .write_types import DocumentWriteTypes
 
 # ----------------------- #
@@ -29,6 +29,7 @@ __all__ = [
     "RowLockMode",
     "KeyedCreate",
     "KeyedUpdate",
+    "OwnedBy",
     "UpsertItem",
     "DocumentCodecs",
     "document_codecs_for_spec",

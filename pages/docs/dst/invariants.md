@@ -37,6 +37,10 @@ The generic `expect(kind, predicate, message=...)` covers most domain rules: it 
 
     Named ops must reach `ok`; an op must finish within a virtual-time budget; an op must touch one entity key (the *wrong-entity* guard) — all from the trace alone.
 
+-   :lucide-eye-off: **`denial_bodies_identical(*ops)`**
+
+    Every refusal of an op renders one response: all its 403s and 404s must be the same rendered envelope. The property a [non-disclosing posture](../reference/errors.md#non-disclosing-denials) promises — it fires on a handler's own untagged not-found, or on a posture never bound. Reads a digest of the envelope from the trace, never the text.
+
 -   :lucide-eye: **`read_your_writes(surface, value_field=…)` · `expect_value(surface, predicate)`**
 
     Value-level (opt into `capture_values`): a keyed read must observe the last value written to it (stale-read guard); every captured write/read value must satisfy a predicate (the *wrong-value* guard).

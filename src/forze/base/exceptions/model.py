@@ -64,6 +64,7 @@ class _CoreExceptionOfKind(Protocol):
         *,
         code: str | None = None,
         details: Mapping[str, Any] | None = None,
+        resource_type: str | None = None,
     ) -> CoreException: ...
 
 
@@ -88,8 +89,15 @@ class _exc_of_kind:
             *,
             code: str | None = None,
             details: Mapping[str, Any] | None = None,
+            resource_type: str | None = None,
         ) -> CoreException:
-            return owner.of(self.kind, summary, code=code, details=details)
+            return owner.of(
+                self.kind,
+                summary,
+                code=code,
+                details=details,
+                resource_type=resource_type,
+            )
 
         factory.__name__ = self.kind.value
         factory.__doc__ = f"Build a ``{self.kind.value}`` :class:`CoreException`."
@@ -122,6 +130,14 @@ class CoreException(Exception):
     details: Mapping[str, Any] | None = attrs.field(default=None, kw_only=True)
     """The details of the exception."""
 
+    resource_type: str | None = attrs.field(default=None, kw_only=True)
+    """The resource type this error is about (a document spec name), or :obj:`None`.
+
+    Read by :func:`~forze.base.exceptions.error_envelope` under a non-disclosing
+    :class:`~forze.base.exceptions.DenialPosture`: an ``authorization`` or ``not_found``
+    error about a covered type renders as one canonical not-found. Set by the authz hook
+    for a denial about a resource and by the document adapters for a missing row."""
+
     # ....................... #
 
     def __str__(self) -> str:
@@ -137,6 +153,7 @@ class CoreException(Exception):
         *,
         code: str | None = None,
         details: Mapping[str, Any] | None = None,
+        resource_type: str | None = None,
     ) -> Self:
         """Build a :class:`CoreException` of the given kind."""
 
@@ -145,6 +162,7 @@ class CoreException(Exception):
             summary=summary,
             code=code or f"core.{kind.value}",
             details=details,
+            resource_type=resource_type,
         )
 
     # ....................... #

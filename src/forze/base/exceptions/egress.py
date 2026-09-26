@@ -1,8 +1,10 @@
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from typing import Literal
 
 import attrs
 
-from .model import ExceptionKind
+from .model import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -120,3 +122,144 @@ def http_status_for_kind(kind: ExceptionKind) -> int:
     """
 
     return _EXC_KIND_HTTP_STATUS.get(kind, 500)
+
+
+# ....................... #
+
+_COLLAPSIBLE_KINDS = frozenset({ExceptionKind.AUTHORIZATION, ExceptionKind.NOT_FOUND})
+
+_DENIAL_POSTURE_MODES = frozenset({"standard", "non_disclosing"})
+
+
+def _resource_types(value: Iterable[str]) -> frozenset[str]:
+    # A bare string is an iterable of its letters: "notes" would cover "n", "o", "t", … and no
+    # real type, so the posture would quietly protect nothing.
+    if isinstance(value, str):
+        raise CoreException.configuration(
+            f"DenialPosture.resource_types takes a collection of names, not the string {value!r}.",
+            code="denial_posture_resource_types",
+        )
+
+    return frozenset(value)
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class DenialPosture:
+    """How an error about a resource renders to clients.
+
+    ``standard`` (the default) renders every error as it is. ``non_disclosing`` renders an
+    ``authorization`` or ``not_found`` error whose
+    :attr:`~forze.base.exceptions.CoreException.resource_type` is in :attr:`resource_types`
+    as one canonical not-found — same status, body and code whether the row is missing or
+    the caller may not see it — so the response is no longer an existence check. The
+    server-side exception keeps its real kind. This closes the response-shape oracle, not
+    the timing one.
+    """
+
+    mode: Literal["standard", "non_disclosing"] = "standard"
+    """``standard`` renders errors as they are; ``non_disclosing`` collapses covered ones."""
+
+    resource_types: frozenset[str] = attrs.field(default=frozenset(), converter=_resource_types)
+    """The resource types (document spec names) a ``non_disclosing`` posture covers."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Refused, not read as "standard": a misspelled mode would otherwise switch the posture
+        # off without a word.
+        if self.mode not in _DENIAL_POSTURE_MODES:
+            raise CoreException.configuration(
+                f"Unknown DenialPosture mode {self.mode!r}; expected one of "
+                f"{sorted(_DENIAL_POSTURE_MODES)}.",
+                code="denial_posture_mode",
+            )
+
+        if self.mode == "non_disclosing" and not self.resource_types:
+            raise CoreException.configuration(
+                "A non_disclosing DenialPosture must name the resource types it covers.",
+                code="denial_posture_empty",
+            )
+
+    # ....................... #
+
+    def collapses(self, exc: CoreException) -> bool:
+        """Whether *exc* renders as the canonical not-found under this posture."""
+
+        return (
+            self.mode == "non_disclosing"
+            and exc.kind in _COLLAPSIBLE_KINDS
+            and exc.resource_type in self.resource_types
+        )
+
+
+_denial_posture = DenialPosture()
+
+
+def configure_denial_posture(posture: DenialPosture) -> DenialPosture:
+    """Set the process-wide :class:`DenialPosture`; return the previous one.
+
+    Process-wide on purpose: every transport renders errors in its own request task, which
+    a context variable bound at startup would not reach. A runtime holds its posture through
+    :func:`bind_denial_posture` instead.
+    """
+
+    global _denial_posture
+
+    previous, _denial_posture = _denial_posture, posture
+    return previous
+
+
+def current_denial_posture() -> DenialPosture:
+    """Return the process-wide :class:`DenialPosture` (``standard`` unless configured)."""
+
+    return _denial_posture
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True)
+class _Held:
+    posture: DenialPosture
+    previous: DenialPosture
+    holders: int = 0
+
+
+_held: _Held | None = None
+
+
+@contextmanager
+def bind_denial_posture(posture: DenialPosture) -> Iterator[None]:
+    """Hold *posture* process-wide for the block — an execution runtime's scope.
+
+    Overlapping holders must agree: a second one asking for a different posture is refused, since
+    the process renders every request's errors with one posture and switching it would disclose
+    under the first holder's covered types. The posture in force before the first holder is
+    restored when the last one exits, whatever order they exit in.
+    """
+
+    global _held
+
+    held = _held
+
+    if held is None:
+        held = _held = _Held(posture=posture, previous=configure_denial_posture(posture))
+
+    elif held.posture != posture:
+        raise CoreException.configuration(
+            "A runtime scope asked for a different DenialPosture than the one already held in "
+            "this process; every runtime in one process must use the same posture.",
+            code="denial_posture_conflict",
+        )
+
+    held.holders += 1
+
+    try:
+        yield
+
+    finally:
+        held.holders -= 1
+
+        if held.holders == 0:
+            _held = None
+            configure_denial_posture(held.previous)

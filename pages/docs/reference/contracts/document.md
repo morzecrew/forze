@@ -214,14 +214,34 @@ proof — a simulation asserts the invariant over a workload the guarantee is qu
 
 | Method | Returns | On miss |
 |--------|---------|---------|
-| `get(pk, *, for_update=False, skip_cache=False)` | `R` | raises `not_found` |
-| `get_many(pks, *, skip_cache=False)` | `Sequence[R]` | raises `not_found` (lists missing) |
+| `get(pk, *, owned_by=None, for_update=False, skip_cache=False)` | `R` | raises `not_found` |
+| `get_many(pks, *, owned_by=None, skip_cache=False)` | `Sequence[R]` | raises `not_found` (lists missing) |
 | `find(filters, *, for_update=False)` | `R \| None` | returns `None` |
 | `project(filters, fields, *, for_update=False)` | `JsonDict \| None` | returns `None` |
 | `select(filters, return_type, *, for_update=False)` | `T \| None` | returns `None` |
 
 `for_update` takes a `RowLockMode` (`True` / `"nowait"` / `"skip_locked"`) to lock
-the row inside a transaction.
+the row inside a transaction. A locking read always goes to the database, past any read cache.
+
+`owned_by` is the preferred way to say a row belongs to someone. With it, a row whose owner
+field holds another value is **not found** — the same error as a missing row, from the same
+read — so a handler cannot serve a foreign row by forgetting a check:
+
+```python
+from forze.application.contracts.document import OwnedBy
+
+note = await ctx.doc.query(NOTES).get(pk, owned_by=OwnedBy(field="owner_id", value=principal_id))
+```
+
+The owner goes into the database predicate, so a locking read never locks a foreign row; a row
+served from the read cache is checked before it is returned. In `get_many`, a foreign id fails
+the call exactly as a missing id does, with one summary that names no id — a list of only the
+missing ids would tell the caller the others exist. `field` must be a stored, filterable UUID
+field of the read model: one the model lacks, one sealed with randomized encryption, or a lenient
+read field is refused as a `configuration` error before the read, rather than answered with a
+not-found on one path and something else on the other.
+Pair it with a [non-disclosing posture](../errors.md#non-disclosing-denials) so the not-found
+also renders like a denial.
 
 ### Fetch many
 
