@@ -628,18 +628,20 @@ def denial_bodies_identical(*ops: str) -> Invariant:
             if (not wanted or op in wanted) and event.fields.get("status") in (403, 404):
                 refusals.setdefault(op, []).append(event)
 
+        def responses(events: list[Event]) -> set[tuple[Any, Any]]:
+            return {(e.fields.get("status"), e.fields.get("rendered")) for e in events}
+
         return [
             Violation(
                 invariant="denial_bodies_identical",
                 message=(
-                    f"operation {op!r} refused with "
-                    f"{len({e.fields.get('rendered') for e in events})} different responses "
+                    f"operation {op!r} refused with {len(responses(events))} different responses "
                     f"(statuses {sorted({str(e.fields.get('status')) for e in events})})"
                 ),
                 events=tuple(events),
             )
             for op, events in refusals.items()
-            if len({(e.fields.get("status"), e.fields.get("rendered")) for e in events}) > 1
+            if len(responses(events)) > 1
         ]
 
     return named("denial_bodies_identical", _check)

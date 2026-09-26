@@ -70,7 +70,9 @@ class TestOverAHistory:
             _op(1, op="read", outcome="failed", status=404, rendered="a"),
         )
 
-        assert len(check(history, [denial_bodies_identical()])) == 1
+        (violation,) = check(history, [denial_bodies_identical()])
+
+        assert "2 different responses" in violation.message
 
     def test_one_rendering_holds(self) -> None:
         history = _history(
