@@ -6085,6 +6085,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#non-disclosing-denials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Non-disclosing denials
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6247,6 +6258,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#non-disclosing-denials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Non-disclosing denials
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6353,9 +6375,9 @@ the method:</p>
 <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">domain</span><span class="p">(</span><span class="s2">"A shipped order is final."</span><span class="p">)</span>
 <span class="k">raise</span> <span class="n">exc</span><span class="o">.</span><span class="n">conflict</span><span class="p">(</span><span class="s2">"Email already registered."</span><span class="p">,</span> <span class="n">code</span><span class="o">=</span><span class="s2">"email_taken"</span><span class="p">)</span>
 </code></pre></div>
-<p><code>exc.&lt;kind&gt;(summary, *, code=None, details=None)</code> — <code>code</code> defaults to
-<code>core.&lt;kind&gt;</code>. A <code>CoreException</code> carries <code>kind</code>, <code>summary</code>, <code>code</code>, and optional
-<code>details</code>.</p>
+<p><code>exc.&lt;kind&gt;(summary, *, code=None, details=None, resource_type=None)</code> — <code>code</code>
+defaults to <code>core.&lt;kind&gt;</code>. A <code>CoreException</code> carries <code>kind</code>, <code>summary</code>, <code>code</code>, and
+optional <code>details</code> and <code>resource_type</code> (see <a href="#non-disclosing-denials">Non-disclosing denials</a>).</p>
 <h2 id="the-kinds">The kinds<a class="headerlink" href="#the-kinds" title="Permanent link">&para;</a></h2>
 <p>Each kind has an <strong>egress policy</strong> with two flags: <code>expose_details</code> (are details
 safe to return to a caller?) and <code>retryable</code> (is the failure transient?). Only
@@ -6490,6 +6512,47 @@ raise — a <code>finally_</code> stage hook — it receives an <code>Outcome</c
 into a response — the status from the kind, the <code>code</code> on an error-code header,
 and details exposed only when <code>expose_details</code> is set; kinds with no status of
 their own (<code>configuration</code>, <code>infrastructure</code>, <code>internal</code>) map to <code>500</code>.</p>
+<h2 id="non-disclosing-denials">Non-disclosing denials<a class="headerlink" href="#non-disclosing-denials" title="Permanent link">&para;</a></h2>
+<p>A 403 for a row you may not see and a 404 for a row that does not exist tell a caller which
+ids exist. A <code>DenialPosture</code> closes that: for the resource types it names, a denial and a
+not-found render as one response — <code>404</code>, code <code>core.not_found</code>, detail <code>"Not found"</code>, no
+context — on every transport, because the collapse happens in the shared envelope.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.exceptions</span><span class="w"> </span><span class="kn">import</span> <span class="n">DenialPosture</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">denial_posture</span><span class="o">=</span><span class="n">DenialPosture</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">"non_disclosing"</span><span class="p">,</span> <span class="n">resource_types</span><span class="o">=</span><span class="p">{</span><span class="s2">"notes"</span><span class="p">,</span> <span class="s2">"invoices"</span><span class="p">}),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The runtime sets the posture for the whole process while its scope is entered, and every runtime
+in one process must use the same one: a scope asking for a different posture than one already
+held is refused. What is covered:</p>
+<ul>
+<li>a denial from the authz before-hook when the hook has a <code>resource_factory</code> — it carries the
+  resource's <code>resource_type</code>;</li>
+<li>a not-found from a document port — it carries the spec name, so name your authz resource
+  types after your document specs;</li>
+<li>anything you raise with <code>resource_type=</code> yourself. A handler's own
+  <code>exc.not_found("Note 7 not found")</code> without it renders as written, and that difference is
+  itself the leak.</li>
+</ul>
+<p>A denial about no particular resource — the hook without a <code>resource_factory</code>, a policy scope
+that denies a whole list — stays a 403: it says nothing about any row. The server-side
+exception keeps its real kind and code, so logs and metrics still tell a denial from a miss.</p>
+<p>For the row itself, read it with <code>owned_by</code> (see the <a href="../contracts/document/#fetch-one">document port</a>):
+a foreign row is then not found by the read, not by a check after it.</p>
+<div class="admonition warning">
+<p class="admonition-title">What this does and does not close</p>
+<p>It closes the <strong>response-shape</strong> oracle. It does not close timing — refusing a row that
+exists can still take a different time than missing one that does not — and it does not
+stop enumeration by volume, which is throttling's job. It is <strong>off</strong> by default, and turning
+it on changes what clients see: any client that tells 403 from 404 will break. Adopt it per
+resource type, and list the types rather than the endpoints, so every route over a type is
+covered at once.</p>
+</div>
+<p>To check it holds across a workload, add <code>denial_bodies_identical("notes.read", ...)</code> from
+<code>forze_dst.invariants</code> to a <a href="../../dst/invariants/">simulation</a>: it fails when one operation refuses
+with more than one rendered response.</p>
 
 
 

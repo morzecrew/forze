@@ -6399,6 +6399,10 @@
 <p>Named ops must reach <code>ok</code>; an op must finish within a virtual-time budget; an op must touch one entity key (the <em>wrong-entity</em> guard) — all from the trace alone.</p>
 </li>
 <li>
+<p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-eye-off" viewBox="0 0 24 24"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.8 10.8 0 0 1-1.444 2.49M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143M2 2l20 20"/></svg></span> <strong><code>denial_bodies_identical(*ops)</code></strong></p>
+<p>Every refusal of an op renders one response: all its 403s and 404s must be the same rendered envelope. The property a <a href="../../reference/errors/#non-disclosing-denials">non-disclosing posture</a> promises — it fires on a handler's own untagged not-found, or on a posture never bound. Reads a digest of the envelope from the trace, never the text.</p>
+</li>
+<li>
 <p><span class="twemoji"><svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg></span> <strong><code>read_your_writes(surface, value_field=…)</code> · <code>expect_value(surface, predicate)</code></strong></p>
 <p>Value-level (opt into <code>capture_values</code>): a keyed read must observe the last value written to it (stale-read guard); every captured write/read value must satisfy a predicate (the <em>wrong-value</em> guard).</p>
 </li>

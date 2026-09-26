@@ -8599,6 +8599,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A refusal about a row can stop saying whether the row exists.</strong> <code>build_runtime(denial_posture=DenialPosture(mode="non_disclosing", resource_types={"notes"}))</code> renders a denial and a not-found about a covered type as one response — <code>404</code>, <code>core.not_found</code>, <code>"Not found"</code>, no context — on HTTP, Socket.IO, WebSocket, <abbr title="Model Context Protocol">MCP</abbr> and agent tools alike, while the server-side exception keeps its real kind. <code>CoreException</code> gains <code>resource_type</code>: the authz before-hook sets it when it has a resource, and document ports set it to the spec name on every not-found. A denial about no particular resource stays a 403. Every runtime in one process holds the same posture; a scope asking for another is refused. Off by default, since enabling it changes what clients see; it closes the response-shape oracle, not timing. Under the posture, a covered not-found no longer names the missing id. <code>forze_dst.invariants.denial_bodies_identical(*ops)</code> checks it over a workload.</p>
+</li>
+<li>
+<p><strong>A read by id can require the row to belong to the caller.</strong> <code>get(pk, owned_by=OwnedBy(field="owner_id", value=principal_id))</code> — and <code>get_many</code> — make a foreign row not found, the same error as a missing one, on every backend; a failing batch names no id. The owner is in the database predicate, so a locking read never locks a foreign row, and a row served from the read cache is checked before it is returned. An owner field the predicate cannot use — randomized-encrypted, or not stored — is refused before the read.</p>
+</li>
+<li>
 <p><strong>A spec can declare that writes for one key do not interleave.</strong> <code>DocumentSpec(..., guarantees=(SerializedBy(key=("employee_id",)),))</code> says two writes for one owner never run at once — the rule that otherwise lives in whichever writer remembered it, and holds until the next writer is added. <code>forze_mock</code> keeps it, held from the first write until the transaction ends so a caller's own read-then-write is not split, and every write path takes it. The key derivation ships as <code>advisory_lock_key</code>: a digest rather than <code>hash</code>, which is salted per interpreter, with the spec and tenant in the key so two aggregates never contend by accident. Postgres keeps it too, through a transaction-scoped advisory lock taken before every write — nothing to migrate; Mongo refuses the declaration. Two writers each holding the owner the other wants are refused as <code>concurrency</code> on both.</p>
 </li>
 <li>
@@ -8650,6 +8656,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A locking read by id takes its lock when the document has a read cache.</strong> <code>get(pk, for_update=True)</code> on a cached spec returned the cached row, or a row fetched without a lock, and locked nothing; it now always reads the database.</p>
+</li>
 <li>
 <p><strong>A container sandbox run killed at its memory ceiling could come back as <code>exited</code>.</strong> The daemon can report the exit before it records the OOM, and the adapter read its <code>OOMKilled</code> flag at once. A run the kernel killed outright under a memory ceiling now waits briefly for the flag, and a non-zero exit's detail names its exit status.</p>
 </li>
