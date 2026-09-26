@@ -1,5 +1,7 @@
 import asyncio
-from collections.abc import Callable
+import hashlib
+import json
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast, final
 
 import attrs
@@ -8,7 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.contracts.execution import Handler, OnSuccess, TwoPhaseHandler
 from forze.application.contracts.transaction import COMMIT_AMBIGUOUS_CODE, AfterCommitPort
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, error_envelope, exc
 from forze.base.primitives import StrKey
 
 from ...context.active_operation import active_operation_var
@@ -240,6 +242,28 @@ class DispatchedOperation[Args, R](OnSuccess[Args, R]):
 # ....................... #
 
 
+def _rendered(error: BaseException) -> Mapping[str, Any] | None:
+    """What a client is shown for a declared failure: its status and a digest of the envelope.
+
+    A digest rather than the text, so the trace carries nothing a handler wrote into a summary
+    — enough to tell two answers apart, which is all an oracle over rendered errors needs.
+    """
+
+    if not isinstance(error, CoreException):
+        return None
+
+    envelope = error_envelope(error)
+    body = json.dumps(attrs.asdict(envelope), sort_keys=True, default=str)
+
+    return {
+        "status": envelope.status,
+        "rendered": hashlib.sha256(body.encode()).hexdigest()[:16],
+    }
+
+
+# ....................... #
+
+
 async def run_operation(
     registry: "FrozenOperationRegistry",
     op: StrKey,
@@ -274,6 +298,7 @@ async def run_operation(
             outcome="failed" if isinstance(error, CoreException) else "error",
             error=type(error).__name__,
             corr=invoke_seq,
+            result=_rendered(error) if ctx.deps.runtime_tracer.enabled else None,
             deps=ctx.deps,
         )
         raise
