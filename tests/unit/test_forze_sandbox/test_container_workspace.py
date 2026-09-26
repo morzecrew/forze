@@ -11,8 +11,6 @@ tar members rather than on paths, and none of them needs a container to exercise
 
 from __future__ import annotations
 
-import asyncio
-
 import io
 import tarfile
 from datetime import timedelta
@@ -322,84 +320,6 @@ class TestNarrowingCeilings:
         assert memory == 2048
 
 
-class _FlagsLate:
-    """An engine whose daemon reports the exit before it has recorded the OOM."""
-
-    def __init__(self, flagged_after: int) -> None:
-        self.calls = 0
-        self.flagged_after = flagged_after
-
-    async def inspect(self, container: str) -> dict[str, object]:
-        self.calls += 1
-        return {"OOMKilled": self.calls > self.flagged_after}
-
-
-class TestWaitingForAnOwedOomFlag:
-    async def test_a_kill_under_a_memory_ceiling_waits_for_the_flag(self) -> None:
-        box = _sandbox(memory_ceiling=1024)
-        engine = _FlagsLate(flagged_after=2)
-        state = await box._state_after(  # pyright: ignore[reportPrivateUsage]
-            engine, "c", 137, None, SandboxRequest(command=("true",))  # pyright: ignore[reportArgumentType]
-        )
-
-        assert state["OOMKilled"] is True
-        assert engine.calls == 3
-
-    @pytest.mark.parametrize(
-        ("status", "killed", "memory_ceiling"),
-        [(1, None, 1024), (137, "timeout", 1024), (137, None, None)],
-        ids=["not-a-sigkill", "the-adapter-killed-it", "no-memory-ceiling"],
-    )
-    async def test_nothing_else_waits(
-        self, status: int, killed: str | None, memory_ceiling: int | None
-    ) -> None:
-        box = _sandbox(memory_ceiling=memory_ceiling) if memory_ceiling else _sandbox()
-        engine = _FlagsLate(flagged_after=5)
-        state = await box._state_after(  # pyright: ignore[reportPrivateUsage]
-            engine, "c", status, killed, SandboxRequest(command=("true",))  # pyright: ignore[reportArgumentType]
-        )
-
-        assert state["OOMKilled"] is False
-        assert engine.calls == 1
-
-
-class _StallsThenFails:
-    """An engine whose first inspect answers and whose repeats hang or fail."""
-
-    def __init__(self, repeat: str) -> None:
-        self.calls = 0
-        self.repeat = repeat
-
-    async def inspect(self, container: str) -> dict[str, object]:
-        self.calls += 1
-
-        if self.calls == 1:
-            return {"OOMKilled": False, "first": True}
-
-        if self.repeat == "hang":
-            await asyncio.sleep(3600)
-
-        raise RuntimeError("daemon went away")
-
-
-class TestTheOwedFlagCannotCostTheResult:
-    @pytest.mark.parametrize("repeat", ["hang", "fail"])
-    async def test_a_repeat_that_hangs_or_fails_keeps_the_state_already_read(
-        self, repeat: str
-    ) -> None:
-        # The run's outcome is already known; waiting for a better label must neither hold it
-        # past the wait's own limit nor turn it into an exception.
-        box = _sandbox(memory_ceiling=1024)
-        state = await asyncio.wait_for(
-            box._state_after(  # pyright: ignore[reportPrivateUsage]
-                _StallsThenFails(repeat), "c", 137, None, SandboxRequest(command=("true",))  # pyright: ignore[reportArgumentType]
-            ),
-            timeout=3,
-        )
-
-        assert state == {"OOMKilled": False, "first": True}
-
-
 class TestReadingHowARunEnded:
     def test_the_deadline_outranks_whatever_the_container_reported(self) -> None:
         box = _sandbox(memory_ceiling=1024)
@@ -417,6 +337,30 @@ class TestReadingHowARunEnded:
         )
 
         assert outcome == "killed_oom"
+
+    @pytest.mark.parametrize("cpu", [None, timedelta(seconds=2)], ids=["memory-only", "both"])
+    def test_a_sigkill_under_a_memory_ceiling_is_its_memory_kill_flagged_or_not(
+        self, cpu: timedelta | None
+    ) -> None:
+        # The daemon's flag is not reliable: CI saw status 137, the ceiling in force, and no
+        # flag. The adapter's own kills name themselves first, so a SIGKILL reaching here under
+        # a memory ceiling is the kernel's memory killer — which also outranks the CPU hard
+        # limit, reached only by a child that caught SIGXCPU and kept going.
+        box = _sandbox(memory_ceiling=1024, cpu_ceiling=cpu)
+        outcome, detail = box._ended_by(  # pyright: ignore[reportPrivateUsage]
+            137, {"OOMKilled": False}, None, SandboxRequest(command=("true",)), 5.0, ""
+        )
+
+        assert outcome == "killed_oom"
+        assert detail is not None and "1024" in detail
+
+    def test_a_sigkill_with_no_ceiling_to_blame_is_an_exit(self) -> None:
+        box = _sandbox()
+        outcome, _ = box._ended_by(  # pyright: ignore[reportPrivateUsage]
+            137, {}, None, SandboxRequest(command=("true",)), 5.0, ""
+        )
+
+        assert outcome == "exited"
 
     @pytest.mark.parametrize("status", [152, 137])
     def test_a_cpu_over_run_is_named_at_either_edge_of_its_ceiling(self, status: int) -> None:

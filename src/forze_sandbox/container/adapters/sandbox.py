@@ -84,14 +84,6 @@ _SIGXCPU_STATUS: Final = 128 + int(getattr(signal, "SIGXCPU", 24))
 _SIGKILL_STATUS: Final = 128 + int(signal.SIGKILL)
 """Exit status of a child something killed outright."""
 
-_OOM_FLAG_WAIT: Final = 1.0
-"""How long a SIGKILL under a memory ceiling waits for the daemon to flag the OOM.
-
-The kernel's kill and the daemon's ``OOMKilled`` reach the daemon as two events, and the exit
-can be reported before the OOM is: inspecting at once reads a memory kill as a plain exit."""
-
-_OOM_FLAG_POLL: Final = 0.05
-
 _STAGE_MODE: Final = 0o755
 """Mode for staged directories; files land one bit less permissive."""
 
@@ -325,7 +317,7 @@ class ContainerSandbox:
                     yield SandboxEvent(kind=kind, text=mask_text(text, secrets))
 
             status, killed = await self._status_of(engine, container, killed, deadline)
-            state = await self._state_after(engine, container, status, killed, request)
+            state = await engine.inspect(container)
             outcome, detail = self._ended_by(
                 status, state, killed, request, budget, captured["stderr"].peek()
             )
@@ -454,8 +446,9 @@ class ContainerSandbox:
 
         This is the tier's whole difference from the one below. An ``RLIMIT_AS`` breach in a
         bare process is the child raising ``MemoryError`` and exiting 1, indistinguishable
-        from the same program failing on its own; here the daemon marks the container
-        ``OOMKilled`` and the caller is told which ceiling ended the run.
+        from the same program failing on its own; here the kill comes from outside the child —
+        the daemon's ``OOMKilled`` when it records one, the ``SIGKILL`` status under a memory
+        ceiling when it does not — and the caller is told which ceiling ended the run.
 
         The exec failure is read the way the process tier reads its shim's: status **and**
         marker together. The init process always starts, so without the marker a program the
@@ -477,6 +470,15 @@ class ContainerSandbox:
         memory, ulimits = self._ceilings(request)
         cpu = next((limit for limit in ulimits if limit["Name"] == "cpu"), None)
 
+        if memory is not None and status == _SIGKILL_STATUS:
+            # The daemon's `OOMKilled` is not a reliable witness: runs have come back with the
+            # status, the ceiling in force and no flag, even after waiting for one. The adapter's
+            # own kills name themselves above, so a SIGKILL here under a memory ceiling is the
+            # kernel's memory killer — or a program killing itself outright, which is rarer than
+            # an over-run. It outranks the CPU hard limit, which only a child that caught
+            # `SIGXCPU` and kept going ever reaches.
+            return "killed_oom", f"killed outright under its {memory}-byte memory ceiling"
+
         if cpu is not None and status in (_SIGXCPU_STATUS, _SIGKILL_STATUS):
             # `SIGXCPU` is the soft limit's warning and a child may catch it and carry on;
             # the kernel then sends `SIGKILL` at the hard limit. Both are the ceiling, and
@@ -489,50 +491,6 @@ class ContainerSandbox:
             )
 
         return "exited", None
-
-    # ....................... #
-
-    async def _state_after(
-        self,
-        engine: ContainerEngine,
-        container: str,
-        status: int,
-        killed: Literal["timeout"] | None,
-        request: SandboxRequest,
-    ) -> Mapping[str, object]:
-        """The container's final state, waiting briefly for an OOM flag that is owed.
-
-        Only a run the kernel killed outright under a memory ceiling — not by this adapter — can
-        be owed one, so every other run pays nothing.
-        """
-
-        state = await engine.inspect(container)
-        memory, _ = self._ceilings(request)
-
-        if (
-            state.get("OOMKilled")
-            or killed is not None
-            or status != _SIGKILL_STATUS
-            or memory is None
-        ):
-            return state
-
-        deadline = monotonic() + _OOM_FLAG_WAIT
-
-        while not state.get("OOMKilled") and monotonic() < deadline:
-            await asyncio.sleep(_OOM_FLAG_POLL)
-
-            # The outcome is already known and this only improves its label, so a repeat that
-            # stalls or fails keeps the state already read rather than holding or losing it.
-            try:
-                state = await asyncio.wait_for(
-                    engine.inspect(container), timeout=max(deadline - monotonic(), 0.0)
-                )
-
-            except Exception:
-                return state
-
-        return state
 
     # ....................... #
 
