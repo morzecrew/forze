@@ -235,8 +235,11 @@ note = await ctx.doc.query(NOTES).get(pk, owned_by=OwnedBy(field="owner_id", val
 
 The owner goes into the database predicate, so a locking read never locks a foreign row; a row
 served from the read cache is checked before it is returned. In `get_many`, a foreign id fails
-the call exactly as a missing id does. `field` must be a UUID field of the read model — a name
-the model lacks is refused as a `configuration` error rather than answered with a not-found.
+the call exactly as a missing id does, with one summary that names no id — a list of only the
+missing ids would tell the caller the others exist. `field` must be a stored, filterable UUID
+field of the read model: one the model lacks, one sealed with randomized encryption, or a lenient
+read field is refused as a `configuration` error before the read, rather than answered with a
+not-found on one path and something else on the other.
 Pair it with a [non-disclosing posture](../errors.md#non-disclosing-denials) so the not-found
 also renders like a denial.
 

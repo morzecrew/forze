@@ -1,11 +1,11 @@
 """Document query port methods."""
 
 from collections.abc import AsyncGenerator, Sequence
-from typing import Generic, cast
+from typing import Any, Generic, cast
 from uuid import UUID
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
-from forze.application.contracts.document import OwnedBy, RowLockMode
+from forze.application.contracts.document import DocumentSpec, OwnedBy, RowLockMode
 from forze.application.contracts.document.gateways import DocumentReadGatewayPort
 from forze.application.contracts.querying import (
     AggregatesExpression,
@@ -16,7 +16,6 @@ from forze.application.contracts.querying import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
-from forze.domain.constants import ID_FIELD
 
 from ._pagination import (
     CursorQuery,
@@ -33,6 +32,7 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
 
     read_gw: DocumentReadGatewayPort[R]
     document_cache: DocumentCache[R]
+    spec: DocumentSpec[R, Any, Any, Any]
 
     # ....................... #
 
@@ -58,7 +58,7 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
             )
 
         if owned_by is not None:
-            owned_by.check(self.read_gw.model_type)
+            owned_by.check(self.spec)
 
         async def fetch(lock: RowLockMode) -> R:
             if owned_by is None:
@@ -99,22 +99,17 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
     ) -> Sequence[R]:
         """Fetch multiple documents by primary key with cache-aware batching.
 
-        ``owned_by`` is checked on the rows read: a foreign id raises the not-found a missing
-        id raises. (No lock is taken, so checking after the read reveals nothing a predicate
-        would hide.)
+        With ``owned_by``, a missing or foreign id fails the whole call with one summary that
+        names no id, and the owner is checked on the rows read (no lock is taken, so checking
+        after the read reveals nothing a predicate would hide).
         """
 
-        if owned_by is not None:
-            owned_by.check(self.read_gw.model_type)
+        if owned_by is None:
+            return await self._get_many(pks, skip_cache=skip_cache)
 
-        rows = await self._get_many(pks, skip_cache=skip_cache)
+        owned_by.check(self.spec)
 
-        if owned_by is not None and (foreign := [row for row in rows if not owned_by.owns(row)]):
-            raise exc.not_found(
-                f"Some records not found: {[getattr(row, ID_FIELD) for row in foreign]}"
-            )
-
-        return rows
+        return await owned_by.read_batch(self._get_many(pks, skip_cache=skip_cache))
 
     async def _get_many(self, pks: Sequence[UUID], *, skip_cache: bool) -> Sequence[R]:
 

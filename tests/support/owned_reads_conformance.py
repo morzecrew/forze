@@ -12,7 +12,9 @@ The claims:
 2. **a foreign row is not found**, and the not-found names the spec as its resource type;
 3. **a foreign row reads exactly like a missing one** — kind, code and resource type, and under
    a non-disclosing posture the rendered envelope;
-4. **a batch holding a foreign id fails like a batch holding a missing id**;
+4. **a batch holding a foreign id fails like a batch holding a missing id**, and a failing
+   batch never says which of its ids failed — one listing only the missing ids tells the
+   caller the rest exist;
 5. **the cache cannot serve a foreign row** — the owner's read puts the row in the cache (the
    leg proves it did, where it has a cache), and another principal's read of it is still
    not found;
@@ -209,6 +211,26 @@ async def check_a_batch_with_a_foreign_id_fails_like_a_missing_one(h: OwnedReads
     _same_answer(h, foreign, missing)
 
 
+async def check_a_batch_does_not_say_which_ids_failed(h: OwnedReadsHarness) -> None:
+    """A mixed batch must not answer differently from a foreign-only or a missing-only one.
+
+    A summary listing only the ids that do not exist tells the caller that every other id it
+    sent — the foreign one included — does.
+    """
+
+    owner = uuid4()
+    mine = await _row(h, owner)
+    theirs = await _row(h, uuid4())
+    absent = uuid4()
+
+    summaries = {
+        (await _error(h.query.get_many(batch, owned_by=_owned(owner)))).summary
+        for batch in ([mine, theirs], [mine, absent], [mine, theirs, absent], [absent, theirs])
+    }
+
+    assert len(summaries) == 1, summaries
+
+
 async def check_the_cache_cannot_serve_a_foreign_row(h: OwnedReadsHarness) -> None:
     owner = uuid4()
     pk = await _row(h, owner)
@@ -243,6 +265,7 @@ OWNED_READS_BATTERY: tuple[Check, ...] = (
     check_a_foreign_row_is_not_found,
     check_a_foreign_row_reads_like_a_missing_one,
     check_a_batch_with_a_foreign_id_fails_like_a_missing_one,
+    check_a_batch_does_not_say_which_ids_failed,
     check_the_cache_cannot_serve_a_foreign_row,
     check_a_misspelled_owner_field_is_refused,
 )

@@ -607,7 +607,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         del skip_cache
 
         if owned_by is not None:
-            owned_by.check(self.spec.read)
+            owned_by.check(self.spec)
             # The owner is part of the lookup, as on the real backends: a foreign row is
             # neither returned nor claimed by a locking read.
             row = await self.find(owned_by.filter(pk), for_update=for_update)
@@ -648,17 +648,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         owned_by: OwnedBy | None = None,
         skip_cache: bool = False,
     ) -> Sequence[R]:
-        if owned_by is not None:
-            owned_by.check(self.spec.read)
+        if owned_by is None:
+            return await self._get_many(pks, skip_cache=skip_cache)
 
-        rows = await self._get_many(pks, skip_cache=skip_cache)
+        owned_by.check(self.spec)
 
-        if owned_by is not None and (foreign := [row for row in rows if not owned_by.owns(row)]):
-            raise exc.not_found(
-                f"Documents not found: {[getattr(row, ID_FIELD) for row in foreign]}"
-            )
-
-        return rows
+        return await owned_by.read_batch(self._get_many(pks, skip_cache=skip_cache))
 
     async def _get_many(self, pks: Sequence[UUID], *, skip_cache: bool) -> Sequence[R]:
         del skip_cache
