@@ -1,8 +1,9 @@
 from collections.abc import Mapping
+from typing import Literal
 
 import attrs
 
-from .model import ExceptionKind
+from .model import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -120,3 +121,72 @@ def http_status_for_kind(kind: ExceptionKind) -> int:
     """
 
     return _EXC_KIND_HTTP_STATUS.get(kind, 500)
+
+
+# ....................... #
+
+_COLLAPSIBLE_KINDS = frozenset({ExceptionKind.AUTHORIZATION, ExceptionKind.NOT_FOUND})
+
+
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class DenialPosture:
+    """How an error about a resource renders to clients.
+
+    ``standard`` (the default) renders every error as it is. ``non_disclosing`` renders an
+    ``authorization`` or ``not_found`` error whose
+    :attr:`~forze.base.exceptions.CoreException.resource_type` is in :attr:`resource_types`
+    as one canonical not-found — same status, body and code whether the row is missing or
+    the caller may not see it — so the response is no longer an existence check. The
+    server-side exception keeps its real kind. This closes the response-shape oracle, not
+    the timing one.
+    """
+
+    mode: Literal["standard", "non_disclosing"] = "standard"
+    """``standard`` renders errors as they are; ``non_disclosing`` collapses covered ones."""
+
+    resource_types: frozenset[str] = attrs.field(default=frozenset(), converter=frozenset)
+    """The resource types (document spec names) a ``non_disclosing`` posture covers."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.mode == "non_disclosing" and not self.resource_types:
+            raise CoreException.configuration(
+                "A non_disclosing DenialPosture must name the resource types it covers.",
+                code="denial_posture_empty",
+            )
+
+    # ....................... #
+
+    def collapses(self, exc: CoreException) -> bool:
+        """Whether *exc* renders as the canonical not-found under this posture."""
+
+        return (
+            self.mode == "non_disclosing"
+            and exc.kind in _COLLAPSIBLE_KINDS
+            and exc.resource_type in self.resource_types
+        )
+
+
+_denial_posture = DenialPosture()
+
+
+def configure_denial_posture(posture: DenialPosture) -> DenialPosture:
+    """Set the process-wide :class:`DenialPosture`; return the previous one.
+
+    Process-wide on purpose: every transport renders errors in its own request task, which
+    a context variable bound at startup would not reach. An
+    :class:`~forze.application.execution.ExecutionRuntime` built with a posture sets it
+    for its scope and restores the previous one on exit.
+    """
+
+    global _denial_posture
+
+    previous, _denial_posture = _denial_posture, posture
+    return previous
+
+
+def current_denial_posture() -> DenialPosture:
+    """Return the process-wide :class:`DenialPosture` (``standard`` unless configured)."""
+
+    return _denial_posture

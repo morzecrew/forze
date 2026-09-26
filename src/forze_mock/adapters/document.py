@@ -27,6 +27,7 @@ from forze.application.contracts.document import (
     DocumentCommandPort,
     DocumentQueryPort,
     DocumentSpec,
+    OwnedBy,
     RowLockMode,
     validate_query_parameters,
 )
@@ -55,6 +56,7 @@ from forze.application.contracts.querying import (
     validate_runtime_filter_fields,
     validate_runtime_sort_fields,
 )
+from forze.application.integrations.document import DocumentNotFoundTagging
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_STREAM_PAGES,
     assert_cursor_advanced,
@@ -101,6 +103,7 @@ from ._document_command import MockDocumentCommandMixin
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride]
+    DocumentNotFoundTagging,
     MockTenancyMixin,
     MockDocumentCommandMixin[R, D, C, U],
     DocumentQueryPort[R],
@@ -597,10 +600,22 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self,
         pk: UUID,
         *,
+        owned_by: OwnedBy | None = None,
         for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> R:
         del skip_cache
+
+        if owned_by is not None:
+            owned_by.check(self.spec.read)
+            # The owner is part of the lookup, as on the real backends: a foreign row is
+            # neither returned nor claimed by a locking read.
+            row = await self.find(owned_by.filter(pk), for_update=for_update)
+
+            if row is None:
+                raise exc.not_found(f"Document not found: {pk}")
+
+            return row
 
         self._require_params_bound()
 
@@ -630,8 +645,22 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         self,
         pks: Sequence[UUID],
         *,
+        owned_by: OwnedBy | None = None,
         skip_cache: bool = False,
     ) -> Sequence[R]:
+        if owned_by is not None:
+            owned_by.check(self.spec.read)
+
+        rows = await self._get_many(pks, skip_cache=skip_cache)
+
+        if owned_by is not None and (foreign := [row for row in rows if not owned_by.owns(row)]):
+            raise exc.not_found(
+                f"Documents not found: {[getattr(row, ID_FIELD) for row in foreign]}"
+            )
+
+        return rows
+
+    async def _get_many(self, pks: Sequence[UUID], *, skip_cache: bool) -> Sequence[R]:
         del skip_cache
 
         self._require_params_bound()

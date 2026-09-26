@@ -5,7 +5,13 @@ from .boundary import (
     ServerErrorHook,
     guard_frame,
 )
-from .egress import exception_egress_policy, http_status_for_kind
+from .egress import (
+    DenialPosture,
+    configure_denial_posture,
+    current_denial_posture,
+    exception_egress_policy,
+    http_status_for_kind,
+)
 from .envelope import (
     GENERIC_INTERNAL_DETAIL,
     INTERNAL_ERROR_CODE,
@@ -37,6 +43,9 @@ __all__ = [
     "ExceptionMapper",
     "exception_egress_policy",
     "http_status_for_kind",
+    "DenialPosture",
+    "configure_denial_posture",
+    "current_denial_posture",
     "ErrorEnvelope",
     "error_envelope",
     "unhandled_error_envelope",

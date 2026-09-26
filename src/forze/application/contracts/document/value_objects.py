@@ -12,8 +12,13 @@ from typing import Literal
 from uuid import UUID
 
 import attrs
+from pydantic import BaseModel
 
+from forze.base.exceptions import exc
+from forze.domain.constants import ID_FIELD
 from forze.domain.models import BaseDTO
+
+from ..querying import QueryFilterExpression
 
 # ----------------------- #
 
@@ -31,6 +36,57 @@ def row_lock_requires_transaction(mode: RowLockMode) -> bool:
     """Return whether *mode* implies a transactional read on non-Postgres backends."""
 
     return mode is not False
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, frozen=True)
+class OwnedBy:
+    """Ownership predicate for a read by primary key: the row's ``field`` must equal ``value``.
+
+    A row owned by someone else is **not found** — the same error, raised by the same read, as a
+    row that does not exist — so a handler cannot serve a foreign row by forgetting a check.
+    ``value`` is a UUID (a principal id) and ``field`` a UUID field of the read model.
+    """
+
+    field: str
+    """Name of the read-model field holding the owner."""
+
+    value: UUID
+    """The owner the row must belong to."""
+
+    # ....................... #
+
+    def filter(self, pk: UUID) -> QueryFilterExpression:  # type: ignore[valid-type]
+        """The query filter selecting *pk* only when it belongs to :attr:`value`."""
+
+        return {"$values": {ID_FIELD: pk, self.field: self.value}}
+
+    # ....................... #
+
+    def check(self, read_model: type[BaseModel]) -> None:
+        """Refuse a :attr:`field` *read_model* does not have.
+
+        Refused rather than answered "not owned": a misspelled field would otherwise turn
+        every read into a not-found, which looks exactly like correct enforcement. Checked
+        before the read, so the answer does not depend on whether the row was cached.
+        """
+
+        if self.field not in read_model.model_fields:
+            raise exc.configuration(
+                f"owned_by names {self.field!r}, which {read_model.__name__} does not have.",
+                code="owned_by_unknown_field",
+            )
+
+    # ....................... #
+
+    def owns(self, row: BaseModel) -> bool:
+        """Whether *row* (a read model) belongs to :attr:`value`."""
+
+        self.check(type(row))
+
+        return bool(getattr(row, self.field) == self.value)
 
 
 # ....................... #

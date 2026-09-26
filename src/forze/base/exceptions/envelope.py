@@ -23,7 +23,7 @@ import attrs
 
 from forze.base.scrubbing import sanitize
 
-from .egress import exception_egress_policy, http_status_for_kind
+from .egress import current_denial_posture, exception_egress_policy, http_status_for_kind
 from .model import CoreException, ExceptionKind
 
 # ----------------------- #
@@ -40,6 +40,9 @@ GENERIC_INTERNAL_DETAIL: Final[str] = "Internal server error"
 
 INTERNAL_ERROR_CODE: Final[str] = "core.internal"
 """Error code for an unhandled, non-:class:`CoreException` error."""
+
+NOT_FOUND_DETAIL: Final[str] = "Not found"
+"""Client-facing detail of the canonical not-found a non-disclosing posture renders."""
 
 # ....................... #
 
@@ -141,8 +144,13 @@ def error_envelope(exc: CoreException) -> ErrorEnvelope:
 
     Pure: server-side errors get a generic detail and no context; client-safe
     kinds keep their summary and expose sanitized context only when the kind's
-    egress policy allows it.
+    egress policy allows it. Under a non-disclosing
+    :class:`~forze.base.exceptions.DenialPosture`, a denial or not-found about a
+    covered resource type renders as one canonical not-found instead.
     """
+
+    if current_denial_posture().collapses(exc):
+        return _canonical_not_found()
 
     policy = exception_egress_policy(exc.kind)
     status = http_status_for_kind(exc.kind)
@@ -160,6 +168,27 @@ def error_envelope(exc: CoreException) -> ErrorEnvelope:
         retryable=policy.retryable,
         server_error=server_error,
         context=context,
+    )
+
+
+# ....................... #
+
+
+def _canonical_not_found() -> ErrorEnvelope:
+    """The one not-found a covered resource type renders, whatever the real reason.
+
+    Nothing in it depends on the exception: a denial and a missing row, on any backend,
+    produce the same status, code, kind, detail and (absent) context.
+    """
+
+    return ErrorEnvelope(
+        code="core.not_found",
+        kind=ExceptionKind.NOT_FOUND,
+        detail=NOT_FOUND_DETAIL,
+        status=http_status_for_kind(ExceptionKind.NOT_FOUND),
+        retryable=exception_egress_policy(ExceptionKind.NOT_FOUND).retryable,
+        server_error=False,
+        context=None,
     )
 
 

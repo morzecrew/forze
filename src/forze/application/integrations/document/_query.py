@@ -5,7 +5,7 @@ from typing import Generic, cast
 from uuid import UUID
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
-from forze.application.contracts.document import RowLockMode
+from forze.application.contracts.document import OwnedBy, RowLockMode
 from forze.application.contracts.document.gateways import DocumentReadGatewayPort
 from forze.application.contracts.querying import (
     AggregatesExpression,
@@ -16,6 +16,7 @@ from forze.application.contracts.querying import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
+from forze.domain.constants import ID_FIELD
 
 from ._pagination import (
     CursorQuery,
@@ -39,27 +40,52 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
         self,
         pk: UUID,
         *,
+        owned_by: OwnedBy | None = None,
         for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> R:
-        """Fetch a single document by primary key, using the cache when available."""
+        """Fetch a single document by primary key, using the cache when available.
+
+        ``owned_by`` goes into the database predicate, so a foreign row is neither read nor
+        locked; a row served from the cache (keyed by pk alone) is checked before it is
+        returned.
+        """
 
         if not self.document_cache.id_rev_capable():
             raise exc.internal(
                 f"Cannot get document of type '{type(self.read_gw.model_type).__name__}' as it does not have defined id field"
             )
 
+        if owned_by is not None:
+            owned_by.check(self.read_gw.model_type)
+
+        async def fetch(lock: RowLockMode) -> R:
+            if owned_by is None:
+                return await self.read_gw.get(pk, for_update=lock)
+
+            row = await self.read_gw.find(owned_by.filter(pk), for_update=lock)
+
+            if row is None:
+                raise exc.not_found(f"Record not found: {pk}")
+
+            return row
+
         if not self.document_cache.read_through_eligible(
             skip_cache=skip_cache,
             return_fields=None,
         ):
-            return await self.read_gw.get(pk, for_update=for_update)
+            return await fetch(for_update)
 
-        return await self.document_cache.get_read_through(
+        row = await self.document_cache.get_read_through(
             pk,
-            fetch_on_cache_fault=lambda: self.read_gw.get(pk, for_update=for_update),
+            fetch_on_cache_fault=lambda: fetch(for_update),
             fetch_on_miss_without_lock=lambda: self.read_gw.get(pk),
         )
+
+        if owned_by is not None and not owned_by.owns(row):
+            raise exc.not_found(f"Record not found: {pk}")
+
+        return row
 
     # ....................... #
 
@@ -67,9 +93,29 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
         self,
         pks: Sequence[UUID],
         *,
+        owned_by: OwnedBy | None = None,
         skip_cache: bool = False,
     ) -> Sequence[R]:
-        """Fetch multiple documents by primary key with cache-aware batching."""
+        """Fetch multiple documents by primary key with cache-aware batching.
+
+        ``owned_by`` is checked on the rows read: a foreign id raises the not-found a missing
+        id raises. (No lock is taken, so checking after the read reveals nothing a predicate
+        would hide.)
+        """
+
+        if owned_by is not None:
+            owned_by.check(self.read_gw.model_type)
+
+        rows = await self._get_many(pks, skip_cache=skip_cache)
+
+        if owned_by is not None and (foreign := [row for row in rows if not owned_by.owns(row)]):
+            raise exc.not_found(
+                f"Some records not found: {[getattr(row, ID_FIELD) for row in foreign]}"
+            )
+
+        return rows
+
+    async def _get_many(self, pks: Sequence[UUID], *, skip_cache: bool) -> Sequence[R]:
 
         if not pks:
             return []
