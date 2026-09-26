@@ -612,8 +612,8 @@ def denial_bodies_identical(*ops: str) -> Invariant:
     property a non-disclosing :class:`~forze.base.exceptions.DenialPosture` promises for
     operations over a covered resource type, stated over what was rendered rather than over
     how the errors were raised — so a handler's own ``not_found("Note 7 not found")``, a denial
-    that forgot to name its resource, or a posture that was never bound, each shows up as a
-    second answer. Reads the envelope digest the operation's error terminal records under
+    that forgot to name its resource, or a posture that was never bound (each not-found then
+    names its own id) shows up as a second answer. Reads the envelope digest the operation's error terminal records under
     tracing, never the text.
     """
 

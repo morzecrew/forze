@@ -46,9 +46,9 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
     ) -> R:
         """Fetch a single document by primary key, using the cache when available.
 
-        ``owned_by`` goes into the database predicate, so a foreign row is neither read nor
-        locked; a row served from the cache (keyed by pk alone) is checked before it is
-        returned.
+        On a direct read ``owned_by`` goes into the database predicate, so a foreign row is
+        neither returned nor locked. A read through the cache (keyed by pk alone) fetches by pk
+        and checks the row before returning it.
         """
 
         if not self.document_cache.id_rev_capable():
