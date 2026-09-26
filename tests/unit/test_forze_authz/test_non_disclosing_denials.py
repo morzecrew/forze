@@ -288,16 +288,21 @@ class TestTheRuntimeBindsThePosture:
         """One process renders with one posture; a later scope must not switch it under the first."""
 
         posture(DenialPosture())
+        refused = build_runtime(MockDepsModule(), denial_posture=DenialPosture())
 
         async with build_runtime(MockDepsModule(), denial_posture=COVERED).scope():
             with pytest.raises(CoreException) as caught:
-                async with build_runtime(MockDepsModule(), denial_posture=DenialPosture()).scope():
+                async with refused.scope():
                     pass
 
             assert caught.value.code == "denial_posture_conflict"
             assert current_denial_posture() == COVERED
 
         assert current_denial_posture() == DenialPosture()
+
+        # The refusal left nothing behind: once the conflict is gone, the same runtime enters.
+        async with refused.scope():
+            pass
 
     async def test_overlapping_runtimes_keep_it_until_the_last_one_exits(self, posture: Any) -> None:
         posture(DenialPosture())
