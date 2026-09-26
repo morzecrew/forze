@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Literal
 
 import attrs
@@ -127,6 +127,20 @@ def http_status_for_kind(kind: ExceptionKind) -> int:
 
 _COLLAPSIBLE_KINDS = frozenset({ExceptionKind.AUTHORIZATION, ExceptionKind.NOT_FOUND})
 
+_DENIAL_POSTURE_MODES = frozenset({"standard", "non_disclosing"})
+
+
+def _resource_types(value: Iterable[str]) -> frozenset[str]:
+    # A bare string is an iterable of its letters: "notes" would cover "n", "o", "t", … and no
+    # real type, so the posture would quietly protect nothing.
+    if isinstance(value, str):
+        raise CoreException.configuration(
+            f"DenialPosture.resource_types takes a collection of names, not the string {value!r}.",
+            code="denial_posture_resource_types",
+        )
+
+    return frozenset(value)
+
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class DenialPosture:
@@ -144,12 +158,21 @@ class DenialPosture:
     mode: Literal["standard", "non_disclosing"] = "standard"
     """``standard`` renders errors as they are; ``non_disclosing`` collapses covered ones."""
 
-    resource_types: frozenset[str] = attrs.field(default=frozenset(), converter=frozenset)
+    resource_types: frozenset[str] = attrs.field(default=frozenset(), converter=_resource_types)
     """The resource types (document spec names) a ``non_disclosing`` posture covers."""
 
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        # Refused, not read as "standard": a misspelled mode would otherwise switch the posture
+        # off without a word.
+        if self.mode not in _DENIAL_POSTURE_MODES:
+            raise CoreException.configuration(
+                f"Unknown DenialPosture mode {self.mode!r}; expected one of "
+                f"{sorted(_DENIAL_POSTURE_MODES)}.",
+                code="denial_posture_mode",
+            )
+
         if self.mode == "non_disclosing" and not self.resource_types:
             raise CoreException.configuration(
                 "A non_disclosing DenialPosture must name the resource types it covers.",

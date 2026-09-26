@@ -254,11 +254,24 @@ class TestStandardPosture:
     def test_standard_is_the_default(self) -> None:
         assert DenialPosture().mode == "standard"
 
-    def test_a_non_disclosing_posture_must_name_its_types(self) -> None:
+    @pytest.mark.parametrize(
+        ("kwargs", "code"),
+        [
+            ({"mode": "non_disclosing"}, "denial_posture_empty"),
+            ({"mode": "non-disclosing", "resource_types": {"notes"}}, "denial_posture_mode"),
+            ({"mode": "non_disclosing", "resource_types": "notes"}, "denial_posture_resource_types"),
+        ],
+        ids=["no_types", "misspelled_mode", "a_bare_string"],
+    )
+    def test_a_posture_that_would_protect_nothing_is_refused(
+        self,
+        kwargs: dict[str, Any],
+        code: str,
+    ) -> None:
         with pytest.raises(CoreException) as caught:
-            DenialPosture(mode="non_disclosing")
+            DenialPosture(**kwargs)
 
-        assert caught.value.code == "denial_posture_empty"
+        assert caught.value.code == code
 
 
 class TestTheRuntimeBindsThePosture:
