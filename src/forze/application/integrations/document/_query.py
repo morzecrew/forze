@@ -46,9 +46,10 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
     ) -> R:
         """Fetch a single document by primary key, using the cache when available.
 
-        On a direct read ``owned_by`` goes into the database predicate, so a foreign row is
-        neither returned nor locked. A read through the cache (keyed by pk alone) fetches by pk
-        and checks the row before returning it.
+        A locking read (``for_update``) always goes to the database: a cached copy cannot hold a
+        row lock. On a direct read ``owned_by`` goes into the database predicate, so a foreign
+        row is neither returned nor locked. A read through the cache (keyed by pk alone) fetches
+        by pk and checks the row before returning it.
         """
 
         if not self.document_cache.id_rev_capable():
@@ -70,7 +71,7 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
 
             return row
 
-        if not self.document_cache.read_through_eligible(
+        if for_update or not self.document_cache.read_through_eligible(
             skip_cache=skip_cache,
             return_fields=None,
         ):
@@ -78,7 +79,7 @@ class DocumentQueryMixin(DocumentPaginationMixin[R], Generic[R]):
 
         row = await self.document_cache.get_read_through(
             pk,
-            fetch_on_cache_fault=lambda: fetch(for_update),
+            fetch_on_cache_fault=lambda: fetch(False),
             fetch_on_miss_without_lock=lambda: self.read_gw.get(pk),
         )
 

@@ -221,7 +221,7 @@ proof — a simulation asserts the invariant over a workload the guarantee is qu
 | `select(filters, return_type, *, for_update=False)` | `T \| None` | returns `None` |
 
 `for_update` takes a `RowLockMode` (`True` / `"nowait"` / `"skip_locked"`) to lock
-the row inside a transaction.
+the row inside a transaction. A locking read always goes to the database, past any read cache.
 
 `owned_by` is the preferred way to say a row belongs to someone. With it, a row whose owner
 field holds another value is **not found** — the same error as a missing row, from the same

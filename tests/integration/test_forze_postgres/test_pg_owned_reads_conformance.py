@@ -133,3 +133,39 @@ async def test_a_locking_read_never_locks_a_foreign_row(
                 f"SELECT id FROM {table} WHERE id = %s FOR UPDATE NOWAIT",  # type: ignore[arg-type]
                 [row.id],
             )
+
+
+@pytest.mark.parametrize("owned", [False, True], ids=["plain", "owned"])
+async def test_a_locking_read_takes_its_lock_even_with_a_cache(
+    pg_client: PostgresClient,
+    postgres_container: Any,
+    owned: bool,
+) -> None:
+    """A cache hit or miss must not stand in for ``FOR UPDATE``: the row is locked, or it is not.
+
+    The owner reads twice so the second read would be a cache hit, then a second session's
+    ``NOWAIT`` must find the row held.
+    """
+
+    ctx, spec, cache_holds = await _context(pg_client, cached=True)
+    owner = uuid4()
+    row = await ctx.doc.command(spec).create(OwnedCreate(owner_id=owner))
+    table = str(spec.name).removeprefix("doc_")
+    dsn = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+    owned_by = OwnedBy(field="owner_id", value=owner) if owned else None
+
+    await ctx.doc.query(spec).get(row.id)
+    assert await cache_holds(row.id)
+
+    async with ctx.tx_ctx.scope("main"):
+        await ctx.doc.query(spec).get(row.id, owned_by=owned_by, for_update=True)
+
+        other = await psycopg.AsyncConnection.connect(dsn, connect_timeout=5)
+
+        async with other:
+            with pytest.raises(psycopg.errors.LockNotAvailable):
+                async with other.transaction():
+                    await other.execute(
+                        f"SELECT id FROM {table} WHERE id = %s FOR UPDATE NOWAIT",  # type: ignore[arg-type]
+                        [row.id],
+                    )
