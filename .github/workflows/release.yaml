@@ -11,7 +11,9 @@ permissions:
 jobs:
   ci:
     name: Run CI before release
-    uses: ./.github/workflows/ci.yml
+    # A reusable-workflow call already resolves to the caller's commit, and this workflow runs only
+    # on a release tag, so the `$/` self-repository form would first be exercised by a live release.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository] see above
     with:
       force_full: true
     permissions:
