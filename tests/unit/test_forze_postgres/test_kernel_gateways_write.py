@@ -5,8 +5,10 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
+import attrs
 import pytest
 
+from forze.application.contracts.guarantees import SerializedBy
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.constants import ID_FIELD
@@ -523,3 +525,19 @@ async def test_create_and_update_use_dedicated_codecs() -> None:
         MyUpdateDoc(name="after"),
         exclude={"unset": True},
     )
+
+
+# ....................... #
+
+
+def test_serializing_writes_without_a_scope_is_refused() -> None:
+    # Every lock key carries the spec's name; without one, two aggregates keyed on the same
+    # value would contend for no reason their declarations state.
+    gw, _ = _build_gateway()
+
+    with pytest.raises(CoreException) as caught:
+        attrs.evolve(gw, serialized_by=(SerializedBy(key=("name",)),))
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    attrs.evolve(gw, serialized_by=(SerializedBy(key=("name",)),), serialization_scope="docs")

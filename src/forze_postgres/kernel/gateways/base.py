@@ -549,8 +549,12 @@ class PostgresGateway[M: BaseModel](
         pks: Sequence[UUID],
         *,
         for_update: bool = False,
+        missing_ok: bool = False,
     ) -> Sequence[M]:
-        """Load domain rows for *pks* from the write relation, preserving input order."""
+        """Load domain rows for *pks* from the write relation, preserving input order.
+
+        A missing row is ``not_found`` unless *missing_ok*, which skips it instead.
+        """
 
         if not pks:
             return []
@@ -591,6 +595,9 @@ class PostgresGateway[M: BaseModel](
             row_by_id = by_id.get(pk)
 
             if row_by_id is None:
+                if missing_ok:
+                    continue
+
                 raise exc.not_found(f"Record not found: {pk!s}")
 
             out.append(self._decode_row(row_by_id))

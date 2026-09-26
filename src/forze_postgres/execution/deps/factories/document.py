@@ -16,6 +16,7 @@ from forze.application.contracts.document import (
     DocumentCommandDepPort,
     DocumentQueryDepPort,
 )
+from forze.application.contracts.guarantees import SerializedBy
 from forze.application.execution.domain import domain_dispatcher_provider
 from forze.application.integrations.crypto import resolve_document_codecs
 from forze.application.integrations.document import DocumentCache
@@ -231,6 +232,8 @@ class ConfigurablePostgresDocument(DocumentCommandDepPort[R, D, C, U]):
             nested_field_hints=self.config.nested_field_hints,
             conflict_target=self.config.conflict_target,
             write_omit_fields=spec.write_omit_fields,
+            serialized_by=tuple(g for g in spec.guarantees if isinstance(g, SerializedBy)),
+            serialization_scope=str(spec.name),
         )
 
         after_commit = ctx.tx_ctx.run_or_defer if cache is not None else None
