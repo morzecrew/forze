@@ -38,6 +38,7 @@ class ConfigurablePostgresIdempotency:
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
             owner_provider=ctx.inv_ctx.get_execution_id,
+            principal_provider=ctx.inv_ctx.get_authn,
             # Detects the optional ``owner`` column; its cache keeps that one query per
             # relation rather than one per operation.
             introspector=ctx.deps.provide(PostgresIntrospectorDepKey),

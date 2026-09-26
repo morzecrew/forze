@@ -15,13 +15,14 @@ from tests.support.execution_context import (
 
 pytest.importorskip("psycopg")
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
     DocumentSpec,
 )
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey
-from forze.application.contracts.idempotency import IdempotencySpec
+from forze.application.contracts.idempotency import IdempotencySpec, scoped_claim_key
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
@@ -815,6 +816,13 @@ class TestPostgresIdempotencyFactory:
 
         with ctx.inv_ctx.bind_metadata(metadata=metadata):
             assert store.claim_owner() == metadata.execution_id
+
+        # The principal scope does not degrade to the old shared key when unwired — it
+        # degrades to the anonymous space, which every store test also passes in.
+        principal = uuid4()
+
+        with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=principal)):
+            assert store.claim_key("k") == scoped_claim_key(principal, "k")
 
     def test_an_idempotency_only_module_resolves_the_store(self) -> None:
         # The factory now asks the container for the introspector, so a module wiring

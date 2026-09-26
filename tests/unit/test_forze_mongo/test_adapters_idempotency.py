@@ -11,7 +11,11 @@ from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.idempotency import IdempotencyRecord, IdempotencySpec
+from forze.application.contracts.idempotency import (
+    IdempotencyRecord,
+    IdempotencySpec,
+    scoped_claim_key,
+)
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import utcnow
@@ -134,7 +138,7 @@ async def test_commit_and_fail_are_fenced_on_the_claim() -> None:
     fail_filter = client.delete_one.await_args.args[1]
 
     for flt in (commit_filter, fail_filter):
-        assert flt["_id"] == store._doc_id(OP, "k", None)
+        assert flt["_id"] == store._doc_id(OP, scoped_claim_key(None, "k"), None)
         assert flt["payload_hash"] == HASH_A
         assert flt["status"] == "pending"
 

@@ -1,4 +1,4 @@
-"""Integration tests (MinIO) for the new storage metadata & access ops.
+"""Integration tests (RustFS and floci) for the new storage metadata & access ops.
 
 Exercises head / copy / move / download_range / download_if_changed /
 put_object_tags end-to-end through the public storage ports against a real

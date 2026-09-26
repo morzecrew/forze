@@ -160,11 +160,15 @@ class AuthzBeforeAuthorize(BeforeFactory):
                 context=context,
             )
             result = await decision_port.authorize(request)
+            # A denial about a resource names its type, so a non-disclosing posture can render
+            # it as that type's not-found; an action-level denial (no resource) stays a 403.
+            resource_type = resource.resource_type if resource is not None else None
 
             if not result.allowed:
                 raise exc.authorization(
                     result.reason or f"Permission denied: {self.action!r}",
                     code="permission_denied",
+                    resource_type=resource_type,
                 )
 
             # Delegation (on-behalf-of): walk the actor chain. Each actor must be
@@ -182,6 +186,7 @@ class AuthzBeforeAuthorize(BeforeFactory):
                     raise exc.authorization(
                         actor_result.reason or f"Delegate not permitted: {self.action!r}",
                         code="delegate_denied",
+                        resource_type=resource_type,
                     )
 
                 if delegation_port is not None:

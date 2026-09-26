@@ -14,6 +14,7 @@ import attrs
 
 from forze.application.contracts.idempotency import (
     ClaimOwnerMixin,
+    ClaimPrincipalMixin,
     IdempotencyPort,
     IdempotencyRecord,
 )
@@ -52,7 +53,9 @@ class _MetaPayload(TypedDict, total=False):
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter, ClaimOwnerMixin):
+class RedisIdempotencyAdapter(
+    IdempotencyPort, RedisBaseAdapter, ClaimOwnerMixin, ClaimPrincipalMixin
+):
     """Redis implementation of :class:`~forze.application.contracts.idempotency.IdempotencyPort`.
 
     Uses ``SET NX`` on a small JSON metadata key for :meth:`begin`, and stores
@@ -161,6 +164,8 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter, ClaimOwnerMixin
         await self._prepare_keys()
         logger.debug("Beginning idempotency for op '%s', key '%s'", op, key[:9] + "...")
 
+        key = self.claim_key(key)
+
         meta_k = self.__meta_key(op, key)
         idem_p, _ = self.__pending_meta(payload_hash)
 
@@ -222,6 +227,8 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter, ClaimOwnerMixin
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return None
 
+        key = self.claim_key(key)
+
         await self._prepare_keys()
         logger.debug(
             "Committing idempotency for op '%s', key '%s'",
@@ -268,6 +275,8 @@ class RedisIdempotencyAdapter(IdempotencyPort, RedisBaseAdapter, ClaimOwnerMixin
         if not key:
             logger.debug("Idempotency key is not provided for op '%s', skipping", op)
             return
+
+        key = self.claim_key(key)
 
         await self._prepare_keys()
         logger.debug(

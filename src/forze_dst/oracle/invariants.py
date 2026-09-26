@@ -604,6 +604,49 @@ def operation_succeeds(*ops: str) -> Invariant:
     return named("operation_succeeds", _check)
 
 
+def denial_bodies_identical(*ops: str) -> Invariant:
+    """Every refusal of an operation renders one response — whatever the reason for it.
+
+    Over the run's declared failures of each named operation (every operation with no *ops*):
+    all that a client saw as a 403 or a 404 must be the same rendered envelope. It is the
+    property a non-disclosing :class:`~forze.base.exceptions.DenialPosture` promises for
+    operations over a covered resource type, stated over what was rendered rather than over
+    how the errors were raised — so a handler's own ``not_found("Note 7 not found")``, a denial
+    that forgot to name its resource, or a posture that was never bound (each not-found then
+    names its own id) shows up as a second answer. Reads the envelope digest the operation's error terminal records under
+    tracing, never the text.
+    """
+
+    wanted = frozenset(ops)
+
+    def _check(history: History) -> list[Violation]:
+        refusals: dict[str, list[Event]] = {}
+
+        for event in history.of_kind("operation"):
+            op = str(event.fields.get("op"))
+
+            if (not wanted or op in wanted) and event.fields.get("status") in (403, 404):
+                refusals.setdefault(op, []).append(event)
+
+        def responses(events: list[Event]) -> set[tuple[Any, Any]]:
+            return {(e.fields.get("status"), e.fields.get("rendered")) for e in events}
+
+        return [
+            Violation(
+                invariant="denial_bodies_identical",
+                message=(
+                    f"operation {op!r} refused with {len(responses(events))} different responses "
+                    f"(statuses {sorted({str(e.fields.get('status')) for e in events})})"
+                ),
+                events=tuple(events),
+            )
+            for op, events in refusals.items()
+            if len(responses(events)) > 1
+        ]
+
+    return named("denial_bodies_identical", _check)
+
+
 def completes_within(op: str, seconds: float) -> Invariant:
     """Every ``op`` operation must finish within *seconds* of **virtual** time (invoke→return).
 

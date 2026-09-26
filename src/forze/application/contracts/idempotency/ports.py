@@ -16,6 +16,11 @@ class IdempotencyPort(Protocol):
     idempotency key, and a payload hash, and replay it when a duplicate request
     is detected.
 
+    Guarantee: **a key belongs to the principal that used it.** Every shipped store scopes
+    its claims to the tenant and the acting principal
+    (:class:`~forze.application.contracts.idempotency.ClaimPrincipalMixin`), so a key in use
+    by another principal behaves as unused — neither refused nor replayed.
+
     Guarantee: **at-least-once with a dedup window**, not exactly-once. A duplicate
     within the record's TTL replays the stored result without re-executing; one that
     arrives after the TTL re-executes — so ``IdempotencySpec.ttl`` must be at least the

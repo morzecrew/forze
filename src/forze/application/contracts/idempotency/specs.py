@@ -29,7 +29,7 @@ class IdempotencySpec(BaseSpec):
     The idempotency store caches an operation's full return value for replay — potentially
     sensitive business data (e.g. a created order, a user record), in plaintext in a
     Forze-owned store (Redis/Postgres). When ``True``, the result bytes are sealed on commit
-    and opened on replay (AAD binds tenant + operation/key); the status/hash metadata stays
+    and opened on replay (AAD binds tenant, principal and operation/key); the status/hash metadata stays
     plaintext. Requires a wired keyring (``KeyringDepKey``) — fail-closed otherwise. Records
     written before enabling this still replay (envelope sniff)."""
 

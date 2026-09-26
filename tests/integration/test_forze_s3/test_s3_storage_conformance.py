@@ -1,6 +1,6 @@
 """S3 storage against live servers — the shared conformance battery.
 
-Runs against both S3 implementations the suite wires (MinIO and floci), which is where three
+Runs against both S3 implementations the suite wires (RustFS and floci), which is where three
 of this battery's checks came from: the two servers disagreed with each other about a second
 ``abort_upload`` and about a same-key copy, and a single-server suite would have called the
 plane consistent.

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, final
 
 import attrs
 
-from forze.base.primitives import StripedAsyncLocks
+from forze.base.primitives import AsyncLockTable, PerOwnerAsyncLocks, StripedAsyncLocks
 
 if TYPE_CHECKING:
     from forze.application.contracts.authn import AuthnEvent
@@ -157,6 +157,18 @@ class MockState:
     cache_bodies: dict[str, dict[tuple[str, str], Any]] = attrs.field(factory=dict)
     idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]] = attrs.field(factory=dict)
     rotating_credential_locks: StripedAsyncLocks = attrs.field(factory=StripedAsyncLocks)
+
+    write_serialization: PerOwnerAsyncLocks = attrs.field(factory=PerOwnerAsyncLocks)
+    """The locks serializing writes per owner (see ``SerializedBy``).
+
+    One lock per key rather than a striped pool: striping collapses distinct owners onto a
+    shared lock, and an aggregate declaring this is entitled to have two *different* owners
+    proceed at once — a simulation over a striped pool would attest a serialization the
+    deployment does not have and hide the contention it does.
+
+    A lock table rather than a plain dict, and that is load-bearing: :meth:`clear` exempts
+    synchronisation machinery **by type**, so a reset cannot empty this one while a caller is
+    waiting inside it and hand the next caller a different lock for the same owner."""
     """Per-credential single-flight for the rotating-credential store.
 
     Lives on the state rather than the adapter so that per-scope store instances — the
@@ -370,11 +382,12 @@ class MockState:
         only factory-defaulted fields, which is the same silent gap a written-out list has:
         the next counter someone adds would quietly survive a reset.
 
-        **Synchronisation primitives are the exception, and it is not cosmetic.** A striped
-        lock table is machinery, not data: replacing it while a caller waits on one of its
-        locks hands the next caller a *different* lock and silently breaks single-flight.
-        Detected by type rather than by name, so a second lock table added later is exempt
-        without anyone remembering to say so.
+        **Synchronisation primitives are the exception, and it is not cosmetic.** A lock table
+        is machinery, not data: replacing it while a caller waits on one of its locks hands the
+        next caller a *different* lock and silently breaks whatever it was serializing —
+        single-flight for the striped table, per-owner write ordering for the exact one.
+        Detected by the shared :class:`~forze.base.primitives.AsyncLockTable` type rather than
+        by name, so a table added later is exempt without anyone remembering to say so.
 
         The lock, the transaction serializer and the id sequence are private and survive for
         the same reason: a reset empties the data, it does not rebuild the state's machinery
@@ -395,7 +408,7 @@ class MockState:
 
                 current = getattr(self, field.name, None)
 
-                if isinstance(current, StripedAsyncLocks):
+                if isinstance(current, AsyncLockTable):
                     continue
 
                 fresh = _fresh_default(self, field.default)

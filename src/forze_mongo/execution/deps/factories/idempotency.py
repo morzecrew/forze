@@ -38,4 +38,5 @@ class ConfigurableMongoIdempotency:
             tenant_aware=self.config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
             owner_provider=ctx.inv_ctx.get_execution_id,
+            principal_provider=ctx.inv_ctx.get_authn,
         )

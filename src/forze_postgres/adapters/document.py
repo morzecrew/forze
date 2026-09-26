@@ -69,6 +69,7 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
         unique_together_skip_null=True,
         non_overlapping=True,
         non_overlapping_filtered=True,
+        serialized_by=True,
     )
     """What this store enforces, given the index or constraint the deployment migrated.
 
@@ -78,6 +79,9 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
     of them arrives as ``conflict`` through the client's error mapping, the same refusal the
     in-memory store raises, which is what makes the parity battery meaningful rather than a
     comparison of two spellings.
+
+    Serializing writes per key is a transaction-scoped advisory lock the write gateway takes
+    before every write, which needs nothing migrated.
     """
 
     batch_size: int = 200

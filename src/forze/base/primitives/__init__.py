@@ -42,6 +42,7 @@ from .entropy_source import (
     secure_token_urlsafe,
 )
 from .fingerprint import (
+    advisory_lock_key,
     build_routing_fingerprint,
     combine_fingerprint,
     connection_string_fingerprint,
@@ -75,7 +76,7 @@ from .selector import StrKeySelector, str_key_selector
 from .sequence import AbstractSequence
 from .sketch import DDSketch, WindowedDDSketch
 from .string import normalize_string
-from .striped_locks import LOCK_STRIPES, StripedAsyncLocks
+from .striped_locks import LOCK_STRIPES, AsyncLockTable, PerOwnerAsyncLocks, StripedAsyncLocks
 from .time_source import (
     FrozenTimeSource,
     SystemTimeSource,
@@ -89,6 +90,9 @@ from .uuid import uuid4, uuid7
 # ----------------------- #
 
 __all__ = [
+    "AsyncLockTable",
+    "PerOwnerAsyncLocks",
+    "advisory_lock_key",
     "utcnow",
     "monotonic",
     "DEFAULT_DRIVER_DEADLINE_GRACE",

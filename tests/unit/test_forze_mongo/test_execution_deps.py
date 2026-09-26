@@ -17,6 +17,7 @@ from forze_mock import MockKeyManagement
 
 pytest.importorskip("pymongo")
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
     DocumentQueryDepKey,
@@ -29,7 +30,11 @@ from forze.application.contracts.durable.function import (
     DurableScheduleStoreDepKey,
 )
 from forze.application.contracts.hlc import HlcCheckpointDepKey
-from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
+from forze.application.contracts.idempotency import (
+    IdempotencyDepKey,
+    IdempotencySpec,
+    scoped_claim_key,
+)
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
@@ -170,7 +175,7 @@ def test_configurable_mongo_idempotency_builds_store() -> None:
     assert isinstance(store, MongoIdempotencyStore)
 
 
-def test_configurable_mongo_idempotency_wires_the_claim_owner() -> None:
+def test_configurable_mongo_idempotency_wires_the_claim_owner_and_principal() -> None:
     # The fence degrades silently without a provider, so a factory that forgot to pass one
     # would leave every claim unowned and every store test still green.
     ctx = _ctx()
@@ -182,6 +187,13 @@ def test_configurable_mongo_idempotency_wires_the_claim_owner() -> None:
 
     with ctx.inv_ctx.bind_metadata(metadata=metadata):
         assert store.claim_owner() == metadata.execution_id
+
+    # The principal scope does not degrade to the old shared key when unwired — it
+    # degrades to the anonymous space, which every store test also passes in.
+    principal = uuid4()
+
+    with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=principal)):
+        assert store.claim_key("k") == scoped_claim_key(principal, "k")
 
 
 def test_mongo_deps_module_ro_only() -> None:

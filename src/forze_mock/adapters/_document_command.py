@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -15,11 +15,21 @@ from uuid import UUID
 
 from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
 from forze.application.contracts.domain import drain_domain_events
-from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
+from forze.application.contracts.guarantees import (
+    NonOverlapping,
+    SerializedBy,
+    UniqueTogether,
+)
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, Period, utcnow
+from forze.base.primitives import JsonDict, Period, advisory_lock_key, utcnow
 from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze_mock.adapters._mvcc import (
+    MvccTx,
+    StatementLocks,
+    current_mvcc_tx,
+    release_write_locks,
+)
 from forze_mock.adapters.tx import ensure_mock_tx_writable
 from forze_mock.query._types import C, D, R, U
 
@@ -250,6 +260,199 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     # ....................... #
 
+    def _serialized_by(self) -> tuple[SerializedBy, ...]:
+        """Every write-serialization declaration this spec makes.
+
+        All of them, not the first: a spec may serialize on more than one axis, and honouring
+        one while ignoring the rest leaves the others reading as rules nothing keeps.
+        """
+
+        return tuple(g for g in self.spec.guarantees if isinstance(g, SerializedBy))
+
+    # ....................... #
+
+    def _owner_keys(
+        self,
+        guarantees: Sequence[SerializedBy],
+        rows: Sequence[Any],
+    ) -> list[int]:
+        """The lock keys *rows* contend on, sorted and without repeats.
+
+        Spec and tenant are part of every key, so two aggregates that happen to key on the same
+        value do not wait on each other and two tenants never do. Sorted, because a call writing
+        several owners that took them in encounter order would deadlock against another call
+        writing the same owners in the other one.
+
+        A row is either an inbound payload or a stored mapping, so the owner is read off
+        whichever it is.
+        """
+
+        tenant = self.require_tenant_if_aware() if self.tenant_aware else None
+        keys: set[int] = set()
+
+        for guarantee in guarantees:
+            for row in rows:
+                if row is None:
+                    continue
+
+                values = [
+                    row.get(field) if isinstance(row, Mapping) else getattr(row, field, None)
+                    for field in guarantee.key
+                ]
+                # The axis is in the key, so two declarations over different fields do not
+                # collide and a row is not serialized against itself twice.
+                keys.add(advisory_lock_key(str(self.spec.name), tenant, *guarantee.key, *values))
+
+        return sorted(keys)
+
+    # ....................... #
+
+    async def _serialize_writes(self, rows: Callable[[], Sequence[Any]]) -> None:
+        """Hold this aggregate's per-owner write lock for every owner a write touches.
+
+        *rows* names what the write touches — the rows it inserts, the rows it changes and
+        where the change moves them — and is asked again after every wait. Taking a lock is an
+        await: while this call waits, a row can move to another owner or be committed into a
+        filter, and the owner it has then was never in the first answer. Whatever new owner the
+        answer names is taken too, and since a row whose owner is held cannot move, it stops
+        growing.
+
+        Held until the transaction ends rather than until the write returns: what a caller needs
+        serialized is its own read-then-write, and a lock released at the write leaves exactly the
+        gap between them open.
+
+        Outside a transaction the write is a statement of its own: every owner is held at once
+        and all are given back as this returns. Giving them back before the write is sound only
+        because every caller writes before it next awaits, so no other writer can run between
+        the two — which is why a caller that decides between writes decides in that same step.
+        """
+
+        guarantees = self._serialized_by()
+
+        if not guarantees:
+            return
+
+        table = self.state.write_serialization
+        mvcc = current_mvcc_tx()
+        holder = mvcc if mvcc is not None else StatementLocks()
+
+        try:
+            while wanted := [
+                key for key in self._owner_keys(guarantees, rows()) if key not in holder.write_locks
+            ]:
+                for key in wanted:
+                    lock = table.for_key(key)
+
+                    if lock.locked():
+                        self._refuse_lock_cycle(holder, key)
+
+                    holder.waiting_for = key
+
+                    try:
+                        await lock.acquire()
+
+                    finally:
+                        holder.waiting_for = None
+
+                    holder.write_locks[key] = lock
+                    table.hold(key, holder)
+
+        finally:
+            if mvcc is None:
+                release_write_locks(holder, self.state)
+
+    # ....................... #
+
+    def _refuse_lock_cycle(self, holder: MvccTx | StatementLocks, key: int) -> None:
+        """Refuse a wait that would close a cycle, instead of joining one.
+
+        Walks from whoever holds *key* to whatever that writer is itself waiting for, and on to
+        its holder. A chain arriving back at a key *holder* already holds is a deadlock: neither
+        side can release first, and without this both would sit there until an operation deadline
+        fired — a hang where the store being modelled detects the cycle and aborts one of them.
+
+        Refused on the side about to *join* the cycle, which is the side that can still give up
+        without having blocked anyone.
+
+        :raises CoreException: ``concurrency`` naming the owner — the kind Postgres gives the
+            same cycle when it detects the deadlock, so a caller's retry policy treats both alike.
+        """
+
+        holders = self.state.write_serialization
+        seen: set[int] = set()
+        cursor: int | None = key
+
+        while cursor is not None and cursor not in seen:
+            seen.add(cursor)
+            other = holders.holder_of(cursor)
+
+            if other is None:
+                return
+
+            if other.waiting_for in holder.write_locks:
+                raise exc.concurrency(
+                    "Two writers want each other's owners, so neither can finish. One is "
+                    "refused rather than both waiting: retrying it after the other finishes "
+                    "takes the owners in one order and succeeds.",
+                    details={"key": str(key)},
+                )
+
+            cursor = other.waiting_for
+
+    # ....................... #
+
+    def _destination(self, stored: Any, patch: Mapping[str, Any]) -> JsonDict | None:
+        """The row *patch* produces when applied to *stored*, or ``None`` if nothing is stored.
+
+        The patch alone is not the destination: a partial one names some of a composite key and
+        leaves the rest, which would read as null and derive a key no row can share — a lock on
+        an owner that does not exist, held while the real destination went unheld.
+        """
+
+        if not isinstance(stored, Mapping):
+            return None
+
+        return {**dict(stored), **dict(patch)}
+
+    # ....................... #
+
+    def _sides(self, pk: UUID, patch: Mapping[str, Any]) -> list[Any]:
+        """The row *pk* as stored now, and where *patch* would move it.
+
+        Both: a patch that moves a row to another owner has to hold the owner it is leaving as
+        well as the one it is joining, or a reader of either sees half the move.
+        """
+
+        stored = self._store().get(pk)
+
+        return [stored, self._destination(stored, patch)]
+
+    # ....................... #
+
+    def _encode_patch(self, dto: U) -> JsonDict:
+        """The update *dto* as a plaintext patch.
+
+        ``encode_mapping`` is the codec's non-encrypting path, so the patch merges cleanly into
+        the decrypted domain and the single ``encode_persistence_mapping(updated)`` afterwards
+        encrypts exactly once — an encrypting codec's ``encode`` is not idempotent, so encoding
+        the patch here would double-encrypt. ``computed_fields`` is excluded to match
+        persistence-dump semantics; for a plain codec this is identical to encoding the model.
+        """
+
+        return self._patch_codec().encode_mapping(
+            cast(Any, dto),
+            exclude={"computed_fields": True, "unset": True},
+        )
+
+    # ....................... #
+
+    async def _serialize_stored(self, *pks: UUID) -> None:
+        """The same, for a write addressed by primary key: the owner is on the stored row."""
+
+        await self._serialize_writes(lambda: [self._store().get(pk) for pk in pks])
+
+    # ....................... #
+
     def _ensure_writable(self) -> None:
         """Reject writes inside a strict read-only mock transaction.
 
@@ -335,24 +538,10 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self._ensure_writable()
         domain = self._build_domain(payload, id)
         serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
+        await self._serialize_writes(lambda: [serialized])
 
         with self.state.lock:
-            store = self._store()
-            if domain.id in store:
-                # Mirror the integration adapters: Postgres maps a duplicate
-                # primary key (UniqueViolation) to ``exc.conflict``.
-                raise exc.conflict(
-                    "Unique violation.",
-                    details={"id": str(domain.id)},
-                )
-            self._write_row(store, domain.id, serialized)
-
-            # Publish-time unique-violation guard: a concurrent transaction may commit the same id
-            # between this statement and this transaction's commit; marking the create lets the MVCC
-            # commit raise ``exc.conflict`` then rather than silently merging (matching Postgres,
-            # which raises 23505 at every isolation level).
-            if conflict_on_duplicate:
-                self._mark_created(domain.id)
+            self._store_created(domain, serialized, conflict_on_duplicate=conflict_on_duplicate)
 
         await drain_domain_events(
             [domain],
@@ -361,6 +550,32 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         )
 
         return self._to_read(serialized) if return_new else None
+
+    def _store_created(
+        self,
+        domain: D,
+        serialized: JsonDict,
+        *,
+        conflict_on_duplicate: bool,
+    ) -> None:
+        """Store a new row; the caller holds :attr:`state.lock` and the row's owners."""
+
+        store = self._store()
+        if domain.id in store:
+            # Mirror the integration adapters: Postgres maps a duplicate
+            # primary key (UniqueViolation) to ``exc.conflict``.
+            raise exc.conflict(
+                "Unique violation.",
+                details={"id": str(domain.id)},
+            )
+        self._write_row(store, domain.id, serialized)
+
+        # Publish-time unique-violation guard: a concurrent transaction may commit the same id
+        # between this statement and this transaction's commit; marking the create lets the MVCC
+        # commit raise ``exc.conflict`` then rather than silently merging (matching Postgres,
+        # which raises 23505 at every isolation level).
+        if conflict_on_duplicate:
+            self._mark_created(domain.id)
 
     # ....................... #
 
@@ -420,6 +635,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     async def ensure(self, id: UUID, payload: C, *, return_new: bool = True) -> R | None:
         self._ensure_writable()
         domain = self._build_domain(payload, id)
+        row = self._apply_tenant(self._domain_codec().encode_persistence_mapping(domain))
+        await self._serialize_writes(lambda: [row])
 
         with self.state.lock:
             store = self._store()
@@ -503,28 +720,42 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         *,
         return_new: bool = True,
     ) -> R | None:
-        # Read-decide-write atomically: holding the (reentrant) state lock across
-        # the delegated call keeps the existence check and the resulting
-        # create/update in one critical section, so two concurrent upserts on the
-        # same id cannot both observe "absent" and race into duplicate creates.
-        # The delegated store mutation happens synchronously before any await
-        # suspension point, so async tasks cannot interleave either.
+        self._ensure_writable()
+        patch = self._encode_patch(update)
+
+        # Every owner either arm could touch — the row's, the one the update would move it to,
+        # and the one a create would write — since which arm runs is decided below.
+        if self._serialized_by():
+            created = self._apply_tenant(
+                self._domain_codec().encode_persistence_mapping(self._build_domain(create, id))
+            )
+            await self._serialize_writes(lambda: [*self._sides(id, patch), created])
+
+        # Read, decide and write in one step with no await inside it: two concurrent upserts on
+        # the same id cannot both observe "absent" and race into duplicate creates, and nothing
+        # lands between the decision and the write it chose.
         with self.state.lock:
             if id in self._store():
                 rev = self._to_domain(dict(self._store()[id])).rev
-                if return_new:
-                    return await self.update(id, rev, update, return_new=True)
-                await self.update(id, rev, update, return_new=False)
-                return None
-            # ``ON CONFLICT DO NOTHING`` idempotency: a concurrent upsert of the same id must not
-            # raise a unique violation (the real adapters converge silently), so the create arm opts
-            # out of the publish-time duplicate guard.
-            return await self._insert(
-                create,
-                id=id,
-                return_new=return_new,
-                conflict_on_duplicate=False,
-            )
+                written, serialized, _ = self._store_updated(id, rev, patch)
+
+            else:
+                written = self._build_domain(create, id)
+                serialized = self._apply_tenant(
+                    self._domain_codec().encode_persistence_mapping(written)
+                )
+                # ``ON CONFLICT DO NOTHING`` idempotency: a concurrent upsert of the same id must
+                # not raise a unique violation (the real adapters converge silently), so the
+                # create arm opts out of the publish-time duplicate guard.
+                self._store_created(written, serialized, conflict_on_duplicate=False)
+
+        await drain_domain_events(
+            [written],
+            dispatcher_provider=lambda: self.dispatcher_provider(),
+            document_name=self.spec.name,
+        )
+
+        return self._to_read(serialized) if return_new else None
 
     # ....................... #
 
@@ -622,38 +853,11 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         return_diff: bool = False,
     ) -> R | JsonDict | tuple[R, JsonDict] | None:
         self._ensure_writable()
-        # ``encode_mapping`` is the codec's non-encrypting path, so the patch is
-        # plaintext: it merges cleanly into the decrypted domain and the single
-        # ``encode_persistence_mapping(updated)`` below encrypts exactly once (an
-        # encrypting codec's ``encode`` is not idempotent, so encoding the patch
-        # here would double-encrypt). ``computed_fields`` is excluded to match
-        # persistence-dump semantics; for a plain codec this is identical to the
-        # previous behavior.
-        patch = self._patch_codec().encode_mapping(
-            cast(Any, dto),
-            exclude={"computed_fields": True, "unset": True},
-        )
+        patch = self._encode_patch(dto)
+        await self._serialize_writes(lambda: self._sides(pk, patch))
 
         with self.state.lock:
-            current_raw = dict(self._ensure_exists(pk))
-            current = self._to_domain(current_raw)
-            self._check_rev(current.rev, rev)
-
-            updated, diff = current.update(patch, materialized=self.spec.materialized)
-            if diff:
-                updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
-
-            serialized = self._apply_tenant(
-                self._domain_codec().encode_persistence_mapping(updated)
-            )
-            self._write_row(self._store(), pk, serialized)
-
-            # A rev-guarded write (caller supplied a rev) is the one read-committed must fail on a
-            # concurrent same-row commit; a blind write (rev is None) is left to lose silently.
-            if rev is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                self._mark_rev_guarded(pk)
-
-            write_diff = {**dict(diff), REV_FIELD: updated.rev} if diff else {}
+            updated, serialized, write_diff = self._store_updated(pk, rev, patch)
 
         await drain_domain_events(
             [updated],
@@ -667,6 +871,34 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         read_result = self._to_read(serialized)
 
         return (read_result, write_diff) if return_diff else read_result
+
+    def _store_updated(
+        self,
+        pk: UUID,
+        rev: int,
+        patch: JsonDict,
+    ) -> tuple[D, JsonDict, JsonDict]:
+        """Apply *patch* to row *pk*; the caller holds :attr:`state.lock` and the row's owners.
+
+        :returns: The updated domain model, the row as stored, and the diff with its new rev.
+        """
+
+        current = self._to_domain(dict(self._ensure_exists(pk)))
+        self._check_rev(current.rev, rev)
+
+        updated, diff = current.update(patch, materialized=self.spec.materialized)
+        if diff:
+            updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
+
+        serialized = self._apply_tenant(self._domain_codec().encode_persistence_mapping(updated))
+        self._write_row(self._store(), pk, serialized)
+
+        # A rev-guarded write (caller supplied a rev) is the one read-committed must fail on a
+        # concurrent same-row commit; a blind write (rev is None) is left to lose silently.
+        if rev is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            self._mark_rev_guarded(pk)
+
+        return updated, serialized, {**dict(diff), REV_FIELD: updated.rev} if diff else {}
 
     # ....................... #
 
@@ -786,17 +1018,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
                 code="core.document.materialized_bulk_update_unsupported",
             )
 
-        # ``encode_mapping`` is the codec's non-encrypting path, so the patch is
-        # plaintext: it merges cleanly into the decrypted domain and the single
-        # ``encode_persistence_mapping(updated)`` below encrypts exactly once (an
-        # encrypting codec's ``encode`` is not idempotent, so encoding the patch
-        # here would double-encrypt). ``computed_fields`` is excluded to match
-        # persistence-dump semantics; for a plain codec this is identical to the
-        # previous behavior.
-        patch = self._patch_codec().encode_mapping(
-            cast(Any, dto),
-            exclude={"computed_fields": True, "unset": True},
-        )
+        patch = self._encode_patch(dto)
 
         if not patch:
             return [] if return_new else 0
@@ -806,14 +1028,26 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         staged: dict[UUID, JsonDict] = {}
         n = 0
 
-        match = self._matcher(filters)
+        selects = self._matcher(filters)
+
+        # Every owner the filter selects, and every owner the patch would move a selected row
+        # to, before the section rather than inside it: a set-based update is one statement on a
+        # real store and takes every lock it needs up front.
+        await self._serialize_writes(
+            lambda: [
+                side
+                for raw in list(self._store().values())
+                if selects(raw)
+                for side in (raw, self._destination(raw, patch))
+            ]
+        )
 
         with self.state.lock:
             store = self._store()
             merged = dict(store.items())
 
             for pk, raw in list(store.items()):
-                if not match(raw):
+                if not selects(raw):
                     continue
 
                 current = self._to_domain(dict(raw))
@@ -954,6 +1188,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def touch(self, pk: UUID, *, return_new: bool = True) -> R | None:
         self._ensure_writable()
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -1009,6 +1244,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
     async def kill(self, pk: UUID) -> None:
         self._ensure_writable()
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             _ = self._ensure_exists(pk)
@@ -1056,6 +1292,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
+
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))
@@ -1149,6 +1387,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         if not self._supports_soft_delete():
             raise exc.internal("Soft deletion is not supported for this model")
+
+        await self._serialize_stored(pk)
 
         with self.state.lock:
             current_raw = dict(self._ensure_exists(pk))

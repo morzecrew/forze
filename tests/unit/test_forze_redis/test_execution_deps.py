@@ -16,7 +16,11 @@ from forze.application.contracts.dlock import (
     DistributedLockQueryDepKey,
     DistributedLockSpec,
 )
-from forze.application.contracts.idempotency import IdempotencyDepKey, IdempotencySpec
+from forze.application.contracts.idempotency import (
+    IdempotencyDepKey,
+    IdempotencySpec,
+    scoped_claim_key,
+)
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
 from forze_redis.adapters import (
@@ -133,7 +137,7 @@ class TestRedisDepsModule:
         assert isinstance(adapter, RedisIdempotencyAdapter)
         assert adapter.ttl == timedelta(minutes=5)
 
-    def test_idempotency_adapter_wires_the_claim_owner(self) -> None:
+    def test_idempotency_adapter_wires_the_claim_owner_and_principal(self) -> None:
         # Without a provider the store degrades to unfenced and every other test stays
         # green, so the wiring is asserted where the wiring happens.
         ctx = _ctx()
@@ -145,6 +149,13 @@ class TestRedisDepsModule:
 
         with ctx.inv_ctx.bind_metadata(metadata=metadata):
             assert adapter.claim_owner() == metadata.execution_id
+
+        # The principal scope does not degrade to the old shared key when unwired — it
+        # degrades to the anonymous space, which every store test also passes in.
+        principal = uuid4()
+
+        with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=principal)):
+            assert adapter.claim_key("k") == scoped_claim_key(principal, "k")
 
     def test_distributed_lock_adapter(self) -> None:
         factory = ConfigurableRedisDistributedLock(

@@ -551,6 +551,14 @@ for the Adya anomalies to act on — the battery's read/write sets are document 
 transactional behaviour is covered by the graph mock conformance suite instead.\
 """
 
+[tool.conformance_manifest.planes.owned_reads]
+scenario = "tests.support.owned_reads_conformance:OWNED_READS_BATTERY"
+dep_keys = []
+engines = ["mock", "postgres", "mongo", "firestore"]
+# The document ports are claimed by the isolation plane; this battery is one more claim on
+# them — whoever provides a document query port owes a leg showing a foreign row is not found.
+derive_from = ["document_query"]
+
 [tool.conformance_manifest.planes.delivery]
 scenario = "forze_dst.conformance.delivery:run_crash_recovery_delivery"
 dep_keys = ["outbox_command", "outbox_query", "outbox_admin", "inbox"]

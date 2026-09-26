@@ -28,7 +28,7 @@ Known, accepted infidelities (spiked/observed 2026-07 against 1.5.32):
   accepted; real S3 and MinIO return 403), and expiry enforcement is
   environment-dependent (a 1s-expiry URL dies locally but never expires on CI
   runners). Both negative presign tests skip on floci and assert the
-  properties against MinIO.
+  properties against RustFS.
 """
 
 from __future__ import annotations

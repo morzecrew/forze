@@ -140,6 +140,8 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
 
         terminal = by_corr.get(invoke.seq)
 
+        rendered: Any = None
+
         if terminal is None:
             outcome, error = "incomplete", None
             returned_at, end_seq = invoke.at, invoke.seq
@@ -148,6 +150,8 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
             outcome = terminal.outcome or "ok"
             error = terminal.error
             returned_at, end_seq = terminal.at, terminal.seq
+            # A declared failure's terminal carries what the client was shown (status + digest).
+            rendered = terminal.result if outcome == "failed" else None
 
         record_event(
             "operation",
@@ -156,6 +160,8 @@ def project_operation_events(trace_events: Sequence[Any]) -> None:
             op=invoke.op,
             outcome=outcome,
             error=error,
+            status=rendered.get("status") if rendered else None,
+            rendered=rendered.get("rendered") if rendered else None,
             invoked_at=invoke.at,
             returned_at=returned_at,
             start_seq=invoke.seq,

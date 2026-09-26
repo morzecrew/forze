@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.idempotency import IdempotencyRecord
+from forze.application.contracts.idempotency import IdempotencyRecord, scoped_claim_key
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.codecs import JsonCodec
 from forze.base.exceptions import CoreException
@@ -21,7 +21,8 @@ _CODEC = JsonCodec()
 
 
 def _digest(key: str) -> str:
-    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+    # No principal is wired here, so the adapter stores every key in the anonymous space.
+    return hashlib.sha256(scoped_claim_key(None, key).encode("utf-8")).hexdigest()
 
 
 def _pending_bytes(payload_hash: str) -> bytes:
@@ -145,11 +146,11 @@ def _body_without_tenant(key: str = "test-key") -> str:
 
 
 def _meta(adapter: RedisIdempotencyAdapter, op: str, key: str) -> str:
-    return adapter._RedisIdempotencyAdapter__meta_key(op, key)  # type: ignore[attr-defined]
+    return adapter._RedisIdempotencyAdapter__meta_key(op, adapter.claim_key(key))  # type: ignore[attr-defined]
 
 
 def _body(adapter: RedisIdempotencyAdapter, op: str, key: str) -> str:
-    return adapter._RedisIdempotencyAdapter__body_key(op, key)  # type: ignore[attr-defined]
+    return adapter._RedisIdempotencyAdapter__body_key(op, adapter.claim_key(key))  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------- #

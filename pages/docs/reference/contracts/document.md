@@ -120,6 +120,24 @@ Two sentences carry the whole doctrine:
 | `UniqueTogether(fields=…, skip_null=True)` | …exempting tuples holding a null | partial unique index | `partialFilterExpression` with `$type` | ✅ |
 | `NonOverlapping(key=…, period=…)` | no two rows for one key hold overlapping [periods](../../core-concepts/domain-layer.md#a-period-and-which-end-is-in-force) | `EXCLUDE USING gist` | — | ✅ |
 | `NonOverlapping(key=…, period=…, where=…)` | …among the rows the filter selects | `EXCLUDE … WHERE (…)` | — | ✅ |
+| `SerializedBy(key=…)` | two writes for one key never run at once | `pg_advisory_xact_lock` | — | ✅ |
+
+`SerializedBy` is the one member about write *ordering* rather than about stored rows. It says
+two writes for one key never run at once — the rule that otherwise lives in whichever writer
+remembered to take a lock, and holds until somebody adds the next writer.
+
+On Postgres every write takes a transaction-scoped advisory lock per owner before it writes, held
+until the transaction ends — so there is nothing to migrate. A write outside a transaction runs in
+one of its own, so its lock still covers it. A write that names a row by id reads the row first to
+learn its owner, which is one extra query, paid only by a spec that declares this. Two
+transactions that each hold the owner the other wants are a deadlock Postgres detects: one is
+refused as `concurrency`, which is retryable, and the in-memory store refuses the same cycle the
+same way. Mongo has no advisory-lock mechanism and refuses the declaration.
+
+It **serializes, it does not validate**, and the difference is worth stating twice: the lock is
+taken before the *write*, so a handler that reads, decides, and then writes still made its
+decision on an unprotected read. What the declaration removes is two writes landing at once;
+making a read-then-write atomic is a different property, and reads are never serialized by this.
 
 Mongo refuses `NonOverlapping`, and will keep refusing it: non-overlap is a comparison *between*
 two rows rather than a property of one row's fields, so unlike filtered uniqueness there is no
@@ -196,14 +214,34 @@ proof — a simulation asserts the invariant over a workload the guarantee is qu
 
 | Method | Returns | On miss |
 |--------|---------|---------|
-| `get(pk, *, for_update=False, skip_cache=False)` | `R` | raises `not_found` |
-| `get_many(pks, *, skip_cache=False)` | `Sequence[R]` | raises `not_found` (lists missing) |
+| `get(pk, *, owned_by=None, for_update=False, skip_cache=False)` | `R` | raises `not_found` |
+| `get_many(pks, *, owned_by=None, skip_cache=False)` | `Sequence[R]` | raises `not_found` (lists missing) |
 | `find(filters, *, for_update=False)` | `R \| None` | returns `None` |
 | `project(filters, fields, *, for_update=False)` | `JsonDict \| None` | returns `None` |
 | `select(filters, return_type, *, for_update=False)` | `T \| None` | returns `None` |
 
 `for_update` takes a `RowLockMode` (`True` / `"nowait"` / `"skip_locked"`) to lock
-the row inside a transaction.
+the row inside a transaction. A locking read always goes to the database, past any read cache.
+
+`owned_by` is the preferred way to say a row belongs to someone. With it, a row whose owner
+field holds another value is **not found** — the same error as a missing row, from the same
+read — so a handler cannot serve a foreign row by forgetting a check:
+
+```python
+from forze.application.contracts.document import OwnedBy
+
+note = await ctx.doc.query(NOTES).get(pk, owned_by=OwnedBy(field="owner_id", value=principal_id))
+```
+
+The owner goes into the database predicate, so a locking read never locks a foreign row; a row
+served from the read cache is checked before it is returned. In `get_many`, a foreign id fails
+the call exactly as a missing id does, with one summary that names no id — a list of only the
+missing ids would tell the caller the others exist. `field` must be a stored, filterable UUID
+field of the read model: one the model lacks, one sealed with randomized encryption, or a lenient
+read field is refused as a `configuration` error before the read, rather than answered with a
+not-found on one path and something else on the other.
+Pair it with a [non-disclosing posture](../errors.md#non-disclosing-denials) so the not-found
+also renders like a denial.
 
 ### Fetch many
 

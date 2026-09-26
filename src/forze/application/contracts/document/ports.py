@@ -25,7 +25,7 @@ from ..querying import (
     QuerySortExpression,
 )
 from .specs import DocumentSpec
-from .value_objects import KeyedCreate, KeyedUpdate, RowLockMode, UpsertItem
+from .value_objects import KeyedCreate, KeyedUpdate, OwnedBy, RowLockMode, UpsertItem
 
 # ----------------------- #
 
@@ -81,19 +81,29 @@ class DocumentQueryPort(BaseDocumentPort[R, Any, Any, Any], Protocol[R]):
         self,
         pk: UUID,
         *,
+        owned_by: OwnedBy | None = None,
         for_update: RowLockMode = False,
         skip_cache: bool = False,
     ) -> Awaitable[R]:
-        """Fetch a single document by primary key as the typed read model."""
+        """Fetch a single document by primary key as the typed read model.
+
+        With ``owned_by``, a row belonging to someone else raises the same not-found as a
+        missing row; a locking read never locks it.
+        """
         ...  # pragma: no cover
 
     def get_many(
         self,
         pks: Sequence[UUID],
         *,
+        owned_by: OwnedBy | None = None,
         skip_cache: bool = False,
     ) -> Awaitable[Sequence[R]]:
-        """Fetch multiple documents by primary key as typed read models."""
+        """Fetch multiple documents by primary key as typed read models.
+
+        With ``owned_by``, an id belonging to someone else raises the same not-found as a
+        missing id.
+        """
         ...  # pragma: no cover
 
     def find(

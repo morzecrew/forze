@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import timedelta
 from uuid import UUID, uuid4
 
 import attrs
 import pytest
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.crypto import (
     AesGcmAead,
     KeyRef,
     StaticKeyDirectory,
 )
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencyRecord
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import Keyring, payload_aad
 from forze.application.integrations.idempotency import (
     EncryptingIdempotencyPort,
     encrypting_idempotency_port,
 )
+from forze.application.integrations.idempotency.encryption import IDEMPOTENCY_PAYLOAD_DOMAIN
 from forze.base.crypto import is_envelope
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock import MockKeyManagement, MockState
@@ -112,6 +115,73 @@ async def test_aad_binds_op_and_key() -> None:
     store.records[("op-b", "k")] = IdempotencyRecord(result=sealed)
     with pytest.raises(CoreException):
         await port.begin("op-b", "k", "h")
+
+
+@pytest.mark.asyncio
+async def test_a_result_sealed_for_one_principal_does_not_open_for_another() -> None:
+    # The stores keep two principals' claims apart; the binding is the second wall, so a
+    # record that reached the wrong caller anyway — a store that forgot to scope — is noise.
+    store = _FakeStore()
+    keyring = _keyring()
+    alice = AuthnIdentity(principal_id=uuid4())
+    bob = AuthnIdentity(principal_id=uuid4())
+
+    def as_(identity: AuthnIdentity) -> EncryptingIdempotencyPort:
+        return EncryptingIdempotencyPort(
+            inner=store, cipher=keyring, tenant_provider=lambda: None, principal_provider=lambda: identity
+        )
+
+    await as_(alice).commit("op", "k", "h", IdempotencyRecord(result=b"alice's"))
+
+    replayed = await as_(alice).begin("op", "k", "h")
+    assert replayed is not None and replayed.result == b"alice's"
+
+    with pytest.raises(CoreException):
+        await as_(bob).begin("op", "k", "h")
+
+
+@attrs.define(slots=True)
+class _ScopedFakeStore(_FakeStore):
+    """A store that scopes its claims to a principal, the way every shipped one does."""
+
+    principal_provider: Callable[[], AuthnIdentity | None] | None = None
+
+
+@pytest.mark.asyncio
+async def test_a_wrapper_given_no_provider_binds_the_stores_principal() -> None:
+    # Built directly around a scoped store, with no provider of its own, the wrapper must still
+    # bind whoever the store scopes to — or a record copied from one principal's claim into
+    # another's opens for the second. The fake keeps both under one key to stand for the copy.
+    alice = AuthnIdentity(principal_id=uuid4())
+    bob = AuthnIdentity(principal_id=uuid4())
+    acting = [alice]
+    store = _ScopedFakeStore(principal_provider=lambda: acting[0])
+    port = EncryptingIdempotencyPort(inner=store, cipher=_keyring(), tenant_provider=lambda: None)
+
+    await port.commit("op", "k", "h", IdempotencyRecord(result=b"alice's"))
+
+    acting[0] = bob
+
+    with pytest.raises(CoreException):
+        await port.begin("op", "k", "h")
+
+
+@pytest.mark.asyncio
+async def test_a_record_sealed_before_claims_were_scoped_does_not_open() -> None:
+    # The old binding named the caller's raw key; a record sealed under it must not open under
+    # the scoped one, anonymous caller included, or the scope would be a key format only.
+    store = _FakeStore()
+    keyring = _keyring()
+    old_aad = payload_aad(IDEMPOTENCY_PAYLOAD_DOMAIN, None, f"{len('op')}:op:k")
+    sealed = await keyring.encrypt(b"before", tenant=None, aad=old_aad)
+    store.records[("op", "k")] = IdempotencyRecord(result=sealed)
+
+    port = EncryptingIdempotencyPort(inner=store, cipher=keyring, tenant_provider=lambda: None)
+
+    with pytest.raises(CoreException):
+        await port.begin("op", "k", "h")
+
+    assert await keyring.decrypt(sealed, aad=old_aad) == b"before"
 
 
 def test_fail_closed_without_keyring() -> None:
