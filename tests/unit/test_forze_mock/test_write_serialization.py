@@ -422,6 +422,7 @@ class TestTwoTransactionsWantingEachOthersOwners:
         ctx = _ctx(state)
         took_first = [asyncio.Event(), asyncio.Event()]
         outcomes: list[str] = []
+        kinds: list[ExceptionKind] = []
 
         async def writer(index: int, first: str, second: str) -> None:
             tx = _tx(state)
@@ -437,8 +438,9 @@ class TestTwoTransactionsWantingEachOthersOwners:
 
                 outcomes.append(f"{index}:ok")
 
-            except CoreException:
+            except CoreException as caught:
                 outcomes.append(f"{index}:refused")
+                kinds.append(caught.kind)
 
         await asyncio.wait_for(
             asyncio.gather(writer(0, "o1", "o2"), writer(1, "o2", "o1")),
@@ -450,6 +452,8 @@ class TestTwoTransactionsWantingEachOthersOwners:
             "0:refused",
             "1:ok",
         ], outcomes
+        # The kind Postgres gives the same cycle when it detects the deadlock.
+        assert kinds == [ExceptionKind.CONCURRENCY], kinds
         assert state.write_serialization.held() == ()
 
     async def test_the_same_two_owners_in_one_order_both_succeed(self) -> None:
@@ -664,7 +668,7 @@ class TestAWriteOutsideATransactionWaitsForEveryOwner:
         )
 
         assert isinstance(refused, CoreException), refused
-        assert refused.kind is ExceptionKind.CONFLICT
+        assert refused.kind is ExceptionKind.CONCURRENCY
         assert moved.owner == second
 
     async def test_a_chain_through_a_key_just_given_back_is_not_a_cycle(self) -> None:
@@ -681,7 +685,7 @@ class TestAWriteOutsideATransactionWaitsForEveryOwner:
         with pytest.raises(CoreException) as caught:
             port._refuse_lock_cycle(StatementLocks(write_locks={2: None}), 1)
 
-        assert caught.value.kind is ExceptionKind.CONFLICT
+        assert caught.value.kind is ExceptionKind.CONCURRENCY
 
     async def test_a_row_that_changes_owner_while_the_write_waits_is_held_by_its_new_one(
         self,

@@ -8,6 +8,7 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
     document_codecs_for_write_types,
 )
+from forze.application.contracts.guarantees import SerializedBy
 from forze.application.execution import ExecutionContext, resolve_resilience_executor
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze_postgres.kernel.relation import RelationSpec
@@ -135,6 +136,8 @@ def doc_write_gw(
     nested_field_hints: Mapping[str, type[Any]] | None = None,
     conflict_target: tuple[str, ...] | None = None,
     write_omit_fields: frozenset[str] = frozenset(),
+    serialized_by: tuple[SerializedBy, ...] = (),
+    serialization_scope: str = "",
 ) -> PostgresWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -150,6 +153,8 @@ def doc_write_gw(
     :param bookkeeping_strategy: Bookkeeping strategy.
     :param tenant_aware: Whether the document is tenant-aware.
     :param conflict_target: Optional ``ON CONFLICT`` columns; ``None`` infers PRIMARY KEY.
+    :param serialized_by: The spec's ``SerializedBy`` declarations, whose writes are kept apart.
+    :param serialization_scope: The spec's name, carried by every lock key.
     :returns: Postgres write gateway.
     """
 
@@ -223,4 +228,6 @@ def doc_write_gw(
         tenant_aware=tenant_aware,
         conflict_target=conflict_target,
         resilience=resolve_resilience_executor(ctx),
+        serialized_by=serialized_by,
+        serialization_scope=serialization_scope,
     )
