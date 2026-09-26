@@ -10,6 +10,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from pydantic import BaseModel
 
 from forze.application.contracts.crypto import FieldEncryption
 from forze.application.contracts.document import OwnedBy
@@ -62,3 +63,17 @@ async def test_an_adapter_refuses_it_before_reading() -> None:
             await read
 
         assert caught.value.code == "owned_by_unfilterable_field"
+
+
+async def test_a_batch_read_that_fails_otherwise_is_not_turned_into_a_not_found() -> None:
+    """Only a missing row is folded into the one summary; an outage must still read as one."""
+
+    outage = CoreException.infrastructure("database unavailable")
+
+    async def read() -> list[BaseModel]:
+        raise outage
+
+    with pytest.raises(CoreException) as caught:
+        await OwnedBy(field="owner_id", value=uuid4()).read_batch(read())
+
+    assert caught.value is outage
