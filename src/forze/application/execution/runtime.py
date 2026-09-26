@@ -1,12 +1,7 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
-from collections.abc import AsyncGenerator, Iterator
-from contextlib import (
-    AbstractContextManager,
-    asynccontextmanager,
-    contextmanager,
-    nullcontext,
-)
+from collections.abc import AsyncGenerator
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from datetime import timedelta
 from enum import StrEnum
 from typing import final
@@ -25,12 +20,7 @@ from forze.application.contracts.querying import (
     bind_cursor_cipher,
     bind_cursor_signer,
 )
-from forze.base.exceptions import (
-    CoreException,
-    DenialPosture,
-    configure_denial_posture,
-    exc,
-)
+from forze.base.exceptions import CoreException, DenialPosture, bind_denial_posture, exc
 from forze.base.primitives import (
     CpuExecutor,
     OnceCell,
@@ -87,20 +77,6 @@ def _positive_cpu_workers(_instance: object, _attribute: object, value: int | No
             "leave it None for default sizing.",
             code="core.runtime.cpu_workers_invalid",
         )
-
-
-# ....................... #
-
-
-@contextmanager
-def _denial_posture_bound(posture: DenialPosture) -> Iterator[None]:
-    previous = configure_denial_posture(posture)
-
-    try:
-        yield
-
-    finally:
-        configure_denial_posture(previous)
 
 
 # ....................... #
@@ -253,7 +229,8 @@ class ExecutionRuntime:
     denial_posture: DenialPosture | None = None
     """Optional :class:`~forze.base.exceptions.DenialPosture` — how a denial about a resource
     renders to clients. Set process-wide while :meth:`scope` is entered (every transport renders
-    errors in its own request task) and the previous posture restored on exit. ``None``
+    errors in its own request task) and the previous posture restored when the last runtime
+    holding it exits; a scope whose posture differs from one already held is refused. ``None``
     (default) leaves the process's posture alone, which is ``standard`` unless configured."""
 
     # ....................... #
@@ -498,7 +475,6 @@ class ExecutionRuntime:
         """
 
         logger.info("Entering execution runtime scope")
-        self.create_context()
 
         # Bind a CPU-offload executor for startup, body, and shutdown, by priority:
         #   1. an injected executor     -> bound, caller-owned (never closed here);
@@ -538,13 +514,17 @@ class ExecutionRuntime:
         )
 
         posture_bind: AbstractContextManager[None] = (
-            _denial_posture_bound(self.denial_posture)
+            bind_denial_posture(self.denial_posture)
             if self.denial_posture is not None
             else nullcontext()
         )
 
         try:
             with bind, sign_bind, cipher_bind, posture_bind:
+                # Inside the binds, so one that refuses (a conflicting denial posture) leaves no
+                # context behind for the next scope to trip over.
+                self.create_context()
+
                 try:
                     await self.startup()
 

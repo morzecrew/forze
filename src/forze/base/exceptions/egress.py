@@ -1,4 +1,5 @@
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from typing import Literal
 
 import attrs
@@ -198,9 +199,8 @@ def configure_denial_posture(posture: DenialPosture) -> DenialPosture:
     """Set the process-wide :class:`DenialPosture`; return the previous one.
 
     Process-wide on purpose: every transport renders errors in its own request task, which
-    a context variable bound at startup would not reach. An
-    :class:`~forze.application.execution.ExecutionRuntime` built with a posture sets it
-    for its scope and restores the previous one on exit.
+    a context variable bound at startup would not reach. A runtime holds its posture through
+    :func:`bind_denial_posture` instead.
     """
 
     global _denial_posture
@@ -213,3 +213,53 @@ def current_denial_posture() -> DenialPosture:
     """Return the process-wide :class:`DenialPosture` (``standard`` unless configured)."""
 
     return _denial_posture
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True)
+class _Held:
+    posture: DenialPosture
+    previous: DenialPosture
+    holders: int = 0
+
+
+_held: _Held | None = None
+
+
+@contextmanager
+def bind_denial_posture(posture: DenialPosture) -> Iterator[None]:
+    """Hold *posture* process-wide for the block — an execution runtime's scope.
+
+    Overlapping holders must agree: a second one asking for a different posture is refused, since
+    the process renders every request's errors with one posture and switching it would disclose
+    under the first holder's covered types. The posture in force before the first holder is
+    restored when the last one exits, whatever order they exit in.
+    """
+
+    global _held
+
+    held = _held
+
+    if held is None:
+        held = _held = _Held(posture=posture, previous=configure_denial_posture(posture))
+
+    elif held.posture != posture:
+        raise CoreException.configuration(
+            "A runtime scope asked for a different DenialPosture than the one already held in "
+            "this process; every runtime in one process must use the same posture.",
+            code="denial_posture_conflict",
+        )
+
+    held.holders += 1
+
+    try:
+        yield
+
+    finally:
+        held.holders -= 1
+
+        if held.holders == 0:
+            _held = None
+            configure_denial_posture(held.previous)

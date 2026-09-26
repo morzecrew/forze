@@ -7,6 +7,7 @@ from .boundary import (
 )
 from .egress import (
     DenialPosture,
+    bind_denial_posture,
     configure_denial_posture,
     current_denial_posture,
     exception_egress_policy,
@@ -44,6 +45,7 @@ __all__ = [
     "exception_egress_policy",
     "http_status_for_kind",
     "DenialPosture",
+    "bind_denial_posture",
     "configure_denial_posture",
     "current_denial_posture",
     "ErrorEnvelope",

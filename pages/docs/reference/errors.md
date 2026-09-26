@@ -78,7 +78,9 @@ runtime = build_runtime(
 )
 ```
 
-The runtime sets the posture for the whole process while its scope is entered. What is covered:
+The runtime sets the posture for the whole process while its scope is entered, and every runtime
+in one process must use the same one: a scope asking for a different posture than one already
+held is refused. What is covered:
 
 - a denial from the authz before-hook when the hook has a `resource_factory` — it carries the
   resource's `resource_type`;
