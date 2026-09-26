@@ -6819,7 +6819,7 @@ wiring:</p>
 <tr>
 <td><code>SerializedBy(key=…)</code></td>
 <td>two writes for one key never run at once</td>
-<td>—</td>
+<td><code>pg_advisory_xact_lock</code></td>
 <td>—</td>
 <td>✅</td>
 </tr>
@@ -6827,9 +6827,14 @@ wiring:</p>
 </table>
 <p><code>SerializedBy</code> is the one member about write <em>ordering</em> rather than about stored rows. It says
 two writes for one key never run at once — the rule that otherwise lives in whichever writer
-remembered to take a lock, and holds until somebody adds the next writer. The in-memory store
-keeps it; no backend with a connection maps it yet, so a spec declaring it is wireable under
-simulation and refused everywhere else.</p>
+remembered to take a lock, and holds until somebody adds the next writer.</p>
+<p>On Postgres every write takes a transaction-scoped advisory lock per owner before it writes, held
+until the transaction ends — so there is nothing to migrate. A write outside a transaction runs in
+one of its own, so its lock still covers it. A write that names a row by id reads the row first to
+learn its owner, which is one extra query, paid only by a spec that declares this. Two
+transactions that each hold the owner the other wants are a deadlock Postgres detects: one is
+refused as <code>concurrency</code>, which is retryable, and the in-memory store refuses the same cycle the
+same way. Mongo has no advisory-lock mechanism and refuses the declaration.</p>
 <p>It <strong>serializes, it does not validate</strong>, and the difference is worth stating twice: the lock is
 taken before the <em>write</em>, so a handler that reads, decides, and then writes still made its
 decision on an unprotected read. What the declaration removes is two writes landing at once;
