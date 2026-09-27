@@ -122,3 +122,38 @@ proposal: ASSUMED — `holds` outside the two values is refused at construction 
 ```
 
 **Drift count: 0**
+
+## Self-audit, round 1 — 2026-09-27
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: discovery
+at: 2026-09-27T11:40:00Z
+attempt: 2
+claim: the earlier entry's stripping of the deferral clause before the predicate is read changes nothing observable — `_predicate_names` matches identifiers case-sensitively, Postgres folds an unquoted identifier to lower case and renders the clause in upper case, so the clause can collide only with a quoted all-capitals column named `"DEFERRED"`; sabotage removing the strip survived a leg written to kill it, which is the proof
+evidence: src/forze_postgres/kernel/catalog/validation/validate_schema.py:423
+action: decided
+proposal: the strip and its leg are removed rather than kept as code that cannot be shown to do anything; deferral is still read from `condeferred`, never from the definition text.
+```
+
+**Drift count: 0**
+
+Findings, round 1 (scope: the branch — vocabulary, reconciliation, mock enforcement, Postgres
+introspection and startup, docs, changelog):
+
+1. **Fixed — code that did nothing.** The deferral-clause strip (entry above): sabotage removing
+   it survived a leg written to kill it. Removed, with the leg.
+2. **Fixed — an untested path.** The set-based update (`update_matching`) validates a staged
+   batch through its own call, and nothing exercised its deferral: a mutant making it never
+   defer survived the battery. A leg now drives a bulk update through a transient duplicate
+   inside a transaction.
+
+Checks run: sabotage, 17 mutants — 16 killed by an assertion (mock eager check both ways, the
+empty-namespace recheck, every reconciliation arm, the moment validation, the foreign-key join,
+deferral read and compared for both members, both DDL forms, the partial-at-commit refusal, the
+adapter flag), the 17th the equivalent mutant above. Patch coverage 100% (68/68 added source
+lines) over the unit suites and the Postgres guarantee file. The specification's test list is
+covered point by point, the parity legs comparing the two stores in one test.
+
+**Drift count: 0**

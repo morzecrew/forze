@@ -136,6 +136,19 @@ class TestUniquenessHoldingAtCommit:
         assert _is_conflict(caught.value)
         assert await _positions(ctx, spec) == []
 
+    async def test_a_set_based_update_may_pass_through_one_too(self) -> None:
+        # The bulk path validates the whole staged batch rather than row by row; inside a
+        # transaction it leaves a commit guarantee to the commit as well.
+        spec = _spec(AT_COMMIT)
+        ctx, first, second = await _list_of_two(spec)
+        command = ctx.doc.command(spec)
+
+        async with ctx.tx_ctx.scope("mock"):
+            await command.update_matching({"$values": {"id": first.id}}, _ItemUpdate(position=1))
+            await command.update(second.id, second.rev, _ItemUpdate(position=2))
+
+        assert await _positions(ctx, spec) == [1, 2]
+
     async def test_outside_a_transaction_the_write_is_the_commit(self) -> None:
         spec = _spec(AT_COMMIT)
         ctx, _, _ = await _list_of_two(spec)
