@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Final, Literal, get_args
 from uuid import UUID
 
 # ----------------------- #
@@ -72,6 +72,14 @@ HierarchyValue = str | Sequence[str]
 
 Op = EqOp | OrdOp | MembOp | UnaryOp | SetRelOp | TextOp | HierarchyOp
 """All supported filter operators."""
+
+ALL_VALUE_OPS: Final[frozenset[str]] = frozenset(
+    op for ops in (EqOp, OrdOp, MembOp, UnaryOp, SetRelOp, TextOp) for op in get_args(ops)
+)
+"""Every operator the DSL allows on a top-level field predicate: the ``Op`` set without the
+hierarchy operators, which a backend advertises separately. Here rather than beside the other
+runtime sets in ``capabilities`` because the parser needs it, and ``capabilities`` imports the
+parser's package."""
 
 # ....................... #
 

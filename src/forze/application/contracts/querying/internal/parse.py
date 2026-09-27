@@ -28,6 +28,7 @@ from ..guards import (
     is_query_value_shortcut,
 )
 from ..types import (
+    ALL_VALUE_OPS,
     CompareOp,
     EqOp,
     HierarchyOp,
@@ -60,6 +61,12 @@ _TEXT_OPS: frozenset[str] = frozenset(get_args(TextOp))
 _MEMB_OPS: frozenset[str] = frozenset(get_args(MembOp))
 _ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS | _MEMB_OPS
 _COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
+_FIELDS_MIGRATION = "Before 0.7 `$fields` held value predicates; they belong under `$values` now."
+"""Appended to every `$fields` refusal that has the shape of a pre-0.7 value predicate.
+
+`$fields` kept its key and changed its meaning, so old filters stay valid dictionaries and fail
+only when parsed; one sentence shared by every such refusal keeps them naming the migration
+rather than the symptom, and keeps them from drifting apart."""
 _UNARY_OPS: frozenset[str] = frozenset(get_args(UnaryOp))
 _SET_REL_OPS: frozenset[str] = frozenset(get_args(SetRelOp))
 _HIERARCHY_OPS: frozenset[str] = frozenset(get_args(HierarchyOp))
@@ -297,19 +304,31 @@ class QueryFilterExpressionParser:
 
             return [self._validate_fields_op(left, op, right) for op, right in raw.items()]
 
-        raise exc.precondition(f"Invalid $fields map value: {raw!r}")
+        raise exc.precondition(f"Invalid $fields map value: {raw!r}. {_FIELDS_MIGRATION}")
 
     # ....................... #
 
     @staticmethod
     def _validate_fields_op(left: str, op: str, right: Any) -> QueryCompare:
         if op not in _COMPARE_OPS:
+            # A value operator can never compare two fields, so it is pre-0.7 code rather than
+            # a typo — which keeps the plain message, and the pointer specific.
+            if op in ALL_VALUE_OPS:
+                raise exc.precondition(
+                    f"{op!r} is a value operator, and `$fields` compares two field paths. "
+                    f"{_FIELDS_MIGRATION}",
+                )
+
             raise exc.precondition(f"Invalid field compare operator: {op!r}")
 
         if not isinstance(right, str) or not right.strip():
+            # A literal on the right is the other unmistakable pre-0.7 shape; an empty or blank
+            # string is as likely a mistyped field path, and gets no pointer.
+            hint = "" if isinstance(right, str) else f". {_FIELDS_MIGRATION}"
+
             raise exc.precondition(
                 f"Field compare operator {op!r} requires a non-empty field path "
-                f"string, got {right!r}",
+                f"string, got {right!r}{hint}",
             )
 
         return QueryCompare(left, op, right)  # type: ignore[arg-type]
