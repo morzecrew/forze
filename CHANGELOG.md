@@ -1824,7 +1824,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.7.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/morzecrew/forze/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/morzecrew/forze/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/morzecrew/forze/compare/v0.5.0...v0.5.1
