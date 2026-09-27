@@ -6897,6 +6897,24 @@ same way. Mongo has no advisory-lock mechanism and refuses the declaration.</p>
 taken before the <em>write</em>, so a handler that reads, decides, and then writes still made its
 decision on an unprotected read. What the declaration removes is two writes landing at once;
 making a read-then-write atomic is a different property, and reads are never serialized by this.</p>
+<p><code>UniqueTogether</code> and <code>NonOverlapping</code> also say <strong>when</strong> they hold: <code>holds="always"</code>, the default,
+means after every write; <code>holds="commit"</code> means once the transaction commits, so a transaction may
+pass through a violation it resolves before committing — inserting at the top of a positioned list
+while the rows it displaces still hold their positions:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.guarantees</span><span class="w"> </span><span class="kn">import</span> <span class="n">UniqueTogether</span>
+
+<span class="n">UniqueTogether</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"order_id"</span><span class="p">,</span> <span class="s2">"position"</span><span class="p">),</span> <span class="n">holds</span><span class="o">=</span><span class="s2">"commit"</span><span class="p">)</span>
+</code></pre></div>
+<p>On Postgres that is a constraint declared <code>DEFERRABLE INITIALLY DEFERRED</code>, and startup checks the
+deferral both ways: a deferred constraint behind a guarantee that holds always is refused — the
+in-memory store would refuse writes the database accepts — and so is an immediate one behind a
+guarantee that holds at commit. <code>DEFERRABLE INITIALLY IMMEDIATE</code> counts as immediate. A <em>partial</em>
+uniqueness (<code>where</code> or <code>skip_null</code>) cannot hold at commit on Postgres, because deferral belongs to
+constraints and a unique constraint cannot be partial, so wiring refuses it there; a filtered
+<code>NonOverlapping</code> can, since an <code>EXCLUDE</code> constraint takes both. Mongo checks every write and
+refuses <code>"commit"</code>. The in-memory store checks a <code>"commit"</code> guarantee when the transaction
+commits — and at the write itself outside a transaction, where, as in Postgres autocommit, there
+is no later moment.</p>
 <p>Mongo refuses <code>NonOverlapping</code>, and will keep refusing it: non-overlap is a comparison <em>between</em>
 two rows rather than a property of one row's fields, so unlike filtered uniqueness there is no
 partial index that expresses it.</p>

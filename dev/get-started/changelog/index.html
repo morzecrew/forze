@@ -8756,7 +8756,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.8.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>A guarantee can hold at commit.</strong> <code>UniqueTogether</code> and <code>NonOverlapping</code> take <code>holds="commit"</code>: a transaction may pass through a violation it resolves, such as an insert at the top of a positioned list. Postgres keeps it with a <code>DEFERRABLE INITIALLY DEFERRED</code> constraint; the in-memory store checks it at commit.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -8764,7 +8764,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>A deferred Postgres constraint no longer satisfies a guarantee that holds after every write.</strong> Startup accepted a <code>DEFERRABLE INITIALLY DEFERRED</code> constraint, and the in-memory store then refused writes the database took. It is refused now, naming the deferral.</li>
 </ul>
 <h2 id="080-2026-09-27"><a href="https://github.com/morzecrew/forze/compare/v0.7.0...v0.8.0">0.8.0</a> - 2026-09-27<a class="headerlink" href="#080-2026-09-27" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
