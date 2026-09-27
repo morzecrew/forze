@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Literal
@@ -226,6 +227,7 @@ class _Held:
 
 
 _held: _Held | None = None
+_held_lock = threading.Lock()
 
 
 @contextmanager
@@ -235,31 +237,34 @@ def bind_denial_posture(posture: DenialPosture) -> Iterator[None]:
     Overlapping holders must agree: a second one asking for a different posture is refused, since
     the process renders every request's errors with one posture and switching it would disclose
     under the first holder's covered types. The posture in force before the first holder is
-    restored when the last one exits, whatever order they exit in.
+    restored when the last one exits, whatever order they exit in. The bookkeeping is under a
+    lock: runtimes on two threads would otherwise both see nothing held and both take it.
     """
 
     global _held
 
-    held = _held
+    with _held_lock:
+        held = _held
 
-    if held is None:
-        held = _held = _Held(posture=posture, previous=configure_denial_posture(posture))
+        if held is None:
+            held = _held = _Held(posture=posture, previous=configure_denial_posture(posture))
 
-    elif held.posture != posture:
-        raise CoreException.configuration(
-            "A runtime scope asked for a different DenialPosture than the one already held in "
-            "this process; every runtime in one process must use the same posture.",
-            code="denial_posture_conflict",
-        )
+        elif held.posture != posture:
+            raise CoreException.configuration(
+                "A runtime scope asked for a different DenialPosture than the one already held "
+                "in this process; every runtime in one process must use the same posture.",
+                code="denial_posture_conflict",
+            )
 
-    held.holders += 1
+        held.holders += 1
 
     try:
         yield
 
     finally:
-        held.holders -= 1
+        with _held_lock:
+            held.holders -= 1
 
-        if held.holders == 0:
-            _held = None
-            configure_denial_posture(held.previous)
+            if held.holders == 0:
+                _held = None
+                configure_denial_posture(held.previous)

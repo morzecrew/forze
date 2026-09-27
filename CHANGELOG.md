@@ -9,39 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A refusal about a row can stop saying whether the row exists.** `build_runtime(denial_posture=DenialPosture(mode="non_disclosing", resource_types={"notes"}))` renders a denial and a not-found about a covered type as one response — `404`, `core.not_found`, `"Not found"`, no context — on HTTP, Socket.IO, WebSocket, MCP and agent tools alike, while the server-side exception keeps its real kind. `CoreException` gains `resource_type`: the authz before-hook sets it when it has a resource, and document ports set it to the spec name on every not-found. A denial about no particular resource stays a 403. Every runtime in one process holds the same posture; a scope asking for another is refused. Off by default, since enabling it changes what clients see; it closes the response-shape oracle, not timing. Under the posture, a covered not-found no longer names the missing id. `forze_dst.invariants.denial_bodies_identical(*ops)` checks it over a workload.
-
-- **A read by id can require the row to belong to the caller.** `get(pk, owned_by=OwnedBy(field="owner_id", value=principal_id))` — and `get_many` — make a foreign row not found, the same error as a missing one, on every backend; a failing batch names no id. The owner is in the database predicate, so a locking read never locks a foreign row, and a row served from the read cache is checked before it is returned. An owner field the predicate cannot use — randomized-encrypted, or not stored — is refused before the read.
-
-- **A spec can declare that writes for one key do not interleave.** `DocumentSpec(..., guarantees=(SerializedBy(key=("employee_id",)),))` says two writes for one owner never run at once — the rule that otherwise lives in whichever writer remembered it, and holds until the next writer is added. `forze_mock` keeps it, held from the first write until the transaction ends so a caller's own read-then-write is not split, and every write path takes it. The key derivation ships as `advisory_lock_key`: a digest rather than `hash`, which is salted per interpreter, with the spec and tenant in the key so two aggregates never contend by accident. Postgres keeps it too, through a transaction-scoped advisory lock taken before every write — nothing to migrate; Mongo refuses the declaration. Two writers each holding the owner the other wants are refused as `concurrency` on both.
-
-- **An aggregate can be effective-dated.** `AggregateKit(..., temporal=TemporalPolicy(key=…, bounds=…))` adds `valid_from` / `valid_to`, an `effective_on(key, on)` returning the one row in force that day, and a paginated `timeline(key, start, end)` answering a window in one query. The bounds convention is declared once and read by both reads and by the store's guarantee; `None` is open-ended, and a period in force on no day is refused on the domain model. Requires the matching `NonOverlapping` guarantee on the spec — the rule is the store's, not the kit's, because a read-then-insert check cannot be correct under concurrency. Refused at wiring on Mongo, which has no mechanism for it. Composes with `versioned` — the bitemporal case — where the guarantee is scoped to the current versions, since a correction writes a successor carrying its predecessor's dates.
-
-- **A store can keep periods under one key from overlapping.** `NonOverlapping` is enforced now rather than only declared: `forze_mock` compares periods with `Period.overlaps`, and Postgres maps it to an `EXCLUDE USING gist` constraint whose columns *and bounds* startup validates, printing the DDL and the `btree_gist` extension it needs. Nothing is created. An exclusion violation reaches the caller as `conflict` now rather than `precondition`, beside the unique violation it sits next to. `NonOverlapping` takes a `where` like `UniqueTogether` does, mapping to `EXCLUDE ... WHERE (...)`, so an aggregate that keeps its own history can scope the rule to the rows in force.
-
-- **An aggregate can be corrected instead of overwritten.** `AggregateKit(..., versioned=VersionedPolicy(corrections=spec))` adds `root_id` / `version` / `supersedes_id` / `is_current` / `superseded_at`, a `correct(id, expected_version, patch, reason)` that retires the current version and inserts a successor in one transaction, and `history` / `as_of` over the chain; generated reads stay on current versions, and the generated `update` refuses a patch that edits what a version asserts — retiring it and soft-deleting it are the only writes that reach one. Requires the versioning mixins and both storage guarantees on the spec — the kit refuses to build without them, and startup refuses a deployment whose indexes are missing.
-
-- **A spec can declare what its store must guarantee.** `DocumentSpec(..., guarantees=(UniqueTogether(fields=…, where=…, skip_null=…),))` states a property of the data, and a backend that cannot keep it refuses when the port is built (`storage_guarantee_unsupported`). Postgres and Mongo check the live catalog at startup and print the DDL that would satisfy a guarantee, never creating one; `forze_mock` enforces it in memory, raising the same `conflict`. `NonOverlapping` is enforced by nothing, so it is refused at wiring; on Mongo the null exemption is a `partialFilterExpression` naming the field's BSON type, since a `sparse` index still indexes an explicit null.
-
-- **An outbound OAuth2 grant can be acquired, not just stored.** `build_authorize_url` and `read_authorization_callback` in `forze_identity.oauth` cover the redirect and the callback — state compared constant-time first, a provider error never mistaken for a code — and `OAuth2TokenClient` exchanges the code for the first credential. The same client *is* the `CredentialExchangerPort`, so one provider config closes acquisition and every rotation after it; `complete_authorization` persists before it returns.
-
-- **An outbound HTTP operation can send a form body and read its own error responses.** `async_http_op(..., body_encoding="form")` sends `application/x-www-form-urlencoded` (scalars only, refusing anything a form cannot carry), `error_type=` validates a rejected response's body and hands it to the caller in `details["response_error"]`, and `HttpAuthConfig(kind="basic", …)` presents HTTP Basic. Together they mean a token endpoint no longer has to be called from a bare client, outside the plane's tenancy, deadlines and egress declaration. Declaring any credential over a plaintext `base_url` now warns at wiring.
-
-- **An outbound route can declare that data leaves your trust boundary.** `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)` makes the egress a reviewed wiring fact — declaring without acknowledging fails closed — and tags the call's span `forze.egress.sensitive`. Off by default; the inference configs now share the same gate.
-
-- **An in-process agent's tools can be your operations.** `operation_tools(registry, include=…)` projects allowlisted operations into tool definitions carrying their own input schema, and `dispatch_tool_use` runs the agent's call through `run_operation` on the live context, so tenancy, permissions, deadlines and audit apply as they do to any caller. Read-only by default; a sensitive operation is refused, not skipped. A query tool's description carries the read model's filterable fields and their operators — the spec's allow-set, in the same sentence the MCP surface uses — so a model does not have to guess them. New *Simulate an agent's tool calls* recipe (`examples/recipes/agent_tools_dst/`): the dispatch path drives a deterministic simulation, so an aggregate's declared invariant is checked under interleaved turns.
-
-- **A model call can stay inside the plane.** `HttpInferenceConfig(protocol="openai_chat", prompt=PromptTemplate(...))` speaks `/v1/chat/completions` (OpenAI, vLLM, Ollama, TGI, Groq); `protocol="anthropic_messages"` speaks Claude's native `/v1/messages` and requires `max_output_tokens`. Both carry the operation's deadline, tenant, credentials, declared egress and resilience policy, and simulate through `MockInferenceAdapter`. `output_mode="structured"` constrains the completion to the output model's JSON schema, refusing at wiring what the provider cannot enforce — the Messages vocabulary is wider, so a defaulted field, a string `format` and a non-empty list serve there and are refused on `openai_chat`; `text` fills a one-field `str` model. Token usage is a span attribute, a content refusal is `precondition` (`inference_content_refused`), and a sampling temperature above the endpoint's ceiling (2 for chat completions, 1 for Messages) is refused at wiring. New *Triage a ticket with a model, under simulation* recipe (`examples/recipes/llm_triage_dst/`).
-
-- **Docs snippets are checked against the API** (`just docs-snippets`, in `just quality`) — every inline python block in `pages/docs` parses, every `forze*` symbol it imports exists, and every call to one matches the live signature. A block that cannot stand alone is marked `python fragment`.
-
-- **An application can catalogue the identity planes it actually wires.** `forze_identity.spec_contributions(planes=["authn"])` narrows the contribution, so an authn-only app passes `build_runtime(specs=…)` reconciliation instead of choosing between the helper and the check. No arguments still catalogues all three.
-
-- **A read model may declare the fields its backend produces.** Mapping a name to `None` in `DocumentSpec.derived_read_fields` marks it derived whatever its shape — a joined column, a nested reference, an aggregate — and `SpecSeed(derived=...)` supplies it, so a view-backed aggregate is readable from `forze_mock`.
-
-- **A view-backed aggregate can be simulated.** `MockDepsModule(derived_values=MockDerivedRegistry().on(spec, source))` supplies a marked derived field per row, including rows a workload creates after any seed ran, so an invariant runs over such an aggregate under `forze_dst`. Registering nothing keeps the refusal.
-
-- **A span of time says which end is in force.** `Period(start, end, bounds)` in `forze.base.primitives` carries its bounds convention in the value — `"[)"` by default, so consecutive periods tile — with `contains`, `overlaps` and `intersects` reading it, an open end as `None` rather than a sentinel, and endpoints checked at construction — dates or datetimes, mutually comparable, with a naive/aware `datetime` mix refused like a `date`/`datetime` one. `forze_dst.invariants.no_overlapping_periods(kind, key=…, start=…, end=…, bounds=…)` asserts the matching property over a recorded history: no two periods for one owner overlap, reporting every conflicting pair in recorded order and reporting a malformed marker rather than raising.
+- ...
 
 ### Changed
 
@@ -49,21 +17,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- ...
+
+## [0.8.0] - 2026-09-27
+
+### Added
+
+- **A refusal about a row can stop saying whether the row exists.** `DenialPosture(mode="non_disclosing", resource_types=…)` on `build_runtime` renders a denial and a not-found about a covered type as one `404` on every transport, while the server keeps the real kind. Off by default, since clients see the change.
+
+- **A read by id can require the row to belong to the caller.** `get` and `get_many` take `owned_by=OwnedBy(field=…, value=…)`: a foreign row is not found, exactly like a missing one, on every backend, and a locking read never locks it.
+
+- **A spec can declare that writes for one key do not interleave.** `SerializedBy(key=…)` among a spec's guarantees serializes writes per owner, in memory on `forze_mock` and through a transaction-scoped advisory lock on Postgres. Mongo refuses the declaration.
+
+- **An aggregate can be effective-dated.** `AggregateKit(..., temporal=TemporalPolicy(...))` adds `valid_from`/`valid_to`, `effective_on(key, on)` and a paginated `timeline(key, start, end)`. It requires the matching `NonOverlapping` guarantee and composes with `versioned` for the bitemporal case.
+
+- **A store can keep periods under one key from overlapping.** `NonOverlapping(key=…, period=…, bounds=…, where=…)` is enforced in memory by `forze_mock` and by an `EXCLUDE USING gist` constraint on Postgres, which startup validates and prints the DDL for, never creating it.
+
+- **An aggregate can be corrected instead of overwritten.** `AggregateKit(..., versioned=VersionedPolicy(corrections=spec))` keeps a version chain: `correct(...)` retires the current version and inserts its successor in one transaction, and `history`/`as_of` read the chain.
+
+- **A spec can declare what its store must guarantee.** `DocumentSpec(guarantees=(UniqueTogether(...),))` states a property of the data: a backend that cannot keep it refuses at wiring, `forze_mock` enforces it, and Postgres and Mongo check the live catalog at startup, printing the DDL they need.
+
+- **An outbound OAuth2 grant can be acquired, not just stored.** `build_authorize_url`, `read_authorization_callback` and `complete_authorization` in `forze_identity.oauth` cover the redirect and the callback, and `OAuth2TokenClient` exchanges the code and serves every later rotation.
+
+- **An outbound HTTP operation can send a form body and read its own error responses.** `body_encoding="form"` sends a form, `error_type=` validates a rejected response into `details["response_error"]`, and `HttpAuthConfig(kind="basic")` presents HTTP Basic. A credential over plaintext HTTP warns at wiring.
+
+- **An outbound route can declare that data leaves your trust boundary.** `HttpServiceConfig(egress_sensitive=True, acknowledge_data_egress=True)` makes the egress a reviewed wiring fact, and declaring it without acknowledging fails closed. The inference configs share the gate.
+
+- **An in-process agent's tools can be your operations.** `operation_tools(registry, include=…)` projects allowlisted operations into tool definitions, and `dispatch_tool_use` runs a call through `run_operation`, so tenancy, permissions, deadlines and audit apply. Read-only by default.
+
+- **A model call can stay inside the plane.** `HttpInferenceConfig(protocol="openai_chat")` or `"anthropic_messages"`, with a `PromptTemplate`, calls a chat model under the operation's deadline, tenant, credentials and egress declaration, can constrain output to a schema, and simulates through `MockInferenceAdapter`.
+
+- **An application can catalogue the identity planes it actually wires.** `forze_identity.spec_contributions(planes=["authn"])` narrows the contribution, so an authn-only app passes `build_runtime(specs=…)` reconciliation. No arguments still catalogues all three.
+
+- **A read model may declare the fields its backend produces.** Mapping a name to `None` in `DocumentSpec.derived_read_fields` marks it derived whatever its shape, and `SpecSeed(derived=…)` supplies it, so a view-backed aggregate is readable from `forze_mock`.
+
+- **A view-backed aggregate can be simulated.** `MockDepsModule(derived_values=MockDerivedRegistry().on(spec, source))` supplies a derived field per row, including rows a workload creates, so an invariant can run over such an aggregate under `forze_dst`.
+
+- **A span of time says which end is in force.** `Period(start, end, bounds)` in `forze.base.primitives` carries its bounds convention, `"[)"` by default, into `contains`, `overlaps` and `intersects`, and `no_overlapping_periods` in `forze_dst.invariants` asserts it over a history.
+
+### Changed
+
+- **A document query port must accept `owned_by`.** `DocumentQueryPort.get` and `get_many` gained the keyword; the shipped adapters and the mock take it, and an implementation of your own fails when a caller passes it.
+
+- **Idempotency claims are stored under per-caller keys.** A key claimed before the upgrade does not replay after it, so a retry spanning the deploy runs again, and an `encrypt_result` record sealed before it no longer opens.
+
+- **A Postgres exclusion-constraint violation is `conflict`.** It was `precondition`, unlike the unique violation it sits beside.
+
+### Fixed
+
 - **A locking read by id takes its lock when the document has a read cache.** `get(pk, for_update=True)` on a cached spec returned the cached row, or a row fetched without a lock, and locked nothing; it now always reads the database.
 
-- **A container sandbox run killed at its memory ceiling could come back as `exited`.** The adapter trusted the daemon's `OOMKilled` flag, and the daemon does not always set it: runs came back with status 137, the ceiling in force and no flag. A run killed outright (`SIGKILL`) under a memory ceiling, by anything but the adapter itself, is now `killed_oom` whether or not the flag arrives, and a non-zero exit's detail names its exit status.
+- **A container sandbox run killed at its memory ceiling could come back as `exited`.** The daemon does not always flag that kill, so a `SIGKILL` under a memory ceiling that the adapter did not send is now `killed_oom`, and a non-zero exit's detail names its status.
 
-- **An outbound HTTP reply came back as a bare `BaseModel`.** `HttpServicePort.invoke` took the operation's *name*, and a name cannot carry the `args_type` and `return_type` its `HttpOperationSpec` declares — so every field read off a response was an error under a strict type checker, and a handler that named its own args model was refused by `MockHttpRegistry.on`. `invoke` now also takes the operation spec itself (`invoke(model_messages, ModelArgs(...))`), which resolves through the new `HttpServiceSpec.operation` and hands back the declared model; passing a spec another service declares is refused rather than resolved by its name. The name form is unchanged, for an operation chosen from config.
+- **An outbound HTTP reply came back as a bare `BaseModel`.** `HttpServicePort.invoke` now also takes the operation spec itself and returns the model it declares, so a strict type checker reads the response's fields. The name form is unchanged.
 
-- **Two mapping fields on one module could not be passed together.** The `MappingConverter` converters named a key type variable, and `attrs` publishes a converter's input as the generated `__init__` parameter type — so one shared, once-solved key variable made a strict type checker reject every `StrEnum`-keyed argument but the first, as in `PostgresDepsModule(client=…, rw_documents=…, searches=…)`. The key is unconstrained now — `Mapping` is invariant in it, so no named type admits both `str` and a `StrEnum` — which moves the one check it did make, against a genuinely non-string key, from the call site to construction.
+- **Two mapping fields on one deps module could not be passed together under a strict type checker.** A shared key type variable rejected every `StrEnum`-keyed argument but the first, as in `PostgresDepsModule(client=…, rw_documents=…, searches=…)`.
 
-- **A parallel DST sweep died under a coverage session.** `parallel_sweep` ran its seeds through a `ProcessPoolExecutor`, which pickles a private stdlib task class by name; under `pytest --cov` with a module-level source the parent could no longer resolve that name to the same object and every sweep failed before a worker saw a seed. It runs on a `multiprocessing.Pool` now, which pickles only the caller's `run` and the seeds.
+- **A parallel DST sweep died under a coverage session.** `parallel_sweep` failed before any seed ran under `pytest --cov`; it now runs on a `multiprocessing.Pool`, which pickles only the caller's `run` and the seeds.
 
-- **`HttpAuthConfig` with no token sent `Authorization: Bearer None`.** An optional secret field converted `None` into a `SecretStr` wrapping it, so a config that declared no token still sent a header — an unauthenticated request that looked authenticated. The same conversion was corrected on `HttpClientLifecycleStep.auth_token` and Meilisearch's `api_key`, where consumers happened to unwrap defensively.
+- **`HttpAuthConfig` with no token sent `Authorization: Bearer None`.** A config declaring no token still sent the header; it no longer does, and the same fix covers `HttpClientLifecycleStep.auth_token` and Meilisearch's `api_key`.
 
 ### Security
 
-- **Two principals using one idempotency key no longer share its claim.** A claim is scoped to the tenant and the acting principal — the subject, on a delegated call — so a caller reusing another's key runs its own operation instead of being served that caller's stored result, and is never refused for it. Every shipped store scopes through the new `ClaimPrincipalMixin`; a custom store should inherit it and wire `principal_provider`, and one that cannot scope is named in a warning when an operation resolves it. **Breaking:** stored keys change shape, so a key claimed before the upgrade does not replay after it — drain the dedup window across the deploy, or accept that a retry spanning it runs again. An `encrypt_result` record sealed before the upgrade no longer opens.
+- **Two principals using one idempotency key no longer share its claim.** A claim is scoped to the tenant and the acting principal, so a caller reusing another's key runs its own operation instead of being served that caller's stored result. A custom store inherits `ClaimPrincipalMixin`.
 
 ## [0.7.0] - 2026-09-10
 
@@ -1808,7 +1824,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.7.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/morzecrew/forze/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/morzecrew/forze/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/morzecrew/forze/compare/v0.5.0...v0.5.1
