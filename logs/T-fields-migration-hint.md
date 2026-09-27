@@ -66,3 +66,40 @@ proposal: not built — the release note names the silent shape; the gate stays 
 ```
 
 **Drift count: 0**
+
+```divergence
+decision: message-only
+grade: LOCKED
+kind: resolved
+at: 2026-09-27T09:40:00Z
+attempt: 1
+claim: every refusal keeps its kind (`precondition`), its code (`core.precondition`) and its place in the control flow; only the text changes, and a valid compare parses to the same node
+evidence: src/forze/application/contracts/querying/internal/parse.py:316
+action: decided
+```
+
+## Self-audit — 2026-09-27
+
+Scope: the branch, 1 commit, 6 files (+121 −33: 33 source, 84 test, 8 docs/changelog).
+
+No findings beyond the decisions logged before code. Checked:
+
+- **Sabotage, 6 mutants, all killed by an assertion:** the value-operator pointer removed; the
+  pointer firing on any unknown operator (caught by the typo leg — the specificity the
+  specification asked to pin); the literal-right-hand-side pointer removed; the pointer firing on
+  a blank string; the map-value pointer removed; the `ALL_VALUE_OPS` derivation dropping a
+  literal family. The last one matters because the value-operator leg takes its cases from
+  `ALL_VALUE_OPS` itself and would shrink with it; the mock's DSL parity corpus kills it
+  independently, once `$like` leaves the default capabilities.
+- **Patch coverage:** 100% (10/10 added source lines).
+- **Spec conformance:** message 1 is the specification's text verbatim; 2 and 3 are the existing
+  text plus the one shared suffix; the four required legs are present, the typo leg asserting the
+  whole message.
+- `_validate_fields_op` has no caller but the `$fields` parser, and `$having` parses through
+  the same code, so the pointer never lands outside a `$fields` refusal.
+
+Residue: the halted entry (a string right-hand side naming no field is refused by field
+validation with no pointer) waits on the maintainer. The query-syntax page gained a two-sentence
+note for readers migrating from before 0.7 — an extra the specification did not ask for.
+
+**Drift count: 0**
