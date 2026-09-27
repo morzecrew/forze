@@ -119,3 +119,17 @@ proposal: LOCKED — a `$fields` right-hand side naming no field carries the mig
 ```
 
 **Drift count: 0**
+
+## Self-audit, round 2 — 2026-09-27
+
+Scope: the field-validation addition (`e79fda517`). No findings.
+
+- **Sabotage, 4 mutants, all killed:** the pointer removed; the pointer on every unknown field
+  (caught by the `$values`-key and left-hand-side legs); the right-hand side not tracked; the
+  left-hand side tracked in its place.
+- **Wired, not only callable:** a leg through the mock document port carries the pointer, and
+  fails without the change.
+- **Patch coverage:** 100% (19/19 added source lines across the branch). `just quality -s`: all
+  19 gates.
+
+**Drift count: 0**
