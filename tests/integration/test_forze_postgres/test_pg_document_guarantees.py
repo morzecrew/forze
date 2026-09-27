@@ -1022,6 +1022,31 @@ class TestWhenTheGuaranteeHolds:
 
         await _validate(pg_client, table, filtered)
 
+    async def test_the_deferral_clause_is_not_read_as_part_of_the_predicate(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # A deferred partial constraint deparses as `... WHERE (...) DEFERRABLE INITIALLY
+        # DEFERRED`. Read as predicate, the clause "mentions" a quoted column named
+        # `DEFERRABLE`, and a constraint filtered on another column would pass for one on it.
+        table = await _table(pg_client)
+        await pg_client.execute(f'ALTER TABLE {table} ADD COLUMN "DEFERRABLE" boolean;')
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            "(root_id WITH =, daterange(valid_from, valid_to, '[]') WITH &&) "
+            "WHERE (is_current) DEFERRABLE INITIALLY DEFERRED;"
+        )
+        on_the_other_column = NonOverlapping(
+            key=("root_id",),
+            period=("valid_from", "valid_to"),
+            bounds="[]",
+            where={"$values": {"DEFERRABLE": True}},
+            holds="commit",
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, on_the_other_column)
+
     async def test_an_exclusion_constraint_must_agree_on_deferral_too(
         self, pg_client: PostgresClient
     ) -> None:

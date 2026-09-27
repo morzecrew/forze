@@ -157,3 +157,19 @@ lines) over the unit suites and the Postgres guarantee file. The specification's
 covered point by point, the parity legs comparing the two stores in one test.
 
 **Drift count: 0**
+
+## Review round 1 — 2026-09-27
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: discovery
+at: 2026-09-27T12:20:00Z
+attempt: 3
+claim: the audit's removal of the deferral-clause strip was wrong. It rested on the clause being unable to collide with a column, which holds for every unquoted identifier and not for a quoted column spelled `"DEFERRABLE"` — the case the audit named and set aside as contrived. Review reproduced it: a deferred partial EXCLUDE constraint over `is_current` validated a guarantee filtered on `"DEFERRABLE"`. A mutant that survives because no leg reaches its input is not an equivalent mutant; it is an untested one
+evidence: src/forze_postgres/kernel/catalog/validation/validate_schema.py:525
+action: decided
+proposal: the strip is back, anchored after the predicate's closing parenthesis and matched in the case Postgres renders; a leg with a quoted `"DEFERRABLE"` column fails without it.
+```
+
+**Drift count: 0**

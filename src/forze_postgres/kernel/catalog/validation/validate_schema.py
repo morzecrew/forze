@@ -522,6 +522,14 @@ def _range_over(definition: str, period: tuple[str, str]) -> frozenset[str]:
 _CONSTRAINT_WHERE = re.compile(r"\)\s+WHERE\s+(.+)$", re.DOTALL)
 """The trailing predicate of a deparsed partial EXCLUDE constraint, if it carries one."""
 
+_CONSTRAINT_CHARACTERISTICS = re.compile(
+    r"(?<=\))\s+DEFERRABLE(?:\s+INITIALLY\s+(?:DEFERRED|IMMEDIATE))?\s*$"
+)
+"""The deferral clause ``pg_get_constraintdef`` appends after a deferrable constraint's closing
+parenthesis. Stripped before the predicate is read: left in, it names ``DEFERRABLE`` and
+``DEFERRED``, so a quoted column spelled that way would read as restricted on. Deferral itself is
+read from ``condeferred``, never from this text."""
+
 
 def _constraint_predicate(definition: str) -> str | None:
     """The ``WHERE`` predicate of a partial EXCLUDE constraint, or ``None`` for a full one.
@@ -531,7 +539,7 @@ def _constraint_predicate(definition: str) -> str | None:
     ``pg_get_constraintdef`` is what renders it.
     """
 
-    match = _CONSTRAINT_WHERE.search(definition)
+    match = _CONSTRAINT_WHERE.search(_CONSTRAINT_CHARACTERISTICS.sub("", definition))
 
     return match.group(1).strip() if match is not None else None
 
