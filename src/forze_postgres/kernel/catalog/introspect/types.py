@@ -114,6 +114,12 @@ class UniqueIndexInfo:
     nulls_not_distinct: bool
     """Whether the index was built ``NULLS NOT DISTINCT`` — i.e. two nulls conflict."""
 
+    initially_deferred: bool = False
+    """Whether the constraint the index backs is ``DEFERRABLE INITIALLY DEFERRED`` — checked at
+    commit rather than per statement. ``False`` for a bare index, which cannot be deferred, and
+    for ``DEFERRABLE INITIALLY IMMEDIATE``, which checks per statement unless a transaction
+    asks otherwise."""
+
 
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ExclusionConstraintInfo:
@@ -139,3 +145,7 @@ class ExclusionConstraintInfo:
 
     definition: str
     """``pg_get_constraintdef``: the whole ``EXCLUDE USING … (… WITH …)`` text."""
+
+    initially_deferred: bool = False
+    """Whether the constraint is ``DEFERRABLE INITIALLY DEFERRED`` (``condeferred``) — read from
+    the catalog, never from :attr:`definition`, which only renders it."""

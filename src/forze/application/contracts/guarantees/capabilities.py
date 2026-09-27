@@ -28,6 +28,7 @@ from forze.base.exceptions import exc
 
 from .value_objects import (
     GuaranteeKind,
+    GuaranteeMoment,
     NonOverlapping,
     SerializedBy,
     StorageGuarantee,
@@ -82,6 +83,20 @@ class StorageGuaranteeCapabilities:
     separate: they are different capabilities, and a store with the unfiltered kind and no way
     to restrict it would otherwise pass reconciliation and fail at the first write."""
 
+    checks_deferred_to_commit: bool = False
+    """Whether a guarantee can hold at commit (``holds="commit"``) rather than after every write.
+
+    A store without it checks every write as it lands, so a transaction passing through a state
+    the guarantee forbids fails there — refusing work the declaration says is legal."""
+
+    unique_together_partial_at_commit: bool = False
+    """Whether a uniqueness holding at commit can also be partial — restricted by ``where`` or
+    exempting nulls by ``skip_null``.
+
+    Separate because a store can have both halves and not the pair: in Postgres deferral is a
+    property of constraints, a partial uniqueness is only an index, and a unique constraint
+    cannot be partial. Non-overlap has no such flag: its constraint can be both."""
+
     # ....................... #
 
     def unmet(self, guarantee: StorageGuarantee) -> tuple[str, ...]:
@@ -100,6 +115,7 @@ class StorageGuaranteeCapabilities:
         match guarantee:
             case UniqueTogether():
                 missing = [] if self.unique_together else ["uniqueness over a field tuple"]
+                partial = guarantee.where is not None or guarantee.skip_null
 
                 # Each axis is consulted only where the guarantee asks for it: a declaration
                 # with no `where` must not be refused by a store lacking the filtered form.
@@ -109,6 +125,20 @@ class StorageGuaranteeCapabilities:
                 if guarantee.skip_null and not self.unique_together_skip_null:
                     missing.append("exempting rows whose tuple holds a null (`skip_null`)")
 
+                missing.extend(self._unmet_moment(guarantee.holds))
+
+                # Only for a store that can defer at all: one that cannot is already refused
+                # above, and naming the narrower gap as well would send a reader two ways.
+                if (
+                    guarantee.holds == "commit"
+                    and partial
+                    and self.checks_deferred_to_commit
+                    and not self.unique_together_partial_at_commit
+                ):
+                    missing.append(
+                        "a partial uniqueness (`where` or `skip_null`) that holds only at commit"
+                    )
+
                 return tuple(missing)
 
             case NonOverlapping():
@@ -117,10 +147,18 @@ class StorageGuaranteeCapabilities:
                 if guarantee.where is not None and not self.non_overlapping_filtered:
                     missing.append("non-overlap restricted to a subset of rows (`where`)")
 
+                missing.extend(self._unmet_moment(guarantee.holds))
+
                 return tuple(missing)
 
             case SerializedBy():
                 return () if self.serialized_by else ("serializing writes per key",)
+
+    def _unmet_moment(self, holds: GuaranteeMoment) -> tuple[str, ...]:
+        if holds == "commit" and not self.checks_deferred_to_commit:
+            return ('holding only at commit (`holds="commit"`)',)
+
+        return ()
 
 
 # ....................... #
@@ -132,6 +170,8 @@ FULL_STORAGE_GUARANTEES: Final[StorageGuaranteeCapabilities] = StorageGuaranteeC
     non_overlapping=True,
     non_overlapping_filtered=True,
     serialized_by=True,
+    checks_deferred_to_commit=True,
+    unique_together_partial_at_commit=True,
 )
 """Every guarantee that is enforced anywhere today — the in-memory store's declaration.
 

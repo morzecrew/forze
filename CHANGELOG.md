@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A guarantee can hold at commit.** `UniqueTogether` and `NonOverlapping` take `holds="commit"`: a transaction may pass through a violation it resolves, such as an insert at the top of a positioned list. Postgres keeps it with a `DEFERRABLE INITIALLY DEFERRED` constraint; the in-memory store checks it at commit.
 
 ### Changed
 
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **A deferred Postgres constraint no longer satisfies a guarantee that holds after every write.** Startup accepted a `DEFERRABLE INITIALLY DEFERRED` constraint, and the in-memory store then refused writes the database took. It is refused now, naming the deferral.
 
 ## [0.8.0] - 2026-09-27
 

@@ -8,6 +8,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.guarantees import (
+    GuaranteeMoment,
     NonOverlapping,
     StorageGuarantees,
     UniqueTogether,
@@ -295,7 +296,12 @@ async def _require_guarantee_mechanisms(
       column leaves exactly the rows the guarantee covers unconstrained;
     * it is an ordinary unique index over a nullable column while the guarantee counts nulls as
       values, which Postgres does not unless the index says ``NULLS NOT DISTINCT``;
-    * it is not valid, ready or live — the state a failed concurrent build leaves.
+    * it is not valid, ready or live — the state a failed concurrent build leaves;
+    * its deferral disagrees with ``holds``: a ``DEFERRABLE INITIALLY DEFERRED`` constraint
+      behind a guarantee that holds after every write lets the database accept writes the
+      in-memory store refuses, and an immediate one behind a guarantee that holds at commit
+      refuses a transaction the declaration lets through. Either way the two stores disagree,
+      so the refusal names the deferral.
 
     What is still not checked is whether the predicate *means* the same as the filter: deciding
     that two boolean expressions agree is the database's job, not a startup check's. So the
@@ -337,6 +343,10 @@ async def _require_guarantee_mechanisms(
         # Over NOT NULL columns the ordinary index is exactly the mechanism, and demanding
         # NULLS NOT DISTINCT there would refuse a correct migration.
         needs_nulls_not_distinct = bool(nullable) and not guarantee.skip_null
+        at_commit = guarantee.holds == "commit"
+        # Right in every respect but when it is checked, kept so the refusal can say that
+        # rather than describe columns the operator will find are already indexed.
+        deferral_mismatch = False
 
         for index in indexes:
             if index.columns != wanted:
@@ -357,11 +367,34 @@ async def _require_guarantee_mechanisms(
             if needs_nulls_not_distinct and not index.nulls_not_distinct:
                 continue
 
+            if index.initially_deferred != at_commit:
+                deferral_mismatch = True
+                continue
+
             break
 
         else:
+            ddl = _unique_ddl(
+                schema=schema,
+                table=table,
+                columns=columns,
+                predicate_columns=predicate_columns,
+                nulls_not_distinct=needs_nulls_not_distinct,
+                holds=guarantee.holds,
+            )
+
             raise exc.configuration(
-                _guarantee_refusal(
+                _deferral_refusal(
+                    spec_name=str(spec.name),
+                    relation=f"{schema}.{table}",
+                    described=f"at most one row per ({', '.join(columns)})",
+                    holds=guarantee.holds,
+                    ddl=ddl,
+                )
+                # A partial index behind a commit guarantee is not a deferral mismatch to fix:
+                # there is no deferred form to recreate it as, which the other message says.
+                if deferral_mismatch and ddl is not None
+                else _guarantee_refusal(
                     spec_name=str(spec.name),
                     schema=schema,
                     table=table,
@@ -369,6 +402,7 @@ async def _require_guarantee_mechanisms(
                     predicate_columns=predicate_columns,
                     nulls_not_distinct=needs_nulls_not_distinct,
                     nullable=nullable,
+                    ddl=ddl,
                 ),
                 details={
                     "document": spec.name,
@@ -488,6 +522,14 @@ def _range_over(definition: str, period: tuple[str, str]) -> frozenset[str]:
 _CONSTRAINT_WHERE = re.compile(r"\)\s+WHERE\s+(.+)$", re.DOTALL)
 """The trailing predicate of a deparsed partial EXCLUDE constraint, if it carries one."""
 
+_CONSTRAINT_CHARACTERISTICS = re.compile(
+    r"\s+(?:NOT\s+)?DEFERRABLE(?:\s+INITIALLY\s+(?:DEFERRED|IMMEDIATE))?\s*$",
+    re.IGNORECASE,
+)
+"""The deferral clause ``pg_get_constraintdef`` appends to a deferrable constraint — stripped
+before the predicate is read, or it would be read as part of it. Deferral itself is read from
+``condeferred``, never from this text."""
+
 
 def _constraint_predicate(definition: str) -> str | None:
     """The ``WHERE`` predicate of a partial EXCLUDE constraint, or ``None`` for a full one.
@@ -497,7 +539,7 @@ def _constraint_predicate(definition: str) -> str | None:
     ``pg_get_constraintdef`` is what renders it.
     """
 
-    match = _CONSTRAINT_WHERE.search(definition)
+    match = _CONSTRAINT_WHERE.search(_CONSTRAINT_CHARACTERISTICS.sub("", definition))
 
     return match.group(1).strip() if match is not None else None
 
@@ -543,7 +585,10 @@ async def _require_overlap_mechanisms(
       property claims;
     * it carries a **different bounds convention** than the declaration. The two conventions
       differ on exactly one day, which is the day a boundary bug lives on, so a ``'[]'``
-      declaration validated against a ``'[)'`` constraint is the failure this check exists for.
+      declaration validated against a ``'[)'`` constraint is the failure this check exists for;
+    * its deferral disagrees with ``holds``, for the reason the uniqueness pass gives. Unlike a
+      uniqueness, a partial EXCLUDE constraint can also be deferred, so a filtered non-overlap
+      holding at commit has a mechanism.
 
     Deliberately no validity check, unlike the uniqueness pass: Postgres refuses ``NOT VALID``
     on an EXCLUDE constraint and has no concurrent build for one, so the half-built state that
@@ -574,6 +619,9 @@ async def _require_overlap_mechanisms(
             else frozenset()
         )
 
+        at_commit = guarantee.holds == "commit"
+        deferral_mismatch = False
+
         for constraint in constraints:
             # Equality, not containment: an extra scalar key column *weakens* the constraint,
             # because two rows then have to match on that column too before they conflict. A
@@ -598,17 +646,36 @@ async def _require_overlap_mechanisms(
             elif predicate is not None:
                 continue
 
+            if constraint.initially_deferred != at_commit:
+                deferral_mismatch = True
+                continue
+
             break
 
         else:
+            extension_missing = not await introspector.extension_installed(name=BTREE_GIST)
+            range_fn = _range_function(column_types.get(start))
+
             raise exc.configuration(
-                _overlap_refusal(
+                _deferral_refusal(
+                    spec_name=str(spec.name),
+                    relation=f"{schema}.{table}",
+                    described=(
+                        f"no two rows per ({', '.join(guarantee.key)}) hold overlapping periods"
+                    ),
+                    holds=guarantee.holds,
+                    ddl=_overlap_ddl(
+                        schema=schema, table=table, guarantee=guarantee, range_fn=range_fn
+                    ),
+                )
+                if deferral_mismatch
+                else _overlap_refusal(
                     spec_name=str(spec.name),
                     schema=schema,
                     table=table,
                     guarantee=guarantee,
-                    range_fn=_range_function(column_types.get(start)),
-                    extension_missing=not await introspector.extension_installed(name=BTREE_GIST),
+                    range_fn=range_fn,
+                    extension_missing=extension_missing,
                 ),
                 details={
                     "document": spec.name,
@@ -653,19 +720,10 @@ def _overlap_refusal(
 
     key_list = ", ".join(guarantee.key)
     start, end = guarantee.period
-    key_elements = ", ".join(f"{field} WITH =" for field in guarantee.key)
     predicate_columns = (
         sorted(collect_filter_field_roots(guarantee.where)) if guarantee.where is not None else []
     )
-    restriction = (
-        f" WHERE (<a condition over {', '.join(predicate_columns)}>)" if predicate_columns else ""
-    )
-
-    ddl = (
-        f"ALTER TABLE {schema}.{table} ADD EXCLUDE USING gist ("
-        f"{key_elements}, {range_fn}({start}, {end}, '{guarantee.bounds}') WITH &&)"
-        f"{restriction};"
-    )
+    ddl = _overlap_ddl(schema=schema, table=table, guarantee=guarantee, range_fn=range_fn)
 
     extension = (
         f"  CREATE EXTENSION IF NOT EXISTS {BTREE_GIST};  -- not installed; "
@@ -686,6 +744,106 @@ def _overlap_refusal(
     )
 
 
+def _overlap_ddl(
+    *,
+    schema: str,
+    table: str,
+    guarantee: NonOverlapping,
+    range_fn: str,
+) -> str:
+    """The EXCLUDE constraint that keeps *guarantee*, deferred when it holds at commit."""
+
+    start, end = guarantee.period
+    key_elements = ", ".join(f"{field} WITH =" for field in guarantee.key)
+    predicate_columns = (
+        sorted(collect_filter_field_roots(guarantee.where)) if guarantee.where is not None else []
+    )
+    restriction = (
+        f" WHERE (<a condition over {', '.join(predicate_columns)}>)" if predicate_columns else ""
+    )
+
+    return (
+        f"ALTER TABLE {schema}.{table} ADD EXCLUDE USING gist ("
+        f"{key_elements}, {range_fn}({start}, {end}, '{guarantee.bounds}') WITH &&)"
+        f"{restriction}{_DEFERRED if guarantee.holds == 'commit' else ''};"
+    )
+
+
+# ....................... #
+
+_DEFERRED: Final[str] = " DEFERRABLE INITIALLY DEFERRED"
+
+
+def _unique_ddl(
+    *,
+    schema: str,
+    table: str,
+    columns: tuple[str, ...],
+    predicate_columns: frozenset[str],
+    nulls_not_distinct: bool,
+    holds: GuaranteeMoment,
+) -> str | None:
+    """The DDL that keeps a uniqueness, or ``None`` when Postgres has no mechanism for it.
+
+    A partial uniqueness is only an index and a deferred one is only a constraint, and
+    ``CREATE UNIQUE INDEX`` has no ``DEFERRABLE`` clause — so a partial uniqueness holding at
+    commit has nothing to print. Wiring refuses that declaration first; startup can still meet
+    it when it runs without the port being resolved.
+    """
+
+    column_list = ", ".join(columns)
+    deferred = _DEFERRED if holds == "commit" else ""
+
+    if predicate_columns:
+        if deferred:
+            return None
+
+        return (
+            f"CREATE UNIQUE INDEX CONCURRENTLY ON {schema}.{table} ({column_list}) "
+            f"WHERE <a condition over {', '.join(sorted(predicate_columns))}>;"
+        )
+
+    nulls = " NULLS NOT DISTINCT" if nulls_not_distinct else ""
+
+    return f"ALTER TABLE {schema}.{table} ADD UNIQUE{nulls} ({column_list}){deferred};"
+
+
+# ....................... #
+
+
+def _deferral_refusal(
+    *,
+    spec_name: str,
+    relation: str,
+    described: str,
+    holds: GuaranteeMoment,
+    ddl: str,
+) -> str:
+    """The message for a mechanism right in every respect but when the database checks it.
+
+    Names the deferral rather than the columns: the operator has already indexed those, and a
+    refusal describing them again reads as a missing migration when the migration is there.
+    """
+
+    if holds == "always":
+        return (
+            f"Document {spec_name!r} guarantees {described} after every write, and the "
+            f"constraint on {relation} that would keep it is DEFERRABLE INITIALLY DEFERRED — "
+            "checked only at commit. The two stores would then disagree: the in-memory store "
+            "refuses the write that breaks it, and this database accepts it until commit. "
+            'Declare holds="commit" if a transaction is meant to pass through the violation, or '
+            "recreate the constraint without INITIALLY DEFERRED."
+        )
+
+    return (
+        f'Document {spec_name!r} guarantees {described} at commit (holds="commit"), and the '
+        f"constraint on {relation} that would keep it is checked per statement — not "
+        "DEFERRABLE INITIALLY DEFERRED — so a transaction the declaration lets pass through a "
+        "violation fails at the write. A constraint's deferral is fixed when it is created; "
+        f"recreate it deferred:\n  {ddl}"
+    )
+
+
 # ....................... #
 
 
@@ -698,6 +856,7 @@ def _guarantee_refusal(
     predicate_columns: frozenset[str],
     nulls_not_distinct: bool,
     nullable: Sequence[str],
+    ddl: str | None,
 ) -> str:
     """The message for a guarantee with no index behind it, carrying the DDL that would serve.
 
@@ -709,17 +868,14 @@ def _guarantee_refusal(
     column_list = ", ".join(columns)
     filtered = bool(predicate_columns)
 
-    if filtered:
-        ddl = (
-            f"CREATE UNIQUE INDEX CONCURRENTLY ON {schema}.{table} ({column_list}) "
-            f"WHERE <a condition over {', '.join(sorted(predicate_columns))}>;"
+    if ddl is None:
+        return (
+            f"Document {spec_name!r} guarantees at most one row per ({column_list}) at commit, "
+            f"among the rows a filter selects (a `where`, or `skip_null`), and Postgres has no "
+            "mechanism for that: a deferrable uniqueness is a constraint, a partial one is an "
+            "index, and a unique constraint cannot be partial. Declare it to hold always, or "
+            "drop the filter."
         )
-
-    elif nulls_not_distinct:
-        ddl = f"ALTER TABLE {schema}.{table} ADD UNIQUE NULLS NOT DISTINCT ({column_list});"
-
-    else:
-        ddl = f"ALTER TABLE {schema}.{table} ADD UNIQUE ({column_list});"
 
     why = " among the rows its filter selects, and " if filtered else ", and "
     missing = (

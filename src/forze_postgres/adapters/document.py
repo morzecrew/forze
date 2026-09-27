@@ -70,6 +70,7 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
         non_overlapping=True,
         non_overlapping_filtered=True,
         serialized_by=True,
+        checks_deferred_to_commit=True,
     )
     """What this store enforces, given the index or constraint the deployment migrated.
 
@@ -82,6 +83,13 @@ class PostgresDocumentAdapter(DocumentAdapter[R, D, C, U]):
 
     Serializing writes per key is a transaction-scoped advisory lock the write gateway takes
     before every write, which needs nothing migrated.
+
+    A guarantee holding at commit is a constraint declared ``DEFERRABLE INITIALLY DEFERRED``,
+    which the database checks when the transaction commits. Not for a *partial* uniqueness
+    (``where`` or ``skip_null``): deferral belongs to constraints, a partial uniqueness is only an
+    index, and a unique constraint cannot be partial — so that pair is refused here, where the
+    mock, which can keep it, is not. An exclusion constraint can be both, so a filtered
+    non-overlap holding at commit is kept.
     """
 
     batch_size: int = 200

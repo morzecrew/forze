@@ -139,6 +139,28 @@ taken before the *write*, so a handler that reads, decides, and then writes stil
 decision on an unprotected read. What the declaration removes is two writes landing at once;
 making a read-then-write atomic is a different property, and reads are never serialized by this.
 
+`UniqueTogether` and `NonOverlapping` also say **when** they hold: `holds="always"`, the default,
+means after every write; `holds="commit"` means once the transaction commits, so a transaction may
+pass through a violation it resolves before committing — inserting at the top of a positioned list
+while the rows it displaces still hold their positions:
+
+```python
+from forze.application.contracts.guarantees import UniqueTogether
+
+UniqueTogether(fields=("order_id", "position"), holds="commit")
+```
+
+On Postgres that is a constraint declared `DEFERRABLE INITIALLY DEFERRED`, and startup checks the
+deferral both ways: a deferred constraint behind a guarantee that holds always is refused — the
+in-memory store would refuse writes the database accepts — and so is an immediate one behind a
+guarantee that holds at commit. `DEFERRABLE INITIALLY IMMEDIATE` counts as immediate. A *partial*
+uniqueness (`where` or `skip_null`) cannot hold at commit on Postgres, because deferral belongs to
+constraints and a unique constraint cannot be partial, so wiring refuses it there; a filtered
+`NonOverlapping` can, since an `EXCLUDE` constraint takes both. Mongo checks every write and
+refuses `"commit"`. The in-memory store checks a `"commit"` guarantee when the transaction
+commits — and at the write itself outside a transaction, where, as in Postgres autocommit, there
+is no later moment.
+
 Mongo refuses `NonOverlapping`, and will keep refusing it: non-overlap is a comparison *between*
 two rows rather than a property of one row's fields, so unlike filtered uniqueness there is no
 partial index that expresses it.
