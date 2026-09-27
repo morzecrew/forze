@@ -61,7 +61,7 @@ _TEXT_OPS: frozenset[str] = frozenset(get_args(TextOp))
 _MEMB_OPS: frozenset[str] = frozenset(get_args(MembOp))
 _ELEMENT_OPS: frozenset[str] = _EQ_OPS | _ORD_OPS | _TEXT_OPS | _MEMB_OPS
 _COMPARE_OPS: frozenset[str] = frozenset(get_args(CompareOp))
-_FIELDS_MIGRATION = "Before 0.7 `$fields` held value predicates; they belong under `$values` now."
+FIELDS_MIGRATION = "Before 0.7 `$fields` held value predicates; they belong under `$values` now."
 """Appended to every `$fields` refusal that has the shape of a pre-0.7 value predicate.
 
 `$fields` kept its key and changed its meaning, so old filters stay valid dictionaries and fail
@@ -304,7 +304,7 @@ class QueryFilterExpressionParser:
 
             return [self._validate_fields_op(left, op, right) for op, right in raw.items()]
 
-        raise exc.precondition(f"Invalid $fields map value: {raw!r}. {_FIELDS_MIGRATION}")
+        raise exc.precondition(f"Invalid $fields map value: {raw!r}. {FIELDS_MIGRATION}")
 
     # ....................... #
 
@@ -316,7 +316,7 @@ class QueryFilterExpressionParser:
             if op in ALL_VALUE_OPS:
                 raise exc.precondition(
                     f"{op!r} is a value operator, and `$fields` compares two field paths. "
-                    f"{_FIELDS_MIGRATION}",
+                    f"{FIELDS_MIGRATION}",
                 )
 
             raise exc.precondition(f"Invalid field compare operator: {op!r}")
@@ -324,7 +324,7 @@ class QueryFilterExpressionParser:
         if not isinstance(right, str) or not right.strip():
             # A literal on the right is the other unmistakable pre-0.7 shape; an empty or blank
             # string is as likely a mistyped field path, and gets no pointer.
-            hint = "" if isinstance(right, str) else f". {_FIELDS_MIGRATION}"
+            hint = "" if isinstance(right, str) else f". {FIELDS_MIGRATION}"
 
             raise exc.precondition(
                 f"Field compare operator {op!r} requires a non-empty field path "

@@ -155,10 +155,10 @@ filters = {
 ```
 
 !!! note "Filters written before 0.7"
-    `$fields` used to hold value predicates; those belong under `$values` now, and the parser says
-    so when it meets one. The shape it cannot catch is a string value, such as
-    `{"$fields": {"status": "draft"}}`: that compares `status` with a field named `draft` —
-    refused when the read model has no such field, and silently wrong when it has.
+    `$fields` used to hold value predicates; those belong under `$values` now, and a refused
+    filter says so. The shape that cannot be caught is a string value naming a real field, such
+    as `{"$fields": {"status": "draft"}}` on a model with a `draft` field: it reads as comparing
+    `status` with `draft`.
 
 ## Combining expressions — `$and` / `$or` / `$not`
 

@@ -31,7 +31,7 @@ from .internal.nodes import (
     QueryNot,
     QueryOr,
 )
-from .internal.parse import QueryFilterExpressionParser
+from .internal.parse import FIELDS_MIGRATION, QueryFilterExpressionParser
 
 # ----------------------- #
 
@@ -51,7 +51,16 @@ def collect_filter_field_roots(expr: QueryFilterExpression) -> frozenset[str]:  
     array field path itself (the quantifier's ``path``) is a top-level reference.
     """
 
+    return _field_roots(expr)[0]
+
+
+def _field_roots(
+    expr: QueryFilterExpression,  # type: ignore[valid-type]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Every referenced root, and the ones that are the right-hand side of a field compare."""
+
     roots: set[str] = set()
+    compared: set[str] = set()
 
     def _walk(node: QueryExpr) -> None:
         match node:
@@ -69,6 +78,7 @@ def collect_filter_field_roots(expr: QueryFilterExpression) -> frozenset[str]:  
             case QueryCompare(left, _, right):
                 roots.add(_root(left))
                 roots.add(_root(right))
+                compared.add(_root(right))
 
             case QueryElem(path, _, _):
                 roots.add(_root(path))
@@ -78,7 +88,7 @@ def collect_filter_field_roots(expr: QueryFilterExpression) -> frozenset[str]:  
 
     _walk(QueryFilterExpressionParser.parse(expr))
 
-    return frozenset(roots)
+    return frozenset(roots), frozenset(compared)
 
 
 # ....................... #
@@ -142,12 +152,22 @@ def validate_runtime_filter_fields(
         return
 
     fields = (frozenset(model.model_fields) | materialized) - lenient
-    roots = collect_filter_field_roots(filters)
+    roots, compared = _field_roots(filters)
     unknown = sorted(root for root in roots if root not in fields)
 
     if unknown:
+        # A `$fields` right-hand side is a field path, so a pre-0.7 string value — a bare
+        # string or a string enum — parses as one and first fails here, as an unknown field.
+        values = sorted(root for root in unknown if root in compared)
+        hint = (
+            f" {values} on the right of a `$fields` compare name a field, not a value. "
+            f"{FIELDS_MIGRATION}"
+            if values
+            else ""
+        )
+
         raise exc.precondition(
-            f"Filter field(s) {unknown} are not on the read model ({model.__name__}).",
+            f"Filter field(s) {unknown} are not on the read model ({model.__name__}).{hint}",
             code="field_not_on_read_model",
         )
 

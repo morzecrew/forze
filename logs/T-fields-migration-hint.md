@@ -103,3 +103,19 @@ validation with no pointer) waits on the maintainer. The query-syntax page gaine
 note for readers migrating from before 0.7 — an extra the specification did not ask for.
 
 **Drift count: 0**
+
+## Maintainer decision — 2026-09-27
+
+```divergence
+decision: unlisted
+grade: LOCKED
+kind: resolved
+at: 2026-09-27T10:05:00Z
+attempt: 2
+claim: the maintainer accepted the halted proposal — a string right-hand side of a `$fields` compare that names no field on the read model is refused by field validation with the same suffix, after a clause naming it as a field where a value was meant; any other unknown field (a `$values` key, a `$fields` left-hand side) keeps the plain message
+evidence: src/forze/application/contracts/querying/field_policy.py:161
+action: decided
+proposal: LOCKED — a `$fields` right-hand side naming no field carries the migration suffix at field validation; the one silent shape left is a string that names a real field.
+```
+
+**Drift count: 0**
