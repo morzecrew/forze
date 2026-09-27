@@ -6,6 +6,7 @@ from forze.application.contracts.guarantees import (
     FULL_STORAGE_GUARANTEES,
     GUARANTEE_UNSUPPORTED,
     NonOverlapping,
+    SerializedBy,
     StorageGuaranteeCapabilities,
     UniqueTogether,
     capabilities_of,
@@ -187,3 +188,107 @@ class TestReconciliation:
 
         assert caught.value.details["spec"] == "shift"
         assert caught.value.details["backend"] == "void"
+
+
+# ....................... #
+
+
+class TestWhenAGuaranteeHolds:
+    """``holds`` defaults to after every write; ``"commit"`` needs a store that says it can."""
+
+    def test_every_member_holds_always_unless_told_otherwise(self) -> None:
+        assert ANY_ROW.holds == "always"
+        assert NO_OVERLAP.holds == "always"
+
+    @pytest.mark.parametrize("holds", ["Commit", "deferred", "", None])
+    def test_a_moment_outside_the_two_is_refused(self, holds: object) -> None:
+        # From configuration, "Commit" would compare unequal to "commit" everywhere and quietly
+        # behave as "always".
+        for build in (
+            lambda: UniqueTogether(fields=("a",), holds=holds),  # type: ignore[arg-type]
+            lambda: NonOverlapping(key=("a",), period=("s", "e"), holds=holds),  # type: ignore[arg-type]
+        ):
+            with pytest.raises(CoreException) as caught:
+                build()
+
+            assert caught.value.kind.value == "configuration"
+
+    def test_serialization_has_no_moment_to_hold_at(self) -> None:
+        # It orders writes; it is not a state that can be inspected at a point in time.
+        with pytest.raises(TypeError):
+            SerializedBy(key=("a",), holds="commit")  # type: ignore[call-arg]
+
+    def test_a_store_that_cannot_defer_names_it(self) -> None:
+        store = StorageGuaranteeCapabilities(unique_together=True, non_overlapping=True)
+
+        for guarantee in (
+            UniqueTogether(fields=("a",), holds="commit"),
+            NonOverlapping(key=("a",), period=("s", "e"), holds="commit"),
+        ):
+            assert store.unmet(guarantee) == ('holding only at commit (`holds="commit"`)',)
+
+        assert store.unmet(ANY_ROW) == ()
+
+    def test_the_superset_keeps_every_moment(self) -> None:
+        for guarantee in (
+            UniqueTogether(fields=("a",), where={"$values": {"x": 1}}, holds="commit"),
+            UniqueTogether(fields=("a",), skip_null=True, holds="commit"),
+            NonOverlapping(
+                key=("a",), period=("s", "e"), where={"$values": {"x": 1}}, holds="commit"
+            ),
+        ):
+            assert FULL_STORAGE_GUARANTEES.unmet(guarantee) == ()
+
+
+class TestWiringAMomentAgainstEachBackend:
+    """Reconciliation, not the vocabulary, refuses what one backend cannot keep — so a
+    declaration the in-memory store honours is not forbidden everywhere."""
+
+    PARTIAL_AT_COMMIT = (
+        UniqueTogether(fields=("a",), where={"$values": {"x": 1}}, holds="commit"),
+        UniqueTogether(fields=("a",), skip_null=True, holds="commit"),
+    )
+
+    @staticmethod
+    def _validate(guarantee: object, port: object, backend: str) -> None:
+        validate_storage_guarantees((guarantee,), port, spec_name="items", backend=backend)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("guarantee", PARTIAL_AT_COMMIT, ids=["where", "skip_null"])
+    def test_a_partial_uniqueness_at_commit_is_refused_on_postgres(
+        self, guarantee: UniqueTogether
+    ) -> None:
+        from forze_postgres.adapters.document import PostgresDocumentAdapter
+
+        with pytest.raises(CoreException) as caught:
+            self._validate(guarantee, PostgresDocumentAdapter, "postgres")
+
+        assert caught.value.code == GUARANTEE_UNSUPPORTED
+        assert "a partial uniqueness" in caught.value.summary
+        assert "holding only at commit" not in caught.value.summary
+
+    @pytest.mark.parametrize("guarantee", PARTIAL_AT_COMMIT, ids=["where", "skip_null"])
+    def test_the_same_declaration_is_kept_by_the_mock(self, guarantee: UniqueTogether) -> None:
+        from forze_mock.adapters.document import MockDocumentAdapter
+
+        self._validate(guarantee, MockDocumentAdapter, "mock")
+
+    def test_postgres_keeps_the_forms_it_has_a_constraint_for(self) -> None:
+        from forze_postgres.adapters.document import PostgresDocumentAdapter
+
+        for guarantee in (
+            UniqueTogether(fields=("a", "b"), holds="commit"),
+            NonOverlapping(
+                key=("a",), period=("s", "e"), where={"$values": {"x": 1}}, holds="commit"
+            ),
+        ):
+            self._validate(guarantee, PostgresDocumentAdapter, "postgres")
+
+    def test_mongo_checks_every_write_and_cannot_defer(self) -> None:
+        from forze_mongo.adapters.document import MongoDocumentAdapter
+
+        with pytest.raises(CoreException) as caught:
+            self._validate(
+                UniqueTogether(fields=("a",), holds="commit"), MongoDocumentAdapter, "mongo"
+            )
+
+        assert "holding only at commit" in caught.value.summary

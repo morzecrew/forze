@@ -892,3 +892,296 @@ class TestMockAndPostgresRefuseTheSameWay:
         )
 
         assert row.valid_to == date(2025, 12, 31)
+
+
+# ....................... #
+
+ONE_EVER_AT_COMMIT = UniqueTogether(fields=("root_id",), holds="commit")
+NO_OVERLAP_AT_COMMIT = NonOverlapping(
+    key=("root_id",), period=("valid_from", "valid_to"), bounds="[]", holds="commit"
+)
+
+
+class TestWhenTheGuaranteeHolds:
+    """A constraint's deferral has to agree with the declaration's ``holds``.
+
+    Disagreement either way is the mock and the database answering differently: a deferred
+    constraint behind a guarantee that holds after every write accepts writes the in-memory store
+    refuses, and an immediate one behind a guarantee that holds at commit refuses the transaction
+    the declaration lets through. Keyed on ``condeferred``, not ``condeferrable``: ``DEFERRABLE
+    INITIALLY IMMEDIATE`` checks per statement unless a transaction asks otherwise.
+    """
+
+    async def test_a_deferred_constraint_keeps_a_commit_guarantee(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD UNIQUE (root_id) DEFERRABLE INITIALLY DEFERRED;"
+        )
+
+        await _validate(pg_client, table, ONE_EVER_AT_COMMIT)
+
+    async def test_a_deferred_constraint_does_not_keep_an_immediate_guarantee(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # The bug the moment was found through: accepted today, and the mock refused a write
+        # the database took.
+        table = await _table(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD UNIQUE (root_id) DEFERRABLE INITIALLY DEFERRED;"
+        )
+
+        with pytest.raises(CoreException, match="INITIALLY DEFERRED") as caught:
+            await _validate(pg_client, table, ONE_EVER)
+
+        assert 'holds="commit"' in caught.value.summary
+        assert "has no valid unique index" not in caught.value.summary
+
+    @pytest.mark.parametrize(
+        "constraint",
+        ["UNIQUE (root_id)", "UNIQUE (root_id) DEFERRABLE INITIALLY IMMEDIATE"],
+        ids=["not-deferrable", "initially-immediate"],
+    )
+    async def test_an_immediate_constraint_keeps_only_an_immediate_guarantee(
+        self, pg_client: PostgresClient, constraint: str
+    ) -> None:
+        table = await _table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD {constraint};")
+
+        await _validate(pg_client, table, ONE_EVER)
+
+        with pytest.raises(CoreException, match="checked per statement") as caught:
+            await _validate(pg_client, table, ONE_EVER_AT_COMMIT)
+
+        assert "ADD UNIQUE (root_id) DEFERRABLE INITIALLY DEFERRED;" in caught.value.summary
+
+    async def test_a_missing_constraint_prints_the_deferred_ddl(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+
+        with pytest.raises(CoreException, match="no valid unique index") as caught:
+            await _validate(pg_client, table, ONE_EVER_AT_COMMIT)
+
+        assert "ADD UNIQUE (root_id) DEFERRABLE INITIALLY DEFERRED;" in caught.value.summary
+
+    async def test_a_partial_uniqueness_at_commit_has_no_mechanism(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # Reached only when startup runs without the port being resolved: wiring refuses it
+        # first. A partial index is right in every other respect and still cannot be deferred.
+        table = await _table(pg_client)
+        await pg_client.execute(f"CREATE UNIQUE INDEX ON {table} (root_id) WHERE is_current;")
+        at_commit = UniqueTogether(
+            fields=("root_id",), where={"$values": {"is_current": True}}, holds="commit"
+        )
+
+        with pytest.raises(CoreException, match="has no mechanism for that") as caught:
+            await _validate(pg_client, table, at_commit)
+
+        assert "None" not in caught.value.summary
+
+    async def test_a_deferred_foreign_key_elsewhere_says_nothing_about_the_index(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # `conindid` is set on a foreign key referencing the index too; joined carelessly, the
+        # referencing table's deferral would be read as the referenced index's.
+        table = await _table(pg_client)
+        await pg_client.execute(f"ALTER TABLE {table} ADD UNIQUE (root_id);")
+        referencing = f"{table}_ref"
+        await pg_client.execute(
+            f"CREATE TABLE {referencing} (root_id text REFERENCES {table} (root_id) "
+            "DEFERRABLE INITIALLY DEFERRED);"
+        )
+
+        await _validate(pg_client, table, ONE_EVER)
+
+        with pytest.raises(CoreException, match="checked per statement"):
+            await _validate(pg_client, table, ONE_EVER_AT_COMMIT)
+
+    async def test_a_deferred_partial_exclusion_keeps_a_filtered_commit_guarantee(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # Unlike a uniqueness, an EXCLUDE constraint can be partial and deferred at once — and
+        # the deparsed text then ends in the deferral clause, after the predicate.
+        table = await _table(pg_client)
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            "(root_id WITH =, daterange(valid_from, valid_to, '[]') WITH &&) "
+            "WHERE (is_current) DEFERRABLE INITIALLY DEFERRED;"
+        )
+        filtered = NonOverlapping(
+            key=("root_id",),
+            period=("valid_from", "valid_to"),
+            bounds="[]",
+            where={"$values": {"is_current": True}},
+            holds="commit",
+        )
+
+        await _validate(pg_client, table, filtered)
+
+    async def test_the_deferral_clause_is_not_read_as_part_of_the_predicate(
+        self, pg_client: PostgresClient
+    ) -> None:
+        # A deferred partial constraint deparses as `... WHERE (...) DEFERRABLE INITIALLY
+        # DEFERRED`. Read as predicate, the clause "mentions" a quoted column named
+        # `DEFERRABLE`, and a constraint filtered on another column would pass for one on it.
+        table = await _table(pg_client)
+        await pg_client.execute(f'ALTER TABLE {table} ADD COLUMN "DEFERRABLE" boolean;')
+        await pg_client.execute("CREATE EXTENSION IF NOT EXISTS btree_gist;")
+        await pg_client.execute(
+            f"ALTER TABLE {table} ADD EXCLUDE USING gist "
+            "(root_id WITH =, daterange(valid_from, valid_to, '[]') WITH &&) "
+            "WHERE (is_current) DEFERRABLE INITIALLY DEFERRED;"
+        )
+        on_the_other_column = NonOverlapping(
+            key=("root_id",),
+            period=("valid_from", "valid_to"),
+            bounds="[]",
+            where={"$values": {"DEFERRABLE": True}},
+            holds="commit",
+        )
+
+        with pytest.raises(CoreException, match="no EXCLUDE constraint"):
+            await _validate(pg_client, table, on_the_other_column)
+
+    async def test_an_exclusion_constraint_must_agree_on_deferral_too(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table = await _table(pg_client)
+        await _exclude(pg_client, table, bounds="[]")
+
+        await _validate(pg_client, table, NO_OVERLAP)
+
+        with pytest.raises(CoreException, match="checked per statement") as caught:
+            await _validate(pg_client, table, NO_OVERLAP_AT_COMMIT)
+
+        assert "WITH &&) DEFERRABLE INITIALLY DEFERRED;" in caught.value.summary
+
+        deferred = await _table(pg_client)
+        await pg_client.execute(
+            f"ALTER TABLE {deferred} ADD EXCLUDE USING gist "
+            "(root_id WITH =, daterange(valid_from, valid_to, '[]') WITH &&) "
+            "DEFERRABLE INITIALLY DEFERRED;"
+        )
+
+        await _validate(pg_client, deferred, NO_OVERLAP_AT_COMMIT)
+
+        with pytest.raises(CoreException, match="INITIALLY DEFERRED"):
+            await _validate(pg_client, deferred, NO_OVERLAP)
+
+
+# ....................... #
+
+
+class _ItemRead(ReadDocument):
+    order_id: str
+    position: int
+
+
+class _Item(Document):
+    order_id: str
+    position: int
+
+
+class _ItemCreate(CreateDocumentCmd):
+    order_id: str
+    position: int
+
+
+class _ItemUpdate(BaseDTO):
+    position: int | None = None
+
+
+POSITIONS_AT_COMMIT = UniqueTogether(fields=("order_id", "position"), holds="commit")
+
+
+class TestBothStoresLetATransactionPassThroughAViolation:
+    """The case that asked for the moment: an item inserted at the top of a positioned list.
+
+    Written while the row it displaces still holds the position, and legal once the displaced
+    rows have moved down — Postgres settles a deferred constraint at commit, and the in-memory
+    store has to settle a commit guarantee the same way, or the application's ordinary
+    reconciliation fails in the one place it is tested.
+    """
+
+    @staticmethod
+    async def _postgres_list(pg_client: PostgresClient) -> tuple[str, UUID, UUID]:
+        table = f"items_{uuid4().hex[:12]}"
+        await pg_client.execute(
+            f"CREATE TABLE {table} (id uuid PRIMARY KEY, order_id text NOT NULL, "
+            "position integer NOT NULL, UNIQUE (order_id, position) "
+            "DEFERRABLE INITIALLY DEFERRED);"
+        )
+        first, second = uuid4(), uuid4()
+        await pg_client.execute(
+            f"INSERT INTO {table} VALUES (%s, 'o1', 0), (%s, 'o1', 1);", [first, second]
+        )
+
+        return table, first, second
+
+    @staticmethod
+    def _mock_spec() -> DocumentSpec[Any, Any, Any, Any]:
+        return DocumentSpec[_ItemRead, _Item, _ItemCreate, _ItemUpdate](
+            name="items",
+            read=_ItemRead,
+            write=DocumentWriteTypes(
+                domain=_Item, create_cmd=_ItemCreate, update_cmd=_ItemUpdate
+            ),
+            guarantees=(POSITIONS_AT_COMMIT,),
+        )
+
+    async def test_both_commit_an_insert_at_the_top(self, pg_client: PostgresClient) -> None:
+        table, first, second = await self._postgres_list(pg_client)
+
+        async with pg_client.transaction():
+            await pg_client.execute(f"INSERT INTO {table} VALUES (%s, 'o1', 0);", [uuid4()])
+            await pg_client.execute(f"UPDATE {table} SET position = 1 WHERE id = %s;", [first])
+            await pg_client.execute(f"UPDATE {table} SET position = 2 WHERE id = %s;", [second])
+
+        spec = self._mock_spec()
+        ctx = context_from_modules(MockDepsModule())
+        command = ctx.doc.command(spec)
+        a = await command.create(_ItemCreate(order_id="o1", position=0))
+        b = await command.create(_ItemCreate(order_id="o1", position=1))
+
+        async with ctx.tx_ctx.scope("mock"):
+            await command.create(_ItemCreate(order_id="o1", position=0))
+            await command.update(a.id, a.rev, _ItemUpdate(position=1))
+            await command.update(b.id, b.rev, _ItemUpdate(position=2))
+
+        rows = await pg_client.fetch_all(
+            f"SELECT position FROM {table} ORDER BY position;", [], row_factory="dict", commit=False
+        )
+        page = await ctx.doc.query(spec).find_many({"$values": {"order_id": "o1"}})
+
+        assert [row["position"] for row in rows] == [0, 1, 2]
+        assert sorted(row.position for row in page.hits) == [0, 1, 2]
+
+    async def test_both_refuse_the_same_way_when_the_violation_is_left_at_commit(
+        self, pg_client: PostgresClient
+    ) -> None:
+        table, first, _ = await self._postgres_list(pg_client)
+
+        with pytest.raises(CoreException) as from_postgres:
+            async with pg_client.transaction():
+                await pg_client.execute(f"INSERT INTO {table} VALUES (%s, 'o1', 0);", [uuid4()])
+                await pg_client.execute(
+                    f"UPDATE {table} SET position = 1 WHERE id = %s;", [first]
+                )
+
+        spec = self._mock_spec()
+        ctx = context_from_modules(MockDepsModule())
+        command = ctx.doc.command(spec)
+        a = await command.create(_ItemCreate(order_id="o1", position=0))
+        await command.create(_ItemCreate(order_id="o1", position=1))
+
+        with pytest.raises(CoreException) as from_mock:
+            async with ctx.tx_ctx.scope("mock"):
+                await command.create(_ItemCreate(order_id="o1", position=0))
+                await command.update(a.id, a.rev, _ItemUpdate(position=1))
+
+        assert from_mock.value.kind is from_postgres.value.kind
+        assert from_mock.value.kind.value == "conflict"

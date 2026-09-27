@@ -99,7 +99,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         second writer slips between them and both rows land.
         """
 
-        self._check_guarantees(store, pk, row)
+        self._check_guarantees(store, pk, row, deferred=current_mvcc_tx() is None)
         store[pk] = row
 
         if self.spec.guarantees:
@@ -112,21 +112,32 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         store: dict[UUID, JsonDict],
         pk: UUID,
         row: JsonDict,
+        *,
+        deferred: bool = True,
     ) -> None:
         """Raise if *row* at *pk* would break a declared guarantee, given *store*.
 
         Split from :meth:`_write_row` for the one caller that cannot check and write in the
         same step: a set-based update validates the state the whole batch would produce, so it
         needs the check against a staged store rather than against the live one.
+
+        *deferred* includes the guarantees that hold only at commit. A write inside a
+        transaction leaves them out — the commit recheck judges them on what the transaction
+        publishes — and a write outside one keeps them, because there is no later moment: the
+        write *is* the commit, as a statement in autocommit is to a deferred constraint. The
+        commit recheck calls this with the default, so it judges every guarantee.
         """
 
         for guarantee in self.spec.guarantees:
             match guarantee:
-                case UniqueTogether():
+                case UniqueTogether() if deferred or guarantee.holds == "always":
                     self._refuse_duplicate(store, pk, row, guarantee)
 
-                case NonOverlapping():
+                case NonOverlapping() if deferred or guarantee.holds == "always":
                     self._refuse_overlap(store, pk, row, guarantee)
+
+                case _:
+                    pass
 
     # ....................... #
 
@@ -1076,7 +1087,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             merged.update(staged)
 
             for pk, row in staged.items():
-                self._check_guarantees(merged, pk, row)
+                self._check_guarantees(merged, pk, row, deferred=current_mvcc_tx() is None)
 
             for pk, row in staged.items():
                 store[pk] = row

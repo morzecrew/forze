@@ -581,6 +581,11 @@ class PostgresIntrospector:
           unique index does *not* refuse two rows that share a tuple containing one. Requires
           Postgres 15 or later; the repository already depends on 16-and-later behaviour
           elsewhere.
+        * ``condeferred``, on the constraint the index backs, if any. A ``DEFERRABLE INITIALLY
+          DEFERRED`` constraint is checked at commit, not per statement. The join is to the
+          index's *own* constraint: ``conindid`` is also set on a foreign key in another table
+          that references the index, and a deferred foreign key says nothing about when this
+          uniqueness is checked.
 
         Expression indexes are skipped: their key is a computed value, not a column, and a
         guarantee names columns.
@@ -612,9 +617,14 @@ class PostgresIntrospector:
               WHERE u.attnum <> 0
             ) AS columns,
             pg_get_expr(i.indpred, i.indrelid) AS predicate,
-            i.indnullsnotdistinct AS nulls_not_distinct
+            i.indnullsnotdistinct AS nulls_not_distinct,
+            COALESCE(c.condeferred, false) AS initially_deferred
             FROM pg_index i
             JOIN rel ON rel.oid = i.indrelid
+            LEFT JOIN pg_constraint c
+              ON c.conindid = i.indexrelid
+             AND c.conrelid = i.indrelid
+             AND c.contype IN ('u', 'p')
             WHERE i.indisunique
               AND i.indisvalid
               AND i.indisready
@@ -644,6 +654,7 @@ class PostgresIntrospector:
                     columns=columns,
                     predicate=str(predicate) if predicate is not None else None,
                     nulls_not_distinct=bool(row.get("nulls_not_distinct")),
+                    initially_deferred=bool(row.get("initially_deferred")),
                 )
             )
 
@@ -679,6 +690,7 @@ class PostgresIntrospector:
             """
             SELECT c.conname AS name,
                    pg_get_constraintdef(c.oid) AS definition,
+                   c.condeferred AS initially_deferred,
                    (
                      SELECT COALESCE(array_agg(a.attname), ARRAY[]::text[])
                      FROM unnest(c.conkey) AS u(attnum)
@@ -708,6 +720,7 @@ class PostgresIntrospector:
                 name=str(row.get("name")),
                 columns=frozenset(str(column) for column in (row.get("columns") or [])),  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
                 definition=str(row.get("definition") or ""),
+                initially_deferred=bool(row.get("initially_deferred")),
             )
             for row in rows
         )

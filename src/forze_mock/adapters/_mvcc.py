@@ -364,10 +364,9 @@ class MvccTx:
         published: dict[str, dict[Any, Any]] = {}
 
         for (ns, key), check in self.guarantee_rechecks.items():
-            live = state.documents.get(ns)
-
-            if not live:
-                continue
+            # No skip for a namespace with nothing committed yet: a guarantee that holds at
+            # commit was not checked when it was written, so the transaction's own rows may be
+            # all the store holds and still break it.
 
             # The value this transaction will actually publish, read now rather than recorded
             # when the write happened: a key rewritten since then is checked once, on its final

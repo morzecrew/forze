@@ -40,6 +40,29 @@ apart. A member is added by demand only, and pays for a capability flag, an adap
 mock implementation and a parity leg."""
 
 
+GuaranteeMoment = Literal["always", "commit"]
+"""When a guarantee must hold.
+
+``"always"`` — after every write: no transaction may pass through a state that breaks it.
+``"commit"`` — once the transaction commits: a transaction may break it on the way, as long as
+what it publishes does not. The difference is observable, which is what makes it a property
+rather than a mechanism: reconciling a child collection as delete, insert, update writes a row
+at a position its displaced sibling still holds, and only the second reading lets that
+transaction commit."""
+
+_MOMENTS: frozenset[str] = frozenset({"always", "commit"})
+
+
+def _require_moment(owner: str, holds: object) -> None:
+    # A declaration read from configuration is a string at runtime whatever the annotation
+    # says, and one that is not quite `"commit"` would quietly behave as `"always"`.
+    if holds not in _MOMENTS:
+        raise exc.configuration(
+            f"{owner}.holds is {holds!r}; it must be 'always' (after every write) or 'commit' "
+            "(once the transaction commits).",
+        )
+
+
 # ....................... #
 
 
@@ -80,7 +103,13 @@ class UniqueTogether:
     wants the looser one should have to say so. A self-reference that is null until it points
     somewhere — a correction's superseded row — is the case that wants it on."""
 
+    holds: GuaranteeMoment = "always"
+    """When the uniqueness must hold (:data:`GuaranteeMoment`). ``"commit"`` lets a transaction
+    pass through a duplicate it resolves before committing — a position shifted down a list."""
+
     def __attrs_post_init__(self) -> None:
+        _require_moment("UniqueTogether", self.holds)
+
         if not self.fields:
             raise exc.configuration(
                 "UniqueTogether names no field. A uniqueness guarantee over nothing is either "
@@ -142,7 +171,14 @@ class NonOverlapping:
     property still says what it meant: nothing in force now overlaps anything else in force
     now."""
 
+    holds: GuaranteeMoment = "always"
+    """When the non-overlap must hold (:data:`GuaranteeMoment`). ``"commit"`` lets a
+    transaction pass through an overlap it resolves before committing — a period shortened
+    after its successor was written."""
+
     def __attrs_post_init__(self) -> None:
+        _require_moment("NonOverlapping", self.holds)
+
         if not self.key:
             raise exc.configuration(
                 "NonOverlapping names no key field. Without one the guarantee says no two rows "
