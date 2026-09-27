@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **A pre-0.7 `$fields` filter says it belongs under `$values`.** A value operator, a literal on the right, a non-path value, or a string naming no field is refused with that pointer. A string or string enum that names a field still reads as a field compare, the one shape that cannot be caught.
 
 ### Fixed
 

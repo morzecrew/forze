@@ -38,6 +38,7 @@ from .internal.nodes import (
     QueryNot,
     QueryOr,
 )
+from .types import ALL_VALUE_OPS as ALL_VALUE_OPS
 
 # ----------------------- #
 
@@ -45,32 +46,8 @@ UNSUPPORTED_QUERY_FEATURE_CODE: Final[str] = "query_feature_unsupported"
 """Error code raised when a filter uses a feature the target backend cannot compile."""
 
 
-# Runtime operator sets (the ``types.py`` aliases are ``Literal`` types — not iterable
-# at runtime — so the canonical sets are spelled out here, the single source for the
-# full surface a backend may advertise).
-
-ALL_VALUE_OPS: Final[frozenset[str]] = frozenset(
-    {
-        "$eq",
-        "$neq",
-        "$gt",
-        "$gte",
-        "$lt",
-        "$lte",
-        "$in",
-        "$nin",
-        "$null",
-        "$empty",
-        "$superset",
-        "$subset",
-        "$disjoint",
-        "$overlaps",
-        "$like",
-        "$ilike",
-        "$regex",
-    }
-)
-"""Every operator the DSL allows on a top-level field predicate (the full ``Op`` set)."""
+# Runtime operator sets — the canonical surface a backend may advertise. ``ALL_VALUE_OPS``
+# is derived beside its literals in ``types.py`` (the parser needs it) and re-exported here.
 
 ALL_ELEMENT_OPS: Final[frozenset[str]] = frozenset(
     {

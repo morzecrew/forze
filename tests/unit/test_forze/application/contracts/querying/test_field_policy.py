@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 import pytest
 
 from forze.application.contracts.querying import (
@@ -313,3 +315,79 @@ class TestValidateRuntimeFilterFields:
         validate_runtime_filter_fields(
             {"$values": {"email": "x"}}, model=_Doc, encrypted=frozenset()
         )
+
+
+class _Status(StrEnum):
+    ARCHIVED = "archived"
+
+
+class TestAStringValueUnderFieldsNamesTheMigration:
+    """A string under `$fields` is a field path, so a pre-0.7 string value parses as one.
+
+    When it names no field the read model has, field validation is where it fails — and the only
+    place the refusal can say it was a value that belongs under `$values`. A name on the left, or
+    anywhere outside a `$fields` right-hand side, is an ordinary unknown field and says nothing
+    about the migration.
+    """
+
+    @staticmethod
+    def _refusal(filters: dict[str, object]) -> CoreException:
+        from pydantic import BaseModel
+
+        from forze.application.contracts.querying import validate_runtime_filter_fields
+
+        class _Doc(BaseModel):
+            id: str
+            status: str
+            created_at: str
+
+        with pytest.raises(CoreException) as caught:
+            validate_runtime_filter_fields(filters, model=_Doc)
+
+        assert (caught.value.kind, caught.value.code) == (
+            ExceptionKind.PRECONDITION,
+            "field_not_on_read_model",
+        )
+        return caught.value
+
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$fields": {"status": "archived"}},
+            {"$fields": {"status": {"$neq": "archived"}}},
+            {"$values": {"id": "x"}, "$fields": {"status": _Status.ARCHIVED}},
+            {"$fields": {"status": {"$eq": _Status.ARCHIVED}}},
+        ],
+        ids=["shortcut", "operator", "string-enum-shortcut", "string-enum-operator"],
+    )
+    def test_an_unknown_right_hand_side_names_values(self, filters: dict[str, object]) -> None:
+        error = self._refusal(filters)
+
+        assert "['archived']" in error.summary
+        assert "`$values`" in error.summary
+
+    @pytest.mark.parametrize(
+        "filters",
+        [{"$values": {"archived": "x"}}, {"$fields": {"archived": "created_at"}}],
+        ids=["values-key", "fields-left-side"],
+    )
+    def test_any_other_unknown_field_says_nothing_about_it(
+        self, filters: dict[str, object]
+    ) -> None:
+        assert "`$values`" not in self._refusal(filters).summary
+
+
+    async def test_a_document_port_says_so(self) -> None:
+        """Wired, not only callable: an adapter's filter validation carries the pointer."""
+
+        from forze_mock import MockDepsModule
+        from tests.support.execution_context import context_from_modules
+        from tests.support.owned_reads_conformance import owned_spec
+
+        query = context_from_modules(MockDepsModule()).doc.query(owned_spec("notes"))
+
+        with pytest.raises(CoreException) as caught:
+            await query.find({"$fields": {"title": "archived"}})
+
+        assert caught.value.code == "field_not_on_read_model"
+        assert "`$values`" in caught.value.summary

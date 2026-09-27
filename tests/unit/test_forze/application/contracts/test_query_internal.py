@@ -2,11 +2,13 @@
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import Enum
+from typing import get_args
 from uuid import UUID
 
 import pytest
 
-from forze.application.contracts.querying import AggregatesExpressionParser
+from forze.application.contracts.querying import ALL_VALUE_OPS, AggregatesExpressionParser
 from forze.application.contracts.querying.internal import (
     ELEM_SCALAR_FIELD,
     GroupField,
@@ -26,7 +28,8 @@ from forze.application.contracts.querying.internal import (
 from forze.application.contracts.querying.internal.aggregate import (
     _having_field_roots,
 )
-from forze.base.exceptions import CoreException
+from forze.application.contracts.querying.types import CompareOp
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -1181,7 +1184,7 @@ class TestQueryCompareExpressionParser:
     def test_parse_compare_invalid_operator_raises(self) -> None:
         with pytest.raises(CoreException, match="Invalid field compare operator"):
             QueryFilterExpressionParser.parse(
-                {"$fields": {"a": {"$in": "b"}}},
+                {"$fields": {"a": {"$nonsense": "b"}}},
             )
 
     def test_parse_compare_scalar_rhs_raises(self) -> None:
@@ -1347,6 +1350,81 @@ class TestQueryCompareExpressionParser:
 
 # ----------------------- #
 # Extra branch coverage for the filter parser (error/edge paths).
+
+
+class _Status(Enum):
+    DRAFT = "draft"
+
+
+def _refusal(filters: object) -> CoreException:
+    with pytest.raises(CoreException) as caught:
+        QueryFilterExpressionParser.parse(filters)  # type: ignore[arg-type]
+
+    assert (caught.value.kind, caught.value.code) == (
+        ExceptionKind.PRECONDITION,
+        "core.precondition",
+    )
+    return caught.value
+
+
+class TestAPre07FieldsFilterNamesTheMigration:
+    """`$fields` kept its key and changed its meaning in 0.7, so an old filter fails at parse.
+
+    Each refusal with the unmistakable shape of a pre-0.7 value predicate says where it moved;
+    a genuine typo does not, because the pointer is only worth having while it is specific.
+    """
+
+    @pytest.mark.parametrize("op", sorted(ALL_VALUE_OPS - set(get_args(CompareOp))))
+    def test_a_value_operator_names_values(self, op: str) -> None:
+        error = _refusal({"$fields": {"id": {op: ["a"]}}})
+
+        assert "is a value operator" in error.summary
+        assert "`$values`" in error.summary
+
+    @pytest.mark.parametrize("op", sorted(get_args(CompareOp)))
+    @pytest.mark.parametrize(
+        "right",
+        [1, UUID(int=1), _Status.DRAFT, ["a"], None],
+        ids=["int", "uuid", "enum", "list", "none"],
+    )
+    def test_a_compare_operator_with_a_literal_on_the_right_names_values(
+        self, op: str, right: object
+    ) -> None:
+        error = _refusal({"$fields": {"a": {op: right}}})
+
+        assert "requires a non-empty field path" in error.summary
+        assert "`$values`" in error.summary
+
+    @pytest.mark.parametrize(
+        "value", [UUID(int=1), ["a"], 7, _Status.DRAFT], ids=["uuid", "list", "int", "enum"]
+    )
+    def test_a_value_where_a_field_path_belongs_names_values(self, value: object) -> None:
+        error = _refusal({"$fields": {"id": value}})
+
+        assert "Invalid $fields map value" in error.summary
+        assert "`$values`" in error.summary
+
+    def test_an_unknown_operator_keeps_the_plain_message(self) -> None:
+        error = _refusal({"$fields": {"a": {"$nonsense": "b"}}})
+
+        assert error.summary == "Invalid field compare operator: '$nonsense'"
+
+    @pytest.mark.parametrize("right", ["", "   "], ids=["empty", "blank"])
+    def test_an_empty_field_path_keeps_the_plain_message(self, right: str) -> None:
+        # As likely a mistyped path as old code: the pointer would be a guess.
+        error = _refusal({"$fields": {"a": {"$eq": right}}})
+
+        assert "`$values`" not in error.summary
+
+    @pytest.mark.parametrize(
+        "filters",
+        [{"$fields": {"a": {"$eq": "b"}}}, {"$fields": {"a": "b"}}],
+        ids=["operator", "shortcut"],
+    )
+    def test_a_field_compare_still_parses(self, filters: object) -> None:
+        assert QueryFilterExpressionParser.parse(filters) == QueryAnd(  # type: ignore[arg-type]
+            items=(QueryCompare(left="a", op="$eq", right="b"),)
+        )
 
 
 class TestQueryFilterParserBranches:
