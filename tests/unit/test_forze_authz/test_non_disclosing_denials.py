@@ -13,6 +13,8 @@ that forgot to name the resource, or an adapter that forgot to tag its not-found
 from __future__ import annotations
 
 import json
+import threading
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
@@ -32,8 +34,10 @@ from forze.base.exceptions import (
     CoreException,
     DenialPosture,
     ExceptionKind,
+    bind_denial_posture,
     configure_denial_posture,
     current_denial_posture,
+    egress,
     exc,
     guard_frame,
 )
@@ -324,3 +328,54 @@ class TestTheRuntimeBindsThePosture:
 
         async with build_runtime(MockDepsModule()).scope():
             assert current_denial_posture() == COVERED
+
+
+class TestHoldingThePostureAcrossThreads:
+    def test_a_conflicting_holder_on_another_thread_is_still_refused(self, posture: Any) -> None:
+        """Two runtimes can enter their scopes on two threads; the check-then-hold must not split.
+
+        The first holder's write is slowed so the second arrives while it is in progress —
+        without a lock both see nothing held, and the second is let in with another posture.
+        """
+
+        posture(DenialPosture())
+        entered = threading.Event()
+        release = threading.Event()
+        real = egress.configure_denial_posture
+
+        def slow(value: DenialPosture) -> DenialPosture:
+            entered.set()
+            time.sleep(0.2)
+            return real(value)
+
+        def first() -> None:
+            with bind_denial_posture(COVERED):
+                release.wait(5)
+
+        errors: list[BaseException] = []
+
+        def second() -> None:
+            entered.wait(5)
+
+            try:
+                with bind_denial_posture(DenialPosture()):
+                    pass
+
+            except CoreException as error:
+                errors.append(error)
+
+        egress.configure_denial_posture = slow  # type: ignore[assignment]
+
+        try:
+            threads = [threading.Thread(target=first), threading.Thread(target=second)]
+            for thread in threads:
+                thread.start()
+            threads[1].join(5)
+            release.set()
+            threads[0].join(5)
+
+        finally:
+            egress.configure_denial_posture = real  # type: ignore[assignment]
+
+        assert [getattr(e, "code", None) for e in errors] == ["denial_posture_conflict"]
+        assert current_denial_posture() == DenialPosture()
