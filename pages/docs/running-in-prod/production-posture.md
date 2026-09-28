@@ -69,7 +69,9 @@ runtime = build_runtime(posture=posture)
 | `LoopbackHost(fields=…)` | a URL, DSN or `host:port` pointing at `localhost` or a loopback address | the named paths |
 | `DevValue(pattern=…, fields=…)` | a value containing the pattern — `"*"` for wildcard origins | the named paths, or **every** string field when `fields` is omitted |
 
-A path naming a group — a nested model or a mapping — applies the rule to every value under it.
+A path naming a group — a nested model or a mapping — applies `RequireHttps`, `LoopbackHost` and
+`DevValue` to every value under it. `RequireSet` asks only that the group itself holds something;
+name the fields inside it that must be set.
 
 `DEFAULT_RULES` is the one rule that needs no path: a `_dev_only` marker anywhere in the
 settings, secrets included, refuses. Every other rule points at your own fields, because only you
