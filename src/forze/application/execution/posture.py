@@ -21,7 +21,7 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from enum import Enum
 from ipaddress import ip_address
 from typing import Any, Final, Protocol, final, runtime_checkable
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 import attrs
 from pydantic import BaseModel, SecretBytes, SecretStr
@@ -325,7 +325,7 @@ class ProductionPosture:
             case RequireHttps(fields=fields):
                 for path in fields:
                     if any(
-                        urlsplit(text).scheme.lower() != "https"
+                        (split := _split(text)) is None or split.scheme.lower() != "https"
                         for text in _texts(_resolve(self.settings, path))
                     ):
                         yield WiringFinding(source="posture", target=path, rule="must be https")
@@ -397,12 +397,9 @@ def _resolve(root: object, path: str) -> Any:
             return None
 
         if isinstance(node, BaseModel):
-            if segment not in type(node).model_fields:
-                return _UNRESOLVED
+            node = _fields(node)
 
-            node = getattr(node, segment)
-
-        elif isinstance(node, Mapping):
+        if isinstance(node, Mapping):
             if segment not in node:
                 return _UNRESOLVED
 
@@ -418,10 +415,9 @@ def _leaves(node: object, path: str) -> Iterator[tuple[str, Any]]:
     """Every field under *node* with its path — models and mappings walked, anything else a leaf."""
 
     if isinstance(node, BaseModel):
-        for name in type(node).model_fields:
-            yield from _leaves(getattr(node, name), f"{path}.{name}" if path else name)
+        node = _fields(node)
 
-    elif isinstance(node, Mapping):
+    if isinstance(node, Mapping):
         for key, value in node.items():
             yield from _leaves(value, f"{path}.{key}" if path else str(key))
 
@@ -452,8 +448,31 @@ def _texts(value: Any) -> Iterator[str]:
         for item in value:
             yield from _texts(item)
 
-    elif not isinstance(value, (BaseModel, Mapping)):
+    elif isinstance(value, (BaseModel, Mapping)):
+        # A group: every value under it, so a rule or the scan never passes one by not looking.
+        for _, leaf in _leaves(value, ""):
+            yield from _texts(leaf)
+
+    else:
         yield str(value)
+
+
+def _fields(model: BaseModel) -> dict[str, Any]:
+    """A model's fields by name, keys kept by ``extra="allow"`` included."""
+
+    return {name: getattr(model, name) for name in type(model).model_fields} | (
+        model.model_extra or {}
+    )
+
+
+def _split(text: str) -> SplitResult | None:
+    # The parser refuses a netloc with an unmatched or non-address bracket — an unencoded
+    # password can hold one — and its error may quote part of it. Unparseable is an answer.
+    try:
+        return urlsplit(text)
+
+    except ValueError:
+        return None
 
 
 def _is_set(value: Any) -> bool:
@@ -473,7 +492,8 @@ def _is_set(value: Any) -> bool:
 
 
 def _is_loopback(text: str) -> bool:
-    host = urlsplit(text if "//" in text else f"//{text}").hostname
+    split = _split(text if "//" in text else f"//{text}")
+    host = split.hostname if split is not None else None
 
     if not host:
         return False

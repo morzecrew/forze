@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from forze.application.execution import (
     DEFAULT_RULES,
@@ -150,6 +150,56 @@ class TestEachRuleKind:
             "db.password: development-only value (contains '_dev_only')",
             "extras.note: development-only value (contains '_dev_only')",
         ]
+
+    def test_the_marker_is_found_inside_collections_and_undeclared_keys(self) -> None:
+        # A list of models or mappings, and a key `extra="allow"` kept: all settings the scan
+        # must read, each reported at the field that holds it.
+        class _Upstream(BaseModel):
+            token: SecretStr
+
+        class _Loose(BaseModel):
+            model_config = ConfigDict(extra="allow")
+
+            upstreams: list[_Upstream] = []
+            hooks: list[dict[str, str]] = []
+
+        settings = _Loose(
+            upstreams=[_Upstream(token=SecretStr("t_dev_only"))],
+            hooks=[{"url": "https://h_dev_only.example"}],
+            seeded="s_dev_only",  # type: ignore[call-arg]
+        )
+
+        assert sorted(f.target for f in ProductionPosture(settings=settings).findings()) == [
+            "hooks",
+            "seeded",
+            "upstreams",
+        ]
+
+    def test_a_rule_over_a_group_reads_every_value_under_it(self) -> None:
+        class _Grouped(BaseModel):
+            callbacks: dict[str, str] = {}
+
+        posture = ProductionPosture(
+            settings=_Grouped(callbacks={"a": "https://a.example", "b": "http://b.example"}),
+            rules=(RequireHttps(fields=("callbacks",)),),
+        )
+
+        assert [f.render() for f in posture.findings()] == ["callbacks: must be https"]
+
+    @pytest.mark.parametrize("password", ["ab[cd", "ab[cd]ef"])
+    def test_a_value_that_is_not_a_url_is_judged_not_raised(self, password: str) -> None:
+        # A password nobody URL-encoded makes the DSN unparseable. The posture still answers —
+        # it is not https, and it names no loopback host — rather than crashing the boot with
+        # a parser error that may quote part of the value.
+        class _Raw(BaseModel):
+            dsn: str
+
+        posture = ProductionPosture(
+            settings=_Raw(dsn=f"postgresql://app:{password}@db.internal/app"),
+            rules=(RequireHttps(fields=("dsn",)), LoopbackHost(fields=("dsn",))),
+        )
+
+        assert [f.render() for f in posture.findings()] == ["dsn: must be https"]
 
 
 class TestWhichEnvironmentIsProduction:
