@@ -3240,6 +3240,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/production-posture/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Production posture
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/deadlines/" class="md-nav__link">
         
   
@@ -8756,7 +8785,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.8.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>A guarantee can hold at commit.</strong> <code>UniqueTogether</code> and <code>NonOverlapping</code> take <code>holds="commit"</code>: a transaction may pass through a violation it resolves, such as an insert at the top of a positioned list. Postgres keeps it with a <code>DEFERRABLE INITIALLY DEFERRED</code> constraint; the in-memory store checks it at commit.</li>
+<li>
+<p><strong>A deployment can refuse to boot with development settings.</strong> <code>ProductionPosture</code> declares rules over your own settings (required, HTTPS-only, loopback, development-only values) and refuses at <code>check_wiring</code> and when the runtime is built, naming keys, never values. An unset environment is production.</p>
+</li>
+<li>
+<p><strong>A guarantee can hold at commit.</strong> <code>UniqueTogether</code> and <code>NonOverlapping</code> take <code>holds="commit"</code>: a transaction may pass through a violation it resolves, such as an insert at the top of a positioned list. Postgres keeps it with a <code>DEFERRABLE INITIALLY DEFERRED</code> constraint; the in-memory store checks it at commit.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

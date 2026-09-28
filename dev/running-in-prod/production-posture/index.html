@@ -12,32 +12,36 @@
         <meta name="author" content="Lev Litvinov">
       
       
-        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/dst/_generated/transfer/">
+        <link rel="canonical" href="https://morzecrew.github.io/forze/dev/running-in-prod/production-posture/">
       
       
+        <link rel="prev" href="../../identity-tenancy-enc/cursor-tokens/">
+      
+      
+        <link rel="next" href="../deadlines/">
       
       
         
       
       
-      <link rel="icon" href="../../../_images/forze-multicolor.png">
+      <link rel="icon" href="../../_images/forze-multicolor.png">
       <meta name="generator" content="zensical-0.0.63">
     
     
       
-        <title>Corpus bug transfer - Forze</title>
+        <title>Production posture - Forze</title>
       
     
     
       
         
       
-      <link rel="stylesheet" href="../../../assets/stylesheets/modern/main.10763589.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.10763589.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../../assets/stylesheets/modern/palette.812a03bb.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
       
       
 
@@ -56,20 +60,20 @@
       
     
     
-      <link rel="stylesheet" href="../../../_stylesheets/glightbox.min.css">
+      <link rel="stylesheet" href="../../_stylesheets/glightbox.min.css">
     
-      <link rel="stylesheet" href="../../../_stylesheets/extra.css">
+      <link rel="stylesheet" href="../../_stylesheets/extra.css">
     
-      <link rel="stylesheet" href="../../../_stylesheets/hero.css">
+      <link rel="stylesheet" href="../../_stylesheets/hero.css">
     
-    <script>__md_scope=new URL("../../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
     
       
 
     
     
   
-  <script src="../../../_javascripts/glightbox.min.js"></script>
+  <script src="../../_javascripts/glightbox.min.js"></script>
 
   </head>
   
@@ -90,7 +94,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#corpus-bug-transfer" class="md-skip">
+        <a href="#declaring-a-posture" class="md-skip">
           Skip to content
         </a>
       
@@ -115,7 +119,7 @@
   </span>
 
             </div>
-            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
+            <script>var el=document.querySelector("[data-md-component=outdated]"),base=new URL("../.."),outdated=__md_get("__outdated",sessionStorage,base);!0===outdated&&el&&(el.hidden=!1)</script>
           </aside>
         
       </div>
@@ -125,9 +129,9 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../.." title="Forze" class="md-header__button md-logo" aria-label="Forze" data-md-component="logo">
+    <a href="../.." title="Forze" class="md-header__button md-logo" aria-label="Forze" data-md-component="logo">
       
-  <img src="../../../_images/forze-multicolor.png" alt="Forze">
+  <img src="../../_images/forze-multicolor.png" alt="Forze">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
@@ -144,7 +148,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Corpus bug transfer
+              Production posture
             
           </span>
         </div>
@@ -228,7 +232,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../.." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   Home
@@ -249,7 +253,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../get-started/introduction/" class="md-tabs__link">
+        <a href="../../get-started/introduction/" class="md-tabs__link">
           
   
   Get Started
@@ -264,15 +268,7 @@
   
   
   
-  
     
-      
-    
-    
-    
-      
-  
-  
   
   
     
@@ -280,8 +276,20 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../../core-concepts/overview/" class="md-tabs__link">
+      
+  
+  
+  
+    
+  
+  
+    
+      
+    
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../core-concepts/overview/" class="md-tabs__link">
           
   
   Learn
@@ -306,7 +314,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../overview/" class="md-tabs__link">
+        <a href="../../dst/overview/" class="md-tabs__link">
           
   
   Simulation
@@ -328,7 +336,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../integrations/" class="md-tabs__link">
+        <a href="../../integrations/" class="md-tabs__link">
           
   
   Integrations
@@ -360,7 +368,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../recipes/crud-fastapi-postgres/" class="md-tabs__link">
+        <a href="../../recipes/crud-fastapi-postgres/" class="md-tabs__link">
           
   
   Recipes
@@ -385,7 +393,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../reference/glossary/" class="md-tabs__link">
+        <a href="../../reference/glossary/" class="md-tabs__link">
           
   
   Reference
@@ -418,9 +426,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../.." title="Forze" class="md-nav__button md-logo" aria-label="Forze" data-md-component="logo">
+    <a href="../.." title="Forze" class="md-nav__button md-logo" aria-label="Forze" data-md-component="logo">
       
-  <img src="../../../_images/forze-multicolor.png" alt="Forze">
+  <img src="../../_images/forze-multicolor.png" alt="Forze">
 
     </a>
     Forze
@@ -447,7 +455,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -524,7 +532,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../get-started/introduction/" class="md-nav__link">
+      <a href="../../get-started/introduction/" class="md-nav__link">
         
   
   
@@ -553,7 +561,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../get-started/installation/" class="md-nav__link">
+      <a href="../../get-started/installation/" class="md-nav__link">
         
   
   
@@ -582,7 +590,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../get-started/quickstart/" class="md-nav__link">
+      <a href="../../get-started/quickstart/" class="md-nav__link">
         
   
   
@@ -611,7 +619,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../get-started/project-structure/" class="md-nav__link">
+      <a href="../../get-started/project-structure/" class="md-nav__link">
         
   
   
@@ -640,7 +648,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../get-started/changelog/" class="md-nav__link">
+      <a href="../../get-started/changelog/" class="md-nav__link">
         
   
   
@@ -674,26 +682,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -711,7 +724,7 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
             <label class="md-nav__title" for="__nav_3">
               <span class="md-nav__icon md-icon"></span>
               
@@ -734,17 +747,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_1" >
         
           
-          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_1" id="__nav_3_1_label" tabindex="">
             
   
   
@@ -779,7 +795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../core-concepts/overview/" class="md-nav__link">
+      <a href="../../core-concepts/overview/" class="md-nav__link">
         
   
   
@@ -808,7 +824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../core-concepts/architecture/" class="md-nav__link">
+      <a href="../../core-concepts/architecture/" class="md-nav__link">
         
   
   
@@ -837,7 +853,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../core-concepts/domain-layer/" class="md-nav__link">
+      <a href="../../core-concepts/domain-layer/" class="md-nav__link">
         
   
   
@@ -866,7 +882,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../core-concepts/why-four-models/" class="md-nav__link">
+      <a href="../../core-concepts/why-four-models/" class="md-nav__link">
         
   
   
@@ -895,7 +911,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../core-concepts/application-layer/" class="md-nav__link">
+      <a href="../../core-concepts/application-layer/" class="md-nav__link">
         
   
   
@@ -924,7 +940,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../core-concepts/contracts/" class="md-nav__link">
+      <a href="../../core-concepts/contracts/" class="md-nav__link">
         
   
   
@@ -953,7 +969,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../core-concepts/runtime/" class="md-nav__link">
+      <a href="../../core-concepts/runtime/" class="md-nav__link">
         
   
   
@@ -997,17 +1013,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
         
           
-          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="">
             
   
   
@@ -1042,7 +1061,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/wiring/" class="md-nav__link">
+      <a href="../../writing-operation/wiring/" class="md-nav__link">
         
   
   
@@ -1071,7 +1090,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/capability-execution/" class="md-nav__link">
+      <a href="../../writing-operation/capability-execution/" class="md-nav__link">
         
   
   
@@ -1100,7 +1119,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/transactions/" class="md-nav__link">
+      <a href="../../writing-operation/transactions/" class="md-nav__link">
         
   
   
@@ -1129,7 +1148,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/errors/" class="md-nav__link">
+      <a href="../../writing-operation/errors/" class="md-nav__link">
         
   
   
@@ -1158,7 +1177,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/concurrency-conflicts/" class="md-nav__link">
+      <a href="../../writing-operation/concurrency-conflicts/" class="md-nav__link">
         
   
   
@@ -1187,7 +1206,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/idempotency/" class="md-nav__link">
+      <a href="../../writing-operation/idempotency/" class="md-nav__link">
         
   
   
@@ -1216,7 +1235,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/aggregate-decisions/" class="md-nav__link">
+      <a href="../../writing-operation/aggregate-decisions/" class="md-nav__link">
         
   
   
@@ -1245,7 +1264,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../writing-operation/system-invariants/" class="md-nav__link">
+      <a href="../../writing-operation/system-invariants/" class="md-nav__link">
         
   
   
@@ -1289,17 +1308,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
         
           
-          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
             
   
   
@@ -1334,7 +1356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/reading-data/" class="md-nav__link">
+      <a href="../../data-events/reading-data/" class="md-nav__link">
         
   
   
@@ -1363,7 +1385,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/query-parameters/" class="md-nav__link">
+      <a href="../../data-events/query-parameters/" class="md-nav__link">
         
   
   
@@ -1392,7 +1414,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/procedures/" class="md-nav__link">
+      <a href="../../data-events/procedures/" class="md-nav__link">
         
   
   
@@ -1421,7 +1443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/analytics/" class="md-nav__link">
+      <a href="../../data-events/analytics/" class="md-nav__link">
         
   
   
@@ -1450,7 +1472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/dynamic-read/" class="md-nav__link">
+      <a href="../../data-events/dynamic-read/" class="md-nav__link">
         
   
   
@@ -1479,7 +1501,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/inference/" class="md-nav__link">
+      <a href="../../data-events/inference/" class="md-nav__link">
         
   
   
@@ -1508,7 +1530,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/agent-tools/" class="md-nav__link">
+      <a href="../../data-events/agent-tools/" class="md-nav__link">
         
   
   
@@ -1537,7 +1559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/sandbox/" class="md-nav__link">
+      <a href="../../data-events/sandbox/" class="md-nav__link">
         
   
   
@@ -1566,7 +1588,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/caching/" class="md-nav__link">
+      <a href="../../data-events/caching/" class="md-nav__link">
         
   
   
@@ -1595,7 +1617,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/events-sagas/" class="md-nav__link">
+      <a href="../../data-events/events-sagas/" class="md-nav__link">
         
   
   
@@ -1624,7 +1646,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/messaging-delivery-models/" class="md-nav__link">
+      <a href="../../data-events/messaging-delivery-models/" class="md-nav__link">
         
   
   
@@ -1653,7 +1675,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/realtime/" class="md-nav__link">
+      <a href="../../data-events/realtime/" class="md-nav__link">
         
   
   
@@ -1682,7 +1704,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../data-events/durable-execution/" class="md-nav__link">
+      <a href="../../data-events/durable-execution/" class="md-nav__link">
         
   
   
@@ -1726,17 +1748,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
         
           
-          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
             
   
   
@@ -1771,7 +1796,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../identity-tenancy-enc/identity/" class="md-nav__link">
+      <a href="../../identity-tenancy-enc/identity/" class="md-nav__link">
         
   
   
@@ -1800,7 +1825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../identity-tenancy-enc/multi-tenancy/" class="md-nav__link">
+      <a href="../../identity-tenancy-enc/multi-tenancy/" class="md-nav__link">
         
   
   
@@ -1829,7 +1854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../identity-tenancy-enc/encryption/" class="md-nav__link">
+      <a href="../../identity-tenancy-enc/encryption/" class="md-nav__link">
         
   
   
@@ -1858,7 +1883,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../identity-tenancy-enc/cursor-tokens/" class="md-nav__link">
+      <a href="../../identity-tenancy-enc/cursor-tokens/" class="md-nav__link">
         
   
   
@@ -1893,26 +1918,31 @@
                   
   
   
+    
   
   
+  
     
     
     
     
       
       
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
         
           
-          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
             
   
   
@@ -1930,7 +1960,7 @@
           </label>
         
         
-          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="true">
             <label class="md-nav__title" for="__nav_3_5">
               <span class="md-nav__icon md-icon"></span>
               
@@ -1944,10 +1974,36 @@
                   
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../running-in-prod/production-posture/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Production posture
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1964,6 +2020,58 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#declaring-a-posture" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Declaring a posture
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-it-is-checked" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where it is checked
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integrations-that-escalate-their-own-warnings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Integrations that escalate their own warnings
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1976,7 +2084,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/deadlines/" class="md-nav__link">
+      <a href="../deadlines/" class="md-nav__link">
         
   
   
@@ -2005,7 +2113,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/resilience/" class="md-nav__link">
+      <a href="../resilience/" class="md-nav__link">
         
   
   
@@ -2034,7 +2142,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/load-shedding/" class="md-nav__link">
+      <a href="../load-shedding/" class="md-nav__link">
         
   
   
@@ -2063,7 +2171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/shutdown-and-fleets/" class="md-nav__link">
+      <a href="../shutdown-and-fleets/" class="md-nav__link">
         
   
   
@@ -2092,7 +2200,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/credential-rotation/" class="md-nav__link">
+      <a href="../credential-rotation/" class="md-nav__link">
         
   
   
@@ -2121,7 +2229,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/portability/" class="md-nav__link">
+      <a href="../portability/" class="md-nav__link">
         
   
   
@@ -2150,7 +2258,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/operation-progress/" class="md-nav__link">
+      <a href="../operation-progress/" class="md-nav__link">
         
   
   
@@ -2179,7 +2287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/observability/" class="md-nav__link">
+      <a href="../observability/" class="md-nav__link">
         
   
   
@@ -2208,7 +2316,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../running-in-prod/grafana-stack/" class="md-nav__link">
+      <a href="../grafana-stack/" class="md-nav__link">
         
   
   
@@ -2252,17 +2360,20 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
         
           
-          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
             
   
   
@@ -2297,7 +2408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../testing/overview/" class="md-nav__link">
+      <a href="../../testing/overview/" class="md-nav__link">
         
   
   
@@ -2326,7 +2437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../testing/concurrency/" class="md-nav__link">
+      <a href="../../testing/concurrency/" class="md-nav__link">
         
   
   
@@ -2423,7 +2534,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../overview/" class="md-nav__link">
+      <a href="../../dst/overview/" class="md-nav__link">
         
   
   
@@ -2503,7 +2614,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../invariants/" class="md-nav__link">
+      <a href="../../dst/invariants/" class="md-nav__link">
         
   
   
@@ -2532,7 +2643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../environment/" class="md-nav__link">
+      <a href="../../dst/environment/" class="md-nav__link">
         
   
   
@@ -2561,7 +2672,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../crashes-and-clusters/" class="md-nav__link">
+      <a href="../../dst/crashes-and-clusters/" class="md-nav__link">
         
   
   
@@ -2590,7 +2701,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../exploration/" class="md-nav__link">
+      <a href="../../dst/exploration/" class="md-nav__link">
         
   
   
@@ -2619,7 +2730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../the-loop/" class="md-nav__link">
+      <a href="../../dst/the-loop/" class="md-nav__link">
         
   
   
@@ -2708,7 +2819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../detection-statistics/" class="md-nav__link">
+      <a href="../../dst/detection-statistics/" class="md-nav__link">
         
   
   
@@ -2737,7 +2848,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../fidelity/" class="md-nav__link">
+      <a href="../../dst/fidelity/" class="md-nav__link">
         
   
   
@@ -2766,7 +2877,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../campaign-results/" class="md-nav__link">
+      <a href="../../dst/campaign-results/" class="md-nav__link">
         
   
   
@@ -2863,7 +2974,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/" class="md-nav__link">
+      <a href="../../integrations/" class="md-nav__link">
         
   
   
@@ -2943,7 +3054,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/postgres/" class="md-nav__link">
+      <a href="../../integrations/postgres/" class="md-nav__link">
         
   
   
@@ -2972,7 +3083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/mongo/" class="md-nav__link">
+      <a href="../../integrations/mongo/" class="md-nav__link">
         
   
   
@@ -3001,7 +3112,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/firestore/" class="md-nav__link">
+      <a href="../../integrations/firestore/" class="md-nav__link">
         
   
   
@@ -3030,7 +3141,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/neo4j/" class="md-nav__link">
+      <a href="../../integrations/neo4j/" class="md-nav__link">
         
   
   
@@ -3059,7 +3170,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/redis/" class="md-nav__link">
+      <a href="../../integrations/redis/" class="md-nav__link">
         
   
   
@@ -3088,7 +3199,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/s3/" class="md-nav__link">
+      <a href="../../integrations/s3/" class="md-nav__link">
         
   
   
@@ -3117,7 +3228,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/gcs/" class="md-nav__link">
+      <a href="../../integrations/gcs/" class="md-nav__link">
         
   
   
@@ -3146,7 +3257,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/meilisearch/" class="md-nav__link">
+      <a href="../../integrations/meilisearch/" class="md-nav__link">
         
   
   
@@ -3175,7 +3286,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/bigquery/" class="md-nav__link">
+      <a href="../../integrations/bigquery/" class="md-nav__link">
         
   
   
@@ -3204,7 +3315,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/clickhouse/" class="md-nav__link">
+      <a href="../../integrations/clickhouse/" class="md-nav__link">
         
   
   
@@ -3233,7 +3344,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/duckdb/" class="md-nav__link">
+      <a href="../../integrations/duckdb/" class="md-nav__link">
         
   
   
@@ -3322,7 +3433,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/kafka/" class="md-nav__link">
+      <a href="../../integrations/kafka/" class="md-nav__link">
         
   
   
@@ -3351,7 +3462,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/rabbitmq/" class="md-nav__link">
+      <a href="../../integrations/rabbitmq/" class="md-nav__link">
         
   
   
@@ -3380,7 +3491,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/sqs/" class="md-nav__link">
+      <a href="../../integrations/sqs/" class="md-nav__link">
         
   
   
@@ -3469,7 +3580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/temporal/" class="md-nav__link">
+      <a href="../../integrations/temporal/" class="md-nav__link">
         
   
   
@@ -3498,7 +3609,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/inngest/" class="md-nav__link">
+      <a href="../../integrations/inngest/" class="md-nav__link">
         
   
   
@@ -3587,7 +3698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/fastapi/" class="md-nav__link">
+      <a href="../../integrations/fastapi/" class="md-nav__link">
         
   
   
@@ -3616,7 +3727,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/socketio/" class="md-nav__link">
+      <a href="../../integrations/socketio/" class="md-nav__link">
         
   
   
@@ -3645,7 +3756,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/mcp/" class="md-nav__link">
+      <a href="../../integrations/mcp/" class="md-nav__link">
         
   
   
@@ -3734,7 +3845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/authn/" class="md-nav__link">
+      <a href="../../integrations/authn/" class="md-nav__link">
         
   
   
@@ -3763,7 +3874,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/oidc/" class="md-nav__link">
+      <a href="../../integrations/oidc/" class="md-nav__link">
         
   
   
@@ -3852,7 +3963,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/vault/" class="md-nav__link">
+      <a href="../../integrations/vault/" class="md-nav__link">
         
   
   
@@ -3881,7 +3992,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/kms/" class="md-nav__link">
+      <a href="../../integrations/kms/" class="md-nav__link">
         
   
   
@@ -3970,7 +4081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/http/" class="md-nav__link">
+      <a href="../../integrations/http/" class="md-nav__link">
         
   
   
@@ -3999,7 +4110,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../integrations/inference/" class="md-nav__link">
+      <a href="../../integrations/inference/" class="md-nav__link">
         
   
   
@@ -4147,7 +4258,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/crud-fastapi-postgres/" class="md-nav__link">
+      <a href="../../recipes/crud-fastapi-postgres/" class="md-nav__link">
         
   
   
@@ -4176,7 +4287,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/governed-aggregate-kit/" class="md-nav__link">
+      <a href="../../recipes/governed-aggregate-kit/" class="md-nav__link">
         
   
   
@@ -4205,7 +4316,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/read-only-document-api/" class="md-nav__link">
+      <a href="../../recipes/read-only-document-api/" class="md-nav__link">
         
   
   
@@ -4234,7 +4345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/cache-reads-with-redis/" class="md-nav__link">
+      <a href="../../recipes/cache-reads-with-redis/" class="md-nav__link">
         
   
   
@@ -4263,7 +4374,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/analytics-over-a-data-lake/" class="md-nav__link">
+      <a href="../../recipes/analytics-over-a-data-lake/" class="md-nav__link">
         
   
   
@@ -4292,7 +4403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/expose-an-aggregate-over-mcp/" class="md-nav__link">
+      <a href="../../recipes/expose-an-aggregate-over-mcp/" class="md-nav__link">
         
   
   
@@ -4321,7 +4432,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/query-agent/" class="md-nav__link">
+      <a href="../../recipes/query-agent/" class="md-nav__link">
         
   
   
@@ -4350,7 +4461,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/mock-server/" class="md-nav__link">
+      <a href="../../recipes/mock-server/" class="md-nav__link">
         
   
   
@@ -4439,7 +4550,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/add-idempotency/" class="md-nav__link">
+      <a href="../../recipes/add-idempotency/" class="md-nav__link">
         
   
   
@@ -4468,7 +4579,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/two-phase-handler/" class="md-nav__link">
+      <a href="../../recipes/two-phase-handler/" class="md-nav__link">
         
   
   
@@ -4497,7 +4608,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/offload-cpu-work/" class="md-nav__link">
+      <a href="../../recipes/offload-cpu-work/" class="md-nav__link">
         
   
   
@@ -4586,7 +4697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/authn-authz-tenancy-fastapi/" class="md-nav__link">
+      <a href="../../recipes/authn-authz-tenancy-fastapi/" class="md-nav__link">
         
   
   
@@ -4615,7 +4726,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/provision-identity-postgres/" class="md-nav__link">
+      <a href="../../recipes/provision-identity-postgres/" class="md-nav__link">
         
   
   
@@ -4644,7 +4755,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/password-reset/" class="md-nav__link">
+      <a href="../../recipes/password-reset/" class="md-nav__link">
         
   
   
@@ -4673,7 +4784,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/tenant-selector-and-admin/" class="md-nav__link">
+      <a href="../../recipes/tenant-selector-and-admin/" class="md-nav__link">
         
   
   
@@ -4702,7 +4813,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/local-identity/" class="md-nav__link">
+      <a href="../../recipes/local-identity/" class="md-nav__link">
         
   
   
@@ -4731,7 +4842,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/external-bootstrap-forze-jwt/" class="md-nav__link">
+      <a href="../../recipes/external-bootstrap-forze-jwt/" class="md-nav__link">
         
   
   
@@ -4760,7 +4871,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/external-idp-oidc/" class="md-nav__link">
+      <a href="../../recipes/external-idp-oidc/" class="md-nav__link">
         
   
   
@@ -4789,7 +4900,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/social-sign-in/" class="md-nav__link">
+      <a href="../../recipes/social-sign-in/" class="md-nav__link">
         
   
   
@@ -4818,7 +4929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/rotating-oauth-credentials/" class="md-nav__link">
+      <a href="../../recipes/rotating-oauth-credentials/" class="md-nav__link">
         
   
   
@@ -4907,7 +5018,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/end-to-end-saga-outbox-inbox/" class="md-nav__link">
+      <a href="../../recipes/end-to-end-saga-outbox-inbox/" class="md-nav__link">
         
   
   
@@ -4936,7 +5047,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/transactional-outbox/" class="md-nav__link">
+      <a href="../../recipes/transactional-outbox/" class="md-nav__link">
         
   
   
@@ -4965,7 +5076,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/transactional-notifications/" class="md-nav__link">
+      <a href="../../recipes/transactional-notifications/" class="md-nav__link">
         
   
   
@@ -4994,7 +5105,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/realtime-offline-delivery/" class="md-nav__link">
+      <a href="../../recipes/realtime-offline-delivery/" class="md-nav__link">
         
   
   
@@ -5023,7 +5134,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/tenant-sharded-realtime/" class="md-nav__link">
+      <a href="../../recipes/tenant-sharded-realtime/" class="md-nav__link">
         
   
   
@@ -5052,7 +5163,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/background-workflow/" class="md-nav__link">
+      <a href="../../recipes/background-workflow/" class="md-nav__link">
         
   
   
@@ -5081,7 +5192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/temporal-worker/" class="md-nav__link">
+      <a href="../../recipes/temporal-worker/" class="md-nav__link">
         
   
   
@@ -5110,7 +5221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../recipes/scheduled-queue-jobs/" class="md-nav__link">
+      <a href="../../recipes/scheduled-queue-jobs/" class="md-nav__link">
         
   
   
@@ -5207,7 +5318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/glossary/" class="md-nav__link">
+      <a href="../../reference/glossary/" class="md-nav__link">
         
   
   
@@ -5287,7 +5398,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/" class="md-nav__link">
+      <a href="../../reference/contracts/" class="md-nav__link">
         
   
   
@@ -5316,7 +5427,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/document/" class="md-nav__link">
+      <a href="../../reference/contracts/document/" class="md-nav__link">
         
   
   
@@ -5345,7 +5456,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/search/" class="md-nav__link">
+      <a href="../../reference/contracts/search/" class="md-nav__link">
         
   
   
@@ -5374,7 +5485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/analytics/" class="md-nav__link">
+      <a href="../../reference/contracts/analytics/" class="md-nav__link">
         
   
   
@@ -5403,7 +5514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/procedure/" class="md-nav__link">
+      <a href="../../reference/contracts/procedure/" class="md-nav__link">
         
   
   
@@ -5432,7 +5543,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/graph/" class="md-nav__link">
+      <a href="../../reference/contracts/graph/" class="md-nav__link">
         
   
   
@@ -5461,7 +5572,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/stores/" class="md-nav__link">
+      <a href="../../reference/contracts/stores/" class="md-nav__link">
         
   
   
@@ -5490,7 +5601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/messaging/" class="md-nav__link">
+      <a href="../../reference/contracts/messaging/" class="md-nav__link">
         
   
   
@@ -5519,7 +5630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/streaming/" class="md-nav__link">
+      <a href="../../reference/contracts/streaming/" class="md-nav__link">
         
   
   
@@ -5548,7 +5659,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/durable/" class="md-nav__link">
+      <a href="../../reference/contracts/durable/" class="md-nav__link">
         
   
   
@@ -5577,7 +5688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/coordination/" class="md-nav__link">
+      <a href="../../reference/contracts/coordination/" class="md-nav__link">
         
   
   
@@ -5606,7 +5717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/contracts/identity/" class="md-nav__link">
+      <a href="../../reference/contracts/identity/" class="md-nav__link">
         
   
   
@@ -5695,7 +5806,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/tenancy-matrix/" class="md-nav__link">
+      <a href="../../reference/tenancy-matrix/" class="md-nav__link">
         
   
   
@@ -5724,7 +5835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/encryption-matrix/" class="md-nav__link">
+      <a href="../../reference/encryption-matrix/" class="md-nav__link">
         
   
   
@@ -5813,7 +5924,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/spec-registry/" class="md-nav__link">
+      <a href="../../reference/spec-registry/" class="md-nav__link">
         
   
   
@@ -5840,7 +5951,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/query-syntax/" class="md-nav__link">
+      <a href="../../reference/query-syntax/" class="md-nav__link">
         
   
   
@@ -5869,7 +5980,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/mapping/" class="md-nav__link">
+      <a href="../../reference/mapping/" class="md-nav__link">
         
   
   
@@ -5898,7 +6009,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/outbox-schema/" class="md-nav__link">
+      <a href="../../reference/outbox-schema/" class="md-nav__link">
         
   
   
@@ -5927,7 +6038,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/fastapi-routes/" class="md-nav__link">
+      <a href="../../reference/fastapi-routes/" class="md-nav__link">
         
   
   
@@ -5956,7 +6067,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/realtime-protocol/" class="md-nav__link">
+      <a href="../../reference/realtime-protocol/" class="md-nav__link">
         
   
   
@@ -6043,7 +6154,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/errors/" class="md-nav__link">
+      <a href="../../reference/errors/" class="md-nav__link">
         
   
   
@@ -6072,7 +6183,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/resilience-tuning/" class="md-nav__link">
+      <a href="../../reference/resilience-tuning/" class="md-nav__link">
         
   
   
@@ -6101,7 +6212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/metrics/" class="md-nav__link">
+      <a href="../../reference/metrics/" class="md-nav__link">
         
   
   
@@ -6154,8 +6265,6 @@
                     
                     
                     
-                      
-                    
                     
                       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
                       <div class="md-sidebar-button__wrapper">
@@ -6171,8 +6280,6 @@
   
   
   
-    
-  
   
     <label class="md-nav__title" for="__toc">
       <span class="md-nav__icon md-icon"></span>
@@ -6181,41 +6288,35 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#mock-postgres" class="md-nav__link">
+  <a href="#declaring-a-posture" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        mock ↔ postgres
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="mock ↔ postgres">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#controls-expected-clean-on-both-backends" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Controls (expected clean on both backends)
+        Declaring a posture
       </span>
     </span>
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#not-transferable-120-mutants" class="md-nav__link">
+      
+        <li class="md-nav__item">
+  <a href="#where-it-is-checked" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Not transferable — 1/20 mutants
+        Where it is checked
       </span>
     </span>
   </a>
   
 </li>
-        
-      </ul>
-    </nav>
+      
+        <li class="md-nav__item">
+  <a href="#integrations-that-escalate-their-own-warnings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Integrations that escalate their own warnings
+      </span>
+    </span>
+  </a>
   
 </li>
       
@@ -6237,6 +6338,84 @@
   
 
 
+  <nav class="md-path" aria-label="Navigation" >
+    <ol class="md-path__list">
+      
+        
+  
+  
+    <li class="md-path__item">
+      <a href="../.." class="md-path__link">
+        
+  
+  <span class="md-ellipsis">
+    Home
+  </span>
+
+      </a>
+    </li>
+  
+
+      
+      
+        
+  
+  
+    
+    
+    
+    
+    
+      
+  
+  
+    
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="../../core-concepts/overview/" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Learn
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+    
+  
+
+      
+        
+  
+  
+    
+    
+    
+    
+    
+      <li class="md-path__item">
+        <a href="././" class="md-path__link">
+          
+  
+  <span class="md-ellipsis">
+    Running in production
+  </span>
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ol>
+  </nav>
+
               
               <article class="md-content__inner md-typeset">
                 
@@ -6245,323 +6424,144 @@
   
 
 
-<h1 id="corpus-bug-transfer">Corpus bug transfer<a class="headerlink" href="#corpus-bug-transfer" title="Permanent link">&para;</a></h1>
-<p>Mock↔real verdict pairs for every transferable misuse-corpus instance: the same
-hand-authored provocation (a forced port-level interleaving, a re-invocation, or a
-documented crash analog) runs on both backends, and the same final-state predicate —
-read back through the ports — decides <code>detected</code>/<code>clean</code> on each. <code>✓</code> = the verdicts
-agree; <code>▲</code> = <strong>mock artifact</strong> (mock detects, real clean — everything <abbr title="Deterministic Simulation Testing">DST</abbr> catches via
-that mutant is noise); <code>△</code> = <strong>mock blind spot</strong> (real bleeds, mock clean — the
-dangerous direction: <abbr title="Deterministic Simulation Testing">DST</abbr> would green-light a real bug). There is no allowed-divergence
-catalog on this plane — any divergence is a finding.</p>
-<p><em>Generated by <code>just dst-transfer</code> — do not edit by hand.</em></p>
-<h2 id="mock-postgres">mock ↔ postgres<a class="headerlink" href="#mock-postgres" title="Permanent link">&para;</a></h2>
-<p>Instances: <strong>19</strong> mutants + <strong>18</strong> controls · mock artifacts (▲): <strong>0</strong> · mock blind spots (△): <strong>0</strong></p>
+  <h1 id="__skip">Production posture</h1>
+
+<p>Every incident that starts with "it was running with the dev settings" is a check nobody ran. A
+<code>ProductionPosture</code> is that check, declared once by the deployment: these settings must be set,
+these must be HTTPS, these values are development-only. The runtime evaluates it before it
+starts, and a violation refuses the boot — naming the <strong>settings and the rules they break, never
+their values</strong>, because a boot failure ends up in logs, collectors and tickets.</p>
+<p><strong>An unset environment is production.</strong> You name the environments that are not — <code>dev</code>, <code>test</code>,
+<code>staging</code> — and every other value, including none at all, gets every rule. The dangerous default
+is the strict one.</p>
+<h2 id="declaring-a-posture">Declaring a posture<a class="headerlink" href="#declaring-a-posture" title="Permanent link">&para;</a></h2>
+<p>The framework owns no settings class, so the posture carries yours and names fields by path:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">SecretStr</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">DEFAULT_RULES</span><span class="p">,</span>
+    <span class="n">DevValue</span><span class="p">,</span>
+    <span class="n">LoopbackHost</span><span class="p">,</span>
+    <span class="n">ProductionPosture</span><span class="p">,</span>
+    <span class="n">RequireHttps</span><span class="p">,</span>
+    <span class="n">RequireSet</span><span class="p">,</span>
+    <span class="n">build_runtime</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Db</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">dsn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">password</span><span class="p">:</span> <span class="n">SecretStr</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Settings</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">env</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">db</span><span class="p">:</span> <span class="n">Db</span> <span class="o">=</span> <span class="n">Db</span><span class="p">()</span>
+    <span class="n">public_base_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">cors_allow_origins</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+
+<span class="n">settings</span> <span class="o">=</span> <span class="n">Settings</span><span class="p">()</span>
+
+<span class="n">posture</span> <span class="o">=</span> <span class="n">ProductionPosture</span><span class="p">(</span>
+    <span class="n">settings</span><span class="o">=</span><span class="n">settings</span><span class="p">,</span>
+    <span class="n">environment</span><span class="o">=</span><span class="s2">"env"</span><span class="p">,</span>
+    <span class="n">non_production</span><span class="o">=</span><span class="p">{</span><span class="s2">"dev"</span><span class="p">,</span> <span class="s2">"test"</span><span class="p">},</span>
+    <span class="n">rules</span><span class="o">=</span><span class="p">(</span>
+        <span class="o">*</span><span class="n">DEFAULT_RULES</span><span class="p">,</span>
+        <span class="n">RequireSet</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"db.password"</span><span class="p">,)),</span>
+        <span class="n">RequireHttps</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"public_base_url"</span><span class="p">,</span> <span class="s2">"cors_allow_origins"</span><span class="p">)),</span>
+        <span class="n">LoopbackHost</span><span class="p">(</span><span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"db.dsn"</span><span class="p">,</span> <span class="s2">"public_base_url"</span><span class="p">)),</span>
+        <span class="n">DevValue</span><span class="p">(</span><span class="n">pattern</span><span class="o">=</span><span class="s2">"*"</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">(</span><span class="s2">"cors_allow_origins"</span><span class="p">,)),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span><span class="n">posture</span><span class="o">=</span><span class="n">posture</span><span class="p">)</span>
+</code></pre></div>
 <table>
 <thead>
 <tr>
-<th>mutant</th>
-<th>family</th>
-<th>tier</th>
-<th>mock</th>
-<th>real</th>
-<th>verdict</th>
+<th>Rule</th>
+<th>Refuses</th>
+<th>Reads</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>T1-blind-write-payment</code></td>
-<td>transactions</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
+<td><code>RequireSet(fields=…)</code></td>
+<td>a field that is <code>None</code>, blank, an empty secret or an empty collection</td>
+<td>the named paths</td>
 </tr>
 <tr>
-<td><code>T3-payment-outside-tx</code></td>
-<td>transactions</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
+<td><code>RequireHttps(fields=…)</code></td>
+<td>a set value (or any element of a collection) that is not an <code>https</code> URL</td>
+<td>the named paths</td>
 </tr>
 <tr>
-<td><code>T3-torn-activation</code></td>
-<td>transactions</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
+<td><code>LoopbackHost(fields=…)</code></td>
+<td>a URL, DSN or <code>host:port</code> pointing at <code>localhost</code> or a loopback address</td>
+<td>the named paths</td>
 </tr>
 <tr>
-<td><code>T3-double-torn</code></td>
-<td>transactions</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>T4-weakened-oncall</code></td>
-<td>transactions</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>T5-unchecked-reservation</code></td>
-<td>transactions</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>I1-retry-without-key</code></td>
-<td>idempotency</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>I2-naive-retry-loop</code></td>
-<td>idempotency</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>M1-dual-write-shipment</code></td>
-<td>messaging</td>
-<td>fault-analog</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>I3-ack-before-processing</code></td>
-<td>idempotency</td>
-<td>fault-analog</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>M2-consumer-without-inbox</code></td>
-<td>messaging</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>D1-skip-lock</code></td>
-<td>distributed</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>D2-early-lease-release</code></td>
-<td>distributed</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>D3-nonatomic-acquire</code></td>
-<td>distributed</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>D4-unmerged-remote-hlc</code></td>
-<td>distributed</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>D5-wall-clock-ordering</code></td>
-<td>distributed</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>N1-drop-tenant-predicate</code></td>
-<td>data</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>N3-unbound-cursor-walk</code></td>
-<td>data</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>N2-stale-cache</code></td>
-<td>data</td>
-<td>conductor</td>
-<td>detected</td>
-<td>detected</td>
-<td>✓ agree</td>
+<td><code>DevValue(pattern=…, fields=…)</code></td>
+<td>a value containing the pattern — <code>"*"</code> for wildcard origins</td>
+<td>the named paths, or <strong>every</strong> string field when <code>fields</code> is omitted</td>
 </tr>
 </tbody>
 </table>
-<h3 id="controls-expected-clean-on-both-backends">Controls (expected clean on both backends)<a class="headerlink" href="#controls-expected-clean-on-both-backends" title="Permanent link">&para;</a></h3>
-<table>
-<thead>
-<tr>
-<th>control</th>
-<th>mock</th>
-<th>real</th>
-<th>verdict</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>ctrl-row-after-guard</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-row-before-guard-in-tx</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-atomic-provision</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-unique-reservation</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-retry-with-key</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-atomic-pair</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-idempotent-retry</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-serializable-oncall</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-merged-relay</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-floored-append</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-bound-cursor-walk</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-release-after-write</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-outbox-in-tx</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-process-then-ack</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-lock-protocol</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-tenant-filtered-browse</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-cache-invalidate-in-tx</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-<tr>
-<td><code>ctrl-inbox-consumer</code></td>
-<td>clean</td>
-<td>clean</td>
-<td>✓ agree</td>
-</tr>
-</tbody>
-</table>
-<h3 id="not-transferable-120-mutants">Not transferable — 1/20 mutants<a class="headerlink" href="#not-transferable-120-mutants" title="Permanent link">&para;</a></h3>
-<p>Defects whose trigger or observable needs simulation-only machinery; their
-<code>ground_truth</code> stays undetermined by design, and the fraction is stated so a capped
-denominator never reads as full coverage.</p>
-<table>
-<thead>
-<tr>
-<th>mutant</th>
-<th>reason</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>T2-charge-before-guard</code></td>
-<td>The external charge is a trace-level marker by design (an effect that leaves the process, not a port write) — no real-backend final-state observable exists. The transferable sibling of this shape is T3.</td>
-</tr>
-</tbody>
-</table>
+<p>A path naming a group — a nested model or a mapping — applies <code>RequireHttps</code>, <code>LoopbackHost</code> and
+<code>DevValue</code> to every value under it. <code>RequireSet</code> asks only that the group itself holds something;
+name the fields inside it that must be set.</p>
+<p><code>DEFAULT_RULES</code> is the one rule that needs no path: a <code>_dev_only</code> marker anywhere in the
+settings, secrets included, refuses. Every other rule points at your own fields, because only you
+know which one is the DSN. Extend the default rather than replacing it.</p>
+<p>A path that names nothing in your settings is refused in <strong>every</strong> environment, development
+included: a posture referring to a renamed field is a rule nobody enforces, and a laptop is where
+that should surface. A path through an unset parent (<code>db.password</code> when <code>db</code> is <code>None</code>) reads as
+unset.</p>
+<h2 id="where-it-is-checked">Where it is checked<a class="headerlink" href="#where-it-is-checked" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>check_wiring(..., posture=posture)</code></strong> puts its refusals in the report's <code>findings</code>, beside
+  unresolved operations. A finding makes <code>ok</code> false and <code>raise_if_failed</code> raise, so the CI gate
+  that runs the wiring check catches a posture violation before a deployment does.</li>
+<li><strong><code>build_runtime(posture=posture)</code></strong> evaluates it again when the runtime is built, and refuses
+  it with <code>configuration</code> (code <code>production_posture_refused</code>). An application that never runs the
+  wiring check still cannot boot with development settings in production.</li>
+</ul>
+<h2 id="integrations-that-escalate-their-own-warnings">Integrations that escalate their own warnings<a class="headerlink" href="#integrations-that-escalate-their-own-warnings" title="Permanent link">&para;</a></h2>
+<p>Some configs already know a hazard and warn about it, because they cannot know on their own
+whether they are running on a laptop. An HTTP service that sends a credential or declared-sensitive
+data over plaintext <code>http://</code> is one: its config warns when constructed. Under a production
+posture the same condition refuses the boot, named <code>http_service:&lt;name&gt;</code>.</p>
+<p>A tenant-routed service is the exception: it learns each tenant's URL from that tenant's secret
+after the boot, so the posture never sees it, and its check stays a warning logged when the
+tenant's client is first built.</p>
+<p>The legitimate case — a service mesh terminating TLS in a sidecar, so the hop is plaintext and the
+network is not — is an exemption the deployment writes down, with its reason:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">Exempt</span>
+
+<span class="n">posture</span> <span class="o">=</span> <span class="n">ProductionPosture</span><span class="p">(</span>
+    <span class="n">settings</span><span class="o">=</span><span class="n">settings</span><span class="p">,</span>
+    <span class="n">environment</span><span class="o">=</span><span class="s2">"env"</span><span class="p">,</span>
+    <span class="n">non_production</span><span class="o">=</span><span class="p">{</span><span class="s2">"dev"</span><span class="p">,</span> <span class="s2">"test"</span><span class="p">},</span>
+    <span class="n">rules</span><span class="o">=</span><span class="p">(</span><span class="o">*</span><span class="n">DEFAULT_RULES</span><span class="p">,</span> <span class="o">...</span><span class="p">),</span>
+    <span class="n">exempt</span><span class="o">=</span><span class="p">(</span>
+        <span class="n">Exempt</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="s2">"http_service:billing"</span><span class="p">,</span> <span class="n">reason</span><span class="o">=</span><span class="s2">"the mesh terminates TLS in a sidecar"</span><span class="p">),</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>An exemption needs a non-blank reason, so it reads as a reviewed line. It matches a rule's
+settings path as well as an integration's target; a path that does not resolve cannot be exempted.</p>
+<div class="admonition warning">
+<p class="admonition-title">Adopting a posture can refuse a deployment that boots today</p>
+<p>That is the point, and it is still a break. Run <code>check_wiring</code> with the posture in CI first,
+against the production settings, and fix what it names before the runtime starts refusing.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">What a green posture means</p>
+<p>That the declared rules passed — not that the deployment is safe. The posture is a checklist
+you write; the shipped rule is a starting point, and it grades nothing it was not told about.</p>
+</div>
 
 
 
@@ -6570,6 +6570,9 @@ denominator never reads as full coverage.</p>
 
 
 
+
+  
+  
 
 
 
@@ -6594,6 +6597,44 @@ denominator never reads as full coverage.</p>
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../../identity-tenancy-enc/cursor-tokens/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Cursor tokens">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Cursor tokens
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="../deadlines/" class="md-footer__link md-footer__link--next" aria-label="Next: Deadlines">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Deadlines
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </div>
+          </a>
+        
+      </nav>
     
   
   <div class="md-footer-meta md-typeset">
@@ -6631,14 +6672,14 @@ denominator never reads as full coverage.</p>
       
         
         
-      <script id="__config" type="application/json">{"annotate":null,"base":"../../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.8dcc8e9c.min.js"></script>
+      <script src="../../assets/javascripts/bundle.8dcc8e9c.min.js"></script>
       
-        <script src="../../../_javascripts/theme.js"></script>
+        <script src="../../_javascripts/theme.js"></script>
       
-        <script src="../../../_javascripts/hero.js"></script>
+        <script src="../../_javascripts/hero.js"></script>
       
     
   </body>
