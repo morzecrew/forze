@@ -217,7 +217,7 @@ async def test_a_failed_audit_write_rolls_the_business_write_back(
 ) -> None:
     await pg_client.execute("DROP TABLE audit_events;")
 
-    with pytest.raises(Exception):
+    with pytest.raises(CoreException):
         await _run(_registry(Audited(spec=SPEC)), _ctx(pg_client))
 
     assert await _things(pg_client) == 0

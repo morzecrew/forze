@@ -48,6 +48,7 @@ from forze_mock import MockDepsModule
 USER: Final = uuid4()
 AGENT: Final = uuid4()
 OTHER: Final = uuid4()
+AS_USER: Final = AuthnIdentity(principal_id=USER)
 
 
 class _Thing(Document):
@@ -145,7 +146,7 @@ async def _run(
     reg: Any,
     ctx: ExecutionContext,
     args: _Args | None = None,
-    identity: AuthnIdentity | None = AuthnIdentity(principal_id=USER),
+    identity: AuthnIdentity | None = AS_USER,
 ) -> Any:
     with ctx.inv_ctx.bind_identity(authn=identity):
         return await run_operation(reg, "op", args if args is not None else _Args(), ctx)
