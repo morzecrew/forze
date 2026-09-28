@@ -792,6 +792,16 @@ itself, not by an integration package. There is no backend behind them to diverg
 checker fails if one ever appears.\
 """
 
+[[tool.conformance_manifest.exempt_groups]]
+kind = "no-engine-matrix"
+keys = ["audit"]
+reason = """
+The audit port is implemented once, in forze_kits, over whichever document store the app \
+already wired: an audit row is a document, so its storage-level behaviour is the document \
+plane's, which the isolation plane compares. The checker verifies the claim: any integration \
+package registering the key fails here.\
+"""
+
 [tool.conformance_manifest.exemptions."crypto.required_reach"]
 kind = "config-value"
 reason = """

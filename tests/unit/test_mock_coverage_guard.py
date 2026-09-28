@@ -69,6 +69,12 @@ _EXEMPTIONS: dict[str, tuple[str, str]] = {
         "forze_identity.authn registers it per route; the contract also treats an absent "
         "sink as a no-op, so unregistered is a supported state rather than a hole.",
     ),
+    "audit": (
+        _OTHER_MODULE,
+        "forze_kits.integrations.audit.AuditDepsModule registers it, writing through the "
+        "document port MockDepsModule already serves — on the mock, the audit trail is the "
+        "kit's port over the mock's documents, not a second in-memory store.",
+    ),
     "resilience_admin": (
         _OTHER_MODULE,
         "forze.application.execution.resilience.module registers the executor under it.",

@@ -76,6 +76,7 @@ nav = [
             "identity-tenancy-enc/multi-tenancy.md",
             "identity-tenancy-enc/encryption.md",
             "identity-tenancy-enc/cursor-tokens.md",
+            "identity-tenancy-enc/audit.md",
         ] },
         { "Running in production" = [
             "running-in-prod/production-posture.md",

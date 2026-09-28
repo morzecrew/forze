@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An operation can leave an audit row, and only the metadata it declared.** `Audited(spec=AuditSpec(...))` records allowed, denied and failed outcomes with the actor from the authenticated identity; an undeclared metadata key raises. `forze_kits.integrations.audit` stores the trail as a document collection.
+
 - **A deployment can refuse to boot with development settings.** `ProductionPosture` declares rules over your own settings (required, HTTPS-only, loopback, development-only values) and refuses at `check_wiring` and when the runtime is built, naming keys, never values. An unset environment is production.
 
 - **A guarantee can hold at commit.** `UniqueTogether` and `NonOverlapping` take `holds="commit"`: a transaction may pass through a violation it resolves, such as an insert at the top of a positioned list. Postgres keeps it with a `DEFERRABLE INITIALLY DEFERRED` constraint; the in-memory store checks it at commit.
