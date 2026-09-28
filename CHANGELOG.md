@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.9.0] - 2026-09-28
+
+### Added
+
 - **An operation can leave an audit row, and only the metadata it declared.** `Audited(spec=AuditSpec(...))` records allowed, denied and failed outcomes with the actor from the authenticated identity; an undeclared metadata key raises. `forze_kits.integrations.audit` stores the trail as a document collection.
 
 - **A deployment can refuse to boot with development settings.** `ProductionPosture` declares rules over your own settings (required, HTTPS-only, loopback, development-only values) and refuses at `check_wiring` and when the runtime is built, naming keys, never values. An unset environment is production.
@@ -20,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A pre-0.7 `$fields` filter says it belongs under `$values`.** A value operator, a literal on the right, a non-path value, or a string naming no field is refused with that pointer. A string or string enum that names a field still reads as a field compare, the one shape that cannot be caught.
 
 ### Fixed
+
+- **The HTTP cleartext-credentials warning reads what is actually sent.** A credential in `default_headers` (`Authorization`, `Cookie`, an API key) now counts; an `HttpAuthConfig` that sends no header does not.
 
 - **Returning to a scope on an operation binder no longer drops what was bound to it.** A second `bind_outer()` or `bind_tx()` on one binder kept only its own steps, silently discarding earlier guards and the transaction route.
 
@@ -1830,7 +1846,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.8.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/morzecrew/forze/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/morzecrew/forze/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/morzecrew/forze/compare/v0.5.1...v0.6.0
