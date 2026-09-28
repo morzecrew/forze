@@ -230,6 +230,38 @@ class TestTheRoundTrip:
         assert caught.value.code == PREVIEW_CHANGED
         assert await _orders(ctx) == 0
 
+    async def test_the_check_reads_the_state_before_the_handler_changes_it(self) -> None:
+        # A confirmation that marks what it confirms (here: relabels the quote) must be checked
+        # against what the caller saw, not against what the handler just wrote.
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class _MarkAndOrder:
+            ctx: ExecutionContext
+
+            async def __call__(self, args: _Confirm) -> None:
+                current = await self.ctx.document.query(QUOTES).get(args.quote_id)
+                await self.ctx.document.command(QUOTES).update(
+                    args.quote_id, current.rev, _QuoteUpdate(label="confirmed")
+                )
+                await self.ctx.document.command(ORDERS).create(_OrderCreate(quote_id=args.quote_id))
+
+        ctx = context_from_modules(MockDepsModule())
+        quote = await _quote(ctx)
+        preview = await QUOTE_PREVIEW.reviewed(ctx, _QuoteArgs(quote_id=quote.id))
+        binder = (
+            OperationRegistry(handlers={"confirm": lambda c: _MarkAndOrder(ctx=c)})
+            .bind("confirm")
+            .bind_tx()
+            .set_route("mock")
+            .finish()
+        )
+        reg = QUOTE_PREVIEW.bind(binder).finish().freeze()
+
+        await run_operation(
+            reg, "confirm", _Confirm(quote_id=quote.id, fingerprint=preview.fingerprint), ctx
+        )
+
+        assert await _orders(ctx) == 1
+
     async def test_the_check_runs_inside_the_transaction(self) -> None:
         ctx = context_from_modules(MockDepsModule())
         quote = await _quote(ctx)
