@@ -357,7 +357,7 @@ class TestTheCanonicalForm:
         # them later. Any change to how a value renders must take a new prefix, and this digest
         # is what notices one that did not.
         assert canonical_fingerprint(_Everything()) == (
-            "sha256-c1:cf268c9c5fea71d8cbcb489c5472d0b47dc675b7ed00570b5c8903bf4e61833b"
+            "sha256-c1:aeb5d6e7f0dd025886c5c4b8b3ae770efe97c75010acad90dc896c6a4c02776f"
         )
 
     def test_key_and_set_order_do_not_move_it(self) -> None:
@@ -385,6 +385,27 @@ class TestTheCanonicalForm:
     )
     def test_every_value_type_moves_it_when_it_changes(self, change: dict[str, Any]) -> None:
         assert canonical_fingerprint(_Everything(**change)) != canonical_fingerprint(_Everything())
+
+    def test_a_mapping_key_keeps_its_type(self) -> None:
+        class _Keyed(BaseModel):
+            by: dict[Any, str]
+
+        assert canonical_fingerprint(_Keyed(by={1: "x"})) != canonical_fingerprint(
+            _Keyed(by={"1": "x"})
+        )
+
+    def test_keys_that_render_alike_are_refused(self) -> None:
+        # A UUID and its string render identically; kept as two keys they would collapse into
+        # one, and the fingerprint would miss whichever value was dropped.
+        ref = UUID("00000000-0000-4000-8000-000000000001")
+
+        class _Keyed(BaseModel):
+            by: dict[Any, str]
+
+        with pytest.raises(CoreException) as caught:
+            canonical_fingerprint(_Keyed(by={ref: "a", str(ref): "b"}))
+
+        assert caught.value.code == "preview_projection_unrenderable"
 
     def test_a_value_with_no_canonical_form_is_refused(self) -> None:
         class _Opaque(BaseModel):

@@ -70,7 +70,19 @@ def _leaf(value: Any) -> Any:
 
 def _canonical(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {str(_leaf(key)): _canonical(item) for key, item in value.items()}
+        # As sorted [key, value] pairs rather than a JSON object, whose keys are text: a key
+        # keeps its type ({1: …} and {"1": …} differ), and two keys that render alike (a UUID
+        # and its string) are refused rather than one silently replacing the other.
+        pairs = [[_canonical(key), _canonical(item)] for key, item in value.items()]
+
+        if len({_text(key) for key, _ in pairs}) != len(pairs):
+            raise exc.configuration(
+                "Two keys of a mapping in a preview projection render alike; give them "
+                "distinct values or one key type.",
+                code="preview_projection_unrenderable",
+            )
+
+        return sorted(pairs, key=lambda pair: _text(pair[0]))
 
     if isinstance(value, (set, frozenset)):
         # A set's iteration order is hash-seeded per process for strings: sorted by each
@@ -91,7 +103,7 @@ def canonical_fingerprint(model: BaseModel, *, exclude: Iterable[str] = ()) -> s
     """The fingerprint of *model* without the *exclude* fields, as ``"sha256-c1:<hex>"``.
 
     The canonical form is this function's own, not a serializer's: the Python-mode dump, every
-    set sorted, dates and times in ISO 8601, UUIDs and decimals as strings, enums as their
+    mapping as sorted key-value pairs (a key keeps its type), every set sorted, dates and times in ISO 8601, UUIDs and decimals as strings, enums as their
     values, then standard-library JSON with sorted keys and fixed separators. It is the same in
     every process and does not move with a dependency upgrade, so a stored fingerprint stays
     recomputable.
