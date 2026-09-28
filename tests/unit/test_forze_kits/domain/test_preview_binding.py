@@ -347,6 +347,7 @@ class _Everything(BaseModel):
     colour: _Colour = _Colour.RED
     tags: set[str] = {"alpha", "beta", "gamma", "delta"}
     lines: dict[str, int] = {"a": 1, "b": 2}
+    steps: list[str] = ["first", "second"]
     nothing: None = None
 
 
@@ -356,7 +357,7 @@ class TestTheCanonicalForm:
         # them later. Any change to how a value renders must take a new prefix, and this digest
         # is what notices one that did not.
         assert canonical_fingerprint(_Everything()) == (
-            "sha256-c1:1498c472d47c2c3a67d88c6b50ab68e6398149e8c150f48fc2efc0d900f0184c"
+            "sha256-c1:cf268c9c5fea71d8cbcb489c5472d0b47dc675b7ed00570b5c8903bf4e61833b"
         )
 
     def test_key_and_set_order_do_not_move_it(self) -> None:
@@ -379,6 +380,7 @@ class TestTheCanonicalForm:
             {"money": Decimal("12.51")},
             {"tags": {"alpha"}},
             {"lines": {"a": 1, "b": 3}},
+            {"steps": ["second", "first"]},  # a list's order is data, unlike a set's
         ],
     )
     def test_every_value_type_moves_it_when_it_changes(self, change: dict[str, Any]) -> None:
