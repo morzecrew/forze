@@ -51,8 +51,9 @@ registry = audited.bind(
 
 ## What gets recorded, and where
 
-Every audited operation ends in one row, with an outcome of `allowed`, `denied` or `failed`.
-Where the row is written depends on the outcome, because that decides whether it can be trusted:
+An audited write ends in one row, with an outcome of `allowed`, `denied` or `failed`; reads
+follow rules of their own, below. Where the row is written depends on the outcome, because that
+decides whether it can be trusted:
 
 | The operation… | Outcome | The row is written… |
 |----------------|---------|---------------------|
@@ -64,6 +65,10 @@ A denial is the event a trail most needs, and it happens before the handler and 
 transaction opens — which is why the audit hooks are bound to the operation's outer scope as well
 as its transaction. An operation without a transaction binds with `transactional=False`, and its
 `allowed` row is written after it returns.
+
+A failed or denied row is written after the operation's own transaction, not after every
+transaction: an audited operation called inside another one's transaction writes its row into
+that transaction, and the row goes if the outer one rolls back.
 
 **Reads** (`QUERY` operations) follow two rules of their own, set by `audit_reads`:
 
