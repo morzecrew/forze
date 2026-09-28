@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from forze.application.contracts.authz import (
     AuthzScope,
     DerivedPermissionRef,
+    DerivedPermissions,
     EffectiveGrants,
     PermissionProvider,
     PermissionRef,
@@ -310,6 +311,13 @@ class AuthzGrantResolver:
 # ....................... #
 
 
+def _denials(provider: PermissionProvider, keys: frozenset[str]) -> set[DerivedPermissionRef]:
+    return {
+        DerivedPermissionRef(permission_key=key, provider=provider.name, denied=True)
+        for key in keys
+    }
+
+
 async def derive_permissions(
     providers: Sequence[PermissionProvider],
     principal_id: UUID,
@@ -317,9 +325,9 @@ async def derive_permissions(
 ) -> frozenset[DerivedPermissionRef]:
     """Run *providers* for *principal_id* and collect what they derived.
 
-    A provider that raises denies every key it declares, and a key a provider returns outside
-    its declaration is a denial for that key: an outage or a stray key fails closed, and a
-    denial masks catalog bindings, so neither becomes an authorization bypass.
+    A provider that raises, returns something other than :class:`DerivedPermissions`, or names a
+    key outside its declaration denies every key it declares: an outage or a typo fails closed,
+    and a denial masks catalog bindings, so neither becomes an authorization bypass.
     """
 
     if not providers:
@@ -334,34 +342,35 @@ async def derive_permissions(
         try:
             result = await provider.derive(principal_id, ctx)
 
+            if not isinstance(result, DerivedPermissions):  # pyright: ignore[reportUnnecessaryIsInstance]
+                raise TypeError(f"derive returned {type(result).__name__}")
+
+            stray = (result.granted | result.denied) - provider.keys
+
         except Exception as error:
             logger.error(
                 "authz.permission_provider_failed",
                 provider=provider.name,
                 error=type(error).__name__,
             )
-            derived |= {
-                DerivedPermissionRef(permission_key=key, provider=provider.name, denied=True)
-                for key in provider.keys
-            }
+            derived |= _denials(provider, provider.keys)
             continue
 
-        stray = (result.granted | result.denied) - provider.keys
-
         if stray:
+            # A result naming a key the provider never declared cannot be read as meant: a
+            # misspelt denial would deny the misspelling and leave the real key to the catalog.
             logger.warning(
                 "authz.permission_provider_undeclared_keys",
                 provider=provider.name,
                 keys=sorted(stray),
             )
+            derived |= _denials(provider, provider.keys | stray)
+            continue
 
-        derived |= {
-            DerivedPermissionRef(permission_key=key, provider=provider.name, denied=True)
-            for key in result.denied | stray
-        }
+        derived |= _denials(provider, result.denied)
         derived |= {
             DerivedPermissionRef(permission_key=key, provider=provider.name)
-            for key in result.granted & provider.keys
+            for key in result.granted
         }
 
     return frozenset(derived)

@@ -7,6 +7,7 @@ path and not another is exactly what a hand-built snapshot would never show.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -73,6 +74,18 @@ class _Provider:
             raise RuntimeError("members table unreachable")
 
         return DerivedPermissions(granted=self.granted, denied=self.denied)
+
+
+@attrs.define(slots=True, kw_only=True)
+class _Returns:
+    """A provider whose result is whatever *make* builds, well-formed or not."""
+
+    name: str
+    keys: frozenset[str]
+    make: Any
+
+    async def derive(self, principal_id: UUID, ctx: Any) -> DerivedPermissions:
+        return self.make()
 
 
 def _request(action: str, *, owner: UUID | None = None) -> AuthzRequest:
@@ -225,22 +238,43 @@ class TestDeactivationWins:
 
         assert not await _allowed("ledger.write", _direct_binding("ledger.write"), broken)
 
-    async def test_an_undeclared_key_is_a_denial_not_a_grant(self) -> None:
+    async def test_an_undeclared_key_voids_the_result(self) -> None:
+        # A key outside the declaration means the result cannot be read as meant: a misspelt
+        # denial would deny the misspelling and leave the real key granted by the catalog. So
+        # the whole result is treated like a failure.
         sloppy = _Provider(
             name="members",
-            keys=frozenset({"ledger.read"}),
-            granted=frozenset({"ledger.read", "ledger.write"}),
+            keys=frozenset({"ledger.read", "ledger.write"}),
+            denied=frozenset({"ledger.wirte"}),
         )
         grants = await _grants(_direct_binding("ledger.write"), sloppy)
 
-        assert POLICY.decide(grants, _request("ledger.read")).allowed
         assert not POLICY.decide(grants, _request("ledger.write")).allowed
-        # Recorded as a denial only: the snapshot never shows a grant the provider was not
-        # allowed to make.
         assert {(r.permission_key, r.denied) for r in grants.derived} == {
-            ("ledger.read", False),
+            ("ledger.read", True),
             ("ledger.write", True),
+            ("ledger.wirte", True),
         }
+
+    @pytest.mark.parametrize(
+        "result",
+        [
+            lambda: DerivedPermissions(denied="ledger.write"),  # type: ignore[arg-type]
+            lambda: DerivedPermissions(granted=["ledger.write", 7]),  # type: ignore[list-item]
+            lambda: None,
+            lambda: {"denied": {"ledger.write"}},
+            # Shaped like the real thing, so only the type check refuses it.
+            lambda: SimpleNamespace(granted=frozenset({"ledger.write"}), denied=frozenset()),
+        ],
+        ids=["string-denial", "non-string-key", "none", "dict", "look-alike"],
+    )
+    async def test_a_malformed_result_denies_what_it_declares(self, result: Any) -> None:
+        odd = _Returns(name="members", keys=frozenset({"ledger.write"}), make=result)
+        grants = await _grants(_direct_binding("ledger.write"), odd)
+
+        assert not POLICY.decide(grants, _request("ledger.write")).allowed
+        # Only its own keys: the principal's other permissions are decided as before.
+        assert "ledger.read" not in grants.denied_keys
 
     async def test_an_inactive_principal_is_refused_whatever_it_holds(self) -> None:
         member = _Provider(

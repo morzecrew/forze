@@ -131,12 +131,12 @@ startup = permission_providers_lifecycle_step(providers)  # pass to build_runtim
 
 - **Gate on permissions, never on roles** — that is what lets a derived denial close a route.
 - A provider **reads and never writes**. It runs for the principal being decided; on a delegated
-  call each actor is decided separately, so a delegation never exceeds what every principal in it
-  holds.
+  call `AuthzBeforeAuthorize` decides each actor in turn, so the provider runs for each of them.
 - `keys` declares everything a provider may grant or deny. The startup step refuses to boot when
-  a declared key has no catalog row, so a typo is a boot error rather than a permanent denial; a
-  key returned outside `keys` is treated as denied.
+  a declared key has no catalog row, so a typo is a boot error rather than a permanent denial.
 - A provider that **raises denies every key it declares** — an outage must not become a bypass.
+  So does one whose result is not a `DerivedPermissions`, or names a key outside `keys`: a
+  misspelt denial would otherwise deny the misspelling and leave the real key granted.
 - Derived grants sit in `EffectiveGrants.derived`, attributed to their provider and apart from the
   catalog's `permissions`, so an administered grant can be told from a derived one.
 
