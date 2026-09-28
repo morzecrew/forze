@@ -20,8 +20,8 @@ from .record import AuditCreate, AuditDocumentSpec, audit_record_spec
 class DocumentAuditPort(AuditPort):
     """Writes each entry as one row of the audit collection.
 
-    Inside an open transaction the row joins it; outside one it commits in a transaction of
-    its own on :attr:`tx_route`.
+    Inside an operation's transaction on :attr:`tx_route` the row joins it; outside one it
+    commits in a transaction of its own there.
     """
 
     ctx: ExecutionContext
@@ -46,10 +46,9 @@ class DocumentAuditPort(AuditPort):
             at=entry.at,
         )
 
-        if self.ctx.tx_ctx.depth() > 0:
-            await self.command.create(payload, return_new=False)
-            return
-
+        # Inside the operation's transaction this nests on the same route and commits or rolls
+        # back with it; on another route it refuses, since a row on another database cannot be
+        # atomic with the operation's write. Outside one it is a transaction of its own.
         async with self.ctx.tx_ctx.scope(self.tx_route):
             await self.command.create(payload, return_new=False)
 
