@@ -45,10 +45,13 @@ class AuthzKernelConfig:
     the runtime starts — see :func:`~forze_identity.authz.permission_providers_lifecycle_step`."""
 
     def __attrs_post_init__(self) -> None:
-        _check_providers(self.permission_providers)
+        check_permission_providers(self.permission_providers)
 
 
-def _check_providers(providers: Iterable[PermissionProvider]) -> None:
+def check_permission_providers(providers: Iterable[PermissionProvider]) -> None:
+    """Refuse a declaration nobody meant: a blank or repeated name, or keys that are not a
+    non-empty set of permission-key strings."""
+
     names: set[str] = set()
 
     for provider in providers:
@@ -59,10 +62,21 @@ def _check_providers(providers: Iterable[PermissionProvider]) -> None:
                 code="authz_provider_declaration",
             )
 
-        if isinstance(provider.keys, str) or not provider.keys:
+        if not provider.keys:
             raise exc.configuration(
-                f"Permission provider {provider.name!r} declares no keys (or a bare string); a "
-                "provider that may grant or deny nothing is a declaration nobody meant.",
+                f"Permission provider {provider.name!r} declares no keys; a provider that may "
+                "grant or deny nothing is a declaration nobody meant.",
+                code="authz_provider_declaration",
+            )
+
+        # Every decision takes set differences against the declaration, so a list or a bare
+        # string would fail there rather than here.
+        if not isinstance(provider.keys, (set, frozenset)) or not all(
+            isinstance(key, str) for key in provider.keys
+        ):
+            raise exc.configuration(
+                f"Permission provider {provider.name!r} must declare its keys as a set of "
+                f"permission-key strings, not {type(provider.keys).__name__}.",
                 code="authz_provider_declaration",
             )
 

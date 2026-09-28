@@ -314,8 +314,17 @@ class TestTheDeclaration:
             (_Provider(name=" ", keys=frozenset({"k"})),),
             (_Provider(name="a", keys=frozenset()),),
             (_Provider(name="a", keys="ledger.write"),),  # type: ignore[arg-type]
+            (_Provider(name="a", keys=["ledger.write"]),),  # type: ignore[arg-type]
+            (_Provider(name="a", keys=frozenset({"ledger.write", 7})),),  # type: ignore[arg-type]
         ],
-        ids=["duplicate-name", "blank-name", "no-keys", "bare-string-keys"],
+        ids=[
+            "duplicate-name",
+            "blank-name",
+            "no-keys",
+            "bare-string-keys",
+            "list-keys",
+            "non-string-key",
+        ],
     )
     def test_a_declaration_nobody_meant_is_refused(self, providers: Any) -> None:
         with pytest.raises(CoreException) as caught:
@@ -412,3 +421,11 @@ class TestTheBootCheck:
 
         assert caught.value.code == "authz_provider_unknown_keys"
         assert "ledger.wrte" in caught.value.summary and "members" in caught.value.summary
+
+    def test_the_step_refuses_a_declaration_the_config_would(self) -> None:
+        member = _Provider(name="members", keys=["ledger.write"])  # type: ignore[arg-type]
+
+        with pytest.raises(CoreException) as caught:
+            permission_providers_lifecycle_step([member])
+
+        assert caught.value.code == "authz_provider_declaration"

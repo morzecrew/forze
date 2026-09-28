@@ -14,6 +14,7 @@ from forze.base.exceptions import exc
 
 from ..application.specs import permission_definition_spec
 from ..services.grants import fetch_all_document_hits
+from .deps.configs import check_permission_providers
 
 # ----------------------- #
 
@@ -70,7 +71,10 @@ def permission_providers_lifecycle_step(
     permission catalog is tenant-scoped, *tenant* is the tenant it is read under.
     """
 
+    declared = tuple(providers)
+    check_permission_providers(declared)
+
     return LifecycleStep(
         id=name,
-        startup=_CheckProviderKeys(providers=tuple(providers), tenant=tenant),
+        startup=_CheckProviderKeys(providers=declared, tenant=tenant),
     )
