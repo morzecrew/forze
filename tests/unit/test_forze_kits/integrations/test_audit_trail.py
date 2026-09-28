@@ -361,6 +361,33 @@ class TestReads:
         rows = await _rows(ctx)
         assert [row.outcome for row in rows] == ([AuditOutcome.ALLOWED] if recorded else [])
 
+    async def test_a_read_resolved_inside_another_read_is_recorded(self) -> None:
+        # The audit port is built when the operation is resolved. Resolved inside another
+        # read, that happens under the read-only flag, and the audit collection's write port
+        # is the one it may still take.
+        ctx = _ctx()
+        inner = _registry(self._audited(owned=False), read=True)
+
+        @attrs.define(slots=True, kw_only=True, frozen=True)
+        class _Outer:
+            ctx: ExecutionContext
+
+            async def __call__(self, args: _Args) -> Any:
+                return await run_operation(inner, "op", args, self.ctx)
+
+        outer = (
+            OperationRegistry(handlers={"outer": lambda c: _Outer(ctx=c)})
+            .bind("outer")
+            .as_query()
+            .finish()
+            .freeze()
+        )
+
+        with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=USER)):
+            await run_operation(outer, "outer", _Args(), ctx)
+
+        assert [row.action for row in await _rows(ctx)] == ["thing.read"]
+
     async def test_without_an_owner_every_admitted_read_is_recorded(self) -> None:
         ctx = _ctx()
 
@@ -482,10 +509,10 @@ class TestWhenTheAuditWriteFails:
 
 
 class TestWiring:
-    def test_an_unwired_audit_port_fails_the_wiring_check(self) -> None:
-        report = check_wiring(
-            _registry(Audited(spec=SPEC)), lambda: context_from_modules(MockDepsModule())
-        )
+    @pytest.mark.parametrize("transactional", [True, False])
+    def test_an_unwired_audit_port_fails_the_wiring_check(self, transactional: bool) -> None:
+        reg = _registry(Audited(spec=SPEC), transactional=transactional, tx=transactional)
+        report = check_wiring(reg, lambda: context_from_modules(MockDepsModule()))
 
         assert not report.ok
         assert [failure.op for failure in report.failures] == ["op"]
