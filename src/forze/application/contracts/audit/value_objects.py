@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
-from types import MappingProxyType
 from typing import final
 from uuid import UUID
 
@@ -49,10 +48,6 @@ class AuditObjectRef:
 # ....................... #
 
 
-def _frozen_metadata(value: Mapping[str, AuditScalar]) -> Mapping[str, AuditScalar]:
-    return MappingProxyType(dict(value))
-
-
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AuditEntry:
@@ -82,5 +77,5 @@ class AuditEntry:
     object_ref: AuditObjectRef | None = None
     """What it acted on, when the audited operation says."""
 
-    metadata: Mapping[str, AuditScalar] = attrs.field(factory=dict, converter=_frozen_metadata)
+    metadata: Mapping[str, AuditScalar] = attrs.field(factory=dict)
     """The declared metadata, already checked against the spec's allowlist."""
