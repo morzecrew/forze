@@ -94,6 +94,52 @@ authorizes the operation, and a `wrap` step injects scope filters into
 list/search queries. Both read the bound `AuthnIdentity` and `TenantIdentity` to
 build the decision.
 
+### Permissions derived from state
+
+"Active member of X" is state, not a binding, and syncing bindings from it drifts. A
+`PermissionProvider` derives permissions per decision from documents or reviewed configuration,
+and the policy unions them with catalog grants:
+
+| Source | Grants | Wins over |
+|--------|--------|-----------|
+| Catalog bindings (principal, role, group) | yes | — |
+| A provider's `granted` | yes | — |
+| A provider's `denied` | no | **every** grant, bindings included |
+
+```python
+from uuid import UUID
+
+from forze.application.contracts.authz import DerivedPermissions
+from forze_identity.authz import AuthzKernelConfig, permission_providers_lifecycle_step
+
+
+class ActiveMembers:
+    name = "active_members"
+    keys = frozenset({"ledger.read", "ledger.write"})
+
+    async def derive(self, principal_id: UUID, ctx) -> DerivedPermissions:
+        member = ...  # read the member row through ctx
+        if member is None or not member.active:
+            return DerivedPermissions(denied=self.keys)  # deactivation closes every route
+        return DerivedPermissions(granted=self.keys)
+
+
+providers = (ActiveMembers(),)
+kernel = AuthzKernelConfig(permission_providers=providers)
+startup = permission_providers_lifecycle_step(providers)  # pass to build_runtime
+```
+
+- **Gate on permissions, never on roles** — that is what lets a derived denial close a route.
+- A provider **reads and never writes**. It runs for the principal being decided; on a delegated
+  call each actor is decided separately, so a delegation never exceeds what every principal in it
+  holds.
+- `keys` declares everything a provider may grant or deny. The startup step refuses to boot when
+  a declared key has no catalog row, so a typo is a boot error rather than a permanent denial; a
+  key returned outside `keys` is treated as denied.
+- A provider that **raises denies every key it declares** — an outage must not become a bypass.
+- Derived grants sit in `EffectiveGrants.derived`, attributed to their provider and apart from the
+  catalog's `permissions`, so an administered grant can be told from a derived one.
+
 ## Authn events and login lockout
 
 Authentication flows can narrate themselves. Wire an optional **authn event

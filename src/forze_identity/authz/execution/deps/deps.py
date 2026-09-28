@@ -44,7 +44,7 @@ from .configs import AuthzSharedServices
 # ----------------------- #
 
 
-def _grant_resolver(ctx: ExecutionContext) -> AuthzGrantResolver:
+def _grant_resolver(ctx: ExecutionContext, shared: AuthzSharedServices) -> AuthzGrantResolver:
     # The invocation tenant is what the (tenant-aware) document ports auto-scope to;
     # pass it so the resolver can refuse a scope that names a different tenant.
     tenant = ctx.inv_ctx.get_tenant()
@@ -62,6 +62,8 @@ def _grant_resolver(ctx: ExecutionContext) -> AuthzGrantResolver:
             gperm_binding_qry=ctx.doc.query(group_permission_binding_spec),
         ),
         invocation_tenant_id=tenant.tenant_id if tenant is not None else None,
+        providers=shared.permission_providers,
+        ctx=ctx,
     )
 
 
@@ -89,6 +91,8 @@ class ConfigurablePrincipalRegistry:
 class ConfigurableRoleAssignment:
     """Build :class:`~forze_authz.adapters.role_assignment.RoleAssignmentAdapter`."""
 
+    shared: AuthzSharedServices
+
     def __call__(
         self,
         ctx: ExecutionContext,
@@ -100,7 +104,7 @@ class ConfigurableRoleAssignment:
             role_qry=ctx.doc.query(role_definition_spec),
             pr_binding_cmd=ctx.doc.command(principal_role_binding_spec),
             pr_binding_qry=ctx.doc.query(principal_role_binding_spec),
-            resolver=_grant_resolver(ctx),
+            resolver=_grant_resolver(ctx, self.shared),
         )
 
 
@@ -108,6 +112,8 @@ class ConfigurableRoleAssignment:
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class ConfigurableGrantQuery:
     """Build :class:`~forze_authz.adapters.effective_grants.GrantQueryAdapter`."""
+
+    shared: AuthzSharedServices
 
     def __call__(
         self,
@@ -117,7 +123,7 @@ class ConfigurableGrantQuery:
         return GrantQueryAdapter(
             spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
-            resolver=_grant_resolver(ctx),
+            resolver=_grant_resolver(ctx, self.shared),
         )
 
 
@@ -166,7 +172,7 @@ class ConfigurableAuthzDecision:
         return AuthzDecisionAdapter(
             spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
-            resolver=_grant_resolver(ctx),
+            resolver=_grant_resolver(ctx, self.shared),
             policy=self.shared.policy,
         )
 
@@ -182,6 +188,6 @@ class ConfigurableAuthzScope:
         return AuthzScopeAdapter(
             spec=spec,
             principal_qry=ctx.doc.query(policy_principal_spec),
-            resolver=_grant_resolver(ctx),
+            resolver=_grant_resolver(ctx, self.shared),
             policy=self.shared.policy,
         )

@@ -1,5 +1,7 @@
 """Resolve effective grants from catalog documents and binding edges."""
 
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import attrs
@@ -7,7 +9,9 @@ from pydantic import BaseModel
 
 from forze.application.contracts.authz import (
     AuthzScope,
+    DerivedPermissionRef,
     EffectiveGrants,
+    PermissionProvider,
     PermissionRef,
     RoleRef,
 )
@@ -19,6 +23,7 @@ from forze.application.integrations.document._limits import (
 )
 from forze.base.exceptions import exc
 
+from .._logger import logger
 from ..domain.models.bindings import (
     ReadGroupPermissionBinding,
     ReadGroupPrincipalBinding,
@@ -28,6 +33,9 @@ from ..domain.models.bindings import (
     ReadRolePermissionBinding,
 )
 from ..domain.models.group import ReadGroup
+
+if TYPE_CHECKING:
+    from forze.application.execution.context import ExecutionContext
 from ..domain.models.permission_definition import ReadPermissionDefinition
 from ..domain.models.role_definition import ReadRoleDefinition
 
@@ -103,6 +111,12 @@ class AuthzGrantResolver:
     a caller-supplied :class:`AuthzScope` naming a *different* tenant is refused rather
     than silently resolved against the ambient tenant's bindings. ``None`` disables the
     check (the historical behavior, and correct for untenanted / single-tenant use)."""
+
+    providers: tuple[PermissionProvider, ...] = ()
+    """Permission providers run after the catalog grants, in declaration order."""
+
+    ctx: "ExecutionContext | None" = None
+    """The execution context a provider reads through; required when there are providers."""
 
     # ....................... #
 
@@ -239,6 +253,7 @@ class AuthzGrantResolver:
         return EffectiveGrants(
             roles=frozenset(role_refs.values()),
             permissions=frozenset(perm_refs.values()),
+            derived=await derive_permissions(self.providers, principal_id, self.ctx),
         )
 
     # ....................... #
@@ -290,3 +305,63 @@ class AuthzGrantResolver:
                 active.append(row.group_id)
 
         return active
+
+
+# ....................... #
+
+
+async def derive_permissions(
+    providers: Sequence[PermissionProvider],
+    principal_id: UUID,
+    ctx: "ExecutionContext | None",
+) -> frozenset[DerivedPermissionRef]:
+    """Run *providers* for *principal_id* and collect what they derived.
+
+    A provider that raises denies every key it declares, and a key a provider returns outside
+    its declaration is a denial for that key: an outage or a stray key fails closed, and a
+    denial masks catalog bindings, so neither becomes an authorization bypass.
+    """
+
+    if not providers:
+        return frozenset()
+
+    if ctx is None:
+        raise exc.internal("Permission providers need an execution context to derive from.")
+
+    derived: set[DerivedPermissionRef] = set()
+
+    for provider in providers:
+        try:
+            result = await provider.derive(principal_id, ctx)
+
+        except Exception as error:
+            logger.error(
+                "authz.permission_provider_failed",
+                provider=provider.name,
+                error=type(error).__name__,
+            )
+            derived |= {
+                DerivedPermissionRef(permission_key=key, provider=provider.name, denied=True)
+                for key in provider.keys
+            }
+            continue
+
+        stray = (result.granted | result.denied) - provider.keys
+
+        if stray:
+            logger.warning(
+                "authz.permission_provider_undeclared_keys",
+                provider=provider.name,
+                keys=sorted(stray),
+            )
+
+        derived |= {
+            DerivedPermissionRef(permission_key=key, provider=provider.name, denied=True)
+            for key in result.denied | stray
+        }
+        derived |= {
+            DerivedPermissionRef(permission_key=key, provider=provider.name)
+            for key in (result.granted & provider.keys) - result.denied
+        }
+
+    return frozenset(derived)

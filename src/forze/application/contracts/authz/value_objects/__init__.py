@@ -2,7 +2,7 @@
 
 from .catalog import GroupRef, PermissionRef, PrincipalRef, RoleRef
 from .decision import AuthzDecision, AuthzRequest, AuthzResource, AuthzScope, AuthzSubject
-from .grants import EffectiveGrants
+from .grants import DerivedPermissionRef, EffectiveGrants
 from .scoping import AuthzDocumentScope, AuthzDocumentScopeRequest, AuthzSensitiveAccessRequest
 
 # ----------------------- #
@@ -16,6 +16,7 @@ __all__ = [
     "AuthzScope",
     "AuthzSensitiveAccessRequest",
     "AuthzSubject",
+    "DerivedPermissionRef",
     "EffectiveGrants",
     "GroupRef",
     "PermissionRef",

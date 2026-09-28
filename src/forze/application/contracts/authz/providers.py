@@ -1,0 +1,50 @@
+"""Permission providers: grants and denials derived from state or configuration per decision."""
+
+from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
+from uuid import UUID
+
+import attrs
+
+if TYPE_CHECKING:
+    from forze.application.execution.context import ExecutionContext
+
+# ----------------------- #
+
+
+def _keys(value: frozenset[str] | set[str] | tuple[str, ...] | list[str]) -> frozenset[str]:
+    return frozenset(value)
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class DerivedPermissions:
+    """What one provider derived for one principal."""
+
+    granted: frozenset[str] = attrs.field(factory=frozenset, converter=_keys)
+    """Keys granted, as if the principal held a binding for each."""
+
+    denied: frozenset[str] = attrs.field(factory=frozenset, converter=_keys)
+    """Keys refused whatever else grants them — catalog bindings, roles and groups included.
+    Marking an employee inactive is then a complete authorization action."""
+
+
+@runtime_checkable
+class PermissionProvider(Protocol):  # pragma: no cover
+    """Derives permissions per decision from documents or reviewed configuration.
+
+    Registered on the identity plane's authz kernel, run in declaration order after the catalog
+    grants are resolved; the result is the union of every provider's grants minus the union of
+    their denials. A provider reads and never writes. One that raises denies every key it
+    declares — an outage must not become an authorization bypass.
+    """
+
+    name: str
+    """What a derived grant is attributed to."""
+
+    keys: frozenset[str]
+    """Every key this provider may grant or deny. Checked against the permission catalog when
+    the runtime starts; a key returned outside it is a denial for that key."""
+
+    async def derive(self, principal_id: UUID, ctx: "ExecutionContext") -> DerivedPermissions:
+        """Derive grants and denials for *principal_id*."""
+        ...

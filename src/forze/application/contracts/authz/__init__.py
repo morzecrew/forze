@@ -31,6 +31,7 @@ from .ports import (
     PrincipalRegistryPort,
     RoleAssignmentPort,
 )
+from .providers import DerivedPermissions, PermissionProvider
 from .specs import AuthzSpec, AuthzTenancyMode
 from .types import PrincipalKind
 from .value_objects import (
@@ -42,6 +43,7 @@ from .value_objects import (
     AuthzScope,
     AuthzSensitiveAccessRequest,
     AuthzSubject,
+    DerivedPermissionRef,
     EffectiveGrants,
     GroupRef,
     PermissionRef,
@@ -75,7 +77,10 @@ __all__ = [
     "DelegationGrantDepPort",
     "DelegationGrantPort",
     "DelegationPort",
+    "DerivedPermissionRef",
+    "DerivedPermissions",
     "EffectiveGrants",
+    "PermissionProvider",
     "MAX_DELEGATION_DEPTH",
     "GrantQueryDepKey",
     "GrantQueryDepPort",

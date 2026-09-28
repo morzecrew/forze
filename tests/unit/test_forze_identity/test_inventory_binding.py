@@ -137,10 +137,11 @@ class _RecordingCtx:
 
 class TestFeatureGroupsMatchTheFactories:
     def test_grant_resolution_group(self) -> None:
+        from forze_identity.authz.execution.deps.configs import build_authz_shared_services
         from forze_identity.authz.execution.deps.deps import _grant_resolver
 
         ctx = _RecordingCtx()
-        _grant_resolver(ctx)  # type: ignore[arg-type]
+        _grant_resolver(ctx, build_authz_shared_services())  # type: ignore[arg-type]
 
         assert ctx.resolved == _names(GRANT_RESOLUTION_SPECS)
 
