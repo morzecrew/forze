@@ -74,12 +74,20 @@ def _require_naive(local: datetime) -> None:
         )
 
 
-def _require_aware(*values: datetime) -> None:
-    if any(value.tzinfo is None or value.utcoffset() is None for value in values):
+def _instants(start: datetime, end: datetime) -> tuple[datetime, datetime]:
+    """*start* and *end* as UTC instants, refusing a naive one.
+
+    In UTC because Python compares and subtracts two datetimes that share a ``tzinfo`` by their
+    wall clocks, so two values carrying the same zone across a transition are off by the shift.
+    """
+
+    if any(value.tzinfo is None or value.utcoffset() is None for value in (start, end)):
         raise exc.precondition(
             "An instant is required, and a naive datetime is a wall-clock time in no zone.",
             code=NAIVE_DATETIME,
         )
+
+    return start.astimezone(UTC), end.astimezone(UTC)
 
 
 def _readings(zone: CivilZone, local: datetime) -> tuple[datetime, datetime, bool, bool]:
@@ -189,7 +197,7 @@ def spanned_local_days(zone: CivilZone, start: datetime, end: datetime) -> tuple
         *end* is before *start*.
     """
 
-    _require_aware(start, end)
+    start, end = _instants(start, end)
 
     if end < start:
         raise exc.precondition("The range ends before it starts.")
@@ -221,7 +229,7 @@ def elapsed_minutes(start: datetime, end: datetime) -> int:
     :raises CoreException: ``precondition`` (``naive_datetime``) for a naive argument.
     """
 
-    _require_aware(start, end)
+    start, end = _instants(start, end)
 
     return int((end - start) / timedelta(minutes=1))
 

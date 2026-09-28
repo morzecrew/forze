@@ -203,6 +203,14 @@ class TestSpannedDays:
 
         assert spanned_local_days(BERLIN, noon, noon) == ()
 
+    def test_values_carrying_the_zone_itself_are_ordered_as_instants(self) -> None:
+        # The same pair: backwards on the wall clock, forwards in fact.
+        tz = BERLIN.zone()
+        first = datetime(2026, 10, 25, 2, 30, fold=0, tzinfo=tz)
+        second = datetime(2026, 10, 25, 2, 15, fold=1, tzinfo=tz)
+
+        assert spanned_local_days(BERLIN, first, second) == (date(2026, 10, 25),)
+
     def test_a_backwards_or_naive_range_is_refused(self) -> None:
         start = datetime(2026, 6, 1, tzinfo=UTC)
 
@@ -228,6 +236,16 @@ class TestElapsed:
     def test_a_naive_argument_is_refused(self) -> None:
         with _refused(NAIVE_DATETIME):
             elapsed_minutes(datetime(2026, 6, 1), datetime(2026, 6, 2, tzinfo=UTC))
+
+    def test_values_carrying_the_zone_itself_are_measured_as_instants(self) -> None:
+        # Python subtracts two datetimes sharing a tzinfo by their wall clocks. Across Berlin's
+        # repeated hour, the first 02:30 to the second 02:15 reads as -15 minutes on the clock.
+        # It is 45 minutes in fact.
+        tz = BERLIN.zone()
+        first = datetime(2026, 10, 25, 2, 30, fold=0, tzinfo=tz)
+        second = datetime(2026, 10, 25, 2, 15, fold=1, tzinfo=tz)
+
+        assert elapsed_minutes(first, second) == 45
 
     def test_it_truncates_toward_zero(self) -> None:
         start = datetime(2026, 6, 1, tzinfo=UTC)
