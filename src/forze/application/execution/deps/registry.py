@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from forze.application.contracts.deps import Deps, DepsModule, ProviderStore
 
 from ..interception import PortInterceptor, PortInterceptorChain
+from ..posture import PostureAware
 from ..tracing import RuntimeTracer, runtime_tracer_from_flag
 from .frozen import FrozenDepsRegistry
 from .resolution import (
@@ -284,6 +285,14 @@ class DepsRegistry:
         )
 
         built: list[Deps] = []
+        # Read once, here, while the modules are still in hand: the frozen registry keeps
+        # providers, not modules, and both posture gates read from what it keeps.
+        findings = tuple(
+            finding
+            for module in self.modules
+            if isinstance(module, PostureAware)
+            for finding in module.posture_findings()
+        )
 
         for i, module in enumerate(self.modules, 1):
             module_deps = module()
@@ -315,4 +324,5 @@ class DepsRegistry:
             runtime_tracer=runtime_tracer,
             interceptors=self.interceptors,
             otel_port_tracer=self.otel_port_tracer,
+            posture_findings=findings,
         )

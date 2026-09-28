@@ -16,6 +16,7 @@ from forze.application.contracts.egress import (
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
+from forze.base.scrubbing.policy import is_sensitive_key
 from forze.base.serialization.pydantic import pydantic_secret_converter
 from forze_http.execution._logger import logger
 from forze_http.kernel.client.cleartext import is_cleartext_destination
@@ -199,6 +200,30 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
 
     # ....................... #
 
+    @property
+    def sends_secrets_in_cleartext(self) -> bool:
+        """Whether a credential or declared-sensitive data would leave over plaintext HTTP.
+
+        Either a credential the transport sends — from :attr:`auth`, or a default header whose
+        name the log scrubber treats as secret-bearing (``Authorization``, ``Cookie``, an API
+        key) — or a route that has declared it carries sensitive data out. The second case is the one a credential in the *body* falls into —
+        an OAuth token request posts its client secret as a form field and needs no
+        :class:`HttpAuthConfig` at all, so reading :attr:`auth` alone would stay silent for
+        exactly the route that carries the most. Loopback is never cleartext here.
+        """
+
+        # An auth config that sends no header (a token kind with no token) carries nothing.
+        sends_credential = (self.auth is not None and bool(self.auth.auth_headers())) or any(
+            is_sensitive_key(name) for name in self.default_headers
+        )
+
+        if self.base_url is None or not (sends_credential or self.egress_sensitive):
+            return False
+
+        return is_cleartext_destination(self.base_url)
+
+    # ....................... #
+
     def _warn_if_credentials_travel_in_cleartext(self) -> None:
         """Warn when something worth protecting would leave over plaintext HTTP.
 
@@ -209,23 +234,17 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         carries data worth protecting regardless of how it authenticates, which is the
         case a credential in the request *body* falls into.
 
-        A warning rather than a refusal, and the reason is a real deployment: a service
+        A warning rather than a refusal here, and the reason is a real deployment: a service
         mesh terminates TLS in a sidecar, so ``http://service.namespace.svc`` with a
         credential is both plaintext at this hop and encrypted on the network. Refusing it
         would need an opt-out flag to stay usable, which is a decision this config should
-        not make on its own. Loopback is exempt outright — that is a developer's own
-        machine, and warning on it would train the reader to ignore the warning.
+        not make on its own. The deployment makes it: :class:`HttpDepsModule` reports the same
+        condition to a production posture, which refuses it unless it exempts the service
+        with a reason. Loopback is exempt outright — that is a developer's own machine, and
+        warning on it would train the reader to ignore the warning.
         """
 
-        # Either a credential the transport sends, or a route that has declared it carries
-        # sensitive data out. The second case is the one a credential in the *body* falls
-        # into — an OAuth token request posts its client secret as a form field and needs
-        # no `HttpAuthConfig` at all, so reading `auth` alone would stay silent for exactly
-        # the route that carries the most.
-        if self.base_url is None or not (self.auth is not None or self.egress_sensitive):
-            return
-
-        if not is_cleartext_destination(self.base_url):
+        if not self.sends_secrets_in_cleartext:
             return
 
         logger.warning(

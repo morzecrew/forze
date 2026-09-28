@@ -34,6 +34,7 @@ from .context import ExecutionContext
 from .context.transaction import AfterCommitErrorHandler
 from .deps import FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
+from .posture import ProductionPosture
 
 # ----------------------- #
 
@@ -233,6 +234,12 @@ class ExecutionRuntime:
     holding it exits; a scope whose posture differs from one already held is refused. ``None``
     (default) leaves the process's posture alone, which is ``standard`` unless configured."""
 
+    posture: ProductionPosture | None = None
+    """Optional :class:`~forze.application.execution.ProductionPosture`, evaluated when the runtime
+    is constructed — together with the deps modules' own safety findings — and refusing it on any
+    finding. The floor under :func:`~forze.application.execution.check_wiring`, which an
+    application may never call. ``None`` (default) checks nothing."""
+
     # ....................... #
 
     __ctx: RuntimeVar[ExecutionContext] = attrs.field(
@@ -255,6 +262,10 @@ class ExecutionRuntime:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        # First: a deployment the posture refuses should not get as far as the lifecycle checks.
+        if self.posture is not None:
+            self.posture.enforce(self.deps.posture_findings)
+
         if self.deployment is DeploymentProfile.FLEET:
             if offending := sorted(
                 str(step.id)

@@ -14,6 +14,7 @@ from forze.base.primitives import CpuExecutor
 from .context.transaction import AfterCommitErrorHandler
 from .deps import DepsRegistry
 from .lifecycle import LifecyclePlan
+from .posture import ProductionPosture
 from .runtime import DeploymentProfile, ExecutionRuntime
 
 # ----------------------- #
@@ -87,6 +88,7 @@ def build_runtime(
     cursor_token_signer: CursorTokenSigner | None = None,
     cursor_token_cipher: CursorTokenCipher | None = None,
     denial_posture: DenialPosture | None = None,
+    posture: ProductionPosture | None = None,
     specs: SpecRegistry | FrozenSpecRegistry | Iterable[SpecRegistry] | None = None,
     allow_unregistered: bool = False,
 ) -> ExecutionRuntime:
@@ -161,6 +163,9 @@ def build_runtime(
     :param denial_posture: Passed through to :attr:`ExecutionRuntime.denial_posture` — a
         non-disclosing posture renders a denial or not-found about a covered resource type
         as one canonical not-found. ``None`` (default) keeps the process's posture.
+    :param posture: Passed through to :attr:`ExecutionRuntime.posture` — a
+        :class:`~forze.application.execution.ProductionPosture` whose findings refuse the build,
+        naming keys and rules, never values. ``None`` (default) checks nothing.
     :param specs: This application's spec inventory — one registry, or every contribution
         to merge: the author's own specs, each ``AggregateKit.spec_contributions()``, and
         ``forze_identity.spec_contributions()`` if the identity plane is wired. Merging
@@ -211,5 +216,6 @@ def build_runtime(
         cursor_token_signer=cursor_token_signer,
         cursor_token_cipher=cursor_token_cipher,
         denial_posture=denial_posture,
+        posture=posture,
         **optional,
     )

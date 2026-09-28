@@ -78,6 +78,7 @@ nav = [
             "identity-tenancy-enc/cursor-tokens.md",
         ] },
         { "Running in production" = [
+            "running-in-prod/production-posture.md",
             "running-in-prod/deadlines.md",
             "running-in-prod/resilience.md",
             "running-in-prod/load-shedding.md",
