@@ -13,6 +13,7 @@ import subprocess
 import sys
 import textwrap
 from datetime import UTC, date, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo
 
 from forze_dst.invariants import no_overlapping_periods
 from forze_dst.oracle import Event, History
@@ -173,6 +174,25 @@ class TestWhatItCatches:
         )
 
         assert len(violations) == 1
+
+    def test_an_overlap_across_a_repeated_hour_is_found(self) -> None:
+        # Both shifts carry Berlin's zone through its repeated hour on 25 Oct 2026. In fact the
+        # first runs 00:40-01:20 UTC and the second 01:10-01:30 UTC, so they overlap. On the wall
+        # clock the second starts first (02:10 before 02:40), and ordering by it would retire
+        # that shift before the first one reached it.
+        berlin = ZoneInfo("Europe/Berlin")
+        first = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 40, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 20, fold=1, tzinfo=berlin),
+        )
+        second = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 10, fold=1, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=berlin),
+        )
+
+        assert len(_CHECK(_history(first, second))) == 1
 
 
 class TestWhatItMustNotCatch:

@@ -17,6 +17,7 @@ import attrs
 
 from forze.base.exceptions import CoreException
 from forze.base.primitives import Bounds, Period, grain_of
+from forze.base.primitives.period import as_instant
 from forze_dst.oracle.recorder import Event, History
 
 # ----------------------- #
@@ -496,7 +497,9 @@ def _overlaps_within(
     """
 
     _ = kind
-    entries.sort(key=lambda entry: (entry[0].start, entry[1].seq))
+    # Ordered and pruned by instant: two datetimes sharing a zone compare by wall clock, and
+    # through a repeated hour that would retire a period before a later one reached it.
+    entries.sort(key=lambda entry: (as_instant(entry[0].start), entry[1].seq))
     violations: list[Violation] = []
     active: list[tuple[Period[Any], Event]] = []
 
@@ -504,7 +507,7 @@ def _overlaps_within(
         active = [
             (earlier, earlier_event)
             for earlier, earlier_event in active
-            if earlier.end is None or earlier.end >= period.start
+            if earlier.end is None or as_instant(earlier.end) >= as_instant(period.start)
         ]
 
         for earlier, earlier_event in active:

@@ -27,7 +27,7 @@ analysis, and a consumer that needs a coverage report reads the periods and comp
 build periods rather than to the type itself.
 """
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Literal, final, get_args
 
 import attrs
@@ -141,7 +141,7 @@ class Period[T: (date, datetime)]:
                 "build two periods."
             )
 
-        if self.end < self.start:
+        if as_instant(self.end) < as_instant(self.start):
             raise exc.validation(f"Period ends before it starts: {self.start!r} to {self.end!r}.")
 
     # ....................... #
@@ -156,7 +156,11 @@ class Period[T: (date, datetime)]:
         a type that rejected it would push the case back into every caller.
         """
 
-        return self.end is not None and self.start == self.end and self.bounds != "[]"
+        return (
+            self.end is not None
+            and as_instant(self.start) == as_instant(self.end)
+            and self.bounds != "[]"
+        )
 
     # ....................... #
 
@@ -208,10 +212,10 @@ class Period[T: (date, datetime)]:
     def _after_start(self, at: T) -> bool:
         """Whether *at* is at or past the start, counting the start only when it is in force."""
 
-        if at == self.start:
+        if as_instant(at) == as_instant(self.start):
             return self.bounds in _START_CLOSED
 
-        return at > self.start
+        return as_instant(at) > as_instant(self.start)
 
     def _before_end(self, at: T) -> bool:
         """Whether *at* is before the end, counting the end only when it is in force."""
@@ -221,10 +225,10 @@ class Period[T: (date, datetime)]:
         if self.end is None:
             return True
 
-        if at == self.end:
+        if as_instant(at) == as_instant(self.end):
             return self.bounds in _END_CLOSED
 
-        return at < self.end
+        return as_instant(at) < as_instant(self.end)
 
     def _starts_before_end_of(self, other: "Period[T]") -> bool:
         """Whether this period's start falls before *other* ends.
@@ -237,10 +241,10 @@ class Period[T: (date, datetime)]:
         if other.end is None:
             return True
 
-        if self.start == other.end:
+        if as_instant(self.start) == as_instant(other.end):
             return self.bounds in _START_CLOSED and other.bounds in _END_CLOSED
 
-        return self.start < other.end
+        return as_instant(self.start) < as_instant(other.end)
 
     def _require_same_grain(self, value: T) -> None:
         if not isinstance(value, date) or grain_of(value) != grain_of(self.start):  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -251,6 +255,19 @@ class Period[T: (date, datetime)]:
 
 
 # ....................... #
+
+
+def as_instant[V: date](value: V) -> V:
+    """*value* in UTC when it is an aware datetime, so comparisons read instants.
+
+    Python compares two datetimes sharing a ``tzinfo`` by their wall clocks and ignores
+    ``fold``: across a zone's repeated hour, two instants an hour apart compare equal.
+    """
+
+    if isinstance(value, datetime) and value.utcoffset() is not None:
+        return value.astimezone(UTC)  # pyright: ignore[reportReturnType]
+
+    return value
 
 
 def _grain_name(value: object) -> str:

@@ -8,6 +8,7 @@ both directions because that is the property a wrong implementation breaks first
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -334,3 +335,61 @@ class TestTiling:
         that its own periods must not share an endpoint."""
 
         assert _p(JAN, FEB, "[]").overlaps(_p(FEB, MAR, "[]"))
+
+
+class TestInstantsInOneZone:
+    """Endpoints carrying the same DST zone are compared as instants, not by wall clock.
+
+    Python compares two datetimes that share a ``tzinfo`` by their wall clocks and ignores
+    ``fold``. Across Berlin's repeated hour on 25 Oct 2026, the first 02:30 and the second one
+    are an hour apart and compare equal; the first 02:30 and the second 02:15 are 45 minutes
+    apart and compare backwards.
+    """
+
+    ZONE = ZoneInfo("Europe/Berlin")
+    FIRST = datetime(2026, 10, 25, 2, 30, fold=0, tzinfo=ZONE)
+    SECOND = datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=ZONE)
+    LATER = datetime(2026, 10, 25, 2, 15, fold=1, tzinfo=ZONE)
+
+    def test_an_hour_across_the_fold_is_not_empty(self) -> None:
+        period = Period(start=self.FIRST, end=self.SECOND)
+
+        assert not period.is_empty
+        assert period.contains(self.FIRST.astimezone(UTC) + timedelta(minutes=30))
+
+    def test_a_period_ending_later_in_fact_is_accepted(self) -> None:
+        period = Period(start=self.FIRST, end=self.LATER)
+
+        assert period.contains(self.FIRST.astimezone(UTC) + timedelta(minutes=40))
+        assert not period.contains(self.LATER.astimezone(UTC) + timedelta(minutes=1))
+
+    def test_a_point_in_the_same_zone_is_placed_by_instant(self) -> None:
+        period = Period(start=self.FIRST, end=self.LATER)
+
+        # 02:05 in winter time is after the summer 02:30 in fact, and before it on the clock.
+        assert period.contains(datetime(2026, 10, 25, 2, 5, fold=1, tzinfo=self.ZONE))
+        # 02:35 in summer time is before the winter 02:15 in fact, and after it on the clock.
+        assert period.contains(datetime(2026, 10, 25, 2, 35, fold=0, tzinfo=self.ZONE))
+
+    def test_the_second_pass_is_not_the_excluded_start(self) -> None:
+        # The winter 02:30 reads equal to the summer 02:30 on the clock; it is an hour later.
+        period = Period(
+            start=self.FIRST, end=datetime(2026, 10, 25, 3, 0, tzinfo=self.ZONE), bounds="()"
+        )
+
+        assert period.contains(self.SECOND)
+        assert not period.contains(self.FIRST)
+
+    def test_the_two_passes_through_the_repeated_hour_do_not_overlap(self) -> None:
+        # 02:10-02:50 in summer time is 00:10-00:50 UTC; 02:20-02:40 in winter time is
+        # 01:20-01:40 UTC. Disjoint in fact, nested on the wall clock.
+        summer = Period(
+            start=datetime(2026, 10, 25, 2, 10, fold=0, tzinfo=self.ZONE),
+            end=datetime(2026, 10, 25, 2, 50, fold=0, tzinfo=self.ZONE),
+        )
+        winter = Period(
+            start=datetime(2026, 10, 25, 2, 20, fold=1, tzinfo=self.ZONE),
+            end=datetime(2026, 10, 25, 2, 40, fold=1, tzinfo=self.ZONE),
+        )
+
+        assert not summer.overlaps(winter) and not winter.overlaps(summer)
