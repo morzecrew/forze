@@ -98,13 +98,25 @@ whether they are running on a laptop. An HTTP service that sends a credential or
 data over plaintext `http://` is one: its config warns when constructed. Under a production
 posture the same condition refuses the boot, named `http_service:<name>`.
 
+A tenant-routed service is the exception: it learns each tenant's URL from that tenant's secret
+after the boot, so the posture never sees it, and its check stays a warning logged when the
+tenant's client is first built.
+
 The legitimate case — a service mesh terminating TLS in a sidecar, so the hop is plaintext and the
 network is not — is an exemption the deployment writes down, with its reason:
 
 ```python
 from forze.application.execution import Exempt
 
-Exempt(target="http_service:billing", reason="the mesh terminates TLS in a sidecar")
+posture = ProductionPosture(
+    settings=settings,
+    environment="env",
+    non_production={"dev", "test"},
+    rules=(*DEFAULT_RULES, ...),
+    exempt=(
+        Exempt(target="http_service:billing", reason="the mesh terminates TLS in a sidecar"),
+    ),
+)
 ```
 
 An exemption needs a non-blank reason, so it reads as a reviewed line. It matches a rule's
