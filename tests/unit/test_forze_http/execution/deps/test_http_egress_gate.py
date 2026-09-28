@@ -190,6 +190,18 @@ class TestCleartextCredentialWarning:
 
         spy.warning.assert_not_called()
 
+    def test_an_auth_config_that_sends_nothing_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A token kind with no token sends no header, so nothing worth protecting leaves —
+        # and under a production posture this is a refusal, not just a line in the log.
+        spy = self._warnings(monkeypatch)
+
+        config = HttpServiceConfig(base_url="http://provider.example", auth=HttpAuthConfig())
+
+        spy.warning.assert_not_called()
+        assert not config.sends_secrets_in_cleartext
+
     def test_https_is_quiet(self, monkeypatch: pytest.MonkeyPatch) -> None:
         spy = self._warnings(monkeypatch)
 

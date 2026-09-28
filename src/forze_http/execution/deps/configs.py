@@ -210,7 +210,10 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
         exactly the route that carries the most. Loopback is never cleartext here.
         """
 
-        if self.base_url is None or not (self.auth is not None or self.egress_sensitive):
+        # An auth config that sends no header (a token kind with no token) carries nothing.
+        sends_credential = self.auth is not None and bool(self.auth.auth_headers())
+
+        if self.base_url is None or not (sends_credential or self.egress_sensitive):
             return False
 
         return is_cleartext_destination(self.base_url)
