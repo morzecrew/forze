@@ -138,26 +138,23 @@ def _run(*, bind: str) -> tuple[Any, Counter[str]]:
         # that retries.
         return [MockDepsModule(state=state, resilience="real"), AuditDepsModule(tx_route="mock")]
 
-    binder = (
-        OperationRegistry(
-            handlers={"edit": lambda ctx: _Edit(ctx=ctx)},
-            descriptors={"edit": OperationDescriptor(input_type=Edit, output_type=None)},
-        )
-        .bind("edit")
-        .bind_tx()
-        .set_route("mock")
-        .finish()
-        .bind_outer()
-        .wrap(ResilienceWrap(policy="transient").to_step())
-        .finish()
-    )
+    binder = OperationRegistry(
+        handlers={"edit": lambda ctx: _Edit(ctx=ctx)},
+        descriptors={"edit": OperationDescriptor(input_type=Edit, output_type=None)},
+    ).bind("edit")
+
+    # Left out of the audit, the edit has no transaction either: nothing else put it in one.
+    if bind != "none":
+        binder = binder.bind_tx().set_route("mock").finish()
+
+    binder = binder.bind_outer().wrap(ResilienceWrap(policy="transient").to_step()).finish()
     audited = Audited(spec=EDIT)
 
     if bind == "once":
         binder = audited.bind(binder)
     elif bind == "twice":
         binder = audited.bind(audited.bind(binder), step_id="audit.again")
-    else:
+    elif bind == "after":
         # The admitted row written by the outer hook, after the transaction has closed.
         binder = audited.bind(binder, transactional=False)
 
@@ -214,7 +211,11 @@ class TestOneRowPerEffect:
 
     @pytest.mark.parametrize(
         ("bind", "why"),
-        [("twice", "committed 2 audit rows"), ("after", "with no audit row")],
+        [
+            ("twice", "committed 2 audit rows"),
+            ("after", "with no audit row"),
+            ("none", "outside a transaction"),
+        ],
     )
     def test_a_row_outside_the_effects_transaction_breaks_it(self, bind: str, why: str) -> None:
         report, _ = _run(bind=bind)
@@ -261,10 +262,16 @@ class TestWhatItJudges:
 
         assert CHECK(history) == []
 
-    def test_a_run_without_transaction_ids_is_not_judged(self) -> None:
-        # Outside a simulation the trace stamps no transaction id, so writes cannot be grouped;
-        # reading them as one transaction would invent a violation.
-        assert CHECK(_history(_write(NOTE_SPEC.name, None), _commit(None))) == []
+    def test_an_effect_written_outside_a_transaction_is_reported(self) -> None:
+        # No row can commit with it: this is what an operation left out of the audit looks like
+        # when nothing else put it in a transaction.
+        [violation] = CHECK(_history(_write(NOTE_SPEC.name, None)))
+
+        assert "outside a transaction" in violation.message
+
+    def test_a_commit_without_an_id_is_not_a_transaction(self) -> None:
+        # A root exit with no id cannot be grouped with the writes it closed.
+        assert CHECK(_history(_write(TRAIL.name, None), _commit(None))) == []
 
     def test_a_rolled_back_transaction_is_not_judged(self) -> None:
         rolled_back = {**_commit(1), "outcome": "rollback"}

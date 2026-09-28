@@ -283,13 +283,20 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
 
     - A committed transaction that wrote one of *effect_routes* and no row on *audit_route* is
       an effect nobody can account for.
+    - A write to one of *effect_routes* outside any transaction is one too: no row can commit
+      with it. That is what an unaudited write looks like, and an operation bound with
+      ``transactional=False`` is reported the same way.
     - A committed transaction with two rows is a double record.
+
+    The unit is the transaction, so it is stated for workloads where each transaction carries one
+    audited operation. An operation writing several effects is one row. An audited operation
+    dispatched inside another's transaction adds its row to that transaction, and reads here as
+    a double record.
 
     It reads write *calls*. So it is stated for actions that fail closed
     (``on_failure="fail"``, the default), where a failed audit write rolls the transaction
     back. An action that ignores a failed audit write can commit its effect without the row
-    the call was for. Writes made outside a transaction carry no id to group by and are not
-    judged, so an operation bound with ``transactional=False`` is outside what this checks.
+    the call was for.
     """
 
     effects = frozenset(effect_routes)
@@ -304,13 +311,11 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
         committed: set[Any] = set()
         rows: dict[Any, list[Event]] = defaultdict(list)
         written: dict[Any, list[Event]] = defaultdict(list)
+        outside: list[Event] = []
 
         for event in history.of_kind("trace"):
             fields = event.fields
             tx_id = fields.get("tx_id")
-
-            if tx_id is None:
-                continue
 
             if fields.get("trace_domain") == "tx":
                 if fields.get("op") == "exit" and fields.get("outcome") == "commit":
@@ -320,9 +325,20 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
                 rows[tx_id].append(event)
 
             elif fields.get("phase") == "command" and fields.get("route") in effects:
-                written[tx_id].append(event)
+                (outside if tx_id is None else written[tx_id]).append(event)
 
-        violations: list[Violation] = []
+        violations: list[Violation] = [
+            Violation(
+                invariant="audit_row_per_effect",
+                message=(
+                    f"a write to {event.fields.get('route')!r} outside a transaction, where no "
+                    "audit row can commit with it"
+                ),
+                events=(event,),
+            )
+            for event in outside
+        ]
+        committed.discard(None)
 
         for tx_id in sorted(committed, key=str):
             effect, recorded = written.get(tx_id, []), rows.get(tx_id, [])
