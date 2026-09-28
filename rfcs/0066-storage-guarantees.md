@@ -284,7 +284,7 @@ created**, and **your migration is the thing that satisfies it**. Plus the compa
 | 7 | `ASSUMED` | `SystemInvariant` is not merged with guarantees. One is a law the framework checks over a read-set, the other is a property the store refuses; §5.6's table is shipped in the docs because authors will ask. |
 | 8 | `ASSUMED` | Members are added by demand only, each paying for a capability flag, a per-adapter mapping, a mock implementation and a parity leg. |
 | 9 | `OPEN` | Whether findings arrive as a `WiringReport` field or synthesized failures (shared with [RFC 0061](0061-production-posture.md)), whether the capability declaration is its own value or flags on existing ones, and whether `SerializedBy` belongs in this vocabulary. **Decided by rows 10–12.** |
-| 10 | `ASSUMED` | Decides row 9's first question: reconciliation refuses at `resolve_configurable`, beside the inventory guard, so a mismatch arrives as an ordinary wiring failure; [RFC 0061](0061-production-posture.md) inherits the answer — see `logs/T-0066.md` (D-9, attempt 1). |
+| 10 | `ASSUMED` | Decides row 9's first question: reconciliation refuses at `resolve_configurable`, beside the inventory guard, so a mismatch arrives as an ordinary wiring failure; [RFC 0061](0061-production-posture.md) inherits the answer — see `logs/T-0066.md` (D-9, attempt 1). **Narrowed by row 19.** |
 | 11 | `ASSUMED` | Decides row 9's second question: `StorageGuaranteeCapabilities` is **its own value object** — a guarantee is not a query feature — see `logs/T-0066.md` (D-9, attempt 1). |
 | 12 | `ASSUMED` | Decides row 9's third question in P4: `SerializedBy` **is a member**, with its own capability axis — see `logs/T-0066.md` (D-9, attempt 1) and `logs/T-0063.md` (D-9, attempt 1). |
 | 13 | `ASSUMED` | An adapter publishes its guarantees as a **port attribute**, and a port declaring none is read as enforcing none. This is a new surface; §5.3's claim that it is the existing convention's shape does not hold — see `logs/T-0066.md` (unlisted, attempt 1). |
@@ -293,6 +293,7 @@ created**, and **your migration is the thing that satisfies it**. Plus the compa
 | 16 | `ASSUMED` | The in-memory store re-checks a guarantee **at commit** against the committed store, because a unique index is not snapshot-scoped — see `logs/T-0066.md` (D-9, attempt 1). |
 | 17 | `ASSUMED` | The in-memory overlap check is **`Period.overlaps`**, never a hand-written pair of inequalities, so the store and a caller asking the same question cannot drift apart — see `logs/T-0066.md` (D-5, attempt 1). |
 | 18 | `ASSUMED` | Startup carries **no invalid-constraint guard** for non-overlap: Postgres refuses to mark an exclusion constraint `NOT VALID`, so the guard ported from the uniqueness pass was unreachable and was removed — see `logs/T-0066.md` (unlisted, attempt 1). |
+| 19 | `ASSUMED` | Narrows row 10's "RFC 0061 inherits the answer": a guarantee mismatch stays a `WiringFailure`, because it surfaces while an operation's spec is resolved; RFC 0061 added `WiringReport.findings` for refusals that belong to no operation (a posture violation), so the two coexist, split by whether an operation is involved — see `logs/T-0061.md:254` (D-8, attempt 2) and [RFC 0061](0061-production-posture.md) row 11. |
 
 ## 12. Phasing
 
