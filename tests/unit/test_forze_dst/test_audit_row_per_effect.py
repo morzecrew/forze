@@ -271,7 +271,9 @@ class TestWhatItJudges:
 
     def test_a_commit_without_an_id_is_not_a_transaction(self) -> None:
         # A root exit with no id cannot be grouped with the writes it closed.
-        assert CHECK(_history(_write(TRAIL.name, None), _commit(None))) == []
+        assert (
+            CHECK(_history(_write(TRAIL.name, None), _write(TRAIL.name, None), _commit(None))) == []
+        )
 
     def test_a_rolled_back_transaction_is_not_judged(self) -> None:
         rolled_back = {**_commit(1), "outcome": "rollback"}
