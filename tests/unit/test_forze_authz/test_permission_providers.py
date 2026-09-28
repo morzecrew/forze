@@ -200,7 +200,12 @@ class TestDeactivationWins:
         deps = binding("ledger.write")
 
         assert await _allowed("ledger.write", deps)  # the binding alone admits
-        assert not await _allowed("ledger.write", deps, inactive)
+
+        decision = POLICY.decide(await _grants(deps, inactive), _request("ledger.write"))
+
+        assert not decision.allowed
+        # Denied, not merely ungranted: the reason is what an operator reads to learn why.
+        assert decision.reason == "Permission 'ledger.write' is denied"
 
     @pytest.mark.parametrize("order", ["grant-first", "deny-first"])
     async def test_order_does_not_decide(self, order: str) -> None:
@@ -230,6 +235,22 @@ class TestDeactivationWins:
 
         assert POLICY.decide(grants, _request("ledger.read")).allowed
         assert not POLICY.decide(grants, _request("ledger.write")).allowed
+        # Recorded as a denial only: the snapshot never shows a grant the provider was not
+        # allowed to make.
+        assert {(r.permission_key, r.denied) for r in grants.derived} == {
+            ("ledger.read", False),
+            ("ledger.write", True),
+        }
+
+    async def test_an_inactive_principal_is_refused_whatever_it_holds(self) -> None:
+        member = _Provider(
+            name="members", keys=frozenset({"ledger.write"}), granted=frozenset({"ledger.write"})
+        )
+        grants = await _grants(_direct_binding("ledger.write"), member)
+
+        decision = POLICY.decide(grants, _request("ledger.write"), principal_active=False)
+
+        assert not decision.allowed
 
 
 class TestTheSnapshot:
@@ -338,6 +359,28 @@ class TestTheBootCheck:
         member = _Provider(name="members", keys=frozenset({"ledger.write"}))
 
         await permission_providers_lifecycle_step([member]).startup(ctx)
+
+    async def test_a_tenant_scoped_catalog_is_read_under_the_given_tenant(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze.application.contracts.tenancy import TenantIdentity
+        from forze_identity.authz.execution import providers as boot
+
+        tenant = TenantIdentity(tenant_id=uuid4())
+        seen: list[Any] = []
+
+        async def _fetch(qry: Any, *, filters: Any) -> list[Any]:
+            seen.append(ctx.inv_ctx.get_tenant())
+            return []
+
+        ctx = context_from_modules(MockDepsModule())
+        monkeypatch.setattr(boot, "fetch_all_document_hits", _fetch)
+        member = _Provider(name="members", keys=frozenset({"ledger.write"}))
+
+        with pytest.raises(CoreException):
+            await permission_providers_lifecycle_step([member], tenant=tenant).startup(ctx)
+
+        assert seen == [tenant]
 
     async def test_a_key_the_catalog_lacks_refuses_to_boot(self) -> None:
         ctx = await self._catalog("ledger.write")

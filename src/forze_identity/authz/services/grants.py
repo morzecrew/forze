@@ -361,7 +361,7 @@ async def derive_permissions(
         }
         derived |= {
             DerivedPermissionRef(permission_key=key, provider=provider.name)
-            for key in (result.granted & provider.keys) - result.denied
+            for key in result.granted & provider.keys
         }
 
     return frozenset(derived)
