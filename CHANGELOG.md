@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **The temporal and versioned kits' reads are marked as reads.** `effective_on`, `timeline`, `history` and `as_of` now run under the read-only guard and are listed as read-only in the operation catalog, so an MCP projection that includes only reads now includes them.
 
 ## [0.9.0] - 2026-09-28
 
