@@ -37,6 +37,8 @@ from forze.application.contracts.deps import FallbackReport
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import StrKey
 
+from ..posture import ProductionPosture, WiringFinding
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
@@ -85,6 +87,12 @@ class WiringReport:
     failures: tuple[WiringFailure, ...]
     """Failures, one per operation that did not resolve cleanly."""
 
+    findings: tuple[WiringFinding, ...] = ()
+    """Declaration-time refusals — a production posture's, and what it escalated from the deps
+    modules' own safety checks. Not operations that failed to resolve, so not in
+    :attr:`failures`; still refusals, so :attr:`ok` and :meth:`raise_if_failed` count them. Each
+    names a target and a rule, never a value."""
+
     fallbacks: FallbackReport | None = None
     """What the checked context owes to fallback registrations — always set by
     :func:`check_wiring` (``FallbackReport.hybrid`` is ``False`` when the context mixes
@@ -94,27 +102,37 @@ class WiringReport:
 
     @property
     def ok(self) -> bool:
-        """Whether every checked operation resolved without error."""
+        """Whether every checked operation resolved and nothing was refused at declaration."""
 
-        return not self.failures
+        return not self.failures and not self.findings
 
     def raise_if_failed(self) -> None:
-        """Raise a single configuration error aggregating every failure.
+        """Raise a single configuration error aggregating every failure and finding.
 
         Aggregating (rather than raising the first) means a test or startup gate reports the
-        whole list of broken operations in one pass, not one miss at a time.
+        whole list of broken operations in one pass, not one miss at a time. A finding counts:
+        a CI gate that passed a deployment the runtime then refuses to boot is no gate.
         """
 
-        if not self.failures:
+        if not self.failures and not self.findings:
             return
 
-        lines = "\n".join(
-            f"  - {failure.op}: [{failure.kind}] {failure.message}" for failure in self.failures
-        )
-        raise exc.configuration(
-            f"Operation wiring check failed for {len(self.failures)} of "
-            f"{len(self.checked)} operation(s):\n{lines}"
-        )
+        sections: list[str] = []
+
+        if self.failures:
+            lines = "\n".join(
+                f"  - {failure.op}: [{failure.kind}] {failure.message}" for failure in self.failures
+            )
+            sections.append(
+                f"Operation wiring check failed for {len(self.failures)} of "
+                f"{len(self.checked)} operation(s):\n{lines}"
+            )
+
+        if self.findings:
+            lines = "\n".join(f"  - {finding.render()}" for finding in self.findings)
+            sections.append(f"Declaration check refused {len(self.findings)} finding(s):\n{lines}")
+
+        raise exc.configuration("\n".join(sections))
 
 
 # ....................... #
@@ -125,6 +143,7 @@ def check_wiring(
     context_factory: Callable[[], ExecutionContext],
     *,
     ops: Iterable[StrKey] | None = None,
+    posture: ProductionPosture | None = None,
 ) -> WiringReport:
     """Dry-run resolve every operation to catch missing/misrouted dependencies.
 
@@ -135,6 +154,9 @@ def check_wiring(
             ``lambda: context_from_modules(MockDepsModule(...))``. It must resolve from the
             same frozen deps the runtime uses, or the check will not reflect real wiring.
         ops: Operations to check; defaults to every operation in ``registry.handlers``.
+        posture: A :class:`~forze.application.execution.ProductionPosture` to evaluate with the
+            deps modules' safety findings; its refusals land in :attr:`WiringReport.findings`.
+            The runtime evaluates it again when it is built, whether or not this ran.
 
     Returns:
         A :class:`WiringReport`. Call :meth:`WiringReport.raise_if_failed` to fail fast;
@@ -170,6 +192,7 @@ def check_wiring(
     return WiringReport(
         checked=keys,
         failures=tuple(failures),
+        findings=posture.findings(ctx.deps.posture_findings) if posture is not None else (),
         fallbacks=ctx.deps.store.fallback_report(),
     )
 

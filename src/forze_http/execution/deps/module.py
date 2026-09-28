@@ -7,6 +7,7 @@ import attrs
 from forze.application.contracts.deps import Deps, DepsModule, merge_deps, routed_from_mapping
 from forze.application.contracts.http import HttpServiceDepKey
 from forze.application.contracts.tenancy import warn_integration_routes
+from forze.application.execution import WiringFinding
 from forze.base.primitives import MappingConverter, StrKeyMapping
 from forze_http.execution._logger import logger
 from forze_http.execution.deps._warnings import HTTP_SERVICE_WARNING
@@ -56,3 +57,23 @@ class HttpDepsModule(DepsModule):
             )
 
         return merge_deps(plain_deps, service_deps)
+
+    # ....................... #
+
+    def posture_findings(self) -> tuple[WiringFinding, ...]:
+        """One finding per service that would send a secret over plaintext HTTP.
+
+        The same condition its config warns about when constructed, reported so a production
+        posture can refuse it. Exempt a service by its target — ``http_service:<name>`` — with
+        the reason, a service mesh terminating TLS in a sidecar being the usual one.
+        """
+
+        return tuple(
+            WiringFinding(
+                source="forze_http",
+                target=f"http_service:{name}",
+                rule="sends a credential or declared-sensitive data over plaintext http",
+            )
+            for name, config in (self.services or {}).items()
+            if config.sends_secrets_in_cleartext
+        )

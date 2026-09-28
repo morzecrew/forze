@@ -27,6 +27,7 @@ from forze.application.execution.tracing import (
 from forze.base.primitives import StrKey
 
 from ..interception import PortInterceptorChain
+from ..posture import WiringFinding
 from .port_instrumentation import (
     maybe_wrap_configurable,
     maybe_wrap_interceptors,
@@ -77,6 +78,11 @@ class FrozenDepsRegistry:
     routes missing from the declared inventory. Installed by the runtime; ``None``
     (no inventory declared) costs nothing."""
 
+    posture_findings: tuple[WiringFinding, ...] = ()
+    """Safety findings the registry's deps modules reported when it was frozen (see
+    :class:`~forze.application.execution.posture.PostureAware`) — warnings until a production
+    posture reads them, refusals after."""
+
     # ....................... #
 
     def resolve(self) -> FrozenDeps:
@@ -89,6 +95,7 @@ class FrozenDepsRegistry:
             interceptors=self.interceptors,
             otel_port_tracer=self.otel_port_tracer,
             inventory_guard=self.inventory_guard,
+            posture_findings=self.posture_findings,
         )
 
 
@@ -121,6 +128,10 @@ class FrozenDeps:
     ``(key_name, route)`` on every routed configurable resolution when set, refusing
     routes missing from the declared inventory. Installed by the runtime; ``None``
     (no inventory declared) costs nothing."""
+
+    posture_findings: tuple[WiringFinding, ...] = ()
+    """The frozen registry's module safety findings, carried to each scope so
+    :func:`~forze.application.execution.check_wiring` reads them from its context."""
 
     _resolution: ResolutionContext = attrs.field(
         default=attrs.Factory(
