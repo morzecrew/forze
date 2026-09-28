@@ -36,7 +36,7 @@ from forze_dst import OperationCase, Simulation, SimulationConfig, Strategy
 from forze_dst import invariants as inv
 from forze_dst.faults import FaultPolicy, FaultRule
 from forze_dst.oracle.invariants import Violation, named
-from forze_dst.oracle.recorder import History
+from forze_dst.oracle.recorder import Event, History
 from forze_kits.integrations.audit import AuditDepsModule, audit_record_spec
 from forze_mock import MockDepsModule, MockState
 
@@ -223,6 +223,53 @@ class TestOneRowPerEffect:
         assert any(
             v.invariant == "audit_row_per_effect" and why in v.message for v in report.violations
         ), [v.message for v in report.violations]
+
+
+def _history(*events: dict[str, Any]) -> History:
+    return History(
+        seed=0,
+        events=tuple(
+            Event(seq=n, kind="trace", at=0.0, fields=fields) for n, fields in enumerate(events)
+        ),
+    )
+
+
+def _write(route: str, tx: int | None, *, phase: str = "command") -> dict[str, Any]:
+    return {"trace_domain": "port", "route": route, "phase": phase, "tx_id": tx}
+
+
+def _commit(tx: int | None) -> dict[str, Any]:
+    return {"trace_domain": "tx", "op": "exit", "outcome": "commit", "tx_id": tx}
+
+
+CHECK: Final = inv.audit_row_per_effect(audit_route=TRAIL.name, effect_routes=[NOTE_SPEC.name])
+
+
+class TestWhatItJudges:
+    def test_a_committed_transaction_with_no_effect_needs_no_row(self) -> None:
+        # A failed or denied row, or a read's, commits in a transaction of its own; one that
+        # wrote nothing at all is nothing to account for.
+        assert CHECK(_history(_write(TRAIL.name, 1), _commit(1), _commit(2))) == []
+
+    def test_reading_the_trail_is_not_a_row(self) -> None:
+        history = _history(
+            _write(NOTE_SPEC.name, 1),
+            _write(TRAIL.name, 1),
+            _write(TRAIL.name, 1, phase="query"),
+            _commit(1),
+        )
+
+        assert CHECK(history) == []
+
+    def test_a_run_without_transaction_ids_is_not_judged(self) -> None:
+        # Outside a simulation the trace stamps no transaction id, so writes cannot be grouped;
+        # reading them as one transaction would invent a violation.
+        assert CHECK(_history(_write(NOTE_SPEC.name, None), _commit(None))) == []
+
+    def test_a_rolled_back_transaction_is_not_judged(self) -> None:
+        rolled_back = {**_commit(1), "outcome": "rollback"}
+
+        assert CHECK(_history(_write(NOTE_SPEC.name, 1), rolled_back)) == []
 
 
 class TestTheDeclaration:
