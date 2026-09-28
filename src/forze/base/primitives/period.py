@@ -28,7 +28,7 @@ build periods rather than to the type itself.
 """
 
 from datetime import UTC, date, datetime
-from typing import Literal, final, get_args
+from typing import Any, Final, Literal, final, get_args
 
 import attrs
 
@@ -86,6 +86,27 @@ def grain_of(value: date) -> tuple[type, bool]:
 # ....................... #
 
 
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def as_instant(value: date | None) -> Any:
+    """*value* as a point on one timeline when it is an aware datetime; anything else as is.
+
+    An aware datetime becomes its distance from the UTC epoch. Python compares two datetimes
+    sharing a ``tzinfo`` by their wall clocks and ignores ``fold``, so across a zone's repeated
+    hour two instants an hour apart compare equal. Converting to UTC instead can leave the
+    calendar near its ends (``datetime.max`` in New York), while a distance cannot.
+    """
+
+    if isinstance(value, datetime) and value.utcoffset() is not None:
+        return value - _EPOCH
+
+    return value
+
+
+# ....................... #
+
+
 @final
 @attrs.define(frozen=True, slots=True)
 class Period[T: (date, datetime)]:
@@ -95,10 +116,11 @@ class Period[T: (date, datetime)]:
         against a ``datetime``) or when ``end`` precedes ``start``.
     """
 
-    start: T
-    """First endpoint, in force when :attr:`bounds` opens with ``[``."""
+    start: T = attrs.field(eq=as_instant)
+    """First endpoint, in force when :attr:`bounds` opens with ``[``. Two periods are equal when
+    their endpoints are the same instants, whatever zone they are written in."""
 
-    end: T | None = None
+    end: T | None = attrs.field(default=None, eq=as_instant)
     """Last endpoint, in force when :attr:`bounds` closes with ``]``; ``None`` is open-ended —
     still in force, with no last moment. Never a sentinel date, which would lie in every export,
     comparison and report that met it."""
@@ -255,19 +277,6 @@ class Period[T: (date, datetime)]:
 
 
 # ....................... #
-
-
-def as_instant[V: date](value: V) -> V:
-    """*value* in UTC when it is an aware datetime, so comparisons read instants.
-
-    Python compares two datetimes sharing a ``tzinfo`` by their wall clocks and ignores
-    ``fold``: across a zone's repeated hour, two instants an hour apart compare equal.
-    """
-
-    if isinstance(value, datetime) and value.utcoffset() is not None:
-        return value.astimezone(UTC)  # pyright: ignore[reportReturnType]
-
-    return value
 
 
 def _grain_name(value: object) -> str:

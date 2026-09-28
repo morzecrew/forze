@@ -7,7 +7,7 @@ both directions because that is the property a wrong implementation breaks first
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -416,3 +416,35 @@ class TestInstantsInOneZone:
         )
 
         assert not summer.overlaps(winter) and not winter.overlaps(summer)
+
+    def test_equality_reads_instants(self) -> None:
+        # attrs compared raw endpoints, so a one-hour period equalled an empty one and shared its
+        # hash, while the same span written in UTC did not equal it.
+        empty = Period(start=self.FIRST, end=self.FIRST)
+        hour = Period(start=self.FIRST, end=self.SECOND)
+        in_utc = Period(start=self.FIRST.astimezone(UTC), end=self.SECOND.astimezone(UTC))
+
+        assert empty != hour and len({empty, hour}) == 2
+        assert hour == in_utc and hash(hour) == hash(in_utc)
+
+
+class TestTheEndsOfTheCalendar:
+    NEW_YORK = ZoneInfo("America/New_York")
+
+    def test_an_end_of_time_in_a_western_zone_is_an_ordinary_endpoint(self) -> None:
+        # Converted to UTC, datetime.max in New York is past year 9999.
+        forever = datetime.max.replace(tzinfo=self.NEW_YORK)
+        period = Period(start=datetime(2026, 1, 1, tzinfo=self.NEW_YORK), end=forever)
+
+        assert period.contains(datetime(2100, 1, 1, tzinfo=UTC))
+        assert not Period(
+            start=datetime(2026, 1, 1, tzinfo=UTC), end=datetime(2027, 1, 1, tzinfo=UTC)
+        ).contains(forever)
+
+    def test_a_start_of_time_in_an_eastern_zone_is_an_ordinary_endpoint(self) -> None:
+        east = timezone(timedelta(hours=5))
+        period = Period(
+            start=datetime.min.replace(tzinfo=east), end=datetime(2026, 1, 1, tzinfo=UTC)
+        )
+
+        assert period.contains(datetime(2000, 1, 1, tzinfo=UTC))

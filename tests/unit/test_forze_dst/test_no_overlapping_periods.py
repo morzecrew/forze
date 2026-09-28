@@ -192,7 +192,8 @@ class TestWhatItCatches:
             datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=berlin),
         )
 
-        assert len(_CHECK(_history(first, second))) == 1
+        [violation] = _CHECK(_history(first, second))
+        assert violation.message.startswith("overlapping periods")
 
     def test_a_period_is_not_retired_by_the_clock(self) -> None:
         # Ordered by instant the two are in order, and the first still reaches past the second's
@@ -234,6 +235,21 @@ class TestWhatItCatches:
         )
 
         assert len(_CHECK(_history(middle, late, early))) == 2
+
+    def test_an_end_of_time_in_a_western_zone_does_not_hide_an_overlap(self) -> None:
+        # Converted to UTC, datetime.max in New York is past year 9999; one owner's marker must not
+        # cost another owner the check.
+        new_york = ZoneInfo("America/New_York")
+        forever = _shift(
+            "bob", datetime(2026, 1, 1, tzinfo=UTC), datetime.max.replace(tzinfo=new_york)
+        )
+        overlap = (
+            _shift("ann", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 3, 1, tzinfo=UTC)),
+            _shift("ann", datetime(2026, 2, 1, tzinfo=UTC), datetime(2026, 4, 1, tzinfo=UTC)),
+        )
+
+        [violation] = _CHECK(_history(forever, *overlap))
+        assert "ann" in violation.message
 
 
 class TestWhatItMustNotCatch:
