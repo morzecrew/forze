@@ -65,6 +65,8 @@ The confirmation runs at **snapshot isolation** (`isolation=` raises it to seria
 committed is refused). Below snapshot, a write landing between the check and the handler's own
 reads would reach the handler, which would then act on a state nobody was shown. Snapshot can
 refuse a concurrent write with a `concurrency` error, which is retryable.
+An operation that already declares serializable passes `isolation=IsolationLevel.SERIALIZABLE`
+to `bind` — two different levels on one operation are refused when the registry freezes.
 
 !!! note "Detection, not a lock"
 
