@@ -198,6 +198,11 @@ class TestSpannedDays:
         assert spanned_local_days(BERLIN, start, start + timedelta(days=1)) == (date(2026, 6, 1),)
         assert spanned_local_days(BERLIN, start, start) == ()
 
+    def test_an_empty_range_inside_a_day_spans_nothing(self) -> None:
+        noon = to_instant(BERLIN, datetime(2026, 6, 1, 12, 0))
+
+        assert spanned_local_days(BERLIN, noon, noon) == ()
+
     def test_a_backwards_or_naive_range_is_refused(self) -> None:
         start = datetime(2026, 6, 1, tzinfo=UTC)
 
