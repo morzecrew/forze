@@ -149,7 +149,9 @@ class ScopeBinder[P: _Parent, R]:
     def finish(self, *, deep: bool = False) -> P | R:
         """Finish binding and return updated parent or root."""
 
-        new_plan = self._source.merge(self._acc)
+        # ``merge`` is a classmethod: called on the source instance it would merge only the
+        # accumulator, and re-entering a scope would drop everything bound to it before.
+        new_plan = type(self._source).merge(self._source, self._acc)
         new_parent = self._commit_fn(self._parent, new_plan)
 
         if not deep:

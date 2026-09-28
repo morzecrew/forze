@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An operation can leave an audit row, and only the metadata it declared.** `Audited(spec=AuditSpec(...))` records allowed, denied and failed outcomes with the actor from the authenticated identity; an undeclared metadata key raises. `forze_kits.integrations.audit` stores the trail as a document collection.
+
 - **A deployment can refuse to boot with development settings.** `ProductionPosture` declares rules over your own settings (required, HTTPS-only, loopback, development-only values) and refuses at `check_wiring` and when the runtime is built, naming keys, never values. An unset environment is production.
 
 - **A guarantee can hold at commit.** `UniqueTogether` and `NonOverlapping` take `holds="commit"`: a transaction may pass through a violation it resolves, such as an insert at the top of a positioned list. Postgres keeps it with a `DEFERRABLE INITIALLY DEFERRED` constraint; the in-memory store checks it at commit.
@@ -18,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A pre-0.7 `$fields` filter says it belongs under `$values`.** A value operator, a literal on the right, a non-path value, or a string naming no field is refused with that pointer. A string or string enum that names a field still reads as a field compare, the one shape that cannot be caught.
 
 ### Fixed
+
+- **Returning to a scope on an operation binder no longer drops what was bound to it.** A second `bind_outer()` or `bind_tx()` on one binder kept only its own steps, silently discarding earlier guards and the transaction route.
 
 - **A deferred Postgres constraint no longer satisfies a guarantee that holds after every write.** Startup accepted a `DEFERRABLE INITIALLY DEFERRED` constraint, and the in-memory store then refused writes the database took. It is refused now, naming the deferral.
 
