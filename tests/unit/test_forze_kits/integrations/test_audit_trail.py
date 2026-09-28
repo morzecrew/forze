@@ -8,6 +8,7 @@ or a committed write with no row, is the failure the split exists to prevent.
 
 from __future__ import annotations
 
+import time
 from typing import Any, Final
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
@@ -36,6 +37,7 @@ from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.audit import Audited
 from forze.application.hooks.audit import plans as audit_plans
 from forze.base.exceptions import CoreException, ExceptionKind, exc
+from forze.base.primitives import bind_time_source
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze.testing import context_from_modules
 from forze_kits.integrations.audit import AuditDepsModule, AuditRecord, audit_record_spec
@@ -496,6 +498,31 @@ class TestWhenTheAuditWriteFails:
         [row] = await _rows(ctx)
         assert (row.outcome, row.metadata) == (AuditOutcome.DENIED, {})
         assert spy.error.call_args.args == ("audit.metadata_failed",)
+
+    async def test_a_denial_keeps_its_own_error_when_no_row_can_be_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Even the bare row reads the clock. A clock that fails there must not turn a denial
+        # into a clock error: the caller is owed the refusal that actually happened.
+        class _BrokenClock:
+            def now(self) -> Any:
+                raise RuntimeError("clock down")
+
+            def uuid(self) -> UUID:
+                return uuid4()
+
+            def monotonic(self) -> float:
+                return time.monotonic()
+
+        spy = MagicMock()
+        monkeypatch.setattr(audit_plans, "logger", spy)
+        ctx = _ctx()
+
+        with bind_time_source(_BrokenClock()), pytest.raises(CoreException) as caught:
+            await _run(_registry(Audited(spec=SPEC), guard=ExceptionKind.AUTHORIZATION), ctx)
+
+        assert caught.value.kind is ExceptionKind.AUTHORIZATION
+        assert ("audit.write_failed",) in [call.args for call in spy.error.call_args_list]
 
     async def test_a_failing_operation_keeps_its_own_error(
         self, monkeypatch: pytest.MonkeyPatch

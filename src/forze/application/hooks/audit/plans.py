@@ -280,22 +280,23 @@ async def _record_failure(
     denied = isinstance(error, CoreException) and error.kind in _DENIALS
     outcome = AuditOutcome.DENIED if denied else AuditOutcome.FAILED
 
+    # One guard around everything, the bare fallback included: it still reads the clock.
     try:
-        entry = audited.entry(ctx, args, None, outcome)
+        try:
+            entry = audited.entry(ctx, args, None, outcome)
 
-    except Exception as build_error:
-        # A metadata callable written for the success path (``result.root_id``) cannot run
-        # without a result. The event is what the trail needs from a denial, so it is kept
-        # without the metadata rather than lost with it.
-        logger.error(
-            "audit.metadata_failed",
-            action=audited.spec.action,
-            outcome=str(outcome),
-            error=type(build_error).__name__,
-        )
-        entry = audited.entry(ctx, args, None, outcome, bare=True)
+        except Exception as build_error:
+            # A metadata callable written for the success path (``result.root_id``) cannot
+            # run without a result. The event is what the trail needs from a denial, so it is
+            # kept without the metadata rather than lost with it.
+            logger.error(
+                "audit.metadata_failed",
+                action=audited.spec.action,
+                outcome=str(outcome),
+                error=type(build_error).__name__,
+            )
+            entry = audited.entry(ctx, args, None, outcome, bare=True)
 
-    try:
         await port.record(entry)
 
     except Exception as audit_error:
