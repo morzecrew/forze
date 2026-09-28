@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A confirmation can refuse when its preview has changed.** `PreviewBinding(name=…, projector=…, exclude=…)` returns a fingerprinted preview with `reviewed()`, and `bind()` makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with `preview_changed` on a mismatch.
 
+- **An aggregate kit can audit the operations it generates.** `AggregateKit(audit={kernel op: Audited(...)})` binds the audit hooks and runs an audited write in a transaction, so its row commits with it. `audit_row_per_effect` checks under simulation that each committed audited write carries exactly one row.
+
 ### Changed
 
 - ...

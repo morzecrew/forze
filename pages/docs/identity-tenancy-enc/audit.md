@@ -81,6 +81,30 @@ that transaction, and the row goes if the outer one rolls back.
   recorded, since the skip is never a guess.
 - `"never"` records no reads for that action.
 
+## Auditing a kit's operations
+
+An `AggregateKit` binds the hooks to the operations it generates, keyed by kernel op like its
+`handlers`:
+
+```python
+from forze_kits.aggregates import AggregateKit
+from forze_kits.aggregates.document import DocumentKernelOp
+
+ORDERS = AggregateKit(
+    spec=ORDER_SPEC,
+    audit={
+        DocumentKernelOp.CREATE: Audited(spec=AuditSpec(action="order.create")),
+        DocumentKernelOp.GET: Audited(spec=AuditSpec(action="order.read")),
+    },
+)
+```
+
+An audited write runs in a transaction on the registry's `tx_route`, so its `allowed` row commits
+with the write or rolls back with it. An audited read gets no transaction it did not have; its row
+is written after it completes. A key naming an operation the kit does not compose is refused when
+the registry is built. An update's `result` is the row wrapped with its diff, so a callable that
+reads it unwraps it with `written_read_model(result)`.
+
 ## When the audit write fails
 
 `on_failure="fail"` (the default): an operation whose audit row could not be written **fails**, and
@@ -133,6 +157,9 @@ open transaction when there is one — and register its factory under `AuditDepK
 
 `audit_record_spec(encryption=...)` may seal `metadata`; the other fields are what the trail is
 queried by, and sealing one is refused.
+
+A deterministic-simulation invariant, `audit_row_per_effect`, checks the one-row claim under
+retries and injected faults: see [Invariants](../dst/invariants.md).
 
 !!! warning "Not tamper-evident"
 

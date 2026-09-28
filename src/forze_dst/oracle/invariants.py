@@ -9,7 +9,7 @@ and collects every violation.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, final
 
@@ -271,6 +271,87 @@ def no_duplicate_trace_effect(
         return violations
 
     return named(invariant_name, _check)
+
+
+def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> Invariant:
+    """Every committed transaction that wrote an audited effect carries exactly one audit row.
+
+    The audit plane writes an admitted operation's row inside the operation's own transaction,
+    so an attempt that rolled back takes its row with it and a retry needs no dedup key. This
+    checks that claim on the trace. Port writes are grouped by the root transaction id the
+    trace stamps, and a transaction counts as committed only on its root ``commit`` exit.
+
+    - A committed transaction that wrote one of *effect_routes* and no row on *audit_route* is
+      an effect nobody can account for.
+    - A committed transaction with two rows is a double record.
+
+    It reads write *calls*. So it is stated for actions that fail closed
+    (``on_failure="fail"``, the default), where a failed audit write rolls the transaction
+    back. An action that ignores a failed audit write can commit its effect without the row
+    the call was for. Writes made outside a transaction carry no id to group by and are not
+    judged, so an operation bound with ``transactional=False`` is outside what this checks.
+    """
+
+    effects = frozenset(effect_routes)
+
+    if not effects:
+        raise ValueError("audit_row_per_effect needs at least one effect route to judge")
+
+    if audit_route in effects:
+        raise ValueError(f"the audit route {audit_route!r} cannot also be an effect route")
+
+    def _check(history: History) -> list[Violation]:
+        committed: set[Any] = set()
+        rows: dict[Any, list[Event]] = defaultdict(list)
+        written: dict[Any, list[Event]] = defaultdict(list)
+
+        for event in history.of_kind("trace"):
+            fields = event.fields
+            tx_id = fields.get("tx_id")
+
+            if tx_id is None:
+                continue
+
+            if fields.get("trace_domain") == "tx":
+                if fields.get("op") == "exit" and fields.get("outcome") == "commit":
+                    committed.add(tx_id)
+
+            elif fields.get("phase") == "command" and fields.get("route") == audit_route:
+                rows[tx_id].append(event)
+
+            elif fields.get("phase") == "command" and fields.get("route") in effects:
+                written[tx_id].append(event)
+
+        violations: list[Violation] = []
+
+        for tx_id in sorted(committed, key=str):
+            effect, recorded = written.get(tx_id, []), rows.get(tx_id, [])
+
+            if effect and not recorded:
+                violations.append(
+                    Violation(
+                        invariant="audit_row_per_effect",
+                        message=(
+                            f"transaction {tx_id} committed a write to "
+                            f"{sorted({str(e.fields.get('route')) for e in effect})} "
+                            "with no audit row"
+                        ),
+                        events=tuple(effect),
+                    )
+                )
+
+            elif len(recorded) > 1:
+                violations.append(
+                    Violation(
+                        invariant="audit_row_per_effect",
+                        message=f"transaction {tx_id} committed {len(recorded)} audit rows",
+                        events=tuple(recorded),
+                    )
+                )
+
+        return violations
+
+    return named("audit_row_per_effect", _check)
 
 
 def monotonic_per(kind: str, value: str, *, actor: str) -> Invariant:
