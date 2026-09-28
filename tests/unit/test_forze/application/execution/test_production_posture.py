@@ -23,8 +23,10 @@ from forze.application.execution import (
     RequireHttps,
     RequireSet,
     build_runtime,
+    check_facade_factory_wiring,
     check_wiring,
 )
+from forze.application.execution.operations.facade import OperationFacade, OperationFacadeFactory
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_http.execution.deps.configs import HttpAuthConfig, HttpServiceConfig
@@ -318,6 +320,16 @@ class TestBothGates:
 
         with pytest.raises(CoreException, match="must be https"):
             report.raise_if_failed()
+
+    def test_the_facade_factory_shortcut_carries_it(self) -> None:
+        factory = OperationFacadeFactory(
+            OperationFacade, OperationRegistry().freeze(), lambda: context_from_modules()
+        )
+        settings = _good(http=_Http(public_base_url="http://app.example.com"))
+
+        report = check_facade_factory_wiring(factory, posture=_posture(settings))
+
+        assert [f.render() for f in report.findings] == ["http.public_base_url: must be https"]
 
     def test_a_clean_posture_leaves_the_report_ok(self) -> None:
         report = check_wiring(

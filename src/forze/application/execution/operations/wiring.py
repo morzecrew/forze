@@ -202,7 +202,12 @@ def check_wiring(
 
 def check_facade_factory_wiring(
     factory: OperationFacadeFactory[OperationFacade],
+    *,
+    posture: ProductionPosture | None = None,
 ) -> WiringReport:
-    """Convenience wrapper: check a facade factory's registry using its own context factory."""
+    """Convenience wrapper: check a facade factory's registry using its own context factory.
 
-    return check_wiring(factory.registry, factory.ctx_factory)
+    :param posture: As for :func:`check_wiring`.
+    """
+
+    return check_wiring(factory.registry, factory.ctx_factory, posture=posture)
