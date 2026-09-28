@@ -163,7 +163,10 @@ class TestTheRoundTrip:
 
         preview = await QUOTE_PREVIEW.reviewed(ctx, _QuoteArgs(quote_id=quote.id))
         await run_operation(
-            _registry(), "confirm", _Confirm(quote_id=quote.id, fingerprint=preview.fingerprint), ctx
+            _registry(),
+            "confirm",
+            _Confirm(quote_id=quote.id, fingerprint=preview.fingerprint),
+            ctx,
         )
 
         assert preview.data == _Projection(label="12 widgets", amount=1200, hint="rendered 09:00")
@@ -207,7 +210,10 @@ class TestTheRoundTrip:
 
         await _edit(ctx, quote, hint="rendered 09:05")
         await run_operation(
-            _registry(), "confirm", _Confirm(quote_id=quote.id, fingerprint=preview.fingerprint), ctx
+            _registry(),
+            "confirm",
+            _Confirm(quote_id=quote.id, fingerprint=preview.fingerprint),
+            ctx,
         )
 
         assert await _orders(ctx) == 1
@@ -231,7 +237,10 @@ class TestTheRoundTrip:
         DEPTHS.clear()
 
         await run_operation(
-            _registry(), "confirm", _Confirm(quote_id=quote.id, fingerprint=preview.fingerprint), ctx
+            _registry(),
+            "confirm",
+            _Confirm(quote_id=quote.id, fingerprint=preview.fingerprint),
+            ctx,
         )
 
         assert DEPTHS == [1]
@@ -310,6 +319,14 @@ class _Everything(BaseModel):
 
 
 class TestTheCanonicalForm:
+    def test_the_form_is_pinned(self) -> None:
+        # The form is the fingerprint's contract: RFC 0055 stores fingerprints and recomputes
+        # them later. Any change to how a value renders must take a new prefix, and this digest
+        # is what notices one that did not.
+        assert canonical_fingerprint(_Everything()) == (
+            "sha256-c1:1498c472d47c2c3a67d88c6b50ab68e6398149e8c150f48fc2efc0d900f0184c"
+        )
+
     def test_key_and_set_order_do_not_move_it(self) -> None:
         one = _Everything(tags={"alpha", "beta", "gamma", "delta"}, lines={"a": 1, "b": 2})
         two = _Everything(tags={"delta", "gamma", "beta", "alpha"}, lines={"b": 2, "a": 1})
