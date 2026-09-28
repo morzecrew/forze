@@ -248,12 +248,7 @@ def _next_day_start(zone: CivilZone, day: date, *, after: datetime) -> datetime:
     early, late, early_reads, late_reads = _readings(
         zone, datetime.combine(day + timedelta(days=1), time())
     )
-    later = [i for i, reads in ((early, early_reads), (late, late_reads)) if reads and i > after]
-
-    if not later:
-        raise exc.internal(f"No start of the day after {day} follows {after.isoformat()}.")
-
-    return min(later)
+    return min(i for i, reads in ((early, early_reads), (late, late_reads)) if reads and i > after)
 
 
 def elapsed_minutes(start: datetime, end: datetime) -> int:

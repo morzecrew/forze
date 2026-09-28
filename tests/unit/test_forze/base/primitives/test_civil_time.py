@@ -288,11 +288,13 @@ class TestTheZoneDatabaseEdges:
         ) == (date(2011, 12, 29), date(2011, 12, 31))
 
     def test_a_calendar_stepped_back_still_moves_forward(self) -> None:
-        # Sitka took the American date in Oct 1867, and the local date stepped back a day. After
-        # the switch, the next midnight had also happened before it; the walk takes the later one.
+        # Sitka took the American date in Oct 1867, and the local date stepped back a day. From
+        # 02:00 UTC on the 19th it reads the 18th again, and the 19th's midnight has already
+        # happened once; an hour from there is still the 18th.
         sitka = CivilZone("America/Sitka")
-        start = datetime(1867, 10, 19, 0, 32, tzinfo=UTC)
+        start = datetime(1867, 10, 19, 2, 0, tzinfo=UTC)
 
+        assert spanned_local_days(sitka, start, start + timedelta(hours=1)) == (date(1867, 10, 18),)
         assert spanned_local_days(sitka, start, start + timedelta(hours=26)) == (
             date(1867, 10, 18),
             date(1867, 10, 19),
