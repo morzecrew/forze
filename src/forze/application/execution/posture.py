@@ -322,7 +322,9 @@ class ProductionPosture:
             case RequireHttps(fields=fields):
                 for path in fields:
                     if any(
-                        (split := _split(text)) is None or split.scheme.lower() != "https"
+                        (split := _split(text)) is None
+                        or split.scheme.lower() != "https"
+                        or not split.hostname
                         for text in _texts(_resolve(self.settings, path))
                     ):
                         yield WiringFinding(source="posture", target=path, rule="must be https")
@@ -490,6 +492,15 @@ def _is_set(value: Any) -> bool:
 
 def _is_loopback(text: str) -> bool:
     split = _split(text if "//" in text else f"//{text}")
+
+    # A multi-host DSN (`postgresql://a:5432,b:5432/db`) lists hosts the parser reads as one.
+    hosts = split.netloc.rpartition("@")[2].split(",") if split is not None else []
+
+    return any(_is_loopback_host(host) for host in hosts)
+
+
+def _is_loopback_host(entry: str) -> bool:
+    split = _split(f"//{entry}")
     host = split.hostname if split is not None else None
 
     if not host:

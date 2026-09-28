@@ -130,8 +130,11 @@ class TestEachRuleKind:
 
         assert bool(posture.findings()) is refused
 
-    def test_an_http_url_where_https_is_required_refuses(self) -> None:
-        refusals = _refusals(_good(http=_Http(public_base_url="http://app.example.com")))
+    @pytest.mark.parametrize(
+        "url", ["http://app.example.com", "https://", "https:///path", "https:app.example.com"]
+    )
+    def test_anything_but_an_https_url_with_a_host_refuses(self, url: str) -> None:
+        refusals = _refusals(_good(http=_Http(public_base_url=url)))
 
         assert refusals == ["http.public_base_url: must be https"]
 
@@ -164,12 +167,25 @@ class TestEachRuleKind:
             "postgresql://app@127.0.0.1/app",
             "postgresql://app@[::1]/app",
             "localhost:5432",
+            # A multi-host DSN: the parser reads the host list as one hostname.
+            "postgresql://app@db.internal:5432,localhost:5432/app",
+            "postgresql://app@db.internal,127.0.0.1/app",
         ],
     )
     def test_a_loopback_host_refuses(self, dsn: str) -> None:
         refusals = _refusals(_good(db=_Db(dsn=dsn, password=SecretStr(SECRET))))
 
         assert refusals == ["db.dsn: points at a loopback host"]
+
+    @pytest.mark.parametrize(
+        "dsn",
+        [
+            "postgresql://app@db-a.internal:5432,db-b.internal:5432/app",
+            "postgresql://app:pa,ss@db.internal/app",
+        ],
+    )
+    def test_remote_hosts_pass(self, dsn: str) -> None:
+        assert _refusals(_good(db=_Db(dsn=dsn, password=SecretStr(SECRET)))) == []
 
     def test_the_default_marker_is_found_anywhere(self) -> None:
         # No path: the shipped rule reads every string field, secrets and mappings included.
