@@ -194,6 +194,47 @@ class TestWhatItCatches:
 
         assert len(_CHECK(_history(first, second))) == 1
 
+    def test_a_period_is_not_retired_by_the_clock(self) -> None:
+        # Ordered by instant the two are in order, and the first still reaches past the second's
+        # start (01:40 against 00:50 UTC). On the clock it ends at 02:40, before the second
+        # starts at 02:50, and would be retired unchecked.
+        berlin = ZoneInfo("Europe/Berlin")
+        first = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 20, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 40, fold=1, tzinfo=berlin),
+        )
+        second = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 50, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 3, 0, tzinfo=berlin),
+        )
+
+        assert len(_CHECK(_history(first, second))) == 1
+
+    def test_every_pair_is_found_whatever_the_clock_order(self) -> None:
+        # In fact: early 00:52-02:10, middle 01:05-01:45, late 01:50-01:55 UTC — early overlaps
+        # both. On the clock middle starts first (02:05), then late (02:50), then early (02:52),
+        # and in that order middle is retired when late starts, before early reaches it.
+        berlin = ZoneInfo("Europe/Berlin")
+        middle = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 5, fold=1, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 45, fold=1, tzinfo=berlin),
+        )
+        late = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 50, fold=1, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 55, fold=1, tzinfo=berlin),
+        )
+        early = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 52, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 3, 10, tzinfo=berlin),
+        )
+
+        assert len(_CHECK(_history(middle, late, early))) == 2
+
 
 class TestWhatItMustNotCatch:
     def test_a_tiling_history_is_clean(self) -> None:

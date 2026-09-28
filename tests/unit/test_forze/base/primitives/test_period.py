@@ -371,6 +371,29 @@ class TestInstantsInOneZone:
         # 02:35 in summer time is before the winter 02:15 in fact, and after it on the clock.
         assert period.contains(datetime(2026, 10, 25, 2, 35, fold=0, tzinfo=self.ZONE))
 
+    def test_the_first_pass_is_not_the_excluded_end(self) -> None:
+        # The summer 02:30 reads equal to a winter 02:30 end on the clock; it is an hour before.
+        period = Period(
+            start=datetime(2026, 10, 25, 2, 0, fold=0, tzinfo=self.ZONE), end=self.SECOND
+        )
+
+        assert period.contains(self.FIRST)
+
+    def test_closed_periods_meeting_on_the_clock_only_do_not_overlap(self) -> None:
+        # One ends at the summer 02:30 and the other starts at the winter one: both ends are in
+        # force, and they would touch if the two 02:30s were the same instant. They are an hour
+        # apart.
+        summer = Period(
+            start=datetime(2026, 10, 25, 2, 0, fold=0, tzinfo=self.ZONE),
+            end=self.FIRST,
+            bounds="[]",
+        )
+        winter = Period(
+            start=self.SECOND, end=datetime(2026, 10, 25, 3, 0, tzinfo=self.ZONE), bounds="[]"
+        )
+
+        assert not summer.overlaps(winter) and not winter.overlaps(summer)
+
     def test_the_second_pass_is_not_the_excluded_start(self) -> None:
         # The winter 02:30 reads equal to the summer 02:30 on the clock; it is an hour later.
         period = Period(
