@@ -69,13 +69,14 @@ def check_permission_providers(providers: Iterable[PermissionProvider]) -> None:
                 code="authz_provider_declaration",
             )
 
-        # Every decision takes set differences against the declaration, so a list or a bare
-        # string would fail there rather than here.
-        if not isinstance(provider.keys, (set, frozenset)) or not all(
+        # Every decision reads the declaration and takes set differences against it: a list or
+        # a bare string would fail there rather than here, and a mutable set could be widened
+        # after this check, past the catalog check at boot.
+        if not isinstance(provider.keys, frozenset) or not all(
             isinstance(key, str) for key in provider.keys
         ):
             raise exc.configuration(
-                f"Permission provider {provider.name!r} must declare its keys as a set of "
+                f"Permission provider {provider.name!r} must declare its keys as a frozenset of "
                 f"permission-key strings, not {type(provider.keys).__name__}.",
                 code="authz_provider_declaration",
             )

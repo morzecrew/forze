@@ -347,6 +347,17 @@ class TestTheResultType:
             with pytest.raises(CoreException):
                 DerivedPermissions(**{field: keys})
 
+    async def test_a_generator_of_denials_still_denies(self) -> None:
+        # A one-shot iterator: checking its items must not use them up before they are kept.
+        gone = _Returns(
+            name="members",
+            keys=frozenset({"ledger.write"}),
+            make=lambda: DerivedPermissions(denied=(key for key in ["ledger.write"])),
+        )
+        grants = await _grants(_direct_binding("ledger.write"), gone)
+
+        assert not POLICY.decide(grants, _request("ledger.write")).allowed
+
     def test_any_collection_of_strings_is_taken(self) -> None:
         derived = DerivedPermissions(granted=["a", "b"], denied=("c",))  # type: ignore[arg-type]
 
@@ -365,6 +376,8 @@ class TestTheDeclaration:
             (_Provider(name="a", keys=frozenset()),),
             (_Provider(name="a", keys="ledger.write"),),  # type: ignore[arg-type]
             (_Provider(name="a", keys=["ledger.write"]),),  # type: ignore[arg-type]
+            # A set could be widened after it was checked; the declaration is read every decision.
+            (_Provider(name="a", keys={"ledger.write"}),),  # type: ignore[arg-type]
             (_Provider(name="a", keys=frozenset({"ledger.write", 7})),),  # type: ignore[arg-type]
         ],
         ids=[
@@ -373,6 +386,7 @@ class TestTheDeclaration:
             "no-keys",
             "bare-string-keys",
             "list-keys",
+            "mutable-set-keys",
             "non-string-key",
         ],
     )
@@ -423,6 +437,14 @@ class TestTheBootCheck:
     async def test_declared_keys_the_catalog_defines_boot(self) -> None:
         ctx = await self._catalog("ledger.write", "ledger.read")
         member = _Provider(name="members", keys=frozenset({"ledger.write"}))
+
+        await permission_providers_lifecycle_step([member]).startup(ctx)
+
+    async def test_more_keys_than_one_query_may_name_still_boot(self) -> None:
+        # A single $in over every declared key hits the query's 1000-item limit.
+        keys = [f"ledger.k{n}" for n in range(1001)]
+        ctx = await self._catalog(*keys)
+        member = _Provider(name="members", keys=frozenset(keys))
 
         await permission_providers_lifecycle_step([member]).startup(ctx)
 

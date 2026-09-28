@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable
 from contextlib import nullcontext
-from typing import final
+from typing import Final, final
 
 import attrs
 
@@ -17,6 +17,10 @@ from ..services.grants import fetch_all_document_hits
 from .deps.configs import check_permission_providers
 
 # ----------------------- #
+
+
+_IN_BATCH: Final = 1_000
+"""The query parser's default ``$in`` limit."""
 
 
 @final
@@ -37,13 +41,20 @@ class _CheckProviderKeys:
             else nullcontext()
         )
 
-        with binding:
-            rows = await fetch_all_document_hits(
-                ctx.doc.query(permission_definition_spec),
-                filters={"$values": {"permission_key": {"$in": declared}}},
-            )
+        known: set[str] = set()
+        query = ctx.doc.query(permission_definition_spec)
 
-        known = {row.permission_key for row in rows}
+        with binding:
+            # In batches: a query may name at most _IN_BATCH values in one $in.
+            for first in range(0, len(declared), _IN_BATCH):
+                rows = await fetch_all_document_hits(
+                    query,
+                    filters={
+                        "$values": {"permission_key": {"$in": declared[first : first + _IN_BATCH]}}
+                    },
+                )
+                known |= {row.permission_key for row in rows}
+
         missing = {
             provider.name: sorted(provider.keys - known)
             for provider in self.providers
