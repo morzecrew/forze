@@ -128,6 +128,15 @@ class TestDaysAndMonths:
         assert start == datetime(2026, 9, 6, 4, 0, tzinfo=UTC)
         assert start.astimezone(SANTIAGO.zone()).hour == 1
 
+    def test_a_repeated_midnight_starts_the_day_at_its_first_occurrence(self) -> None:
+        # Havana repeats 00:00-00:59 on 1 Nov: the day starts at the first midnight, not the
+        # second, and is 25 hours long.
+        havana = CivilZone("America/Havana")
+        bounds = local_day_bounds(havana, date(2026, 11, 1))
+
+        assert bounds.start == datetime(2026, 11, 1, 4, 0, tzinfo=UTC)
+        assert bounds.end is not None and bounds.end - bounds.start == timedelta(hours=25)
+
     def test_consecutive_days_tile(self) -> None:
         for zone in (BERLIN, SANTIAGO, LORD_HOWE):
             day = date(2026, 3, 25)

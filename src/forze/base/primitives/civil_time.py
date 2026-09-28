@@ -194,9 +194,6 @@ def spanned_local_days(zone: CivilZone, start: datetime, end: datetime) -> tuple
     if end < start:
         raise exc.precondition("The range ends before it starts.")
 
-    if end == start:
-        return ()
-
     tz = zone.zone()
     first = start.astimezone(tz).date()
     last = (end - timedelta(microseconds=1)).astimezone(tz).date()
