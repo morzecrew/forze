@@ -165,7 +165,20 @@ def _confirmed_what_was_shown():
 
         for event in history.events:
             if event.kind == "previewed":
-                shown[int(event.fields["flow"])] = str(event.fields["label"])
+                flow = int(event.fields["flow"])
+
+                # A reused id would let one flow's confirmation be judged against another's
+                # preview; the workload's own defect, refused rather than read either way.
+                if flow in shown:
+                    found.append(
+                        Violation(
+                            invariant="confirmed_what_was_shown",
+                            message=f"the workload reused flow id {flow}",
+                            events=(),
+                        )
+                    )
+
+                shown[flow] = str(event.fields["label"])
 
             elif event.kind == "confirmed":
                 flow, label = int(event.fields["flow"]), str(event.fields["label"])
