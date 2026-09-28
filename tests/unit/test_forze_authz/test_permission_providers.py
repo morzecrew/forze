@@ -265,6 +265,13 @@ class TestTheSnapshot:
             ("ledger.write", "members", False)
         ]
 
+    async def test_providers_without_a_context_are_refused(self) -> None:
+        member = _Provider(name="members", keys=frozenset({"ledger.write"}))
+        resolver = AuthzGrantResolver(deps=_empty_deps(), providers=(member,))
+
+        with pytest.raises(CoreException):
+            await resolver.resolve_effective_grants(PRINCIPAL)
+
     async def test_a_provider_derives_for_the_principal_decided(self) -> None:
         member = _Provider(name="members", keys=frozenset({"ledger.write"}))
         await _grants(None, member)
@@ -381,6 +388,20 @@ class TestTheBootCheck:
             await permission_providers_lifecycle_step([member], tenant=tenant).startup(ctx)
 
         assert seen == [tenant]
+
+    async def test_no_providers_boot_without_reading_the_catalog(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_identity.authz.execution import providers as boot
+
+        async def _fetch(qry: Any, *, filters: Any) -> list[Any]:
+            raise AssertionError("the catalog was read for no keys")
+
+        monkeypatch.setattr(boot, "fetch_all_document_hits", _fetch)
+
+        await permission_providers_lifecycle_step([]).startup(
+            context_from_modules(MockDepsModule())
+        )
 
     async def test_a_key_the_catalog_lacks_refuses_to_boot(self) -> None:
         ctx = await self._catalog("ledger.write")
