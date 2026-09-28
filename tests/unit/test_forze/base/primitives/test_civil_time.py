@@ -288,18 +288,37 @@ class TestTheZoneDatabaseEdges:
             self.APIA, start - timedelta(hours=1), start + timedelta(hours=1)
         ) == (date(2011, 12, 29), date(2011, 12, 31))
 
-    def test_a_calendar_stepped_back_still_moves_forward(self) -> None:
-        # Sitka took the American date in Oct 1867, and the local date stepped back a day. From
-        # 02:00 UTC on the 19th it reads the 18th again, and the 19th's midnight has already
-        # happened once; an hour from there is still the 18th.
-        sitka = CivilZone("America/Sitka")
-        start = datetime(1867, 10, 19, 2, 0, tzinfo=UTC)
+    @pytest.mark.parametrize(
+        ("key", "start"),
+        [
+            # A fall-back across midnight: at 00:01 the clock returned to 23:01 of the day before.
+            ("America/St_Johns", datetime(2010, 11, 7, 2, 30, 30, tzinfo=UTC)),
+            ("America/St_Johns", datetime(2010, 11, 7, 2, 40, tzinfo=UTC)),
+            # Sitka took the American date in Oct 1867 and read the 18th a second time.
+            ("America/Sitka", datetime(1867, 10, 19, 0, 0, tzinfo=UTC)),
+            ("America/Sitka", datetime(1867, 10, 19, 2, 0, tzinfo=UTC)),
+            # Samoa skipped 30 Dec 2011.
+            ("Pacific/Apia", datetime(2011, 12, 30, 9, 0, tzinfo=UTC)),
+        ],
+        ids=["st-johns-first-midnight", "st-johns-repeat", "sitka-before", "sitka-after", "apia"],
+    )
+    @pytest.mark.parametrize("hours", [0.5, 3, 30])
+    def test_the_listed_days_cover_the_range_once(
+        self, key: str, start: datetime, hours: float
+    ) -> None:
+        # Summed over its days, a range's time is all there and counted once: the property a
+        # timesheet split by day rests on, and the one a day read off the clock breaks where the
+        # clock repeats a midnight.
+        zone = CivilZone(key)
+        end = start + timedelta(hours=hours)
+        covered = timedelta(0)
 
-        assert spanned_local_days(sitka, start, start + timedelta(hours=1)) == (date(1867, 10, 18),)
-        assert spanned_local_days(sitka, start, start + timedelta(hours=26)) == (
-            date(1867, 10, 18),
-            date(1867, 10, 19),
-        )
+        for day in spanned_local_days(zone, start, end):
+            bounds = local_day_bounds(zone, day)
+            assert bounds.end is not None and bounds.end > start and bounds.start < end, day
+            covered += min(end, bounds.end) - max(start, bounds.start)
+
+        assert covered == end - start
 
     def test_a_two_hour_shift_gives_22_and_26_hour_days(self) -> None:
         troll = CivilZone("Antarctica/Troll")

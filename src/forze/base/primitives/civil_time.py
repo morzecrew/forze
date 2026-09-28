@@ -96,18 +96,6 @@ def _refuse_naive(start: datetime, end: datetime) -> None:
         )
 
 
-def _instants(start: datetime, end: datetime) -> tuple[datetime, datetime]:
-    """*start* and *end* as UTC instants, refusing a naive one.
-
-    In UTC because Python compares and subtracts two datetimes that share a ``tzinfo`` by their
-    wall clocks, so two values carrying the same zone across a transition are off by the shift.
-    """
-
-    _refuse_naive(start, end)
-
-    return start.astimezone(UTC), end.astimezone(UTC)
-
-
 def _readings(zone: CivilZone, local: datetime) -> tuple[datetime, datetime, bool, bool]:
     """Both interpretations of *local* as UTC instants, and whether each reads back as *local*."""
 
@@ -214,47 +202,45 @@ def month_bounds(zone: CivilZone, year: int, month: int) -> Period[datetime]:
 
 
 def spanned_local_days(zone: CivilZone, start: datetime, end: datetime) -> tuple[date, ...]:
-    """The local days in *zone* that the instant range ``[start, end)`` touches, in order.
+    """The local days in *zone* whose bounds the instant range ``[start, end)`` meets, in order.
+
+    A day is its :func:`local_day_bounds`, so the days tile and a range's time is counted once.
+    Where a zone repeats the hours around a midnight, the repeated stretch after the first
+    midnight belongs to the new day, whatever the clock reads there; a day the zone skips is
+    empty and never listed.
 
     :raises CoreException: ``precondition`` (``naive_datetime``) for a naive bound, or when
         *end* is before *start*.
     """
 
-    start, end = _instants(start, end)
+    _refuse_naive(start, end)
 
-    if end < start:
+    if end - _EPOCH < start - _EPOCH:
         raise exc.precondition("The range ends before it starts.")
 
-    tz = zone.zone()
-    days: list[date] = []
-    cursor = start
+    if end - _EPOCH == start - _EPOCH:
+        return ()
 
-    # Walk day starts rather than the calendar between the two ends: a day the zone skips is
-    # between them and is never reached.
-    while cursor < end:
-        day = cursor.astimezone(tz).date()
-        days.append(day)
-        cursor = _next_day_start(zone, day, after=cursor)
+    one = timedelta(days=1)
+    day = start.astimezone(zone.zone()).date()
+
+    # The clock may still read the previous date after the day has begun (a fall-back across
+    # midnight); the day holding *start* is the last one to begin at or before it.
+    while _start_of(zone, day + one) <= start:
+        day += one
+
+    days: list[date] = []
+    begins = _start_of(zone, day)
+
+    while begins < end:
+        ends = _start_of(zone, day + one)
+
+        if ends > begins:
+            days.append(day)
+
+        day, begins = day + one, ends
 
     return tuple(days)
-
-
-def _next_day_start(zone: CivilZone, day: date, *, after: datetime) -> datetime:
-    """The start of the local day after *day*, as the first such instant later than *after*.
-
-    Usually :func:`_start_of`. Where a zone stepped its calendar back (Sitka, 1867), the next
-    midnight also happened before *after*, and the reading that comes later is the one wanted.
-    """
-
-    start = _start_of(zone, day + timedelta(days=1))
-
-    if start > after:
-        return start
-
-    early, late, early_reads, late_reads = _readings(
-        zone, datetime.combine(day + timedelta(days=1), time())
-    )
-    return min(i for i, reads in ((early, early_reads), (late, late_reads)) if reads and i > after)
 
 
 def elapsed_minutes(start: datetime, end: datetime) -> int:
