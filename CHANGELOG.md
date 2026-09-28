@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Returning to a scope on an operation binder no longer drops what was bound to it.** A second `bind_outer()` or `bind_tx()` on one binder kept only its own steps, silently discarding earlier guards and the transaction route.
+
 - **A deferred Postgres constraint no longer satisfies a guarantee that holds after every write.** Startup accepted a `DEFERRABLE INITIALLY DEFERRED` constraint, and the in-memory store then refused writes the database took. It is refused now, naming the deferral.
 
 ## [0.8.0] - 2026-09-27
