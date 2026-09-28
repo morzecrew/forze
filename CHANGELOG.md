@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A confirmation can refuse when its preview has changed.** `PreviewBinding(name=…, projector=…, exclude=…)` returns a fingerprinted preview with `reviewed()`, and `bind()` makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with `preview_changed` on a mismatch.
 
 ### Changed
 
