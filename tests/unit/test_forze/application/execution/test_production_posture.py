@@ -8,10 +8,12 @@ and pasted into a ticket, so a secret planted in the settings must appear in non
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, HttpUrl, SecretBytes, SecretStr
 
 from forze.application.execution import (
     DEFAULT_RULES,
@@ -29,6 +31,7 @@ from forze.application.execution import (
 from forze.application.execution.operations.facade import OperationFacade, OperationFacadeFactory
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze_http.execution.deps import configs
 from forze_http.execution.deps.configs import HttpAuthConfig, HttpServiceConfig
 from forze_http.execution.deps.module import HttpDepsModule
 from forze_http.kernel.client import HttpClient
@@ -112,10 +115,37 @@ class TestEachRuleKind:
     def test_an_unset_required_field_refuses(self, db: _Db) -> None:
         assert _refusals(_good(db=db)) == ["db.password: required and unset"]
 
+    @pytest.mark.parametrize(
+        ("value", "refused"),
+        [([], True), ({}, True), (b"  ", True), (0, False)],
+        ids=["empty-list", "empty-mapping", "blank-bytes", "zero"],
+    )
+    def test_set_means_holding_something(self, value: Any, refused: bool) -> None:
+        class _Loose(BaseModel):
+            value: Any = None
+
+        posture = ProductionPosture(
+            settings=_Loose(value=value), rules=(RequireSet(fields=("value",)),)
+        )
+
+        assert bool(posture.findings()) is refused
+
     def test_an_http_url_where_https_is_required_refuses(self) -> None:
         refusals = _refusals(_good(http=_Http(public_base_url="http://app.example.com")))
 
         assert refusals == ["http.public_base_url: must be https"]
+
+    def test_a_url_typed_field_is_read_too(self) -> None:
+        # pydantic's URL types are not strings; the rule reads their rendering.
+        class _Typed(BaseModel):
+            public_base_url: HttpUrl
+
+        posture = ProductionPosture(
+            settings=_Typed(public_base_url=HttpUrl("http://app.example.com")),
+            rules=(RequireHttps(fields=("public_base_url",)),),
+        )
+
+        assert [f.render() for f in posture.findings()] == ["public_base_url: must be https"]
 
     def test_every_element_of_a_collection_must_be_https(self) -> None:
         cors = _Cors(allow_origins=["https://a.example.com", "http://b.example.com"])
@@ -164,16 +194,19 @@ class TestEachRuleKind:
 
             upstreams: list[_Upstream] = []
             hooks: list[dict[str, str]] = []
+            signing_key: SecretBytes | None = None
 
         settings = _Loose(
             upstreams=[_Upstream(token=SecretStr("t_dev_only"))],
             hooks=[{"url": "https://h_dev_only.example"}],
+            signing_key=SecretBytes(b"k_dev_only"),
             seeded="s_dev_only",  # type: ignore[call-arg]
         )
 
         assert sorted(f.target for f in ProductionPosture(settings=settings).findings()) == [
             "hooks",
             "seeded",
+            "signing_key",
             "upstreams",
         ]
 
@@ -217,6 +250,27 @@ class TestWhichEnvironmentIsProduction:
 
         assert _refusals(settings) == []
 
+    def test_an_enum_environment_is_read_by_its_value(self) -> None:
+        class _Env(Enum):
+            DEV = "dev"
+            PROD = "prod"
+
+        class _Enumerated(BaseModel):
+            env: _Env
+            public_base_url: str = "http://localhost:8000"
+
+        def _refused(env: _Env) -> bool:
+            return bool(
+                ProductionPosture(
+                    settings=_Enumerated(env=env),
+                    environment="env",
+                    non_production=frozenset({"dev"}),
+                    rules=(RequireHttps(fields=("public_base_url",)),),
+                ).findings()
+            )
+
+        assert (_refused(_Env.DEV), _refused(_Env.PROD)) == (False, True)
+
     def test_no_environment_path_means_production(self) -> None:
         posture = ProductionPosture(
             settings=_good(env="dev", http=_Http(public_base_url="http://x.example")),
@@ -228,18 +282,17 @@ class TestWhichEnvironmentIsProduction:
 
 class TestADeclarationThatNamesNothing:
     @pytest.mark.parametrize("env", ["production", "dev"])
-    def test_an_unresolvable_path_is_reported_in_every_environment(self, env: str) -> None:
+    @pytest.mark.parametrize("path", ["db.pasword", "db.dsn.host"], ids=["renamed", "through-a-value"])
+    def test_an_unresolvable_path_is_reported_in_every_environment(self, env: str, path: str) -> None:
         # A renamed field is a rule nobody enforces; a laptop is where that should surface.
         posture = ProductionPosture(
             settings=_good(env=env),
             environment="env",
             non_production=frozenset({"dev"}),
-            rules=(RequireSet(fields=("db.pasword",)),),
+            rules=(RequireSet(fields=(path,)),),
         )
 
-        assert [f.render() for f in posture.findings()] == [
-            "db.pasword: does not resolve in _Settings"
-        ]
+        assert [f.render() for f in posture.findings()] == [f"{path}: does not resolve in _Settings"]
 
     def test_an_unresolvable_path_cannot_be_exempted(self) -> None:
         posture = ProductionPosture(
@@ -369,11 +422,19 @@ class TestEscalatingAModuleWarning:
             },
         )
 
-    def test_without_a_posture_it_only_warns(self) -> None:
-        build_runtime(self._module())
+    @pytest.mark.parametrize("env", [None, "dev"], ids=["no-posture", "non-production"])
+    def test_outside_production_it_only_warns(
+        self, env: str | None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The config logger is structlog-backed and writes past caplog, so it is patched.
+        spy = MagicMock()
+        monkeypatch.setattr(configs, "logger", spy)
+        posture = None if env is None else _posture(_good(env=env))
 
-    def test_a_non_production_posture_leaves_it_a_warning(self) -> None:
-        build_runtime(self._module(), posture=_posture(_good(env="dev")))
+        build_runtime(self._module(), posture=posture)
+
+        spy.warning.assert_called_once()
+        assert spy.warning.call_args.args == ("http.service.cleartext_credentials",)
 
     def test_a_production_posture_refuses_it(self) -> None:
         with pytest.raises(CoreException) as caught:

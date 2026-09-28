@@ -261,14 +261,11 @@ class ProductionPosture:
         if self.environment is None:
             return True
 
-        value = _resolve(self.settings, self.environment)
-
-        if value is _UNRESOLVED or value is None:
-            return True
-
-        name = value.value if isinstance(value, Enum) else value
-
-        return str(name).strip() not in self.non_production
+        # Unset or unresolvable yields no name, and `all` of nothing is production.
+        return all(
+            name.strip() not in self.non_production
+            for name in _texts(_resolve(self.settings, self.environment))
+        )
 
     # ....................... #
 
