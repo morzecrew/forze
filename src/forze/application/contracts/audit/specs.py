@@ -36,7 +36,14 @@ def _metadata_names(value: Iterable[str]) -> frozenset[str]:
             code=AUDIT_DECLARATION,
         )
 
-    names = frozenset(value)
+    try:
+        names = frozenset(value)
+
+    except TypeError:
+        raise exc.configuration(
+            "AuditSpec.allowed_metadata takes a collection of names.",
+            code=AUDIT_DECLARATION,
+        ) from None
 
     if any(not isinstance(name, str) or not name.strip() for name in names):
         raise exc.configuration(

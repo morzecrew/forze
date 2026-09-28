@@ -227,6 +227,8 @@ class TestTheAllowlist:
             lambda: AuditSpec(action="a", allowed_metadata=frozenset({"api_key"})),
             lambda: AuditSpec(action="a", allowed_metadata="purpose"),  # type: ignore[arg-type]
             lambda: AuditSpec(action="a", allowed_metadata=frozenset({" "})),
+            lambda: AuditSpec(action="a", allowed_metadata=5),  # type: ignore[arg-type]
+            lambda: AuditSpec(action="a", allowed_metadata=[["a"]]),  # type: ignore[list-item]
             lambda: AuditSpec(action=" "),
             lambda: AuditSpec(action="a", audit_reads="Never"),  # type: ignore[arg-type]
             lambda: AuditSpec(action="a", on_failure="failclosed"),  # type: ignore[arg-type]
@@ -236,6 +238,8 @@ class TestTheAllowlist:
             "api-key",
             "bare-string",
             "blank-key",
+            "not-iterable",
+            "unhashable",
             "blank-action",
             "reads-typo",
             "policy-typo",
