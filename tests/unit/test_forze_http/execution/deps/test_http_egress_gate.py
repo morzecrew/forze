@@ -202,6 +202,28 @@ class TestCleartextCredentialWarning:
         spy.warning.assert_not_called()
         assert not config.sends_secrets_in_cleartext
 
+    @pytest.mark.parametrize(
+        ("headers", "warns"),
+        [
+            ({"Authorization": "Bearer t"}, True),
+            ({"X-API-Key": "k"}, True),
+            ({"Cookie": "session=s"}, True),
+            ({"User-Agent": "svc/1.0", "Accept": "application/json"}, False),
+        ],
+        ids=["authorization", "api-key", "cookie", "no-credential"],
+    )
+    def test_a_credential_in_default_headers_counts(
+        self, headers: dict[str, str], warns: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Default headers go out on every request, so a credential written there instead of
+        # in `auth` travels exactly as far — over plaintext, as readably.
+        spy = self._warnings(monkeypatch)
+
+        config = HttpServiceConfig(base_url="http://provider.example", default_headers=headers)
+
+        assert spy.warning.called is warns
+        assert config.sends_secrets_in_cleartext is warns
+
     def test_https_is_quiet(self, monkeypatch: pytest.MonkeyPatch) -> None:
         spy = self._warnings(monkeypatch)
 

@@ -16,6 +16,7 @@ from forze.application.contracts.egress import (
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
+from forze.base.scrubbing.policy import is_sensitive_key
 from forze.base.serialization.pydantic import pydantic_secret_converter
 from forze_http.execution._logger import logger
 from forze_http.kernel.client.cleartext import is_cleartext_destination
@@ -203,15 +204,18 @@ class HttpServiceConfig(TenantAwareIntegrationConfig):
     def sends_secrets_in_cleartext(self) -> bool:
         """Whether a credential or declared-sensitive data would leave over plaintext HTTP.
 
-        Either a credential the transport sends, or a route that has declared it carries
-        sensitive data out. The second case is the one a credential in the *body* falls into —
+        Either a credential the transport sends — from :attr:`auth`, or a default header whose
+        name the log scrubber treats as secret-bearing (``Authorization``, ``Cookie``, an API
+        key) — or a route that has declared it carries sensitive data out. The second case is the one a credential in the *body* falls into —
         an OAuth token request posts its client secret as a form field and needs no
         :class:`HttpAuthConfig` at all, so reading :attr:`auth` alone would stay silent for
         exactly the route that carries the most. Loopback is never cleartext here.
         """
 
         # An auth config that sends no header (a token kind with no token) carries nothing.
-        sends_credential = self.auth is not None and bool(self.auth.auth_headers())
+        sends_credential = (self.auth is not None and bool(self.auth.auth_headers())) or any(
+            is_sensitive_key(name) for name in self.default_headers
+        )
 
         if self.base_url is None or not (sends_credential or self.egress_sensitive):
             return False
