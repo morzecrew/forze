@@ -38,6 +38,8 @@ DST_NONEXISTENT: Final[str] = "dst_nonexistent"
 NAIVE_DATETIME: Final[str] = "naive_datetime"
 """Code on a refused naive datetime where an instant is required."""
 
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
 
 @final
 @attrs.define(slots=True, frozen=True)
@@ -86,6 +88,14 @@ def _require_naive(local: datetime) -> None:
         )
 
 
+def _refuse_naive(start: datetime, end: datetime) -> None:
+    if any(value.tzinfo is None or value.utcoffset() is None for value in (start, end)):
+        raise exc.precondition(
+            "An instant is required, and a naive datetime is a wall-clock time in no zone.",
+            code=NAIVE_DATETIME,
+        )
+
+
 def _instants(start: datetime, end: datetime) -> tuple[datetime, datetime]:
     """*start* and *end* as UTC instants, refusing a naive one.
 
@@ -93,11 +103,7 @@ def _instants(start: datetime, end: datetime) -> tuple[datetime, datetime]:
     wall clocks, so two values carrying the same zone across a transition are off by the shift.
     """
 
-    if any(value.tzinfo is None or value.utcoffset() is None for value in (start, end)):
-        raise exc.precondition(
-            "An instant is required, and a naive datetime is a wall-clock time in no zone.",
-            code=NAIVE_DATETIME,
-        )
+    _refuse_naive(start, end)
 
     return start.astimezone(UTC), end.astimezone(UTC)
 
@@ -260,8 +266,10 @@ def elapsed_minutes(start: datetime, end: datetime) -> int:
     :raises CoreException: ``precondition`` (``naive_datetime``) for a naive argument.
     """
 
-    start, end = _instants(start, end)
-    delta = end - start
+    _refuse_naive(start, end)
+    # Each as its distance from the UTC epoch: a subtraction across two zones reads instants, and
+    # unlike a conversion to UTC it cannot leave the calendar (datetime.max in New York).
+    delta = (end - _EPOCH) - (start - _EPOCH)
     whole = abs(delta) // timedelta(minutes=1)
 
     return whole if delta >= timedelta(0) else -whole

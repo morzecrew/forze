@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from typing import Final
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -325,6 +326,12 @@ class TestTheZoneDatabaseEdges:
         assert elapsed_minutes(start + timedelta(minutes=minutes, microseconds=-1), start) == -(
             minutes - 1
         )
+
+    def test_elapsed_minutes_reaches_the_end_of_the_calendar(self) -> None:
+        # Converted to UTC, datetime.max in New York is past year 9999.
+        forever = datetime.max.replace(tzinfo=ZoneInfo("America/New_York"))
+
+        assert elapsed_minutes(datetime(9999, 12, 31, tzinfo=UTC), forever) == 24 * 60 + 5 * 60 - 1
 
     @pytest.mark.parametrize("month", [0, 13])
     def test_a_month_outside_the_calendar_is_refused(self, month: int) -> None:
