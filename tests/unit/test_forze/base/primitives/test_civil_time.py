@@ -128,6 +128,15 @@ class TestDaysAndMonths:
         assert start == datetime(2026, 9, 6, 4, 0, tzinfo=UTC)
         assert start.astimezone(SANTIAGO.zone()).hour == 1
 
+    def test_a_gap_straddling_midnight_starts_the_day_where_the_gap_ends(self) -> None:
+        # Toronto jumped from 23:30 to 00:30 on 31 Mar 1919: midnight sits thirty minutes inside
+        # the gap, so neither reading of 00:00 is the day's first instant — 00:30 local is.
+        toronto = CivilZone("America/Toronto")
+        start = local_day_bounds(toronto, date(1919, 3, 31)).start
+
+        assert start == datetime(1919, 3, 31, 4, 30, tzinfo=UTC)
+        assert start.astimezone(toronto.zone()).strftime("%H:%M") == "00:30"
+
     def test_a_repeated_midnight_starts_the_day_at_its_first_occurrence(self) -> None:
         # Havana repeats 00:00-00:59 on 1 Nov: the day starts at the first midnight, not the
         # second, and is 25 hours long.
