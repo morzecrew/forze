@@ -272,3 +272,59 @@ class TestTheZoneAndTheBoundary:
         [error] = caught.value.errors()
         assert (error["type"], error["loc"]) == (NAIVE_DATETIME, ("starts_at",))
         assert Shift(starts_at=datetime(2026, 6, 1, 9, 0, tzinfo=UTC)).starts_at.tzinfo is UTC
+
+
+class TestTheZoneDatabaseEdges:
+    APIA = CivilZone("Pacific/Apia")
+
+    def test_a_day_the_zone_skips_is_empty_and_not_spanned(self) -> None:
+        # Samoa skipped 30 Dec 2011 entirely, moving across the date line.
+        skipped = local_day_bounds(self.APIA, date(2011, 12, 30))
+        start = local_day_bounds(self.APIA, date(2011, 12, 31)).start
+
+        assert skipped.end == skipped.start
+        assert spanned_local_days(
+            self.APIA, start - timedelta(hours=1), start + timedelta(hours=1)
+        ) == (date(2011, 12, 29), date(2011, 12, 31))
+
+    def test_a_calendar_stepped_back_still_moves_forward(self) -> None:
+        # Sitka took the American date in Oct 1867, and the local date stepped back a day. After
+        # the switch, the next midnight had also happened before it; the walk takes the later one.
+        sitka = CivilZone("America/Sitka")
+        start = datetime(1867, 10, 19, 0, 32, tzinfo=UTC)
+
+        assert spanned_local_days(sitka, start, start + timedelta(hours=26)) == (
+            date(1867, 10, 18),
+            date(1867, 10, 19),
+        )
+
+    def test_a_two_hour_shift_gives_22_and_26_hour_days(self) -> None:
+        troll = CivilZone("Antarctica/Troll")
+
+        for day, hours in ((date(2026, 3, 29), 22), (date(2026, 10, 25), 26)):
+            bounds = local_day_bounds(troll, day)
+            assert bounds.end is not None and bounds.end - bounds.start == timedelta(hours=hours)
+
+    @pytest.mark.parametrize("key", ["right/Europe/Berlin", "posix/Europe/Berlin", "posixrules"])
+    def test_a_file_that_is_not_a_zone_name_is_refused(self, key: str) -> None:
+        # ZoneInfo opens these, and the right/ ones count leap seconds: a result off by 27 s.
+        with pytest.raises(CoreException) as caught:
+            CivilZone(key)
+
+        assert caught.value.code == "civil_zone_unknown"
+
+    def test_elapsed_minutes_truncates_exactly_over_long_spans(self) -> None:
+        start = datetime(1000, 1, 1, tzinfo=UTC)
+        minutes = 2**29
+
+        assert elapsed_minutes(start, start + timedelta(minutes=minutes, microseconds=-1)) == (
+            minutes - 1
+        )
+        assert elapsed_minutes(start + timedelta(minutes=minutes, microseconds=-1), start) == -(
+            minutes - 1
+        )
+
+    @pytest.mark.parametrize("month", [0, 13])
+    def test_a_month_outside_the_calendar_is_refused(self, month: int) -> None:
+        with pytest.raises(CoreException):
+            month_bounds(BERLIN, 2026, month)

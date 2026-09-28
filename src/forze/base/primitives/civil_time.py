@@ -14,10 +14,10 @@ value): subtracting two wall-clock times across a transition is off by the offse
 the result is a plausible number.
 """
 
-from collections.abc import Iterator
 from datetime import UTC, date, datetime, time, timedelta
+from functools import cache
 from typing import Annotated, Final, final
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
 import attrs
 from pydantic import AfterValidator
@@ -48,10 +48,17 @@ class CivilZone:
     """The IANA name (``"Europe/Berlin"``)."""
 
     def __attrs_post_init__(self) -> None:
+        # ZoneInfo opens any file under the zone path, including `right/` zones, which count leap
+        # seconds and so disagree with every other clock by tens of seconds; only a listed name
+        # is a zone.
         try:
+            known = isinstance(self.key, str) and self.key in _zone_names()
             ZoneInfo(self.key)
 
         except (ZoneInfoNotFoundError, ValueError, TypeError):
+            known = False
+
+        if not known:
             raise exc.configuration(
                 f"{self.key!r} is not an IANA time zone the zone database knows.",
                 code="civil_zone_unknown",
@@ -61,6 +68,11 @@ class CivilZone:
         """The zone (``ZoneInfo`` caches it by key)."""
 
         return ZoneInfo(self.key)
+
+
+@cache
+def _zone_names() -> frozenset[str]:
+    return frozenset(available_timezones())
 
 
 # ....................... #
@@ -142,7 +154,8 @@ def to_instant(zone: CivilZone, local: datetime, *, fold: int | None = None) -> 
 
 
 def _start_of(zone: CivilZone, day: date) -> datetime:
-    """The first instant whose local date is *day* — midnight, or the end of a gap over it."""
+    """The first instant whose local date is *day* or later: midnight, the end of a gap over it,
+    or, for a day the zone skips entirely, the next day's start."""
 
     early, late, early_reads, late_reads = _readings(zone, datetime.combine(day, time()))
 
@@ -171,11 +184,12 @@ def _start_of(zone: CivilZone, day: date) -> datetime:
 
 
 def local_day_bounds(zone: CivilZone, day: date) -> Period[datetime]:
-    """The instants of local *day* in *zone*, half-open — 23, 24 or 25 hours, and 23.5 or 24.5
-    where a zone shifts by half an hour.
+    """The instants of local *day* in *zone*, half-open.
 
-    A day whose local midnight the zone skips starts at the first instant that exists: a day
-    always has a first moment even when 00:00 is not it.
+    Its length is whatever the zone's shifts make it: 23, 24 or 25 hours where a zone moves by
+    an hour, 23.5 or 24.5 where it moves by half of one, 22 or 26 where it moves by two, and
+    empty for a day the zone skips entirely (Samoa's 30 December 2011). A day whose local midnight
+    the zone skips starts at the first instant that exists.
     """
 
     return Period(start=_start_of(zone, day), end=_start_of(zone, day + timedelta(days=1)))
@@ -183,6 +197,9 @@ def local_day_bounds(zone: CivilZone, day: date) -> Period[datetime]:
 
 def month_bounds(zone: CivilZone, year: int, month: int) -> Period[datetime]:
     """The instants of a local calendar month in *zone*, half-open."""
+
+    if not 1 <= month <= 12:
+        raise exc.precondition(f"A month is 1 to 12, not {month}.")
 
     first = date(year, month, 1)
     following = date(year + month // 12, month % 12 + 1, 1)
@@ -202,22 +219,41 @@ def spanned_local_days(zone: CivilZone, start: datetime, end: datetime) -> tuple
     if end < start:
         raise exc.precondition("The range ends before it starts.")
 
-    if end == start:
-        return ()
-
     tz = zone.zone()
-    first = start.astimezone(tz).date()
-    last = (end - timedelta(microseconds=1)).astimezone(tz).date()
+    days: list[date] = []
+    cursor = start
 
-    return tuple(_days(first, last))
+    # Walk day starts rather than the calendar between the two ends: a day the zone skips is
+    # between them and is never reached.
+    while cursor < end:
+        day = cursor.astimezone(tz).date()
+        days.append(day)
+        cursor = _next_day_start(zone, day, after=cursor)
+
+    return tuple(days)
 
 
-def _days(first: date, last: date) -> Iterator[date]:
-    day = first
+def _next_day_start(zone: CivilZone, day: date, *, after: datetime) -> datetime:
+    """The start of the local day after *day*, as the first such instant later than *after*.
 
-    while day <= last:
-        yield day
-        day += timedelta(days=1)
+    Usually :func:`_start_of`. Where a zone stepped its calendar back (Sitka, 1867), the next
+    midnight also happened before *after*, and the reading that comes later is the one wanted.
+    """
+
+    start = _start_of(zone, day + timedelta(days=1))
+
+    if start > after:
+        return start
+
+    early, late, early_reads, late_reads = _readings(
+        zone, datetime.combine(day + timedelta(days=1), time())
+    )
+    later = [i for i, reads in ((early, early_reads), (late, late_reads)) if reads and i > after]
+
+    if not later:
+        raise exc.internal(f"No start of the day after {day} follows {after.isoformat()}.")
+
+    return min(later)
 
 
 def elapsed_minutes(start: datetime, end: datetime) -> int:
@@ -230,8 +266,10 @@ def elapsed_minutes(start: datetime, end: datetime) -> int:
     """
 
     start, end = _instants(start, end)
+    delta = end - start
+    whole = abs(delta) // timedelta(minutes=1)
 
-    return int((end - start) / timedelta(minutes=1))
+    return whole if delta >= timedelta(0) else -whole
 
 
 # ....................... #

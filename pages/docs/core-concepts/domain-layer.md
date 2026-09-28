@@ -159,12 +159,13 @@ local_day_bounds(berlin, date(2026, 10, 25))               # a 25-hour Period, b
 | Function | Returns | Refuses |
 |----------|---------|---------|
 | `to_instant(zone, local, fold=None)` | the UTC instant a naive wall time names | `dst_ambiguous` without `fold`, `dst_nonexistent` always |
-| `local_day_bounds(zone, day)` · `month_bounds(zone, year, month)` | a half-open `Period` of instants | — |
+| `local_day_bounds(zone, day)` · `month_bounds(zone, year, month)` | a half-open `Period` of instants | a month outside 1–12 |
 | `spanned_local_days(zone, start, end)` | the local days `[start, end)` touches | `naive_datetime` |
 | `elapsed_minutes(start, end)` | whole minutes between two instants | `naive_datetime` |
 
 A day whose midnight the zone skips starts at the first instant that exists — the one place these
-helpers resolve instead of refusing, because a calendar with holes is worse. Durations are
+helpers resolve instead of refusing, because a calendar with holes is worse. A day the zone skips
+entirely (Samoa's 30 December 2011) is an empty `Period`, and `spanned_local_days` never lists it. Durations are
 computed on instants only: two wall-clock times across a transition are off by the shift, and the
 wrong answer is a plausible number. `AwareDatetime` is for your boundary models: a naive value is
 a validation error (`naive_datetime`) naming the field. Bind `fold` where the UI knows which
