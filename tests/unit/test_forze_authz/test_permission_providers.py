@@ -337,6 +337,22 @@ class TestTheOwnerOverride:
         assert not POLICY.decide(grants, _request("invoice.read", owner=uuid4())).allowed
 
 
+class TestTheResultType:
+    @pytest.mark.parametrize(
+        "keys", ["ledger.write", b"ledger.write", ["ledger.write", 7]], ids=["str", "bytes", "int"]
+    )
+    def test_a_key_set_is_a_collection_of_strings(self, keys: Any) -> None:
+        # A string would otherwise become the set of its letters.
+        for field in ("granted", "denied"):
+            with pytest.raises(CoreException):
+                DerivedPermissions(**{field: keys})
+
+    def test_any_collection_of_strings_is_taken(self) -> None:
+        derived = DerivedPermissions(granted=["a", "b"], denied=("c",))  # type: ignore[arg-type]
+
+        assert (derived.granted, derived.denied) == (frozenset({"a", "b"}), frozenset({"c"}))
+
+
 class TestTheDeclaration:
     @pytest.mark.parametrize(
         "providers",
