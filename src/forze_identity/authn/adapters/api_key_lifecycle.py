@@ -99,6 +99,14 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         actor_principal_id: UUID | None = None,
         label: str | None = None,
     ) -> IssuedApiKey:
+        # A key minted for a delegated identity would authenticate as the principal alone,
+        # with no actor, and escape the delegation's intersection.
+        if identity.actor is not None:
+            raise exc.authorization(
+                "A delegated caller cannot mint an API key for the principal it acts for",
+                code="delegate_denied",
+            )
+
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         return await self._issue_for_principal(

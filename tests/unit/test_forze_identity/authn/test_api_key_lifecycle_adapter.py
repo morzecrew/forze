@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.authn import ApiKeyCredentials, AuthnIdentity
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze_identity.authn.adapters.api_key_lifecycle import ApiKeyLifecycleAdapter
 from forze_identity.authn.domain.models.account import ReadApiKeyAccount
 from forze_identity.authn.services import ApiKeyConfig, ApiKeyService
@@ -144,6 +144,22 @@ class TestApiKeyLifecycleAdapterIssueDelegation:
         await adapter.issue_api_key(AuthnIdentity(principal_id=uuid4()))
 
         assert ak_cmd.create.await_args.args[0].actor_principal_id is None
+
+    @pytest.mark.asyncio
+    async def test_issue_refuses_a_delegated_identity(self) -> None:
+        # The key would authenticate as the principal alone, with no actor.
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+        delegated = AuthnIdentity(principal_id=uuid4(), actor=AuthnIdentity(principal_id=uuid4()))
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(delegated)
+
+        assert caught.value.code == "delegate_denied"
+        ak_cmd.create.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_issue_persists_label_and_a_nonsecret_hint(self) -> None:

@@ -42,6 +42,28 @@ def _require_identity(
     return identity
 
 
+def _require_own_identity(
+    resolver: "Callable[[], AuthnIdentity | None]",
+) -> AuthnIdentity:
+    """Pull the bound identity, refusing a delegated one (credential self-service guard).
+
+    An agent acting for a principal holds the intersection of the two. Minting that principal's
+    API key would hand it a credential that authenticates as the principal alone, with no actor,
+    and so escapes the intersection; revoking the principal's keys or sessions, or changing its
+    password, acts on the principal's own standing. Only the principal manages its credentials.
+    """
+
+    identity = _require_identity(resolver)
+
+    if identity.actor is not None:
+        raise exc.authorization(
+            "A delegated caller cannot manage the credentials of the principal it acts for",
+            code="delegate_denied",
+        )
+
+    return identity
+
+
 # ----------------------- #
 
 
@@ -94,13 +116,7 @@ class AuthnLogout(Handler[None, None]):
     async def __call__(self, args: None) -> None:
         _ = args
 
-        identity = self.resolver()
-
-        if identity is None:
-            raise exc.authentication(
-                "Authentication required",
-                code="auth_required",
-            )
+        identity = _require_own_identity(self.resolver)
 
         await self.token_lifecycle.revoke_tokens(identity)
 
@@ -141,13 +157,7 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
     # ....................... #
 
     async def __call__(self, args: AuthnChangePasswordRequestDTO) -> None:
-        identity = self.resolver()
-
-        if identity is None:
-            raise exc.authentication(
-                "Authentication required",
-                code="auth_required",
-            )
+        identity = _require_own_identity(self.resolver)
 
         await self.password_lifecycle.change_password(
             identity,
@@ -177,7 +187,7 @@ class AuthnIssueApiKey(Handler[AuthnIssueApiKeyRequestDTO, AuthnIssuedApiKeyDTO]
     # ....................... #
 
     async def __call__(self, args: AuthnIssueApiKeyRequestDTO) -> AuthnIssuedApiKeyDTO:
-        identity = _require_identity(self.resolver)
+        identity = _require_own_identity(self.resolver)
 
         issued = await self.api_key_lifecycle.issue_api_key(
             identity,
@@ -255,6 +265,6 @@ class AuthnRevokeApiKey(Handler[AuthnRevokeApiKeyRequestDTO, None]):
     # ....................... #
 
     async def __call__(self, args: AuthnRevokeApiKeyRequestDTO) -> None:
-        identity = _require_identity(self.resolver)
+        identity = _require_own_identity(self.resolver)
 
         await self.api_key_lifecycle.revoke_api_key(identity, str(args.id))

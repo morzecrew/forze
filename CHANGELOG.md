@@ -33,7 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **A delegated call on a scope-guarded route is scoped for every principal in its chain.** `AuthzDocumentScopeWrap` scopes each actor too: a denied actor refuses the call, its row filters narrow the subject's, and an enforced delegation grant is checked. The sensitive-resource check requires every principal.
+- **A delegated call on a scope-guarded route is scoped for every principal in its chain.** `AuthzDocumentScopeWrap` scopes each actor too: a denied actor refuses the call, its row filters narrow the subject's, and an enforced delegation grant is checked. So does the sensitive-resource check.
+
+- **A delegated caller cannot manage the credentials of the principal it acts for.** Issuing or revoking an API key, logging out and changing the password refuse a delegated identity (`delegate_denied`), so an agent cannot mint a key that authenticates as the user alone.
 
 ## [0.9.0] - 2026-09-28
 
