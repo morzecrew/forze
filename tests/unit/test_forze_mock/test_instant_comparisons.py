@@ -9,7 +9,7 @@ of them as instants; the mock has to agree, or a test passes against it and fail
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Final
 from zoneinfo import ZoneInfo
 
@@ -184,3 +184,63 @@ def test_an_instant_key_never_equals_a_duration() -> None:
     assert instant_key(SUMMER_0230) != instant_key(distance)
     assert instant_key(SUMMER_0230) == instant_key(SUMMER_0230.astimezone(UTC))
     assert instant_key(SUMMER_0230) != instant_key(WINTER_0230)
+
+
+class _Stamped(Document):
+    grp: str
+    at: datetime
+
+
+class _StampedRead(ReadDocument):
+    grp: str
+    at: datetime
+
+
+class _StampedCreate(CreateDocumentCmd):
+    grp: str
+    at: datetime
+
+
+STAMPS = DocumentSpec(
+    name="stamps",
+    read=_StampedRead,
+    write=DocumentWriteTypes(domain=_Stamped, create_cmd=_StampedCreate),
+)
+
+
+class TestTheAggregates:
+    async def _stamps(self) -> object:
+        ctx = _ctx()
+
+        for at in (SUMMER_0230, WINTER_0230):
+            await ctx.document.command(STAMPS).create(_StampedCreate(grp="g", at=at))
+
+        return ctx
+
+    async def test_distinct_min_and_max_read_instants(self) -> None:
+        ctx = await self._stamps()
+        page = await ctx.document.query(STAMPS).aggregate_page(  # type: ignore[attr-defined]
+            aggregates={
+                "$groups": {"g": "grp"},
+                "$computed": {
+                    "n": {"$count_distinct": "at"},
+                    "lo": {"$min": "at"},
+                    "hi": {"$max": "at"},
+                },
+            },
+            pagination={"limit": 10},
+        )
+        [row] = page.hits
+
+        # An hour apart in fact, equal on the clock.
+        assert row["n"] == 2
+        assert (row["lo"] - SUMMER_0230, row["hi"] - WINTER_0230) == (timedelta(0), timedelta(0))
+
+    async def test_a_group_is_one_instant(self) -> None:
+        ctx = await self._stamps()
+        page = await ctx.document.query(STAMPS).aggregate_page(  # type: ignore[attr-defined]
+            aggregates={"$groups": {"at": "at"}, "$computed": {"n": {"$count": None}}},
+            pagination={"limit": 10},
+        )
+
+        assert sorted(row["n"] for row in page.hits) == [1, 1]
