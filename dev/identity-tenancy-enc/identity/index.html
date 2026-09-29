@@ -6781,7 +6781,9 @@ and the policy unions them with catalog grants:</p>
 <ul>
 <li><strong>Gate on permissions, never on roles</strong> — that is what lets a derived denial close a route.</li>
 <li>A provider <strong>reads and never writes</strong>. It runs for the principal being decided; on a delegated
-  call <code>AuthzBeforeAuthorize</code> decides each actor in turn, so the provider runs for each of them.</li>
+  call <code>AuthzBeforeAuthorize</code> and <code>AuthzDocumentScopeWrap</code> decide each actor in turn, so the
+  provider runs for each of them: past those two guards, a delegation never exceeds what every
+  principal in it holds.</li>
 <li><code>keys</code> declares everything a provider may grant or deny, as a <code>frozenset</code>. A declared key with
   no catalog row refuses the first decision per tenant that runs the providers
   (<code>authz_provider_unknown_keys</code>), so a typo cannot go unnoticed; register the startup step to

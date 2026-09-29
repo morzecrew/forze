@@ -758,6 +758,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -859,7 +870,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -931,7 +942,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -1275,7 +1286,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_2" class="md-nav__link">
+  <a href="#security_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7626,6 +7637,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7727,7 +7749,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7799,7 +7821,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8143,7 +8165,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_2" class="md-nav__link">
+  <a href="#security_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8978,6 +9000,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The temporal and versioned kits' reads are marked as reads.</strong> <code>effective_on</code>, <code>timeline</code>, <code>history</code> and <code>as_of</code> now run under the read-only guard and are listed as read-only in the operation catalog, so an <abbr title="Model Context Protocol">MCP</abbr> projection that includes only reads now includes them.</p>
 </li>
 </ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong>A delegated call on a scope-guarded route is scoped for every principal in its chain.</strong> <code>AuthzDocumentScopeWrap</code> scopes each actor too: a denied actor refuses the call, its row filters narrow the subject's, and an enforced delegation grant is checked. So does the sensitive-resource check.</p>
+</li>
+<li>
+<p><strong>A delegated caller cannot manage the account it acts for.</strong> Issuing or revoking an API key, minting a session, logging out, changing the password, and switching or leaving a tenant refuse a delegated identity (<code>delegate_denied</code>).</p>
+</li>
+<li>
+<p><strong>Work started by a delegated caller keeps its delegation.</strong> Temporal headers carry the actor chain, as does the Inngest <code>_forze</code> envelope where <code>bind_identity_from_event</code> binds it, and an <abbr title="Model Context Protocol">MCP</abbr> subject that is already delegated keeps its chain under the server's agent.</p>
+</li>
+</ul>
 <h2 id="090-2026-09-28"><a href="https://github.com/morzecrew/forze/compare/v0.8.0...v0.9.0">0.9.0</a> - 2026-09-28<a class="headerlink" href="#090-2026-09-28" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9092,7 +9126,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>HttpAuthConfig</code> with no token sent <code>Authorization: Bearer None</code>.</strong> A config declaring no token still sent the header; it no longer does, and the same fix covers <code>HttpClientLifecycleStep.auth_token</code> and Meilisearch's <code>api_key</code>.</p>
 </li>
 </ul>
-<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Two principals using one idempotency key no longer share its claim.</strong> A claim is scoped to the tenant and the acting principal, so a caller reusing another's key runs its own operation instead of being served that caller's stored result. A custom store inherits <code>ClaimPrincipalMixin</code>.</li>
 </ul>
@@ -9214,7 +9248,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A durable run or schedule registered for a tenant nothing is bound to now lands where that tenant looks for it.</strong> The relation came from the binding while the tag and the scoped id came from the argument, so on a per-tenant relation the row was written somewhere nobody reads and the schedule never fired.</p>
 </li>
 </ul>
-<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
+<h3 id="security_2">Security<a class="headerlink" href="#security_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>A bound tenant can no longer reach another tenant's durable run.</strong> <code>begin</code>, <code>renew</code>, <code>load</code> and the terminal writes enforced no tenant; they now reach the bound tenant's runs and untagged ones. Postgres, Mongo and the mock.</p>
@@ -10622,7 +10656,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_temporal</code> and <code>forze[mcp]</code> workflow sandbox</strong> — the sandbox runner passes <code>beartype</code> and <code>coverage</code> through, fixing circular-import failures and a coverage-induced test hang.</p>
 </li>
 </ul>
-<h3 id="security_2">Security<a class="headerlink" href="#security_2" title="Permanent link">&para;</a></h3>
+<h3 id="security_3">Security<a class="headerlink" href="#security_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Password change revokes existing sessions (breaking by default)</strong> — <code>change_password</code> revokes all sessions (refresh families plus session-bound access JWTs); opt out explicitly, and missing session ports fail at startup.</p>

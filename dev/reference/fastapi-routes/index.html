@@ -7001,6 +7001,9 @@ lists the caller's keys as non-secret descriptors (a <code>hint</code> like <cod
 never the secret), and <code>DELETE /api-keys/{id}</code> revokes one. This is the minting
 surface for the <a href="../../integrations/mcp/#protect-it-with-api-key-auth"><abbr title="Model Context Protocol">MCP</abbr> API-key flow</a>:
 the user issues a key here and pastes it into the agent host.</p>
+<p>A delegated caller (an agent acting for the user) may list the keys but not issue or revoke
+them, and may not log out or change the password: only the user manages their own account. Those
+routes answer <code>403</code> (<code>delegate_denied</code>), and so do switching and leaving a tenant below.</p>
 <p>Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers from the <a href="../../integrations/fastapi/">integration setup</a> —
 generated routes only validate the input DTO and run the operation through the

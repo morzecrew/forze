@@ -6577,7 +6577,9 @@ FastAPI edge), resolves the tenant, and hands FastMCP an <code>AccessToken</code
 key returns <code>None</code> → a clean <code>401</code>, while a misconfiguration fails loud.
 <code>AccessTokenIdentityResolver</code> reads that verified token and binds the principal,
 attaching the delegation <strong>actor</strong>. The engine then enforces the least-privilege
-intersection of the user's and the agent's grants.</p>
+intersection of the user's and the agent's grants: on an action guard, each must hold the
+permission; on a scope-guarded list, each must be permitted and the agent's row filters narrow
+the user's.</p>
 <p>The agent can also ride the key itself: a <strong>delegation key</strong> minted for a
 user→agent pair (<code>issue_api_key(identity, actor_principal_id=agent)</code>) carries that
 agent, so a user's ChatGPT and Claude connections attribute and revoke
