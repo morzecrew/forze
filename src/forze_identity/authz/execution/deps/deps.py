@@ -64,6 +64,8 @@ def _grant_resolver(ctx: ExecutionContext, shared: AuthzSharedServices) -> Authz
         invocation_tenant_id=tenant.tenant_id if tenant is not None else None,
         providers=shared.permission_providers,
         ctx=ctx,
+        provider_timeout=shared.permission_provider_timeout,
+        key_check=shared.provider_key_check,
     )
 
 

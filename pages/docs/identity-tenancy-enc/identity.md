@@ -126,17 +126,23 @@ class ActiveMembers:
 
 providers = (ActiveMembers(),)
 kernel = AuthzKernelConfig(permission_providers=providers)
-startup = permission_providers_lifecycle_step(providers)  # pass to build_runtime
+startup = permission_providers_lifecycle_step(providers)  # optional: fail at boot instead
 ```
 
 - **Gate on permissions, never on roles** — that is what lets a derived denial close a route.
 - A provider **reads and never writes**. It runs for the principal being decided; on a delegated
   call `AuthzBeforeAuthorize` decides each actor in turn, so the provider runs for each of them.
-- `keys` declares everything a provider may grant or deny. The startup step refuses to boot when
-  a declared key has no catalog row, so a typo is a boot error rather than a permanent denial.
+- `keys` declares everything a provider may grant or deny, as a `frozenset`. A declared key with
+  no catalog row refuses the first decision per tenant that runs the providers
+  (`authz_provider_unknown_keys`), so a typo cannot go unnoticed; register the startup step to
+  refuse at boot instead.
 - A provider that **raises denies every key it declares** — an outage must not become a bypass.
-  So does one whose result is not a `DerivedPermissions`, or names a key outside `keys`: a
-  misspelt denial would otherwise deny the misspelling and leave the real key granted.
+  So does one whose result is not a `DerivedPermissions`, or names a key outside `keys` (a
+  misspelt denial would otherwise deny the misspelling and leave the real key granted), and one
+  that misses `permission_provider_timeout` (2 s by default): every decision runs every provider,
+  so a hanging one would otherwise stall them all.
+- `MockDepsModule(permission_providers=...)` runs the same providers in the mock's decision, so a
+  mock-backed test sees a derived denial outrank a seeded grant.
 - Derived grants sit in `EffectiveGrants.derived`, attributed to their provider and apart from the
   catalog's `permissions`, so an administered grant can be told from a derived one.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Literal, final
 
 import attrs
@@ -31,6 +32,7 @@ from forze.application.contracts.authz import (
     DelegationDepKey,
     DelegationGrantDepKey,
     GrantQueryDepKey,
+    PermissionProvider,
     PrincipalRegistryDepKey,
     RoleAssignmentDepKey,
 )
@@ -150,6 +152,7 @@ from forze.application.execution import (
 from forze.application.integrations.authn import (
     LockoutConfig,
 )
+from forze.application.integrations.authz import DEFAULT_PROVIDER_TIMEOUT
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
@@ -237,6 +240,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockStream,
     ConfigurableMockTokenLifecycle,
     ConstantMockPortFactory,
+    MockAuthzDecisionFactory,
     mock_journal_txmanager,
     mock_strict_txmanager,
     mock_txmanager,
@@ -370,6 +374,16 @@ class MockDepsModule(DepsModule):
 
     strict_tx: bool = attrs.field(default=False)
     """Back-compat alias: when true, forces ``transactions="strict"``."""
+
+    permission_providers: tuple[PermissionProvider, ...] = attrs.field(
+        factory=tuple, converter=tuple
+    )
+    """Permission providers the mock's authz decision runs per request, as the identity
+    plane's ``AuthzKernelConfig(permission_providers=...)`` does: a derived denial outranks a
+    seeded grant, and a derived grant counts like one."""
+
+    permission_provider_timeout: timedelta | None = attrs.field(default=DEFAULT_PROVIDER_TIMEOUT)
+    """How long one provider may take before it counts as failed (its keys denied)."""
 
     authn_events: bool = attrs.field(default=False)
     """Register :class:`~forze_mock.adapters.events.RecordingAuthnEventSink`
@@ -590,7 +604,19 @@ class MockDepsModule(DepsModule):
                 MockDelegationGrantPort, authz_keys, state=self.state
             ),
             DelegationDepKey: route_stubs(MockDelegationPort, authz_keys, state=self.state),
-            AuthzDecisionDepKey: route_stubs(MockAuthzDecisionPort, authz_keys, state=self.state),
+            AuthzDecisionDepKey: (
+                {
+                    route: MockAuthzDecisionFactory(
+                        state=self.state,
+                        route=str(route),
+                        providers=self.permission_providers,
+                        provider_timeout=self.permission_provider_timeout,
+                    )
+                    for route in authz_keys
+                }
+                if self.permission_providers
+                else route_stubs(MockAuthzDecisionPort, authz_keys, state=self.state)
+            ),
             AuthzScopeDepKey: route_stubs(MockAuthzScopePort, authz_keys),
             # Simple, not configurable: both tenancy keys are ``SimpleDepPort`` s, so a
             # ``(ctx, spec)`` factory here raises the moment anything resolves them.

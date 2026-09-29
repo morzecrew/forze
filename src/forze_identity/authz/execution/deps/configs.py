@@ -1,13 +1,16 @@
 """Kernel configuration and shared services for authz dependency wiring."""
 
 from collections.abc import Iterable
+from datetime import timedelta
 from typing import final
 
 import attrs
 
 from forze.application.contracts.authz import PermissionProvider
+from forze.application.integrations.authz import DEFAULT_PROVIDER_TIMEOUT
 from forze.base.exceptions import exc
 
+from ...services.grants import ProviderKeyCheck
 from ...services.policy import (
     DEFAULT_OWNER_OVERRIDE_PERMISSIONS,
     AuthzPolicyService,
@@ -41,11 +44,24 @@ class AuthzKernelConfig:
         factory=tuple, converter=tuple
     )
     """Providers deriving permissions per decision from documents or configuration, run in
-    declaration order after the catalog grants. Their keys are checked against the catalog when
-    the runtime starts — see :func:`~forze_identity.authz.permission_providers_lifecycle_step`."""
+    declaration order after the catalog grants. Their keys are checked against the catalog once
+    per tenant on the first decision that runs them, and at boot when
+    :func:`~forze_identity.authz.permission_providers_lifecycle_step` is registered."""
+
+    permission_provider_timeout: timedelta | None = DEFAULT_PROVIDER_TIMEOUT
+    """How long one provider's ``derive`` may take; one that misses it has failed, and denies
+    the keys it declares. ``None`` removes the deadline."""
 
     def __attrs_post_init__(self) -> None:
         check_permission_providers(self.permission_providers)
+
+        timeout = self.permission_provider_timeout
+
+        if timeout is not None and timeout <= timedelta(0):
+            raise exc.configuration(
+                f"permission_provider_timeout must be positive, not {timeout}.",
+                code="authz_provider_declaration",
+            )
 
 
 def check_permission_providers(providers: Iterable[PermissionProvider]) -> None:
@@ -96,6 +112,11 @@ class AuthzSharedServices:
 
     permission_providers: tuple[PermissionProvider, ...] = ()
 
+    permission_provider_timeout: timedelta | None = DEFAULT_PROVIDER_TIMEOUT
+
+    provider_key_check: ProviderKeyCheck | None = None
+    """Shared by every resolver built from this graph, so the check runs once per tenant."""
+
 
 # ....................... #
 
@@ -112,4 +133,6 @@ def build_authz_shared_services(
             owner_override_permissions=kernel.owner_override_permissions,
         ),
         permission_providers=kernel.permission_providers,
+        permission_provider_timeout=kernel.permission_provider_timeout,
+        provider_key_check=ProviderKeyCheck(providers=kernel.permission_providers),
     )
