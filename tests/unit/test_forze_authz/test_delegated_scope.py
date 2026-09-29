@@ -43,6 +43,12 @@ pytestmark = pytest.mark.unit
 USER = AuthnIdentity(principal_id=uuid4())
 AGENT = AuthnIdentity(principal_id=uuid4())
 AS_AGENT_FOR_USER = AuthnIdentity(principal_id=USER.principal_id, actor=AGENT)
+INNER = AuthnIdentity(principal_id=uuid4())
+# INNER acts for AGENT, which acts for USER.
+THREE_HOPS = AuthnIdentity(
+    principal_id=USER.principal_id,
+    actor=AuthnIdentity(principal_id=AGENT.principal_id, actor=INNER),
+)
 
 
 class _ListArgs(BaseDTO):
@@ -170,6 +176,17 @@ class TestTheScopeWrap:
 
         assert caught.value.code == "delegation_not_granted"
 
+    async def test_each_hop_asks_for_the_principal_it_acts_for(self) -> None:
+        delegation = _Delegation(True)
+        spec = AuthzSpec(name="main", enforce_delegation_grant=True)
+
+        await _list(THREE_HOPS, _ScopeByPrincipal({}), spec=spec, delegation=delegation)
+
+        assert delegation.asked == [
+            (AGENT.principal_id, USER.principal_id),
+            (INNER.principal_id, AGENT.principal_id),
+        ]
+
     def test_an_enforced_grant_with_no_port_fails_when_the_hook_is_built(self) -> None:
         # Never open at runtime: the route cannot check what it declared it would.
         ctx = context_from_deps(Deps())
@@ -264,6 +281,29 @@ class TestTheSensitiveResourceCheck:
             await adapter.authorize_sensitive_resource(self._request(AS_AGENT_FOR_USER)) is granted
         )
         assert delegation.asked == [(AGENT.principal_id, USER.principal_id)]
+
+    async def test_an_inner_actor_needs_access_too(self) -> None:
+        both = {
+            USER.principal_id: _holding("invoice.read"),
+            AGENT.principal_id: _holding("invoice.read"),
+        }
+
+        assert not await _adapter(both).authorize_sensitive_resource(self._request(THREE_HOPS))
+
+    async def test_each_hop_asks_for_the_principal_it_acts_for(self) -> None:
+        every = {
+            principal.principal_id: _holding("invoice.read") for principal in (USER, AGENT, INNER)
+        }
+        delegation = _Delegation(True)
+        adapter = _adapter(
+            every, spec=AuthzSpec(name="main", enforce_delegation_grant=True), delegation=delegation
+        )
+
+        assert await adapter.authorize_sensitive_resource(self._request(THREE_HOPS))
+        assert delegation.asked == [
+            (AGENT.principal_id, USER.principal_id),
+            (INNER.principal_id, AGENT.principal_id),
+        ]
 
     def test_an_enforced_grant_with_no_port_is_refused_when_built(self) -> None:
         # Never open: the spec says a delegated call needs a recorded grant.
