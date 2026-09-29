@@ -21,6 +21,7 @@ from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import AwareDatetime as PydanticAwareDatetime
 from pydantic import (
+    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
@@ -181,6 +182,10 @@ class _StrId(BaseDTO):
     id: str
 
 
+class _ListId(BaseDTO):
+    id: list[int]
+
+
 class _OptionalRev(BaseDTO):
     id: int
     rev: int | None = None
@@ -201,6 +206,16 @@ class _Filter(BaseDTO):
     sku: str
     limit: int = 10
     tags: list[str] = []
+
+
+class _Repeated(BaseDTO):
+    tag_list: list[str] = Field(default_factory=list, alias="tag")
+    maybe: list[str] | None = None
+    code: list[str] = Field(default_factory=list, validation_alias="c")
+    picked: list[str] = Field(
+        default_factory=list, alias="pick", validation_alias=AliasChoices("pick", "p")
+    )
+    sku: str = ""
 
 
 class _AliasedFilter(BaseDTO):
@@ -453,6 +468,33 @@ class TestTheQueryRoute:
         assert from_query == from_body
         assert from_query["set"] == ["sku"]
 
+    async def test_each_parameter_is_read_as_fastapi_reads_it(self) -> None:
+        # A list read from its alias or validation alias, or behind an Optional, collects every
+        # value even when one is sent; a repeated scalar takes the last, as FastAPI's own
+        # model does.
+        async with _client(_one(_Repeated, build=query_endpoint, path="/one")) as client:
+            seen = (
+                await client.get(
+                    "/stock/one",
+                    params=[
+                        ("tag", "x"),
+                        ("maybe", "y"),
+                        ("c", "z"),
+                        ("pick", "w"),
+                        ("sku", "a"),
+                        ("sku", "b"),
+                    ],
+                )
+            ).json()
+
+        assert seen["dump"] == {
+            "tag_list": ["x"],
+            "maybe": ["y"],
+            "code": ["z"],
+            "picked": ["w"],
+            "sku": "b",
+        }
+
     async def test_a_parameter_sent_by_its_alias_counts_as_set(self) -> None:
         async with _client(_one(_AliasedFilter, build=query_endpoint, path="/one")) as client:
             seen = (await client.get("/stock/one", params={"skuCode": "a-1"})).json()
@@ -498,6 +540,12 @@ class TestTheIdRoutes:
 
         uuid_params = _app().openapi()["paths"]["/stock/{id}"]["get"]["parameters"]
         assert uuid_params[0]["schema"] == {"type": "string", "format": "uuid", "title": "Id"}
+
+    def test_an_id_that_is_not_one_value_is_refused(self) -> None:
+        with pytest.raises(CoreException, match=r"single path or query value") as caught:
+            _one(_ListId, build=id_endpoint, path="/{id}")
+
+        assert caught.value.kind.value == "configuration"
 
     async def test_an_optional_rev_is_published_and_read_as_optional(self) -> None:
         app = _one(_OptionalRev, build=id_rev_endpoint, path="/{id}")
