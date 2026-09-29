@@ -230,8 +230,14 @@ documentation value — a reader should never have to re-derive whether an end i
 | 4 | `ASSUMED` | A zero-length period is empty under `"[)"` and a point under `"[]"`, and is **not refused**: it is a real row, and refusing it pushes the case into every caller. |
 | 5 | `ASSUMED` | Mixed-bounds comparison is defined under the stricter reading of each endpoint rather than refused, so the predicate is total and symmetric. |
 | 6 | `LOCKED` | Overlap is asserted as an `Invariant` over a recorded history — `Callable[[History], list[Violation]]` — never as a `SystemInvariant`. The reducer set is closed at `SumOf \| CountAll` and overlap is pairwise. |
-| 7 | `ASSUMED` | Generic over `date` and `datetime`, so mixing grains is a type error rather than a runtime coercion. |
-| 8 | `OPEN` | Whether `mutual_exclusion` is reimplemented on this core, where the type lands (`forze.domain` vs `forze_kits.domain`, answered with 0054), and whether `bounds` carries two members or four. |
+| 7 | `ASSUMED` | Generic over `date` and `datetime`, so mixing grains is a type error rather than a runtime coercion. **Departed from by row 13.** |
+| 8 | `OPEN` | Whether `mutual_exclusion` is reimplemented on this core, where the type lands (`forze.domain` vs `forze_kits.domain`, answered with 0054), and whether `bounds` carries two members or four. **Decided by rows 9–11.** |
+| 9 | `ASSUMED` | Decides row 8's location: `Period` lands in `forze.base.primitives`, a third option the row did not list — a dependency-free value object that contracts, kits and the simulator all read cannot sit in `forze.domain` without an upward import or a copy. [RFC 0054](0054-civil-time.md) inherits the answer — see `logs/T-0067.md:5` (D-8, attempt 1). |
+| 10 | `ASSUMED` | Decides row 8's first question: `mutual_exclusion` stays as it is. It asks whether two holders overlapped in time over `float` fields under one fixed convention; the relationship is stated in both docstrings — see `logs/T-0067.md:17` (D-8, attempt 1). |
+| 11 | `ASSUMED` | Decides row 8's last question: `bounds` carries four members, since the predicate is symmetric in its endpoints and an exclusive start costs table rows rather than a branch — see `logs/T-0067.md:29` (D-8, attempt 1). |
+| 12 | `ASSUMED` | `no_overlapping_periods` reads recorded markers, as `mutual_exclusion` does, with the workload recording one per period it writes — the only shape row 6 allows — see `logs/T-0067.md:41` (unlisted, attempt 1). |
+| 13 | `ASSUMED` | Departs from row 7: the generic stays, and a mixed-grain pair is refused at construction with `validation`, since a type checker passes a `date`/`datetime` pair — see `logs/T-0067.md:53` (D-7, attempt 1). |
+| 14 | `ASSUMED` | `is_empty` is public, and the unused `is_open_ended` was dropped — see `logs/T-0067.md:79` and `logs/T-0067.md:67` (unlisted, attempt 1). |
 
 ## 12. Phasing
 
