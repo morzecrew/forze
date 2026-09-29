@@ -424,6 +424,13 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
         *,
         tenant_id: UUID | None = None,
     ) -> IssuedTokens:
+        # Mirrors the real lifecycle: no session for a delegated identity.
+        if identity.actor is not None:
+            raise exc.authorization(
+                "A delegated caller cannot mint a session for the principal it acts for",
+                code="delegate_denied",
+            )
+
         if self.eligibility is not None:
             await self.eligibility.require_authentication_allowed(identity.principal_id)
 

@@ -31,7 +31,11 @@ class PasswordLifecyclePort(Protocol):  # pragma: no cover
 
 
 class TokenLifecyclePort(Protocol):  # pragma: no cover
-    """Issue, refresh, and revoke OAuth2-style token pairs for an authenticated subject."""
+    """Issue, refresh, and revoke OAuth2-style token pairs for an authenticated subject.
+
+    ``issue_tokens`` refuses a delegated identity (``delegate_denied``): a token carries the
+    principal alone, so one minted for an agent acting for a user would drop the agent.
+    """
 
     def issue_tokens(
         self,

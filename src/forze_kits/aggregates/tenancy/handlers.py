@@ -15,10 +15,13 @@ from forze.application.contracts.tenancy import (
     TenantManagementPort,
     TenantResolverPort,
 )
-from forze.base.exceptions import exc
 
 from ..authn.dto import AuthnTokenResponseDTO
-from ..authn.handlers._utils import token_response_from_issued_tokens
+from ..authn.handlers._utils import (
+    require_identity,
+    require_own_identity,
+    token_response_from_issued_tokens,
+)
 from .dto import (
     TenantLeaveRequestDTO,
     TenantListDTO,
@@ -27,22 +30,6 @@ from .dto import (
 )
 
 # ----------------------- #
-
-
-def _require_identity(
-    resolver: "Callable[[], AuthnIdentity | None]",
-) -> AuthnIdentity:
-    """Pull the bound identity or raise the uniform 401 (self-service guard)."""
-
-    identity = resolver()
-
-    if identity is None:
-        raise exc.authentication("Authentication required", code="auth_required")
-
-    return identity
-
-
-# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -61,7 +48,7 @@ class ListTenants(Handler[None, TenantListDTO]):
     async def __call__(self, args: None) -> TenantListDTO:
         _ = args
 
-        identity = _require_identity(self.resolver)
+        identity = require_identity(self.resolver)
         current = self.current_tenant()
         current_id = current.tenant_id if current is not None else None
 
@@ -96,7 +83,7 @@ class SwitchTenant(Handler[TenantSwitchRequestDTO, AuthnTokenResponseDTO]):
     """Token lifecycle used to re-mint a token scoped to the selected tenant."""
 
     async def __call__(self, args: TenantSwitchRequestDTO) -> AuthnTokenResponseDTO:
-        identity = _require_identity(self.resolver)
+        identity = require_own_identity(self.resolver)
 
         # The selection is a *request*; the resolver is the authority. This raises
         # ``tenant_mismatch`` (not a member) / ``tenant_inactive`` — never trust the id alone.
@@ -133,6 +120,6 @@ class LeaveTenant(Handler[TenantLeaveRequestDTO, None]):
     """Tenant management port (membership revocation)."""
 
     async def __call__(self, args: TenantLeaveRequestDTO) -> None:
-        identity = _require_identity(self.resolver)
+        identity = require_own_identity(self.resolver)
 
         await self.tenant_management.detach_principal(identity.principal_id, args.id)

@@ -3,7 +3,8 @@
 An agent acting for a user holds the intersection of the two. Minting an API key for the user
 would hand it a credential that authenticates as the user alone, with no actor, and that escapes
 the intersection for good; revoking the user's keys or sessions, or changing the password, acts
-on the user's own standing. Each self-service handler refuses a delegated identity.
+on the user's own standing. Switching tenant mints a token the same way, and leaving a tenant
+drops the user's membership. Each self-service handler refuses a delegated identity.
 """
 
 from __future__ import annotations
@@ -26,6 +27,12 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnListApiKeys,
     AuthnLogout,
     AuthnRevokeApiKey,
+)
+from forze_kits.aggregates.tenancy import (
+    LeaveTenant,
+    SwitchTenant,
+    TenantLeaveRequestDTO,
+    TenantSwitchRequestDTO,
 )
 
 pytestmark = pytest.mark.unit
@@ -72,10 +79,21 @@ def _handlers(port: _Recorder) -> dict[str, tuple[Any, Any]]:
                 current_password="old-secret", new_password="new-secret-1"
             ),
         ),
+        "switch-tenant": (
+            SwitchTenant(resolver=resolve, tenant_resolver=port, token_lifecycle=port),  # type: ignore[arg-type]
+            TenantSwitchRequestDTO(id=uuid4()),
+        ),
+        "leave-tenant": (
+            LeaveTenant(resolver=resolve, tenant_management=port),  # type: ignore[arg-type]
+            TenantLeaveRequestDTO(id=uuid4()),
+        ),
     }
 
 
-@pytest.mark.parametrize("name", ["issue", "revoke", "logout", "change-password"])
+@pytest.mark.parametrize(
+    "name",
+    ["issue", "revoke", "logout", "change-password", "switch-tenant", "leave-tenant"],
+)
 async def test_a_delegated_caller_is_refused_before_the_port(name: str) -> None:
     port = _Recorder()
     handler, args = _handlers(port)[name]
