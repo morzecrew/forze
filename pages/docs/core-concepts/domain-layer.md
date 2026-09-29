@@ -170,9 +170,11 @@ entirely (Samoa's 30 December 2011) is an empty `Period`, and `spanned_local_day
 Days tile: where a zone repeats the hours around a midnight, the repeat belongs to the new day,
 so a range split by `spanned_local_days` and `local_day_bounds` keeps all its time, once. Durations are
 computed on instants only: two wall-clock times across a transition are off by the shift, and the
-wrong answer is a plausible number. `AwareDatetime` is for your boundary models: a naive value is
-a validation error (`naive_datetime`) naming the field. Bind `fold` where the UI knows which
-occurrence the user meant; otherwise expect a `dst_ambiguous` on one autumn night a year.
+wrong answer is a plausible number. An answer that would fall outside years 1 to 9999 is refused
+(`civil_time_out_of_range`) rather than raising from inside a conversion. `AwareDatetime` is for
+your boundary models: a naive value is a validation error (`naive_datetime`) naming the field.
+Bind `fold` where the UI knows which occurrence the user meant; otherwise expect a
+`dst_ambiguous` on one autumn night a year.
 
 These sit beside two other time-zone paths the framework already has — the analytics
 time-bucketing and the durable scheduler's cron — each shaped for its own plane. Use these for

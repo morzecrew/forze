@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Wall-clock times convert to instants without guessing.** `CivilZone`, `to_instant`, `local_day_bounds`, `month_bounds`, `spanned_local_days` and `elapsed_minutes` in `forze.base.primitives` refuse a DST-repeated time without `fold` and a skipped one always; `AwareDatetime` refuses naive input at a boundary.
+- **Wall-clock times convert to instants without guessing.** `CivilZone`, `to_instant`, `local_day_bounds`, `month_bounds`, `spanned_local_days` and `elapsed_minutes` in `forze.base.primitives` refuse a DST-repeated time without `fold`, a skipped one, and one outside years 1–9999; `AwareDatetime` refuses naive input.
 
 - **Permissions can be derived from state per decision.** A `PermissionProvider` (declared on `AuthzKernelConfig(permission_providers=…)`) grants or denies keys from documents or config; a denial outranks every catalog binding, and `permission_providers_lifecycle_step` refuses to boot on a key the catalog lacks.
 
