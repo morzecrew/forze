@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A delegated caller cannot manage the account it acts for.** Issuing or revoking an API key, minting a session, logging out, changing the password, and switching or leaving a tenant refuse a delegated identity (`delegate_denied`), so an agent cannot get a credential that authenticates as the user alone.
 
+- **Work started by a delegated caller keeps its delegation.** Temporal headers and the Inngest `_forze` envelope carry the actor chain, so a workflow or function runs as the agent acting for the user, not as the user alone.
+
 ## [0.9.0] - 2026-09-28
 
 ### Added

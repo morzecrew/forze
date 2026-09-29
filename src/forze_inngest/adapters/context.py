@@ -19,6 +19,7 @@ EXEC_ID_KEY: Final[str] = "execution_id"
 CORR_ID_KEY: Final[str] = "correlation_id"
 CAUS_ID_KEY: Final[str] = "causation_id"
 PRINCIPAL_ID_KEY: Final[str] = "principal_id"
+ACTOR_IDS_KEY: Final[str] = "actor_ids"
 TENANT_ID_KEY: Final[str] = "tenant_id"
 
 
@@ -57,6 +58,17 @@ def merge_envelope(
 
     if authn is not None:
         envelope[PRINCIPAL_ID_KEY] = str(authn.principal_id)
+
+        # Dropping the actor would run an agent's event as the user alone.
+        actor_ids: list[str] = []
+        actor = authn.actor
+
+        while actor is not None:
+            actor_ids.append(str(actor.principal_id))
+            actor = actor.actor
+
+        if actor_ids:
+            envelope[ACTOR_IDS_KEY] = actor_ids
 
     if tenant is not None:
         envelope[TENANT_ID_KEY] = str(tenant.tenant_id)
@@ -99,7 +111,12 @@ def split_envelope(data: JsonDict) -> tuple[InngestDecodedContext, JsonDict]:
         )
 
     if principal_raw := raw.get(PRINCIPAL_ID_KEY):
-        authn = AuthnIdentity(principal_id=UUID(str(principal_raw)))
+        actor = None
+
+        for actor_raw in reversed(cast(list[object], raw.get(ACTOR_IDS_KEY) or [])):
+            actor = AuthnIdentity(principal_id=UUID(str(actor_raw)), actor=actor)
+
+        authn = AuthnIdentity(principal_id=UUID(str(principal_raw)), actor=actor)
 
     if tenant_raw := raw.get(TENANT_ID_KEY):
         tenant = TenantIdentity(tenant_id=UUID(str(tenant_raw)))

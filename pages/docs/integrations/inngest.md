@@ -93,5 +93,6 @@ shutdown window.
 - A function binding maps a `DurableFunctionSpec` to either an operation
   (`for_registry_operation`) or a handler factory — set exactly one.
 - The execution-context metadata travels in a `_forze` envelope and is restored
-  in the worker, so functions run with the right identity/tenant.
+  in the worker, so functions run with the right identity/tenant. A delegated identity keeps
+  its actor chain.
 - Steps resolve only inside a running function.

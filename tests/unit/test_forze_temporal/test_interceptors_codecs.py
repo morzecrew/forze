@@ -138,3 +138,31 @@ class TestTemporalContextCodecDecode:
         assert metadata_out.execution_id != eid
         assert metadata_out.correlation_id == cid
         assert metadata_out.causation_id == eid
+
+
+class TestTheActorChain:
+    """A workflow started by an agent acting for a user runs as that delegation, not as the user."""
+
+    def _round_trip(self, identity: AuthnIdentity) -> AuthnIdentity | None:
+        codec = TemporalContextCodec()
+        decoded = codec.decode(codec.encode(authn=identity))
+        _, bound, _ = TemporalContextBinder().bind(decoded)
+        return bound
+
+    def test_one_hop_survives(self) -> None:
+        identity = AuthnIdentity(principal_id=uuid7(), actor=AuthnIdentity(principal_id=uuid7()))
+
+        assert self._round_trip(identity) == identity
+
+    def test_every_hop_survives_in_order(self) -> None:
+        identity = AuthnIdentity(
+            principal_id=uuid7(),
+            actor=AuthnIdentity(principal_id=uuid7(), actor=AuthnIdentity(principal_id=uuid7())),
+        )
+
+        assert self._round_trip(identity) == identity
+
+    def test_a_direct_call_stays_direct(self) -> None:
+        identity = AuthnIdentity(principal_id=uuid7())
+
+        assert self._round_trip(identity) == identity
