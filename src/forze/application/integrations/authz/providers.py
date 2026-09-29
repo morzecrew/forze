@@ -122,7 +122,15 @@ async def derive_permissions(
 
             stray = (result.granted | result.denied) - provider.keys
 
-        except Exception as error:
+        except (Exception, asyncio.CancelledError) as error:
+            # A cancellation aimed at this task is the caller's and propagates; one raised from
+            # inside the provider, by an inner task it awaited, is the provider failing.
+            if isinstance(error, asyncio.CancelledError):
+                task = asyncio.current_task()
+
+                if task is None or task.cancelling():
+                    raise
+
             logger.error(
                 "authz.permission_provider_failed",
                 provider=provider.name,

@@ -115,6 +115,32 @@ class TestTheDeadline:
 
         assert {(ref.permission_key, ref.denied) for ref in derived} == {("ledger.write", True)}
 
+    async def test_a_cancellation_from_inside_the_provider_denies(self) -> None:
+        # An inner task the provider awaited was cancelled: that is the provider failing, not
+        # the decision being cancelled.
+        class _InnerCancelled:
+            name = "members"
+            keys = frozenset({"ledger.write"})
+
+            async def derive(self, principal_id: UUID, ctx: Any) -> DerivedPermissions:
+                inner = asyncio.ensure_future(asyncio.sleep(5))
+                inner.cancel()
+                await inner
+                return DerivedPermissions(granted=self.keys)
+
+        derived = await derive_permissions((_InnerCancelled(),), PRINCIPAL, object())  # type: ignore[arg-type]
+
+        assert {(ref.permission_key, ref.denied) for ref in derived} == {("ledger.write", True)}
+
+    async def test_cancelling_the_decision_still_cancels_it(self) -> None:
+        slow = _Provider(name="members", keys=frozenset({"ledger.write"}), delay=5)
+        deciding = asyncio.ensure_future(derive_permissions((slow,), PRINCIPAL, object()))  # type: ignore[arg-type]
+        await asyncio.sleep(0.01)
+        deciding.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await deciding
+
     @pytest.mark.parametrize("timeout", [timedelta(0), timedelta(seconds=-1)])
     def test_a_deadline_is_positive(self, timeout: timedelta) -> None:
         with pytest.raises(CoreException):
