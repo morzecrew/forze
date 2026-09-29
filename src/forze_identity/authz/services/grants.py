@@ -390,11 +390,12 @@ async def check_declared_keys(
 
 @attrs.define(slots=True, kw_only=True)
 class ProviderKeyCheck:
-    """:func:`check_declared_keys`, run once per tenant per process on the first decision.
+    """:func:`check_declared_keys`, run per tenant per process until it first succeeds.
 
     The lifecycle step fails at boot, but only where a deployment registers it; this makes the
     check impossible to leave out. A failure is not remembered, so every decision refuses until
-    the keys are fixed.
+    the keys are fixed. First decisions that overlap may each run the check: it is a read, so
+    running it twice only costs a query, where a lock would serialize them.
     """
 
     providers: tuple[PermissionProvider, ...]
