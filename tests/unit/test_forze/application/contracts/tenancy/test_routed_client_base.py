@@ -134,3 +134,31 @@ async def test_cached_tenant_ids_exposes_the_pool_snapshot() -> None:
 
   await routed.evict_tenant(tid)
   assert routed.cached_tenant_ids() == ()
+
+
+@pytest.mark.asyncio
+async def test_client_scope_can_name_a_tenant_other_than_the_bound_one() -> None:
+  # A caller acting for a tenant it is not bound to — a provisioner onboarding it — must
+  # reach that tenant's backend, whatever the tenant provider answers.
+  bound, named = uuid4(), uuid4()
+  made_for: list[object] = []
+
+  @attrs.define(slots=True, kw_only=True)
+  class _Routed(RoutedTenantClientBase[_Client]):
+      async def resolve_credentials(self, tenant_id):
+          return "creds"
+
+      async def initialize_client(self, tenant_id, creds):
+          made_for.append(tenant_id)
+          return _Client()
+
+      async def ensure_access_fingerprint(self, tenant_id) -> None:
+          self._pool.set_fingerprint(tenant_id, "fp")
+
+  routed = _Routed(secrets=MagicMock(), secret_ref_for_tenant={}, tenant_provider=lambda: bound)
+  await routed.startup()
+
+  async with routed.client_scope(named):
+      pass
+
+  assert made_for == [named]

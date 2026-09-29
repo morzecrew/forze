@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
@@ -14,10 +16,26 @@ from forze.application.integrations.storage import ObjectStorageTenantProvisione
 
 
 class _FakeClient:
+    """Like the real clients, refuses an operation outside an open ``client()`` scope."""
+
     def __init__(self) -> None:
         self.ensured: list[str] = []
+        self.scoped = False
+
+    @asynccontextmanager
+    async def client(self) -> AsyncIterator[object]:
+        self.scoped = True
+
+        try:
+            yield object()
+
+        finally:
+            self.scoped = False
 
     async def ensure_bucket(self, bucket: str) -> None:
+        if not self.scoped:
+            raise RuntimeError("S3 client is not initialized")
+
         self.ensured.append(bucket)
 
     def __getattr__(self, _name: str) -> Any:  # pragma: no cover - unused client surface
