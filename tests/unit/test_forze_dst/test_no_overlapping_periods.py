@@ -13,6 +13,7 @@ import subprocess
 import sys
 import textwrap
 from datetime import UTC, date, datetime, timedelta, tzinfo
+from zoneinfo import ZoneInfo
 
 from forze_dst.invariants import no_overlapping_periods
 from forze_dst.oracle import Event, History
@@ -173,6 +174,82 @@ class TestWhatItCatches:
         )
 
         assert len(violations) == 1
+
+    def test_an_overlap_across_a_repeated_hour_is_found(self) -> None:
+        # Both shifts carry Berlin's zone through its repeated hour on 25 Oct 2026. In fact the
+        # first runs 00:40-01:20 UTC and the second 01:10-01:30 UTC, so they overlap. On the wall
+        # clock the second starts first (02:10 before 02:40), and ordering by it would retire
+        # that shift before the first one reached it.
+        berlin = ZoneInfo("Europe/Berlin")
+        first = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 40, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 20, fold=1, tzinfo=berlin),
+        )
+        second = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 10, fold=1, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=berlin),
+        )
+
+        [violation] = _CHECK(_history(first, second))
+        assert violation.message.startswith("overlapping periods")
+
+    def test_a_period_is_not_retired_by_the_clock(self) -> None:
+        # Ordered by instant the two are in order, and the first still reaches past the second's
+        # start (01:40 against 00:50 UTC). On the clock it ends at 02:40, before the second
+        # starts at 02:50, and would be retired unchecked.
+        berlin = ZoneInfo("Europe/Berlin")
+        first = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 20, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 40, fold=1, tzinfo=berlin),
+        )
+        second = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 50, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 3, 0, tzinfo=berlin),
+        )
+
+        assert len(_CHECK(_history(first, second))) == 1
+
+    def test_every_pair_is_found_whatever_the_clock_order(self) -> None:
+        # In fact: early 00:52-02:10, middle 01:05-01:45, late 01:50-01:55 UTC — early overlaps
+        # both. On the clock middle starts first (02:05), then late (02:50), then early (02:52),
+        # and in that order middle is retired when late starts, before early reaches it.
+        berlin = ZoneInfo("Europe/Berlin")
+        middle = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 5, fold=1, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 45, fold=1, tzinfo=berlin),
+        )
+        late = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 50, fold=1, tzinfo=berlin),
+            datetime(2026, 10, 25, 2, 55, fold=1, tzinfo=berlin),
+        )
+        early = _shift(
+            "ann",
+            datetime(2026, 10, 25, 2, 52, fold=0, tzinfo=berlin),
+            datetime(2026, 10, 25, 3, 10, tzinfo=berlin),
+        )
+
+        assert len(_CHECK(_history(middle, late, early))) == 2
+
+    def test_an_end_of_time_in_a_western_zone_does_not_hide_an_overlap(self) -> None:
+        # Converted to UTC, datetime.max in New York is past year 9999; one owner's marker must not
+        # cost another owner the check.
+        new_york = ZoneInfo("America/New_York")
+        forever = _shift(
+            "bob", datetime(2026, 1, 1, tzinfo=UTC), datetime.max.replace(tzinfo=new_york)
+        )
+        overlap = (
+            _shift("ann", datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 3, 1, tzinfo=UTC)),
+            _shift("ann", datetime(2026, 2, 1, tzinfo=UTC), datetime(2026, 4, 1, tzinfo=UTC)),
+        )
+
+        [violation] = _CHECK(_history(forever, *overlap))
+        assert "ann" in violation.message
 
 
 class TestWhatItMustNotCatch:
