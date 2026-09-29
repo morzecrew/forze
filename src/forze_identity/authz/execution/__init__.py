@@ -11,6 +11,7 @@ from .deps import (
     ConfigurableRoleAssignment,
     build_authz_shared_services,
 )
+from .providers import permission_providers_lifecycle_step
 
 # ----------------------- #
 
@@ -26,4 +27,5 @@ __all__ = [
     "ConfigurablePrincipalRegistry",
     "ConfigurableRoleAssignment",
     "build_authz_shared_services",
+    "permission_providers_lifecycle_step",
 ]
