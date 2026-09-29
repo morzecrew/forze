@@ -16,7 +16,8 @@ from uuid import UUID, uuid4
 import attrs
 import pytest
 
-from forze.application.contracts.authz import DerivedPermissions
+from forze.application.contracts.authz import AuthzScope, DerivedPermissions
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException
 from forze.testing import context_from_modules
 from forze_identity.authz import AuthzKernelConfig
@@ -119,6 +120,56 @@ class TestTheFirstUseKeyCheck:
 
         assert len(checks) == 1
         assert member.calls == 3
+
+    async def test_each_tenant_is_checked_on_a_resolver_built_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The runtime caches the resolver for the whole process, so the tenant it was built
+        # under says nothing about the tenant a later decision runs in.
+        from forze_identity.authz.services import grants as module
+
+        checked_in: list[object] = []
+        ctx = await _ctx_with_catalog("ledger.write")
+
+        async def _recording(query: Any, providers: Any) -> None:
+            checked_in.append(ctx.inv_ctx.get_tenant())
+
+        monkeypatch.setattr(module, "check_declared_keys", _recording)
+        member = _Provider(name="members", keys=frozenset({"ledger.write"}))
+        shared = build_authz_shared_services(AuthzKernelConfig(permission_providers=(member,)))
+        first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+
+        with ctx.inv_ctx.bind_identity(tenant=first):
+            resolver = _grant_resolver(ctx, shared)
+            await resolver.resolve_effective_grants(PRINCIPAL)
+
+        with ctx.inv_ctx.bind_identity(tenant=second):
+            await resolver.resolve_effective_grants(PRINCIPAL)
+
+        assert checked_in == [first, second]
+
+    async def test_a_scope_naming_the_bound_tenant_passes_on_a_resolver_built_once(
+        self,
+    ) -> None:
+        ctx = await _ctx_with_catalog()
+        shared = build_authz_shared_services(AuthzKernelConfig())
+        first, second = TenantIdentity(tenant_id=uuid4()), TenantIdentity(tenant_id=uuid4())
+
+        with ctx.inv_ctx.bind_identity(tenant=first):
+            resolver = _grant_resolver(ctx, shared)
+
+        with ctx.inv_ctx.bind_identity(tenant=second):
+            await resolver.resolve_effective_grants(
+                PRINCIPAL, scope=AuthzScope(tenant_id=second.tenant_id)
+            )
+
+            # And a scope naming the tenant it was built under is the mismatch now.
+            with pytest.raises(CoreException) as caught:
+                await resolver.resolve_effective_grants(
+                    PRINCIPAL, scope=AuthzScope(tenant_id=first.tenant_id)
+                )
+
+        assert caught.value.code == "authz.scope_tenant_mismatch"
 
     async def test_a_failed_check_is_not_remembered(self) -> None:
         typo = _Provider(name="members", keys=frozenset({"ledger.write"}))

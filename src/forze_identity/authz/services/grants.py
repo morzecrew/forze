@@ -107,11 +107,12 @@ class AuthzGrantResolver:
     deps: AuthzGrantResolverDeps
 
     invocation_tenant_id: UUID | None = None
-    """The tenant bound on the invocation context, when known (the tenant the storage
-    layer auto-scopes binding queries to). Used only as a defense-in-depth cross-check:
-    a caller-supplied :class:`AuthzScope` naming a *different* tenant is refused rather
-    than silently resolved against the ambient tenant's bindings. ``None`` disables the
-    check (the historical behavior, and correct for untenanted / single-tenant use)."""
+    """The tenant bound on the invocation context, for a resolver built without :attr:`ctx`
+    (the tenant the storage layer auto-scopes binding queries to). Used only as a
+    defense-in-depth cross-check: a caller-supplied :class:`AuthzScope` naming a *different*
+    tenant is refused rather than silently resolved against the ambient tenant's bindings.
+    ``None`` disables the check (the historical behavior, and correct for untenanted /
+    single-tenant use). With :attr:`ctx`, the tenant is read from it on every call instead."""
 
     providers: tuple[PermissionProvider, ...] = ()
     """Permission providers run after the catalog grants, in declaration order."""
@@ -124,6 +125,18 @@ class AuthzGrantResolver:
 
     key_check: "ProviderKeyCheck | None" = None
     """Checks the providers' declared keys against the catalog once per tenant."""
+
+    # ....................... #
+
+    def _invocation_tenant(self) -> UUID | None:
+        # Read on every call: the runtime caches a built resolver for the whole process, so
+        # the tenant bound when it was built is only the first request's.
+        if self.ctx is None:
+            return self.invocation_tenant_id
+
+        tenant = self.ctx.inv_ctx.get_tenant()
+
+        return tenant.tenant_id if tenant is not None else None
 
     # ....................... #
 
@@ -141,7 +154,9 @@ class AuthzGrantResolver:
         if scope is None or scope.tenant_id is None:
             return
 
-        if self.invocation_tenant_id is not None and scope.tenant_id != self.invocation_tenant_id:
+        invocation_tenant_id = self._invocation_tenant()
+
+        if invocation_tenant_id is not None and scope.tenant_id != invocation_tenant_id:
             raise exc.internal(
                 "AuthzScope.tenant_id disagrees with the invocation tenant; refusing to "
                 "resolve grants against a different tenant's bindings.",
@@ -267,7 +282,7 @@ class AuthzGrantResolver:
 
     async def _derive(self, principal_id: UUID) -> frozenset[DerivedPermissionRef]:
         if self.providers and self.key_check is not None:
-            await self.key_check.ensure(self.deps.permission_qry, self.invocation_tenant_id)
+            await self.key_check.ensure(self.deps.permission_qry, self._invocation_tenant())
 
         return await derive_permissions(
             self.providers, principal_id, self.ctx, timeout=self.provider_timeout
