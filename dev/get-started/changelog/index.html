@@ -8947,7 +8947,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Wall-clock times convert to instants without guessing.</strong> <code>CivilZone</code>, <code>to_instant</code>, <code>local_day_bounds</code>, <code>month_bounds</code>, <code>spanned_local_days</code> and <code>elapsed_minutes</code> in <code>forze.base.primitives</code>: conversions refuse a repeated time without <code>fold</code>, a skipped one, or a result past years 1–9999; <code>AwareDatetime</code> refuses naive.</p>
 </li>
 <li>
-<p><strong>Permissions can be derived from state per decision.</strong> A <code>PermissionProvider</code> (declared on <code>AuthzKernelConfig(permission_providers=…)</code>) grants or denies keys from documents or config; a denial outranks every catalog binding, and <code>permission_providers_lifecycle_step</code> refuses to boot on a key the catalog lacks.</p>
+<p><strong>Permissions can be derived from state per decision.</strong> A <code>PermissionProvider</code> (declared on <code>AuthzKernelConfig(permission_providers=…)</code>) grants or denies keys from documents or config. A denial outranks every catalog binding, an unknown key is refused, and a late provider denies its keys; the mock decides with them.</p>
 </li>
 <li>
 <p><strong>A confirmation can refuse when its preview has changed.</strong> <code>PreviewBinding(name=…, projector=…, exclude=…)</code> returns a fingerprinted preview with <code>reviewed()</code>, and <code>bind()</code> makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with <code>preview_changed</code> on a mismatch.</p>
@@ -8962,6 +8962,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A multi-tenant app no longer refuses authorization in every tenant but the first.</strong> Grant resolution compared a requested tenant with the tenant bound when its port was first built, then cached for the process, so other tenants' decisions failed with <code>authz.scope_tenant_mismatch</code>.</p>
+</li>
 <li>
 <p><strong>Sorting and keyset paging order aware datetimes by instant.</strong> The shared comparator ordered datetimes by their ISO text, so different UTC offsets, or a repeated hour, sorted out of order in the mock and the search merges. A cursor keeps its ISO text and compares as the instant it names.</p>
 </li>

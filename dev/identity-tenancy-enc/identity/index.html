@@ -6776,17 +6776,25 @@ and the policy unions them with catalog grants:</p>
 
 <span class="n">providers</span> <span class="o">=</span> <span class="p">(</span><span class="n">ActiveMembers</span><span class="p">(),)</span>
 <span class="n">kernel</span> <span class="o">=</span> <span class="n">AuthzKernelConfig</span><span class="p">(</span><span class="n">permission_providers</span><span class="o">=</span><span class="n">providers</span><span class="p">)</span>
-<span class="n">startup</span> <span class="o">=</span> <span class="n">permission_providers_lifecycle_step</span><span class="p">(</span><span class="n">providers</span><span class="p">)</span>  <span class="c1"># pass to build_runtime</span>
+<span class="n">startup</span> <span class="o">=</span> <span class="n">permission_providers_lifecycle_step</span><span class="p">(</span><span class="n">providers</span><span class="p">)</span>  <span class="c1"># optional: fail at boot instead</span>
 </code></pre></div>
 <ul>
 <li><strong>Gate on permissions, never on roles</strong> — that is what lets a derived denial close a route.</li>
 <li>A provider <strong>reads and never writes</strong>. It runs for the principal being decided; on a delegated
   call <code>AuthzBeforeAuthorize</code> decides each actor in turn, so the provider runs for each of them.</li>
-<li><code>keys</code> declares everything a provider may grant or deny. The startup step refuses to boot when
-  a declared key has no catalog row, so a typo is a boot error rather than a permanent denial.</li>
+<li><code>keys</code> declares everything a provider may grant or deny, as a <code>frozenset</code>. A declared key with
+  no catalog row refuses the first decision per tenant that runs the providers
+  (<code>authz_provider_unknown_keys</code>), so a typo cannot go unnoticed; register the startup step to
+  refuse at boot instead.</li>
 <li>A provider that <strong>raises denies every key it declares</strong> — an outage must not become a bypass.
-  So does one whose result is not a <code>DerivedPermissions</code>, or names a key outside <code>keys</code>: a
-  misspelt denial would otherwise deny the misspelling and leave the real key granted.</li>
+  So does one whose result is not a <code>DerivedPermissions</code>, or names a key outside <code>keys</code> (a
+  misspelt denial would otherwise deny the misspelling and leave the real key granted), and one
+  that misses <code>permission_provider_timeout</code> (2 s by default): every decision runs every provider,
+  so a hanging one would otherwise stall them all.</li>
+<li><code>MockDepsModule(permission_providers=...)</code> runs the same providers in the mock's decision, so a
+  mock-backed test sees a derived denial outrank a seeded grant, and refuses a declaration the
+  kernel config would. The mock has no catalog to check keys against, and its scope and grant
+  query ports do not run providers.</li>
 <li>Derived grants sit in <code>EffectiveGrants.derived</code>, attributed to their provider and apart from the
   catalog's <code>permissions</code>, so an administered grant can be told from a derived one.</li>
 </ul>
