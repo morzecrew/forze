@@ -7,16 +7,18 @@ Sphinx roles reached the rendered docs verbatim.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Annotated, Any
 
 import pytest
 
 pytest.importorskip("fastapi")
 
-from fastapi import FastAPI, Query
-from pydantic import BaseModel
+from fastapi import Body, FastAPI, Query
+from pydantic import BaseModel, Field
 
 from forze.application.contracts.authn import AuthnSpec
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO
 from forze_fastapi import apply_openapi_conventions
 from forze_fastapi.openapi import _markdown  # pyright: ignore[reportPrivateUsage]
@@ -29,7 +31,7 @@ from forze_kits.dto.paginated import Pagination
 
 pytestmark = pytest.mark.unit
 
-_ENVELOPE = {"$ref": "#/components/schemas/ErrorResponse"}
+_ENVELOPE = {"$ref": "#/components/schemas/ForzeErrorResponse"}
 
 
 class _Order(BaseDTO):
@@ -48,6 +50,21 @@ class _Custom422(BaseModel):
 
 class _Tagged(BaseDTO):
     meta: dict[str, str] = {"description": "keep ``this``"}
+
+
+class ErrorResponse(BaseModel):
+    """The app's own error body, sharing the envelope's common name."""
+
+    code: int
+    message: str
+
+
+class _DataNamed(BaseModel):
+    example: str = Field(description="The ``example``.")
+    default: str = Field(description="The ``default``.")
+    enum: str = Field(description="The ``enum``.")
+    const: str = Field(description="The ``const``.")
+    examples: str = Field(description="The ``examples``.")
 
 
 def _app() -> FastAPI:
@@ -96,7 +113,7 @@ class TestTheErrorEnvelope:
             assert _schema_ref(response) == _ENVELOPE
             assert "X-Error-Code" in response["headers"]
 
-        envelope = schema["components"]["schemas"]["ErrorResponse"]
+        envelope = schema["components"]["schemas"]["ForzeErrorResponse"]
         assert envelope["required"] == ["detail"]
         assert set(envelope["properties"]) == {"detail", "context"}
 
@@ -116,6 +133,38 @@ class TestTheErrorEnvelope:
         assert _schema_ref(_response(schema, "/custom", "get", "422")) == {
             "$ref": "#/components/schemas/_Custom422"
         }
+
+    def test_an_apps_own_error_response_model_is_untouched(self) -> None:
+        app = _app()
+
+        @app.get("/mine", responses={400: {"model": ErrorResponse}})
+        async def mine(n: int) -> int:
+            return n
+
+        before = deepcopy(FastAPI.openapi(app)["components"]["schemas"]["ErrorResponse"])
+        app.openapi_schema = None
+        apply_openapi_conventions(app)
+        schema = app.openapi()
+
+        assert schema["components"]["schemas"]["ErrorResponse"] == before
+        assert _schema_ref(_response(schema, "/mine", "get", "400")) == {
+            "$ref": "#/components/schemas/ErrorResponse"
+        }
+
+    def test_a_different_body_under_the_envelopes_name_is_refused(self) -> None:
+        app = _app()
+        ForzeErrorResponse = type("ForzeErrorResponse", (BaseModel,), {"__annotations__": {"x": int}})
+
+        @app.get("/clash", responses={400: {"model": ForzeErrorResponse}})
+        async def clash(n: int) -> int:
+            return n
+
+        apply_openapi_conventions(app)
+
+        with pytest.raises(CoreException) as caught:
+            app.openapi()
+
+        assert caught.value.kind.value == "configuration"
 
     def test_fastapis_schemas_go_once_unreferenced(self) -> None:
         app = _app()
@@ -158,6 +207,24 @@ class TestApplying:
 
         assert first is second
         assert _schema_ref(_response(second, "/orders", "post", "422")) == _ENVELOPE
+
+    def test_applied_last_it_converts_what_security_added(self) -> None:
+        app = _app()
+        requirement = AuthnRequirement(
+            ingress=(
+                HeaderTokenAuthn(
+                    authn_spec=AuthnSpec(name="api", enabled_methods=frozenset({"token"})),
+                    header_name="X-Key",
+                    description="A key per :class:`~a.Key`.",
+                ),
+            ),
+        )
+        apply_openapi_security(app, requirement)
+        apply_openapi_conventions(app)
+
+        [scheme] = app.openapi()["components"]["securitySchemes"].values()
+
+        assert scheme["description"] == "A key per `Key`."
 
     @pytest.mark.parametrize("security_first", [True, False])
     def test_composes_with_security_in_either_order(self, security_first: bool) -> None:
@@ -209,6 +276,36 @@ class TestMarkupInTheSchema:
         meta = app.openapi()["components"]["schemas"]["_Tagged"]["properties"]["meta"]
 
         assert meta["default"] == {"description": "keep ``this``"}
+
+    def test_fields_named_like_data_keys_are_prose(self) -> None:
+        app = FastAPI()
+
+        @app.post("/named")
+        async def named(body: _DataNamed) -> None:
+            return None
+
+        apply_openapi_conventions(app)
+        properties = app.openapi()["components"]["schemas"]["_DataNamed"]["properties"]
+
+        for name in ("example", "default", "enum", "const", "examples"):
+            assert properties[name]["description"] == f"The `{name}`."
+
+    def test_example_objects_have_prose_and_data(self) -> None:
+        app = FastAPI()
+        value = {"note": "keep ``this``"}
+        examples: dict[str, Any] = {
+            "one": {"summary": "Uses ``x``", "description": "See :class:`~a.B`.", "value": value}
+        }
+
+        @app.post("/ex")
+        async def ex(body: _Tagged = Body(openapi_examples=examples)) -> None:  # noqa: B008
+            return None
+
+        apply_openapi_conventions(app)
+        media = app.openapi()["paths"]["/ex"]["post"]["requestBody"]["content"]
+        example = media["application/json"]["examples"]["one"]
+
+        assert example == {"summary": "Uses `x`", "description": "See `B`.", "value": value}
 
     def test_a_forze_dto_comes_out_clean(self) -> None:
         app = _app()
@@ -269,16 +366,82 @@ Outro."""
             "Intro.\n\n> **Note:** Careful with `x`.\n\n> **Warning:** Watch out.\n\nOutro."
         )
 
-    def test_other_directives_are_dropped(self) -> None:
+    def test_unknown_directives_are_dropped(self) -> None:
         text = """Intro.
 
-.. code-block:: python
-
-   x = 1
+.. image:: diagram.png
+   :alt: A diagram.
 
 Outro."""
 
         assert _markdown(text) == "Intro.\n\nOutro."
+
+    @pytest.mark.parametrize(
+        ("name", "label"),
+        [
+            ("deprecated", "Deprecated"),
+            ("important", "Important"),
+            ("danger", "Danger"),
+            ("caution", "Caution"),
+            ("attention", "Attention"),
+            ("tip", "Tip"),
+            ("hint", "Hint"),
+            ("seealso", "See also"),
+        ],
+    )
+    def test_every_admonition_keeps_its_content(self, name: str, label: str) -> None:
+        text = f"Intro.\n\n.. {name}::\n   Use ``v2``.\n\nOutro."
+
+        assert _markdown(text) == f"Intro.\n\n> **{label}:** Use `v2`.\n\nOutro."
+
+    def test_an_admonition_argument_leads_its_body(self) -> None:
+        text = ".. deprecated:: 2.0\n   Use ``/v2/orders`` instead."
+
+        assert _markdown(text) == "> **Deprecated:** 2.0\n> Use `/v2/orders` instead."
+
+    def test_a_code_block_becomes_a_fence(self) -> None:
+        text = """Example:
+
+.. code-block:: python
+
+   def f(x):
+       return ``x``
+
+Outro."""
+
+        assert _markdown(text) == (
+            "Example:\n\n```python\ndef f(x):\n    return ``x``\n```\n\nOutro."
+        )
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("Example::\n\n    x = ``1``\n\nOutro.", "Example:\n\n```\nx = ``1``\n```\n\nOutro."),
+            ("Intro.\n\n::\n\n    x = 1", "Intro.\n\n```\nx = 1\n```"),
+        ],
+        ids=["trailing", "expanded"],
+    )
+    def test_a_literal_block_becomes_a_fence(self, text: str, expected: str) -> None:
+        assert _markdown(text) == expected
+
+    def test_a_double_colon_with_no_block_is_text(self) -> None:
+        assert _markdown("See http://h::1 and a::") == "See http://h::1 and a::"
+
+    @pytest.mark.parametrize("fence", ["```", "~~~"])
+    def test_fenced_blocks_are_verbatim(self, fence: str) -> None:
+        inside = ':type: order\n:param x: The x.\n.. note::\n   Keep.\nUse ``lit`` and :class:`~a.B`.'
+        text = f"Config:\n\n{fence}yaml\n{inside}\n{fence}\n\nAfter ``x``."
+
+        assert _markdown(text) == f"Config:\n\n{fence}yaml\n{inside}\n{fence}\n\nAfter `x`."
+
+    def test_hard_line_breaks_survive(self) -> None:
+        assert _markdown("Line one  \nline two") == "Line one  \nline two"
+
+    def test_an_unpaired_double_backtick_pairs_with_nothing(self) -> None:
+        assert _markdown("Use `` for nothing, then ``x``.") == "Use `` for nothing, then `x`."
+
+    def test_a_role_needs_a_word_boundary(self) -> None:
+        assert _markdown("Keep foo:bar:`baz` as is.") == "Keep foo:bar:`baz` as is."
 
     def test_markdown_is_left_alone(self) -> None:
         text = "Use `x` and **bold**; see [docs](https://example.com)."

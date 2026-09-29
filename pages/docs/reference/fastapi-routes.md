@@ -387,22 +387,31 @@ This **documents** auth; it doesn't enforce it — enforcement stays in the engi
 ## Match OpenAPI to what the app serves
 
 FastAPI documents its own 422 body (`HTTPValidationError`) on every route that
-takes input, but the Forze exception handlers answer every error — a failed
-request parse included — with the Forze envelope. Descriptions come from
-docstrings, so reST such as ``:class:`~shop.Order` `` reaches the rendered docs
-as written. One call fixes both:
+takes input, but the Forze exception handlers answer errors — a failed request
+parse included — with the Forze envelope. Descriptions come from docstrings, so
+reST such as ``:class:`~shop.Order` `` reaches the rendered docs as written. One
+call fixes both:
 
 ```python
 from forze_fastapi import apply_openapi_conventions
 
-# After every router is attached:
+# After every router is attached, and after apply_openapi_security:
 apply_openapi_conventions(app)
 ```
 
-Each FastAPI 422 becomes the `ErrorResponse` envelope (`detail`, optional
-`context`, and the `X-Error-Code` header), every operation gains a `default`
-response in the same shape, and FastAPI's validation schemas are dropped once
-nothing references them. A 422 your route declares with its own model is left
-alone. Every `description` and `summary` then has its reST roles, ``` ``literals`` ```,
-field lists (`:param:`, `:returns:`, …) and `note`/`warning` directives rendered
-as Markdown. It composes with `apply_openapi_security` in either order.
+Each FastAPI 422 becomes the `ForzeErrorResponse` envelope (`detail`, optional
+`context`), and every operation gains a `default` response in the same shape.
+The `X-Error-Code` header accompanies the errors that carry a code, so it is
+documented as optional. FastAPI's validation schemas are dropped once nothing
+references them. A 422 your route declares with its own model is left alone, and
+a different model of yours already named `ForzeErrorResponse` stops the schema
+with a configuration error rather than being overwritten. Responses a route sends
+with no body at all, such as a storage download's `304` and `416`, are not
+envelopes; the `default` entry does not describe them.
+
+Every `description` and `summary` then has its reST roles, ``` ``literals`` ```,
+field lists (`:param:`, `:returns:`, …) and admonitions (`note`, `warning`,
+`deprecated`, `seealso`, …) rendered as Markdown; `code-block` and `::` literal
+blocks become fenced blocks, and fenced blocks already in Markdown pass through
+as written. Call it last: text a later wrapper adds, such as a security scheme's
+description, stays as written.
