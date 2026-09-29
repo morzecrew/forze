@@ -185,7 +185,12 @@ class TestTheScopeWrap:
 # ....................... #
 
 
-def _adapter(grants_by_principal: dict[UUID, EffectiveGrants]) -> AuthzScopeAdapter:
+def _adapter(
+    grants_by_principal: dict[UUID, EffectiveGrants],
+    *,
+    spec: AuthzSpec | None = None,
+    delegation: _Delegation | None = None,
+) -> AuthzScopeAdapter:
     now = datetime.now(tz=UTC)
 
     async def _find(*_: Any, **__: Any) -> ReadPolicyPrincipal:
@@ -204,10 +209,11 @@ def _adapter(grants_by_principal: dict[UUID, EffectiveGrants]) -> AuthzScopeAdap
     resolver.resolve_effective_grants = AsyncMock(side_effect=_grants)
 
     return AuthzScopeAdapter(
-        spec=AuthzSpec(name="main"),
+        spec=spec or AuthzSpec(name="main"),
         principal_qry=principal_qry,
         resolver=resolver,
         policy=AuthzPolicyService(),
+        delegation=delegation,
     )
 
 
@@ -242,3 +248,24 @@ class TestTheSensitiveResourceCheck:
         )
 
         assert await adapter.authorize_sensitive_resource(self._request(AS_AGENT_FOR_USER))
+
+    @pytest.mark.parametrize("granted", [True, False])
+    async def test_an_enforced_delegation_grant_is_checked(self, granted: bool) -> None:
+        both = {
+            USER.principal_id: _holding("invoice.read"),
+            AGENT.principal_id: _holding("invoice.read"),
+        }
+        delegation = _Delegation(granted)
+        adapter = _adapter(
+            both, spec=AuthzSpec(name="main", enforce_delegation_grant=True), delegation=delegation
+        )
+
+        assert (
+            await adapter.authorize_sensitive_resource(self._request(AS_AGENT_FOR_USER)) is granted
+        )
+        assert delegation.asked == [(AGENT.principal_id, USER.principal_id)]
+
+    def test_an_enforced_grant_with_no_port_is_refused_when_built(self) -> None:
+        # Never open: the spec says a delegated call needs a recorded grant.
+        with pytest.raises(CoreException):
+            _adapter({}, spec=AuthzSpec(name="main", enforce_delegation_grant=True))

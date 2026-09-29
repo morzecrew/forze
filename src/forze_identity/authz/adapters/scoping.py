@@ -16,10 +16,12 @@ from forze.application.contracts.authz import (
     AuthzSensitiveAccessRequest,
     AuthzSpec,
     AuthzSubject,
+    DelegationPort,
     resolve_policy_scope,
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.base.exceptions import exc
 
 from ..domain.models.policy_principal import ReadPolicyPrincipal
 from ..services.grants import AuthzGrantResolver
@@ -43,8 +45,19 @@ class AuthzScopeAdapter(AuthzScopePort):
     resolver: AuthzGrantResolver
     policy: AuthzPolicyService
 
+    delegation: DelegationPort | None = None
+    """Required when the spec enforces delegation grants: the sensitive-resource check has no
+    hook in front of it, so it checks ``may_act`` itself."""
+
     def __attrs_post_init__(self) -> None:
         validate_secure_authz_document_spec(self.principal_qry.spec)
+
+        if self.spec.enforce_delegation_grant and self.delegation is None:
+            raise exc.configuration(
+                f"Authz spec {self.spec.name!r} enforces delegation grants, but the scope "
+                "adapter has no delegation port to check them with.",
+                code="authz_delegation_unwired",
+            )
 
     async def _decide_operation(
         self,
@@ -138,7 +151,18 @@ class AuthzScopeAdapter(AuthzScopePort):
             if not await self._may_access(request, node, scope=scope):
                 return False
 
-            node = node.actor
+            actor = node.actor
+
+            if (
+                actor is not None
+                and self.delegation is not None
+                and not await self.delegation.may_act(
+                    actor.principal_id, node.principal_id, scope=scope
+                )
+            ):
+                return False
+
+            node = actor
 
         return True
 

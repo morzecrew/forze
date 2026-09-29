@@ -54,7 +54,9 @@ class AuthzScopePort(Protocol):
     ) -> Awaitable[bool]:
         """Whether the subject may access the given resource instance.
 
-        A delegated subject may only when every principal in its chain may, on its own.
+        A delegated subject may only when every principal in its chain may, on its own, and,
+        when the spec enforces delegation grants, each actor holds one for the principal it acts
+        for.
         """
         ...  # pragma: no cover
 

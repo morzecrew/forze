@@ -190,4 +190,6 @@ class ConfigurableAuthzScope:
             principal_qry=ctx.doc.query(policy_principal_spec),
             resolver=_grant_resolver(ctx, self.shared),
             policy=self.shared.policy,
+            # Resolved only when the spec enforces grants; a missing port fails here, loud.
+            delegation=ctx.authz.delegation(spec) if spec.enforce_delegation_grant else None,
         )
