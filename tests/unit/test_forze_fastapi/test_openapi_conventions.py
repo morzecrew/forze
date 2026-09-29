@@ -46,6 +46,10 @@ class _Custom422(BaseModel):
     reason: str
 
 
+class _Tagged(BaseDTO):
+    meta: dict[str, str] = {"description": "keep ``this``"}
+
+
 def _app() -> FastAPI:
     app = FastAPI()
 
@@ -192,6 +196,19 @@ class TestMarkupInTheSchema:
         order = schema["components"]["schemas"]["_Order"]
         assert order["description"] == "An order, see `Order`."
         assert order["properties"]["sku"]["description"] == "The `SKU` as printed on the label."
+
+    def test_instance_data_is_not_prose(self) -> None:
+        # A default or example is data the client sends back; rewriting it would change it.
+        app = FastAPI()
+
+        @app.post("/tagged")
+        async def tagged(body: _Tagged) -> None:
+            return None
+
+        apply_openapi_conventions(app)
+        meta = app.openapi()["components"]["schemas"]["_Tagged"]["properties"]["meta"]
+
+        assert meta["default"] == {"description": "keep ``this``"}
 
     def test_a_forze_dto_comes_out_clean(self) -> None:
         app = _app()
