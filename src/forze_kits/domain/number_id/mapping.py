@@ -1,3 +1,4 @@
+from string import Formatter
 from typing import Final
 
 import attrs
@@ -42,8 +43,10 @@ class NumberIdMappingStep(PydanticPipelineMapperStep[BaseModel]):
         patch: JsonDict = {NUMBER_ID_FIELD: num}
 
         if self.name_field is not None:
-            # Read from the pipeline's payload, so an earlier step's value is the one named.
-            name = source[1].get(self.name_field)
+            # The payload first, so an earlier step's value is the one named; the source model
+            # second, because the payload carries only the fields a caller set, not defaults.
+            model, payload = source
+            name = payload.get(self.name_field, getattr(model, self.name_field, None))
 
             # Nothing to append to: inventing a name is the caller's call, not the step's.
             if isinstance(name, str) and name:
@@ -64,7 +67,8 @@ class NumberIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
 
     name_field: str | None = None
     """A field to append the number to (e.g. ``"name"``), or ``None`` to leave it alone. An
-    empty or absent value is left as it is."""
+    empty or absent value is left as it is. The counter allocates on its own connection, so a
+    create that fails after this step leaves a gap in the numbering, transaction or not."""
 
     name_format: str = DEFAULT_NAME_FORMAT
     """How the field's value and the number combine, with ``{name}`` and ``{number}``."""
@@ -75,14 +79,22 @@ class NumberIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
         if self.name_field is None:
             return
 
-        try:
-            self.name_format.format(name="", number=0)
+        refusal = exc.configuration(
+            f"name_format {self.name_format!r} must be a format string whose fields are exactly "
+            "{name} and {number} — no attribute or index access, which would reach past the "
+            "value the step fills.",
+        )
 
-        except (KeyError, IndexError, ValueError) as error:
-            raise exc.configuration(
-                f"name_format {self.name_format!r} must be a format string using only "
-                "{name} and {number}.",
-            ) from error
+        try:
+            fields = {field for _, field, _, _ in Formatter().parse(self.name_format)}
+            # A format spec the value cannot take ({name:d}) would fail on every create.
+            self.name_format.format(name="Order", number=1)
+
+        except (KeyError, IndexError, ValueError, TypeError, AttributeError) as error:
+            raise refusal from error
+
+        if not fields - {None} <= {"name", "number"}:
+            raise refusal
 
     # ....................... #
 

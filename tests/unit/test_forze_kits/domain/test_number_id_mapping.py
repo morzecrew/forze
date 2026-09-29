@@ -83,12 +83,59 @@ async def test_an_empty_name_is_left_alone() -> None:
     assert (blank.number_id, unset.number_id) == (1, 2)
 
 
-@pytest.mark.parametrize("name_format", ["{title} #{number}", "{name} #{number"])
+@pytest.mark.parametrize(
+    "name_format",
+    [
+        "{title} #{number}",
+        "{name} #{number",
+        "{name.upper}",
+        "{name[0]}-{number}",
+        "{number[0]}",
+        "{} #{number}",
+        "{0}",
+        "{name:d}",
+    ],
+)
 def test_a_format_it_cannot_fill_is_refused_when_built(name_format: str) -> None:
+    # Attribute and index access reach past the value the step fills; refused, not attempted.
     with pytest.raises(CoreException) as caught:
         NumberIdMappingStepFactory(spec=ORDER_NO, name_field="name", name_format=name_format)
 
     assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+
+@pytest.mark.parametrize(
+    ("name_format", "expected"),
+    [
+        ("{name!r} #{number}", "'Order' #1"),
+        ("{name} #{number:05d}", "Order #00001"),
+        ("{{{name}}} {number}", "{Order} 1"),
+        ("{number}", "1"),
+    ],
+)
+async def test_conversions_and_format_specs_are_allowed(name_format: str, expected: str) -> None:
+    [order] = await _map([OrderIn(name="Order")], name_field="name", name_format=name_format)
+
+    assert order.name == expected
+
+
+class OrderInWithDefault(BaseDTO):
+    name: str = "Order"
+
+
+async def test_a_name_left_at_its_default_is_numbered_too() -> None:
+    # The pipeline encodes only the fields a caller set, so the default is read off the source.
+    factory = PydanticPipelineMapperFactory(
+        in_=OrderInWithDefault,
+        out=OrderCmd,
+        step_factories=(NumberIdMappingStepFactory(spec=ORDER_NO, name_field="name"),),
+    )
+    runtime = build_runtime(MockDepsModule())
+
+    async with runtime.scope():
+        order = await factory(runtime.get_context())(OrderInWithDefault())
+
+    assert (order.number_id, order.name) == (1, "Order #1")
 
 
 # ....................... #
