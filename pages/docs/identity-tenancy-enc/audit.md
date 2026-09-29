@@ -159,7 +159,7 @@ open transaction when there is one — and register its factory under `AuditDepK
 queried by, and sealing one is refused.
 
 A deterministic-simulation invariant, `audit_row_per_effect`, checks the one-row claim under
-retries and injected faults: see [Invariants](../dst/invariants.md).
+operation-level retries and injected faults: see [Invariants](../dst/invariants.md).
 
 !!! warning "Not tamper-evident"
 

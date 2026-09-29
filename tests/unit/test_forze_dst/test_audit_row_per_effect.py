@@ -5,9 +5,9 @@ write and on the audit write. An attempt that fails after its row is written rol
 the row with it, and the retry writes the one that commits. The invariant reads the recorded
 trace: every committed transaction that wrote a note carries exactly one audit row.
 
-Two contrasts must break it, or the bound run attests nothing: an action bound twice records two
-rows per effect, and an admitted row written after the transaction instead of inside it leaves
-the effect's transaction without one.
+Three contrasts must break it, or the bound run attests nothing: an action bound twice records
+two rows per effect, an admitted row written after the transaction instead of inside it leaves the
+effect's transaction without one, and so does an edit the audit does not cover at all.
 """
 
 from __future__ import annotations
@@ -143,9 +143,7 @@ def _run(*, bind: str, seed_in_setup: bool = False) -> tuple[Any, Counter[str]]:
         descriptors={"edit": OperationDescriptor(input_type=Edit, output_type=None)},
     ).bind("edit")
 
-    # Left out of the audit, the edit has no transaction either: nothing else put it in one.
-    if bind != "none":
-        binder = binder.bind_tx().set_route("mock").finish()
+    binder = binder.bind_tx().set_route("mock").finish()
 
     binder = binder.bind_outer().wrap(ResilienceWrap(policy="transient").to_step()).finish()
     audited = Audited(spec=EDIT)
@@ -227,7 +225,7 @@ class TestOneRowPerEffect:
         [
             ("twice", "committed 2 audit rows"),
             ("after", "with no audit row"),
-            ("none", "outside a transaction"),
+            ("none", "with no audit row"),
         ],
     )
     def test_a_row_outside_the_effects_transaction_breaks_it(self, bind: str, why: str) -> None:
@@ -305,24 +303,10 @@ class TestWhatItJudges:
 
         assert CHECK(history) == []
 
-    def test_an_effect_written_outside_a_transaction_is_reported(self) -> None:
-        # No row can commit with it: this is what an operation left out of the audit looks like
-        # when nothing else put it in a transaction.
-        [violation] = CHECK(_history(_write(NOTE_SPEC.name, None), _operation(0, 0)))
-
-        assert "outside a transaction" in violation.message
-
-    def test_a_write_outside_every_operation_is_not_judged(self) -> None:
-        # A simulation's setup seeds through the command port with no transaction and no
-        # operation; that is baseline state, not an unaudited effect.
-        assert CHECK(_history(_write(NOTE_SPEC.name, None), _operation(5, 6))) == []
-
-    def test_an_operation_that_never_returned_still_owns_its_writes(self) -> None:
-        # A crash leaves the span without an end; its writes are still the operation's.
-        history = _history(_operation(0, 0, outcome="incomplete"), _write(NOTE_SPEC.name, None))
-
-        [violation] = CHECK(history)
-        assert "outside a transaction" in violation.message
+    def test_a_write_outside_a_transaction_is_not_judged(self) -> None:
+        # A trace cannot say which operation, if any, made it: setup, recovery, background
+        # tasks and after-commit hooks all write this way.
+        assert CHECK(_history(_write(NOTE_SPEC.name, None), _operation(0, 0))) == []
 
     def test_an_index_sharing_the_route_name_is_not_an_effect(self) -> None:
         # The search sync writes after commit, with no transaction id, on the index's route,

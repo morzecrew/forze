@@ -8,7 +8,6 @@ and collects every violation.
 
 from __future__ import annotations
 
-import math
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
@@ -288,17 +287,16 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
 
     - A committed transaction that wrote one of *effect_routes* and no row on *audit_route* is
       an effect nobody can account for.
-    - A write to one of *effect_routes* outside any transaction, made by an operation, is one
-      too: no row can commit with it. That is what an unaudited write looks like, and an
-      operation bound with ``transactional=False`` is reported the same way. A write outside
-      every operation (a simulation's setup seeding baseline rows) is not judged. After-commit
-      callbacks run once the transaction's id is gone, so an after-commit hook writing an
-      effect route reads as a write outside a transaction; leave such a route out.
-
-    Only document writes are read, and only their calls: a search index may share the
-    document's route name, and under value capture a write that returns its row records a
-    second event for it.
     - A committed transaction with two rows is a double record.
+
+    What it does not judge:
+
+    - Writes outside any transaction. A trace cannot attribute them to an operation, and a
+      simulation's setup and recovery, background tasks and after-commit hooks all write that
+      way. An audited kit write always runs in a transaction, so this matters for an operation
+      the audit does not cover: it is caught only when it runs in one.
+    - Anything but document write calls. A search index may share the document's route name,
+      and under value capture a write that returns its row records a second event for it.
 
     The unit is the transaction, so it is stated for workloads where each transaction carries one
     audited operation. An operation writing several effects is one row. An audited operation
@@ -307,8 +305,10 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
 
     It reads write *calls*. So it is stated for actions that fail closed
     (``on_failure="fail"``, the default), where a failed audit write rolls the transaction
-    back. An action that ignores a failed audit write can commit its effect without the row
-    the call was for.
+    back, and for retries at the operation level, which open a transaction per attempt. An
+    action that ignores a failed audit write can commit its effect without the row the call was
+    for, and a port-level retry of the audit write records the failed call and its retry, which
+    read here as two rows.
     """
 
     effects = frozenset(effect_routes)
@@ -323,7 +323,6 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
         committed: set[Any] = set()
         rows: dict[Any, list[Event]] = defaultdict(list)
         written: dict[Any, list[Event]] = defaultdict(list)
-        outside: list[Event] = []
 
         for event in history.of_kind("trace"):
             fields = event.fields
@@ -347,31 +346,10 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
                 rows[tx_id].append(event)
 
             elif fields.get("route") in effects:
-                (outside if tx_id is None else written[tx_id]).append(event)
+                written[tx_id].append(event)
 
-        # A write outside a transaction is judged only inside an operation: a simulation's
-        # setup seeds baseline state the same way, and it is nobody's effect.
-        spans = [
-            (
-                int(op.fields.get("start_seq", -1)),
-                math.inf
-                if op.fields.get("outcome") == "incomplete"
-                else int(op.fields.get("end_seq", -1)),
-            )
-            for op in history.of_kind("operation")
-        ]
-        violations: list[Violation] = [
-            Violation(
-                invariant="audit_row_per_effect",
-                message=(
-                    f"a write to {event.fields.get('route')!r} outside a transaction, where no "
-                    "audit row can commit with it"
-                ),
-                events=(event,),
-            )
-            for event in outside
-            if any(first <= int(event.fields.get("trace_seq", -1)) <= last for first, last in spans)
-        ]
+        violations: list[Violation] = []
+        # A root exit with no id (an untraced run) cannot be grouped with the writes it closed.
         committed.discard(None)
 
         for tx_id in sorted(committed, key=str):
