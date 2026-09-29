@@ -669,6 +669,24 @@ class TestVersionedUpdateMapping:
         assert (corrected.version, corrected.unit_kwh, corrected.label) == (2, 7, "x-a")
         assert caught.value.kind is ExceptionKind.DOMAIN
 
+    async def test_a_stripped_lineage_field_takes_its_default_and_reads_as_unset(self) -> None:
+        from datetime import UTC, datetime
+
+        from forze_kits.aggregates.versioned.wiring import (
+            _without_lineage,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        def _retiring(ctx: Any) -> Any:
+            async def _map(source: Any) -> ReadingUpdate:
+                return ReadingUpdate(kwh=3, is_current=False, superseded_at=datetime.now(UTC))
+
+            return _map
+
+        cmd = await _without_lineage(_retiring)(None)(None)
+
+        assert (cmd.kwh, cmd.is_current, cmd.superseded_at) == (3, None, None)
+        assert cmd.model_fields_set == {"kwh"}
+
     async def test_wiring_used_directly_maps_update_and_correct_alike(self) -> None:
         from forze_kits.aggregates.document import build_document_registry
         from forze_kits.aggregates.versioned import (
