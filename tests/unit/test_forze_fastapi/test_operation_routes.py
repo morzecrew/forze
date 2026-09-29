@@ -447,6 +447,33 @@ class TestTheQueryRoute:
         assert response.json()["dump"]["pair"] == ["p", "q"]
         assert response.json()["dump"]["ours"] == "2026-01-01T10:00:00+02:00"
 
+    async def test_address_types_parse_from_the_query(self) -> None:
+        # Addresses and e-mails are text on the wire: a query string carries them as a body would.
+        pytest.importorskip("email_validator")
+        from ipaddress import IPv4Address, IPv6Network
+
+        from pydantic import EmailStr, IPvAnyAddress
+
+        class _Addresses(BaseDTO):
+            host: IPv4Address
+            peer: IPvAnyAddress | None = None
+            net: IPv6Network | None = None
+            mail: EmailStr | None = None
+
+        async with _client(_one(_Addresses, build=query_endpoint, path="/one")) as client:
+            response = await client.get(
+                "/stock/one",
+                params={"host": "10.0.0.1", "peer": "::1", "net": "2001:db8::/32", "mail": "a@b.io"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["dump"] == {
+            "host": "10.0.0.1",
+            "peer": "::1",
+            "net": "2001:db8::/32",
+            "mail": "a@b.io",
+        }
+
     def test_an_unresolved_forward_reference_says_so(self) -> None:
         with pytest.raises(CoreException, match=r"forward reference") as caught:
             _app(_UnresolvedQuery)

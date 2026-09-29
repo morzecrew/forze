@@ -21,6 +21,14 @@ from collections.abc import Set as AbstractSet
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import Enum
+from ipaddress import (
+    IPv4Address,
+    IPv4Interface,
+    IPv4Network,
+    IPv6Address,
+    IPv6Interface,
+    IPv6Network,
+)
 from types import NoneType, UnionType
 from typing import (
     Annotated,
@@ -42,9 +50,14 @@ from pydantic import (
     AnyUrl,
     AwareDatetime,
     BaseModel,
+    EmailStr,
     FutureDate,
     FutureDatetime,
+    IPvAnyAddress,
+    IPvAnyInterface,
+    IPvAnyNetwork,
     NaiveDatetime,
+    NameEmail,
     PastDate,
     PastDatetime,
     ValidationError,
@@ -425,7 +438,18 @@ _QUERY_SCALARS: Final = (
     time,
     timedelta,
     Enum,
+    IPv4Address,
+    IPv6Address,
+    IPv4Network,
+    IPv6Network,
+    IPv4Interface,
+    IPv6Interface,
     AnyUrl,
+    EmailStr,
+    NameEmail,
+    IPvAnyAddress,
+    IPvAnyNetwork,
+    IPvAnyInterface,
     AwareDatetime,
     NaiveDatetime,
     PastDate,
@@ -710,7 +734,10 @@ def query_endpoint(
     attached rather than silently dropped on every request. The operation receives the DTO a
     request body sending the same keys would build: only the parameters sent count as set
     (``model_fields_set``), so a patch encoded from it leaves defaulted fields alone, and
-    validators, private attributes and extras behave as for a body.
+    validators, private attributes and extras behave as for a body. FastAPI validates the
+    parameters first, which documents them and answers a malformed request with a 422; that
+    instance is discarded, so the DTO's validators run twice per request and must not have
+    side effects.
     """
 
     dto_type = _complete(require_input_type(input_type, op), op)
