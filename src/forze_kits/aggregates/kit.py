@@ -262,9 +262,10 @@ class AggregateKit(Generic[R, D, C, U]):
 
     dtos: DocumentDTOs[R, Any, Any] | None = None
     """Inbound DTOs, when a create/update DTO is not the spec's own command — the generated
-    routes and tools advertise these. Pair with :attr:`mappers` to translate them. A slot left
-    ``None`` falls back to the spec's own command rather than dropping the operation. The read
-    DTO must be the spec's read model: the store returns that and nothing else."""
+    routes and tools advertise these. Pair with :attr:`mappers` to translate them. As in
+    :func:`build_document_registry`, a slot left ``None`` disables its operation: an
+    append-only aggregate passes ``DocumentDTOs(read=…, create=…)``. The read DTO must be the
+    spec's read model: the store returns that and nothing else."""
 
     transactional_writes: bool = False
     """Run every generated write — create, update, kill, and with :attr:`soft_delete` delete and
@@ -348,44 +349,37 @@ class AggregateKit(Generic[R, D, C, U]):
     # ....................... #
 
     def _refuse_write_options_without_writes(self) -> None:
-        """Refuse a write option the spec gives nothing to act on, rather than ignore it."""
+        """Refuse a write option whose operation is not generated, rather than ignore it.
+
+        An operation is absent when the spec is read-only, when it has no update command, or when
+        :attr:`dtos` leaves its slot empty — the document factory's way to disable one.
+        """
 
         mappers = self.mappers or DocumentMappers()
         dtos = self.dtos
         writes = self.spec.write is not None
         updates = self.spec.supports_update()
+        creating = writes and (dtos is None or dtos.create is not None)
+        updating = updates and (dtos is None or dtos.update is not None)
+        # A versioned aggregate's CORRECT maps through the update mapper even without UPDATE.
+        correcting = updates and self.versioned is not None
 
         declared = {
-            "mappers.create": mappers.create is not None and not writes,
+            "mappers.create": mappers.create is not None and not creating,
             "dtos.create": dtos is not None and dtos.create is not None and not writes,
             "transactional_writes=True": self.transactional_writes and not writes,
-            "mappers.update": mappers.update is not None and not updates,
+            "mappers.update": mappers.update is not None and not (updating or correcting),
             "dtos.update": dtos is not None and dtos.update is not None and not updates,
-            'update_returns="record"': self.update_returns == "record" and not updates,
+            'update_returns="record"': self.update_returns == "record" and not updating,
         }
 
         if ignored := [name for name, refused in declared.items() if refused]:
-            what = "is read-only" if not writes else "has no update command"
             raise exc.configuration(
-                f"AggregateKit spec {self.spec.name!r} {what}, so {', '.join(ignored)} would "
-                "never take effect. Drop the option, or declare the writes it acts on.",
+                f"AggregateKit {self.spec.name!r}: {', '.join(ignored)} would never take effect, "
+                "because the operation it acts on is not generated — the spec is read-only or "
+                "has no update command, or dtos leaves its slot empty. Drop the option, or "
+                "declare the operation.",
             )
-
-    # ....................... #
-
-    def _effective_dtos(self) -> DocumentDTOs[Any, Any, Any] | None:
-        """The author's DTOs, with any write slot left out filled from the spec's own commands."""
-
-        if self.dtos is None:
-            return None
-
-        own = DocumentDTOs[Any, Any, Any].from_spec(cast(Any, self.spec))
-
-        return attrs.evolve(
-            self.dtos,
-            create=self.dtos.create if self.dtos.create is not None else own.create,
-            update=self.dtos.update if self.dtos.update is not None else own.update,
-        )
 
     # ....................... #
 
@@ -689,7 +683,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
         soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
         mappers: DocumentMappers[Any, Any, Any, Any] = self.mappers or DocumentMappers()
-        dtos = self._effective_dtos()
+        dtos = self.dtos
         versioned = (
             versioned_wiring(
                 spec,

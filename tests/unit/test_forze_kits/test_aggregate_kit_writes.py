@@ -10,8 +10,11 @@ transaction legs observe the depth an operation runs at, not only that a binding
 from __future__ import annotations
 
 from typing import Any, Final
+from uuid import UUID
 
 import pytest
+from pydantic import ConfigDict, field_validator
+from pydantic.alias_generators import to_camel
 
 from forze import build_runtime
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
@@ -23,7 +26,13 @@ from forze_kits.aggregates.document import DocumentDTOs, DocumentMappers
 from forze_kits.aggregates.document.dto import DocumentIdRevDTO, DocumentUpdateDTO, ListRequestDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.soft_deletion import SoftDeletionKernelOp
+from forze_kits.aggregates.versioned import ONE_CURRENT_VERSION, ONE_SUCCESSOR
 from forze_kits.domain.soft_deletion import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
+from forze_kits.domain.versioned import (
+    CreateCmdWithVersioningFields,
+    DocWithVersioning,
+    UpdateCmdWithVersioning,
+)
 from forze_mock import MockDepsModule
 
 from .test_versioned_kit import (
@@ -456,6 +465,48 @@ class TestUpdateReturnsTheRecord:
 # ....................... #
 
 
+class Meter(DocWithVersioning):
+    unit_kwh: int = 0
+    label: str | None = None
+
+
+class MeterCreate(CreateCmdWithVersioningFields):
+    unit_kwh: int = 0
+    label: str | None = None
+
+
+class MeterUpdate(UpdateCmdWithVersioning):
+    """A camelCase boundary command with a validator that is not idempotent."""
+
+    model_config = ConfigDict(alias_generator=to_camel, frozen=True)
+
+    unit_kwh: int | None = None
+    label: str | None = None
+
+    @field_validator("label")
+    @classmethod
+    def _prefixed(cls, value: str | None) -> str | None:
+        return None if value is None else f"x-{value}"
+
+
+class MeterRead(ReadDocument):
+    unit_kwh: int = 0
+    label: str | None = None
+    root_id: UUID
+    version: int
+    supersedes_id: UUID | None = None
+    is_current: bool = True
+    superseded_at: object = None
+
+
+METERS: Final = DocumentSpec(
+    name="meters",
+    read=MeterRead,
+    write=DocumentWriteTypes(domain=Meter, create_cmd=MeterCreate, update_cmd=MeterUpdate),
+    guarantees=(ONE_CURRENT_VERSION, ONE_SUCCESSOR),
+)
+
+
 class ReadingFix(BaseDTO):
     """An inbound correction in watt-hours; the command stores kilowatt-hours."""
 
@@ -475,6 +526,13 @@ def _wh_to_kwh(ctx: Any) -> Any:
             return ReadingUpdate()
 
         return ReadingUpdate(kwh=source.reading_wh // 1000)
+
+    return _map
+
+
+def _kwh_times_ten(ctx: Any) -> Any:
+    async def _map(source: ReadingUpdate) -> ReadingUpdate:
+        return source.model_copy(update={"kwh": (source.kwh or 0) * 10})
 
     return _map
 
@@ -575,28 +633,142 @@ class TestVersionedUpdateMapping:
         assert updated.data.is_current is True
 
 
+    async def test_an_aliased_command_keeps_its_fields_and_validates_once(self) -> None:
+        from forze_kits.aggregates.versioned import CorrectDocumentDTO, VersionedKernelOp
+
+        reg = AggregateKit(spec=METERS, versioned=POLICY).registry(tx_route=_TX)
+        runtime = build_runtime(MockDepsModule())
+        key = METERS.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(reg, key(DocumentKernelOp.CREATE), MeterCreate(), ctx)
+            # What a camelCase boundary parses; the validator has already run once.
+            patch = MeterUpdate.model_validate({"unitKwh": 7, "label": "a", "isCurrent": False})
+            corrected = await run_operation(
+                reg,
+                key(VersionedKernelOp.CORRECT),
+                CorrectDocumentDTO(id=made.id, expected_version=1, dto=patch, reason="fix"),
+                ctx,
+            )
+
+            # An ordinary update of the same asserted field is refused — so it reached the
+            # command rather than being dropped with the lineage field beside it.
+            with pytest.raises(CoreException) as caught:
+                await run_operation(
+                    reg,
+                    key(DocumentKernelOp.UPDATE),
+                    DocumentUpdateDTO(
+                        id=corrected.id,
+                        rev=corrected.rev,
+                        dto=MeterUpdate.model_validate({"unitKwh": 8, "isCurrent": False}),
+                    ),
+                    ctx,
+                )
+
+        assert (corrected.version, corrected.unit_kwh, corrected.label) == (2, 7, "x-a")
+        assert caught.value.kind is ExceptionKind.DOMAIN
+
+    async def test_wiring_used_directly_maps_update_and_correct_alike(self) -> None:
+        from forze_kits.aggregates.document import build_document_registry
+        from forze_kits.aggregates.versioned import (
+            CorrectDocumentDTO,
+            VersionedKernelOp,
+            versioned_wiring,
+        )
+
+        dtos = DocumentDTOs(read=ReadingRead, create=ReadingCreate, update=ReadingFix)
+        wiring = versioned_wiring(READINGS, POLICY, dtos=dtos)
+
+        # A mapper handed to mappers() that the wiring's ops never see is refused, not dropped.
+        with pytest.raises(CoreException) as caught:
+            wiring.mappers(DocumentMappers(update=_wh_to_kwh))
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+        wiring = versioned_wiring(READINGS, POLICY, dtos=dtos, update_mapper=_wh_to_kwh)
+        reg = wiring.bind(build_document_registry(READINGS, dtos, wiring.mappers())).freeze()
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(
+                reg, _key(READINGS, DocumentKernelOp.CREATE), ReadingCreate(meter="m", kwh=1), ctx
+            )
+            corrected = await run_operation(
+                reg,
+                _key(READINGS, VersionedKernelOp.CORRECT),
+                CorrectDocumentDTO(
+                    id=made.id, expected_version=1, dto=ReadingFix(reading_wh=9000), reason="r"
+                ),
+                ctx,
+            )
+
+        assert corrected.kwh == 9
+
+
 # ....................... #
 
 
 class TestTheDeclarationIsWhole:
-    async def test_a_dto_slot_left_out_falls_back_to_the_specs_own(self) -> None:
-        kit = AggregateKit(
-            spec=WIDGETS,
-            dtos=DocumentDTOs(read=WidgetRead, update=WidgetUpdate),
-            mappers=DocumentMappers(create=_upper_group),
+    def test_an_empty_dto_slot_disables_its_operation(self) -> None:
+        # The document factory's idiom for "this aggregate has no update": the kit keeps it.
+        kit = AggregateKit(spec=WIDGETS, dtos=DocumentDTOs(read=WidgetRead, create=WidgetCreate))
+        keys = kit.registry(tx_route=_TX).catalog()
+
+        assert _key(WIDGETS, DocumentKernelOp.CREATE) in keys
+        assert _key(WIDGETS, DocumentKernelOp.UPDATE) not in keys
+
+    @pytest.mark.parametrize(
+        ("dtos", "option"),
+        [
+            (
+                DocumentDTOs(read=WidgetRead, update=WidgetUpdate),
+                {"mappers": DocumentMappers(create=_upper_group)},
+            ),
+            (
+                DocumentDTOs(read=WidgetRead, create=WidgetCreate),
+                {"mappers": DocumentMappers(update=_double_qty)},
+            ),
+            (DocumentDTOs(read=WidgetRead, create=WidgetCreate), {"update_returns": "record"}),
+        ],
+        ids=["create-mapper", "update-mapper", "record"],
+    )
+    def test_an_option_for_a_disabled_operation_is_refused(
+        self, dtos: DocumentDTOs[Any, Any, Any], option: dict[str, Any]
+    ) -> None:
+        with pytest.raises(CoreException) as caught:
+            AggregateKit(spec=WIDGETS, dtos=dtos, **option)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    async def test_a_versioned_kit_without_update_still_corrects_through_the_mapper(self) -> None:
+        # UPDATE disabled, CORRECT kept: the update mapper still has an operation to serve.
+        from forze_kits.aggregates.versioned import CorrectDocumentDTO, VersionedKernelOp
+
+        reg = _versioned(
+            dtos=DocumentDTOs(read=ReadingRead, create=ReadingCreate),
+            mappers=DocumentMappers(update=_kwh_times_ten),
         )
-        reg = kit.registry(tx_route=_TX)
+        assert _key(READINGS, DocumentKernelOp.UPDATE) not in reg.catalog()
+
         runtime = build_runtime(MockDepsModule())
 
         async with runtime.scope():
+            ctx = runtime.get_context()
             made = await run_operation(
+                reg, _key(READINGS, DocumentKernelOp.CREATE), ReadingCreate(meter="m"), ctx
+            )
+            corrected = await run_operation(
                 reg,
-                _key(WIDGETS, DocumentKernelOp.CREATE),
-                WidgetCreate(group="a"),
-                runtime.get_context(),
+                _key(READINGS, VersionedKernelOp.CORRECT),
+                CorrectDocumentDTO(
+                    id=made.id, expected_version=1, dto=ReadingUpdate(kwh=2), reason="fix"
+                ),
+                ctx,
             )
 
-        assert made.group == "A"
+        assert corrected.kwh == 20
 
     @pytest.mark.parametrize(
         "option",

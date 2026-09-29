@@ -262,8 +262,9 @@ kit = AggregateKit(
 ```
 
 - **`mappers=` / `dtos=`** — how an inbound DTO becomes the domain command, and which DTOs the
-  generated routes and tools advertise. A DTO slot you leave out falls back to the spec's own
-  command. Your mappers are the base the other options compose on: `soft_delete` adds its
+  generated routes and tools advertise. As in `build_document_registry`, a slot left out
+  disables its operation (`DocumentDTOs(read=…, create=…)` is an aggregate with no `update`).
+  Your mappers are the base the other options compose on: `soft_delete` adds its
   exclusion after your list mapper; `versioned` seeds the first version through your create
   mapper, maps a correction through your update mapper as `update` does, and strips its lineage
   fields from what that mapper produces. List mappers apply to the document list operations
@@ -273,8 +274,8 @@ kit = AggregateKit(
   commit or roll back with the write. A counter does not: counters allocate on their own
   connection, so a create that fails after its number-id step leaves a gap. Off by default.
 
-A write option the spec gives nothing to act on — a create mapper on a read-only spec,
-`update_returns="record"` without an update command — is refused when the kit is built.
+A write option whose operation is not generated — a create mapper on a read-only spec,
+`update_returns="record"` with the update slot left empty — is refused when the kit is built.
 - **`update_returns="record"`** — the generated update returns the updated record instead of
   `{data, diff}`, and its route advertises the read model. The typed facade keeps the default's
   return type.
