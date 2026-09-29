@@ -41,6 +41,7 @@ from forze.application.contracts.querying.internal.matching import (
     _memb_contains,  # pyright: ignore[reportPrivateUsage]
     _normalize_array_value,  # pyright: ignore[reportPrivateUsage]
     _value_is_empty,  # pyright: ignore[reportPrivateUsage]
+    instant_key,
 )
 from forze.application.contracts.querying.internal.time_bucket import (
     floor_to_time_bucket,
@@ -232,19 +233,22 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
         for computed in parsed.computed_fields
     ]
 
-    grouped: dict[tuple[Any, ...], list[JsonDict]] = {}
+    # Keyed by instant, as a store groups timestamptz values; each group keeps the values its
+    # first member had, for the row it reports.
+    grouped: dict[tuple[Any, ...], tuple[tuple[Any, ...], list[JsonDict]]] = {}
 
     for doc in docs:
         parts = tuple(_group_key_part(doc, group.expr) for group in parsed.groups)
-        grouped.setdefault(parts, []).append(doc)
+        key = tuple(instant_key(part) for part in parts)
+        grouped.setdefault(key, (parts, []))[1].append(doc)
 
     if not parsed.groups and not grouped:
-        grouped[()] = []
+        grouped[()] = ((), [])
 
     rows: list[JsonDict] = []
-    for key, items in grouped.items():
+    for parts, items in grouped.values():
         row: JsonDict = {}
-        for group, value in zip(parsed.groups, key, strict=True):
+        for group, value in zip(parsed.groups, parts, strict=True):
             row[group.alias] = value
 
         for computed, matcher in zip(parsed.computed_fields, computed_matchers, strict=True):
@@ -303,13 +307,13 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
                         row[computed.alias] = (nums[hi - 1] + nums[hi]) / 2
 
                 case "$min":
-                    row[computed.alias] = min(values) if values else None
+                    row[computed.alias] = min(values, key=instant_key) if values else None
 
                 case "$max":
-                    row[computed.alias] = max(values) if values else None
+                    row[computed.alias] = max(values, key=instant_key) if values else None
 
                 case "$count_distinct":
-                    row[computed.alias] = len(set(values))
+                    row[computed.alias] = len({instant_key(value) for value in values})
 
                 case "$stddev_pop":
                     nums = _numeric_values(values, computed)
