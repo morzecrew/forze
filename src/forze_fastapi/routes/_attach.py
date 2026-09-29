@@ -49,6 +49,8 @@ from pydantic import (
     PastDatetime,
     ValidationError,
 )
+from pydantic.fields import FieldInfo
+from starlette.datastructures import QueryParams
 
 from forze.application.contracts.querying import QUANTIFIER_OPS, QueryDiscovery
 from forze.application.execution.context import ExecutionContextFactory
@@ -414,7 +416,6 @@ def _fills_path(*names: str) -> Callable[[EndpointBuilder], EndpointBuilder]:
 
 _QUERY_SCALARS: Final = (
     str,
-    bytes,
     int,
     float,
     Decimal,
@@ -432,7 +433,10 @@ _QUERY_SCALARS: Final = (
     PastDatetime,
     FutureDatetime,
 )
-"""Types one query-string value can carry (``bool`` is an ``int``): each parses from text."""
+"""Types one query-string value can carry (``bool`` is an ``int``): each parses from text.
+
+``bytes`` is not one: a query value is decoded as text, so ``%FF`` arrives as a replacement
+character rather than the byte."""
 
 _QUERY_SEQUENCES: Final = (list, tuple, set, frozenset)
 """Containers a repeated query parameter (``?tag=a&tag=b``) can carry."""
@@ -496,13 +500,21 @@ def _complete(dto_type: type[BaseModel], op: str) -> type[BaseModel]:
     return dto_type
 
 
-def _single_value(dto_type: type[BaseModel], name: str, op: str, fallback: Any) -> Any:
-    """The annotation of path/query parameter *name*: the DTO's own field type."""
+def _param(name: str, annotation: Any, default: Any = inspect.Parameter.empty) -> inspect.Parameter:
+    return inspect.Parameter(
+        name, inspect.Parameter.KEYWORD_ONLY, annotation=annotation, default=default
+    )
+
+
+def _single_value(
+    dto_type: type[BaseModel], name: str, op: str, fallback: Any
+) -> inspect.Parameter:
+    """Path/query parameter *name* as the DTO declares its field: type, and default if any."""
 
     field = dto_type.model_fields.get(name)
 
     if field is None:
-        return fallback
+        return _param(name, fallback)
 
     if not _query_carries(field.annotation, in_sequence=True):
         raise exc.configuration(
@@ -510,19 +522,17 @@ def _single_value(dto_type: type[BaseModel], name: str, op: str, fallback: Any) 
             "carried by a single path or query value — only a scalar can"
         )
 
-    return field.annotation
+    if field.is_required():
+        return _param(name, field.annotation)
+
+    return _param(name, field.annotation, field.get_default(call_default_factory=True))
 
 
-def _signed(endpoint: Callable[..., Awaitable[Any]], **params: Any) -> None:
+def _signed(endpoint: Callable[..., Awaitable[Any]], *params: inspect.Parameter) -> None:
     """Give *endpoint* the keyword-only parameters FastAPI reads its inputs from."""
 
-    endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-        [
-            inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, annotation=annotation)
-            for name, annotation in params.items()
-        ]
-    )
-    endpoint.__annotations__ = dict(params)
+    endpoint.__signature__ = inspect.Signature(list(params))  # type: ignore[attr-defined]
+    endpoint.__annotations__ = {param.name: param.annotation for param in params}
 
 
 # ....................... #
@@ -541,7 +551,7 @@ def body_endpoint(
     async def endpoint(payload: Any) -> Any:
         return await runner(payload)
 
-    _signed(endpoint, payload=dto_type)
+    _signed(endpoint, _param("payload", dto_type))
 
     return endpoint
 
@@ -565,7 +575,7 @@ def id_endpoint(
     async def endpoint(id: Any) -> Any:
         return await runner(validate_payload(dto_type, {"id": id}, op))
 
-    _signed(endpoint, id=_single_value(dto_type, "id", op, UUID))
+    _signed(endpoint, _single_value(dto_type, "id", op, UUID))
 
     return endpoint
 
@@ -590,8 +600,8 @@ def id_rev_endpoint(
 
     _signed(
         endpoint,
-        id=_single_value(dto_type, "id", op, UUID),
-        rev=_single_value(dto_type, "rev", op, int),
+        _single_value(dto_type, "id", op, UUID),
+        _single_value(dto_type, "rev", op, int),
     )
 
     return endpoint
@@ -626,9 +636,9 @@ def id_rev_body_endpoint(
 
     _signed(
         endpoint,
-        id=_single_value(dto_type, "id", op, UUID),
-        rev=_single_value(dto_type, "rev", op, int),
-        payload=fields["dto"].annotation,
+        _single_value(dto_type, "id", op, UUID),
+        _single_value(dto_type, "rev", op, int),
+        _param("payload", fields["dto"].annotation),
     )
 
     return endpoint
@@ -637,18 +647,54 @@ def id_rev_body_endpoint(
 # ....................... #
 
 
-def _sent(dto_type: type[BaseModel], keys: AbstractSet[str]) -> set[str]:
-    """The fields of *dto_type* a request's query string named, by name or alias."""
+def _query_key(name: str, field: FieldInfo) -> str:
+    """The query key FastAPI reads a field from: its validation alias, alias, or name."""
 
-    sent: set[str] = set()
+    if isinstance(field.validation_alias, str) and field.validation_alias:
+        return field.validation_alias
+
+    return field.alias or name
+
+
+def _is_sequence(annotation: Any) -> bool:
+    """Whether FastAPI reads a field as a repeated query parameter."""
+
+    origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _is_sequence(get_args(annotation)[0])
+
+    if origin in (Union, UnionType):
+        return any(_is_sequence(arg) for arg in get_args(annotation))
+
+    return origin in _QUERY_SEQUENCES
+
+
+def _query_data(dto_type: type[BaseModel], params: QueryParams) -> dict[str, Any]:
+    """The payload a request body sending the same keys would carry.
+
+    A field is read from the key FastAPI reads it from — every value of a repeated one, the
+    last of a single one — and a key no field reads is passed through, for the DTO's own
+    ``extra`` policy and ``populate_by_name`` to decide on, as for a body. A field not sent is
+    left out, so it is not reported as set.
+    """
+
+    data: dict[str, Any] = {}
+    read: set[str] = set()
 
     for name, field in dto_type.model_fields.items():
-        names = {n for n in (name, field.alias, field.validation_alias) if isinstance(n, str)}
+        key = _query_key(name, field)
+        read.add(key)
 
-        if names & keys:
-            sent.add(name)
+        if values := params.getlist(key):
+            data[key] = values if _is_sequence(field.annotation) else values[-1]
 
-    return sent
+    for key in params:
+        if key not in read:
+            values = params.getlist(key)
+            data[key] = values[0] if len(values) == 1 else values
+
+    return data
 
 
 @_fills_path()
@@ -661,9 +707,10 @@ def query_endpoint(
 
     Each field is one query parameter; a list field repeats it (``?tag=a&tag=b``). A field a
     query string cannot carry (a nested model, a mapping) is refused when the route is
-    attached rather than silently dropped on every request. As from a request body, only the
-    parameters the request sent count as set (``model_fields_set``), so a defaulted field is
-    not written by a patch the operation encodes from it.
+    attached rather than silently dropped on every request. The operation receives the DTO a
+    request body sending the same keys would build: only the parameters sent count as set
+    (``model_fields_set``), so a patch encoded from it leaves defaulted fields alone, and
+    validators, private attributes and extras behave as for a body.
     """
 
     dto_type = _complete(require_input_type(input_type, op), op)
@@ -680,14 +727,15 @@ def query_endpoint(
     query_model = Annotated[dto_type, Query()]  # type: ignore[valid-type]
 
     async def endpoint(payload: Any, request: Request) -> Any:
-        # FastAPI fills every default before validating, so the model it built reports each
-        # field as set; rebuild it from the same values with only the sent ones set.
-        values = {**payload.__dict__, **(payload.__pydantic_extra__ or {})}
-        sent = _sent(dto_type, set(request.query_params))
+        # The query model is FastAPI's: it publishes the parameters and answers 422 on a bad
+        # query. It fills every default before validating, though, so every field reads as
+        # set; the operation gets the model built from what the request actually sent.
+        _ = payload
+        data = _query_data(dto_type, request.query_params)
 
-        return await runner(dto_type.model_construct(_fields_set=sent, **values))
+        return await runner(validate_payload(dto_type, data, op))
 
-    _signed(endpoint, payload=query_model, request=Request)
+    _signed(endpoint, _param("payload", query_model), _param("request", Request))
 
     return endpoint
 

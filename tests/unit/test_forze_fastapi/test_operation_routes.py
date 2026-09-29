@@ -20,23 +20,45 @@ pytest.importorskip("fastapi")
 from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import AwareDatetime as PydanticAwareDatetime
-from pydantic import Field, HttpUrl
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FutureDate,
+    FutureDatetime,
+    HttpUrl,
+    NaiveDatetime,
+    PastDate,
+    PastDatetime,
+    PrivateAttr,
+    model_validator,
+)
+from pydantic.alias_generators import to_camel
 
+from forze.application.contracts.authn import AuthnSpec
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.search import SearchSpec
 from forze.application.execution.operations import OperationDescriptor, OperationRegistry
 from forze.base.exceptions import CoreException
 from forze.base.primitives import AwareDatetime, StrKeyNamespace
-from forze.domain.models import BaseDTO
+from forze.domain.models import BaseDTO, ReadDocument
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.routes import (
     EndpointBuilder,
     RouteBinding,
     attach_operation_routes,
+    attach_search_routes,
+    attach_tenancy_admin_routes,
+    attach_tenancy_routes,
     body_endpoint,
     id_endpoint,
     id_rev_body_endpoint,
+    id_rev_endpoint,
     query_endpoint,
 )
+from forze_kits.aggregates.search import build_search_registry
+from forze_kits.aggregates.tenancy import build_tenancy_registry
+from forze_kits.aggregates.tenancy_admin import build_tenancy_admin_registry
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_modules
 
@@ -45,6 +67,15 @@ pytestmark = pytest.mark.unit
 # ----------------------- #
 
 STOCK = StrKeyNamespace(prefix="stock")
+_AUTHN = AuthnSpec(name="main", enabled_methods=frozenset({"token"}))
+_AUTHN_NS = _AUTHN.default_namespace
+
+
+def _search_registry() -> Any:
+    class _Hit(ReadDocument):
+        title: str
+
+    return build_search_registry(SearchSpec(name="notes", model_type=_Hit, fields=["title"]))
 
 
 class _LevelsQuery(BaseDTO):
@@ -117,6 +148,11 @@ class _CarriedQuery(BaseDTO):
     home: HttpUrl | None = None
     pair: tuple[str, ...] = ()
     size: Annotated[int, Field(ge=1)] | None = None
+    naive: NaiveDatetime | None = None
+    past: PastDate | None = None
+    later: FutureDate | None = None
+    was: PastDatetime | None = None
+    will: FutureDatetime | None = None
 
 
 class _NestedListQuery(BaseDTO):
@@ -126,6 +162,11 @@ class _NestedListQuery(BaseDTO):
 class _AliasedListQuery(BaseDTO):
     # FastAPI reads an alias as one value, so an alias of a list would fail every request.
     inner: _Tags = []
+
+
+class _BytesQuery(BaseDTO):
+    # A query value is text: ``%FF`` arrives as a replacement character, not the byte.
+    inner: bytes = b""
 
 
 class _UnresolvedQuery(BaseDTO):
@@ -138,6 +179,11 @@ class _IntId(BaseDTO):
 
 class _StrId(BaseDTO):
     id: str
+
+
+class _OptionalRev(BaseDTO):
+    id: int
+    rev: int | None = None
 
 
 class _Rename(BaseDTO):
@@ -314,8 +360,8 @@ class TestTheQueryRoute:
 
     @pytest.mark.parametrize(
         "dto",
-        [_NestedQuery, _UnionQuery, _ListOfModelsQuery, _MappingQuery],
-        ids=["model", "union-with-a-model", "list-of-models", "mapping"],
+        [_NestedQuery, _UnionQuery, _ListOfModelsQuery, _MappingQuery, _BytesQuery],
+        ids=["model", "union-with-a-model", "list-of-models", "mapping", "bytes"],
     )
     def test_a_field_a_query_cannot_carry_is_refused_when_attached(
         self, dto: type[BaseDTO]
@@ -361,6 +407,11 @@ class TestTheQueryRoute:
             "home",
             "pair",
             "size",
+            "naive",
+            "past",
+            "later",
+            "was",
+            "will",
         }
 
     async def test_the_carried_scalars_parse_from_the_query(self) -> None:
@@ -436,16 +487,29 @@ class TestTheIdRoutes:
         assert response.status_code == 200
         assert response.json()["dump"]["id"] == 7
 
-    def test_a_document_route_keeps_its_uuid_id_and_int_rev(self) -> None:
+    def test_the_published_parameters_take_the_dtos_types(self) -> None:
         params = _one(
             _IntIdUpdate, build=id_rev_body_endpoint, path="/{id}", method="PATCH"
         ).openapi()["paths"]["/stock/{id}"]["patch"]["parameters"]
         by_name = {p["name"]: p["schema"] for p in params}
 
         assert by_name["id"]["type"] == "integer"
+        assert by_name["rev"]["type"] == "integer"
 
         uuid_params = _app().openapi()["paths"]["/stock/{id}"]["get"]["parameters"]
         assert uuid_params[0]["schema"] == {"type": "string", "format": "uuid", "title": "Id"}
+
+    async def test_an_optional_rev_is_published_and_read_as_optional(self) -> None:
+        app = _one(_OptionalRev, build=id_rev_endpoint, path="/{id}")
+        params = app.openapi()["paths"]["/stock/{id}"]["get"]["parameters"]
+
+        assert {p["name"]: p["required"] for p in params} == {"id": True, "rev": False}
+
+        async with _client(app) as client:
+            response = await client.get("/stock/5")
+
+        assert response.status_code == 200
+        assert response.json()["dump"] == {"id": 5, "rev": None}
 
     def test_an_id_outside_the_path_is_a_query_parameter(self) -> None:
         # The RPC-style document routes rely on it: ``GET /notes.get?id=``.
@@ -508,3 +572,161 @@ class TestTheBindingIsChecked:
         app = _one(_Filter, build=query_endpoint, path="", bindings=bindings, skip_unregistered=True)
 
         assert set(app.openapi()["paths"]) == {"/stock/one"}
+
+    @pytest.mark.parametrize(
+        ("attach", "full"),
+        [
+            (attach_search_routes, lambda: _search_registry()),
+            (attach_tenancy_routes, lambda: build_tenancy_registry(_AUTHN)),
+            (attach_tenancy_admin_routes, lambda: build_tenancy_admin_registry(_AUTHN_NS)),
+        ],
+        ids=["search", "tenancy", "tenancy-admin"],
+    )
+    def test_a_shipped_attacher_skips_what_its_registry_omits(
+        self, attach: Any, full: Any
+    ) -> None:
+        catalog = full().freeze().catalog()
+        kept = sorted(map(str, catalog))[0]
+        registry = OperationRegistry(
+            handlers={kept: lambda _c: _Seen()},
+            descriptors={kept: catalog[kept].descriptor},
+        ).freeze()
+        ns = StrKeyNamespace(prefix=kept.rsplit(".", 1)[0])
+        router = APIRouter()
+
+        attach(router, registry=registry, ns=ns, ctx_dep=lambda: None)
+
+        assert [route.name for route in router.routes] == [kept]  # type: ignore[attr-defined]
+
+
+# ....................... #
+
+
+class _ExtraAliased(BaseModel):
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    sku_code: str = Field("NON", alias="skuCode", pattern=r"^[A-Z]{3}$")
+    limit: int = Field(10, alias="lim")
+
+
+class _Collide(BaseDTO):
+    a: int = Field(0, alias="b_alias")
+    b_alias: int = Field(7, alias="zz")
+
+
+class _Camel(BaseDTO):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, frozen=True)
+
+    sku_code: str = "x"
+    max_qty: int = 5
+
+
+class _Filled(BaseModel):
+    a: int = 0
+    b: int = 0
+
+    @model_validator(mode="after")
+    def _fill(self) -> _Filled:
+        if self.b == 0:
+            self.b = self.a * 2
+
+        return self
+
+
+class _Private(BaseDTO):
+    a: int = 0
+    _norm: str = PrivateAttr(default="unset")
+
+    @model_validator(mode="after")
+    def _normalize(self) -> _Private:
+        self._norm = f"norm-{self.a}"
+        return self
+
+
+_RECEIVED: list[Any] = []
+
+
+@attrs.define(slots=True, kw_only=True)
+class _Record(Handler[Any, Any]):
+    async def __call__(self, args: Any) -> Any:
+        _RECEIVED.append(args)
+        return None
+
+
+async def _twin(dto: type[BaseModel], query: list[tuple[str, str]], body: dict[str, Any]) -> Any:
+    """What one operation receives from a query route and from a body route, same DTO."""
+
+    router = APIRouter()
+    descriptor = OperationDescriptor(input_type=dto, output_type=None)
+    attach_operation_routes(
+        router,
+        registry=OperationRegistry(
+            handlers={STOCK.key("q"): lambda _c: _Record(), STOCK.key("b"): lambda _c: _Record()},
+            descriptors={STOCK.key("q"): descriptor, STOCK.key("b"): descriptor},
+        ).freeze(),
+        ns=STOCK,
+        ctx_dep=lambda: context_from_modules(MockDepsModule()),
+        bindings={
+            "q": RouteBinding(method="GET", path="/q", build=query_endpoint),
+            "b": RouteBinding(method="POST", path="/b", build=body_endpoint),
+        },
+    )
+    app = FastAPI()
+    app.include_router(router)
+    register_exception_handlers(app)
+    _RECEIVED.clear()
+
+    async with _client(app) as client:
+        from_query = await client.get("/q", params=query)
+        from_body = await client.post("/b", json=body)
+
+    assert from_query.status_code == from_body.status_code == 200, (
+        from_query.text,
+        from_body.text,
+    )
+
+    return _RECEIVED
+
+
+class TestTheQueryRouteBuildsWhatABodyWould:
+    """The operation receives the same value from a query route as from a body route."""
+
+    @pytest.mark.parametrize(
+        ("dto", "query", "body"),
+        [
+            (
+                _ExtraAliased,
+                [("skuCode", "ABC"), ("sku_code", "not-valid-at-all"), ("limit", "abc")],
+                {"skuCode": "ABC", "sku_code": "not-valid-at-all", "limit": "abc"},
+            ),
+            (_Collide, [("b_alias", "3"), ("zz", "9")], {"b_alias": "3", "zz": "9"}),
+            (_Camel, [("sku_code", "q"), ("maxQty", "2")], {"sku_code": "q", "maxQty": "2"}),
+            (_Filter, [("sku", "a"), ("tags", "x"), ("tags", "y")], {"sku": "a", "tags": ["x", "y"]}),
+            (_Filled, [("a", "3")], {"a": "3"}),
+            (_Private, [("a", "3")], {"a": "3"}),
+        ],
+        ids=["extra-and-alias", "alias-collision", "populate-by-name", "list", "filled", "private"],
+    )
+    async def test_the_same_value_arrives(
+        self, dto: type[BaseModel], query: list[tuple[str, str]], body: dict[str, Any]
+    ) -> None:
+        from_query, from_body = await _twin(dto, query, body)
+
+        assert from_query == from_body
+        assert from_query.model_dump() == from_body.model_dump()
+        assert from_query.model_dump(exclude_unset=True) == from_body.model_dump(exclude_unset=True)
+        assert from_query.model_fields_set == from_body.model_fields_set
+        assert from_query.__pydantic_private__ == from_body.__pydantic_private__
+        assert from_query.model_extra == from_body.model_extra
+
+    async def test_a_field_sent_by_its_name_stays_validated(self) -> None:
+        # ``sku_code`` is read from ``skuCode``; under its own name it is an extra, and never
+        # replaces the validated value.
+        from_query, _ = await _twin(
+            _ExtraAliased,
+            [("skuCode", "ABC"), ("sku_code", "not-valid-at-all")],
+            {"skuCode": "ABC", "sku_code": "not-valid-at-all"},
+        )
+
+        assert from_query.sku_code == "ABC"
+        assert from_query.model_extra == {"sku_code": "not-valid-at-all"}
