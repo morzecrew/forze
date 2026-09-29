@@ -413,6 +413,11 @@ Outro."""
             "Example:\n\n```python\ndef f(x):\n    return ``x``\n```\n\nOutro."
         )
 
+    def test_a_code_blocks_options_are_not_code(self) -> None:
+        text = ".. code-block:: python\n   :linenos:\n\n   x = 1"
+
+        assert _markdown(text) == "```python\nx = 1\n```"
+
     @pytest.mark.parametrize(
         ("text", "expected"),
         [

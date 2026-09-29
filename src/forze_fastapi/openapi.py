@@ -180,6 +180,9 @@ def _fenced(language: str, body: list[str]) -> str:
     while code and _OPTION.match(code[0]):
         code.pop(0)
 
+    while code and not code[0].strip():
+        code.pop(0)
+
     return "\n".join([f"```{language}", *code, "```"])
 
 
