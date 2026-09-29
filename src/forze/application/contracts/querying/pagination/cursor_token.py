@@ -536,6 +536,16 @@ def _compare_value(v: Any) -> Any:
 # ....................... #
 
 
+def _is_bare_date(text: str) -> bool:
+    try:
+        date.fromisoformat(text)
+
+    except ValueError:
+        return False
+
+    return True
+
+
 def _temporal_pair(left: Any, right: Any) -> tuple[Any, Any]:
     """*left* and *right*, with an ISO string facing a datetime or a date read as one.
 
@@ -552,6 +562,11 @@ def _temporal_pair(left: Any, right: Any) -> tuple[Any, Any]:
 
             except ValueError as e:
                 raise exc.validation("Invalid cursor token") from e
+
+            # A datetime key's cursor always carries a time; a bare date would read as midnight
+            # and silently move the boundary.
+            if isinstance(other, datetime) and _is_bare_date(this):
+                raise exc.validation("Invalid cursor token")
 
             return (parsed, right) if this is left else (left, parsed)
 
