@@ -1,9 +1,10 @@
-"""`AggregateKit(mappers=..., dtos=...)` maps the inbound DTOs the author declares.
+"""How an `AggregateKit` writes: the author's mappers and DTOs, its transaction, its update result.
 
 The mappers are the base the kit's own arms compose on: soft deletion adds its exclusion after the
 author's list mapper, and versioning strips lineage before the author's update mapper and seeds a
 first version from the author's create mapper. An arm that assigned its own mapper instead would
-drop the author's silently, so each composition case drives the composed registry.
+drop the author's silently, so each composition case drives the composed registry. The
+transaction legs observe the depth an operation runs at, not only that a binding registered.
 """
 
 from __future__ import annotations
@@ -393,7 +394,7 @@ class TestUpdateReturnsTheRecord:
             made = await run_operation(
                 reg, _key(WIDGETS, DocumentKernelOp.CREATE), WidgetCreate(group="a"), ctx
             )
-            await run_operation(
+            updated = await run_operation(
                 reg,
                 _key(WIDGETS, DocumentKernelOp.UPDATE),
                 DocumentUpdateDTO(id=made.id, rev=made.rev, dto=WidgetUpdate(qty=7)),
@@ -402,6 +403,8 @@ class TestUpdateReturnsTheRecord:
             index = ctx.deps.provide(MockStateDepKey).documents["widgets_index"]
 
             assert index[made.id]["qty"] == 7
+
+        assert isinstance(updated, WidgetRead)
 
     async def test_an_invariant_scopes_by_the_returned_record(self) -> None:
         from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant

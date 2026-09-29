@@ -241,6 +241,37 @@ Field encryption declared on the spec flows through untouched. Backend config
 over `registry()` with your deps module and the
 [route generators](../integrations/fastapi.md) — so the hexagonal layer split holds.
 
+## Shaping the writes
+
+Three options change how the generated writes behave without replacing a handler:
+
+```python
+kit = AggregateKit(
+    spec=ORDER_SPEC,
+    dtos=DocumentDTOs(read=OrderRead, create=OrderRequest, update=OrderUpdate),
+    mappers=DocumentMappers(
+        create=PydanticPipelineMapperFactory(
+            in_=OrderRequest,
+            out=CreateOrderCmd,
+            step_factories=(NumberIdMappingStepFactory(spec=ORDER_NO, name_field="name"),),
+        ),
+    ),
+    transactional_writes=True,
+    update_returns="record",
+)
+```
+
+- **`mappers=` / `dtos=`** — how an inbound DTO becomes the domain command, and which DTOs the
+  generated routes and tools advertise. Your mappers are the base the other options compose on:
+  `soft_delete` adds its exclusion after your list mapper, and `versioned` strips its lineage
+  fields before your update mapper and seeds the first version through your create mapper.
+- **`transactional_writes=True`** — create, update, kill and the soft-delete transitions run in a
+  transaction on the registry's `tx_route`, so a mapper's side effects (a number-id counter)
+  commit or roll back with the write. Off by default.
+- **`update_returns="record"`** — the generated update returns the updated record instead of
+  `{data, diff}`, and its route advertises the read model. The typed facade keeps the default's
+  return type.
+
 ## The escape hatch
 
 The kit gives the governed-CRUD floor; a bespoke lifecycle comes through a first-class

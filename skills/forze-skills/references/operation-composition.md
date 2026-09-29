@@ -126,6 +126,11 @@ registry = build_document_registry(
 ).freeze()
 ```
 
+`NumberIdMappingStepFactory(spec=..., name_field="name")` also appends the number to that
+field — `"Order"` becomes `"Order #12"` (`name_format="{name} #{number}"` by default); an empty
+value is left alone. With `AggregateKit`, pass the same factory as
+`AggregateKit(mappers=DocumentMappers(create=create_mapper))`.
+
 See [document and search specs](document-spec.md) and the mapping reference for step configuration.
 
 ## Anti-patterns

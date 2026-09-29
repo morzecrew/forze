@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **S3 buckets can be created at startup.** `s3_bucket_lifecycle_step(buckets=[...])` runs after `s3_lifecycle_step` and creates each missing bucket, leaving existing ones alone; a bucket it cannot create fails startup. `s3_lifecycle_step` now provides `s3.client`, so a plan with two of them is refused.
 
+- **An aggregate kit takes your mappers and DTOs, and can run its writes in a transaction.** `AggregateKit(mappers=…, dtos=…)` composes your mappers under soft deletion and versioning; `transactional_writes=True` binds every generated write to `tx_route`; `update_returns="record"` returns the updated record.
+
+- **The number-id step can name what it numbers.** `NumberIdMappingStepFactory(spec, name_field="name")` also sets that field to `name_format` (`"{name} #{number}"` by default), so `"Order"` becomes `"Order #12"`; an empty value is left alone.
+
 ### Changed
 
 - ...
