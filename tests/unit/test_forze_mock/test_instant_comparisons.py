@@ -24,6 +24,7 @@ from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
+UTC_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 BERLIN: Final = ZoneInfo("Europe/Berlin")
 SUMMER_0230: Final = datetime(2026, 10, 25, 2, 30, fold=0, tzinfo=BERLIN)
 WINTER_0230: Final = datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=BERLIN)
@@ -244,3 +245,44 @@ class TestTheAggregates:
         )
 
         assert sorted(row["n"] for row in page.hits) == [1, 1]
+
+
+class TestSortingAndPaging:
+    # In fact 00:30, 01:15, 10:30 and 11:00 UTC; as text the first two and the last two swap.
+    ORDER: Final = (
+        SUMMER_0230,
+        WINTER_0215,
+        datetime(2026, 10, 25, 11, 30, tzinfo=BERLIN),
+        datetime(2026, 10, 25, 11, 0, tzinfo=UTC),
+    )
+
+    async def _slots(self) -> object:
+        ctx = _ctx()
+
+        for at in reversed(self.ORDER):
+            await ctx.document.command(SLOTS).create(_SlotCreate(at=at))
+
+        return ctx
+
+    async def test_a_sort_orders_instants(self) -> None:
+        ctx = await self._slots()
+        page = await ctx.document.query(SLOTS).find_many(sorts={"at": "asc"})  # type: ignore[attr-defined]
+
+        assert [hit.at - UTC_EPOCH for hit in page.hits] == [at - UTC_EPOCH for at in self.ORDER]
+
+    async def test_cursor_pages_follow_the_instants(self) -> None:
+        ctx = await self._slots()
+        query = ctx.document.query(SLOTS)
+        seen: list[datetime] = []
+        cursor: dict[str, object] = {"limit": 1}
+
+        while True:
+            page = await query.find_cursor(sorts={"at": "asc"}, cursor=cursor)  # type: ignore[attr-defined]
+            seen.extend(hit.at for hit in page.hits)
+
+            if not page.has_more:
+                break
+
+            cursor = {"limit": 1, "after": page.next_cursor}
+
+        assert [at - UTC_EPOCH for at in seen] == [at - UTC_EPOCH for at in self.ORDER]
