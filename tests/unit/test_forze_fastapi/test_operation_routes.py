@@ -7,7 +7,9 @@ the catalog. ``query_endpoint`` covers the GET whose input arrives as query para
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import date
+from enum import StrEnum
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import attrs
@@ -68,6 +70,33 @@ class _Nested(BaseDTO):
 
 class _NestedQuery(BaseDTO):
     inner: _Nested
+
+
+class _UnionQuery(BaseDTO):
+    inner: int | _Nested
+
+
+class _ListOfModelsQuery(BaseDTO):
+    inner: list[_Nested] = []
+
+
+class _MappingQuery(BaseDTO):
+    inner: dict[str, str] = {}
+
+
+class _Kind(StrEnum):
+    RAW = "raw"
+    DONE = "done"
+
+
+class _ScalarsQuery(BaseDTO):
+    sku: str
+    kind: _Kind = _Kind.RAW
+    mode: Literal["a", "b"] = "a"
+    since: date | None = None
+    owner: UUID | None = None
+    limit: int | None = None
+    tags: frozenset[str] = frozenset()
 
 
 @attrs.define(slots=True, kw_only=True)
@@ -180,10 +209,30 @@ class TestTheQueryRoute:
         assert isinstance(response.json()["detail"], str)
         assert response.headers[ERROR_CODE_HEADER] == "request_validation_error"
 
-    def test_a_field_a_query_cannot_carry_is_refused_when_attached(self) -> None:
+    @pytest.mark.parametrize(
+        "dto",
+        [_NestedQuery, _UnionQuery, _ListOfModelsQuery, _MappingQuery],
+        ids=["model", "union-with-a-model", "list-of-models", "mapping"],
+    )
+    def test_a_field_a_query_cannot_carry_is_refused_when_attached(
+        self, dto: type[BaseDTO]
+    ) -> None:
         # FastAPI accepts a nested model on a query model at route creation and fails every
         # request; the attacher refuses it up front instead.
         with pytest.raises(CoreException, match=r"Field 'inner'") as caught:
-            _app(_NestedQuery)
+            _app(dto)
 
         assert caught.value.kind.value == "configuration"
+
+    def test_optional_literal_enum_and_set_scalars_are_carried(self) -> None:
+        params = _app(_ScalarsQuery).openapi()["paths"]["/stock/levels"]["get"]["parameters"]
+
+        assert {p["name"] for p in params} == {
+            "sku",
+            "kind",
+            "mode",
+            "since",
+            "owner",
+            "limit",
+            "tags",
+        }
