@@ -157,6 +157,11 @@ class _Filter(BaseDTO):
     tags: list[str] = []
 
 
+class _AliasedFilter(BaseDTO):
+    sku_code: str = Field(alias="skuCode")
+    limit: int = 10
+
+
 @attrs.define(slots=True, kw_only=True)
 class _Seen(Handler[Any, Any]):
     """What reached the operation: the values, and which of them the caller set."""
@@ -396,6 +401,12 @@ class TestTheQueryRoute:
 
         assert from_query == from_body
         assert from_query["set"] == ["sku"]
+
+    async def test_a_parameter_sent_by_its_alias_counts_as_set(self) -> None:
+        async with _client(_one(_AliasedFilter, build=query_endpoint, path="/one")) as client:
+            seen = (await client.get("/stock/one", params={"skuCode": "a-1"})).json()
+
+        assert seen["set"] == ["sku_code"]
 
 
 # ....................... #
