@@ -49,6 +49,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.domain.models import BaseDTO, Document
 from forze_kits.aggregates.document import (
+    DocumentDTOs,
     DocumentFacade,
     DocumentKernelOp,
     DocumentMappers,
@@ -93,6 +94,7 @@ from forze_kits.domain.versioned.constants import IS_CURRENT_FIELD
 from forze_kits.integrations.outbox import OutboxEmit, bind_outbox
 from forze_kits.integrations.search import SearchRebuildReport, rebuild_search_index
 from forze_kits.invariants import InvariantEnforcement, bind_invariants
+from forze_kits.mapping import compose_mapper_factories
 
 if TYPE_CHECKING:
     from forze.application.contracts.document import DocumentSpec
@@ -122,29 +124,6 @@ _WRITE_OPS: tuple[StrKey, ...] = (
 # ``Document.update``, so a generated CREATE never stages — flushing it would just mark the route
 # flushed and poison a later stage in the same task.
 _EMIT_OPS = (DocumentKernelOp.UPDATE,)
-
-
-def _compose_mappers(first: Any, second: Any) -> Any:
-    """A mapper factory running *first* then *second*, or *second* alone when there is none.
-
-    The mapper slots are shared between the arms a kit composes, so an arm that assigned its own
-    would drop the one before it — and each mapper conjoins into the filter the previous one
-    produced, which is what makes stacking them mean "both restrictions".
-    """
-
-    if first is None:
-        return second
-
-    def _factory(ctx: Any) -> Any:
-        before = first(ctx)
-        after = second(ctx)
-
-        async def _map(source: Any) -> Any:
-            return await after(await before(source))
-
-        return _map
-
-    return _factory
 
 
 # ....................... #
@@ -269,6 +248,19 @@ class AggregateKit(Generic[R, D, C, U]):
     extra_ops: OperationRegistry | None = None
     """Escape hatch — merge bespoke operations into the composed registry."""
 
+    mappers: DocumentMappers[C, Any, U, Any] | None = None
+    """The author's document mappers: how an inbound create/update DTO becomes the domain
+    command (e.g. a pipeline with a number-id step), and any list-family restriction.
+
+    They are the base the kit's arms compose on, never replaced by them: soft deletion runs its
+    exclusion after an author's list mapper, and versioning strips lineage fields before an
+    author's update mapper and seeds the first version from an author's create mapper."""
+
+    dtos: DocumentDTOs[R, Any, Any] | None = None
+    """Inbound DTOs, when a create/update DTO is not the spec's own command — the generated
+    routes and tools advertise these. Pair with :attr:`mappers` to translate them. The read DTO
+    must be the spec's read model: the store returns that and nothing else."""
+
     audit: Mapping[StrKey, Audited] = attrs.field(factory=dict[StrKey, Audited])
     """Audit generated operations, keyed by kernel op like :attr:`handlers`.
 
@@ -281,6 +273,13 @@ class AggregateKit(Generic[R, D, C, U]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if self.dtos is not None and self.dtos.read is not self.spec.read:
+            raise exc.configuration(
+                f"AggregateKit dtos.read {self.dtos.read.__name__!r} must be the spec's read "
+                f"model {self.spec.read.__name__!r}: the store returns the read model, so a "
+                "different type would only change what the routes advertise.",
+            )
+
         if self.storage is not None and self.storage.name == self.spec.name:
             raise exc.configuration(
                 f"AggregateKit storage spec name {self.storage.name!r} must differ from the "
@@ -627,15 +626,21 @@ class AggregateKit(Generic[R, D, C, U]):
         ns = spec.default_namespace
 
         soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
+        mappers: DocumentMappers[Any, Any, Any, Any] = self.mappers or DocumentMappers()
         versioned = (
-            versioned_wiring(spec, self.versioned, soft_deleted=self.soft_delete)
+            versioned_wiring(
+                spec,
+                self.versioned,
+                soft_deleted=self.soft_delete,
+                dtos=self.dtos,
+                create_mapper=mappers.create,
+            )
             if self.versioned is not None
             else None
         )
 
-        mappers: DocumentMappers[Any, Any, Any, Any] = (
-            soft.read_mappers() if soft is not None else DocumentMappers()
-        )
+        if soft is not None:
+            mappers = soft.read_mappers(mappers)
 
         if versioned is not None:
             # After soft-delete, and composing with it rather than replacing it: the two arms
@@ -653,7 +658,7 @@ class AggregateKit(Generic[R, D, C, U]):
             else None
         )
 
-        reg = build_document_registry(spec, mappers=mappers)
+        reg = build_document_registry(spec, dtos=self.dtos, mappers=mappers)
 
         if self.search is not None:
             reg = type(reg).merge(
@@ -834,12 +839,14 @@ class AggregateKit(Generic[R, D, C, U]):
         # puts them there.
         return attrs.evolve(
             mappers,
-            search=_compose_mappers(mappers.search, current_versions_only_mapper),
-            projected_search=_compose_mappers(
+            search=compose_mapper_factories(mappers.search, current_versions_only_mapper),
+            projected_search=compose_mapper_factories(
                 mappers.projected_search, current_versions_only_mapper
             ),
-            cursor_search=_compose_mappers(mappers.cursor_search, current_versions_only_mapper),
-            projected_search_cursor=_compose_mappers(
+            cursor_search=compose_mapper_factories(
+                mappers.cursor_search, current_versions_only_mapper
+            ),
+            projected_search_cursor=compose_mapper_factories(
                 mappers.projected_search_cursor, current_versions_only_mapper
             ),
         )

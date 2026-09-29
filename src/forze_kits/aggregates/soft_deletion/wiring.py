@@ -37,6 +37,7 @@ from forze_kits.aggregates.document.dto import DocumentIdDTO
 from forze_kits.aggregates.document.operations import DocumentKernelOp
 from forze_kits.aggregates.document.value_objects import DocumentMappers
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
+from forze_kits.mapping import compose_mapper_factories
 
 from .factories import build_soft_deletion_registry
 from .operations import SoftDeletionKernelOp
@@ -147,18 +148,26 @@ class SoftDeleteWiring:
     ) -> DocumentMappers[Any, Any, Any, Any]:
         """List mappers that exclude soft-deleted rows — pass to ``build_document_registry``.
 
-        Overrides the list-family mappers on *base* (create/update mappers are preserved).
+        Runs the exclusion *after* each list-family mapper *base* already carries rather than
+        replacing it, so a caller's own restriction still applies; create/update mappers are
+        preserved.
         """
 
         base = base if base is not None else DocumentMappers()
 
         return attrs.evolve(
             base,
-            list=exclude_soft_deleted_mapper,
-            projected_list=exclude_soft_deleted_mapper,
-            cursor_list=exclude_soft_deleted_mapper,
-            projected_cursor_list=exclude_soft_deleted_mapper,
-            aggregated_list=exclude_soft_deleted_mapper,
+            list=compose_mapper_factories(base.list, exclude_soft_deleted_mapper),
+            projected_list=compose_mapper_factories(
+                base.projected_list, exclude_soft_deleted_mapper
+            ),
+            cursor_list=compose_mapper_factories(base.cursor_list, exclude_soft_deleted_mapper),
+            projected_cursor_list=compose_mapper_factories(
+                base.projected_cursor_list, exclude_soft_deleted_mapper
+            ),
+            aggregated_list=compose_mapper_factories(
+                base.aggregated_list, exclude_soft_deleted_mapper
+            ),
         )
 
     # ....................... #

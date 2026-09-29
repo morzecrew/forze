@@ -18,7 +18,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.mapping import Mapper
+from forze.application.contracts.mapping import Mapper, MapperFactory
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import exc
@@ -35,7 +35,7 @@ from forze_kits.domain.versioned.constants import (
     SUPERSEDES_ID_FIELD,
     VERSION_FIELD,
 )
-from forze_kits.mapping import PydanticPipelineMapperFactory
+from forze_kits.mapping import PydanticPipelineMapperFactory, compose_mapper_factories
 
 from .factories import build_versioned_registry
 from .handlers import SeedFirstVersion
@@ -119,19 +119,7 @@ def _after(base: Any) -> Any:
     apply both.
     """
 
-    if base is None:
-        return current_versions_only_mapper
-
-    def _factory(ctx: ExecutionContext) -> Mapper[Any, Any]:
-        first = base(ctx)
-        second = current_versions_only_mapper(ctx)
-
-        async def _map(source: Any) -> Any:
-            return await second(await first(source))
-
-        return _map
-
-    return _factory
+    return compose_mapper_factories(base, current_versions_only_mapper)
 
 
 # ....................... #
@@ -224,6 +212,9 @@ class VersionedWiring:
     dtos: DocumentDTOs[Any, Any, Any] | None = None
     """Inbound DTOs, when they are not the spec's own commands."""
 
+    create_mapper: MapperFactory[Any, Any] | None = None
+    """The author's create mapper, which the first-version CREATE maps through when given."""
+
     # ....................... #
 
     def mappers(
@@ -287,7 +278,11 @@ class VersionedWiring:
                 if self.dtos is not None and self.dtos.create is not None
                 else create_cmd
             )
-            seed_mapper = PydanticPipelineMapperFactory(in_=create_dto, out=create_cmd)
+            seed_mapper = (
+                self.create_mapper
+                if self.create_mapper is not None
+                else PydanticPipelineMapperFactory(in_=create_dto, out=create_cmd)
+            )
 
             reg = reg.set_handler(
                 create_key,
@@ -321,6 +316,7 @@ def versioned_wiring(
     *,
     soft_deleted: bool = False,
     dtos: DocumentDTOs[Any, Any, Any] | None = None,
+    create_mapper: MapperFactory[Any, Any] | None = None,
 ) -> VersionedWiring:
     """Build the reusable versioned-facts wiring for *spec*.
 
@@ -333,7 +329,13 @@ def versioned_wiring(
     VersionedPolicy.assert_guarantees(spec)
     _assert_read_model(spec)
 
-    return VersionedWiring(spec=spec, policy=policy, soft_deleted=soft_deleted, dtos=dtos)
+    return VersionedWiring(
+        spec=spec,
+        policy=policy,
+        soft_deleted=soft_deleted,
+        dtos=dtos,
+        create_mapper=create_mapper,
+    )
 
 
 # ....................... #
