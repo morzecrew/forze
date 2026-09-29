@@ -64,9 +64,11 @@ class _ScopeByPrincipal:
 class _Delegation:
     def __init__(self, granted: bool) -> None:
         self.granted = granted
+        self.asked: list[tuple[UUID, UUID]] = []
 
     async def may_act(self, actor_id: UUID, subject_id: UUID, *, scope: Any = None) -> bool:
-        _ = actor_id, subject_id, scope
+        _ = scope
+        self.asked.append((actor_id, subject_id))
         return self.granted
 
 
@@ -156,13 +158,28 @@ class TestTheScopeWrap:
         spec = AuthzSpec(name="main", enforce_delegation_grant=True)
 
         if granted:
-            await _list(AS_AGENT_FOR_USER, port, spec=spec, delegation=_Delegation(True))
+            delegation = _Delegation(True)
+            await _list(AS_AGENT_FOR_USER, port, spec=spec, delegation=delegation)
+
+            # The agent is asked whether it may act for the user, not the other way round.
+            assert delegation.asked == [(AGENT.principal_id, USER.principal_id)]
             return
 
         with pytest.raises(CoreException) as caught:
             await _list(AS_AGENT_FOR_USER, port, spec=spec, delegation=_Delegation(False))
 
         assert caught.value.code == "delegation_not_granted"
+
+    def test_an_enforced_grant_with_no_port_fails_when_the_hook_is_built(self) -> None:
+        # Never open at runtime: the route cannot check what it declared it would.
+        ctx = context_from_deps(Deps())
+        spec = AuthzSpec(name="main", enforce_delegation_grant=True)
+
+        with patch.object(ctx.authz, "scope", return_value=_ScopeByPrincipal({})):
+            with pytest.raises(CoreException):
+                AuthzDocumentScopeWrap(spec=spec, document_name="orders", operation="find_many")(
+                    ctx
+                )
 
 
 # ....................... #
