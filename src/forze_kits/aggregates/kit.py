@@ -261,6 +261,13 @@ class AggregateKit(Generic[R, D, C, U]):
     routes and tools advertise these. Pair with :attr:`mappers` to translate them. The read DTO
     must be the spec's read model: the store returns that and nothing else."""
 
+    transactional_writes: bool = False
+    """Run every generated write — create, update, kill, and with :attr:`soft_delete` delete and
+    restore — in a transaction on the registry's ``tx_route``, so a mapper's side effects (a
+    number-id counter, a lookup) commit or roll back with the write. Off by default: a plain
+    kit's writes open no transaction unless an arm needs one, and the deps module must register
+    a transaction manager on ``tx_route`` for this to wire."""
+
     audit: Mapping[StrKey, Audited] = attrs.field(factory=dict[StrKey, Audited])
     """Audit generated operations, keyed by kernel op like :attr:`handlers`.
 
@@ -698,6 +705,9 @@ class AggregateKit(Generic[R, D, C, U]):
         if temporal is not None:
             reg = temporal.bind(reg, ns=ns)
 
+        if self.transactional_writes:
+            reg = self._bind_writes_tx(reg, ns=ns, tx_route=tx_route)
+
         reg = self._attach_invariants(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_outbox_flush(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_audit(reg, ns=ns, tx_route=tx_route)
@@ -709,6 +719,34 @@ class AggregateKit(Generic[R, D, C, U]):
             reg = type(reg).merge(reg, self.extra_ops)
 
         return reg
+
+    # ....................... #
+
+    def _bind_writes_tx(
+        self,
+        reg: OperationRegistry,
+        *,
+        ns: Any,
+        tx_route: StrKey,
+    ) -> OperationRegistry:
+        # An arm that already binds one of these (audit, invariants, search sync) binds the same
+        # route, and two scopes on one route merge into one.
+        keys = [
+            ns.key(op)
+            for op in (
+                DocumentKernelOp.CREATE,
+                DocumentKernelOp.UPDATE,
+                DocumentKernelOp.KILL,
+                SoftDeletionKernelOp.DELETE,
+                SoftDeletionKernelOp.RESTORE,
+            )
+            if ns.key(op) in reg.operation_keys()
+        ]
+
+        if not keys:
+            return reg
+
+        return reg.bind(*keys).bind_tx().set_route(tx_route).finish(deep=True)
 
     # ....................... #
 

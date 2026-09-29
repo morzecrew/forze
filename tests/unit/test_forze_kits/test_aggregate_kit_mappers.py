@@ -238,3 +238,100 @@ class TestTheDTOs:
             AggregateKit(spec=WIDGETS, dtos=DocumentDTOs(read=OtherRead))
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+
+# ....................... #
+
+
+def _depth_recorder(seen: list[int]) -> Any:
+    """A handler factory recording the transaction depth it runs at."""
+
+    def _factory(ctx: Any) -> Any:
+        async def _handler(args: Any) -> None:
+            seen.append(ctx.tx_ctx.depth())
+
+        return _handler
+
+    return _factory
+
+
+class TestTransactionalWrites:
+    @pytest.mark.parametrize(
+        "op",
+        [
+            DocumentKernelOp.CREATE,
+            DocumentKernelOp.UPDATE,
+            DocumentKernelOp.KILL,
+            SoftDeletionKernelOp.DELETE,
+            SoftDeletionKernelOp.RESTORE,
+        ],
+    )
+    async def test_each_write_runs_in_a_transaction(self, op: str) -> None:
+        # The handler is replaced, the plan is not: whatever runs the op runs inside the tx.
+        seen: list[int] = []
+        kit = AggregateKit(
+            spec=WIDGETS,
+            soft_delete=True,
+            transactional_writes=True,
+            handlers={op: _depth_recorder(seen)},
+        )
+        reg = kit.registry(tx_route=_TX)
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            await run_operation(reg, _key(WIDGETS, op), None, runtime.get_context())
+
+        assert seen == [1]
+
+    async def test_a_generated_create_runs_its_mapper_inside_the_transaction(self) -> None:
+        seen: list[int] = []
+
+        def _recording(ctx: Any) -> Any:
+            async def _map(source: WidgetCreate) -> WidgetCreate:
+                seen.append(ctx.tx_ctx.depth())
+                return source
+
+            return _map
+
+        for transactional in (False, True):
+            kit = AggregateKit(
+                spec=WIDGETS,
+                transactional_writes=transactional,
+                mappers=DocumentMappers(create=_recording),
+            )
+            reg = kit.registry(tx_route=_TX)
+            runtime = build_runtime(MockDepsModule())
+
+            async with runtime.scope():
+                await run_operation(
+                    reg,
+                    _key(WIDGETS, DocumentKernelOp.CREATE),
+                    WidgetCreate(group="a"),
+                    runtime.get_context(),
+                )
+
+        # Off by default; on, the mapper (a number-id counter, say) shares the write's tx.
+        assert seen == [0, 1]
+
+    async def test_it_composes_with_an_arm_that_binds_the_same_write(self) -> None:
+        from forze.application.contracts.audit import AuditSpec
+        from forze.application.hooks.audit import Audited
+        from forze_kits.integrations.audit import AuditDepsModule
+
+        kit = AggregateKit(
+            spec=WIDGETS,
+            transactional_writes=True,
+            audit={DocumentKernelOp.CREATE: Audited(spec=AuditSpec(action="widget.create"))},
+        )
+        reg = kit.registry(tx_route=_TX)
+        runtime = build_runtime([MockDepsModule(), AuditDepsModule(tx_route=_TX)])
+
+        async with runtime.scope():
+            made = await run_operation(
+                reg,
+                _key(WIDGETS, DocumentKernelOp.CREATE),
+                WidgetCreate(group="a"),
+                runtime.get_context(),
+            )
+
+        assert made.group == "a"
