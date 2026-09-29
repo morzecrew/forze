@@ -9,7 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Wall-clock times convert to instants without guessing.** `CivilZone`, `to_instant`, `local_day_bounds`, `month_bounds`, `spanned_local_days` and `elapsed_minutes` in `forze.base.primitives` refuse a DST-repeated time without `fold` and a skipped one always; `AwareDatetime` refuses naive input at a boundary.
+
+- **Permissions can be derived from state per decision.** A `PermissionProvider` (declared on `AuthzKernelConfig(permission_providers=…)`) grants or denies keys from documents or config; a denial outranks every catalog binding, and `permission_providers_lifecycle_step` refuses to boot on a key the catalog lacks.
+
 - **A confirmation can refuse when its preview has changed.** `PreviewBinding(name=…, projector=…, exclude=…)` returns a fingerprinted preview with `reviewed()`, and `bind()` makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with `preview_changed` on a mismatch.
+
+- **An aggregate kit can audit the operations it generates.** `AggregateKit(audit={kernel op: Audited(...)})` binds the audit hooks and runs an audited write in a transaction, so its row commits with it. `audit_row_per_effect` checks under simulation that each committed audited write carries exactly one row.
 
 ### Changed
 
@@ -18,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The in-memory store compares aware datetimes as instants, as a real store does.** Filters, the mock's aggregates and its unique guarantee read a zoned value by the wall clock through a repeated hour, so two instants an hour apart counted as one value and one instant written in two zones could match nothing.
+
+- **A `Period` whose endpoints carry a DST zone compares instants, not wall clocks.** Through a repeated hour a one-hour period read as empty, and a valid one could be refused as backwards; `no_overlapping_periods` and the mock's non-overlap guarantee missed overlaps there and reported false ones.
+
+- **The temporal and versioned kits' reads are marked as reads.** `effective_on`, `timeline`, `history` and `as_of` now run under the read-only guard and are listed as read-only in the operation catalog, so an MCP projection that includes only reads now includes them.
 
 ## [0.9.0] - 2026-09-28
 

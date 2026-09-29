@@ -45,6 +45,10 @@ The generic `expect(kind, predicate, message=...)` covers most domain rules: it 
 
     Value-level (opt into `capture_values`): a keyed read must observe the last value written to it (stale-read guard); every captured write/read value must satisfy a predicate (the *wrong-value* guard).
 
+-   :lucide-scroll-text: **`audit_row_per_effect(audit_route=, effect_routes=)`**
+
+    Every committed transaction that wrote an audited effect carries exactly one [audit row](../identity-tenancy-enc/audit.md): none is an effect nobody can account for, two is a double record. Groups the trace's document writes by transaction, so an attempt that rolled back and was retried at the operation level is judged by the transaction that committed. It judges transactions only: a write outside one cannot be tied to an operation, so an operation the audit does not cover is caught only when it runs in a transaction. The transaction is the unit, so an audited operation dispatched inside another's transaction reads as a double record, and so does a port-level retry of the audit write. Stated for actions that fail closed (the default); one that ignores a failed audit write can commit without its row by design.
+
 -   :lucide-unlock: **`no_unclosed_transaction()` · `no_resource_leak(open_op=, close_op=)`**
 
     Every resource opened must close by end of run: a transaction `enter` with no matching `exit` is an abandoned scope. The general form pairs any open/close ops on the trace — the bug class nobody writes assertions for. (Don't pair with a crash policy — a crash legitimately abandons a scope.)

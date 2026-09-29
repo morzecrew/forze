@@ -16,12 +16,14 @@ from uuid import UUID
 import pytest
 
 from forze import build_runtime
+from forze.application.contracts.audit import AuditSpec
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.invariants import CountAll, ReadSet, SystemInvariant
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.contracts.transaction import IsolationLevel
-from forze.application.execution.operations import run_operation
+from forze.application.execution.operations import OperationKind, run_operation
+from forze.application.hooks.audit import Audited
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import utcnow
 from forze.domain.models import ReadDocument
@@ -53,6 +55,7 @@ from forze_kits.domain.versioned import (
     DocWithVersioning,
     UpdateCmdWithVersioning,
 )
+from forze_kits.integrations.audit import AuditDepsModule, audit_record_spec
 from forze_mock import MockDepsModule, MockStateDepKey
 
 # ----------------------- #
@@ -1355,3 +1358,35 @@ class TestTheFacadeReachesWhatTheKitComposed:
 
         with pytest.raises(CoreException, match="requires a versioning policy"):
             AggregateKit(spec=READINGS).lineage_facade(runtime, tx_route=_TX)
+
+
+class TestItsReadsAreReads:
+    def test_history_and_as_of_run_read_only(self) -> None:
+        plans = _kit().build_unfrozen(tx_route=_TX).get_plans()
+
+        for op in (VersionedKernelOp.HISTORY, VersionedKernelOp.AS_OF):
+            plan = plans.get(_key(op))
+            assert plan is not None and plan.kind is OperationKind.QUERY, op
+
+    async def test_an_audited_history_follows_the_read_rule(self) -> None:
+        # Recorded as a write, a read under audit_reads="never" left an "allowed" row anyway.
+        kit = AggregateKit(
+            spec=READINGS,
+            versioned=POLICY,
+            audit={
+                VersionedKernelOp.HISTORY: Audited(
+                    spec=AuditSpec(action="r.history", audit_reads="never")
+                )
+            },
+        )
+        runtime = build_runtime([MockDepsModule(), AuditDepsModule(tx_route=_TX)])
+        reg = kit.registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+            await run_operation(
+                reg, _key(VersionedKernelOp.HISTORY), FactIdDTO(root_id=first.root_id), ctx
+            )
+
+            assert await ctx.document.query(audit_record_spec()).count() == 0

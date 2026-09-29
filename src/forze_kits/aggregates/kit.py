@@ -37,11 +37,13 @@ from forze.application.contracts.inventory import (
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
 from forze.application.execution.domain import DomainEventRegistry
+from forze.application.execution.operations import OperationKind
 from forze.application.execution.operations.facade import OperationFacadeFactory
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.application.hooks.audit import Audited
 from forze.application.integrations.search import assert_search_encryption_parity
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -266,6 +268,15 @@ class AggregateKit(Generic[R, D, C, U]):
 
     extra_ops: OperationRegistry | None = None
     """Escape hatch — merge bespoke operations into the composed registry."""
+
+    audit: Mapping[StrKey, Audited] = attrs.field(factory=dict[StrKey, Audited])
+    """Audit generated operations, keyed by kernel op like :attr:`handlers`.
+
+    An audited write runs in a transaction on the registry's ``tx_route``, so its ``allowed``
+    row commits with the write or rolls back with it. An audited read (a ``QUERY`` op) is
+    recorded after it completes. A key naming an operation the kit does not compose is refused
+    when the registry is composed. The trail's collection and ``AuditDepsModule`` are wired like
+    any other document spec."""
 
     # ....................... #
 
@@ -684,6 +695,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
         reg = self._attach_invariants(reg, ns=ns, tx_route=tx_route)
         reg = self._attach_outbox_flush(reg, ns=ns, tx_route=tx_route)
+        reg = self._attach_audit(reg, ns=ns, tx_route=tx_route)
 
         if self.handlers:
             reg = reg.set_handlers(dict(self.handlers), override=True, namespace=ns)
@@ -980,6 +992,37 @@ class AggregateKit(Generic[R, D, C, U]):
                 reg = (
                     reg.bind(key).bind_tx().set_route(tx_route).on_success(flush).finish(deep=True)
                 )
+
+        return reg
+
+    # ....................... #
+
+    def _attach_audit(
+        self,
+        reg: OperationRegistry,
+        *,
+        ns: Any,
+        tx_route: StrKey,
+    ) -> OperationRegistry:
+        plans = reg.get_plans()
+
+        for op, audited in self.audit.items():
+            key = ns.key(op)
+
+            if key not in reg.operation_keys():
+                raise exc.configuration(
+                    f"AggregateKit audits {op!r}, which this kit does not compose; its "
+                    f"operations are {sorted(str(k) for k in reg.operation_keys())}.",
+                )
+
+            plan = plans.get(key)
+
+            if plan is not None and plan.kind is OperationKind.QUERY:
+                # A read's row is written after it completes; its own transaction is read-only.
+                reg = audited.bind(reg.bind(key), transactional=False).finish()
+
+            else:
+                reg = audited.bind(reg.bind(key).bind_tx().set_route(tx_route).finish()).finish()
 
         return reg
 

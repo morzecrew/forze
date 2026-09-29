@@ -17,7 +17,7 @@ import pytest
 from forze import build_runtime
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.guarantees import NonOverlapping
-from forze.application.execution.operations import run_operation
+from forze.application.execution.operations import OperationKind, run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, Document, ReadDocument
 from forze_kits.aggregates import AggregateKit
@@ -1140,3 +1140,12 @@ class TestAnInvertedPeriodIsADomainRefusal:
 
         assert caught.value.kind is ExceptionKind.DOMAIN
         assert details["valid_to"] == "2026-01-01"
+
+
+class TestItsReadsAreReads:
+    async def test_the_dated_reads_run_read_only(self) -> None:
+        plans = _kit().build_unfrozen(tx_route=_TX).get_plans()
+
+        for op in (TemporalKernelOp.EFFECTIVE_ON, TemporalKernelOp.TIMELINE):
+            plan = plans.get(_key(op))
+            assert plan is not None and plan.kind is OperationKind.QUERY, op

@@ -27,8 +27,8 @@ analysis, and a consumer that needs a coverage report reads the periods and comp
 build periods rather than to the type itself.
 """
 
-from datetime import date, datetime
-from typing import Literal, final, get_args
+from datetime import UTC, date, datetime
+from typing import Any, Final, Literal, final, get_args
 
 import attrs
 
@@ -86,6 +86,27 @@ def grain_of(value: date) -> tuple[type, bool]:
 # ....................... #
 
 
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def as_instant(value: date | None) -> Any:
+    """*value* as a point on one timeline when it is an aware datetime; anything else as is.
+
+    An aware datetime becomes its distance from the UTC epoch. Python compares two datetimes
+    sharing a ``tzinfo`` by their wall clocks and ignores ``fold``, so across a zone's repeated
+    hour two instants an hour apart compare equal. Converting to UTC instead can leave the
+    calendar near its ends (``datetime.max`` in New York), while a distance cannot.
+    """
+
+    if isinstance(value, datetime) and value.utcoffset() is not None:
+        return value - _EPOCH
+
+    return value
+
+
+# ....................... #
+
+
 @final
 @attrs.define(frozen=True, slots=True)
 class Period[T: (date, datetime)]:
@@ -95,10 +116,11 @@ class Period[T: (date, datetime)]:
         against a ``datetime``) or when ``end`` precedes ``start``.
     """
 
-    start: T
-    """First endpoint, in force when :attr:`bounds` opens with ``[``."""
+    start: T = attrs.field(eq=as_instant)
+    """First endpoint, in force when :attr:`bounds` opens with ``[``. Two periods are equal when
+    their endpoints are the same instants, whatever zone they are written in."""
 
-    end: T | None = None
+    end: T | None = attrs.field(default=None, eq=as_instant)
     """Last endpoint, in force when :attr:`bounds` closes with ``]``; ``None`` is open-ended —
     still in force, with no last moment. Never a sentinel date, which would lie in every export,
     comparison and report that met it."""
@@ -141,7 +163,7 @@ class Period[T: (date, datetime)]:
                 "build two periods."
             )
 
-        if self.end < self.start:
+        if as_instant(self.end) < as_instant(self.start):
             raise exc.validation(f"Period ends before it starts: {self.start!r} to {self.end!r}.")
 
     # ....................... #
@@ -156,7 +178,11 @@ class Period[T: (date, datetime)]:
         a type that rejected it would push the case back into every caller.
         """
 
-        return self.end is not None and self.start == self.end and self.bounds != "[]"
+        return (
+            self.end is not None
+            and as_instant(self.start) == as_instant(self.end)
+            and self.bounds != "[]"
+        )
 
     # ....................... #
 
@@ -208,10 +234,10 @@ class Period[T: (date, datetime)]:
     def _after_start(self, at: T) -> bool:
         """Whether *at* is at or past the start, counting the start only when it is in force."""
 
-        if at == self.start:
+        if as_instant(at) == as_instant(self.start):
             return self.bounds in _START_CLOSED
 
-        return at > self.start
+        return as_instant(at) > as_instant(self.start)
 
     def _before_end(self, at: T) -> bool:
         """Whether *at* is before the end, counting the end only when it is in force."""
@@ -221,10 +247,10 @@ class Period[T: (date, datetime)]:
         if self.end is None:
             return True
 
-        if at == self.end:
+        if as_instant(at) == as_instant(self.end):
             return self.bounds in _END_CLOSED
 
-        return at < self.end
+        return as_instant(at) < as_instant(self.end)
 
     def _starts_before_end_of(self, other: "Period[T]") -> bool:
         """Whether this period's start falls before *other* ends.
@@ -237,10 +263,10 @@ class Period[T: (date, datetime)]:
         if other.end is None:
             return True
 
-        if self.start == other.end:
+        if as_instant(self.start) == as_instant(other.end):
             return self.bounds in _START_CLOSED and other.bounds in _END_CLOSED
 
-        return self.start < other.end
+        return as_instant(self.start) < as_instant(other.end)
 
     def _require_same_grain(self, value: T) -> None:
         if not isinstance(value, date) or grain_of(value) != grain_of(self.start):  # pyright: ignore[reportUnnecessaryIsInstance]
