@@ -18,16 +18,24 @@ import inspect
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from enum import Enum
+from types import NoneType, UnionType
 from typing import (
+    Annotated,
     Any,
+    Final,
     Literal,
+    Union,
     final,
+    get_args,
+    get_origin,
 )
 from uuid import UUID
 
 import attrs
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, ValidationError
 
 from forze.application.contracts.querying import QUANTIFIER_OPS, QueryDiscovery
@@ -479,6 +487,85 @@ def id_rev_body_endpoint(
 
 # ....................... #
 
+_QUERY_SCALARS: Final = (str, int, float, Decimal, UUID, date, datetime, time, timedelta, Enum)
+"""Types a single query-string value can carry (``bool`` is an ``int``)."""
+
+_QUERY_SEQUENCES: Final = (list, tuple, set, frozenset)
+"""Containers a repeated query parameter (``?tag=a&tag=b``) can carry."""
+
+
+def _query_carries(annotation: Any, *, in_sequence: bool = False) -> bool:
+    """Whether a query string can carry a field of type *annotation*."""
+
+    origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _query_carries(get_args(annotation)[0], in_sequence=in_sequence)
+
+    if origin is Literal:
+        return True
+
+    if origin in (Union, UnionType):
+        return all(
+            _query_carries(arg, in_sequence=in_sequence)
+            for arg in get_args(annotation)
+            if arg is not NoneType
+        )
+
+    if origin in _QUERY_SEQUENCES and not in_sequence:
+        return all(
+            _query_carries(arg, in_sequence=True)
+            for arg in get_args(annotation)
+            if arg is not Ellipsis
+        )
+
+    return isinstance(annotation, type) and issubclass(annotation, _QUERY_SCALARS)
+
+
+def query_endpoint(
+    runner: OperationRunner,
+    input_type: type[BaseModel] | None,
+    op: str,
+) -> Callable[..., Awaitable[Any]]:
+    """Endpoint taking the whole input DTO as query parameters (``GET /levels?sku=``).
+
+    Each field is one query parameter; a list field repeats it (``?tag=a&tag=b``). A field a
+    query string cannot carry (a nested model, a mapping) is refused when the route is
+    attached rather than silently dropped on every request.
+    """
+
+    dto_type = require_input_type(input_type, op)
+
+    for name, field in dto_type.model_fields.items():
+        if not _query_carries(field.annotation):
+            raise exc.configuration(
+                f"Field '{name}' of input type '{dto_type.__name__}' (operation '{op}') "
+                "cannot be carried by a query string — only scalars and lists of scalars "
+                "can; take this input as a request body instead"
+            )
+
+    # Built at runtime from the descriptor, so no static checker can read it as a type.
+    query_model = Annotated[dto_type, Query()]  # type: ignore[valid-type]
+
+    async def endpoint(payload: Any) -> Any:
+        return await runner(payload)
+
+    endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        [
+            inspect.Parameter(
+                "payload",
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=query_model,
+            )
+        ]
+    )
+    endpoint.__annotations__ = {"payload": query_model}
+
+    return endpoint
+
+
+# ....................... #
+
 
 def attach_operation_routes(
     router: APIRouter,
@@ -487,7 +574,7 @@ def attach_operation_routes(
     ns: StrKeyNamespace,
     ctx_dep: ExecutionContextFactory,
     bindings: Mapping[str, RouteBinding],
-    include: AbstractSet[Any] | None,
+    include: AbstractSet[Any] | None = None,
     path_overrides: Mapping[Any, str] | None = None,
     exclude_none: bool = True,
 ) -> APIRouter:

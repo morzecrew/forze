@@ -320,6 +320,42 @@ blob routes (under `storage_prefix`) onto one router with a single call, each
 sub-surface exactly as its dedicated attacher would. `tx_route` must match the
 transaction route the deps module registers.
 
+## Your own operation routes
+
+An operation no attacher ships gets its route from a binding table, not a hand-written
+endpoint. `attach_operation_routes` takes the table keyed by operation suffix under a
+namespace; the schema, `operation_id` (the namespaced key, e.g. `stock.add`) and dispatch
+come from the catalog, as for the generated routes.
+
+```python
+from forze.base.primitives import StrKeyNamespace
+from forze_fastapi.routes import (
+    RouteBinding,
+    attach_operation_routes,
+    body_endpoint,
+    id_endpoint,
+    query_endpoint,
+)
+
+attach_operation_routes(
+    router,
+    registry=registry,
+    ns=StrKeyNamespace(prefix="stock"),
+    ctx_dep=ctx_dep,
+    bindings={
+        "levels": RouteBinding(method="GET", path="/levels", build=query_endpoint),
+        "add": RouteBinding(method="POST", path="/add", build=body_endpoint, status_code=201),
+        "get": RouteBinding(method="GET", path="/{id}", build=id_endpoint),
+    },
+)
+```
+
+`query_endpoint` reads the whole input DTO from query parameters, one per field; a list
+field repeats (`?tag=a&tag=b`). A field a query string cannot carry, such as a nested
+model, is refused when the route is attached. `body_endpoint`, `id_endpoint`,
+`id_rev_endpoint` and `id_rev_body_endpoint` are the builders the document routes use; an
+`EndpointBuilder` of your own takes `(runner, input_type, op)`.
+
 ## Infrastructure routes
 
 - `attach_jwks_route(router, jwks_provider, *, path="/.well-known/jwks.json",
