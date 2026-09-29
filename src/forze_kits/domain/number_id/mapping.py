@@ -66,9 +66,12 @@ class NumberIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
     """Counter specification."""
 
     name_field: str | None = None
-    """A field to append the number to (e.g. ``"name"``), or ``None`` to leave it alone. An
-    empty or absent value is left as it is. The counter allocates on its own connection, so a
-    create that fails after this step leaves a gap in the numbering, transaction or not."""
+    """A field to append the number to (e.g. ``"name"``), or ``None`` to leave it alone.
+
+    The value is read from the inbound DTO (or an earlier step's output), so a field only the
+    command declares is never numbered; an empty or absent value is left as it is. The counter
+    allocates on its own connection, so a create that fails after this step leaves a gap in the
+    numbering, transaction or not."""
 
     name_format: str = DEFAULT_NAME_FORMAT
     """How the field's value and the number combine, with ``{name}`` and ``{number}``."""
@@ -82,18 +85,21 @@ class NumberIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
         refusal = exc.configuration(
             f"name_format {self.name_format!r} must be a format string whose fields are exactly "
             "{name} and {number} — no attribute or index access, which would reach past the "
-            "value the step fills.",
+            "value the step fills, and no field nested in a format spec.",
         )
 
         try:
-            fields = {field for _, field, _, _ in Formatter().parse(self.name_format)}
+            parsed = list(Formatter().parse(self.name_format))
+            fields = {field for _, field, _, _ in parsed}
+            # A field nested in a spec ({name:{number.real}}) is resolved too, uninspected here.
+            nested = any(spec and "{" in spec for _, _, spec, _ in parsed)
             # A format spec the value cannot take ({name:d}) would fail on every create.
             self.name_format.format(name="Order", number=1)
 
         except (KeyError, IndexError, ValueError, TypeError, AttributeError) as error:
             raise refusal from error
 
-        if not fields - {None} <= {"name", "number"}:
+        if nested or not fields - {None} <= {"name", "number"}:
             raise refusal
 
     # ....................... #

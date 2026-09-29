@@ -94,6 +94,9 @@ async def test_an_empty_name_is_left_alone() -> None:
         "{} #{number}",
         "{0}",
         "{name:d}",
+        "{name:{number}}",
+        "{number:{number}}",
+        "{name:{number.real}}",
     ],
 )
 def test_a_format_it_cannot_fill_is_refused_when_built(name_format: str) -> None:
