@@ -3,6 +3,18 @@
 from .bounded_lru_map import BoundedLruMap
 from .buffer import ContextualBuffer, ContextVarTrace
 from .cell import OnceCell
+from .civil_time import (
+    DST_AMBIGUOUS,
+    DST_NONEXISTENT,
+    NAIVE_DATETIME,
+    AwareDatetime,
+    CivilZone,
+    elapsed_minutes,
+    local_day_bounds,
+    month_bounds,
+    spanned_local_days,
+    to_instant,
+)
 from .context_scope import ContextScopedResource
 from .cpu import (
     CancelToken,
@@ -178,5 +190,15 @@ __all__ = [
     "Bounds",
     "Period",
     "grain_of",
+    "AwareDatetime",
+    "CivilZone",
+    "DST_AMBIGUOUS",
+    "DST_NONEXISTENT",
+    "NAIVE_DATETIME",
+    "elapsed_minutes",
+    "local_day_bounds",
+    "month_bounds",
+    "spanned_local_days",
+    "to_instant",
     "MappingConverter",
 ]
