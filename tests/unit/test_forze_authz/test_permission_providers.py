@@ -253,8 +253,18 @@ class TestDeactivationWins:
         assert {(r.permission_key, r.denied) for r in grants.derived} == {
             ("ledger.read", True),
             ("ledger.write", True),
-            ("ledger.wirte", True),
         }
+
+    async def test_an_undeclared_key_does_not_reach_past_the_declaration(self) -> None:
+        # A provider affects only what it declares: its stray "invoice.read" must not revoke a
+        # permission another binding grants.
+        sloppy = _Provider(
+            name="members", keys=frozenset({"ledger.write"}), denied=frozenset({"invoice.read"})
+        )
+        grants = await _grants(_direct_binding("invoice.read"), sloppy)
+
+        assert POLICY.decide(grants, _request("invoice.read")).allowed
+        assert not POLICY.decide(grants, _request("ledger.write")).allowed
 
     @pytest.mark.parametrize(
         "result",

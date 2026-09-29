@@ -359,12 +359,14 @@ async def derive_permissions(
         if stray:
             # A result naming a key the provider never declared cannot be read as meant: a
             # misspelt denial would deny the misspelling and leave the real key to the catalog.
+            # Only the declared keys are denied — a provider never reaches past its declaration,
+            # so a stray key cannot revoke a permission another binding grants.
             logger.warning(
                 "authz.permission_provider_undeclared_keys",
                 provider=provider.name,
                 keys=sorted(stray),
             )
-            derived |= _denials(provider, provider.keys | stray)
+            derived |= _denials(provider, provider.keys)
             continue
 
         derived |= _denials(provider, result.denied)
