@@ -320,10 +320,10 @@ def apply_openapi_conventions(app: FastAPI) -> None:
     """Document the Forze error envelope and render reST descriptions as Markdown.
 
     In *app*'s OpenAPI: FastAPI's default 422 (``HTTPValidationError``) becomes the
-    ``ForzeErrorResponse`` envelope, every operation gains a ``default`` response in the
-    same shape, and FastAPI's validation schemas are dropped once nothing references them.
-    The ``X-Error-Code`` header accompanies the errors that carry a code, so it is
-    documented as optional. A 422 an app declared with its own schema is left alone. A
+    ``ForzeErrorResponse`` envelope, every operation without a ``default`` response of its own
+    gains one in the same shape, and FastAPI's validation schemas are dropped once nothing
+    references them. The ``X-Error-Code`` header accompanies the errors that carry a code, so
+    it is documented as optional. A 422 an app declared with its own schema is left alone. A
     different model already named ``ForzeErrorResponse`` is a configuration error raised by
     the schema request itself, since routers may be attached after this call. Every
     ``description`` and ``summary`` then has its reST roles, literals, field lists and

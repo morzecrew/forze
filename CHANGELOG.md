@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The OpenAPI schema can document what a Forze app serves.** `apply_openapi_conventions(app)` documents the Forze error envelope in place of FastAPI's 422 body, adds a `default` error to every operation, and renders reST in descriptions (roles, literals, field lists) as Markdown.
+- **The OpenAPI schema can document what a Forze app serves.** `apply_openapi_conventions(app)` documents the Forze error envelope in place of FastAPI's 422 body, adds a `default` error to every operation that lacks one, and renders reST in descriptions (roles, literals, field lists) as Markdown.
 
 - **Wall-clock times convert to instants without guessing.** `CivilZone`, `to_instant`, `local_day_bounds`, `month_bounds`, `spanned_local_days` and `elapsed_minutes` in `forze.base.primitives`: conversions refuse a repeated time without `fold`, a skipped one, or a result past years 1–9999; `AwareDatetime` refuses naive.
 

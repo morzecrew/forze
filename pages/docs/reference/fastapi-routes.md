@@ -400,7 +400,8 @@ apply_openapi_conventions(app)
 ```
 
 Each FastAPI 422 becomes the `ForzeErrorResponse` envelope (`detail`, optional
-`context`), and every operation gains a `default` response in the same shape.
+`context`), and every operation without its own `default` response gains one in the same
+shape.
 The `X-Error-Code` header accompanies the errors that carry a code, so it is
 documented as optional. FastAPI's validation schemas are dropped once nothing
 references them. A 422 your route declares with its own model is left alone. A
