@@ -9,9 +9,9 @@ and collects every violation.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, final
+from typing import Any, Final, final
 
 import attrs
 
@@ -271,6 +271,115 @@ def no_duplicate_trace_effect(
         return violations
 
     return named(invariant_name, _check)
+
+
+_DOCUMENT_COMMAND: Final = "document_command"
+"""The trace surface of a document write."""
+
+
+def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> Invariant:
+    """Every committed transaction that wrote an audited effect carries exactly one audit row.
+
+    The audit plane writes an admitted operation's row inside the operation's own transaction,
+    so an attempt that rolled back takes its row with it and a retry needs no dedup key. This
+    checks that claim on the trace. Port writes are grouped by the root transaction id the
+    trace stamps, and a transaction counts as committed only on its root ``commit`` exit.
+
+    - A committed transaction that wrote one of *effect_routes* and no row on *audit_route* is
+      an effect nobody can account for.
+    - A committed transaction with two rows is a double record.
+
+    What it does not judge:
+
+    - Writes outside any transaction. A trace cannot attribute them to an operation, and a
+      simulation's setup and recovery, background tasks and after-commit hooks all write that
+      way. An audited kit write always runs in a transaction, so this matters for an operation
+      the audit does not cover: it is caught only when it runs in one.
+    - Anything but document write calls. A search index may share the document's route name,
+      and under value capture a write that returns its row records a second event for it.
+
+    The unit is the transaction, so it is stated for workloads where each transaction carries one
+    audited operation. An operation writing several effects is one row. An audited operation
+    dispatched inside another's transaction adds its row to that transaction, and reads here as
+    a double record.
+
+    It reads write *calls*. So it is stated for actions that fail closed
+    (``on_failure="fail"``, the default), where a failed audit write rolls the transaction
+    back, and for retries at the operation level, which open a transaction per attempt. An
+    action that ignores a failed audit write can commit its effect without the row the call was
+    for, and a port-level retry of the audit write records the failed call and its retry, which
+    read here as two rows.
+    """
+
+    effects = frozenset(effect_routes)
+
+    if not effects:
+        raise ValueError("audit_row_per_effect needs at least one effect route to judge")
+
+    if audit_route in effects:
+        raise ValueError(f"the audit route {audit_route!r} cannot also be an effect route")
+
+    def _check(history: History) -> list[Violation]:
+        committed: set[Any] = set()
+        rows: dict[Any, list[Event]] = defaultdict(list)
+        written: dict[Any, list[Event]] = defaultdict(list)
+
+        for event in history.of_kind("trace"):
+            fields = event.fields
+            tx_id = fields.get("tx_id")
+
+            if fields.get("trace_domain") == "tx":
+                if fields.get("op") == "exit" and fields.get("outcome") == "commit":
+                    committed.add(tx_id)
+
+            # Document writes only, and calls only: a search index may share the document's
+            # route name, and under value capture a write that returns its row records a
+            # second, return event for the same row.
+            elif (
+                fields.get("phase") != "command"
+                or fields.get("surface") != _DOCUMENT_COMMAND
+                or fields.get("result") is not None
+            ):
+                continue
+
+            elif fields.get("route") == audit_route:
+                rows[tx_id].append(event)
+
+            elif fields.get("route") in effects:
+                written[tx_id].append(event)
+
+        violations: list[Violation] = []
+        # A root exit with no id (an untraced run) cannot be grouped with the writes it closed.
+        committed.discard(None)
+
+        for tx_id in sorted(committed, key=str):
+            effect, recorded = written.get(tx_id, []), rows.get(tx_id, [])
+
+            if effect and not recorded:
+                violations.append(
+                    Violation(
+                        invariant="audit_row_per_effect",
+                        message=(
+                            f"transaction {tx_id} committed a write to "
+                            f"{sorted({str(e.fields.get('route')) for e in effect})} "
+                            "with no audit row"
+                        ),
+                        events=tuple(effect),
+                    )
+                )
+
+            elif len(recorded) > 1:
+                violations.append(
+                    Violation(
+                        invariant="audit_row_per_effect",
+                        message=f"transaction {tx_id} committed {len(recorded)} audit rows",
+                        events=tuple(recorded),
+                    )
+                )
+
+        return violations
+
+    return named("audit_row_per_effect", _check)
 
 
 def monotonic_per(kind: str, value: str, *, actor: str) -> Invariant:
