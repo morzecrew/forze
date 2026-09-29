@@ -53,6 +53,7 @@ from forze_kits.aggregates.document import (
     DocumentFacade,
     DocumentKernelOp,
     DocumentMappers,
+    UpdateReturns,
     build_document_registry,
     document_facade,
 )
@@ -267,6 +268,11 @@ class AggregateKit(Generic[R, D, C, U]):
     number-id counter, a lookup) commit or roll back with the write. Off by default: a plain
     kit's writes open no transaction unless an arm needs one, and the deps module must register
     a transaction manager on ``tx_route`` for this to wire."""
+
+    update_returns: UpdateReturns = "result"
+    """What the generated update returns: ``"result"`` (default) wraps the record with its diff;
+    ``"record"`` returns the updated read model itself. The typed facade's ``update`` keeps the
+    default's static type, so call through the registry, or cast, in ``"record"`` mode."""
 
     audit: Mapping[StrKey, Audited] = attrs.field(factory=dict[StrKey, Audited])
     """Audit generated operations, keyed by kernel op like :attr:`handlers`.
@@ -665,7 +671,9 @@ class AggregateKit(Generic[R, D, C, U]):
             else None
         )
 
-        reg = build_document_registry(spec, dtos=self.dtos, mappers=mappers)
+        reg = build_document_registry(
+            spec, dtos=self.dtos, mappers=mappers, update_returns=self.update_returns
+        )
 
         if self.search is not None:
             reg = type(reg).merge(

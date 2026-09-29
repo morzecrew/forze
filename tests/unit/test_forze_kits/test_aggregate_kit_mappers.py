@@ -335,3 +335,97 @@ class TestTransactionalWrites:
             )
 
         assert made.group == "a"
+
+
+# ....................... #
+
+
+class TestUpdateReturnsTheRecord:
+    async def test_the_document_factory_returns_and_advertises_the_read_model(self) -> None:
+        from forze_kits.aggregates.document import build_document_registry
+
+        reg = build_document_registry(WIDGETS, update_returns="record").freeze()
+        update = _key(WIDGETS, DocumentKernelOp.UPDATE)
+
+        descriptor = reg.catalog()[update].descriptor
+        assert descriptor is not None and descriptor.output_type is WidgetRead
+
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(
+                reg, _key(WIDGETS, DocumentKernelOp.CREATE), WidgetCreate(group="a"), ctx
+            )
+            updated = await run_operation(
+                reg,
+                update,
+                DocumentUpdateDTO(id=made.id, rev=made.rev, dto=WidgetUpdate(qty=3)),
+                ctx,
+            )
+
+        assert isinstance(updated, WidgetRead)
+        assert (updated.qty, updated.rev) == (3, made.rev + 1)
+
+    def test_an_unknown_mode_is_refused(self) -> None:
+        from forze_kits.aggregates.document import build_document_registry
+
+        with pytest.raises(CoreException) as caught:
+            build_document_registry(WIDGETS, update_returns="diff")  # type: ignore[arg-type]
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    async def test_search_sync_indexes_the_returned_record(self) -> None:
+        from forze.application.contracts.search import SearchSpec
+        from forze_mock import MockStateDepKey
+
+        index_spec = SearchSpec(
+            name="widgets_index",
+            model_type=WidgetRead,
+            fields=["group"],
+        )
+        kit = AggregateKit(spec=WIDGETS, search=index_spec, update_returns="record")
+        reg = kit.registry(tx_route=_TX)
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(
+                reg, _key(WIDGETS, DocumentKernelOp.CREATE), WidgetCreate(group="a"), ctx
+            )
+            await run_operation(
+                reg,
+                _key(WIDGETS, DocumentKernelOp.UPDATE),
+                DocumentUpdateDTO(id=made.id, rev=made.rev, dto=WidgetUpdate(qty=7)),
+                ctx,
+            )
+            index = ctx.deps.provide(MockStateDepKey).documents["widgets_index"]
+
+            assert index[made.id]["qty"] == 7
+
+    async def test_an_invariant_scopes_by_the_returned_record(self) -> None:
+        from forze.application.contracts.invariants import ReadSet, SumOf, SystemInvariant
+
+        cap = SystemInvariant(
+            name="widget_group_cap",
+            read_set=ReadSet(spec=WIDGETS, scope_keys=("group",)),
+            aggregate=SumOf("qty"),
+            holds=lambda total: total <= 10,
+        )
+        kit = AggregateKit(spec=WIDGETS, invariants=(cap,), update_returns="record")
+        reg = kit.registry(tx_route=_TX)
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(
+                reg, _key(WIDGETS, DocumentKernelOp.CREATE), WidgetCreate(group="a"), ctx
+            )
+
+            with pytest.raises(CoreException):
+                await run_operation(
+                    reg,
+                    _key(WIDGETS, DocumentKernelOp.UPDATE),
+                    DocumentUpdateDTO(id=made.id, rev=made.rev, dto=WidgetUpdate(qty=20)),
+                    ctx,
+                )
