@@ -142,7 +142,9 @@ startup = permission_providers_lifecycle_step(providers)  # optional: fail at bo
   that misses `permission_provider_timeout` (2 s by default): every decision runs every provider,
   so a hanging one would otherwise stall them all.
 - `MockDepsModule(permission_providers=...)` runs the same providers in the mock's decision, so a
-  mock-backed test sees a derived denial outrank a seeded grant.
+  mock-backed test sees a derived denial outrank a seeded grant, and refuses a declaration the
+  kernel config would. The mock has no catalog to check keys against, and its scope and grant
+  query ports do not run providers.
 - Derived grants sit in `EffectiveGrants.derived`, attributed to their provider and apart from the
   catalog's `permissions`, so an administered grant can be told from a derived one.
 

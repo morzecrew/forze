@@ -10,10 +10,10 @@ from forze.application.contracts.authz import PermissionProvider
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
+from forze.application.integrations.authz import check_permission_providers
 
 from ..application.specs import permission_definition_spec
 from ..services.grants import check_declared_keys
-from .deps.configs import check_permission_providers
 
 # ----------------------- #
 

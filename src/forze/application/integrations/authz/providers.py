@@ -1,7 +1,7 @@
 """Running permission providers: one implementation for every authz plane that decides with them."""
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final
 from uuid import UUID
@@ -21,6 +21,55 @@ if TYPE_CHECKING:
 
 DEFAULT_PROVIDER_TIMEOUT: Final = timedelta(seconds=2)
 """How long one provider's ``derive`` may take before it counts as failed."""
+
+
+def check_permission_providers(providers: Iterable[PermissionProvider]) -> None:
+    """Refuse a declaration nobody meant: a blank or repeated name, or keys that are not a
+    non-empty set of permission-key strings."""
+
+    names: set[str] = set()
+
+    for provider in providers:
+        if not provider.name.strip() or provider.name in names:
+            raise exc.configuration(
+                f"Permission provider name {provider.name!r} is blank or used twice; a derived "
+                "grant is attributed to its provider by name.",
+                code="authz_provider_declaration",
+            )
+
+        if not provider.keys:
+            raise exc.configuration(
+                f"Permission provider {provider.name!r} declares no keys; a provider that may "
+                "grant or deny nothing is a declaration nobody meant.",
+                code="authz_provider_declaration",
+            )
+
+        # Every decision reads the declaration and takes set differences against it: a list or
+        # a bare string would fail there rather than here, and a mutable set could be widened
+        # after this check, past the catalog check at boot.
+        if not isinstance(provider.keys, frozenset) or not all(
+            isinstance(key, str) for key in provider.keys
+        ):
+            raise exc.configuration(
+                f"Permission provider {provider.name!r} must declare its keys as a frozenset of "
+                f"permission-key strings, not {type(provider.keys).__name__}.",
+                code="authz_provider_declaration",
+            )
+
+        names.add(provider.name)
+
+
+def check_provider_timeout(timeout: timedelta | None) -> None:
+    """Refuse a deadline no provider could meet; ``None`` removes the deadline."""
+
+    if timeout is not None and timeout <= timedelta(0):
+        raise exc.configuration(
+            f"permission_provider_timeout must be positive, not {timeout}.",
+            code="authz_provider_declaration",
+        )
+
+
+# ....................... #
 
 
 def _denials(provider: PermissionProvider, keys: frozenset[str]) -> set[DerivedPermissionRef]:
@@ -53,12 +102,20 @@ async def derive_permissions(
         raise exc.internal("Permission providers need an execution context to derive from.")
 
     seconds = timeout.total_seconds() if timeout is not None else None
+    loop = asyncio.get_running_loop()
     derived: set[DerivedPermissionRef] = set()
 
     for provider in providers:
         try:
-            async with asyncio.timeout(seconds):
+            async with asyncio.timeout(seconds) as budget:
                 result = await provider.derive(principal_id, ctx)
+
+            # The timer raises only into an await that lets the cancellation through: a provider
+            # that swallows it, or blocks the loop past the deadline, still returns — late.
+            deadline = budget.when()
+
+            if budget.expired() or (deadline is not None and loop.time() >= deadline):
+                raise TimeoutError
 
             if not isinstance(result, DerivedPermissions):  # pyright: ignore[reportUnnecessaryIsInstance]
                 raise TypeError(f"derive returned {type(result).__name__}")

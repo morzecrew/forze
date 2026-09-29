@@ -152,7 +152,11 @@ from forze.application.execution import (
 from forze.application.integrations.authn import (
     LockoutConfig,
 )
-from forze.application.integrations.authz import DEFAULT_PROVIDER_TIMEOUT
+from forze.application.integrations.authz import (
+    DEFAULT_PROVIDER_TIMEOUT,
+    check_permission_providers,
+    check_provider_timeout,
+)
 from forze.application.integrations.crypto import DeterministicFieldCipher, Keyring
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 from forze_mock.adapters import (
@@ -396,6 +400,12 @@ class MockDepsModule(DepsModule):
     """Optional fixed-window login lockout for password authn routes, backed by
     the in-memory mock counter (route ``authn_lockout``). ``None`` disables it,
     mirroring the real :class:`~forze_identity.authn.AuthnDepsModule`."""
+
+    def __attrs_post_init__(self) -> None:
+        # What the identity plane's configuration refuses, the mock refuses too: a declaration
+        # it would not accept can fail open in a decision.
+        check_permission_providers(self.permission_providers)
+        check_provider_timeout(self.permission_provider_timeout)
 
     def _txmanager_factory(self) -> Any:
         """Pick the transaction-manager factory (``strict_tx`` forces strict for back-compat)."""

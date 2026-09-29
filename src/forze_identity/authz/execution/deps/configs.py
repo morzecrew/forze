@@ -1,14 +1,16 @@
 """Kernel configuration and shared services for authz dependency wiring."""
 
-from collections.abc import Iterable
 from datetime import timedelta
 from typing import final
 
 import attrs
 
 from forze.application.contracts.authz import PermissionProvider
-from forze.application.integrations.authz import DEFAULT_PROVIDER_TIMEOUT
-from forze.base.exceptions import exc
+from forze.application.integrations.authz import (
+    DEFAULT_PROVIDER_TIMEOUT,
+    check_permission_providers,
+    check_provider_timeout,
+)
 
 from ...services.grants import ProviderKeyCheck
 from ...services.policy import (
@@ -54,53 +56,7 @@ class AuthzKernelConfig:
 
     def __attrs_post_init__(self) -> None:
         check_permission_providers(self.permission_providers)
-
-        timeout = self.permission_provider_timeout
-
-        if timeout is not None and timeout <= timedelta(0):
-            raise exc.configuration(
-                f"permission_provider_timeout must be positive, not {timeout}.",
-                code="authz_provider_declaration",
-            )
-
-
-def check_permission_providers(providers: Iterable[PermissionProvider]) -> None:
-    """Refuse a declaration nobody meant: a blank or repeated name, or keys that are not a
-    non-empty set of permission-key strings."""
-
-    names: set[str] = set()
-
-    for provider in providers:
-        if not provider.name.strip() or provider.name in names:
-            raise exc.configuration(
-                f"Permission provider name {provider.name!r} is blank or used twice; a derived "
-                "grant is attributed to its provider by name.",
-                code="authz_provider_declaration",
-            )
-
-        if not provider.keys:
-            raise exc.configuration(
-                f"Permission provider {provider.name!r} declares no keys; a provider that may "
-                "grant or deny nothing is a declaration nobody meant.",
-                code="authz_provider_declaration",
-            )
-
-        # Every decision reads the declaration and takes set differences against it: a list or
-        # a bare string would fail there rather than here, and a mutable set could be widened
-        # after this check, past the catalog check at boot.
-        if not isinstance(provider.keys, frozenset) or not all(
-            isinstance(key, str) for key in provider.keys
-        ):
-            raise exc.configuration(
-                f"Permission provider {provider.name!r} must declare its keys as a frozenset of "
-                f"permission-key strings, not {type(provider.keys).__name__}.",
-                code="authz_provider_declaration",
-            )
-
-        names.add(provider.name)
-
-
-# ....................... #
+        check_provider_timeout(self.permission_provider_timeout)
 
 
 @final

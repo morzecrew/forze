@@ -20,6 +20,7 @@ from forze.application.contracts.authz import (
     AuthzSubject,
     DerivedPermissions,
 )
+from forze.base.exceptions import CoreException
 from forze.testing import context_from_modules
 from forze_mock import MockDepsModule
 
@@ -72,6 +73,7 @@ class TestTheMockRunsProviders:
     async def test_a_provider_that_hangs_denies_what_it_declares(self) -> None:
         slow = _Provider(granted=frozenset({"ledger.read"}), delay=5)
 
+        # Half the 2 s default: a deadline that is not wired through fails here, not at it.
         allowed = await asyncio.wait_for(
             _allowed(
                 slow,
@@ -79,7 +81,7 @@ class TestTheMockRunsProviders:
                 seeded="ledger.read",
                 permission_provider_timeout=timedelta(milliseconds=20),
             ),
-            timeout=2,
+            timeout=1,
         )
 
         assert not allowed
@@ -101,3 +103,31 @@ class TestTheMockRunsProviders:
         )
 
         assert result.allowed
+
+
+class TestTheDeclarationIsChecked:
+    """The mock refuses what the identity plane's configuration refuses, when it is built.
+
+    A declaration the plane would refuse fails open in a decision instead: keys given as a bare
+    string are denied letter by letter when the provider fails, and the seeded grant wins.
+    """
+
+    @pytest.mark.parametrize(
+        "provider",
+        [
+            _Provider(keys="ledger.write"),  # type: ignore[arg-type]
+            _Provider(keys=frozenset()),
+            _Provider(name=" "),
+        ],
+        ids=["bare-string-keys", "no-keys", "blank-name"],
+    )
+    def test_a_malformed_provider_is_refused(self, provider: _Provider) -> None:
+        with pytest.raises(CoreException) as caught:
+            MockDepsModule(permission_providers=(provider,))
+
+        assert caught.value.code == "authz_provider_declaration"
+
+    @pytest.mark.parametrize("timeout", [timedelta(0), timedelta(seconds=-1)])
+    def test_a_deadline_is_positive(self, timeout: timedelta) -> None:
+        with pytest.raises(CoreException):
+            MockDepsModule(permission_provider_timeout=timeout)

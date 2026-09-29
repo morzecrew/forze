@@ -9,6 +9,8 @@ registered the boot step still cannot run with a misspelt key.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import time
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,6 +20,7 @@ import pytest
 
 from forze.application.contracts.authz import AuthzScope, DerivedPermissions
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.integrations.authz import derive_permissions
 from forze.base.exceptions import CoreException
 from forze.testing import context_from_modules
 from forze_identity.authz import AuthzKernelConfig
@@ -26,7 +29,9 @@ from forze_identity.authz.domain.models.permission_definition import (
     CreatePermissionDefinitionCmd,
 )
 from forze_identity.authz.execution.deps.configs import build_authz_shared_services
-from forze_identity.authz.execution.deps.deps import _grant_resolver  # pyright: ignore[reportPrivateUsage]
+from forze_identity.authz.execution.deps.deps import (
+    _grant_resolver,  # pyright: ignore[reportPrivateUsage]
+)
 from forze_mock import MockDepsModule
 
 pytestmark = pytest.mark.unit
@@ -69,11 +74,46 @@ class TestTheDeadline:
             )
         )
 
+        # Half the 2 s default: a deadline that is not wired through fails here, not at it.
         grants = await asyncio.wait_for(
-            _grant_resolver(ctx, shared).resolve_effective_grants(PRINCIPAL), timeout=2
+            _grant_resolver(ctx, shared).resolve_effective_grants(PRINCIPAL), timeout=1
         )
 
         assert grants.denied_keys == frozenset({"ledger.write"})
+
+    async def test_a_provider_that_swallows_the_cancellation_still_denies(self) -> None:
+        # A bare ``except`` or a retry loop eats the timer's cancellation and returns normally.
+        class _Stubborn:
+            name = "members"
+            keys = frozenset({"ledger.write"})
+
+            async def derive(self, principal_id: UUID, ctx: Any) -> DerivedPermissions:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.sleep(5)
+
+                return DerivedPermissions(granted=self.keys)
+
+        derived = await derive_permissions(
+            (_Stubborn(),), PRINCIPAL, object(), timeout=timedelta(milliseconds=20)  # type: ignore[arg-type]
+        )
+
+        assert {(ref.permission_key, ref.denied) for ref in derived} == {("ledger.write", True)}
+
+    async def test_a_provider_that_blocks_the_loop_still_denies(self) -> None:
+        # The timer cannot fire while the loop is blocked; the answer still came late.
+        class _Blocking:
+            name = "members"
+            keys = frozenset({"ledger.write"})
+
+            async def derive(self, principal_id: UUID, ctx: Any) -> DerivedPermissions:
+                time.sleep(0.05)  # noqa: ASYNC251 — blocking the loop is the case under test
+                return DerivedPermissions(granted=self.keys)
+
+        derived = await derive_permissions(
+            (_Blocking(),), PRINCIPAL, object(), timeout=timedelta(milliseconds=10)  # type: ignore[arg-type]
+        )
+
+        assert {(ref.permission_key, ref.denied) for ref in derived} == {("ledger.write", True)}
 
     @pytest.mark.parametrize("timeout", [timedelta(0), timedelta(seconds=-1)])
     def test_a_deadline_is_positive(self, timeout: timedelta) -> None:
