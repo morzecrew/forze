@@ -6782,9 +6782,11 @@ entirely (Samoa's 30 December 2011) is an empty <code>Period</code>, and <code>s
 Days tile: where a zone repeats the hours around a midnight, the repeat belongs to the new day,
 so a range split by <code>spanned_local_days</code> and <code>local_day_bounds</code> keeps all its time, once. Durations are
 computed on instants only: two wall-clock times across a transition are off by the shift, and the
-wrong answer is a plausible number. <code>AwareDatetime</code> is for your boundary models: a naive value is
-a validation error (<code>naive_datetime</code>) naming the field. Bind <code>fold</code> where the UI knows which
-occurrence the user meant; otherwise expect a <code>dst_ambiguous</code> on one autumn night a year.</p>
+wrong answer is a plausible number. An answer that would fall outside years 1 to 9999 is refused
+(<code>civil_time_out_of_range</code>) rather than raising from inside a conversion. <code>AwareDatetime</code> is for
+your boundary models: a naive value is a validation error (<code>naive_datetime</code>) naming the field.
+Bind <code>fold</code> where the UI knows which occurrence the user meant; otherwise expect a
+<code>dst_ambiguous</code> on one autumn night a year.</p>
 <p>These sit beside two other time-zone paths the framework already has — the analytics
 time-bucketing and the durable scheduler's cron — each shaped for its own plane. Use these for
 converting domain wall-clock values.</p>

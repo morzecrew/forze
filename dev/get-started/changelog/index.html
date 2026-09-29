@@ -8944,7 +8944,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
-<p><strong>Wall-clock times convert to instants without guessing.</strong> <code>CivilZone</code>, <code>to_instant</code>, <code>local_day_bounds</code>, <code>month_bounds</code>, <code>spanned_local_days</code> and <code>elapsed_minutes</code> in <code>forze.base.primitives</code> refuse a <abbr title="Deterministic Simulation Testing">DST</abbr>-repeated time without <code>fold</code> and a skipped one always; <code>AwareDatetime</code> refuses naive input at a boundary.</p>
+<p><strong>Wall-clock times convert to instants without guessing.</strong> <code>CivilZone</code>, <code>to_instant</code>, <code>local_day_bounds</code>, <code>month_bounds</code>, <code>spanned_local_days</code> and <code>elapsed_minutes</code> in <code>forze.base.primitives</code>: conversions refuse a repeated time without <code>fold</code>, a skipped one, or a result past years 1–9999; <code>AwareDatetime</code> refuses naive.</p>
 </li>
 <li>
 <p><strong>Permissions can be derived from state per decision.</strong> A <code>PermissionProvider</code> (declared on <code>AuthzKernelConfig(permission_providers=…)</code>) grants or denies keys from documents or config; a denial outranks every catalog binding, and <code>permission_providers_lifecycle_step</code> refuses to boot on a key the catalog lacks.</p>
@@ -8962,7 +8962,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The temporal and versioned kits' reads are marked as reads.</strong> <code>effective_on</code>, <code>timeline</code>, <code>history</code> and <code>as_of</code> now run under the read-only guard and are listed as read-only in the operation catalog, so an <abbr title="Model Context Protocol">MCP</abbr> projection that includes only reads now includes them.</li>
+<li>
+<p><strong>Sorting and keyset paging order aware datetimes by instant.</strong> The shared comparator ordered datetimes by their ISO text, so different UTC offsets, or a repeated hour, sorted out of order in the mock and the search merges. A cursor keeps its ISO text and compares as the instant it names.</p>
+</li>
+<li>
+<p><strong>The in-memory store compares aware datetimes as instants, as a real store does.</strong> Filters, the mock's aggregates and its unique guarantee read a zoned value by the wall clock through a repeated hour, so two instants an hour apart counted as one value and one instant written in two zones could match nothing.</p>
+</li>
+<li>
+<p><strong>A <code>Period</code> whose endpoints carry a <abbr title="Deterministic Simulation Testing">DST</abbr> zone compares instants, not wall clocks.</strong> Through a repeated hour a one-hour period read as empty, and a valid one could be refused as backwards; <code>no_overlapping_periods</code> and the mock's non-overlap guarantee missed overlaps there and reported false ones.</p>
+</li>
+<li>
+<p><strong>The temporal and versioned kits' reads are marked as reads.</strong> <code>effective_on</code>, <code>timeline</code>, <code>history</code> and <code>as_of</code> now run under the read-only guard and are listed as read-only in the operation catalog, so an <abbr title="Model Context Protocol">MCP</abbr> projection that includes only reads now includes them.</p>
+</li>
 </ul>
 <h2 id="090-2026-09-28"><a href="https://github.com/morzecrew/forze/compare/v0.8.0...v0.9.0">0.9.0</a> - 2026-09-28<a class="headerlink" href="#090-2026-09-28" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
