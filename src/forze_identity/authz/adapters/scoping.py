@@ -11,9 +11,11 @@ from forze.application.contracts.authz import (
     AuthzDocumentScopeRequest,
     AuthzRequest,
     AuthzResource,
+    AuthzScope,
     AuthzScopePort,
     AuthzSensitiveAccessRequest,
     AuthzSpec,
+    AuthzSubject,
     resolve_policy_scope,
 )
 from forze.application.contracts.document import DocumentQueryPort
@@ -119,12 +121,35 @@ class AuthzScopeAdapter(AuthzScopePort):
         self,
         request: AuthzSensitiveAccessRequest,
     ) -> bool:
+        """Whether every principal in the request's delegation chain may access the resource.
+
+        A delegated request is allowed only when the subject and each actor are allowed on their
+        own, so an agent acting for a user never reaches what either of them could not.
+        """
+
         scope = resolve_policy_scope(
             spec=self.spec,
             explicit=request.scope,
             invocation_tenant_id=request.scope.tenant_id,
         )
-        pid = request.subject.principal_id
+        node: AuthzSubject | None = request.subject
+
+        while node is not None:
+            if not await self._may_access(request, node, scope=scope):
+                return False
+
+            node = node.actor
+
+        return True
+
+    async def _may_access(
+        self,
+        request: AuthzSensitiveAccessRequest,
+        principal: AuthzSubject,
+        *,
+        scope: AuthzScope,
+    ) -> bool:
+        pid = principal.principal_id
         row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if row is None:
@@ -133,14 +158,14 @@ class AuthzScopeAdapter(AuthzScopePort):
         grants = await self.resolver.resolve_effective_grants(pid, scope=scope)
 
         auth_request = AuthzRequest(
-            subject=request.subject,
+            subject=principal,
             action=request.action,
             scope=scope,
             resource=AuthzResource(
                 resource_type=request.resource_type,
                 resource_id=request.resource_id,
             ),
-            context={"subject_id": str(request.subject.principal_id)},
+            context={"subject_id": str(pid)},
         )
 
         return self.policy.decide(

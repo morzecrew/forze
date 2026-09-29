@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The temporal and versioned kits' reads are marked as reads.** `effective_on`, `timeline`, `history` and `as_of` now run under the read-only guard and are listed as read-only in the operation catalog, so an MCP projection that includes only reads now includes them.
 
+### Security
+
+- **A delegated call on a scope-guarded route is scoped for every principal in its chain.** `AuthzDocumentScopeWrap` scopes each actor too: a denied actor refuses the call, its row filters narrow the subject's, and an enforced delegation grant is checked. The sensitive-resource check requires every principal.
+
 ## [0.9.0] - 2026-09-28
 
 ### Added

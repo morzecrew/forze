@@ -12,7 +12,9 @@ from forze.application.contracts.authz import (
     AuthzRequest,
     AuthzResource,
     AuthzScope,
+    AuthzScopePort,
     AuthzSpec,
+    DelegationPort,
     subject_from_authn,
 )
 from forze.application.contracts.base import AbstentionReason
@@ -268,6 +270,11 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
 
     def __call__(self, ctx: ExecutionContext) -> Middleware[Any, Any]:
         scope_port = ctx.authz.scope(self.spec)
+        # Resolved eagerly, as the before-hook guard does: a route enforcing delegation grants
+        # with no delegation port wired fails when the hook is built, never open at runtime.
+        delegation_port = (
+            ctx.authz.delegation(self.spec) if self.spec.enforce_delegation_grant else None
+        )
 
         async def _wrap(
             next: Callable[[Any], Awaitable[Any]],
@@ -296,6 +303,11 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
                     doc_scope.reason or "Access denied by policy scope",
                     code="scope_denied",
                 )
+
+            policy_filters = await self._delegated_filters(
+                scope_port, delegation_port, scope_req, doc_scope.filters
+            )
+            doc_scope = attrs.evolve(doc_scope, filters=policy_filters)
 
             if doc_scope.filters is not None:
                 if not hasattr(args, self.args_filter_attr):
@@ -352,6 +364,56 @@ class AuthzDocumentScopeWrap(MiddlewareFactory):
             return _stamp_abstention(result, reason)
 
         return _wrap
+
+    # ....................... #
+
+    @staticmethod
+    async def _delegated_filters(
+        scope_port: AuthzScopePort,
+        delegation_port: DelegationPort | None,
+        request: AuthzDocumentScopeRequest,
+        subject_filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    ) -> QueryFilterExpression | None:  # type: ignore[valid-type]
+        """The row filters for a delegated call: every principal in the chain, conjoined.
+
+        As the before-hook guard does for the action, each actor is scoped *independently*, so
+        a delegation never sees more than every principal in it could: an actor the policy
+        denies refuses the call, and an actor's row filters narrow the subject's. When the spec
+        enforces delegation grants, each actor must also hold a ``may_act`` grant for the
+        principal it acts for.
+        """
+
+        parts = [subject_filters] if subject_filters is not None else []
+        node = request.subject
+
+        while node.actor is not None:
+            actor = node.actor
+            actor_scope = await scope_port.scope_document(attrs.evolve(request, subject=actor))
+
+            if actor_scope.deny_all:
+                raise exc.authorization(
+                    actor_scope.reason or "Delegate not permitted by policy scope",
+                    code="delegate_denied",
+                )
+
+            if delegation_port is not None and not await delegation_port.may_act(
+                actor.principal_id, node.principal_id, scope=request.scope
+            ):
+                raise exc.authorization(
+                    f"Delegation not granted: {actor.principal_id} may not act on behalf of "
+                    f"{node.principal_id}",
+                    code="delegation_not_granted",
+                )
+
+            if actor_scope.filters is not None:
+                parts.append(actor_scope.filters)
+
+            node = actor
+
+        if not parts:
+            return None
+
+        return parts[0] if len(parts) == 1 else {"$and": parts}
 
     # ....................... #
 

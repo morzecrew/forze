@@ -41,14 +41,21 @@ class AuthzScopePort(Protocol):
         self,
         request: AuthzDocumentScopeRequest,
     ) -> Awaitable[AuthzDocumentScope]:
-        """Return query constraints for a document list/search/read path."""
+        """Return query constraints for a document list/search/read path.
+
+        Scopes the request's subject alone. ``AuthzDocumentScopeWrap`` walks a delegation chain,
+        asking once per principal and conjoining the answers.
+        """
         ...  # pragma: no cover
 
     def authorize_sensitive_resource(
         self,
         request: AuthzSensitiveAccessRequest,
     ) -> Awaitable[bool]:
-        """Whether the subject may access the given resource instance."""
+        """Whether the subject may access the given resource instance.
+
+        A delegated subject may only when every principal in its chain may, on its own.
+        """
         ...  # pragma: no cover
 
 

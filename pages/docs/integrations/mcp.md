@@ -77,7 +77,9 @@ FastAPI edge), resolves the tenant, and hands FastMCP an `AccessToken` — an un
 key returns `None` → a clean `401`, while a misconfiguration fails loud.
 `AccessTokenIdentityResolver` reads that verified token and binds the principal,
 attaching the delegation **actor**. The engine then enforces the least-privilege
-intersection of the user's and the agent's grants.
+intersection of the user's and the agent's grants: on an action guard, each must hold the
+permission; on a scope-guarded list, each must be permitted and the agent's row filters narrow
+the user's.
 
 The agent can also ride the key itself: a **delegation key** minted for a
 user→agent pair (`issue_api_key(identity, actor_principal_id=agent)`) carries that
