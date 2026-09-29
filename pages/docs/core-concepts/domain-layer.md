@@ -163,8 +163,9 @@ local_day_bounds(berlin, date(2026, 10, 25))               # a 25-hour Period, b
 | `spanned_local_days(zone, start, end)` | the local days whose bounds `[start, end)` meets | `naive_datetime`, a range ending before it starts |
 | `elapsed_minutes(start, end)` | whole minutes between two instants | `naive_datetime` |
 
-A day whose midnight the zone skips starts at the first instant that exists — the one place these
-helpers resolve instead of refusing, because a calendar with holes is worse. A day the zone skips
+A day whose midnight the zone skips starts at the first instant that exists, and a day whose
+midnight it repeats starts at the first one: the day bounds resolve where `to_instant` refuses,
+because a calendar with holes or overlaps is worse. A day the zone skips
 entirely (Samoa's 30 December 2011) is an empty `Period`, and `spanned_local_days` never lists it.
 Days tile: where a zone repeats the hours around a midnight, the repeat belongs to the new day,
 so a range split by `spanned_local_days` and `local_day_bounds` keeps all its time, once. Durations are
