@@ -2024,6 +2024,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#auditing-a-kits-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Auditing a kit's operations
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-the-audit-write-fails" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6379,6 +6390,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#auditing-a-kits-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Auditing a kit's operations
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-the-audit-write-fails" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6592,6 +6614,25 @@ that transaction, and the row goes if the outer one rolls back.</p>
   recorded, since the skip is never a guess.</li>
 <li><code>"never"</code> records no reads for that action.</li>
 </ul>
+<h2 id="auditing-a-kits-operations">Auditing a kit's operations<a class="headerlink" href="#auditing-a-kits-operations" title="Permanent link">&para;</a></h2>
+<p>An <code>AggregateKit</code> binds the hooks to the operations it generates, keyed by kernel op like its
+<code>handlers</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates</span><span class="w"> </span><span class="kn">import</span> <span class="n">AggregateKit</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.document</span><span class="w"> </span><span class="kn">import</span> <span class="n">DocumentKernelOp</span>
+
+<span class="n">ORDERS</span> <span class="o">=</span> <span class="n">AggregateKit</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">ORDER_SPEC</span><span class="p">,</span>
+    <span class="n">audit</span><span class="o">=</span><span class="p">{</span>
+        <span class="n">DocumentKernelOp</span><span class="o">.</span><span class="n">CREATE</span><span class="p">:</span> <span class="n">Audited</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">AuditSpec</span><span class="p">(</span><span class="n">action</span><span class="o">=</span><span class="s2">"order.create"</span><span class="p">)),</span>
+        <span class="n">DocumentKernelOp</span><span class="o">.</span><span class="n">GET</span><span class="p">:</span> <span class="n">Audited</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">AuditSpec</span><span class="p">(</span><span class="n">action</span><span class="o">=</span><span class="s2">"order.read"</span><span class="p">)),</span>
+    <span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>An audited write runs in a transaction on the registry's <code>tx_route</code>, so its <code>allowed</code> row commits
+with the write or rolls back with it. An audited read gets no transaction it did not have; its row
+is written after it completes. A key naming an operation the kit does not compose is refused when
+the registry is built. An update's <code>result</code> is the row wrapped with its diff, so a callable that
+reads it unwraps it with <code>written_read_model(result)</code>.</p>
 <h2 id="when-the-audit-write-fails">When the audit write fails<a class="headerlink" href="#when-the-audit-write-fails" title="Permanent link">&para;</a></h2>
 <p><code>on_failure="fail"</code> (the default): an operation whose audit row could not be written <strong>fails</strong>, and
 its write rolls back — an audited action nobody can account for did not happen.
@@ -6633,6 +6674,8 @@ open transaction when there is one — and register its factory under <code>Audi
 <code>AuditDepsModule</code> does.</p>
 <p><code>audit_record_spec(encryption=...)</code> may seal <code>metadata</code>; the other fields are what the trail is
 queried by, and sealing one is refused.</p>
+<p>A deterministic-simulation invariant, <code>audit_row_per_effect</code>, checks the one-row claim under
+operation-level retries and injected faults: see <a href="../../dst/invariants/">Invariants</a>.</p>
 <div class="admonition warning">
 <p class="admonition-title">Not tamper-evident</p>
 <p>The trail is rows in your database, and whoever can write that table can rewrite it. Hash

@@ -8952,6 +8952,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A confirmation can refuse when its preview has changed.</strong> <code>PreviewBinding(name=…, projector=…, exclude=…)</code> returns a fingerprinted preview with <code>reviewed()</code>, and <code>bind()</code> makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with <code>preview_changed</code> on a mismatch.</p>
 </li>
+<li>
+<p><strong>An aggregate kit can audit the operations it generates.</strong> <code>AggregateKit(audit={kernel op: Audited(...)})</code> binds the audit hooks and runs an audited write in a transaction, so its row commits with it. <code>audit_row_per_effect</code> checks under simulation that each committed audited write carries exactly one row.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -8959,7 +8962,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>The temporal and versioned kits' reads are marked as reads.</strong> <code>effective_on</code>, <code>timeline</code>, <code>history</code> and <code>as_of</code> now run under the read-only guard and are listed as read-only in the operation catalog, so an <abbr title="Model Context Protocol">MCP</abbr> projection that includes only reads now includes them.</li>
 </ul>
 <h2 id="090-2026-09-28"><a href="https://github.com/morzecrew/forze/compare/v0.8.0...v0.9.0">0.9.0</a> - 2026-09-28<a class="headerlink" href="#090-2026-09-28" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
