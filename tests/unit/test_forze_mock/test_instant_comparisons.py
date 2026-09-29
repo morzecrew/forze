@@ -172,3 +172,15 @@ class TestTheSetOperators:
         row = {"ats": [SUMMER_0230]}
 
         assert evaluate_filter(row, {"$values": {"ats": {op: value}}}) is expected  # type: ignore[arg-type]
+
+
+def test_an_instant_key_never_equals_a_duration() -> None:
+    # The unique guarantee keys a row by these; an instant must not collide with a timedelta
+    # that happens to hold the same distance from the epoch.
+    from forze.application.contracts.querying.internal.matching import instant_key
+
+    distance = SUMMER_0230 - datetime(1970, 1, 1, tzinfo=UTC)
+
+    assert instant_key(SUMMER_0230) != instant_key(distance)
+    assert instant_key(SUMMER_0230) == instant_key(SUMMER_0230.astimezone(UTC))
+    assert instant_key(SUMMER_0230) != instant_key(WINTER_0230)

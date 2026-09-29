@@ -63,8 +63,7 @@ def _value_is_empty(value: Any) -> bool:
 def _coerce_set(value: Any) -> set[Any]:
     items = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
 
-    # An aware member as the instant it is, tagged so it can never equal a plain timedelta.
-    return {(_INSTANT, item - _EPOCH) if _is_aware(item) else item for item in items}  # pyright: ignore[reportUnknownVariableType]
+    return {instant_key(item) for item in items}  # pyright: ignore[reportUnknownVariableType]
 
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
@@ -85,14 +84,15 @@ def _is_aware(value: Any) -> bool:
 
 
 def instant_key(value: Any) -> Any:
-    """An aware datetime as its distance from the UTC epoch; anything else as is.
+    """A key that is equal for equal instants: an aware datetime as its distance from the UTC
+    epoch, tagged so it never equals a plain ``timedelta``; anything else as is.
 
-    A store compares ``timestamptz`` values as instants. Python compares two datetimes sharing a
-    ``tzinfo`` by their wall clocks and ignores ``fold``, and across zones treats a value in a
-    repeated hour as equal to nothing. A distance compares as the instant it is.
+    For hashing and equality (set members, unique keys). A store compares ``timestamptz`` values
+    as instants, while Python compares two datetimes sharing a ``tzinfo`` by their wall clocks,
+    ignoring ``fold``, and across zones treats a value in a repeated hour as equal to nothing.
     """
 
-    return value - _EPOCH if _is_aware(value) else value
+    return (_INSTANT, value - _EPOCH) if _is_aware(value) else value
 
 
 def _pair(left: Any, right: Any) -> tuple[Any, Any]:
