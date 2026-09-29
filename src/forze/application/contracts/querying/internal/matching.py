@@ -14,6 +14,7 @@ distinct from a present ``None``, so ``$null`` / ``$neq`` behave correctly on ab
 
 from __future__ import annotations
 
+import operator
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -60,13 +61,27 @@ def _value_is_empty(value: Any) -> bool:
 
 
 def _coerce_set(value: Any) -> set[Any]:
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return set(value)  # pyright: ignore[reportUnknownArgumentType]
+    items = value if isinstance(value, (list, tuple, set, frozenset)) else (value,)
 
-    return {value}
+    # An aware member as the instant it is, tagged so it can never equal a plain timedelta.
+    return {(_INSTANT, item - _EPOCH) if _is_aware(item) else item for item in items}  # pyright: ignore[reportUnknownVariableType]
 
 
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_INSTANT: Final = object()
+
+
+def _is_aware(value: Any) -> bool:
+    if not isinstance(value, datetime):
+        return False
+
+    # An app-defined tzinfo may raise; a value that cannot say whether it is aware is compared
+    # as it is, which is what an unreadable operand has always been here.
+    try:
+        return value.utcoffset() is not None
+
+    except Exception:
+        return False
 
 
 def instant_key(value: Any) -> Any:
@@ -77,14 +92,28 @@ def instant_key(value: Any) -> Any:
     repeated hour as equal to nothing. A distance compares as the instant it is.
     """
 
-    if isinstance(value, datetime) and value.utcoffset() is not None:
-        return value - _EPOCH
+    return value - _EPOCH if _is_aware(value) else value
 
-    return value
+
+def _pair(left: Any, right: Any) -> tuple[Any, Any]:
+    """*left* and *right* as instants when both are aware datetimes; otherwise as they are.
+
+    Both or neither: a lone distance would compare cleanly against a ``timedelta`` operand,
+    which a store refuses.
+    """
+
+    if _is_aware(left) and _is_aware(right):
+        return left - _EPOCH, right - _EPOCH
+
+    return left, right
+
+
+def _ordered(compare: Callable[[Any, Any], bool], left: Any, right: Any) -> bool:
+    return compare(*_pair(left, right))
 
 
 def _eq(left: Any, right: Any) -> bool:
-    if instant_key(left) == instant_key(right):
+    if operator.eq(*_pair(left, right)):
         return True
 
     if isinstance(left, UUID):
@@ -171,7 +200,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             # (the caster refuses non-finite operands, but a native Decimal("NaN")
             # reaches here without passing through it).
             try:
-                return instant_key(value) > instant_key(field.value)
+                return _ordered(operator.gt, value, field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -179,7 +208,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             try:
-                return instant_key(value) >= instant_key(field.value)
+                return _ordered(operator.ge, value, field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -187,7 +216,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             try:
-                return instant_key(value) < instant_key(field.value)
+                return _ordered(operator.lt, value, field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -195,7 +224,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             try:
-                return instant_key(value) <= instant_key(field.value)
+                return _ordered(operator.le, value, field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -227,25 +256,25 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             values = cast(Sequence[Any], field.value)
-            return _coerce_set(value).issuperset(values)
+            return _coerce_set(value).issuperset(_coerce_set(values))
 
         case "$subset":
             if value is _MISSING:
                 return False
             values = cast(Sequence[Any], field.value)
-            return _coerce_set(value).issubset(values)
+            return _coerce_set(value).issubset(_coerce_set(values))
 
         case "$disjoint":
             if value is _MISSING:
                 return True
             values = cast(Sequence[Any], field.value)
-            return _coerce_set(value).isdisjoint(values)
+            return _coerce_set(value).isdisjoint(_coerce_set(values))
 
         case "$overlaps":
             if value is _MISSING:
                 return False
             values = cast(Sequence[Any], field.value)
-            return not _coerce_set(value).isdisjoint(values)
+            return not _coerce_set(value).isdisjoint(_coerce_set(values))
 
         case "$like" | "$ilike" | "$regex":
             return _match_text(value, field.op, str(field.value))
@@ -282,7 +311,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return instant_key(left_value) > instant_key(right_value)
+                return _ordered(operator.gt, left_value, right_value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -290,7 +319,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return instant_key(left_value) >= instant_key(right_value)
+                return _ordered(operator.ge, left_value, right_value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -298,7 +327,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return instant_key(left_value) < instant_key(right_value)
+                return _ordered(operator.lt, left_value, right_value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -306,7 +335,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return instant_key(left_value) <= instant_key(right_value)
+                return _ordered(operator.le, left_value, right_value)
             except (TypeError, ArithmeticError):
                 return False
 

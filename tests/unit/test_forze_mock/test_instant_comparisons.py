@@ -115,3 +115,60 @@ class TestTheFilters:
         assert sorted(hit.at - SUMMER_0230 for hit in page.hits) == sorted(
             at - SUMMER_0230 for at in expected
         )
+
+
+class TestOperandsThatAreNotInstants:
+    @pytest.mark.parametrize(
+        "filters",
+        [
+            {"$values": {"at": {"$in": [SUMMER_0230 - datetime(1970, 1, 1, tzinfo=UTC)]}}},
+            {"$fields": {"d": {"$lt": "at"}}},
+            {"$fields": {"d": {"$eq": "at"}}},
+        ],
+        ids=["in-list", "field-lt", "field-eq"],
+    )
+    def test_a_duration_never_compares_with_an_instant(self, filters: dict[str, object]) -> None:
+        # A store refuses interval < timestamptz; read as a distance from the epoch, an instant
+        # would compare cleanly against a timedelta and match.
+        from forze.application.contracts.querying.internal.matching import evaluate_filter
+
+        row = {"at": SUMMER_0230, "d": SUMMER_0230 - datetime(1970, 1, 1, tzinfo=UTC)}
+
+        assert evaluate_filter(row, filters) is False  # type: ignore[arg-type]
+
+    def test_a_zone_that_cannot_answer_is_no_match(self) -> None:
+        from datetime import tzinfo
+
+        from forze.application.contracts.querying.internal.matching import evaluate_filter
+
+        class _Broken(tzinfo):
+            def utcoffset(self, dt: datetime | None) -> None:
+                raise ValueError("no answer")
+
+            def dst(self, dt: datetime | None) -> None:
+                return None
+
+        row = {"at": datetime(2026, 6, 1, tzinfo=_Broken())}
+
+        assert evaluate_filter(row, {"$values": {"at": {"$eq": "x"}}}) is False
+
+
+class TestTheSetOperators:
+    @pytest.mark.parametrize(
+        ("op", "value", "expected"),
+        [
+            ("$overlaps", [SUMMER_0230.astimezone(UTC)], True),
+            ("$superset", [WINTER_0230], False),
+            ("$subset", [SUMMER_0230.astimezone(UTC), WINTER_0215], True),
+            ("$disjoint", [WINTER_0230], True),
+        ],
+        ids=["overlaps-other-zone", "superset-fold", "subset-other-zone", "disjoint-fold"],
+    )
+    def test_members_are_compared_as_instants(
+        self, op: str, value: list[datetime], expected: bool
+    ) -> None:
+        from forze.application.contracts.querying.internal.matching import evaluate_filter
+
+        row = {"ats": [SUMMER_0230]}
+
+        assert evaluate_filter(row, {"$values": {"ats": {op: value}}}) is expected  # type: ignore[arg-type]
