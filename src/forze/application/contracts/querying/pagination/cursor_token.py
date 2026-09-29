@@ -8,6 +8,7 @@ import math
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
@@ -23,6 +24,8 @@ _KEYSET_V1 = 1
 _DIRECTIONS = ("asc", "desc")
 _CODEC = B64UrlJsonCodec()
 _DECIMAL_TAG = "$dec"
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 """Wire tag round-tripping a ``Decimal`` sort key exactly (as its string form) so keyset
 seek compares it numerically after decode, not as a bare (lexicographically-ordered) string."""
 
@@ -502,11 +505,19 @@ def _compare_value(v: Any) -> Any:
 
     Unlike the wire form (:func:`_jsonify_value`), an ``int`` / ``float`` / ``Decimal`` is
     coerced to ``Decimal`` so keys order numerically (``Decimal('9') < Decimal('10')``), not
-    lexicographically as their string form would (``'9' > '10'``). UUID / datetime keep the
-    string / isoformat canonicalization the cursor round-trip relies on.
+    lexicographically as their string form would (``'9' > '10'``). An aware datetime becomes its
+    distance from the UTC epoch, so keys order by instant: ISO strings with different offsets do
+    not, and Python compares two datetimes sharing a zone by the wall clock, ignoring ``fold``.
+    A naive datetime and a date compare as they are; a UUID compares as its string.
     """
 
     if v is None or isinstance(v, bool):
+        return v
+
+    if isinstance(v, datetime):
+        return v - _EPOCH if v.utcoffset() is not None else v
+
+    if isinstance(v, date):
         return v
 
     if isinstance(v, Decimal):
@@ -518,23 +529,39 @@ def _compare_value(v: Any) -> Any:
     if isinstance(v, (str, list, dict)):
         return v  # pyright: ignore[reportUnknownVariableType]
 
-    t = type(v).__name__
-
-    if t in ("UUID", "uuid"):
-        return str(v)
-
-    if t in ("datetime", "date"):
-        return v.isoformat()
-
+    # A UUID, and anything else, as its string.
     return str(v)
 
 
 # ....................... #
 
 
+def _temporal_pair(left: Any, right: Any) -> tuple[Any, Any]:
+    """*left* and *right*, with an ISO string facing a datetime or a date read as one.
+
+    A cursor carries a temporal key as its ISO string (:func:`_jsonify_value`); the row it is
+    compared with holds the value itself. Text that is not a time is a tampered cursor.
+    """
+
+    for this, other in ((left, right), (right, left)):
+        if isinstance(this, str) and isinstance(other, date):
+            parse = datetime.fromisoformat if isinstance(other, datetime) else date.fromisoformat
+
+            try:
+                parsed = parse(this)
+
+            except ValueError as e:
+                raise exc.validation("Invalid cursor token") from e
+
+            return (parsed, right) if this is left else (left, parsed)
+
+    return left, right
+
+
 def compare_keyset_sort_values(left: Any, right: Any) -> int:
     """Compare two sort-key values (-1, 0, 1) using the numeric-aware canonicalization."""
 
+    left, right = _temporal_pair(left, right)
     lc = _compare_value(left)
     rc = _compare_value(right)
 
@@ -577,6 +604,7 @@ def ordered_compare(
     direction. This is the canonical keyset order every backend conforms to.
     """
 
+    left, right = _temporal_pair(left, right)
     lc = _compare_value(left)
     rc = _compare_value(right)
     l_null = lc is None
