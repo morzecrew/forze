@@ -1927,6 +1927,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Authorization: may they?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#permissions-derived-from-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Permissions derived from state
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6437,6 +6454,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Authorization: may they?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#permissions-derived-from-state" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Permissions derived from state
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -6693,6 +6727,69 @@ hooks</a> from the application layer: a <code>BeforeStep</code>
 authorizes the operation, and a <code>wrap</code> step injects scope filters into
 list/search queries. Both read the bound <code>AuthnIdentity</code> and <code>TenantIdentity</code> to
 build the decision.</p>
+<h3 id="permissions-derived-from-state">Permissions derived from state<a class="headerlink" href="#permissions-derived-from-state" title="Permanent link">&para;</a></h3>
+<p>"Active member of X" is state, not a binding, and syncing bindings from it drifts. A
+<code>PermissionProvider</code> derives permissions per decision from documents or reviewed configuration,
+and the policy unions them with catalog grants:</p>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Grants</th>
+<th>Wins over</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Catalog bindings (principal, role, group)</td>
+<td>yes</td>
+<td>—</td>
+</tr>
+<tr>
+<td>A provider's <code>granted</code></td>
+<td>yes</td>
+<td>—</td>
+</tr>
+<tr>
+<td>A provider's <code>denied</code></td>
+<td>no</td>
+<td><strong>every</strong> grant, bindings included</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">uuid</span><span class="w"> </span><span class="kn">import</span> <span class="n">UUID</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">DerivedPermissions</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzKernelConfig</span><span class="p">,</span> <span class="n">permission_providers_lifecycle_step</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ActiveMembers</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="s2">"active_members"</span>
+    <span class="n">keys</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">({</span><span class="s2">"ledger.read"</span><span class="p">,</span> <span class="s2">"ledger.write"</span><span class="p">})</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">derive</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">principal_id</span><span class="p">:</span> <span class="n">UUID</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DerivedPermissions</span><span class="p">:</span>
+        <span class="n">member</span> <span class="o">=</span> <span class="o">...</span>  <span class="c1"># read the member row through ctx</span>
+        <span class="k">if</span> <span class="n">member</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">member</span><span class="o">.</span><span class="n">active</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">DerivedPermissions</span><span class="p">(</span><span class="n">denied</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">keys</span><span class="p">)</span>  <span class="c1"># deactivation closes every route</span>
+        <span class="k">return</span> <span class="n">DerivedPermissions</span><span class="p">(</span><span class="n">granted</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">keys</span><span class="p">)</span>
+
+
+<span class="n">providers</span> <span class="o">=</span> <span class="p">(</span><span class="n">ActiveMembers</span><span class="p">(),)</span>
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">AuthzKernelConfig</span><span class="p">(</span><span class="n">permission_providers</span><span class="o">=</span><span class="n">providers</span><span class="p">)</span>
+<span class="n">startup</span> <span class="o">=</span> <span class="n">permission_providers_lifecycle_step</span><span class="p">(</span><span class="n">providers</span><span class="p">)</span>  <span class="c1"># pass to build_runtime</span>
+</code></pre></div>
+<ul>
+<li><strong>Gate on permissions, never on roles</strong> — that is what lets a derived denial close a route.</li>
+<li>A provider <strong>reads and never writes</strong>. It runs for the principal being decided; on a delegated
+  call <code>AuthzBeforeAuthorize</code> decides each actor in turn, so the provider runs for each of them.</li>
+<li><code>keys</code> declares everything a provider may grant or deny. The startup step refuses to boot when
+  a declared key has no catalog row, so a typo is a boot error rather than a permanent denial.</li>
+<li>A provider that <strong>raises denies every key it declares</strong> — an outage must not become a bypass.
+  So does one whose result is not a <code>DerivedPermissions</code>, or names a key outside <code>keys</code>: a
+  misspelt denial would otherwise deny the misspelling and leave the real key granted.</li>
+<li>Derived grants sit in <code>EffectiveGrants.derived</code>, attributed to their provider and apart from the
+  catalog's <code>permissions</code>, so an administered grant can be told from a derived one.</li>
+</ul>
 <h2 id="authn-events-and-login-lockout">Authn events and login lockout<a class="headerlink" href="#authn-events-and-login-lockout" title="Permanent link">&para;</a></h2>
 <p>Authentication flows can narrate themselves. Wire an optional <strong>authn event
 sink</strong> and every flow emits a structured <code>AuthnEvent</code> — login success/failure,

@@ -8943,7 +8943,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.9.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>A confirmation can refuse when its preview has changed.</strong> <code>PreviewBinding(name=…, projector=…, exclude=…)</code> returns a fingerprinted preview with <code>reviewed()</code>, and <code>bind()</code> makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with <code>preview_changed</code> on a mismatch.</li>
+<li>
+<p><strong>Permissions can be derived from state per decision.</strong> A <code>PermissionProvider</code> (declared on <code>AuthzKernelConfig(permission_providers=…)</code>) grants or denies keys from documents or config; a denial outranks every catalog binding, and <code>permission_providers_lifecycle_step</code> refuses to boot on a key the catalog lacks.</p>
+</li>
+<li>
+<p><strong>A confirmation can refuse when its preview has changed.</strong> <code>PreviewBinding(name=…, projector=…, exclude=…)</code> returns a fingerprinted preview with <code>reviewed()</code>, and <code>bind()</code> makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with <code>preview_changed</code> on a mismatch.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
