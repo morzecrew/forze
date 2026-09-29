@@ -957,6 +957,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#wall-clocks-and-instants" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Wall clocks and instants
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6400,6 +6411,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#wall-clocks-and-instants" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Wall clocks and instants
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6707,6 +6729,65 @@ a type checker passes a <code>date</code>/<code>datetime</code> pair, and a naiv
 to it. <code>Period</code> checks both at construction — along with the endpoints being dates at all, since a
 period is as often built from dynamic input as from typed code — rather than letting any of them
 surface as a <code>TypeError</code> from inside a comparison later.</p>
+<h2 id="wall-clocks-and-instants">Wall clocks and instants<a class="headerlink" href="#wall-clocks-and-instants" title="Permanent link">&para;</a></h2>
+<p>A wall-clock time and a zone name one instant on almost every day of the year. On the two days a
+zone changes offset they do not: a fall-back time happens <strong>twice</strong>, and a spring-forward time
+<strong>never</strong>. The civil-time helpers refuse both rather than pick an hour, and take the zone as a
+value you inject — <code>CivilZone("Europe/Berlin")</code>, validated where you declare it — never a module
+constant:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">date</span><span class="p">,</span> <span class="n">datetime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.base.primitives</span><span class="w"> </span><span class="kn">import</span> <span class="n">CivilZone</span><span class="p">,</span> <span class="n">elapsed_minutes</span><span class="p">,</span> <span class="n">local_day_bounds</span><span class="p">,</span> <span class="n">to_instant</span>
+
+<span class="n">berlin</span> <span class="o">=</span> <span class="n">CivilZone</span><span class="p">(</span><span class="s2">"Europe/Berlin"</span><span class="p">)</span>
+
+<span class="n">to_instant</span><span class="p">(</span><span class="n">berlin</span><span class="p">,</span> <span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">25</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">30</span><span class="p">))</span>          <span class="c1"># refused: dst_ambiguous</span>
+<span class="n">to_instant</span><span class="p">(</span><span class="n">berlin</span><span class="p">,</span> <span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">25</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">30</span><span class="p">),</span> <span class="n">fold</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># the first 02:30, summer time</span>
+<span class="n">local_day_bounds</span><span class="p">(</span><span class="n">berlin</span><span class="p">,</span> <span class="n">date</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="mi">25</span><span class="p">))</span>               <span class="c1"># a 25-hour Period, bounds="[)"</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>Returns</th>
+<th>Refuses</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>to_instant(zone, local, fold=None)</code></td>
+<td>the UTC instant a naive wall time names</td>
+<td><code>dst_ambiguous</code> without <code>fold</code>, <code>dst_nonexistent</code> always</td>
+</tr>
+<tr>
+<td><code>local_day_bounds(zone, day)</code> · <code>month_bounds(zone, year, month)</code></td>
+<td>a half-open <code>Period</code> of instants</td>
+<td>a month outside 1–12</td>
+</tr>
+<tr>
+<td><code>spanned_local_days(zone, start, end)</code></td>
+<td>the local days whose bounds <code>[start, end)</code> meets</td>
+<td><code>naive_datetime</code>, a range ending before it starts</td>
+</tr>
+<tr>
+<td><code>elapsed_minutes(start, end)</code></td>
+<td>whole minutes between two instants</td>
+<td><code>naive_datetime</code></td>
+</tr>
+</tbody>
+</table>
+<p>A day whose midnight the zone skips starts at the first instant that exists, and a day whose
+midnight it repeats starts at the first one: the day bounds resolve where <code>to_instant</code> refuses,
+because a calendar with holes or overlaps is worse. A day the zone skips
+entirely (Samoa's 30 December 2011) is an empty <code>Period</code>, and <code>spanned_local_days</code> never lists it.
+Days tile: where a zone repeats the hours around a midnight, the repeat belongs to the new day,
+so a range split by <code>spanned_local_days</code> and <code>local_day_bounds</code> keeps all its time, once. Durations are
+computed on instants only: two wall-clock times across a transition are off by the shift, and the
+wrong answer is a plausible number. <code>AwareDatetime</code> is for your boundary models: a naive value is
+a validation error (<code>naive_datetime</code>) naming the field. Bind <code>fold</code> where the UI knows which
+occurrence the user meant; otherwise expect a <code>dst_ambiguous</code> on one autumn night a year.</p>
+<p>These sit beside two other time-zone paths the framework already has — the analytics
+time-bucketing and the durable scheduler's cron — each shaped for its own plane. Use these for
+converting domain wall-clock values.</p>
 <p>Aggregates define <em>what</em> your domain is and the rules it keeps; turning actions
 on them into something the runtime can execute is the
 <a href="../application-layer/">application layer</a>.</p>

@@ -8944,6 +8944,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Wall-clock times convert to instants without guessing.</strong> <code>CivilZone</code>, <code>to_instant</code>, <code>local_day_bounds</code>, <code>month_bounds</code>, <code>spanned_local_days</code> and <code>elapsed_minutes</code> in <code>forze.base.primitives</code> refuse a <abbr title="Deterministic Simulation Testing">DST</abbr>-repeated time without <code>fold</code> and a skipped one always; <code>AwareDatetime</code> refuses naive input at a boundary.</p>
+</li>
+<li>
 <p><strong>Permissions can be derived from state per decision.</strong> A <code>PermissionProvider</code> (declared on <code>AuthzKernelConfig(permission_providers=…)</code>) grants or denies keys from documents or config; a denial outranks every catalog binding, and <code>permission_providers_lifecycle_step</code> refuses to boot on a key the catalog lacks.</p>
 </li>
 <li>
