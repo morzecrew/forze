@@ -125,8 +125,10 @@ class TestTheFirstUseKeyCheck:
         ctx = await _ctx_with_catalog()
         shared = build_authz_shared_services(AuthzKernelConfig(permission_providers=(typo,)))
 
-        with pytest.raises(CoreException):
-            await _grant_resolver(ctx, shared).resolve_effective_grants(PRINCIPAL)
+        # Refused, and refused again: a failed check does not count as done.
+        for _ in range(2):
+            with pytest.raises(CoreException):
+                await _grant_resolver(ctx, shared).resolve_effective_grants(PRINCIPAL)
 
         await ctx.doc.command(permission_definition_spec).create(
             CreatePermissionDefinitionCmd(permission_key="ledger.write")
