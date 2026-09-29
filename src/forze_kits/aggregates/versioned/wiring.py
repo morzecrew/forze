@@ -90,6 +90,10 @@ def _without_lineage(inner: MapperFactory[Any, Any]) -> MapperFactory[Any, Any]:
     mapper free to set them itself. Dropped rather than refused: a patch that happens to carry a
     default is not an attack, and a caller cannot tell which fields a kit reserves. The
     correction command writes through the port directly, so it is unaffected.
+
+    Rebuilt without validating: the command is a mapper's validated output, and validating it
+    again would re-key it through its aliases (dropping every aliased field) and run its
+    validators a second time.
     """
 
     def _factory(ctx: ExecutionContext) -> Mapper[Any, Any]:
@@ -97,9 +101,16 @@ def _without_lineage(inner: MapperFactory[Any, Any]) -> MapperFactory[Any, Any]:
 
         async def _map(source: Any) -> Any:
             cmd = await mapper(source)
-            cleaned = cmd.model_dump(exclude=set(_KIT_OWNED_FIELDS), exclude_unset=True)
+            reserved = _KIT_OWNED_FIELDS & cmd.model_fields_set
 
-            return type(cmd).model_validate(cleaned)
+            if not reserved:
+                return cmd
+
+            # Left out, the reserved fields take their defaults and read as unset.
+            return type(cmd).model_construct(
+                _fields_set=cmd.model_fields_set - reserved,
+                **{name: value for name, value in cmd if name not in reserved},
+            )
 
         return _map
 
@@ -214,8 +225,9 @@ class VersionedWiring:
     """The author's create mapper, which the first-version CREATE maps through when given."""
 
     update_mapper: MapperFactory[Any, Any] | None = None
-    """The author's update mapper, which ``CORRECT`` maps its patch through when given — the one
-    the aggregate's ``UPDATE`` runs, so both read an inbound DTO the same way."""
+    """The author's update mapper. :meth:`mappers` hands it to ``UPDATE`` and :meth:`ops` to
+    ``CORRECT``, so both read an inbound DTO the same way — declared here, once, rather than on
+    the mappers passed to :meth:`mappers`."""
 
     # ....................... #
 
@@ -256,10 +268,20 @@ class VersionedWiring:
 
         base = base if base is not None else DocumentMappers()
 
+        # One source for each: CREATE is overridden by :meth:`bind` and CORRECT built by
+        # :meth:`ops` from the wiring's own mappers, so a different one on *base* would map one
+        # operation and silently not the other.
+        for slot, own in (("create", self.create_mapper), ("update", self.update_mapper)):
+            if getattr(base, slot) not in (None, own):
+                raise exc.configuration(
+                    f"Pass the {slot} mapper to versioned_wiring({slot}_mapper=...), not to "
+                    "mappers(): the versioned operations are built from the wiring's own.",
+                )
+
         return attrs.evolve(
             base,
             update=(
-                self._update_mapping(base.update if base.update is not None else self.update_mapper)
+                self._update_mapping(self.update_mapper)
                 if self.spec.supports_update()
                 else base.update
             ),
