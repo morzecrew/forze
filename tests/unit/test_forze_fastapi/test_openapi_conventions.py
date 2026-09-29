@@ -52,6 +52,11 @@ class _Tagged(BaseDTO):
     meta: dict[str, str] = {"description": "keep ``this``"}
 
 
+class _Sampled(BaseModel):
+    one: dict[str, str] = Field(json_schema_extra={"example": {"description": "keep ``one``"}})
+    many: dict[str, str] = Field(examples=[{"summary": "keep ``s``"}])
+
+
 class ErrorResponse(BaseModel):
     """The app's own error body, sharing the envelope's common name."""
 
@@ -161,10 +166,19 @@ class TestTheErrorEnvelope:
 
         apply_openapi_conventions(app)
 
+        # Routers may be attached after the call, so the conflict fails the schema request.
         with pytest.raises(CoreException) as caught:
             app.openapi()
 
         assert caught.value.kind.value == "configuration"
+
+        # Refused before anything was rewritten: the schema FastAPI cached is still its own.
+        cached = app.openapi_schema
+        assert cached is not None
+        assert "default" not in cached["paths"]["/clash"]["get"]["responses"]
+        assert _schema_ref(_response(cached, "/orders", "post", "422")) == {
+            "$ref": "#/components/schemas/HTTPValidationError"
+        }
 
     def test_fastapis_schemas_go_once_unreferenced(self) -> None:
         app = _app()
@@ -292,7 +306,7 @@ class TestMarkupInTheSchema:
 
     def test_example_objects_have_prose_and_data(self) -> None:
         app = FastAPI()
-        value = {"note": "keep ``this``"}
+        value = {"description": "keep ``this``", "summary": ":class:`~a.B`"}
         examples: dict[str, Any] = {
             "one": {"summary": "Uses ``x``", "description": "See :class:`~a.B`.", "value": value}
         }
@@ -306,6 +320,28 @@ class TestMarkupInTheSchema:
         example = media["application/json"]["examples"]["one"]
 
         assert example == {"summary": "Uses `x`", "description": "See `B`.", "value": value}
+
+    def test_schema_examples_are_data(self) -> None:
+        app = FastAPI()
+
+        @app.post("/sample")
+        async def sample(body: _Sampled) -> None:
+            return None
+
+        apply_openapi_conventions(app)
+        properties = app.openapi()["components"]["schemas"]["_Sampled"]["properties"]
+
+        assert properties["one"]["example"] == {"description": "keep ``one``"}
+        assert properties["many"]["examples"] == [{"summary": "keep ``s``"}]
+
+    def test_server_variables_named_like_data_keys_are_prose(self) -> None:
+        variables = {"default": {"default": "prod", "description": "The ``env``."}}
+        app = FastAPI(servers=[{"url": "https://{default}.x", "variables": variables}])
+        apply_openapi_conventions(app)
+
+        [server] = app.openapi()["servers"]
+
+        assert server["variables"]["default"] == {"default": "prod", "description": "The `env`."}
 
     def test_a_forze_dto_comes_out_clean(self) -> None:
         app = _app()
@@ -366,15 +402,73 @@ Outro."""
             "Intro.\n\n> **Note:** Careful with `x`.\n\n> **Warning:** Watch out.\n\nOutro."
         )
 
-    def test_unknown_directives_are_dropped(self) -> None:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (".. versionadded:: 2.0\n   The ``x`` field.", "> **Added in:** 2.0\n> The `x` field."),
+            (
+                ".. admonition:: Heads up\n\n   Body.",
+                "> **Admonition:** Heads up\n>\n> Body.",
+            ),
+            (".. custom:: arg\n   Body ``x``.", "> **Custom:** arg\n> Body `x`."),
+        ],
+        ids=["versionadded", "generic", "unknown"],
+    )
+    def test_every_directive_keeps_its_prose(self, text: str, expected: str) -> None:
+        assert _markdown(text) == expected
+
+    def test_an_admonition_body_is_converted_like_the_top_level(self) -> None:
         text = """Intro.
 
-.. image:: diagram.png
-   :alt: A diagram.
+.. note::
+   Example:
 
-Outro."""
+   .. code-block:: python
 
-        assert _markdown(text) == "Intro.\n\nOutro."
+      x = ``a``
+
+   And ``b`` via :class:`~a.C`::
+
+      y = ``c``
+
+After."""
+
+        assert _markdown(text) == (
+            "Intro.\n\n> **Note:** Example:\n>\n> ```python\n> x = ``a``\n> ```\n>\n"
+            "> And `b` via `C`:\n>\n> ```\n> y = ``c``\n> ```\n\nAfter."
+        )
+
+    def test_a_fence_in_an_admonition_is_verbatim(self) -> None:
+        text = ".. note::\n   Use:\n\n   ```python\n   x = ``a``\n   ```"
+
+        assert _markdown(text) == "> **Note:** Use:\n>\n> ```python\n> x = ``a``\n> ```"
+
+    def test_a_rest_comment_stays_as_text(self) -> None:
+        text = "Items:\n.. and so on\n\nOutro."
+
+        assert _markdown(text) == text
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (
+                "Send::\n\n    :method: GET\n    :path: /orders",
+                "Send:\n\n```\n:method: GET\n:path: /orders\n```",
+            ),
+            (
+                ".. code-block:: yaml\n\n   :key: value\n   other: 1",
+                "```yaml\n:key: value\nother: 1\n```",
+            ),
+        ],
+        ids=["literal", "code-after-blank"],
+    )
+    def test_code_that_looks_like_options_is_code(self, text: str, expected: str) -> None:
+        assert _markdown(text) == expected
+
+    def test_a_generated_fence_outlasts_the_backticks_inside(self) -> None:
+        text = "Example::\n\n    ```\n    x\n    ```"
+
+        assert _markdown(text) == "Example:\n\n````\n```\nx\n```\n````"
 
     @pytest.mark.parametrize(
         ("name", "label"),

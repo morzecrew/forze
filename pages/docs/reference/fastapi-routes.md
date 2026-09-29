@@ -403,15 +403,17 @@ Each FastAPI 422 becomes the `ForzeErrorResponse` envelope (`detail`, optional
 `context`), and every operation gains a `default` response in the same shape.
 The `X-Error-Code` header accompanies the errors that carry a code, so it is
 documented as optional. FastAPI's validation schemas are dropped once nothing
-references them. A 422 your route declares with its own model is left alone, and
-a different model of yours already named `ForzeErrorResponse` stops the schema
-with a configuration error rather than being overwritten. Responses a route sends
+references them. A 422 your route declares with its own model is left alone. A
+different model of yours already named `ForzeErrorResponse` is not overwritten:
+the schema request fails with a configuration error, since routers can still be
+attached after the call. Responses a route sends
 with no body at all, such as a storage download's `304` and `416`, are not
 envelopes; the `default` entry does not describe them.
 
-Every `description` and `summary` then has its reST roles, ``` ``literals`` ```,
-field lists (`:param:`, `:returns:`, …) and admonitions (`note`, `warning`,
-`deprecated`, `seealso`, …) rendered as Markdown; `code-block` and `::` literal
-blocks become fenced blocks, and fenced blocks already in Markdown pass through
-as written. Call it last: text a later wrapper adds, such as a security scheme's
+Every `description` and `summary` then has its reST rendered as Markdown without
+losing prose: roles and ``` ``literals`` ``` become code spans, field lists
+(`:param:`, `:returns:`, …) are dropped, `code-block` and `::` literal blocks
+become fenced blocks, and any other directive (`note`, `deprecated`,
+`versionadded`, …) becomes a labelled blockquote. Fenced blocks already in
+Markdown pass through as written. Call it last: text a later wrapper adds, such as a security scheme's
 description, stays as written.

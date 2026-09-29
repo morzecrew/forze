@@ -72,6 +72,7 @@ _NAME_MAPS: Final = frozenset(
         "securitySchemes",
         "pathItems",
         "examples",
+        "variables",
     }
 )
 """Keys whose object value maps user-chosen names to objects: a field named ``default`` is a
@@ -112,27 +113,16 @@ def _error_response(description: str) -> dict[str, Any]:
 
 # ....................... #
 
-_FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
+_FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})")
 _DIRECTIVE = re.compile(r"^(\s*)\.\.\s+([\w-]+)::\s*(.*)$")
 _FIELD = re.compile(r"^(\s*):(?:param|type|returns?|rtype|raises?)\b[^:]*:")
-_OPTION = re.compile(r"^:[\w-]+:")
+_OPTION = re.compile(r"^\s*:[\w-]+:")
 _ROLE = re.compile(r"(?<![\w`]):(?:[A-Za-z][\w-]*:)?[A-Za-z][\w-]*:`([^`]+)`")
 _LITERAL = re.compile(r"(?<!`)``(?![\s`])([^`]*?[^\s`])``(?!`)")
 _BLANK_RUN = re.compile(r"\n(?:[ \t]*\n){2,}")
 
-_ADMONITIONS: Final = {
-    "note": "Note",
-    "warning": "Warning",
-    "deprecated": "Deprecated",
-    "important": "Important",
-    "danger": "Danger",
-    "caution": "Caution",
-    "attention": "Attention",
-    "tip": "Tip",
-    "hint": "Hint",
-    "seealso": "See also",
-}
 _CODE_DIRECTIVES: Final = frozenset({"code-block", "code", "sourcecode"})
+_LABELS: Final = {"seealso": "See also", "versionadded": "Added in", "versionchanged": "Changed in"}
 
 
 def _role_text(content: str) -> str:
@@ -174,27 +164,11 @@ def _fence_end(lines: list[str], start: int, marker: str) -> int:
 
 
 def _fenced(language: str, body: list[str]) -> str:
-    code = textwrap.dedent("\n".join(body)).strip("\n").splitlines()
+    code = textwrap.dedent("\n".join(body)).strip("\n")
+    # Longer than any backtick run inside, so code quoting a fence stays inside this one.
+    fence = "`" * max([3, *(len(run) + 1 for run in re.findall(r"`+", code))])
 
-    # A directive's options (``:linenos:``) lead its body; they are not code.
-    while code and _OPTION.match(code[0]):
-        code.pop(0)
-
-    while code and not code[0].strip():
-        code.pop(0)
-
-    return "\n".join([f"```{language}", *code, "```"])
-
-
-def _literal_head(line: str) -> str | None:
-    """What an ``::``-ending paragraph line shows: ``Example::`` reads ``Example:``."""
-
-    head = line.rstrip()[:-2]
-
-    if not head.strip():
-        return None
-
-    return head.rstrip() if head.endswith((" ", "\t")) else f"{head}:"
+    return f"{fence}{language}\n{code}\n{fence}"
 
 
 def _inline(text: str) -> str:
@@ -205,10 +179,11 @@ def _inline(text: str) -> str:
 
 
 def _markdown(text: str) -> str:
-    """Render the reST in a docstring-derived *text* as Markdown.
+    """Render the reST in a docstring-derived *text* as Markdown, losing no prose.
 
-    Fenced code blocks (```` ``` ```` or ``~~~``) pass through verbatim; reST literal and
-    ``code-block`` blocks become fenced ones.
+    Fenced blocks (```` ``` ```` or ``~~~``) pass through verbatim; ``code-block`` and
+    ``::`` literal blocks become fenced blocks; field lists (``:param:`` …) are dropped; any
+    other directive becomes a labelled blockquote whose body is converted the same way.
     """
 
     lines = text.splitlines()
@@ -216,9 +191,8 @@ def _markdown(text: str) -> str:
     prose: list[str] = []
 
     def verbatim(block: str) -> None:
-        chunks.append(_inline("\n".join(prose)))
-        chunks.append(block)
-        prose.clear()
+        chunks.extend([_inline("\n".join(prose)), block])
+        prose[:] = [""]
 
     i = 0
 
@@ -228,47 +202,46 @@ def _markdown(text: str) -> str:
         if fence := _FENCE.match(line):
             end = _fence_end(lines, i, fence.group(1))
             verbatim("\n".join(lines[i:end]))
-            i = end
-            continue
+            prose.clear()
 
-        if directive := _DIRECTIVE.match(line):
-            indent, name, argument = len(directive.group(1)), directive.group(2), directive.group(3)
-            end = _block_end(lines, i, indent)
+        elif directive := _DIRECTIVE.match(line):
+            name, argument = directive.group(2), directive.group(3)
+            end = _block_end(lines, i, len(directive.group(1)))
+            body = lines[i + 1 : end]
 
-            if (label := _ADMONITIONS.get(name)) is not None:
-                body = textwrap.dedent("\n".join(lines[i + 1 : end]))
-                content = f"{argument}\n{body}".strip().splitlines() or [""]
-                content[0] = f"**{label}:** {content[0]}".rstrip()
-                prose.extend(f"> {row}" if row.strip() else ">" for row in content)
-                prose.append("")
+            if name in _CODE_DIRECTIVES:
+                # Options sit directly under the directive line, before its first blank line.
+                options = next(
+                    (n for n, row in enumerate(body) if not _OPTION.match(row)), len(body)
+                )
+                verbatim(_fenced(argument.strip(), body[options:]))
 
-            elif name in _CODE_DIRECTIVES:
-                verbatim(_fenced(argument.strip(), lines[i + 1 : end]))
-                prose.append("")
+            else:
+                label = _LABELS.get(name, name.replace("-", " ").capitalize())
+                content = _markdown(f"{argument}\n{textwrap.dedent(chr(10).join(body))}")
+                quoted = f"**{label}:** {content}".rstrip().splitlines()
+                verbatim("\n".join(f"> {row}" if row.strip() else ">" for row in quoted))
 
-            i = end
-            continue
+        elif field := _FIELD.match(line):
+            end = _block_end(lines, i, len(field.group(1)))
 
-        if field := _FIELD.match(line):
-            i = _block_end(lines, i, len(field.group(1)))
-            continue
+        elif line.rstrip().endswith("::") and _indent(
+            next((row for row in lines[i + 1 :] if row.strip()), "")
+        ) > _indent(line):
+            end = _block_end(lines, i, _indent(line))
+            head = line.rstrip()[:-2]
 
-        if line.rstrip().endswith("::"):
-            following = next((j for j in range(i + 1, len(lines)) if lines[j].strip()), None)
+            # ``Example::`` reads ``Example:``; ``Example ::`` and a bare ``::`` drop it.
+            if head.strip():
+                prose.extend([head.rstrip() if head[-1].isspace() else f"{head}:", ""])
 
-            if following is not None and _indent(lines[following]) > _indent(line):
-                end = _block_end(lines, i, _indent(line))
+            verbatim(_fenced("", lines[i + 1 : end]))
 
-                if (head := _literal_head(line)) is not None:
-                    prose.extend([head, ""])
+        else:
+            prose.append(line)
+            end = i + 1
 
-                verbatim(_fenced("", lines[i + 1 : end]))
-                prose.append("")
-                i = end
-                continue
-
-        prose.append(line)
-        i += 1
+        i = end
 
     chunks.append(_inline("\n".join(prose)))
 
@@ -305,6 +278,18 @@ def _render_text(node: Any, *, names: bool = False) -> None:
 
 
 def _document_errors(schema: dict[str, Any]) -> None:
+    schemas = schema.setdefault("components", {}).setdefault("schemas", {})
+
+    # Checked before anything is rewritten, so a refusal leaves FastAPI's cached schema whole.
+    # The name is namespaced, but an app could still hold it; overwriting would re-document
+    # every reference to the app's model as this envelope.
+    if schemas.get(_ERROR_SCHEMA, _ERROR_SCHEMA_BODY) != _ERROR_SCHEMA_BODY:
+        raise exc.configuration(
+            f"The OpenAPI schema already has a different {_ERROR_SCHEMA!r} component; "
+            "rename that model so the error envelope can be documented under its name.",
+            code="openapi_component_conflict",
+        )
+
     for path_item in schema.get("paths", {}).values():
         for method, operation in path_item.items():
             if method not in _HTTP_METHODS:
@@ -318,17 +303,6 @@ def _document_errors(schema: dict[str, Any]) -> None:
                 responses["422"] = _error_response("Validation error")
 
             responses.setdefault("default", _error_response("Error"))
-
-    schemas = schema.setdefault("components", {}).setdefault("schemas", {})
-
-    # The name is namespaced, but an app could still hold it; overwriting would re-document
-    # every reference to the app's model as this envelope.
-    if schemas.get(_ERROR_SCHEMA, _ERROR_SCHEMA_BODY) != _ERROR_SCHEMA_BODY:
-        raise exc.configuration(
-            f"The OpenAPI schema already has a different {_ERROR_SCHEMA!r} component; "
-            "rename that model so the error envelope can be documented under its name.",
-            code="openapi_component_conflict",
-        )
 
     schemas[_ERROR_SCHEMA] = deepcopy(_ERROR_SCHEMA_BODY)
 
@@ -351,8 +325,9 @@ def apply_openapi_conventions(app: FastAPI) -> None:
     ``ForzeErrorResponse`` envelope, every operation gains a ``default`` response in the
     same shape, and FastAPI's validation schemas are dropped once nothing references them.
     The ``X-Error-Code`` header accompanies the errors that carry a code, so it is
-    documented as optional. A 422 an app declared with its own schema is left alone, and a
-    different model already named ``ForzeErrorResponse`` is a configuration error. Every
+    documented as optional. A 422 an app declared with its own schema is left alone. A
+    different model already named ``ForzeErrorResponse`` is a configuration error raised by
+    the schema request itself, since routers may be attached after this call. Every
     ``description`` and ``summary`` then has its reST roles, literals, field lists and
     directives rendered as Markdown; fenced code blocks pass through as written.
 
