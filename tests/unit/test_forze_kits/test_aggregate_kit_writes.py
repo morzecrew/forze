@@ -687,6 +687,31 @@ class TestVersionedUpdateMapping:
         assert (cmd.kwh, cmd.is_current, cmd.superseded_at) == (3, None, None)
         assert cmd.model_fields_set == {"kwh"}
 
+    async def test_stripping_lineage_keeps_each_value_on_its_own_field(self) -> None:
+        # One field's alias is another field's name: rebuilding by name would hand the first
+        # field the second one's value.
+        from pydantic import Field as PydanticField
+
+        from forze_kits.aggregates.versioned.wiring import (
+            _without_lineage,  # pyright: ignore[reportPrivateUsage]
+        )
+
+        class _Crossed(BaseDTO):
+            a: int = PydanticField(0, alias="b_alias")
+            b_alias: int = PydanticField(7, alias="zz")
+            is_current: bool | None = None
+
+        def _retiring(ctx: Any) -> Any:
+            async def _map(source: Any) -> _Crossed:
+                return _Crossed.model_validate({"b_alias": 3, "zz": 9, "is_current": False})
+
+            return _map
+
+        cmd = await _without_lineage(_retiring)(None)(None)
+
+        assert (cmd.a, cmd.b_alias, cmd.is_current) == (3, 9, None)
+        assert cmd.model_fields_set == {"a", "b_alias"}
+
     async def test_wiring_used_directly_maps_update_and_correct_alike(self) -> None:
         from forze_kits.aggregates.document import build_document_registry
         from forze_kits.aggregates.versioned import (

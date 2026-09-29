@@ -106,10 +106,16 @@ def _without_lineage(inner: MapperFactory[Any, Any]) -> MapperFactory[Any, Any]:
             if not reserved:
                 return cmd
 
-            # Left out, the reserved fields take their defaults and read as unset.
+            # Left out, the reserved fields take their defaults and read as unset. Keyed as
+            # ``model_construct`` looks them up, alias first, so no value lands on a field whose
+            # alias is another field's name.
+            fields = type(cmd).model_fields
+
             return type(cmd).model_construct(
                 _fields_set=cmd.model_fields_set - reserved,
-                **{name: value for name, value in cmd if name not in reserved},
+                **{
+                    fields[name].alias or name: value for name, value in cmd if name not in reserved
+                },
             )
 
         return _map
