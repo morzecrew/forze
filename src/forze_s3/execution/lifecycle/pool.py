@@ -152,23 +152,27 @@ def s3_bucket_lifecycle_step(
     Runs after :func:`s3_lifecycle_step` (it requires :data:`S3_CLIENT_CAPABILITY`) and is
     idempotent: an existing bucket is left as it is. A bucket that cannot be created fails
     startup, since nothing could be stored in it. It creates shared infrastructure, so under a
-    ``FLEET`` profile wrap it with a singleton lifecycle step. A tenant-routed client has no
-    tenant at startup; provision per-tenant buckets with ``ObjectStorageTenantProvisioner``.
+    ``FLEET`` profile wrap it with a singleton lifecycle step. It needs a plain
+    :class:`S3Client`: a tenant-routed client has no tenant at startup, so its buckets are
+    created on first write.
 
     :param name: Step name for collision detection.
     :param buckets: Bucket names to ensure.
     :returns: Lifecycle step with a startup hook only.
     """
 
-    # A bare string is a sequence too: it would ensure one bucket per character.
-    if isinstance(buckets, str) or not buckets or any(not b.strip() for b in buckets):
+    # A bare string is a sequence too: it would ensure one bucket per character. Anything else
+    # is read once, so a generator checked here still reaches the hook.
+    names: tuple[object, ...] = () if isinstance(buckets, str) else tuple(buckets)
+
+    if not names or any(not isinstance(b, str) or not b.strip() for b in names):
         raise exc.configuration(
             f"s3_bucket_lifecycle_step needs a non-empty list of bucket names, not {buckets!r}.",
         )
 
     return LifecycleStep(
         id=name,
-        startup=S3BucketStartupHook(buckets=tuple(buckets)),
+        startup=S3BucketStartupHook(buckets=cast(tuple[str, ...], names)),
         requires=(S3_CLIENT_CAPABILITY,),
         mutates_shared_state=True,
     )

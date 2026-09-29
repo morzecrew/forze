@@ -178,11 +178,17 @@ class TestTheBucketStep:
 
     @pytest.mark.parametrize(
         "buckets",
-        [[], ["assets", " "], ["assets", ""], "assets"],
-        ids=["none", "blank", "empty", "bare-string"],
+        [[], ["assets", " "], ["assets", ""], "assets", ["assets", None]],
+        ids=["none", "blank", "empty", "bare-string", "not-a-string"],
     )
     def test_a_bucket_list_nobody_meant_is_refused(self, buckets: object) -> None:
         with pytest.raises(CoreException) as caught:
             s3_bucket_lifecycle_step(buckets=buckets)  # type: ignore[arg-type]
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_buckets_given_once_through_are_all_kept(self) -> None:
+        # A generator is read once: checking it must not leave the step with nothing.
+        step = s3_bucket_lifecycle_step(buckets=(name for name in ("assets", "exports")))
+
+        assert step.startup.buckets == ("assets", "exports")  # type: ignore[union-attr]
