@@ -269,3 +269,18 @@ class TestTheSensitiveResourceCheck:
         # Never open: the spec says a delegated call needs a recorded grant.
         with pytest.raises(CoreException):
             _adapter({}, spec=AuthzSpec(name="main", enforce_delegation_grant=True))
+
+    def test_the_wired_adapter_carries_the_delegation_port_when_enforced(self) -> None:
+        from forze.testing import context_from_modules
+        from forze_identity.authz.execution.deps.configs import build_authz_shared_services
+        from forze_identity.authz.execution.deps.deps import ConfigurableAuthzScope
+        from forze_mock import MockDepsModule
+
+        ctx = context_from_modules(MockDepsModule())
+        build = ConfigurableAuthzScope(shared=build_authz_shared_services())
+
+        enforced = build(ctx, AuthzSpec(name="main", enforce_delegation_grant=True))
+        relaxed = build(ctx, AuthzSpec(name="main"))
+
+        assert enforced.delegation is not None  # type: ignore[attr-defined]
+        assert relaxed.delegation is None  # type: ignore[attr-defined]
