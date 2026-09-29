@@ -137,6 +137,47 @@ to it. `Period` checks both at construction — along with the endpoints being d
 period is as often built from dynamic input as from typed code — rather than letting any of them
 surface as a `TypeError` from inside a comparison later.
 
+## Wall clocks and instants
+
+A wall-clock time and a zone name one instant on almost every day of the year. On the two days a
+zone changes offset they do not: a fall-back time happens **twice**, and a spring-forward time
+**never**. The civil-time helpers refuse both rather than pick an hour, and take the zone as a
+value you inject — `CivilZone("Europe/Berlin")`, validated where you declare it — never a module
+constant:
+
+```python
+from datetime import date, datetime
+from forze.base.primitives import CivilZone, elapsed_minutes, local_day_bounds, to_instant
+
+berlin = CivilZone("Europe/Berlin")
+
+to_instant(berlin, datetime(2026, 10, 25, 2, 30))          # refused: dst_ambiguous
+to_instant(berlin, datetime(2026, 10, 25, 2, 30), fold=0)  # the first 02:30, summer time
+local_day_bounds(berlin, date(2026, 10, 25))               # a 25-hour Period, bounds="[)"
+```
+
+| Function | Returns | Refuses |
+|----------|---------|---------|
+| `to_instant(zone, local, fold=None)` | the UTC instant a naive wall time names | `dst_ambiguous` without `fold`, `dst_nonexistent` always |
+| `local_day_bounds(zone, day)` · `month_bounds(zone, year, month)` | a half-open `Period` of instants | a month outside 1–12 |
+| `spanned_local_days(zone, start, end)` | the local days whose bounds `[start, end)` meets | `naive_datetime`, a range ending before it starts |
+| `elapsed_minutes(start, end)` | whole minutes between two instants | `naive_datetime` |
+
+A day whose midnight the zone skips starts at the first instant that exists, and a day whose
+midnight it repeats starts at the first one: the day bounds resolve where `to_instant` refuses,
+because a calendar with holes or overlaps is worse. A day the zone skips
+entirely (Samoa's 30 December 2011) is an empty `Period`, and `spanned_local_days` never lists it.
+Days tile: where a zone repeats the hours around a midnight, the repeat belongs to the new day,
+so a range split by `spanned_local_days` and `local_day_bounds` keeps all its time, once. Durations are
+computed on instants only: two wall-clock times across a transition are off by the shift, and the
+wrong answer is a plausible number. `AwareDatetime` is for your boundary models: a naive value is
+a validation error (`naive_datetime`) naming the field. Bind `fold` where the UI knows which
+occurrence the user meant; otherwise expect a `dst_ambiguous` on one autumn night a year.
+
+These sit beside two other time-zone paths the framework already has — the analytics
+time-bucketing and the durable scheduler's cron — each shaped for its own plane. Use these for
+converting domain wall-clock values.
+
 Aggregates define *what* your domain is and the rules it keeps; turning actions
 on them into something the runtime can execute is the
 [application layer](application-layer.md).

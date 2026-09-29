@@ -13,6 +13,7 @@ from .oracle.commutativity import commutative_convergence
 from .oracle.invariants import (
     Invariant,
     Violation,
+    audit_row_per_effect,
     check,
     completes_within,
     denial_bodies_identical,
@@ -75,6 +76,7 @@ __all__ = [
     "name_of",
     # always-properties
     "no_duplicate_effect",
+    "audit_row_per_effect",
     "no_overlapping_periods",
     "no_duplicate_trace_effect",
     "no_resource_leak",

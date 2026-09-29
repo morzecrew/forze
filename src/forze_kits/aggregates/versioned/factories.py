@@ -89,6 +89,14 @@ def build_versioned_registry(
         },
     )
 
+    # The lineage reads only acquire a query port: marked so they run read-only, are listed as
+    # reads, and are audited as reads.
+    reg = (
+        reg.bind(VersionedKernelOp.HISTORY, VersionedKernelOp.AS_OF, namespace=ns)
+        .as_query()
+        .finish()
+    )
+
     return reg.set_descriptors(
         {
             VersionedKernelOp.CORRECT: OperationDescriptor(

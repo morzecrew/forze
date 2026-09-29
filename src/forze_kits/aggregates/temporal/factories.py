@@ -66,6 +66,14 @@ def build_temporal_registry(
         },
     )
 
+    # Both only acquire a query port: marked so they run read-only, are listed as reads, and
+    # are audited as reads.
+    reg = (
+        reg.bind(TemporalKernelOp.EFFECTIVE_ON, TemporalKernelOp.TIMELINE, namespace=ns)
+        .as_query()
+        .finish()
+    )
+
     return reg.set_descriptors(
         {
             TemporalKernelOp.EFFECTIVE_ON: OperationDescriptor(
