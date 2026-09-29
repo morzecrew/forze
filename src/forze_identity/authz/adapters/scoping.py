@@ -11,13 +11,17 @@ from forze.application.contracts.authz import (
     AuthzDocumentScopeRequest,
     AuthzRequest,
     AuthzResource,
+    AuthzScope,
     AuthzScopePort,
     AuthzSensitiveAccessRequest,
     AuthzSpec,
+    AuthzSubject,
+    DelegationPort,
     resolve_policy_scope,
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.base.exceptions import exc
 
 from ..domain.models.policy_principal import ReadPolicyPrincipal
 from ..services.grants import AuthzGrantResolver
@@ -41,8 +45,19 @@ class AuthzScopeAdapter(AuthzScopePort):
     resolver: AuthzGrantResolver
     policy: AuthzPolicyService
 
+    delegation: DelegationPort | None = None
+    """Required when the spec enforces delegation grants: the sensitive-resource check has no
+    hook in front of it, so it checks ``may_act`` itself."""
+
     def __attrs_post_init__(self) -> None:
         validate_secure_authz_document_spec(self.principal_qry.spec)
+
+        if self.spec.enforce_delegation_grant and self.delegation is None:
+            raise exc.configuration(
+                f"Authz spec {self.spec.name!r} enforces delegation grants, but the scope "
+                "adapter has no delegation port to check them with.",
+                code="authz_delegation_unwired",
+            )
 
     async def _decide_operation(
         self,
@@ -119,12 +134,46 @@ class AuthzScopeAdapter(AuthzScopePort):
         self,
         request: AuthzSensitiveAccessRequest,
     ) -> bool:
+        """Whether every principal in the request's delegation chain may access the resource.
+
+        A delegated request is allowed only when the subject and each actor are allowed on their
+        own, so an agent acting for a user never reaches what either of them could not.
+        """
+
         scope = resolve_policy_scope(
             spec=self.spec,
             explicit=request.scope,
             invocation_tenant_id=request.scope.tenant_id,
         )
-        pid = request.subject.principal_id
+        node: AuthzSubject | None = request.subject
+
+        while node is not None:
+            if not await self._may_access(request, node, scope=scope):
+                return False
+
+            actor = node.actor
+
+            if (
+                actor is not None
+                and self.delegation is not None
+                and not await self.delegation.may_act(
+                    actor.principal_id, node.principal_id, scope=scope
+                )
+            ):
+                return False
+
+            node = actor
+
+        return True
+
+    async def _may_access(
+        self,
+        request: AuthzSensitiveAccessRequest,
+        principal: AuthzSubject,
+        *,
+        scope: AuthzScope,
+    ) -> bool:
+        pid = principal.principal_id
         row = await find_policy_principal_by_id(self.principal_qry, pid)
 
         if row is None:
@@ -133,14 +182,14 @@ class AuthzScopeAdapter(AuthzScopePort):
         grants = await self.resolver.resolve_effective_grants(pid, scope=scope)
 
         auth_request = AuthzRequest(
-            subject=request.subject,
+            subject=principal,
             action=request.action,
             scope=scope,
             resource=AuthzResource(
                 resource_type=request.resource_type,
                 resource_id=request.resource_id,
             ),
-            context={"subject_id": str(request.subject.principal_id)},
+            context={"subject_id": str(pid)},
         )
 
         return self.policy.decide(

@@ -291,6 +291,10 @@ never the secret), and `DELETE /api-keys/{id}` revokes one. This is the minting
 surface for the [MCP API-key flow](../integrations/mcp.md#protect-it-with-api-key-auth):
 the user issues a key here and pastes it into the agent host.
 
+A delegated caller (an agent acting for the user) may list the keys but not issue or revoke
+them, and may not log out or change the password: only the user manages their own account. Those
+routes answer `403` (`delegate_denied`), and so do switching and leaving a tenant below.
+
 Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers from the [integration setup](../integrations/fastapi.md) —
 generated routes only validate the input DTO and run the operation through the

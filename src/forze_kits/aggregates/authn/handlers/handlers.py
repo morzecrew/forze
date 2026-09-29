@@ -13,7 +13,6 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.contracts.execution import Handler
-from forze.base.exceptions import exc
 
 from ..dto import (
     AuthnApiKeyListDTO,
@@ -26,21 +25,11 @@ from ..dto import (
     AuthnRevokeApiKeyRequestDTO,
     AuthnTokenResponseDTO,
 )
-from ._utils import token_response_from_issued_tokens
-
-
-def _require_identity(
-    resolver: "Callable[[], AuthnIdentity | None]",
-) -> AuthnIdentity:
-    """Pull the bound identity or raise the uniform 401 (self-service guard)."""
-
-    identity = resolver()
-
-    if identity is None:
-        raise exc.authentication("Authentication required", code="auth_required")
-
-    return identity
-
+from ._utils import (
+    require_identity,
+    require_own_identity,
+    token_response_from_issued_tokens,
+)
 
 # ----------------------- #
 
@@ -94,13 +83,7 @@ class AuthnLogout(Handler[None, None]):
     async def __call__(self, args: None) -> None:
         _ = args
 
-        identity = self.resolver()
-
-        if identity is None:
-            raise exc.authentication(
-                "Authentication required",
-                code="auth_required",
-            )
+        identity = require_own_identity(self.resolver)
 
         await self.token_lifecycle.revoke_tokens(identity)
 
@@ -141,13 +124,7 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
     # ....................... #
 
     async def __call__(self, args: AuthnChangePasswordRequestDTO) -> None:
-        identity = self.resolver()
-
-        if identity is None:
-            raise exc.authentication(
-                "Authentication required",
-                code="auth_required",
-            )
+        identity = require_own_identity(self.resolver)
 
         await self.password_lifecycle.change_password(
             identity,
@@ -177,7 +154,7 @@ class AuthnIssueApiKey(Handler[AuthnIssueApiKeyRequestDTO, AuthnIssuedApiKeyDTO]
     # ....................... #
 
     async def __call__(self, args: AuthnIssueApiKeyRequestDTO) -> AuthnIssuedApiKeyDTO:
-        identity = _require_identity(self.resolver)
+        identity = require_own_identity(self.resolver)
 
         issued = await self.api_key_lifecycle.issue_api_key(
             identity,
@@ -213,7 +190,7 @@ class AuthnListApiKeys(Handler[None, AuthnApiKeyListDTO]):
     async def __call__(self, args: None) -> AuthnApiKeyListDTO:
         _ = args
 
-        identity = _require_identity(self.resolver)
+        identity = require_identity(self.resolver)
 
         keys = await self.api_key_lifecycle.list_api_keys(identity)
 
@@ -255,6 +232,6 @@ class AuthnRevokeApiKey(Handler[AuthnRevokeApiKeyRequestDTO, None]):
     # ....................... #
 
     async def __call__(self, args: AuthnRevokeApiKeyRequestDTO) -> None:
-        identity = _require_identity(self.resolver)
+        identity = require_own_identity(self.resolver)
 
         await self.api_key_lifecycle.revoke_api_key(identity, str(args.id))

@@ -131,7 +131,9 @@ startup = permission_providers_lifecycle_step(providers)  # optional: fail at bo
 
 - **Gate on permissions, never on roles** — that is what lets a derived denial close a route.
 - A provider **reads and never writes**. It runs for the principal being decided; on a delegated
-  call `AuthzBeforeAuthorize` decides each actor in turn, so the provider runs for each of them.
+  call `AuthzBeforeAuthorize` and `AuthzDocumentScopeWrap` decide each actor in turn, so the
+  provider runs for each of them: past those two guards, a delegation never exceeds what every
+  principal in it holds.
 - `keys` declares everything a provider may grant or deny, as a `frozenset`. A declared key with
   no catalog row refuses the first decision per tenant that runs the providers
   (`authz_provider_unknown_keys`), so a typo cannot go unnoticed; register the startup step to

@@ -82,8 +82,17 @@ class DelegatedIdentityResolver(MCPIdentityResolver):
     # ....................... #
 
     async def resolve(self) -> tuple[AuthnIdentity | None, TenantIdentity | None]:
-        """Resolve the subject and attach the agent as its actor."""
+        """Resolve the subject and attach the agent as its innermost actor."""
 
         subject, tenant = await self.resolve_subject()
 
-        return attrs.evolve(subject, actor=self.agent), tenant
+        return _acting_through(subject, self.agent), tenant
+
+
+def _acting_through(identity: AuthnIdentity, agent: AuthnIdentity) -> AuthnIdentity:
+    # A subject that is already a delegation keeps its chain: the agent acts through the
+    # innermost actor, so replacing that actor would drop its restrictions.
+    if identity.actor is None:
+        return attrs.evolve(identity, actor=agent)
+
+    return attrs.evolve(identity, actor=_acting_through(identity.actor, agent))

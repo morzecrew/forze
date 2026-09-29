@@ -93,6 +93,14 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
         *,
         tenant_id: UUID | None = None,
     ) -> IssuedTokens:
+        # A token minted for a delegated identity would authenticate as the principal alone,
+        # with no actor, and escape the delegation's intersection.
+        if identity.actor is not None:
+            raise exc.authorization(
+                "A delegated caller cannot mint a session for the principal it acts for",
+                code="delegate_denied",
+            )
+
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         now = utcnow()

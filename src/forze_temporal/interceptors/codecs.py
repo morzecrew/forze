@@ -22,6 +22,7 @@ _EXEC_HEADER: Final[str] = "Forze-Execution-ID"
 _CORR_HEADER: Final[str] = "Forze-Correlation-ID"
 _TENANT_HEADER: Final[str] = "Forze-Tenant-ID"
 _PRINCIPAL_HEADER: Final[str] = "Forze-Principal-ID"
+_ACTOR_HEADER: Final[str] = "Forze-Actor-IDs"
 _ENCODING: Final[str] = "utf-8"
 
 # ....................... #
@@ -33,6 +34,8 @@ class TemporalDecodedContext:
     correlation_id: UUID | None = attrs.field(default=None)
     tenant_id: UUID | None = attrs.field(default=None)
     principal_id: UUID | None = attrs.field(default=None)
+    actor_ids: tuple[UUID, ...] = attrs.field(default=())
+    """The delegation chain behind the principal, nearest actor first."""
 
 
 # ....................... #
@@ -60,6 +63,17 @@ class TemporalContextCodec:
         if authn is not None:
             headers[_PRINCIPAL_HEADER] = Payload(data=str(authn.principal_id).encode(_ENCODING))
 
+            # Dropping the actor would run an agent's workflow as the user alone.
+            actor_ids: list[str] = []
+            actor = authn.actor
+
+            while actor is not None:
+                actor_ids.append(str(actor.principal_id))
+                actor = actor.actor
+
+            if actor_ids:
+                headers[_ACTOR_HEADER] = Payload(data=",".join(actor_ids).encode(_ENCODING))
+
         if tenant is not None:
             headers[_TENANT_HEADER] = Payload(data=str(tenant.tenant_id).encode(_ENCODING))
 
@@ -75,12 +89,18 @@ class TemporalContextCodec:
         corr_raw = headers.get(_CORR_HEADER)
         tenant_raw = headers.get(_TENANT_HEADER)
         principal_raw = headers.get(_PRINCIPAL_HEADER)
+        actor_raw = headers.get(_ACTOR_HEADER)
 
         return TemporalDecodedContext(
             execution_id=UUID(exec_raw.data.decode(_ENCODING)) if exec_raw else None,
             correlation_id=UUID(corr_raw.data.decode(_ENCODING)) if corr_raw else None,
             tenant_id=UUID(tenant_raw.data.decode(_ENCODING)) if tenant_raw else None,
             principal_id=(UUID(principal_raw.data.decode(_ENCODING)) if principal_raw else None),
+            actor_ids=(
+                tuple(UUID(raw) for raw in actor_raw.data.decode(_ENCODING).split(","))
+                if actor_raw
+                else ()
+            ),
         )
 
 
@@ -112,7 +132,12 @@ class TemporalContextBinder:
             identity = None
 
         else:
-            identity = AuthnIdentity(principal_id=decoded.principal_id)
+            actor = None
+
+            for actor_id in reversed(decoded.actor_ids):
+                actor = AuthnIdentity(principal_id=actor_id, actor=actor)
+
+            identity = AuthnIdentity(principal_id=decoded.principal_id, actor=actor)
 
         tenant = None if decoded.tenant_id is None else TenantIdentity(tenant_id=decoded.tenant_id)
 

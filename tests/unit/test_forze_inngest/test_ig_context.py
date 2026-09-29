@@ -40,3 +40,15 @@ def test_merge_and_split_envelope_round_trip() -> None:
 
     args = parse_function_args(data, args_type=_Args)
     assert args.value == "ok"
+
+
+def test_the_envelope_carries_the_actor_chain() -> None:
+    # An event sent by an agent acting for a user binds that delegation, not the user alone.
+    authn = AuthnIdentity(
+        principal_id=uuid4(),
+        actor=AuthnIdentity(principal_id=uuid4(), actor=AuthnIdentity(principal_id=uuid4())),
+    )
+
+    decoded, _ = split_envelope(merge_envelope({"value": "ok"}, authn=authn))
+
+    assert decoded.authn == authn
