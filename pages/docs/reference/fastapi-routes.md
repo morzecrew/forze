@@ -355,14 +355,17 @@ than answering 404; pass `skip_unregistered=True` to skip it instead.
 
 `query_endpoint` reads the whole input DTO from query parameters, one per field; a list
 field repeats (`?tag=a&tag=b`). A field a query string cannot carry, such as a nested
-model, is refused when the route is attached. Only the parameters a request sends count as
-set, as with a body, so a patch built from the DTO leaves the rest alone. A parameter the DTO
-does not declare is ignored unless the DTO forbids extra fields. A literal `+` in a value,
-such as a timezone offset, must be sent as `%2B`: a query string reads `+` as a space.
+model or `bytes`, is refused when the route is attached. The operation receives the DTO a
+body with the same keys would build: only the parameters sent count as set, so a patch built
+from it leaves the rest alone, and validators and extras behave as for a body. A parameter
+the DTO does not declare is ignored unless the DTO forbids or allows extra fields. A literal
+`+` in a value, such as a timezone offset, must be sent as `%2B`: a query string reads `+` as
+a space.
 
 `body_endpoint`, `id_endpoint`, `id_rev_endpoint` and `id_rev_body_endpoint` are the
 builders the document routes use. The id builders take `id` and `rev` from the path where it
-has their placeholder and from the query otherwise, typed as the input DTO declares them. Each
+has their placeholder and from the query otherwise, typed and defaulted as the input DTO
+declares them. Each
 shipped builder names the placeholders it fills, and a path with any other placeholder is
 refused. An `EndpointBuilder` of your own takes `(runner, input_type, op)`; give it a
 `path_params` frozenset to have its paths checked the same way.
