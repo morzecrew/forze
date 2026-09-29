@@ -8,7 +8,7 @@ times below were read from the zone database, not recalled.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
-from typing import Final
+from typing import Any, Final
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,6 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import (
+    CIVIL_TIME_OUT_OF_RANGE,
     DST_AMBIGUOUS,
     DST_NONEXISTENT,
     NAIVE_DATETIME,
@@ -356,3 +357,33 @@ class TestTheZoneDatabaseEdges:
     def test_a_month_outside_the_calendar_is_refused(self, month: int) -> None:
         with pytest.raises(CoreException):
             month_bounds(BERLIN, 2026, month)
+
+
+class TestTheEndsOfTheCalendar:
+    """Python's calendar runs from year 1 to 9999; past it the helpers refuse, never crash."""
+
+    TOKYO = CivilZone("Asia/Tokyo")
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda: to_instant(TestTheEndsOfTheCalendar.TOKYO, datetime.min),
+            lambda: local_day_bounds(BERLIN, date.max),
+            lambda: local_day_bounds(TestTheEndsOfTheCalendar.TOKYO, date.min),
+            lambda: month_bounds(BERLIN, 9999, 12),
+            lambda: spanned_local_days(
+                TestTheEndsOfTheCalendar.TOKYO,
+                datetime.min.replace(tzinfo=UTC),
+                datetime.min.replace(tzinfo=UTC) + timedelta(hours=1),
+            ),
+        ],
+        ids=["instant-year-1-east", "day-max", "day-min-east", "december-9999", "span-year-1-east"],
+    )
+    def test_past_the_calendar_is_a_refusal(self, call: Any) -> None:
+        with _refused(CIVIL_TIME_OUT_OF_RANGE):
+            call()
+
+    def test_the_last_whole_month_still_has_bounds(self) -> None:
+        bounds = month_bounds(BERLIN, 9999, 11)
+
+        assert bounds.end is not None and bounds.end - bounds.start == timedelta(days=30)
