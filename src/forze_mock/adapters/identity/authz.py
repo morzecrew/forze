@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TypedDict, cast, final
+from datetime import timedelta
+from typing import TYPE_CHECKING, TypedDict, cast, final
 from uuid import UUID
 
 import attrs
@@ -18,6 +19,7 @@ from forze.application.contracts.authz.ports import (
     PrincipalRegistryPort,
     RoleAssignmentPort,
 )
+from forze.application.contracts.authz.providers import PermissionProvider
 from forze.application.contracts.authz.types import PrincipalKind
 from forze.application.contracts.authz.value_objects import (
     AuthzDecision,
@@ -31,9 +33,13 @@ from forze.application.contracts.authz.value_objects import (
     PrincipalRef,
     RoleRef,
 )
+from forze.application.integrations.authz import DEFAULT_PROVIDER_TIMEOUT, derive_permissions
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
 from forze_mock.state import MockState
+
+if TYPE_CHECKING:
+    from forze.application.execution import ExecutionContext
 
 # ----------------------- #
 
@@ -248,6 +254,15 @@ class MockAuthzDecisionPort(AuthzDecisionPort):
     route: str = "main"
     allow_by_default: bool = False
 
+    providers: tuple[PermissionProvider, ...] = ()
+    """Permission providers run per decision, as the identity plane runs them: a derived
+    denial outranks a seeded grant, and a derived grant counts like one."""
+
+    provider_timeout: timedelta | None = DEFAULT_PROVIDER_TIMEOUT
+
+    ctx: ExecutionContext | None = None
+    """The execution context providers read through; set when there are providers."""
+
     # ....................... #
 
     def seed_grant(
@@ -275,6 +290,21 @@ class MockAuthzDecisionPort(AuthzDecisionPort):
     # ....................... #
 
     async def authorize(self, request: AuthzRequest) -> AuthzDecision:
+        derived = EffectiveGrants(
+            derived=await derive_permissions(
+                self.providers,
+                request.subject.principal_id,
+                self.ctx,
+                timeout=self.provider_timeout,
+            )
+        )
+
+        if request.action in derived.denied_keys:
+            return AuthzDecision(allowed=False, reason=f"Permission {request.action!r} is denied")
+
+        if request.action in derived.granted_keys:
+            return AuthzDecision(allowed=True, matched_permission_key=request.action)
+
         if self.state is None:
             return AuthzDecision(allowed=self.allow_by_default)
 

@@ -14,8 +14,9 @@ value): subtracting two wall-clock times across a transition is off by the offse
 the result is a plausible number.
 """
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
-from functools import cache
+from functools import cache, wraps
 from typing import Annotated, Final, final
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError, available_timezones
 
@@ -38,7 +39,32 @@ DST_NONEXISTENT: Final[str] = "dst_nonexistent"
 NAIVE_DATETIME: Final[str] = "naive_datetime"
 """Code on a refused naive datetime where an instant is required."""
 
+CIVIL_TIME_OUT_OF_RANGE: Final[str] = "civil_time_out_of_range"
+"""Code on a refused value whose answer falls outside years 1 to 9999, the calendar Python
+represents."""
+
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _in_calendar[**P, R](function: Callable[P, R]) -> Callable[P, R]:
+    """Refuse, rather than crash, when an answer falls outside years 1 to 9999.
+
+    A local time in year 1 east of UTC is an instant in year 0, and the day after 31 December 9999
+    is in year 10000: Python raises ``OverflowError`` for both, from deep inside a conversion.
+    """
+
+    @wraps(function)
+    def _wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return function(*args, **kwargs)
+
+        except OverflowError:
+            raise exc.precondition(
+                "The answer falls outside years 1 to 9999, the calendar Python represents.",
+                code=CIVIL_TIME_OUT_OF_RANGE,
+            ) from None
+
+    return _wrapped
 
 
 @final
@@ -109,6 +135,7 @@ def _readings(zone: CivilZone, local: datetime) -> tuple[datetime, datetime, boo
     return early, late, back(early), back(late)
 
 
+@_in_calendar
 def to_instant(zone: CivilZone, local: datetime, *, fold: int | None = None) -> datetime:
     """The UTC instant a naive wall-clock *local* time names in *zone*.
 
@@ -177,6 +204,7 @@ def _start_of(zone: CivilZone, day: date) -> datetime:
     return high
 
 
+@_in_calendar
 def local_day_bounds(zone: CivilZone, day: date) -> Period[datetime]:
     """The instants of local *day* in *zone*, half-open.
 
@@ -189,6 +217,7 @@ def local_day_bounds(zone: CivilZone, day: date) -> Period[datetime]:
     return Period(start=_start_of(zone, day), end=_start_of(zone, day + timedelta(days=1)))
 
 
+@_in_calendar
 def month_bounds(zone: CivilZone, year: int, month: int) -> Period[datetime]:
     """The instants of a local calendar month in *zone*, half-open."""
 
@@ -196,11 +225,14 @@ def month_bounds(zone: CivilZone, year: int, month: int) -> Period[datetime]:
         raise exc.precondition(f"A month is 1 to 12, not {month}.")
 
     first = date(year, month, 1)
-    following = date(year + month // 12, month % 12 + 1, 1)
+    # Past the first by more than any month and back to its first day: after December 9999 that
+    # is year 10000, which raises the OverflowError the decorator refuses.
+    following = (first + timedelta(days=32)).replace(day=1)
 
     return Period(start=_start_of(zone, first), end=_start_of(zone, following))
 
 
+@_in_calendar
 def spanned_local_days(zone: CivilZone, start: datetime, end: datetime) -> tuple[date, ...]:
     """The local days in *zone* whose bounds the instant range ``[start, end)`` meets, in order.
 

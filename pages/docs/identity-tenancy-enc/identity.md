@@ -126,7 +126,7 @@ class ActiveMembers:
 
 providers = (ActiveMembers(),)
 kernel = AuthzKernelConfig(permission_providers=providers)
-startup = permission_providers_lifecycle_step(providers)  # pass to build_runtime
+startup = permission_providers_lifecycle_step(providers)  # optional: fail at boot instead
 ```
 
 - **Gate on permissions, never on roles** — that is what lets a derived denial close a route.
@@ -134,11 +134,19 @@ startup = permission_providers_lifecycle_step(providers)  # pass to build_runtim
   call `AuthzBeforeAuthorize` and `AuthzDocumentScopeWrap` decide each actor in turn, so the
   provider runs for each of them: past those two guards, a delegation never exceeds what every
   principal in it holds.
-- `keys` declares everything a provider may grant or deny. The startup step refuses to boot when
-  a declared key has no catalog row, so a typo is a boot error rather than a permanent denial.
+- `keys` declares everything a provider may grant or deny, as a `frozenset`. A declared key with
+  no catalog row refuses the first decision per tenant that runs the providers
+  (`authz_provider_unknown_keys`), so a typo cannot go unnoticed; register the startup step to
+  refuse at boot instead.
 - A provider that **raises denies every key it declares** — an outage must not become a bypass.
-  So does one whose result is not a `DerivedPermissions`, or names a key outside `keys`: a
-  misspelt denial would otherwise deny the misspelling and leave the real key granted.
+  So does one whose result is not a `DerivedPermissions`, or names a key outside `keys` (a
+  misspelt denial would otherwise deny the misspelling and leave the real key granted), and one
+  that misses `permission_provider_timeout` (2 s by default): every decision runs every provider,
+  so a hanging one would otherwise stall them all.
+- `MockDepsModule(permission_providers=...)` runs the same providers in the mock's decision, so a
+  mock-backed test sees a derived denial outrank a seeded grant, and refuses a declaration the
+  kernel config would. The mock has no catalog to check keys against, and its scope and grant
+  query ports do not run providers.
 - Derived grants sit in `EffectiveGrants.derived`, attributed to their provider and apart from the
   catalog's `permissions`, so an administered grant can be told from a derived one.
 

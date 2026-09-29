@@ -4,6 +4,7 @@ from .bounded_lru_map import BoundedLruMap
 from .buffer import ContextualBuffer, ContextVarTrace
 from .cell import OnceCell
 from .civil_time import (
+    CIVIL_TIME_OUT_OF_RANGE,
     DST_AMBIGUOUS,
     DST_NONEXISTENT,
     NAIVE_DATETIME,
@@ -192,6 +193,7 @@ __all__ = [
     "grain_of",
     "AwareDatetime",
     "CivilZone",
+    "CIVIL_TIME_OUT_OF_RANGE",
     "DST_AMBIGUOUS",
     "DST_NONEXISTENT",
     "NAIVE_DATETIME",
