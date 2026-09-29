@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, NewType
 from uuid import UUID, uuid4
 
 import attrs
@@ -19,18 +19,22 @@ pytest.importorskip("fastapi")
 
 from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
+from pydantic import AwareDatetime as PydanticAwareDatetime
+from pydantic import Field, HttpUrl
 
 from forze.application.contracts.execution import Handler
 from forze.application.execution.operations import OperationDescriptor, OperationRegistry
 from forze.base.exceptions import CoreException
-from forze.base.primitives import StrKeyNamespace
+from forze.base.primitives import AwareDatetime, StrKeyNamespace
 from forze.domain.models import BaseDTO
 from forze_fastapi.exceptions import ERROR_CODE_HEADER, register_exception_handlers
 from forze_fastapi.routes import (
+    EndpointBuilder,
     RouteBinding,
     attach_operation_routes,
     body_endpoint,
     id_endpoint,
+    id_rev_body_endpoint,
     query_endpoint,
 )
 from forze_mock import MockDepsModule
@@ -97,6 +101,100 @@ class _ScalarsQuery(BaseDTO):
     owner: UUID | None = None
     limit: int | None = None
     tags: frozenset[str] = frozenset()
+
+
+_Sku = NewType("_Sku", str)
+type _Code = str
+type _Tags = list[str]
+
+
+class _CarriedQuery(BaseDTO):
+    sku: _Sku
+    code: _Code = "c"
+    tags: list[_Code] = []
+    at: PydanticAwareDatetime | None = None
+    ours: AwareDatetime | None = None
+    home: HttpUrl | None = None
+    pair: tuple[str, ...] = ()
+    size: Annotated[int, Field(ge=1)] | None = None
+
+
+class _NestedListQuery(BaseDTO):
+    inner: list[list[int]] = []
+
+
+class _AliasedListQuery(BaseDTO):
+    # FastAPI reads an alias as one value, so an alias of a list would fail every request.
+    inner: _Tags = []
+
+
+class _UnresolvedQuery(BaseDTO):
+    inner: _NeverDefined | None = None  # noqa: F821
+
+
+class _IntId(BaseDTO):
+    id: int
+
+
+class _StrId(BaseDTO):
+    id: str
+
+
+class _Rename(BaseDTO):
+    name: str | None = None
+    enabled: bool = True
+
+
+class _IntIdUpdate(BaseDTO):
+    id: int
+    rev: int
+    dto: _Rename
+
+
+class _Filter(BaseDTO):
+    sku: str
+    limit: int = 10
+    tags: list[str] = []
+
+
+@attrs.define(slots=True, kw_only=True)
+class _Seen(Handler[Any, Any]):
+    """What reached the operation: the values, and which of them the caller set."""
+
+    async def __call__(self, args: Any) -> Any:
+        return {"dump": args.model_dump(mode="json"), "set": sorted(args.model_fields_set)}
+
+
+def _one(
+    input_type: type[BaseDTO],
+    *,
+    build: EndpointBuilder,
+    path: str,
+    method: str = "GET",
+    bindings: dict[str, RouteBinding] | None = None,
+    **attach: Any,
+) -> FastAPI:
+    """One operation, ``stock.one``, echoing what reached it."""
+
+    router = APIRouter(prefix="/stock")
+    attach_operation_routes(
+        router,
+        registry=OperationRegistry(
+            handlers={STOCK.key("one"): lambda _c: _Seen()},
+            descriptors={
+                STOCK.key("one"): OperationDescriptor(input_type=input_type, output_type=None)
+            },
+        ).freeze(),
+        ns=STOCK,
+        ctx_dep=lambda: context_from_modules(MockDepsModule()),
+        bindings=bindings or {"one": RouteBinding(method=method, path=path, build=build)},
+        **attach,
+    )
+    app = FastAPI()
+    app.include_router(router)
+    register_exception_handlers(app)
+
+    return app
 
 
 @attrs.define(slots=True, kw_only=True)
@@ -236,3 +334,166 @@ class TestTheQueryRoute:
             "limit",
             "tags",
         }
+
+    @pytest.mark.parametrize(
+        "dto",
+        [_NestedListQuery, _AliasedListQuery],
+        ids=["list-of-lists", "alias-of-a-list"],
+    )
+    def test_a_nested_or_aliased_sequence_is_refused(self, dto: type[BaseDTO]) -> None:
+        with pytest.raises(CoreException, match=r"Field 'inner'"):
+            _app(dto)
+
+    def test_aliases_newtypes_and_string_parsed_scalars_are_carried(self) -> None:
+        params = _app(_CarriedQuery).openapi()["paths"]["/stock/levels"]["get"]["parameters"]
+
+        assert {p["name"] for p in params} == {
+            "sku",
+            "code",
+            "tags",
+            "at",
+            "ours",
+            "home",
+            "pair",
+            "size",
+        }
+
+    async def test_the_carried_scalars_parse_from_the_query(self) -> None:
+        async with _client(_one(_CarriedQuery, build=query_endpoint, path="/one")) as client:
+            response = await client.get(
+                "/stock/one",
+                params=[
+                    ("sku", "a-1"),
+                    ("tags", "x"),
+                    ("ours", "2026-01-01T10:00:00+02:00"),
+                    ("pair", "p"),
+                    ("pair", "q"),
+                    ("size", "3"),
+                ],
+            )
+
+        assert response.status_code == 200
+        assert response.json()["dump"]["pair"] == ["p", "q"]
+        assert response.json()["dump"]["ours"] == "2026-01-01T10:00:00+02:00"
+
+    def test_an_unresolved_forward_reference_says_so(self) -> None:
+        with pytest.raises(CoreException, match=r"forward reference") as caught:
+            _app(_UnresolvedQuery)
+
+        assert caught.value.kind.value == "configuration"
+
+    async def test_only_the_parameters_sent_count_as_set(self) -> None:
+        # A patch encoder writes only what the caller set; a query route must not report
+        # every defaulted field as set, where the same DTO through a body route would not.
+        query = _one(_Filter, build=query_endpoint, path="/one")
+        body = _one(_Filter, build=body_endpoint, path="/one", method="POST")
+
+        async with _client(query) as client:
+            from_query = (await client.get("/stock/one", params={"sku": "a-1"})).json()
+
+        async with _client(body) as client:
+            from_body = (await client.post("/stock/one", json={"sku": "a-1"})).json()
+
+        assert from_query == from_body
+        assert from_query["set"] == ["sku"]
+
+
+# ....................... #
+
+
+class TestTheIdRoutes:
+    @pytest.mark.parametrize(
+        ("dto", "raw", "value"),
+        [(_IntId, "5", 5), (_StrId, "a-1", "a-1")],
+        ids=["int-id", "str-id"],
+    )
+    async def test_the_id_takes_the_dtos_own_type(
+        self, dto: type[BaseDTO], raw: str, value: Any
+    ) -> None:
+        async with _client(_one(dto, build=id_endpoint, path="/{id}")) as client:
+            response = await client.get(f"/stock/{raw}")
+
+        assert response.status_code == 200
+        assert response.json()["dump"] == {"id": value}
+
+    async def test_an_update_takes_the_dtos_own_id_type(self) -> None:
+        app = _one(_IntIdUpdate, build=id_rev_body_endpoint, path="/{id}", method="PATCH")
+
+        async with _client(app) as client:
+            response = await client.patch("/stock/7", params={"rev": 2}, json={"name": "n"})
+
+        assert response.status_code == 200
+        assert response.json()["dump"]["id"] == 7
+
+    def test_a_document_route_keeps_its_uuid_id_and_int_rev(self) -> None:
+        params = _one(
+            _IntIdUpdate, build=id_rev_body_endpoint, path="/{id}", method="PATCH"
+        ).openapi()["paths"]["/stock/{id}"]["patch"]["parameters"]
+        by_name = {p["name"]: p["schema"] for p in params}
+
+        assert by_name["id"]["type"] == "integer"
+
+        uuid_params = _app().openapi()["paths"]["/stock/{id}"]["get"]["parameters"]
+        assert uuid_params[0]["schema"] == {"type": "string", "format": "uuid", "title": "Id"}
+
+    def test_an_id_outside_the_path_is_a_query_parameter(self) -> None:
+        # The RPC-style document routes rely on it: ``GET /notes.get?id=``.
+        params = _one(_ById, build=id_endpoint, path="/one").openapi()["paths"]["/stock/one"][
+            "get"
+        ]["parameters"]
+
+        assert [(p["name"], p["in"]) for p in params] == [("id", "query")]
+
+
+# ....................... #
+
+
+class TestTheBindingIsChecked:
+    @pytest.mark.parametrize(
+        ("build", "path"),
+        [
+            (query_endpoint, "/{sku}/levels"),
+            (body_endpoint, "/{sku}"),
+            (id_endpoint, "/{id}/{other}"),
+        ],
+        ids=["query-with-a-placeholder", "body-with-a-placeholder", "id-with-an-extra"],
+    )
+    def test_a_placeholder_the_builder_does_not_fill_is_refused(
+        self, build: EndpointBuilder, path: str
+    ) -> None:
+        with pytest.raises(CoreException, match=r"placeholder") as caught:
+            _one(_Filter if build is not id_endpoint else _ById, build=build, path=path)
+
+        assert caught.value.kind.value == "configuration"
+
+    def test_a_builder_that_declares_nothing_is_not_checked(self) -> None:
+        def custom(runner: Any, input_type: Any, op: str) -> Any:
+            async def endpoint(sku: str) -> Any:
+                return await runner(_Filter(sku=sku))
+
+            return endpoint
+
+        app = _one(_Filter, build=custom, path="/{sku}")
+
+        assert "/stock/{sku}" in app.openapi()["paths"]
+
+    def test_a_binding_for_an_unregistered_operation_is_refused(self) -> None:
+        bindings = {
+            "one": RouteBinding(method="GET", path="/one", build=query_endpoint),
+            "levles": RouteBinding(method="GET", path="/levles", build=query_endpoint),
+        }
+
+        with pytest.raises(CoreException, match=r"stock\.levles") as caught:
+            _one(_Filter, build=query_endpoint, path="", bindings=bindings)
+
+        assert caught.value.kind.value == "configuration"
+
+    def test_an_attacher_may_skip_unregistered_operations(self) -> None:
+        bindings = {
+            "one": RouteBinding(method="GET", path="/one", build=query_endpoint),
+            "absent": RouteBinding(method="GET", path="/absent", build=query_endpoint),
+        }
+
+        app = _one(_Filter, build=query_endpoint, path="", bindings=bindings, skip_unregistered=True)
+
+        assert set(app.openapi()["paths"]) == {"/stock/one"}
