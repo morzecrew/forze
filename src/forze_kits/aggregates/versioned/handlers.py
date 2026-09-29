@@ -218,8 +218,10 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
             if name in fields
         }
 
-        return self.create_cmd(
-            **carried
+        # By field name: a command with an alias generator would otherwise ignore every
+        # aliased field and build the successor from its defaults.
+        return self.create_cmd.model_validate(
+            carried
             | patch
             | {
                 ROOT_ID_FIELD: root_id,
@@ -227,7 +229,8 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
                 SUPERSEDES_ID_FIELD: args.id,
                 IS_CURRENT_FIELD: True,
                 SUPERSEDED_AT_FIELD: None,
-            }
+            },
+            by_name=True,
         )
 
     # ....................... #

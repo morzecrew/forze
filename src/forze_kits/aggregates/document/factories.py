@@ -267,7 +267,7 @@ def build_document_registry(
     :returns: Operation registry with all supported operations.
     """
 
-    if update_returns not in _UPDATE_RETURNS:
+    if not isinstance(update_returns, str) or update_returns not in _UPDATE_RETURNS:
         raise exc.configuration(
             f"update_returns must be one of {sorted(_UPDATE_RETURNS)}, not {update_returns!r}."
         )

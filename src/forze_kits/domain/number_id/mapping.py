@@ -74,7 +74,8 @@ class NumberIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
     numbering, transaction or not."""
 
     name_format: str = DEFAULT_NAME_FORMAT
-    """How the field's value and the number combine, with ``{name}`` and ``{number}``."""
+    """How the field's value and the number combine: ``{number}`` is required, ``{name}``
+    optional."""
 
     # ....................... #
 
@@ -83,9 +84,9 @@ class NumberIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
             return
 
         refusal = exc.configuration(
-            f"name_format {self.name_format!r} must be a format string whose fields are exactly "
-            "{name} and {number} — no attribute or index access, which would reach past the "
-            "value the step fills, and no field nested in a format spec.",
+            f"name_format {self.name_format!r} must be a format string with a {{number}} field "
+            "and optionally a {name} field, and no other — no attribute or index access, which "
+            "would reach past the value the step fills, and no field nested in a format spec.",
         )
 
         try:
@@ -99,7 +100,8 @@ class NumberIdMappingStepFactory(PydanticPipelineMapperStepFactory[BaseModel]):
         except (KeyError, IndexError, ValueError, TypeError, AttributeError) as error:
             raise refusal from error
 
-        if nested or not fields - {None} <= {"name", "number"}:
+        # Without the number the field would lose what the step is there to add.
+        if nested or "number" not in fields or not fields - {None} <= {"name", "number"}:
             raise refusal
 
     # ....................... #

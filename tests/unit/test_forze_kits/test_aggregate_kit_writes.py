@@ -404,6 +404,15 @@ class TestUpdateReturnsTheRecord:
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
 
+
+    def test_an_unhashable_mode_is_refused_as_configuration(self) -> None:
+        from forze_kits.aggregates.document import build_document_registry
+
+        with pytest.raises(CoreException) as caught:
+            build_document_registry(WIDGETS, update_returns=["record"])  # type: ignore[arg-type]
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
     async def test_search_sync_indexes_the_returned_record(self) -> None:
         from forze.application.contracts.search import SearchSpec
         from forze_mock import MockStateDepKey
@@ -471,6 +480,10 @@ class Meter(DocWithVersioning):
 
 
 class MeterCreate(CreateCmdWithVersioningFields):
+    """camelCase too: a correction builds its successor from this command."""
+
+    model_config = ConfigDict(alias_generator=to_camel, frozen=True)
+
     unit_kwh: int = 0
     label: str | None = None
 

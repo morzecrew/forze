@@ -97,6 +97,8 @@ async def test_an_empty_name_is_left_alone() -> None:
         "{name:{number}}",
         "{number:{number}}",
         "{name:{number.real}}",
+        "Order",
+        "{name}",
     ],
 )
 def test_a_format_it_cannot_fill_is_refused_when_built(name_format: str) -> None:
@@ -114,6 +116,7 @@ def test_a_format_it_cannot_fill_is_refused_when_built(name_format: str) -> None
         ("{name} #{number:05d}", "Order #00001"),
         ("{{{name}}} {number}", "{Order} 1"),
         ("{number}", "1"),
+        ("#{number}", "#1"),
     ],
 )
 async def test_conversions_and_format_specs_are_allowed(name_format: str, expected: str) -> None:
