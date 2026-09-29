@@ -83,7 +83,9 @@ class AuthzDepsModule(DepsModule):
             merged = merged.merge(
                 Deps.routed(
                     {
-                        RoleAssignmentDepKey: {name: ConfigurableRoleAssignment() for name in ra},
+                        RoleAssignmentDepKey: {
+                            name: ConfigurableRoleAssignment(shared=shared) for name in ra
+                        },
                     },
                 ),
             )
@@ -92,7 +94,9 @@ class AuthzDepsModule(DepsModule):
             merged = merged.merge(
                 Deps.routed(
                     {
-                        GrantQueryDepKey: {name: ConfigurableGrantQuery() for name in gq},
+                        GrantQueryDepKey: {
+                            name: ConfigurableGrantQuery(shared=shared) for name in gq
+                        },
                     },
                 ),
             )

@@ -79,12 +79,17 @@ class AuthzPolicyService:
 
         action = request.action
 
-        matched = next(
-            (p for p in grants.permissions if p.permission_key == action),
-            None,
-        )
+        # A provider's denial outranks every source, catalog bindings included: marking a row
+        # inactive must be a complete action, not one a stale binding outlives.
+        if action in grants.denied_keys:
+            return AuthzDecision(
+                allowed=False,
+                reason=f"Permission {action!r} is denied",
+            )
 
-        if matched is None:
+        held = grants.granted_keys
+
+        if action not in held:
             return AuthzDecision(
                 allowed=False,
                 reason=f"No grant for permission {action!r}",
@@ -103,7 +108,7 @@ class AuthzPolicyService:
                         key.replace("{resource_type}", resource.resource_type)
                         for key in self.owner_override_permissions
                     }
-                    if not any(p.permission_key in override_keys for p in grants.permissions):
+                    if not override_keys & held:
                         return AuthzDecision(
                             allowed=False,
                             reason="Resource owner does not match subject",
@@ -111,5 +116,5 @@ class AuthzPolicyService:
 
         return AuthzDecision(
             allowed=True,
-            matched_permission_key=matched.permission_key,
+            matched_permission_key=action,
         )
