@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **The in-memory store compares aware datetimes as instants, as a real store does.** Filters and the mock's unique guarantee read a zoned value by the wall clock through a repeated hour, so two instants an hour apart counted as one value and one instant written in two zones could match nothing.
 
 ## [0.9.0] - 2026-09-28
 

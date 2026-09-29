@@ -21,6 +21,7 @@ from forze.application.contracts.guarantees import (
     UniqueTogether,
 )
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.contracts.querying.internal.matching import instant_key
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, Period, advisory_lock_key, utcnow
 from forze.domain.constants import ID_FIELD, REV_FIELD
@@ -156,6 +157,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         """
 
         values = tuple(row.get(field) for field in guarantee.fields)
+        # Compared as a unique index compares them: an aware datetime by the instant it is.
+        key = tuple(instant_key(value) for value in values)
 
         if guarantee.skip_null and any(value is None for value in values):
             return
@@ -172,7 +175,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
             if other_pk == pk or not matches(other):
                 continue
 
-            if tuple(other.get(field) for field in guarantee.fields) == values:
+            if tuple(instant_key(other.get(field)) for field in guarantee.fields) == key:
                 raise exc.conflict(
                     f"Document {self.spec.name!r} guarantees at most one row per "
                     f"({', '.join(guarantee.fields)}); {other_pk} already holds "

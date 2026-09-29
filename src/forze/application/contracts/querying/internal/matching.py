@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, cast
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Final, cast
 from uuid import UUID
 
 from forze.base.exceptions import exc
@@ -65,8 +66,25 @@ def _coerce_set(value: Any) -> set[Any]:
     return {value}
 
 
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def instant_key(value: Any) -> Any:
+    """An aware datetime as its distance from the UTC epoch; anything else as is.
+
+    A store compares ``timestamptz`` values as instants. Python compares two datetimes sharing a
+    ``tzinfo`` by their wall clocks and ignores ``fold``, and across zones treats a value in a
+    repeated hour as equal to nothing. A distance compares as the instant it is.
+    """
+
+    if isinstance(value, datetime) and value.utcoffset() is not None:
+        return value - _EPOCH
+
+    return value
+
+
 def _eq(left: Any, right: Any) -> bool:
-    if left == right:
+    if instant_key(left) == instant_key(right):
         return True
 
     if isinstance(left, UUID):
@@ -153,7 +171,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             # (the caster refuses non-finite operands, but a native Decimal("NaN")
             # reaches here without passing through it).
             try:
-                return value > field.value
+                return instant_key(value) > instant_key(field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -161,7 +179,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             try:
-                return value >= field.value
+                return instant_key(value) >= instant_key(field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -169,7 +187,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             try:
-                return value < field.value
+                return instant_key(value) < instant_key(field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -177,7 +195,7 @@ def _match_field(doc: JsonDict, field: QueryField) -> bool:
             if value is _MISSING:
                 return False
             try:
-                return value <= field.value
+                return instant_key(value) <= instant_key(field.value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -264,7 +282,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return left_value > right_value
+                return instant_key(left_value) > instant_key(right_value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -272,7 +290,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return left_value >= right_value
+                return instant_key(left_value) >= instant_key(right_value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -280,7 +298,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return left_value < right_value
+                return instant_key(left_value) < instant_key(right_value)
             except (TypeError, ArithmeticError):
                 return False
 
@@ -288,7 +306,7 @@ def _match_compare(doc: JsonDict, node: QueryCompare) -> bool:
             if left_value is _MISSING or right_value is _MISSING:
                 return False
             try:
-                return left_value <= right_value
+                return instant_key(left_value) <= instant_key(right_value)
             except (TypeError, ArithmeticError):
                 return False
 

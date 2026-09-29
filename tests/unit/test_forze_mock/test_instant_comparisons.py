@@ -1,0 +1,117 @@
+"""The in-memory store compares aware datetimes as instants, as a real store does.
+
+Python compares two datetimes that share a ``tzinfo`` by their wall clocks and ignores ``fold``,
+and compares two in different zones as instants. So through Berlin's repeated hour on 25 Oct
+2026, the summer 02:30 and the winter 02:30 are an hour apart and compare equal, while Berlin's
+12:00 in June and 10:00 UTC are one instant written two ways. A ``timestamptz`` column reads all
+of them as instants; the mock has to agree, or a test passes against it and fails in production.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Final
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.guarantees import UniqueTogether
+from forze.base.exceptions import CoreException
+from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze_mock import MockDepsModule
+from tests.support.execution_context import context_from_modules
+
+# ----------------------- #
+
+BERLIN: Final = ZoneInfo("Europe/Berlin")
+SUMMER_0230: Final = datetime(2026, 10, 25, 2, 30, fold=0, tzinfo=BERLIN)
+WINTER_0230: Final = datetime(2026, 10, 25, 2, 30, fold=1, tzinfo=BERLIN)
+WINTER_0215: Final = datetime(2026, 10, 25, 2, 15, fold=1, tzinfo=BERLIN)
+
+
+class _Slot(Document):
+    at: datetime
+
+
+class _SlotRead(ReadDocument):
+    at: datetime
+
+
+class _SlotCreate(CreateDocumentCmd):
+    at: datetime
+
+
+class _SlotUpdate(BaseDTO):
+    at: datetime | None = None
+
+
+SLOTS = DocumentSpec(
+    name="slots",
+    read=_SlotRead,
+    write=DocumentWriteTypes(domain=_Slot, create_cmd=_SlotCreate, update_cmd=_SlotUpdate),
+    guarantees=(UniqueTogether(fields=("at",)),),
+)
+
+
+def _ctx():
+    return context_from_modules(MockDepsModule())
+
+
+# ....................... #
+
+
+class TestTheUniqueGuarantee:
+    async def test_two_passes_through_the_repeated_hour_are_two_instants(self) -> None:
+        ctx = _ctx()
+        await ctx.document.command(SLOTS).create(_SlotCreate(at=SUMMER_0230))
+        await ctx.document.command(SLOTS).create(_SlotCreate(at=WINTER_0230))
+
+        assert await ctx.document.query(SLOTS).count() == 2
+
+    async def test_one_instant_written_in_two_zones_is_one_value(self) -> None:
+        ctx = _ctx()
+        await ctx.document.command(SLOTS).create(
+            _SlotCreate(at=datetime(2026, 6, 1, 12, 0, tzinfo=BERLIN))
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await ctx.document.command(SLOTS).create(
+                _SlotCreate(at=datetime(2026, 6, 1, 10, 0, tzinfo=UTC))
+            )
+
+        assert caught.value.kind.value == "conflict"
+
+
+class TestTheFilters:
+    async def _slots(self) -> object:
+        ctx = _ctx()
+
+        for at in (SUMMER_0230, WINTER_0215):
+            await ctx.document.command(SLOTS).create(_SlotCreate(at=at))
+
+        return ctx
+
+    @pytest.mark.parametrize(
+        ("op", "value", "expected"),
+        [
+            # The winter 02:15 is 45 minutes after the summer 02:30, though its clock reads less.
+            ("$gt", SUMMER_0230, [WINTER_0215]),
+            ("$lt", WINTER_0215, [SUMMER_0230]),
+            # The winter 02:30 reads equal to the summer one on the clock; it is an hour later.
+            ("$eq", WINTER_0230, []),
+            ("$eq", SUMMER_0230.astimezone(UTC), [SUMMER_0230]),
+        ],
+        ids=["gt", "lt", "eq-fold", "eq-other-zone"],
+    )
+    async def test_a_comparison_reads_instants(
+        self, op: str, value: datetime, expected: list[datetime]
+    ) -> None:
+        ctx = await self._slots()
+        page = await ctx.document.query(SLOTS).find_many(  # type: ignore[attr-defined]
+            filters={"$values": {"at": {op: value}}}
+        )
+
+        assert sorted(hit.at - SUMMER_0230 for hit in page.hits) == sorted(
+            at - SUMMER_0230 for at in expected
+        )
