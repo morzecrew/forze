@@ -8977,6 +8977,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>An aggregate kit can audit the operations it generates.</strong> <code>AggregateKit(audit={kernel op: Audited(...)})</code> binds the audit hooks and runs an audited write in a transaction, so its row commits with it. <code>audit_row_per_effect</code> checks under simulation that each committed audited write carries exactly one row.</p>
 </li>
+<li>
+<p><strong>S3 buckets can be created at startup.</strong> <code>s3_bucket_lifecycle_step(buckets=[...])</code> runs after <code>s3_lifecycle_step</code> and creates each missing bucket, leaving existing ones alone; a bucket it cannot create fails startup. <code>s3_lifecycle_step</code> now provides <code>s3.client</code>, so a plan with two of them is refused.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

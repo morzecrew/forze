@@ -6574,15 +6574,25 @@ keys.</p>
 <h2 id="wire-it">Wire it<a class="headerlink" href="#wire-it" title="Permanent link">&para;</a></h2>
 <p>Each storage route names a <strong>bucket</strong> and is keyed by <code>StorageSpec.name</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">DepsRegistry</span><span class="p">,</span> <span class="n">LifecyclePlan</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">forze_s3</span><span class="w"> </span><span class="kn">import</span> <span class="n">S3Client</span><span class="p">,</span> <span class="n">S3DepsModule</span><span class="p">,</span> <span class="n">S3StorageConfig</span><span class="p">,</span> <span class="n">s3_lifecycle_step</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_s3</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">S3Client</span><span class="p">,</span>
+    <span class="n">S3DepsModule</span><span class="p">,</span>
+    <span class="n">S3StorageConfig</span><span class="p">,</span>
+    <span class="n">s3_bucket_lifecycle_step</span><span class="p">,</span>
+    <span class="n">s3_lifecycle_step</span><span class="p">,</span>
+<span class="p">)</span>
 
 <span class="n">deps</span> <span class="o">=</span> <span class="n">DepsRegistry</span><span class="o">.</span><span class="n">from_modules</span><span class="p">(</span>
     <span class="n">S3DepsModule</span><span class="p">(</span><span class="n">client</span><span class="o">=</span><span class="n">s3</span><span class="p">,</span> <span class="n">storages</span><span class="o">=</span><span class="p">{</span><span class="s2">"assets"</span><span class="p">:</span> <span class="n">S3StorageConfig</span><span class="p">(</span><span class="n">bucket</span><span class="o">=</span><span class="s2">"my-assets"</span><span class="p">)}),</span>
 <span class="p">)</span>
 <span class="n">lifecycle</span> <span class="o">=</span> <span class="n">LifecyclePlan</span><span class="o">.</span><span class="n">from_steps</span><span class="p">(</span>
     <span class="n">s3_lifecycle_step</span><span class="p">(</span><span class="n">endpoint</span><span class="o">=</span><span class="s2">"https://s3.amazonaws.com"</span><span class="p">,</span> <span class="n">access_key_id</span><span class="o">=</span><span class="s2">"…"</span><span class="p">,</span> <span class="n">secret_access_key</span><span class="o">=</span><span class="s2">"…"</span><span class="p">),</span>
+    <span class="n">s3_bucket_lifecycle_step</span><span class="p">(</span><span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="s2">"my-assets"</span><span class="p">]),</span>  <span class="c1"># optional: create missing buckets at startup</span>
 <span class="p">)</span>
 </code></pre></div>
+<p><code>s3_bucket_lifecycle_step</code> runs after the client starts and leaves an existing bucket alone; a
+bucket it cannot create fails startup. It writes shared infrastructure, so under a <code>FLEET</code>
+profile wrap it in a singleton lifecycle step.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -6619,7 +6629,9 @@ serves by default.</p>
 <ul>
 <li><strong>A bucket is required</strong> per route — <code>S3StorageConfig(bucket=...)</code>; an empty
   static bucket name is a configuration error.</li>
-<li>Forze never creates or deletes buckets — provision them out of band.</li>
+<li>Forze never deletes buckets. It creates a missing one on first write, or at startup with
+  <code>s3_bucket_lifecycle_step</code> after <code>s3_lifecycle_step</code>. The step needs a plain <code>S3Client</code>: a
+  tenant-routed client has no tenant at startup, so its buckets are created on first write.</li>
 <li>The bucket can be a static name or a per-tenant resolver; <code>RoutedS3Client</code> +
   <code>S3RoutingCredentials</code> cover per-tenant endpoints/credentials.</li>
 <li>Downloads return raw bytes — register the <a href="../fastapi/">FastAPI</a> exception
