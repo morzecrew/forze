@@ -35,9 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A delegated call on a scope-guarded route is scoped for every principal in its chain.** `AuthzDocumentScopeWrap` scopes each actor too: a denied actor refuses the call, its row filters narrow the subject's, and an enforced delegation grant is checked. So does the sensitive-resource check.
 
-- **A delegated caller cannot manage the account it acts for.** Issuing or revoking an API key, minting a session, logging out, changing the password, and switching or leaving a tenant refuse a delegated identity (`delegate_denied`), so an agent cannot get a credential that authenticates as the user alone.
+- **A delegated caller cannot manage the account it acts for.** Issuing or revoking an API key, minting a session, logging out, changing the password, and switching or leaving a tenant refuse a delegated identity (`delegate_denied`).
 
-- **Work started by a delegated caller keeps its delegation.** Temporal headers and the Inngest `_forze` envelope carry the actor chain, so a workflow or function runs as the agent acting for the user, not as the user alone.
+- **Work started by a delegated caller keeps its delegation.** Temporal headers carry the actor chain, as does the Inngest `_forze` envelope where `bind_identity_from_event` binds it, and an MCP subject that is already delegated keeps its chain under the server's agent.
 
 ## [0.9.0] - 2026-09-28
 
