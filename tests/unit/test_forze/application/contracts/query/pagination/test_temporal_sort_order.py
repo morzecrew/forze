@@ -100,6 +100,9 @@ class TestTheCursor:
             after=True,
         )
 
+    def test_the_keyset_comparator_reads_a_cursors_text_too(self) -> None:
+        assert compare_keyset_sort_values(ELEVEN_UTC, keyset_canonical_value(BERLIN_NOON)) == 1
+
     def test_text_that_is_not_a_time_is_a_tampered_cursor(self) -> None:
         with pytest.raises(CoreException) as caught:
             ordered_compare(ELEVEN_UTC, "not a time", direction="asc", nulls="first")
