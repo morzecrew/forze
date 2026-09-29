@@ -8,10 +8,11 @@ and collects every violation.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, final
+from typing import Any, Final, final
 
 import attrs
 
@@ -273,6 +274,10 @@ def no_duplicate_trace_effect(
     return named(invariant_name, _check)
 
 
+_DOCUMENT_COMMAND: Final = "document_command"
+"""The trace surface of a document write."""
+
+
 def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> Invariant:
     """Every committed transaction that wrote an audited effect carries exactly one audit row.
 
@@ -283,9 +288,16 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
 
     - A committed transaction that wrote one of *effect_routes* and no row on *audit_route* is
       an effect nobody can account for.
-    - A write to one of *effect_routes* outside any transaction is one too: no row can commit
-      with it. That is what an unaudited write looks like, and an operation bound with
-      ``transactional=False`` is reported the same way.
+    - A write to one of *effect_routes* outside any transaction, made by an operation, is one
+      too: no row can commit with it. That is what an unaudited write looks like, and an
+      operation bound with ``transactional=False`` is reported the same way. A write outside
+      every operation (a simulation's setup seeding baseline rows) is not judged. After-commit
+      callbacks run once the transaction's id is gone, so an after-commit hook writing an
+      effect route reads as a write outside a transaction; leave such a route out.
+
+    Only document writes are read, and only their calls: a search index may share the
+    document's route name, and under value capture a write that returns its row records a
+    second event for it.
     - A committed transaction with two rows is a double record.
 
     The unit is the transaction, so it is stated for workloads where each transaction carries one
@@ -321,12 +333,33 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
                 if fields.get("op") == "exit" and fields.get("outcome") == "commit":
                     committed.add(tx_id)
 
-            elif fields.get("phase") == "command" and fields.get("route") == audit_route:
+            # Document writes only, and calls only: a search index may share the document's
+            # route name, and under value capture a write that returns its row records a
+            # second, return event for the same row.
+            elif (
+                fields.get("phase") != "command"
+                or fields.get("surface") != _DOCUMENT_COMMAND
+                or fields.get("result") is not None
+            ):
+                continue
+
+            elif fields.get("route") == audit_route:
                 rows[tx_id].append(event)
 
-            elif fields.get("phase") == "command" and fields.get("route") in effects:
+            elif fields.get("route") in effects:
                 (outside if tx_id is None else written[tx_id]).append(event)
 
+        # A write outside a transaction is judged only inside an operation: a simulation's
+        # setup seeds baseline state the same way, and it is nobody's effect.
+        spans = [
+            (
+                int(op.fields.get("start_seq", -1)),
+                math.inf
+                if op.fields.get("outcome") == "incomplete"
+                else int(op.fields.get("end_seq", -1)),
+            )
+            for op in history.of_kind("operation")
+        ]
         violations: list[Violation] = [
             Violation(
                 invariant="audit_row_per_effect",
@@ -337,6 +370,7 @@ def audit_row_per_effect(*, audit_route: str, effect_routes: Iterable[str]) -> I
                 events=(event,),
             )
             for event in outside
+            if any(first <= int(event.fields.get("trace_seq", -1)) <= last for first, last in spans)
         ]
         committed.discard(None)
 

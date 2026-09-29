@@ -1143,7 +1143,7 @@ class TestAnInvertedPeriodIsADomainRefusal:
 
 
 class TestItsReadsAreReads:
-    def test_the_dated_reads_run_read_only(self) -> None:
+    async def test_the_dated_reads_run_read_only(self) -> None:
         plans = _kit().build_unfrozen(tx_route=_TX).get_plans()
 
         for op in (TemporalKernelOp.EFFECTIVE_ON, TemporalKernelOp.TIMELINE):

@@ -124,7 +124,7 @@ def _observed(tally: Counter[str]) -> Any:
     return named("observed", check)
 
 
-def _run(*, bind: str) -> tuple[Any, Counter[str]]:
+def _run(*, bind: str, seed_in_setup: bool = False) -> tuple[Any, Counter[str]]:
     state = MockState()
     tally: Counter[str] = Counter()
 
@@ -158,9 +158,14 @@ def _run(*, bind: str) -> tuple[Any, Counter[str]]:
         # The admitted row written by the outer hook, after the transaction has closed.
         binder = audited.bind(binder, transactional=False)
 
+    async def _seed(ctx: ExecutionContext) -> None:
+        # Baseline rows written by the simulation's own setup: no operation, no transaction.
+        await ctx.document.command(NOTE_SPEC).create(_NoteCreate(label="seeded"))
+
     simulation = Simulation(
         operations=binder.finish().freeze(),
         deps=deps,
+        setup=_seed if seed_in_setup else None,
         invariants=[
             inv.audit_row_per_effect(audit_route=TRAIL.name, effect_routes=[NOTE_SPEC.name]),
             inv.no_unexpected_error(),
@@ -177,7 +182,9 @@ def _run(*, bind: str) -> tuple[Any, Counter[str]]:
             faults=FaultPolicy(
                 rules=(
                     FaultRule(surface="document_command", route=TRAIL.name, error=0.3),
-                    FaultRule(surface="document_command", route=NOTE_SPEC.name, error=0.2),
+                    FaultRule(
+                        surface="document_command", route=NOTE_SPEC.name, op="update", error=0.2
+                    ),
                 )
             ),
         ),
@@ -209,6 +216,12 @@ class TestOneRowPerEffect:
         assert tally["rolled back with a row"] > 0, tally
         assert tally["committed with a row"] > 0, tally
 
+    def test_rows_seeded_by_the_setup_are_not_effects(self) -> None:
+        report, tally = _run(bind="once", seed_in_setup=True)
+
+        assert report is None, f"setup's baseline rows are nobody's effect, got {report}"
+        assert tally["committed with a row"] > 0, tally
+
     @pytest.mark.parametrize(
         ("bind", "why"),
         [
@@ -227,20 +240,50 @@ class TestOneRowPerEffect:
 
 
 def _history(*events: dict[str, Any]) -> History:
+    """Trace events in order, each stamped with its trace sequence; an ``operation`` entry is
+    projected like the engine's, spanning the trace sequences it names."""
+
     return History(
         seed=0,
         events=tuple(
-            Event(seq=n, kind="trace", at=0.0, fields=fields) for n, fields in enumerate(events)
+            Event(
+                seq=n, kind=fields.pop("kind", "trace"), at=0.0, fields={"trace_seq": n, **fields}
+            )
+            for n, fields in enumerate(dict(e) for e in events)
         ),
     )
 
 
-def _write(route: str, tx: int | None, *, phase: str = "command") -> dict[str, Any]:
-    return {"trace_domain": "port", "route": route, "phase": phase, "tx_id": tx}
+def _write(
+    route: str,
+    tx: int | None,
+    *,
+    phase: str = "command",
+    surface: str = "document_command",
+    result: Any = None,
+) -> dict[str, Any]:
+    return {
+        "trace_domain": "port",
+        "surface": surface,
+        "route": route,
+        "phase": phase,
+        "tx_id": tx,
+        "result": result,
+    }
 
 
 def _commit(tx: int | None) -> dict[str, Any]:
     return {"trace_domain": "tx", "op": "exit", "outcome": "commit", "tx_id": tx}
+
+
+def _operation(start: int, end: int, outcome: str = "ok") -> dict[str, Any]:
+    return {
+        "kind": "operation",
+        "op": "edit",
+        "outcome": outcome,
+        "start_seq": start,
+        "end_seq": end,
+    }
 
 
 CHECK: Final = inv.audit_row_per_effect(audit_route=TRAIL.name, effect_routes=[NOTE_SPEC.name])
@@ -265,9 +308,39 @@ class TestWhatItJudges:
     def test_an_effect_written_outside_a_transaction_is_reported(self) -> None:
         # No row can commit with it: this is what an operation left out of the audit looks like
         # when nothing else put it in a transaction.
-        [violation] = CHECK(_history(_write(NOTE_SPEC.name, None)))
+        [violation] = CHECK(_history(_write(NOTE_SPEC.name, None), _operation(0, 0)))
 
         assert "outside a transaction" in violation.message
+
+    def test_a_write_outside_every_operation_is_not_judged(self) -> None:
+        # A simulation's setup seeds through the command port with no transaction and no
+        # operation; that is baseline state, not an unaudited effect.
+        assert CHECK(_history(_write(NOTE_SPEC.name, None), _operation(5, 6))) == []
+
+    def test_an_operation_that_never_returned_still_owns_its_writes(self) -> None:
+        # A crash leaves the span without an end; its writes are still the operation's.
+        history = _history(_operation(0, 0, outcome="incomplete"), _write(NOTE_SPEC.name, None))
+
+        [violation] = CHECK(history)
+        assert "outside a transaction" in violation.message
+
+    def test_an_index_sharing_the_route_name_is_not_an_effect(self) -> None:
+        # The search sync writes after commit, with no transaction id, on the index's route,
+        # which a kit may name like the document.
+        history = _history(_write(NOTE_SPEC.name, None, surface="search_command"), _operation(0, 0))
+
+        assert CHECK(history) == []
+
+    def test_a_returned_row_is_the_same_row(self) -> None:
+        # Under value capture a write that returns its row records a second, return event.
+        history = _history(
+            _write(NOTE_SPEC.name, 1),
+            _write(TRAIL.name, 1),
+            _write(TRAIL.name, 1, result={"id": "r1"}),
+            _commit(1),
+        )
+
+        assert CHECK(history) == []
 
     def test_a_commit_without_an_id_is_not_a_transaction(self) -> None:
         # A root exit with no id cannot be grouped with the writes it closed.
