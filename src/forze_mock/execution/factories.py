@@ -18,6 +18,7 @@ from forze.application.contracts.authn import (
     TokenVerifierDepKey,
     resolve_authn_event_emitter,
 )
+from forze.application.contracts.authz import PermissionProvider
 from forze.application.contracts.cache import CachePort, CacheSpec
 from forze.application.contracts.counter import (
     CounterAdminPort,
@@ -140,6 +141,7 @@ from forze_mock.adapters import (
 from forze_mock.adapters._derived import ResolvedDerivedRead
 from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.identity import (
+    MockAuthzDecisionPort,
     MockPasswordLifecyclePort,
     MockPasswordResetPort,
     MockPrincipalDeactivationPort,
@@ -1250,6 +1252,29 @@ class ConfigurableMockDurableSchedule(_MockFactoryBase):
         return MockDurableScheduleStore(
             state=self._state(context),
             tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class MockAuthzDecisionFactory:
+    """Build a :class:`MockAuthzDecisionPort` bound to the resolving context, so its permission
+    providers read through it, as the identity plane's do."""
+
+    state: MockState
+    route: str
+    providers: tuple[PermissionProvider, ...]
+    provider_timeout: timedelta | None
+
+    def __call__(self, context: ExecutionContext, spec: Any) -> MockAuthzDecisionPort:
+        _ = spec
+
+        return MockAuthzDecisionPort(
+            state=self.state,
+            route=self.route,
+            providers=self.providers,
+            provider_timeout=self.provider_timeout,
+            ctx=context,
         )
 
 

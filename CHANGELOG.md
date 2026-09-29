@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Wall-clock times convert to instants without guessing.** `CivilZone`, `to_instant`, `local_day_bounds`, `month_bounds`, `spanned_local_days` and `elapsed_minutes` in `forze.base.primitives`: conversions refuse a repeated time without `fold`, a skipped one, or a result past years 1–9999; `AwareDatetime` refuses naive.
 
-- **Permissions can be derived from state per decision.** A `PermissionProvider` (declared on `AuthzKernelConfig(permission_providers=…)`) grants or denies keys from documents or config; a denial outranks every catalog binding, and `permission_providers_lifecycle_step` refuses to boot on a key the catalog lacks.
+- **Permissions can be derived from state per decision.** A `PermissionProvider` (declared on `AuthzKernelConfig(permission_providers=…)`) grants or denies keys from documents or config. A denial outranks every catalog binding, an unknown key is refused, and a late provider denies its keys; the mock decides with them.
 
 - **A confirmation can refuse when its preview has changed.** `PreviewBinding(name=…, projector=…, exclude=…)` returns a fingerprinted preview with `reviewed()`, and `bind()` makes the confirming operation recompute it inside its transaction, at snapshot isolation, and refuse with `preview_changed` on a mismatch.
 
@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ...
 
 ### Fixed
+
+- **A multi-tenant app no longer refuses authorization in every tenant but the first.** Grant resolution compared a requested tenant with the tenant bound when its port was first built, then cached for the process, so other tenants' decisions failed with `authz.scope_tenant_mismatch`.
 
 - **Sorting and keyset paging order aware datetimes by instant.** The shared comparator ordered datetimes by their ISO text, so different UTC offsets, or a repeated hour, sorted out of order in the mock and the search merges. A cursor keeps its ISO text and compares as the instant it names.
 

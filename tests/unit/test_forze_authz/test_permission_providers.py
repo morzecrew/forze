@@ -462,7 +462,7 @@ class TestTheBootCheck:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from forze.application.contracts.tenancy import TenantIdentity
-        from forze_identity.authz.execution import providers as boot
+        from forze_identity.authz.services import grants as boot
 
         tenant = TenantIdentity(tenant_id=uuid4())
         seen: list[Any] = []
@@ -483,7 +483,7 @@ class TestTheBootCheck:
     async def test_no_providers_boot_without_reading_the_catalog(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from forze_identity.authz.execution import providers as boot
+        from forze_identity.authz.services import grants as boot
 
         async def _fetch(qry: Any, *, filters: Any) -> list[Any]:
             raise AssertionError("the catalog was read for no keys")

@@ -1,7 +1,8 @@
 """Resolve effective grants from catalog documents and binding edges."""
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from datetime import timedelta
+from typing import TYPE_CHECKING, Final
 from uuid import UUID
 
 import attrs
@@ -10,7 +11,6 @@ from pydantic import BaseModel
 from forze.application.contracts.authz import (
     AuthzScope,
     DerivedPermissionRef,
-    DerivedPermissions,
     EffectiveGrants,
     PermissionProvider,
     PermissionRef,
@@ -18,13 +18,13 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.querying import QueryFilterExpression
+from forze.application.integrations.authz import DEFAULT_PROVIDER_TIMEOUT, derive_permissions
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_FETCH_ALL_PAGES,
     check_page_limit,
 )
 from forze.base.exceptions import exc
 
-from .._logger import logger
 from ..domain.models.bindings import (
     ReadGroupPermissionBinding,
     ReadGroupPrincipalBinding,
@@ -107,17 +107,36 @@ class AuthzGrantResolver:
     deps: AuthzGrantResolverDeps
 
     invocation_tenant_id: UUID | None = None
-    """The tenant bound on the invocation context, when known (the tenant the storage
-    layer auto-scopes binding queries to). Used only as a defense-in-depth cross-check:
-    a caller-supplied :class:`AuthzScope` naming a *different* tenant is refused rather
-    than silently resolved against the ambient tenant's bindings. ``None`` disables the
-    check (the historical behavior, and correct for untenanted / single-tenant use)."""
+    """The tenant bound on the invocation context, for a resolver built without :attr:`ctx`
+    (the tenant the storage layer auto-scopes binding queries to). Used only as a
+    defense-in-depth cross-check: a caller-supplied :class:`AuthzScope` naming a *different*
+    tenant is refused rather than silently resolved against the ambient tenant's bindings.
+    ``None`` disables the check (the historical behavior, and correct for untenanted /
+    single-tenant use). With :attr:`ctx`, the tenant is read from it on every call instead."""
 
     providers: tuple[PermissionProvider, ...] = ()
     """Permission providers run after the catalog grants, in declaration order."""
 
     ctx: "ExecutionContext | None" = None
     """The execution context a provider reads through; required when there are providers."""
+
+    provider_timeout: timedelta | None = DEFAULT_PROVIDER_TIMEOUT
+    """How long one provider's ``derive`` may take before it counts as failed."""
+
+    key_check: "ProviderKeyCheck | None" = None
+    """Checks the providers' declared keys against the catalog once per tenant."""
+
+    # ....................... #
+
+    def _invocation_tenant(self) -> UUID | None:
+        # Read on every call: the runtime caches a built resolver for the whole process, so
+        # the tenant bound when it was built is only the first request's.
+        if self.ctx is None:
+            return self.invocation_tenant_id
+
+        tenant = self.ctx.inv_ctx.get_tenant()
+
+        return tenant.tenant_id if tenant is not None else None
 
     # ....................... #
 
@@ -135,7 +154,9 @@ class AuthzGrantResolver:
         if scope is None or scope.tenant_id is None:
             return
 
-        if self.invocation_tenant_id is not None and scope.tenant_id != self.invocation_tenant_id:
+        invocation_tenant_id = self._invocation_tenant()
+
+        if invocation_tenant_id is not None and scope.tenant_id != invocation_tenant_id:
             raise exc.internal(
                 "AuthzScope.tenant_id disagrees with the invocation tenant; refusing to "
                 "resolve grants against a different tenant's bindings.",
@@ -254,7 +275,17 @@ class AuthzGrantResolver:
         return EffectiveGrants(
             roles=frozenset(role_refs.values()),
             permissions=frozenset(perm_refs.values()),
-            derived=await derive_permissions(self.providers, principal_id, self.ctx),
+            derived=await self._derive(principal_id),
+        )
+
+    # ....................... #
+
+    async def _derive(self, principal_id: UUID) -> frozenset[DerivedPermissionRef]:
+        if self.providers and self.key_check is not None:
+            await self.key_check.ensure(self.deps.permission_qry, self._invocation_tenant())
+
+        return await derive_permissions(
+            self.providers, principal_id, self.ctx, timeout=self.provider_timeout
         )
 
     # ....................... #
@@ -310,69 +341,74 @@ class AuthzGrantResolver:
 
 # ....................... #
 
-
-def _denials(provider: PermissionProvider, keys: frozenset[str]) -> set[DerivedPermissionRef]:
-    return {
-        DerivedPermissionRef(permission_key=key, provider=provider.name, denied=True)
-        for key in keys
-    }
+_IN_BATCH: Final = 1_000
+"""The query parser's default ``$in`` limit."""
 
 
-async def derive_permissions(
+async def check_declared_keys(
+    query: DocumentQueryPort[ReadPermissionDefinition],
     providers: Sequence[PermissionProvider],
-    principal_id: UUID,
-    ctx: "ExecutionContext | None",
-) -> frozenset[DerivedPermissionRef]:
-    """Run *providers* for *principal_id* and collect what they derived.
+) -> None:
+    """Refuse when a provider declares a key the permission catalog behind *query* lacks.
 
-    A provider that raises, returns something other than :class:`DerivedPermissions`, or names a
-    key outside its declaration denies every key it declares: an outage or a typo fails closed,
-    and a denial masks catalog bindings, so neither becomes an authorization bypass.
+    A misspelt declared key would make the provider's denial of it do nothing, while the
+    catalog's grant of the real key stands.
+
+    :raises CoreException: ``configuration`` (``authz_provider_unknown_keys``), naming each
+        provider and its missing keys.
     """
 
-    if not providers:
-        return frozenset()
+    declared = sorted({key for provider in providers for key in provider.keys})
 
-    if ctx is None:
-        raise exc.internal("Permission providers need an execution context to derive from.")
+    if not declared:
+        return
 
-    derived: set[DerivedPermissionRef] = set()
+    known: set[str] = set()
 
-    for provider in providers:
-        try:
-            result = await provider.derive(principal_id, ctx)
+    # In batches: a query may name at most _IN_BATCH values in one $in.
+    for first in range(0, len(declared), _IN_BATCH):
+        rows = await fetch_all_document_hits(
+            query,
+            filters={"$values": {"permission_key": {"$in": declared[first : first + _IN_BATCH]}}},
+        )
+        known |= {row.permission_key for row in rows}
 
-            if not isinstance(result, DerivedPermissions):  # pyright: ignore[reportUnnecessaryIsInstance]
-                raise TypeError(f"derive returned {type(result).__name__}")
+    missing = {
+        provider.name: sorted(provider.keys - known)
+        for provider in providers
+        if provider.keys - known
+    }
 
-            stray = (result.granted | result.denied) - provider.keys
+    if missing:
+        raise exc.configuration(
+            f"Permission providers declare keys the permission catalog does not define: "
+            f"{missing}. A typo here would deny forever; define the permissions or fix "
+            "the keys.",
+            code="authz_provider_unknown_keys",
+        )
 
-        except Exception as error:
-            logger.error(
-                "authz.permission_provider_failed",
-                provider=provider.name,
-                error=type(error).__name__,
-            )
-            derived |= _denials(provider, provider.keys)
-            continue
 
-        if stray:
-            # A result naming a key the provider never declared cannot be read as meant: a
-            # misspelt denial would deny the misspelling and leave the real key to the catalog.
-            # Only the declared keys are denied — a provider never reaches past its declaration,
-            # so a stray key cannot revoke a permission another binding grants.
-            logger.warning(
-                "authz.permission_provider_undeclared_keys",
-                provider=provider.name,
-                keys=sorted(stray),
-            )
-            derived |= _denials(provider, provider.keys)
-            continue
+@attrs.define(slots=True, kw_only=True)
+class ProviderKeyCheck:
+    """:func:`check_declared_keys`, run per tenant per process until it first succeeds.
 
-        derived |= _denials(provider, result.denied)
-        derived |= {
-            DerivedPermissionRef(permission_key=key, provider=provider.name)
-            for key in result.granted
-        }
+    The lifecycle step fails at boot, but only where a deployment registers it; this makes the
+    check impossible to leave out. A failure is not remembered, so every decision refuses until
+    the keys are fixed. First decisions that overlap may each run the check: it is a read, so
+    running it twice only costs a query, where a lock would serialize them.
+    """
 
-    return frozenset(derived)
+    providers: tuple[PermissionProvider, ...]
+
+    _verified: set[UUID | None] = attrs.field(factory=set[UUID | None], init=False)
+
+    async def ensure(
+        self,
+        query: DocumentQueryPort[ReadPermissionDefinition],
+        tenant_id: UUID | None,
+    ) -> None:
+        if not self.providers or tenant_id in self._verified:
+            return
+
+        await check_declared_keys(query, self.providers)
+        self._verified.add(tenant_id)

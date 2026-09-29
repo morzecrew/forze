@@ -45,10 +45,8 @@ from .configs import AuthzSharedServices
 
 
 def _grant_resolver(ctx: ExecutionContext, shared: AuthzSharedServices) -> AuthzGrantResolver:
-    # The invocation tenant is what the (tenant-aware) document ports auto-scope to;
-    # pass it so the resolver can refuse a scope that names a different tenant.
-    tenant = ctx.inv_ctx.get_tenant()
-
+    # The resolver reads the invocation tenant from ctx on every call: this port is cached for
+    # the whole process, so a tenant read here would be the first request's.
     return AuthzGrantResolver(
         deps=AuthzGrantResolverDeps(
             permission_qry=ctx.doc.query(permission_definition_spec),
@@ -61,9 +59,10 @@ def _grant_resolver(ctx: ExecutionContext, shared: AuthzSharedServices) -> Authz
             gr_binding_qry=ctx.doc.query(group_role_binding_spec),
             gperm_binding_qry=ctx.doc.query(group_permission_binding_spec),
         ),
-        invocation_tenant_id=tenant.tenant_id if tenant is not None else None,
         providers=shared.permission_providers,
         ctx=ctx,
+        provider_timeout=shared.permission_provider_timeout,
+        key_check=shared.provider_key_check,
     )
 
 
