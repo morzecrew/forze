@@ -119,7 +119,6 @@ _FIELD = re.compile(r"^(\s*):(?:param|type|returns?|rtype|raises?)\b[^:]*:")
 _OPTION = re.compile(r"^\s*:[\w-]+:")
 _ROLE = re.compile(r"(?<![\w`]):(?:[A-Za-z][\w-]*:)?[A-Za-z][\w-]*:`([^`]+)`")
 _LITERAL = re.compile(r"(?<!`)``(?![\s`])([^`]*?[^\s`])``(?!`)")
-_BLANK_RUN = re.compile(r"\n(?:[ \t]*\n){2,}")
 
 _CODE_DIRECTIVES: Final = frozenset({"code-block", "code", "sourcecode"})
 _LABELS: Final = {"seealso": "See also", "versionadded": "Added in", "versionchanged": "Changed in"}
@@ -173,9 +172,8 @@ def _fenced(language: str, body: list[str]) -> str:
 
 def _inline(text: str) -> str:
     text = _ROLE.sub(lambda match: f"`{_role_text(match.group(1))}`", text)
-    text = _LITERAL.sub(r"`\1`", text)
 
-    return _BLANK_RUN.sub("\n\n", text)
+    return _LITERAL.sub(r"`\1`", text)
 
 
 def _markdown(text: str) -> str:

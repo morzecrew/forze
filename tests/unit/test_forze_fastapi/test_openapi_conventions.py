@@ -533,6 +533,10 @@ Outro."""
 
         assert _markdown(text) == f"Config:\n\n{fence}yaml\n{inside}\n{fence}\n\nAfter `x`."
 
+    def test_inline_triple_backticks_open_no_fence(self) -> None:
+        # A backtick fence's info string cannot hold a backtick, so this is a code span.
+        assert _markdown("```x``` inline\nand ``y``.") == "```x``` inline\nand `y`."
+
     def test_hard_line_breaks_survive(self) -> None:
         assert _markdown("Line one  \nline two") == "Line one  \nline two"
 
