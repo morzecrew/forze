@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Soft deletion's read mappers compose with the ones you pass.** `SoftDeleteWiring.read_mappers(base)` runs its exclusion after each list-family mapper `base` carries instead of replacing it, so your own restriction still applies.
+
 - ...
 
 ### Fixed

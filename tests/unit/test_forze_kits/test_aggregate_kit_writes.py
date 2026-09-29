@@ -190,7 +190,7 @@ class TestTheMappers:
             made = await run_operation(
                 reg, _key(READINGS, DocumentKernelOp.CREATE), ReadingCreate(meter="m1"), ctx
             )
-            await run_operation(
+            updated = await run_operation(
                 reg,
                 _key(READINGS, DocumentKernelOp.UPDATE),
                 DocumentUpdateDTO(id=made.id, rev=made.rev, dto=ReadingUpdate(is_current=False)),
@@ -200,9 +200,9 @@ class TestTheMappers:
         assert made.meter == "M1"
         # Still seeded as the first version of its own fact.
         assert (made.version, made.root_id) == (1, made.id)
-        # The author's update mapper ran, after the kit stripped the lineage field it reserves.
-        [mapped] = seen
-        assert "is_current" not in mapped.model_fields_set
+        # The author's update mapper ran, and the lineage field it passed on was stripped after.
+        assert len(seen) == 1
+        assert updated.data.is_current is True
 
 
 class TestTheDTOs:
@@ -319,23 +319,42 @@ class TestTransactionalWrites:
         from forze.application.hooks.audit import Audited
         from forze_kits.integrations.audit import AuditDepsModule
 
+        seen: dict[str, int] = {}
+
+        def _depth(label: str) -> Any:
+            def _factory(ctx: Any) -> Any:
+                async def _map(source: Any) -> Any:
+                    seen[label] = ctx.tx_ctx.depth()
+                    return source
+
+                return _map
+
+            return _factory
+
+        # Audit binds CREATE itself; UPDATE is bound by transactional_writes alone.
         kit = AggregateKit(
             spec=WIDGETS,
             transactional_writes=True,
+            mappers=DocumentMappers(create=_depth("create"), update=_depth("update")),
             audit={DocumentKernelOp.CREATE: Audited(spec=AuditSpec(action="widget.create"))},
         )
         reg = kit.registry(tx_route=_TX)
         runtime = build_runtime([MockDepsModule(), AuditDepsModule(tx_route=_TX)])
 
         async with runtime.scope():
+            ctx = runtime.get_context()
             made = await run_operation(
+                reg, _key(WIDGETS, DocumentKernelOp.CREATE), WidgetCreate(group="a"), ctx
+            )
+            await run_operation(
                 reg,
-                _key(WIDGETS, DocumentKernelOp.CREATE),
-                WidgetCreate(group="a"),
-                runtime.get_context(),
+                _key(WIDGETS, DocumentKernelOp.UPDATE),
+                DocumentUpdateDTO(id=made.id, rev=made.rev, dto=WidgetUpdate(qty=1)),
+                ctx,
             )
 
-        assert made.group == "a"
+        # One scope each: the two bindings on CREATE merged rather than nesting.
+        assert seen == {"create": 1, "update": 1}
 
 
 # ....................... #
@@ -432,3 +451,192 @@ class TestUpdateReturnsTheRecord:
                     DocumentUpdateDTO(id=made.id, rev=made.rev, dto=WidgetUpdate(qty=20)),
                     ctx,
                 )
+
+
+# ....................... #
+
+
+class ReadingFix(BaseDTO):
+    """An inbound correction in watt-hours; the command stores kilowatt-hours."""
+
+    reading_wh: int | None = None
+
+
+class ReadingPatchIn(BaseDTO):
+    """An inbound patch carrying a field the update command does not have."""
+
+    kwh: int | None = None
+    note: str | None = None
+
+
+def _wh_to_kwh(ctx: Any) -> Any:
+    async def _map(source: ReadingFix) -> ReadingUpdate:
+        if source.reading_wh is None:
+            return ReadingUpdate()
+
+        return ReadingUpdate(kwh=source.reading_wh // 1000)
+
+    return _map
+
+
+def _versioned(**kit: Any) -> Any:
+    return AggregateKit(spec=READINGS, versioned=POLICY, **kit).registry(tx_route=_TX)
+
+
+class TestVersionedUpdateMapping:
+    async def test_a_correction_maps_through_the_authors_update_mapper(self) -> None:
+        from forze_kits.aggregates.versioned import CorrectDocumentDTO, VersionedKernelOp
+
+        reg = _versioned(
+            dtos=DocumentDTOs(read=ReadingRead, create=ReadingCreate, update=ReadingFix),
+            mappers=DocumentMappers(update=_wh_to_kwh),
+        )
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(
+                reg, _key(READINGS, DocumentKernelOp.CREATE), ReadingCreate(meter="m", kwh=1), ctx
+            )
+            corrected = await run_operation(
+                reg,
+                _key(READINGS, VersionedKernelOp.CORRECT),
+                CorrectDocumentDTO(
+                    id=made.id, expected_version=1, dto=ReadingFix(reading_wh=9000), reason="wh"
+                ),
+                ctx,
+            )
+
+        assert (corrected.version, corrected.kwh, corrected.meter) == (2, 9, "m")
+
+    async def test_a_custom_update_dto_without_a_mapper_is_mapped_to_the_command(self) -> None:
+        from forze_kits.aggregates.versioned import CorrectDocumentDTO, VersionedKernelOp
+
+        reg = _versioned(
+            dtos=DocumentDTOs(read=ReadingRead, create=ReadingCreate, update=ReadingPatchIn),
+        )
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(
+                reg, _key(READINGS, DocumentKernelOp.CREATE), ReadingCreate(meter="m"), ctx
+            )
+            # The inbound-only field is dropped by the DTO-to-command mapping, not sent to the
+            # store; nothing the command carries changed, which a version allows.
+            await run_operation(
+                reg,
+                _key(READINGS, DocumentKernelOp.UPDATE),
+                DocumentUpdateDTO(id=made.id, rev=made.rev, dto=ReadingPatchIn(note="x")),
+                ctx,
+            )
+            corrected = await run_operation(
+                reg,
+                _key(READINGS, VersionedKernelOp.CORRECT),
+                CorrectDocumentDTO(
+                    id=made.id, expected_version=1, dto=ReadingPatchIn(kwh=5), reason="fix"
+                ),
+                ctx,
+            )
+
+        assert (corrected.version, corrected.kwh) == (2, 5)
+
+    async def test_lineage_an_authors_mapper_outputs_is_stripped(self) -> None:
+        from datetime import UTC, datetime
+
+        class ArchiveIn(BaseDTO):
+            archived: bool = False
+
+        def _retiring(ctx: Any) -> Any:
+            async def _map(source: ArchiveIn) -> ReadingUpdate:
+                return ReadingUpdate(is_current=False, superseded_at=datetime.now(UTC))
+
+            return _map
+
+        reg = _versioned(
+            dtos=DocumentDTOs(read=ReadingRead, create=ReadingCreate, update=ArchiveIn),
+            mappers=DocumentMappers(update=_retiring),
+        )
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            made = await run_operation(
+                reg, _key(READINGS, DocumentKernelOp.CREATE), ReadingCreate(meter="m"), ctx
+            )
+            updated = await run_operation(
+                reg,
+                _key(READINGS, DocumentKernelOp.UPDATE),
+                DocumentUpdateDTO(id=made.id, rev=made.rev, dto=ArchiveIn(archived=True)),
+                ctx,
+            )
+
+        # An ordinary update cannot retire the only version of a fact, whoever built the patch.
+        assert updated.data.is_current is True
+
+
+# ....................... #
+
+
+class TestTheDeclarationIsWhole:
+    async def test_a_dto_slot_left_out_falls_back_to_the_specs_own(self) -> None:
+        kit = AggregateKit(
+            spec=WIDGETS,
+            dtos=DocumentDTOs(read=WidgetRead, update=WidgetUpdate),
+            mappers=DocumentMappers(create=_upper_group),
+        )
+        reg = kit.registry(tx_route=_TX)
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            made = await run_operation(
+                reg,
+                _key(WIDGETS, DocumentKernelOp.CREATE),
+                WidgetCreate(group="a"),
+                runtime.get_context(),
+            )
+
+        assert made.group == "A"
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            {"mappers": DocumentMappers(create=_upper_group)},
+            {"mappers": DocumentMappers(update=_double_qty)},
+            {"dtos": DocumentDTOs(read=WidgetRead, create=WidgetCreate)},
+            {"dtos": DocumentDTOs(read=WidgetRead, update=WidgetUpdate)},
+            {"update_returns": "record"},
+            {"transactional_writes": True},
+        ],
+        ids=["create-mapper", "update-mapper", "create-dto", "update-dto", "record", "tx"],
+    )
+    def test_a_write_option_on_a_read_only_spec_is_refused(self, option: dict[str, Any]) -> None:
+        read_only = DocumentSpec(name="widgets", read=WidgetRead)
+
+        with pytest.raises(CoreException) as caught:
+            AggregateKit(spec=read_only, **option)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+    @pytest.mark.parametrize(
+        "option",
+        [
+            {"mappers": DocumentMappers(update=_double_qty)},
+            {"dtos": DocumentDTOs(read=WidgetRead, update=WidgetUpdate)},
+            {"update_returns": "record"},
+        ],
+        ids=["update-mapper", "update-dto", "record"],
+    )
+    def test_an_update_option_without_an_update_command_is_refused(
+        self, option: dict[str, Any]
+    ) -> None:
+        create_only = DocumentSpec(
+            name="widgets",
+            read=WidgetRead,
+            write=DocumentWriteTypes(domain=Widget, create_cmd=WidgetCreate),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            AggregateKit(spec=create_only, **option)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION

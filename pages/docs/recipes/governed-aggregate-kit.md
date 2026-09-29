@@ -262,12 +262,19 @@ kit = AggregateKit(
 ```
 
 - **`mappers=` / `dtos=`** — how an inbound DTO becomes the domain command, and which DTOs the
-  generated routes and tools advertise. Your mappers are the base the other options compose on:
-  `soft_delete` adds its exclusion after your list mapper, and `versioned` strips its lineage
-  fields before your update mapper and seeds the first version through your create mapper.
+  generated routes and tools advertise. A DTO slot you leave out falls back to the spec's own
+  command. Your mappers are the base the other options compose on: `soft_delete` adds its
+  exclusion after your list mapper; `versioned` seeds the first version through your create
+  mapper, maps a correction through your update mapper as `update` does, and strips its lineage
+  fields from what that mapper produces. List mappers apply to the document list operations
+  only — not to `get`, search, or the versioned and temporal reads.
 - **`transactional_writes=True`** — create, update, kill and the soft-delete transitions run in a
-  transaction on the registry's `tx_route`, so a mapper's side effects (a number-id counter)
-  commit or roll back with the write. Off by default.
+  transaction on the registry's `tx_route`, so the document reads and writes a mapper makes
+  commit or roll back with the write. A counter does not: counters allocate on their own
+  connection, so a create that fails after its number-id step leaves a gap. Off by default.
+
+A write option the spec gives nothing to act on — a create mapper on a read-only spec,
+`update_returns="record"` without an update command — is refused when the kit is built.
 - **`update_returns="record"`** — the generated update returns the updated record instead of
   `{data, diff}`, and its route advertises the read model. The typed facade keeps the default's
   return type.

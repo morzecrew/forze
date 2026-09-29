@@ -3,6 +3,7 @@
 from typing import Any, TypeVar
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.mapping import MapperFactory
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.primitives import StrKeyNamespace
@@ -12,6 +13,7 @@ from forze_kits.domain.versioned.models import (
     UpdateCmdWithVersioning,
 )
 from forze_kits.dto.paginated import Paginated
+from forze_kits.mapping import PydanticPipelineMapperFactory
 
 from .dto import CorrectDocumentDTO, FactAsOfDTO, FactIdDTO
 from .handlers import CorrectDocument, FactAsOf, FactHistory
@@ -44,6 +46,7 @@ def build_versioned_registry(
     policy: VersionedPolicy,
     *,
     dtos: DocumentDTOs[Any, Any, Any] | None = None,
+    update_mapper: MapperFactory[Any, Any] | None = None,
     ns: StrKeyNamespace | None = None,
 ) -> OperationRegistry:
     """Build the correction command and the two lineage reads for *spec*.
@@ -55,6 +58,9 @@ def build_versioned_registry(
     :param spec: The versioned document specification.
     :param policy: Where correction records are stored.
     :param dtos: Inbound DTOs, when they are not the spec's own commands.
+    :param update_mapper: How the correction's patch becomes the update command — the same
+        mapping the aggregate's ``UPDATE`` runs. Defaults to validating the inbound patch type
+        into the spec's update command.
     :param ns: Optional namespace.
     :returns: Operation registry with CORRECT, HISTORY and AS_OF.
     """
@@ -65,10 +71,15 @@ def build_versioned_registry(
         return OperationRegistry()
 
     corrections = policy.corrections
+    write = spec.write
+    update_cmd = write["update_cmd"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
     # The *inbound* patch type, which a caller may have overridden — publishing the spec's own
     # update command would advertise and validate against a type the boundary never sends.
-    update_dto = (
-        dtos.update if dtos is not None and dtos.update is not None else spec.write["update_cmd"]
+    update_dto = dtos.update if dtos is not None and dtos.update is not None else update_cmd
+    patch_mapper = (
+        update_mapper
+        if update_mapper is not None
+        else PydanticPipelineMapperFactory(in_=update_dto, out=update_cmd)
     )
 
     reg = OperationRegistry(
@@ -77,8 +88,9 @@ def build_versioned_registry(
                 doc=ctx.doc.command(spec),
                 query=ctx.doc.query(spec),
                 corrections=ctx.doc.command(corrections),
-                create_cmd=spec.write["create_cmd"],
+                create_cmd=write["create_cmd"],
                 actor=ctx.inv_ctx.get_authn,
+                mapper=patch_mapper(ctx),
             ),
             ns.key(VersionedKernelOp.HISTORY): lambda ctx: FactHistory(
                 query=ctx.doc.query(spec),

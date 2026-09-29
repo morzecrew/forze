@@ -77,31 +77,29 @@ def _merge_current(filters: QueryFilterExpression | None) -> QueryFilterExpressi
     return {"$and": [_current_only(), filters]}
 
 
-def _without_lineage(base: Any) -> Any:
-    """An update mapper that drops the lineage fields from a caller's patch.
+def _without_lineage(inner: MapperFactory[Any, Any]) -> MapperFactory[Any, Any]:
+    """An update mapper that drops the lineage fields from the command *inner* produces.
 
     The update command carries ``is_current`` and ``superseded_at`` because the kit's own retire
-    write needs them, and that command is also what the generated ``UPDATE`` accepts — so without
+    write needs them, and that command is also what the generated ``UPDATE`` writes — so without
     this a caller can retire the only version of a fact through an ordinary update, leaving no
     current version, no successor and no correction record. Which is the thing the aggregate
     exists to make impossible.
 
-    Dropped rather than refused: a patch that happens to carry a default is not an attack, and a
-    caller cannot tell which fields a kit reserves. The correction command writes through the
-    port directly, so it is unaffected.
+    Stripped from the *output*, after an author's mapper: stripping its input would leave a
+    mapper free to set them itself. Dropped rather than refused: a patch that happens to carry a
+    default is not an attack, and a caller cannot tell which fields a kit reserves. The
+    correction command writes through the port directly, so it is unaffected.
     """
 
     def _factory(ctx: ExecutionContext) -> Mapper[Any, Any]:
-        inner = base(ctx) if base is not None else None
+        mapper = inner(ctx)
 
         async def _map(source: Any) -> Any:
-            stripped = source.model_copy(
-                update=dict.fromkeys(_KIT_OWNED_FIELDS & set(type(source).model_fields), None)
-            )
-            cleaned = stripped.model_dump(exclude=set(_KIT_OWNED_FIELDS), exclude_unset=True)
-            rebuilt = type(source).model_validate(cleaned)
+            cmd = await mapper(source)
+            cleaned = cmd.model_dump(exclude=set(_KIT_OWNED_FIELDS), exclude_unset=True)
 
-            return await inner(rebuilt) if inner is not None else rebuilt
+            return type(cmd).model_validate(cleaned)
 
         return _map
 
@@ -215,6 +213,31 @@ class VersionedWiring:
     create_mapper: MapperFactory[Any, Any] | None = None
     """The author's create mapper, which the first-version CREATE maps through when given."""
 
+    update_mapper: MapperFactory[Any, Any] | None = None
+    """The author's update mapper, which ``CORRECT`` maps its patch through when given — the one
+    the aggregate's ``UPDATE`` runs, so both read an inbound DTO the same way."""
+
+    # ....................... #
+
+    def _update_mapping(self, author: MapperFactory[Any, Any] | None) -> MapperFactory[Any, Any]:
+        """*author*, or the inbound DTO validated into the update command, lineage stripped."""
+
+        if author is None:
+            write = self.spec.write
+
+            if write is None:
+                raise exc.internal("A versioned update mapping needs a writable spec.")
+
+            update_cmd = write["update_cmd"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+            update_dto = (
+                self.dtos.update
+                if self.dtos is not None and self.dtos.update is not None
+                else update_cmd
+            )
+            author = PydanticPipelineMapperFactory(in_=update_dto, out=update_cmd)
+
+        return _without_lineage(author)
+
     # ....................... #
 
     def mappers(
@@ -235,7 +258,11 @@ class VersionedWiring:
 
         return attrs.evolve(
             base,
-            update=_without_lineage(base.update),
+            update=(
+                self._update_mapping(base.update if base.update is not None else self.update_mapper)
+                if self.spec.supports_update()
+                else base.update
+            ),
             list=_after(base.list),
             projected_list=_after(base.projected_list),
             cursor_list=_after(base.cursor_list),
@@ -248,7 +275,15 @@ class VersionedWiring:
     def ops(self, *, ns: StrKeyNamespace | None = None) -> OperationRegistry:
         """The CORRECT + HISTORY + AS_OF ops (empty when the spec is not update-capable)."""
 
-        return build_versioned_registry(self.spec, self.policy, dtos=self.dtos, ns=ns)
+        return build_versioned_registry(
+            self.spec,
+            self.policy,
+            dtos=self.dtos,
+            update_mapper=(
+                self._update_mapping(self.update_mapper) if self.spec.supports_update() else None
+            ),
+            ns=ns,
+        )
 
     # ....................... #
 
@@ -317,6 +352,7 @@ def versioned_wiring(
     soft_deleted: bool = False,
     dtos: DocumentDTOs[Any, Any, Any] | None = None,
     create_mapper: MapperFactory[Any, Any] | None = None,
+    update_mapper: MapperFactory[Any, Any] | None = None,
 ) -> VersionedWiring:
     """Build the reusable versioned-facts wiring for *spec*.
 
@@ -335,6 +371,7 @@ def versioned_wiring(
         soft_deleted=soft_deleted,
         dtos=dtos,
         create_mapper=create_mapper,
+        update_mapper=update_mapper,
     )
 
 

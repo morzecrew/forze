@@ -254,20 +254,25 @@ class AggregateKit(Generic[R, D, C, U]):
     command (e.g. a pipeline with a number-id step), and any list-family restriction.
 
     They are the base the kit's arms compose on, never replaced by them: soft deletion runs its
-    exclusion after an author's list mapper, and versioning strips lineage fields before an
-    author's update mapper and seeds the first version from an author's create mapper."""
+    exclusion after an author's list mapper; versioning seeds the first version from an author's
+    create mapper, maps a correction's patch through the author's update mapper as ``UPDATE``
+    does, and strips its lineage fields from what that mapper produces. The list-family mappers
+    apply to the document list operations only — not to ``GET``, the search operations, or the
+    temporal and versioned reads."""
 
     dtos: DocumentDTOs[R, Any, Any] | None = None
     """Inbound DTOs, when a create/update DTO is not the spec's own command — the generated
-    routes and tools advertise these. Pair with :attr:`mappers` to translate them. The read DTO
-    must be the spec's read model: the store returns that and nothing else."""
+    routes and tools advertise these. Pair with :attr:`mappers` to translate them. A slot left
+    ``None`` falls back to the spec's own command rather than dropping the operation. The read
+    DTO must be the spec's read model: the store returns that and nothing else."""
 
     transactional_writes: bool = False
     """Run every generated write — create, update, kill, and with :attr:`soft_delete` delete and
-    restore — in a transaction on the registry's ``tx_route``, so a mapper's side effects (a
-    number-id counter, a lookup) commit or roll back with the write. Off by default: a plain
-    kit's writes open no transaction unless an arm needs one, and the deps module must register
-    a transaction manager on ``tx_route`` for this to wire."""
+    restore — in a transaction on the registry's ``tx_route``, so the document reads and writes
+    a mapper makes commit or roll back with the write. A counter does not: every counter adapter
+    allocates on its own connection, so a create that fails after its number-id step leaves a
+    gap in the numbering. Off by default: a plain kit's writes open no transaction unless an arm
+    needs one, and the deps module must register a transaction manager on ``tx_route``."""
 
     update_returns: UpdateReturns = "result"
     """What the generated update returns: ``"result"`` (default) wraps the record with its diff;
@@ -286,6 +291,8 @@ class AggregateKit(Generic[R, D, C, U]):
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        self._refuse_write_options_without_writes()
+
         if self.dtos is not None and self.dtos.read is not self.spec.read:
             raise exc.configuration(
                 f"AggregateKit dtos.read {self.dtos.read.__name__!r} must be the spec's read "
@@ -337,6 +344,48 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"(facetable_fields={{{IS_CURRENT_FIELD!r}}}); an index that cannot filter it "
                 "would answer with facts that have since been corrected.",
             )
+
+    # ....................... #
+
+    def _refuse_write_options_without_writes(self) -> None:
+        """Refuse a write option the spec gives nothing to act on, rather than ignore it."""
+
+        mappers = self.mappers or DocumentMappers()
+        dtos = self.dtos
+        writes = self.spec.write is not None
+        updates = self.spec.supports_update()
+
+        declared = {
+            "mappers.create": mappers.create is not None and not writes,
+            "dtos.create": dtos is not None and dtos.create is not None and not writes,
+            "transactional_writes=True": self.transactional_writes and not writes,
+            "mappers.update": mappers.update is not None and not updates,
+            "dtos.update": dtos is not None and dtos.update is not None and not updates,
+            'update_returns="record"': self.update_returns == "record" and not updates,
+        }
+
+        if ignored := [name for name, refused in declared.items() if refused]:
+            what = "is read-only" if not writes else "has no update command"
+            raise exc.configuration(
+                f"AggregateKit spec {self.spec.name!r} {what}, so {', '.join(ignored)} would "
+                "never take effect. Drop the option, or declare the writes it acts on.",
+            )
+
+    # ....................... #
+
+    def _effective_dtos(self) -> DocumentDTOs[Any, Any, Any] | None:
+        """The author's DTOs, with any write slot left out filled from the spec's own commands."""
+
+        if self.dtos is None:
+            return None
+
+        own = DocumentDTOs[Any, Any, Any].from_spec(cast(Any, self.spec))
+
+        return attrs.evolve(
+            self.dtos,
+            create=self.dtos.create if self.dtos.create is not None else own.create,
+            update=self.dtos.update if self.dtos.update is not None else own.update,
+        )
 
     # ....................... #
 
@@ -640,13 +689,15 @@ class AggregateKit(Generic[R, D, C, U]):
 
         soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
         mappers: DocumentMappers[Any, Any, Any, Any] = self.mappers or DocumentMappers()
+        dtos = self._effective_dtos()
         versioned = (
             versioned_wiring(
                 spec,
                 self.versioned,
                 soft_deleted=self.soft_delete,
-                dtos=self.dtos,
+                dtos=dtos,
                 create_mapper=mappers.create,
+                update_mapper=mappers.update,
             )
             if self.versioned is not None
             else None
@@ -672,7 +723,7 @@ class AggregateKit(Generic[R, D, C, U]):
         )
 
         reg = build_document_registry(
-            spec, dtos=self.dtos, mappers=mappers, update_returns=self.update_returns
+            spec, dtos=dtos, mappers=mappers, update_returns=self.update_returns
         )
 
         if self.search is not None:
