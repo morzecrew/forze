@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An aggregate kit can audit the operations it generates.** `AggregateKit(audit={kernel op: Audited(...)})` binds the audit hooks and runs an audited write in a transaction, so its row commits with it. `audit_row_per_effect` checks under simulation that each committed audited write carries exactly one row.
 
+- **S3 buckets can be created at startup.** `s3_bucket_lifecycle_step(buckets=[...])` runs after `s3_lifecycle_step` and creates each missing bucket, leaving existing ones alone; a bucket it cannot create fails startup.
+
 ### Changed
 
 - ...
