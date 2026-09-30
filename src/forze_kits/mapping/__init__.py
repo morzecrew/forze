@@ -1,3 +1,4 @@
+from .compose import compose_mapper_factories
 from .pydantic import (
     PydanticPipelineMapper,
     PydanticPipelineMapperFactory,
@@ -8,6 +9,7 @@ from .pydantic import (
 # ----------------------- #
 
 __all__ = [
+    "compose_mapper_factories",
     "PydanticPipelineMapper",
     "PydanticPipelineMapperStep",
     "PydanticPipelineMapperFactory",

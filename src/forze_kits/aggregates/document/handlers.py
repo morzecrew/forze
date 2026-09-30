@@ -106,6 +106,33 @@ class UpdateDocument[In: Bd, Cmd: Bd, Out: Bm](Handler[Du[In], Dur[Out]]):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class UpdateDocumentRecord[In: Bd, Cmd: Bd, Out: Bm](Handler[Du[In], Out]):
+    """Usecase that updates an existing document from a mapped command and returns the record."""
+
+    doc: DocumentCommandPort[Out, Any, Any, Cmd]
+    """Document port for update operations."""
+
+    mapper: Mapper[In, Cmd]
+    """Mapper that converts input DTO to update command."""
+
+    # ....................... #
+
+    async def __call__(self, args: Du[In]) -> Out:
+        """Update a document from the mapped command and return the updated read model.
+
+        :param args: Update arguments (pk, dto, rev).
+        :returns: Updated read model.
+        """
+
+        cmd = await self.mapper(args.dto)
+
+        return await self.doc.update(pk=args.id, rev=args.rev, dto=cmd)
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class KillDocument(Handler[Did, None]):
     """Handler that permanently deletes a document (hard delete)."""
 

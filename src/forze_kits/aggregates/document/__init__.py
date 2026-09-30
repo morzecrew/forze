@@ -13,7 +13,7 @@ from .dto import (
     ProjectedListRequestDTO,
 )
 from .facades import DocumentFacade, document_facade
-from .factories import build_document_registry
+from .factories import UpdateReturns, build_document_registry
 from .handlers import (
     AggregatedListDocuments,
     CreateDocument,
@@ -24,6 +24,7 @@ from .handlers import (
     ProjectedCursorListDocuments,
     ProjectedListDocuments,
     UpdateDocument,
+    UpdateDocumentRecord,
 )
 from .operations import DocumentKernelOp
 from .two_phase import TwoPhaseDocumentBuilder, TwoPhaseDocumentHandler
@@ -37,6 +38,7 @@ __all__ = [
     "DocumentKernelOp",
     "DocumentMappers",
     "build_document_registry",
+    "UpdateReturns",
     "document_facade",
     "DocumentIdDTO",
     "DocumentIdRevDTO",
@@ -59,4 +61,5 @@ __all__ = [
     "ProjectedCursorListDocuments",
     "ProjectedListDocuments",
     "UpdateDocument",
+    "UpdateDocumentRecord",
 ]

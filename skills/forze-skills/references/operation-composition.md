@@ -126,6 +126,13 @@ registry = build_document_registry(
 ).freeze()
 ```
 
+`NumberIdMappingStepFactory(spec=..., name_field="name")` also appends the number to that
+field — `"Order"` becomes `"Order #12"` (`name_format="{name} #{number}"` by default; it must use
+`{number}` and may use `{name}`, nothing else); an empty value is left alone. The counter allocates on
+its own connection, so a create that fails afterwards leaves a gap in the numbering, even in a
+transaction. With `AggregateKit`, pass the same factory as
+`AggregateKit(spec=project_spec, mappers=DocumentMappers(create=create_mapper))`.
+
 See [document and search specs](document-spec.md) and the mapping reference for step configuration.
 
 ## Anti-patterns
