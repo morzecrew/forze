@@ -198,8 +198,8 @@ class RoutedTenantClientBase(Generic[C]):
     # ....................... #
 
     @asynccontextmanager
-    async def client_scope(self) -> AsyncGenerator[C]:
-        """Scoped access to the current tenant's inner client — the public seam.
+    async def client_scope(self, tenant_id: UUID | None = None) -> AsyncGenerator[C]:
+        """Scoped access to a tenant's inner client — the public seam.
 
         Resolves the ambient tenant, refreshes the access fingerprint (rotation
         detection), and yields the pooled backend client. This is the supported way
@@ -207,9 +207,14 @@ class RoutedTenantClientBase(Generic[C]):
         registry modes, and ``guarded=True`` additionally holds an eviction lease
         for the scope's lifetime (a concurrent rotation disposes the client only
         after the scope exits).
+
+        *tenant_id* names the tenant instead of the ambient one, for a caller acting on a
+        tenant it is not bound to — a provisioner onboarding it.
         """
 
-        tenant_id = self._require_tenant_id()
+        if tenant_id is None:
+            tenant_id = self._require_tenant_id()
+
         await self.ensure_access_fingerprint(tenant_id)
 
         async with self._pool.use(tenant_id) as client:

@@ -26,6 +26,7 @@ from forze.application.contracts.resolution import (
     resolve_value,
 )
 from forze.application.contracts.tenancy import TenantIdentity, TenantProvisionerPort
+from forze.application.contracts.tenancy.routed_client_base import RoutedTenantClientBase
 from forze.base.exceptions import CoreException, exc
 
 from ..kernel.client import PostgresClientPort
@@ -99,6 +100,18 @@ class PostgresSchemaTenantProvisioner(TenantProvisionerPort):
         this class provisions per-tenant containers, so it refuses rather than half-serving
         both.
         """
+
+        # A routed client picks its database from the ambient tenant, and the tenant being
+        # onboarded is generally not it: the schema would land in whichever tenant's database
+        # the admin is bound to, or fail when bound to none.
+        if isinstance(self.client, RoutedTenantClientBase):
+            raise exc.configuration(
+                "PostgresSchemaTenantProvisioner was given a routed Postgres client, which "
+                "resolves its database from the ambient tenant rather than the tenant being "
+                "onboarded. Pass the unrouted admin client for the database the tenants' "
+                "schemas live in.",
+                code="tenant_provisioner_routed_client",
+            )
 
         if callable(self.schema) and self.role is not None and not callable(self.role):
             raise exc.configuration(

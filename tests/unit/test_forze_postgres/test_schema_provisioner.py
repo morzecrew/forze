@@ -657,3 +657,23 @@ async def test_teardown_takes_the_same_lock_provisioning_binds_under() -> None:
     # The role drop sits in a savepoint inside it, which is what lets it fail without taking
     # the schema drop with it.
     assert _index_of("SAVEPOINT") < _index_of("DROP ROLE")
+
+
+def test_a_routed_client_is_refused() -> None:
+    # A routed client picks its database from the ambient tenant, and the tenant being
+    # onboarded is not the ambient one: the schema would land in another tenant's database.
+    from unittest.mock import MagicMock
+
+    from forze_postgres.kernel.client import RoutedPostgresClient
+
+    routed = RoutedPostgresClient(
+        secrets=MagicMock(name="secrets"),
+        secret_ref_for_tenant={},
+        tenant_provider=lambda: None,
+    )
+
+    with pytest.raises(CoreException) as caught:
+        PostgresSchemaTenantProvisioner(client=routed, schema=lambda tid: f"t_{tid.hex}")
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "tenant_provisioner_routed_client"

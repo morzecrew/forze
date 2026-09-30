@@ -218,6 +218,12 @@ default) and provision out of band. Forze includes
 `PostgresSchemaTenantProvisioner` (`CREATE SCHEMA IF NOT EXISTS`) — teardown is
 opt-in wherever it would destroy data.
 
+A tenant-routed client resolves its backend from the ambient tenant, so the database
+provisioners (Postgres, MongoDB) refuse one: pass the unrouted admin client for the
+deployment the tenants live on. `ObjectStorageTenantProvisioner` accepts a routed S3 or GCS
+client and names the onboarded tenant to it, so the bucket is created on that tenant's own
+backend with its credentials — which must already resolve when `provision_tenant` runs.
+
 MongoDB has no schema to create — a database exists once something is written to
 it — so `MongoDatabaseTenantProvisioner` (`forze_mongo`) writes a marker document
 into the tenant's own database instead. The write proves at onboarding that the
