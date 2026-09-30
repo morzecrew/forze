@@ -1,6 +1,6 @@
 """Claim ownership: whose key a claim is, and which invocation holds it in progress."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from uuid import UUID
 
 import attrs
@@ -60,7 +60,12 @@ class ClaimOwnerMixin:
 # ....................... #
 
 
-def scoped_claim_key(principal_id: UUID | None, key: str) -> str:
+def scoped_claim_key(
+    principal_id: UUID | None,
+    key: str,
+    *,
+    actors: Sequence[UUID] = (),
+) -> str:
     """The key a claim is stored under: the caller's *key*, scoped to who is acting.
 
     A client generates its idempotency key, so nothing makes it unique across callers, and two
@@ -69,14 +74,43 @@ def scoped_claim_key(principal_id: UUID | None, key: str) -> str:
     no principal carries a marker of its own rather than going in raw, because a raw key could
     be chosen to equal another principal's scoped one.
 
-    The two forms are told apart by their first character, and a principal's id has a fixed
-    length, so nothing the caller puts in *key* can reach into the part that says whose it is.
+    A delegated call names its *actors* too, nearest first: the stored result was produced
+    under that chain's authorization, so another chain acting for the same principal must run
+    its own operation rather than be served it.
+
+    The forms are told apart by their first character, ids have a fixed length, and a chain
+    states how many actors it has, so nothing the caller puts in *key* can reach into the part
+    that says whose it is.
     """
 
     if principal_id is None:
         return f"a:{key}"
 
-    return f"p:{principal_id}:{key}"
+    if not actors:
+        return f"p:{principal_id}:{key}"
+
+    chain = ":".join(str(actor) for actor in actors)
+
+    return f"d:{principal_id}:{len(actors)}:{chain}:{key}"
+
+
+# ....................... #
+
+
+def claim_key_for(identity: AuthnIdentity | None, key: str) -> str:
+    """*key* scoped to *identity*: its subject and, for a delegated call, its actor chain."""
+
+    if identity is None:
+        return scoped_claim_key(None, key)
+
+    actors: list[UUID] = []
+    actor = identity.actor
+
+    while actor is not None:
+        actors.append(actor.principal_id)
+        actor = actor.actor
+
+    return scoped_claim_key(identity.principal_id, key, actors=actors)
 
 
 # ....................... #
@@ -111,11 +145,11 @@ class ClaimPrincipalMixin:
     def claim_key(self, key: str) -> str:
         """*key* as this store holds it, scoped to the principal acting now.
 
-        Keyed on the **subject** (``principal_id``), not the actor of a delegated call: an
-        idempotency key protects the effect on the subject's data, so an agent retrying a
-        user's request replays it rather than running it again.
+        Keyed on the subject (``principal_id``) and, for a delegated call, its whole actor chain:
+        the same chain retrying replays, but a record produced under one chain's authorization
+        is never served to another acting for the same subject.
         """
 
         identity = self.principal_provider() if self.principal_provider is not None else None
 
-        return scoped_claim_key(identity.principal_id if identity is not None else None, key)
+        return claim_key_for(identity, key)

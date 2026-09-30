@@ -33,9 +33,11 @@ transaction, and the handler.
 - The **same key with a different payload** is a conflict — a key can't be reused
   for a different request.
 - A key **belongs to the caller**. A claim is scoped to the tenant and the
-  authenticated principal — the subject, on a delegated call — so two callers who
-  pick the same key never meet: each runs its own operation and replays its own
-  result, and neither is told the other used it. Calls with no authenticated
+  authenticated principal — on a delegated call, the subject together with its whole
+  actor chain — so two callers who pick the same key never meet: each runs its own
+  operation and replays its own result, and neither is told the other used it. An agent
+  retrying its own request for a user replays; the user, or another agent, reusing that
+  key runs its own operation under its own authorization. Calls with no authenticated
   principal share one anonymous space of their own.
 
 Two identities ride on a claim, and they answer different questions:

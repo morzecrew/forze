@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **An idempotency key reused by a different delegation chain runs its own operation.** A claim is scoped to the subject and its whole actor chain, so a stored result is replayed only to the chain that produced it; direct callers' claims are unchanged.
+
 - **Tenant provisioning reaches the tenant it provisions.** `ObjectStorageTenantProvisioner` creates an onboarded tenant's bucket on that tenant's backend with a routed client, and works with a plain one; `PostgresSchemaTenantProvisioner` refuses a routed client, as the Mongo provisioner already does.
 
 - **A delegated call on a scope-guarded route is scoped for every principal in its chain.** `AuthzDocumentScopeWrap` scopes each actor too: a denied actor refuses the call, its row filters narrow the subject's, and an enforced delegation grant is checked. So does the sensitive-resource check.
