@@ -113,10 +113,11 @@ def test_no_two_chains_share_a_stored_key() -> None:
     stored = {
         scoped_claim_key(user, "k"),
         scoped_claim_key(user, f"{a}:k"),
+        scoped_claim_key(user, f"1:{a}:k"),
         scoped_claim_key(user, "k", actors=(a,)),
         scoped_claim_key(user, f"{b}:k", actors=(a,)),
         scoped_claim_key(user, "k", actors=(a, b)),
         scoped_claim_key(user, "k", actors=(b, a)),
     }
 
-    assert len(stored) == 6
+    assert len(stored) == 7

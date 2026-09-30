@@ -559,6 +559,18 @@ async def check_another_chain_never_meets_a_claim(h: IdempotencyHarness) -> None
 
             assert fresh is None, (h.backend, name, other_name)
 
+    # A direct caller spelling a delegated claim's stored suffix into its own key lands in its
+    # own space, not on the agent's record.
+    key = h.key()
+    via_agent = as_principal(h.store, user, agent)
+
+    assert await via_agent.begin(OP, key, HASH_A) is None, h.backend
+    await via_agent.commit(OP, key, HASH_A, _record(RESULT_A))
+
+    spelled = await as_principal(h.store, user).begin(OP, f"1:{agent}:{key}", HASH_A)
+
+    assert spelled is None, h.backend
+
 
 # ....................... #
 
