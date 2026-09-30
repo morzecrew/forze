@@ -84,14 +84,22 @@ the user's.
 The agent can also ride the key itself: a **delegation key** minted for a
 user→agent pair (`issue_api_key(identity, actor_principal_id=agent)`) carries that
 agent, so a user's ChatGPT and Claude connections attribute and revoke
-independently. The `agent=AGENT_PRINCIPAL` on `AccessTokenIdentityResolver` is the
-**fallback** for plain keys that carry none — pass it for a fixed agent, omit it to
-bind the bare user.
+independently. The key's agent must be a principal authentication accepts, other than the
+user; with `AuthnDepsModule(authz_route=...)` set, it must also be a registered `service`
+principal (under `eligibility="allow_all"` without it, any other id is accepted). The
+`agent=AGENT_PRINCIPAL` on `AccessTokenIdentityResolver` is the operator's agent: a plain
+key binds it as the actor, and a delegation key's agent is chained under it (user ← key
+agent ← operator agent), so a call gets the intersection of all three and a key cannot
+drop the operator's ceiling. Omit it to bind the bare user.
+
+With `enforce_delegation_grant` on the route's authz spec, every hop needs its own grant:
+`may_act(key agent, user)` from the user, and `may_act(operator agent, key agent)` for each
+agent the MCP server may run. A missing grant fails the call closed.
 
 Pass **both** `auth` and `identity` — `auth` rejects bad credentials, `identity`
 binds the good one. Read-only stays the default (`include_writes=False`); a
-write-capable agent needs `include_writes=True` **and** write grants on the agent
-principal. OAuth-based hosts (that can't paste a key) are a later, external concern —
+write-capable agent needs `include_writes=True` **and** write grants on every principal in
+the chain — the user, the key's agent and the operator's agent. OAuth-based hosts (that can't paste a key) are a later, external concern —
 forze stays the Resource Server and never runs an authorization server.
 
 ## What it provides

@@ -529,6 +529,10 @@ class ConfigurableApiKeyLifecycle:
 
     shared: AuthnSharedServices
 
+    authz_route: StrKey | None = None
+    """Authz route whose principal registry checks a delegation key's agent is a service
+    principal; ``None`` leaves only the eligibility gate."""
+
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> ApiKeyLifecyclePort:
@@ -542,6 +546,11 @@ class ConfigurableApiKeyLifecycle:
             ak_qry=ctx.doc.query(api_key_account_spec),
             ak_cmd=ctx.doc.command(api_key_account_spec),
             eligibility=_resolve_eligibility(ctx, spec),
+            principal_registry=(
+                ctx.authz.principal_registry(AuthzSpec(name=self.authz_route))
+                if self.authz_route is not None
+                else None
+            ),
         )
 
 

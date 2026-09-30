@@ -119,7 +119,9 @@ attach_realtime_connection(sio, resolve=resolve_connection, presence=presence)  
 
 `attach_realtime_connection` is the **single** connect path — it authenticates *and*
 auto-joins the principal room, so do not also give `ForzeSocketIOAdapter` an
-`identity_resolver` on the same namespace. The publish-side `Audience.principal(id)` must
+`identity_resolver` on the same namespace. It refuses a delegated identity; a custom
+resolver must return the identity with its `actor` chain intact, not normalized to its
+subject. The publish-side `Audience.principal(id)` must
 use the same id the gateway joins with (`str(authn.principal_id)`).
 
 `build_socketio_connection_resolver` builds `resolve_connection` for you: a fixed

@@ -125,7 +125,9 @@ class AuthnDepsModule(DepsModule):
     """Authn routes that expose cascaded principal deactivation."""
 
     authz_route: StrKey | None = attrs.field(default=None)
-    """Authz route name for :class:`PrincipalRegistryPort` when deactivation is registered."""
+    """Authz route name for :class:`PrincipalRegistryPort`: required when deactivation is
+    registered, and used by API-key lifecycle routes to require that a delegation key's agent
+    is a ``service`` principal (without it only the eligibility gate applies)."""
 
     actor_claim: str | None = attrs.field(default=None)
     """When set (e.g. ``"act"``), token routes read this claim as an RFC 8693 delegation
@@ -396,7 +398,10 @@ class AuthnDepsModule(DepsModule):
                 Deps.routed(
                     {
                         ApiKeyLifecycleDepKey: {
-                            name: ConfigurableApiKeyLifecycle(shared=shared) for name in akl
+                            name: ConfigurableApiKeyLifecycle(
+                                shared=shared, authz_route=self.authz_route
+                            )
+                            for name in akl
                         },
                     },
                 ),

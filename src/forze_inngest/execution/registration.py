@@ -255,6 +255,14 @@ def _register_one(
         raw_data: dict[str, Any] = dict(ctx.event.data) if ctx.event else {}
 
         envelope, payload = split_envelope(raw_data)
+
+        if bind_identity_from_event and envelope.identity_malformed:
+            # The identity this function would bind does not decode: every retry reads the
+            # same event, so stop rather than run under no identity or retry forever.
+            raise inngest.NonRetriableError(
+                f"Event for {spec.name!r} carries a malformed identity in its envelope"
+            )
+
         execution_ctx = ctx_factory()
 
         if is_encrypted_payload(payload):

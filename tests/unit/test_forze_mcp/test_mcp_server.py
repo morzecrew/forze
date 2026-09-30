@@ -112,6 +112,19 @@ class TestDelegatedIdentity:
         assert authn.actor == agent  # actor = agent
         assert tenant is None
 
+    async def test_delegated_resolver_does_not_add_an_agent_already_in_the_chain(self) -> None:
+        agent = AuthnIdentity(principal_id=uuid4())
+        user = AuthnIdentity(principal_id=uuid4(), actor=agent)
+
+        async def _resolve_subject() -> tuple[AuthnIdentity, None]:
+            return user, None
+
+        authn, _ = await DelegatedIdentityResolver(
+            agent=agent, resolve_subject=_resolve_subject
+        ).resolve()
+
+        assert authn == user
+
     async def test_delegated_resolver_keeps_a_subject_already_delegated(self) -> None:
         # The bearer is itself a delegation: an inner agent acting for the user. The MCP agent
         # acts through it, so every restriction on the inner agent still applies.

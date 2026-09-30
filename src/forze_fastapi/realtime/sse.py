@@ -55,6 +55,7 @@ from forze.application.integrations.realtime import (
     encode_frame,
     iter_backlog,
     negotiate_realtime_protocol,
+    refuse_delegated_identity,
     resolve_client_key,
 )
 from forze.base.exceptions import exc
@@ -132,6 +133,8 @@ def _authenticated_principal(ctx: ExecutionContext) -> str:
 
     if authn is None:
         raise exc.authentication("The realtime SSE stream requires an authenticated principal")
+
+    refuse_delegated_identity(authn)
 
     return str(authn.principal_id)
 

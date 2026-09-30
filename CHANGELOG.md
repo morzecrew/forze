@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A malformed Inngest envelope no longer fails every retry.** An identity that does not decode is ignored when the function does not bind it, and stops one that does with a `NonRetriableError`; malformed tracing ids are dropped.
+
 - **A multi-tenant app no longer refuses authorization in every tenant but the first.** Grant resolution compared a requested tenant with the tenant bound when its port was first built, then cached for the process, so other tenants' decisions failed with `authz.scope_tenant_mismatch`.
 
 - **Sorting and keyset paging order aware datetimes by instant.** The shared comparator ordered datetimes by their ISO text, so different UTC offsets, or a repeated hour, sorted out of order in the mock and the search merges. A cursor keeps its ISO text and compares as the instant it names.
@@ -48,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **An idempotency key reused by another delegation chain or tenant runs its own operation.** A claim is scoped to the subject and its whole actor chain, and a tenant-aware Postgres store scopes it by tenant, as the other stores do; direct callers' claims are unchanged.
+
+- **A delegation key's agent is checked, and cannot drop the operator's.** It must be another eligible principal (a `service` one with `authz_route` set), checked at issue and rotation. Over MCP it is chained under the operator's agent; with enforced grants that needs `may_act(operator, agent)`.
+
+- **A delegated identity cannot open a realtime connection.** WebSocket, Socket.IO and SSE refuse an identity with an actor at connect and at reauth (`delegate_denied`), since a connection is the principal's own stream, mailbox and cursors.
 
 - **Tenant provisioning reaches the tenant it provisions.** `ObjectStorageTenantProvisioner` creates an onboarded tenant's bucket on that tenant's backend with a routed client, and works with a plain one; `PostgresSchemaTenantProvisioner` refuses a routed client, as the Mongo provisioner already does.
 
