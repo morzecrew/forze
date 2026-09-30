@@ -179,6 +179,25 @@ async def test_bridge_error_is_isolated_and_acked() -> None:
 # membership
 
 
+async def test_joining_a_principal_room_refuses_a_passed_delegated_identity() -> None:
+    from uuid import uuid4
+
+    from forze.application.contracts.authn import AuthnIdentity
+    from forze.base.exceptions import CoreException
+
+    sio = _StubSio()
+    gw = _gateway(sio, realtime_stream_spec())
+    delegated = AuthnIdentity(principal_id=uuid4(), actor=AuthnIdentity(principal_id=uuid4()))
+
+    with pytest.raises(CoreException) as caught:
+        await gw.join_principal(
+            "sid-1", delegated.principal_id, _TENANT.tenant_id, identity=delegated
+        )
+
+    assert caught.value.code == "delegate_denied"
+    assert sio.entered == []
+
+
 async def test_membership_join_and_leave() -> None:
     spec = realtime_stream_spec()
     sio = _StubSio()

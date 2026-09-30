@@ -204,7 +204,9 @@ WsConnectionResolver = Callable[[WsConnect], "WsConnection | Awaitable[WsConnect
 
 Return ``None`` for anonymous — which this route refuses (replay, ack, and command
 dispatch all need a principal) — or raise a client-safe
-:class:`~forze.base.exceptions.CoreException` to refuse the connection.
+:class:`~forze.base.exceptions.CoreException` to refuse the connection. Return the identity
+with its ``actor`` chain intact: a delegated identity is refused from it, and one normalized
+to its subject would be served the subject's stream as the subject.
 """
 
 

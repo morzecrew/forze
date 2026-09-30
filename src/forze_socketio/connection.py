@@ -146,7 +146,9 @@ ConnectionResolver = Callable[
 ]
 """Resolve a connection's identity at connect time. Return ``None`` for anonymous
 (no principal room joined), or raise a client-safe :class:`CoreException`
-(e.g. ``exc.authentication``) to refuse the connection."""
+(e.g. ``exc.authentication``) to refuse the connection. Return the identity with its
+``actor`` chain intact: a delegated identity is refused from it, and one normalized to its
+subject would join the subject's room as the subject."""
 
 
 # ....................... #

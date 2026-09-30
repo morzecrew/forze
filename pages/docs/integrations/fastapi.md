@@ -277,7 +277,8 @@ re-assert within the TTL.
 Socket.IO (strict-protocol peers, non-JS embedded clients): the same replay + live
 egress as SSE — sharing the hub, presence store, and topic authorization — plus a
 typed ingress. Identity is resolved by an app-supplied resolver from the upgrade
-request (add the path to the middlewares' `allowed_websocket_paths`); the ack rides
+request (add the path to the middlewares' `allowed_websocket_paths`), which must return
+the identity with its `actor` chain intact: a delegated identity is refused; the ack rides
 inline (`{"type": "realtime.ack", "up_to"}`), a rotating token refreshes in place
 (`realtime.reauth`, same principal and tenant only), and — given a frozen registry
 plus `RealtimeCommandRoute` declarations (the same ones a Socket.IO namespace

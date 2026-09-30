@@ -45,6 +45,7 @@ import attrs
 from pydantic import ValidationError
 from socketio.async_server import AsyncServer
 
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.envelope import (
     HEADER_EVENT_ID,
     HEADER_HLC,
@@ -65,6 +66,9 @@ from forze.application.contracts.stream import AckStreamGroupQueryDepKey, Stream
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, is_draining_refusal
 from forze.application.execution.background import run_supervised
+from forze.application.integrations.realtime import (
+    refuse_delegated_identity,
+)
 from forze.application.integrations.realtime import (
     room_for as room_for,  # re-export: established home
 )
@@ -1428,8 +1432,18 @@ class RealtimeGateway:
         sid: str,
         principal_id: UUID | str,
         tenant: UUID | None,
+        *,
+        identity: AuthnIdentity | None = None,
     ) -> None:
-        """Join *sid* to its tenant-scoped principal room (auto-join on connect)."""
+        """Join *sid* to its tenant-scoped principal room (auto-join on connect).
+
+        Never call this for a delegated identity (one with an ``actor``): the principal room
+        carries everything addressed to that principal, and the connection path refuses a
+        delegated identity for that reason. Pass the connection's *identity* to have it
+        refused here too (``delegate_denied``).
+        """
+
+        refuse_delegated_identity(identity)
 
         await self.sio.enter_room(
             sid,
