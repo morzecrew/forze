@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A malformed Inngest envelope no longer fails every retry.** An identity that does not decode is ignored when the function does not bind it, and stops one that does with a `NonRetriableError`; malformed tracing ids are dropped.
+
 - **A multi-tenant app no longer refuses authorization in every tenant but the first.** Grant resolution compared a requested tenant with the tenant bound when its port was first built, then cached for the process, so other tenants' decisions failed with `authz.scope_tenant_mismatch`.
 
 - **Sorting and keyset paging order aware datetimes by instant.** The shared comparator ordered datetimes by their ISO text, so different UTC offsets, or a repeated hour, sorted out of order in the mock and the search merges. A cursor keeps its ISO text and compares as the instant it names.

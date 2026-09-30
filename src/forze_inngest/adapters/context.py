@@ -34,6 +34,10 @@ class InngestDecodedContext:
     authn: AuthnIdentity | None = None
     tenant: TenantIdentity | None = None
 
+    identity_malformed: bool = False
+    """The envelope claims a principal, actor chain or tenant that does not decode. Only a
+    function that binds the envelope's identity has to refuse it; the rest ignore it."""
+
 
 # ....................... #
 
@@ -96,33 +100,55 @@ def split_envelope(data: JsonDict) -> tuple[InngestDecodedContext, JsonDict]:
 
     payload = {k: v for k, v in data.items() if k != _FORZE_ENVELOPE_KEY}
 
+    # The envelope is producer-controlled text, so each part decodes on its own: a malformed
+    # part must not stop a function that never reads it.
     metadata = None
     authn = None
     tenant = None
+    identity_malformed = False
 
-    if exec_raw := raw.get(EXEC_ID_KEY):
-        corr_raw = raw.get(CORR_ID_KEY) or exec_raw
-        caus_raw = raw.get(CAUS_ID_KEY)
+    try:
+        if exec_raw := raw.get(EXEC_ID_KEY):
+            corr_raw = raw.get(CORR_ID_KEY) or exec_raw
+            caus_raw = raw.get(CAUS_ID_KEY)
 
-        metadata = InvocationMetadata(
-            execution_id=UUID(str(exec_raw)),
-            correlation_id=UUID(str(corr_raw)),
-            causation_id=UUID(str(caus_raw)) if caus_raw else None,
-        )
+            metadata = InvocationMetadata(
+                execution_id=UUID(str(exec_raw)),
+                correlation_id=UUID(str(corr_raw)),
+                causation_id=UUID(str(caus_raw)) if caus_raw else None,
+            )
 
-    if principal_raw := raw.get(PRINCIPAL_ID_KEY):
-        actor = None
+    except ValueError:
+        # Tracing context, not an authority: dropped rather than trusted or fatal.
+        metadata = None
 
-        for actor_raw in reversed(cast(list[object], raw.get(ACTOR_IDS_KEY) or [])):
-            actor = AuthnIdentity(principal_id=UUID(str(actor_raw)), actor=actor)
+    try:
+        if principal_raw := raw.get(PRINCIPAL_ID_KEY):
+            actor_ids = raw.get(ACTOR_IDS_KEY, [])
 
-        authn = AuthnIdentity(principal_id=UUID(str(principal_raw)), actor=actor)
+            if not isinstance(actor_ids, list):
+                raise ValueError("actor_ids is not a list")
 
-    if tenant_raw := raw.get(TENANT_ID_KEY):
-        tenant = TenantIdentity(tenant_id=UUID(str(tenant_raw)))
+            actor = None
+
+            for actor_raw in reversed(cast(list[object], actor_ids)):
+                actor = AuthnIdentity(principal_id=UUID(str(actor_raw)), actor=actor)
+
+            authn = AuthnIdentity(principal_id=UUID(str(principal_raw)), actor=actor)
+
+        if tenant_raw := raw.get(TENANT_ID_KEY):
+            tenant = TenantIdentity(tenant_id=UUID(str(tenant_raw)))
+
+    except ValueError:
+        authn, tenant, identity_malformed = None, None, True
 
     return (
-        InngestDecodedContext(metadata=metadata, authn=authn, tenant=tenant),
+        InngestDecodedContext(
+            metadata=metadata,
+            authn=authn,
+            tenant=tenant,
+            identity_malformed=identity_malformed,
+        ),
         payload,
     )
 

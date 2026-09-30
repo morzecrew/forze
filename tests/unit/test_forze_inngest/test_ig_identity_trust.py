@@ -96,3 +96,60 @@ async def test_event_identity_bound_when_opted_in() -> None:
     # Opted in (trusted producers): the claimed identity is bound.
     assert captured["authn"] is not None and captured["authn"].principal_id == _PRINCIPAL
     assert captured["tenant"] is not None and captured["tenant"].tenant_id == _TENANT
+
+
+# ....................... #
+# A malformed envelope. It is producer-controlled text: what the function does not bind must
+# not stop it, and what it would bind must stop it for good rather than be retried forever.
+
+_MALFORMED_IDENTITY = [
+    {"principal_id": "not-a-uuid"},
+    {"principal_id": str(_PRINCIPAL), "actor_ids": "not-a-list"},
+    {"principal_id": str(_PRINCIPAL), "actor_ids": 5},
+    {"principal_id": 5},
+    {"principal_id": str(_PRINCIPAL), "actor_ids": ["not-a-uuid"]},
+    {"principal_id": str(_PRINCIPAL), "tenant_id": "not-a-uuid"},
+]
+
+
+@pytest.mark.parametrize("envelope", _MALFORMED_IDENTITY)
+async def test_a_malformed_identity_is_ignored_when_not_bound(envelope: dict[str, Any]) -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=False)
+
+    await fn._handler(_FakeContext({"_forze": envelope, "value": "ok"}))  # pyright: ignore[reportPrivateUsage]
+
+    assert captured["authn"] is None
+
+
+@pytest.mark.parametrize("envelope", _MALFORMED_IDENTITY)
+async def test_a_malformed_identity_stops_a_binding_function_for_good(
+    envelope: dict[str, Any],
+) -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=True)
+
+    with pytest.raises(inngest.NonRetriableError):
+        await fn._handler(_FakeContext({"_forze": envelope, "value": "ok"}))  # pyright: ignore[reportPrivateUsage]
+
+    assert captured == {}
+
+
+async def test_malformed_tracing_ids_are_dropped() -> None:
+    captured: dict[str, Any] = {}
+    fn = _register(captured, bind_identity_from_event=True)
+    envelope = {"execution_id": "nope", "principal_id": str(_PRINCIPAL)}
+
+    await fn._handler(_FakeContext({"_forze": envelope, "value": "ok"}))  # pyright: ignore[reportPrivateUsage]
+
+    assert captured["authn"].principal_id == _PRINCIPAL
+
+
+def test_function_args_parse_past_a_malformed_envelope() -> None:
+    from forze_inngest.adapters.context import parse_function_args
+
+    parsed = parse_function_args(
+        {"_forze": {"principal_id": "not-a-uuid"}, "value": "ok"}, args_type=_In
+    )
+
+    assert parsed.value == "ok"
