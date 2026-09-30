@@ -242,7 +242,10 @@ class TestHandshake:
     def test_a_delegated_identity_is_refused(self) -> None:
         # A connection joins the subject's own room and mailbox: an agent acting for the
         # subject would receive everything addressed to it and could move its cursors.
-        client, _ = _build()
+        # Seeded, so an accepted connection answers with the subject's replay at once.
+        mailbox = InMemoryRealtimeMailbox()
+        asyncio.run(_seed(mailbox))
+        client, _ = _build(mailbox=mailbox)
 
         with client.websocket_connect("/realtime/ws?token=delegated") as ws:
             with pytest.raises(WebSocketDisconnect) as caught:
