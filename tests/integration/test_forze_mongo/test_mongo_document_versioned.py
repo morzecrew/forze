@@ -80,6 +80,8 @@ class CorrectionRead(ReadDocument):
     from_id: UUID
     to_id: UUID
     actor_id: UUID | None = None
+    subject_id: UUID | None = None
+    actor_ids: list[UUID] = []
     reason: str
 
 

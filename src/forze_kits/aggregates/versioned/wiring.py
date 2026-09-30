@@ -373,6 +373,36 @@ class VersionedWiring:
 # ....................... #
 
 
+_CORRECTION_ATTRIBUTION: Final = ("actor_id", "subject_id", "actor_ids")
+"""What a correction records about who made it and for whom."""
+
+
+def _assert_correction_read_model(corrections: DocumentSpec[Any, Any, Any, Any]) -> None:
+    """Refuse a correction read model that cannot read back who made a correction.
+
+    The kit writes the performer, the subject and the delegation chain on every correction; a
+    read model that does not declare them drops them on every read, so "who corrected this, and
+    for whom" has no answer although the store holds it.
+
+    :raises CoreException: ``configuration`` naming what is missing.
+    """
+
+    missing = [
+        name for name in _CORRECTION_ATTRIBUTION if name not in corrections.read.model_fields
+    ]
+
+    if missing:
+        raise exc.configuration(
+            f"Correction spec {corrections.name!r} has a read model that does not declare "
+            f"{sorted(missing)}. Every correction records who made it and for whom; declare "
+            "those fields so the record can be read back.",
+            details={"document": corrections.name, "missing": sorted(missing)},
+        )
+
+
+# ....................... #
+
+
 def versioned_wiring(
     spec: DocumentSpec[Any, Any, Any, Any],
     policy: VersionedPolicy,
@@ -392,6 +422,7 @@ def versioned_wiring(
 
     VersionedPolicy.assert_guarantees(spec)
     _assert_read_model(spec)
+    _assert_correction_read_model(policy.corrections)
 
     return VersionedWiring(
         spec=spec,

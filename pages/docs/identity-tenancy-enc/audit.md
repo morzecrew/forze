@@ -123,8 +123,8 @@ for it is logged, never raised in its place.
 
 ## The collection
 
-The trail is an ordinary document collection, so it is tenant-scoped, queryable, exportable and
-encryptable like any other. `forze_kits.integrations.audit` provides the spec and the port:
+The trail is an ordinary document collection, so it is tenant-scoped, queryable and exportable
+like any other; only its `metadata` can be sealed, since the other fields are what it is queried by. `forze_kits.integrations.audit` provides the spec and the port:
 
 ```python
 from forze_kits.integrations.audit import AuditDepsModule, audit_record_spec

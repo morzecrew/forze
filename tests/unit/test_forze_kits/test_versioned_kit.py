@@ -1064,6 +1064,29 @@ class TestTheReadModelMustExposeWhatTheKitReads:
         with pytest.raises(CoreException, match="does not expose"):
             AggregateKit(spec=self._spec(Partial), versioned=POLICY).registry(tx_route=_TX)
 
+    def test_a_correction_read_model_without_its_attribution_is_refused(self) -> None:
+        # Every correction records who made it and for whom; a read model that does not declare
+        # those fields drops them on every read, so the question has no answer.
+        class Unattributed(ReadDocument):
+            root_id: UUID
+            from_id: UUID
+            to_id: UUID
+            actor_id: UUID | None = None
+            reason: str
+
+        corrections = DocumentSpec(
+            name="unattributed_corrections",
+            read=Unattributed,
+            write=DocumentWriteTypes(domain=CorrectionDoc, create_cmd=CreateCorrectionCmd),
+        )
+
+        with pytest.raises(CoreException, match="subject_id") as caught:
+            AggregateKit(
+                spec=READINGS, versioned=VersionedPolicy(corrections=corrections)
+            ).registry(tx_route=_TX)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+
     def test_a_write_omitted_field_cannot_be_counted_lost(self) -> None:
         """A field omitted from writes is on the read model by construction.
 
