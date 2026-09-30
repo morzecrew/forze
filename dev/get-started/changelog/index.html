@@ -8966,6 +8966,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The OpenAPI schema can document what a Forze app serves.</strong> <code>apply_openapi_conventions(app)</code> documents the Forze error envelope in place of FastAPI's 422 body, adds a <code>default</code> error to every operation that lacks one, and renders reST in descriptions (roles, literals, field lists) as Markdown.</p>
+</li>
+<li>
 <p><strong>Wall-clock times convert to instants without guessing.</strong> <code>CivilZone</code>, <code>to_instant</code>, <code>local_day_bounds</code>, <code>month_bounds</code>, <code>spanned_local_days</code> and <code>elapsed_minutes</code> in <code>forze.base.primitives</code>: conversions refuse a repeated time without <code>fold</code>, a skipped one, or a result past years 1–9999; <code>AwareDatetime</code> refuses naive.</p>
 </li>
 <li>

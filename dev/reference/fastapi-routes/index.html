@@ -6226,6 +6226,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#match-openapi-to-what-the-app-serves" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Match OpenAPI to what the app serves
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6620,6 +6631,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Document auth in OpenAPI
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#match-openapi-to-what-the-app-serves" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Match OpenAPI to what the app serves
       </span>
     </span>
   </a>
@@ -7082,6 +7104,35 @@ routes advertise the scheme while token-minting routes (<code>/login</code>, <co
 open. Use <code>exclude={"orders.deactivate", ...}</code> to leave a flagged operation open.</p>
 <p>This <strong>documents</strong> auth; it doesn't enforce it — enforcement stays in the engine
 (the <code>AuthnRequired</code>/authz hooks) and identity extraction in the middleware.</p>
+<h2 id="match-openapi-to-what-the-app-serves">Match OpenAPI to what the app serves<a class="headerlink" href="#match-openapi-to-what-the-app-serves" title="Permanent link">&para;</a></h2>
+<p>FastAPI documents its own 422 body (<code>HTTPValidationError</code>) on every route that
+takes input, but the Forze exception handlers answer errors — a failed request
+parse included — with the Forze envelope. Descriptions come from docstrings, so
+reST such as <code>:class:`~shop.Order`</code> reaches the rendered docs as written. One
+call fixes both:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">apply_openapi_conventions</span>
+
+<span class="c1"># After every router is attached, and after apply_openapi_security:</span>
+<span class="n">apply_openapi_conventions</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+</code></pre></div>
+<p>Each FastAPI 422 becomes the <code>ForzeErrorResponse</code> envelope (<code>detail</code>, optional
+<code>context</code>), and every operation without its own <code>default</code> response gains one in the same
+shape.
+The <code>X-Error-Code</code> header accompanies the errors that carry a code, so it is
+documented as optional. FastAPI's validation schemas are dropped once nothing
+references them. A 422 your route declares with its own model is left alone. A
+different model of yours already named <code>ForzeErrorResponse</code> is not overwritten:
+the schema request fails with a configuration error, since routers can still be
+attached after the call. Responses a route sends
+with no body at all, such as a storage download's <code>304</code> and <code>416</code>, are not
+envelopes; the <code>default</code> entry does not describe them.</p>
+<p>Every <code>description</code> and <code>summary</code> then has its reST rendered as Markdown without
+losing prose: roles and <code>``literals``</code> become code spans, field lists
+(<code>:param:</code>, <code>:returns:</code>, …) are dropped, <code>code-block</code> and <code>::</code> literal blocks
+become fenced blocks, and any other directive (<code>note</code>, <code>deprecated</code>,
+<code>versionadded</code>, …) becomes a labelled blockquote. Fenced blocks already in
+Markdown pass through as written. Call it last: text a later wrapper adds, such as a security scheme's
+description, stays as written.</p>
 
 
 
