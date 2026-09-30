@@ -74,8 +74,8 @@ def written_read_model(result: Any) -> Any:
     """The read model a document write op produced.
 
     ``CREATE`` returns the read model directly; ``UPDATE`` wraps it as :attr:`DocumentUpdateRes.data`
-    (alongside the diff). Shared so index sync and invariant enforcement unwrap a write result the
-    same way.
+    (alongside the diff), or returns it directly when built with ``update_returns="record"``.
+    Shared so index sync and invariant enforcement unwrap a write result the same way.
     """
 
     return (  # pyright: ignore[reportUnknownVariableType]

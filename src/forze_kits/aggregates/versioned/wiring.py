@@ -18,7 +18,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.execution import Handler
-from forze.application.contracts.mapping import Mapper
+from forze.application.contracts.mapping import Mapper, MapperFactory
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import exc
@@ -35,7 +35,7 @@ from forze_kits.domain.versioned.constants import (
     SUPERSEDES_ID_FIELD,
     VERSION_FIELD,
 )
-from forze_kits.mapping import PydanticPipelineMapperFactory
+from forze_kits.mapping import PydanticPipelineMapperFactory, compose_mapper_factories
 
 from .factories import build_versioned_registry
 from .handlers import SeedFirstVersion
@@ -77,31 +77,46 @@ def _merge_current(filters: QueryFilterExpression | None) -> QueryFilterExpressi
     return {"$and": [_current_only(), filters]}
 
 
-def _without_lineage(base: Any) -> Any:
-    """An update mapper that drops the lineage fields from a caller's patch.
+def _without_lineage(inner: MapperFactory[Any, Any]) -> MapperFactory[Any, Any]:
+    """An update mapper that drops the lineage fields from the command *inner* produces.
 
     The update command carries ``is_current`` and ``superseded_at`` because the kit's own retire
-    write needs them, and that command is also what the generated ``UPDATE`` accepts — so without
+    write needs them, and that command is also what the generated ``UPDATE`` writes — so without
     this a caller can retire the only version of a fact through an ordinary update, leaving no
     current version, no successor and no correction record. Which is the thing the aggregate
     exists to make impossible.
 
-    Dropped rather than refused: a patch that happens to carry a default is not an attack, and a
-    caller cannot tell which fields a kit reserves. The correction command writes through the
-    port directly, so it is unaffected.
+    Stripped from the *output*, after an author's mapper: stripping its input would leave a
+    mapper free to set them itself. Dropped rather than refused: a patch that happens to carry a
+    default is not an attack, and a caller cannot tell which fields a kit reserves. The
+    correction command writes through the port directly, so it is unaffected.
+
+    Rebuilt without validating: the command is a mapper's validated output, and validating it
+    again would re-key it through its aliases (dropping every aliased field) and run its
+    validators a second time.
     """
 
     def _factory(ctx: ExecutionContext) -> Mapper[Any, Any]:
-        inner = base(ctx) if base is not None else None
+        mapper = inner(ctx)
 
         async def _map(source: Any) -> Any:
-            stripped = source.model_copy(
-                update=dict.fromkeys(_KIT_OWNED_FIELDS & set(type(source).model_fields), None)
-            )
-            cleaned = stripped.model_dump(exclude=set(_KIT_OWNED_FIELDS), exclude_unset=True)
-            rebuilt = type(source).model_validate(cleaned)
+            cmd = await mapper(source)
+            reserved = _KIT_OWNED_FIELDS & cmd.model_fields_set
 
-            return await inner(rebuilt) if inner is not None else rebuilt
+            if not reserved:
+                return cmd
+
+            # Left out, the reserved fields take their defaults and read as unset. Keyed as
+            # ``model_construct`` looks them up, alias first, so no value lands on a field whose
+            # alias is another field's name.
+            fields = type(cmd).model_fields
+
+            return type(cmd).model_construct(
+                _fields_set=cmd.model_fields_set - reserved,
+                **{
+                    fields[name].alias or name: value for name, value in cmd if name not in reserved
+                },
+            )
 
         return _map
 
@@ -119,19 +134,7 @@ def _after(base: Any) -> Any:
     apply both.
     """
 
-    if base is None:
-        return current_versions_only_mapper
-
-    def _factory(ctx: ExecutionContext) -> Mapper[Any, Any]:
-        first = base(ctx)
-        second = current_versions_only_mapper(ctx)
-
-        async def _map(source: Any) -> Any:
-            return await second(await first(source))
-
-        return _map
-
-    return _factory
+    return compose_mapper_factories(base, current_versions_only_mapper)
 
 
 # ....................... #
@@ -224,6 +227,35 @@ class VersionedWiring:
     dtos: DocumentDTOs[Any, Any, Any] | None = None
     """Inbound DTOs, when they are not the spec's own commands."""
 
+    create_mapper: MapperFactory[Any, Any] | None = None
+    """The author's create mapper, which the first-version CREATE maps through when given."""
+
+    update_mapper: MapperFactory[Any, Any] | None = None
+    """The author's update mapper. :meth:`mappers` hands it to ``UPDATE`` and :meth:`ops` to
+    ``CORRECT``, so both read an inbound DTO the same way — declared here, once, rather than on
+    the mappers passed to :meth:`mappers`."""
+
+    # ....................... #
+
+    def _update_mapping(self, author: MapperFactory[Any, Any] | None) -> MapperFactory[Any, Any]:
+        """*author*, or the inbound DTO validated into the update command, lineage stripped."""
+
+        if author is None:
+            write = self.spec.write
+
+            if write is None:
+                raise exc.internal("A versioned update mapping needs a writable spec.")
+
+            update_cmd = write["update_cmd"]  # pyright: ignore[reportTypedDictNotRequiredAccess]
+            update_dto = (
+                self.dtos.update
+                if self.dtos is not None and self.dtos.update is not None
+                else update_cmd
+            )
+            author = PydanticPipelineMapperFactory(in_=update_dto, out=update_cmd)
+
+        return _without_lineage(author)
+
     # ....................... #
 
     def mappers(
@@ -242,9 +274,23 @@ class VersionedWiring:
 
         base = base if base is not None else DocumentMappers()
 
+        # One source for each: CREATE is overridden by :meth:`bind` and CORRECT built by
+        # :meth:`ops` from the wiring's own mappers, so a different one on *base* would map one
+        # operation and silently not the other.
+        for slot, own in (("create", self.create_mapper), ("update", self.update_mapper)):
+            if getattr(base, slot) not in (None, own):
+                raise exc.configuration(
+                    f"Pass the {slot} mapper to versioned_wiring({slot}_mapper=...), not to "
+                    "mappers(): the versioned operations are built from the wiring's own.",
+                )
+
         return attrs.evolve(
             base,
-            update=_without_lineage(base.update),
+            update=(
+                self._update_mapping(self.update_mapper)
+                if self.spec.supports_update()
+                else base.update
+            ),
             list=_after(base.list),
             projected_list=_after(base.projected_list),
             cursor_list=_after(base.cursor_list),
@@ -257,7 +303,15 @@ class VersionedWiring:
     def ops(self, *, ns: StrKeyNamespace | None = None) -> OperationRegistry:
         """The CORRECT + HISTORY + AS_OF ops (empty when the spec is not update-capable)."""
 
-        return build_versioned_registry(self.spec, self.policy, dtos=self.dtos, ns=ns)
+        return build_versioned_registry(
+            self.spec,
+            self.policy,
+            dtos=self.dtos,
+            update_mapper=(
+                self._update_mapping(self.update_mapper) if self.spec.supports_update() else None
+            ),
+            ns=ns,
+        )
 
     # ....................... #
 
@@ -287,7 +341,11 @@ class VersionedWiring:
                 if self.dtos is not None and self.dtos.create is not None
                 else create_cmd
             )
-            seed_mapper = PydanticPipelineMapperFactory(in_=create_dto, out=create_cmd)
+            seed_mapper = (
+                self.create_mapper
+                if self.create_mapper is not None
+                else PydanticPipelineMapperFactory(in_=create_dto, out=create_cmd)
+            )
 
             reg = reg.set_handler(
                 create_key,
@@ -321,6 +379,8 @@ def versioned_wiring(
     *,
     soft_deleted: bool = False,
     dtos: DocumentDTOs[Any, Any, Any] | None = None,
+    create_mapper: MapperFactory[Any, Any] | None = None,
+    update_mapper: MapperFactory[Any, Any] | None = None,
 ) -> VersionedWiring:
     """Build the reusable versioned-facts wiring for *spec*.
 
@@ -333,7 +393,14 @@ def versioned_wiring(
     VersionedPolicy.assert_guarantees(spec)
     _assert_read_model(spec)
 
-    return VersionedWiring(spec=spec, policy=policy, soft_deleted=soft_deleted, dtos=dtos)
+    return VersionedWiring(
+        spec=spec,
+        policy=policy,
+        soft_deleted=soft_deleted,
+        dtos=dtos,
+        create_mapper=create_mapper,
+        update_mapper=update_mapper,
+    )
 
 
 # ....................... #

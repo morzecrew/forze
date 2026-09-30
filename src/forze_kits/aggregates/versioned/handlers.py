@@ -8,6 +8,7 @@ from pydantic import BaseModel as BM
 
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
 from forze.application.contracts.execution import Handler
+from forze.application.contracts.mapping import Mapper
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
 from forze.base.primitives import utcnow, uuid7
@@ -124,6 +125,11 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
     actor: Any
     """``ctx.inv_ctx.get_authn`` — the invocation's identity, read at call time."""
 
+    mapper: Mapper[Any, Any] | None = None
+    """Maps the inbound patch to the update command, as the aggregate's ``UPDATE`` does, so a
+    correction and an update read the same DTO the same way. ``None`` takes the patch as the
+    command."""
+
     # ....................... #
 
     async def __call__(self, args: CorrectDocumentDTO[Any]) -> Out:
@@ -139,6 +145,7 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
 
         predecessor = await self.query.get(pk=args.id)
         self._require_correctable(predecessor, args.expected_version)
+        patch = await self.mapper(args.dto) if self.mapper is not None else args.dto
 
         successor_id = uuid7()
         root_id = getattr(predecessor, ROOT_ID_FIELD)
@@ -160,7 +167,7 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
         )
 
         successor = await self.doc.create(
-            self._successor_of(predecessor, args, root_id=root_id, version=version),
+            self._successor_of(predecessor, args, patch, root_id=root_id, version=version),
             id=successor_id,
         )
 
@@ -183,6 +190,7 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
         self,
         predecessor: Any,
         args: CorrectDocumentDTO[Any],
+        patch_cmd: Any,
         *,
         root_id: UUID,
         version: int,
@@ -192,8 +200,9 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
         A correction is a *new assertion of the whole fact*, not a delta stored against an old
         one — so the successor has to carry every field, or reading the current version would
         mean walking the chain and replaying patches, which is the anti-join mistake in another
-        costume. The patch supplies only what changed (``exclude_unset``, so an explicit ``None``
-        still clears a field while an omitted one inherits).
+        costume. The patch — the caller's DTO after :attr:`mapper` — supplies only what changed
+        (``exclude_unset``, so an explicit ``None`` still clears a field while an omitted one
+        inherits). The lineage fields are overwritten below whatever the patch carried.
 
         Filtered to the create command's own fields: a read model may carry derived or computed
         values that were never stored and that the command has nowhere to put.
@@ -205,12 +214,14 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
         }
         patch = {
             name: value
-            for name, value in args.dto.model_dump(exclude_unset=True).items()
+            for name, value in patch_cmd.model_dump(exclude_unset=True).items()
             if name in fields
         }
 
-        return self.create_cmd(
-            **carried
+        # By field name: a command with an alias generator would otherwise ignore every
+        # aliased field and build the successor from its defaults.
+        return self.create_cmd.model_validate(
+            carried
             | patch
             | {
                 ROOT_ID_FIELD: root_id,
@@ -218,7 +229,8 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
                 SUPERSEDES_ID_FIELD: args.id,
                 IS_CURRENT_FIELD: True,
                 SUPERSEDED_AT_FIELD: None,
-            }
+            },
+            by_name=True,
         )
 
     # ....................... #

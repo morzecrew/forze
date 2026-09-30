@@ -1,6 +1,17 @@
 """Generated routes projecting registry operations onto FastAPI routers."""
 
-from ._attach import RouteStyle
+from ._attach import (
+    EndpointBuilder,
+    OperationRunner,
+    RouteBinding,
+    RouteStyle,
+    attach_operation_routes,
+    body_endpoint,
+    id_endpoint,
+    id_rev_body_endpoint,
+    id_rev_endpoint,
+    query_endpoint,
+)
 from .aggregate import attach_aggregate_routes
 from .asyncapi import attach_asyncapi_route
 from .authn import attach_authn_routes
@@ -16,7 +27,16 @@ from .tenancy_admin import attach_tenancy_admin_routes
 
 __all__ = [
     "DEFAULT_MAX_UPLOAD_SIZE",
+    "EndpointBuilder",
+    "OperationRunner",
+    "RouteBinding",
     "RouteStyle",
+    "attach_operation_routes",
+    "body_endpoint",
+    "id_endpoint",
+    "id_rev_body_endpoint",
+    "id_rev_endpoint",
+    "query_endpoint",
     "attach_aggregate_routes",
     "attach_asyncapi_route",
     "attach_authn_routes",

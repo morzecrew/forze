@@ -18,17 +18,52 @@ import inspect
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from collections.abc import Set as AbstractSet
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from enum import Enum
+from ipaddress import (
+    IPv4Address,
+    IPv4Interface,
+    IPv4Network,
+    IPv6Address,
+    IPv6Interface,
+    IPv6Network,
+)
+from types import NoneType, UnionType
 from typing import (
+    Annotated,
     Any,
+    Final,
+    ForwardRef,
     Literal,
+    TypeAliasType,
+    Union,
     final,
+    get_args,
+    get_origin,
 )
 from uuid import UUID
 
 import attrs
-from fastapi import APIRouter
-from pydantic import BaseModel, ValidationError
+from fastapi import APIRouter, Query, Request
+from pydantic import (
+    AnyUrl,
+    AwareDatetime,
+    BaseModel,
+    EmailStr,
+    FutureDate,
+    FutureDatetime,
+    IPvAnyAddress,
+    IPvAnyInterface,
+    IPvAnyNetwork,
+    NaiveDatetime,
+    NameEmail,
+    PastDate,
+    PastDatetime,
+    ValidationError,
+)
+from pydantic.fields import FieldInfo
+from starlette.datastructures import QueryParams
 
 from forze.application.contracts.querying import QUANTIFIER_OPS, QueryDiscovery
 from forze.application.execution.context import ExecutionContextFactory
@@ -373,6 +408,161 @@ def _query_discovery_extension(discovery: QueryDiscovery) -> dict[str, Any]:
 # ....................... #
 
 
+PATH_PARAMS_ATTR: Final = "path_params"
+"""Attribute naming the path placeholders an endpoint builder can fill.
+
+A builder carrying it (a ``frozenset[str]``) has each binding's path checked when the route is
+attached: a ``{placeholder}`` the builder does not fill is refused, since FastAPI would publish
+it with no parameter behind it. A builder without the attribute is not checked.
+"""
+
+
+def _fills_path(*names: str) -> Callable[[EndpointBuilder], EndpointBuilder]:
+    def declare(build: EndpointBuilder) -> EndpointBuilder:
+        setattr(build, PATH_PARAMS_ATTR, frozenset(names))
+        return build
+
+    return declare
+
+
+# ....................... #
+
+_QUERY_SCALARS: Final = (
+    str,
+    int,
+    float,
+    Decimal,
+    UUID,
+    date,
+    datetime,
+    time,
+    timedelta,
+    Enum,
+    IPv4Address,
+    IPv6Address,
+    IPv4Network,
+    IPv6Network,
+    IPv4Interface,
+    IPv6Interface,
+    AnyUrl,
+    EmailStr,
+    NameEmail,
+    IPvAnyAddress,
+    IPvAnyNetwork,
+    IPvAnyInterface,
+    AwareDatetime,
+    NaiveDatetime,
+    PastDate,
+    FutureDate,
+    PastDatetime,
+    FutureDatetime,
+)
+"""Types one query-string value can carry (``bool`` is an ``int``): each parses from text.
+
+``bytes`` is not one: a query value is decoded as text, so ``%FF`` arrives as a replacement
+character rather than the byte."""
+
+_QUERY_SEQUENCES: Final = (list, tuple, set, frozenset)
+"""Containers a repeated query parameter (``?tag=a&tag=b``) can carry."""
+
+
+def _query_carries(annotation: Any, *, in_sequence: bool = False) -> bool:
+    """Whether a query string can carry a field of type *annotation*.
+
+    With *in_sequence* only a single value can, as for a path parameter or a list's items.
+    """
+
+    # FastAPI reads a type alias or a NewType as one value, whatever it names: an alias of a
+    # list would take one value and fail every request, so only a scalar passes through one.
+    if isinstance(annotation, TypeAliasType):
+        return _query_carries(annotation.__value__, in_sequence=True)
+
+    if (supertype := getattr(annotation, "__supertype__", None)) is not None:  # a NewType
+        return _query_carries(supertype, in_sequence=True)
+
+    origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _query_carries(get_args(annotation)[0], in_sequence=in_sequence)
+
+    if origin is Literal:
+        return True
+
+    if origin in (Union, UnionType):
+        return all(
+            _query_carries(arg, in_sequence=in_sequence)
+            for arg in get_args(annotation)
+            if arg is not NoneType
+        )
+
+    if origin in _QUERY_SEQUENCES and not in_sequence:
+        return all(
+            _query_carries(arg, in_sequence=True)
+            for arg in get_args(annotation)
+            if arg is not Ellipsis
+        )
+
+    # Pydantic's datetime variants are classes at runtime, though typed as Annotated aliases.
+    return isinstance(annotation, type) and issubclass(annotation, _QUERY_SCALARS)  # pyright: ignore[reportArgumentType]
+
+
+def _complete(dto_type: type[BaseModel], op: str) -> type[BaseModel]:
+    """*dto_type* with its forward references resolved, or a refusal saying which remain."""
+
+    if not dto_type.__pydantic_complete__ and not dto_type.model_rebuild(raise_errors=False):
+        unresolved = sorted(
+            name
+            for name, field in dto_type.model_fields.items()
+            if isinstance(field.annotation, ForwardRef | str)
+        )
+        raise exc.configuration(
+            f"Input type '{dto_type.__name__}' of operation '{op}' has an unresolved forward "
+            f"reference in {unresolved}; define the type it names and call "
+            f"{dto_type.__name__}.model_rebuild() before attaching the route"
+        )
+
+    return dto_type
+
+
+def _param(name: str, annotation: Any, default: Any = inspect.Parameter.empty) -> inspect.Parameter:
+    return inspect.Parameter(
+        name, inspect.Parameter.KEYWORD_ONLY, annotation=annotation, default=default
+    )
+
+
+def _single_value(
+    dto_type: type[BaseModel], name: str, op: str, fallback: Any
+) -> inspect.Parameter:
+    """Path/query parameter *name* as the DTO declares its field: type, and default if any."""
+
+    field = dto_type.model_fields.get(name)
+
+    if field is None:
+        return _param(name, fallback)
+
+    if not _query_carries(field.annotation, in_sequence=True):
+        raise exc.configuration(
+            f"Field '{name}' of input type '{dto_type.__name__}' (operation '{op}') cannot be "
+            "carried by a single path or query value — only a scalar can"
+        )
+
+    if field.is_required():
+        return _param(name, field.annotation)
+
+    return _param(name, field.annotation, field.get_default(call_default_factory=True))
+
+
+def _signed(endpoint: Callable[..., Awaitable[Any]], *params: inspect.Parameter) -> None:
+    """Give *endpoint* the keyword-only parameters FastAPI reads its inputs from."""
+
+    endpoint.__signature__ = inspect.Signature(list(params))  # type: ignore[attr-defined]
+    endpoint.__annotations__ = {param.name: param.annotation for param in params}
+
+
+# ....................... #
+
+
+@_fills_path()
 def body_endpoint(
     runner: OperationRunner,
     input_type: type[BaseModel] | None,
@@ -385,16 +575,7 @@ def body_endpoint(
     async def endpoint(payload: Any) -> Any:
         return await runner(payload)
 
-    endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-        [
-            inspect.Parameter(
-                "payload",
-                inspect.Parameter.KEYWORD_ONLY,
-                annotation=dto_type,
-            )
-        ]
-    )
-    endpoint.__annotations__ = {"payload": dto_type}
+    _signed(endpoint, _param("payload", dto_type))
 
     return endpoint
 
@@ -402,18 +583,23 @@ def body_endpoint(
 # ....................... #
 
 
+@_fills_path("id")
 def id_endpoint(
     runner: OperationRunner,
     input_type: type[BaseModel] | None,
     op: str,
 ) -> Callable[..., Awaitable[Any]]:
-    """Endpoint assembling the input DTO from an ``{id}`` path parameter."""
+    """Endpoint assembling the input DTO from ``id`` — a path parameter where the route's path
+    has an ``{id}`` placeholder, a query parameter otherwise. It takes the DTO's own ``id``
+    type."""
 
     dto_type = require_input_type(input_type, op)
     _require_satisfiable(dto_type, op, {"id"})
 
-    async def endpoint(id: UUID) -> Any:
+    async def endpoint(id: Any) -> Any:
         return await runner(validate_payload(dto_type, {"id": id}, op))
+
+    _signed(endpoint, _single_value(dto_type, "id", op, UUID))
 
     return endpoint
 
@@ -421,18 +607,26 @@ def id_endpoint(
 # ....................... #
 
 
+@_fills_path("id", "rev")
 def id_rev_endpoint(
     runner: OperationRunner,
     input_type: type[BaseModel] | None,
     op: str,
 ) -> Callable[..., Awaitable[Any]]:
-    """Endpoint assembling the input DTO from ``{id}`` path and ``rev`` query."""
+    """Endpoint assembling the input DTO from ``id`` and ``rev``, each a path parameter where
+    the path has its placeholder and a query parameter otherwise."""
 
     dto_type = require_input_type(input_type, op)
     _require_satisfiable(dto_type, op, {"id", "rev"})
 
-    async def endpoint(id: UUID, rev: int) -> Any:
+    async def endpoint(id: Any, rev: Any) -> Any:
         return await runner(validate_payload(dto_type, {"id": id, "rev": rev}, op))
+
+    _signed(
+        endpoint,
+        _single_value(dto_type, "id", op, UUID),
+        _single_value(dto_type, "rev", op, int),
+    )
 
     return endpoint
 
@@ -440,12 +634,13 @@ def id_rev_endpoint(
 # ....................... #
 
 
+@_fills_path("id", "rev")
 def id_rev_body_endpoint(
     runner: OperationRunner,
     input_type: type[BaseModel] | None,
     op: str,
 ) -> Callable[..., Awaitable[Any]]:
-    """Endpoint assembling an update DTO from ``{id}`` path, ``rev`` query, and body.
+    """Endpoint assembling an update DTO from ``id`` and ``rev`` (path or query) and a body.
 
     The body carries only the inner patch DTO; the wrapper (``DocumentUpdateDTO``)
     is reassembled before dispatch.
@@ -460,19 +655,114 @@ def id_rev_body_endpoint(
             "(expected 'id', 'rev' and 'dto' fields)"
         )
 
-    inner = fields["dto"].annotation
-
-    async def endpoint(id: UUID, rev: int, payload: Any) -> Any:
+    async def endpoint(id: Any, rev: Any, payload: Any) -> Any:
         return await runner(validate_payload(dto_type, {"id": id, "rev": rev, "dto": payload}, op))
 
-    endpoint.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-        [
-            inspect.Parameter("id", inspect.Parameter.KEYWORD_ONLY, annotation=UUID),
-            inspect.Parameter("rev", inspect.Parameter.KEYWORD_ONLY, annotation=int),
-            inspect.Parameter("payload", inspect.Parameter.KEYWORD_ONLY, annotation=inner),
-        ]
+    _signed(
+        endpoint,
+        _single_value(dto_type, "id", op, UUID),
+        _single_value(dto_type, "rev", op, int),
+        _param("payload", fields["dto"].annotation),
     )
-    endpoint.__annotations__ = {"id": UUID, "rev": int, "payload": inner}
+
+    return endpoint
+
+
+# ....................... #
+
+
+def _query_key(name: str, field: FieldInfo) -> str:
+    """The query key FastAPI reads a field from: its validation alias, alias, or name."""
+
+    if isinstance(field.validation_alias, str) and field.validation_alias:
+        return field.validation_alias
+
+    return field.alias or name
+
+
+def _is_sequence(annotation: Any) -> bool:
+    """Whether FastAPI reads a field as a repeated query parameter."""
+
+    origin = get_origin(annotation)
+
+    if origin is Annotated:
+        return _is_sequence(get_args(annotation)[0])
+
+    if origin in (Union, UnionType):
+        return any(_is_sequence(arg) for arg in get_args(annotation))
+
+    return origin in _QUERY_SEQUENCES
+
+
+def _query_data(dto_type: type[BaseModel], params: QueryParams) -> dict[str, Any]:
+    """The payload a request body sending the same keys would carry.
+
+    A field is read from the key FastAPI reads it from — every value of a repeated one, the
+    last of a single one — and a key no field reads is passed through, for the DTO's own
+    ``extra`` policy and ``populate_by_name`` to decide on, as for a body. A field not sent is
+    left out, so it is not reported as set.
+    """
+
+    data: dict[str, Any] = {}
+    read: set[str] = set()
+
+    for name, field in dto_type.model_fields.items():
+        key = _query_key(name, field)
+        read.add(key)
+
+        if values := params.getlist(key):
+            data[key] = values if _is_sequence(field.annotation) else values[-1]
+
+    for key in params:
+        if key not in read:
+            values = params.getlist(key)
+            data[key] = values[0] if len(values) == 1 else values
+
+    return data
+
+
+@_fills_path()
+def query_endpoint(
+    runner: OperationRunner,
+    input_type: type[BaseModel] | None,
+    op: str,
+) -> Callable[..., Awaitable[Any]]:
+    """Endpoint taking the whole input DTO as query parameters (``GET /levels?sku=``).
+
+    Each field is one query parameter; a list field repeats it (``?tag=a&tag=b``). A field a
+    query string cannot carry (a nested model, a mapping) is refused when the route is
+    attached rather than silently dropped on every request. The operation receives the DTO a
+    request body sending the same keys would build: only the parameters sent count as set
+    (``model_fields_set``), so a patch encoded from it leaves defaulted fields alone, and
+    validators, private attributes and extras behave as for a body. FastAPI validates the
+    parameters first, which documents them and answers a malformed request with a 422; that
+    instance is discarded, so the DTO's validators run twice per request and must not have
+    side effects.
+    """
+
+    dto_type = _complete(require_input_type(input_type, op), op)
+
+    for name, field in dto_type.model_fields.items():
+        if not _query_carries(field.annotation):
+            raise exc.configuration(
+                f"Field '{name}' of input type '{dto_type.__name__}' (operation '{op}') "
+                "cannot be carried by a query string — only scalars and lists of scalars "
+                "can; take this input as a request body instead"
+            )
+
+    # Built at runtime from the descriptor, so no static checker can read it as a type.
+    query_model = Annotated[dto_type, Query()]  # type: ignore[valid-type]
+
+    async def endpoint(payload: Any, request: Request) -> Any:
+        # The query model is FastAPI's: it publishes the parameters and answers 422 on a bad
+        # query. It fills every default before validating, though, so every field reads as
+        # set; the operation gets the model built from what the request actually sent.
+        _ = payload
+        data = _query_data(dto_type, request.query_params)
+
+        return await runner(validate_payload(dto_type, data, op))
+
+    _signed(endpoint, _param("payload", query_model), _param("request", Request))
 
     return endpoint
 
@@ -487,16 +777,23 @@ def attach_operation_routes(
     ns: StrKeyNamespace,
     ctx_dep: ExecutionContextFactory,
     bindings: Mapping[str, RouteBinding],
-    include: AbstractSet[Any] | None,
+    include: AbstractSet[Any] | None = None,
     path_overrides: Mapping[Any, str] | None = None,
     exclude_none: bool = True,
+    skip_unregistered: bool = False,
 ) -> APIRouter:
     """Attach the registered operations under *ns* to *router* per *bindings*.
 
-    One route per binding whose operation the registry holds — unregistered
-    operations are skipped unless explicitly listed in *include*, which makes the
-    omission a configuration error. Each route's ``operation_id`` is the operation
-    key verbatim; schemas come from the operation descriptors.
+    One route per binding. A binding whose operation the registry does not hold is a
+    configuration error — a typo in an app's own table would otherwise answer 404 —
+    unless *skip_unregistered* is set, which the shipped attachers use to mirror a
+    registry that omits operations on purpose (e.g. writes on a read-only spec); an
+    operation listed in *include* is required either way. Each route's ``operation_id``
+    is the operation key verbatim; schemas come from the operation descriptors.
+
+    A builder carrying ``path_params`` (see :data:`PATH_PARAMS_ATTR`; every shipped
+    builder does) has the binding's path checked against it: a ``{placeholder}`` the
+    builder does not fill is refused. A builder of your own without it is not checked.
 
     *path_overrides* maps an operation (the same kernel-op/str key accepted by
     *include*) to a replacement route path. Only the path changes — method,
@@ -523,6 +820,8 @@ def attach_operation_routes(
             ``None`` attaches every registered binding.
         path_overrides (Mapping[Any, str] | None): Per-operation replacement paths,
             keyed like *include*; each must bind exactly the default path's parameters.
+        skip_unregistered (bool): Skip a binding whose operation is not registered instead
+            of refusing it (default ``False``).
         exclude_none (bool): When ``True`` (default) generated JSON responses omit fields
             whose value is ``None`` (``response_model_exclude_none``) — a smaller wire
             payload, and the OpenAPI schema is unchanged (the fields stay optional). Set
@@ -564,6 +863,15 @@ def attach_operation_routes(
 
         default_params = _path_params(binding.path)
         override_params = _path_params(path)
+        fillable: AbstractSet[str] | None = getattr(binding.build, PATH_PARAMS_ATTR, None)
+
+        if fillable is not None and (unfilled := default_params - fillable):
+            raise exc.configuration(
+                f"Path '{binding.path}' for operation '{op}' has placeholder(s) "
+                f"{sorted(unfilled)} its endpoint builder does not fill (it fills "
+                f"{sorted(fillable) or 'none'}); FastAPI would publish them with no "
+                "parameter behind them"
+            )
 
         if missing := default_params - override_params:
             raise exc.configuration(
@@ -583,7 +891,7 @@ def attach_operation_routes(
         entry = catalog.get(op)
 
         if entry is None:
-            if include is not None:
+            if include is not None or not skip_unregistered:
                 raise exc.configuration(f"Operation '{op}' is not registered")
             continue
 

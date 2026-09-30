@@ -1,6 +1,6 @@
 """Factories for document plans, mappers, and registries."""
 
-from typing import Any, TypeVar, cast
+from typing import Any, Final, Literal, TypeVar, cast
 
 import attrs
 from pydantic import BaseModel
@@ -42,6 +42,7 @@ from .handlers import (
     ProjectedCursorListDocuments,
     ProjectedListDocuments,
     UpdateDocument,
+    UpdateDocumentRecord,
 )
 from .operations import DocumentKernelOp
 from .value_objects import DocumentDTOs, DocumentMappers
@@ -57,6 +58,12 @@ _READ_OPS: tuple[DocumentKernelOp, ...] = (
     DocumentKernelOp.AGG_LIST,
 )
 """Document operations that only acquire read (query) ports."""
+
+UpdateReturns = Literal["result", "record"]
+"""What a generated update returns: ``"result"`` wraps the record with its diff
+(:class:`DocumentUpdateRes`); ``"record"`` returns the updated read model itself."""
+
+_UPDATE_RETURNS: Final[frozenset[str]] = frozenset({"result", "record"})
 
 
 def _query_guard(spec: DocumentSpec[Any, Any, Any, Any]) -> QueryFieldGuard | None:
@@ -138,6 +145,7 @@ def _default_update_mapper(
 def _build_document_descriptors(
     spec: DocumentSpec[R, D, C_cmd, U_cmd],
     dtos: DocumentDTOs[R, C, U],
+    update_returns: UpdateReturns,
 ) -> dict[StrKey, OperationDescriptor]:
     """Build catalog descriptors for the registered document operations.
 
@@ -212,10 +220,18 @@ def _build_document_descriptors(
             )
 
         if spec.supports_update() and dtos.update is not None:
-            descriptors[DocumentKernelOp.UPDATE] = OperationDescriptor(
-                input_type=_parametrized(DocumentUpdateDTO, dtos.update),
-                output_type=_parametrized(DocumentUpdateRes, read),
-                description="Update an existing document and return the result with diff.",
+            descriptors[DocumentKernelOp.UPDATE] = (
+                OperationDescriptor(
+                    input_type=_parametrized(DocumentUpdateDTO, dtos.update),
+                    output_type=read,
+                    description="Update an existing document and return it.",
+                )
+                if update_returns == "record"
+                else OperationDescriptor(
+                    input_type=_parametrized(DocumentUpdateDTO, dtos.update),
+                    output_type=_parametrized(DocumentUpdateRes, read),
+                    description="Update an existing document and return the result with diff.",
+                )
             )
 
     if spec.sensitive:
@@ -235,6 +251,7 @@ def build_document_registry(
     mappers: DocumentMappers[C, C_cmd, U, U_cmd] = DocumentMappers(),
     *,
     ns: StrKeyNamespace | None = None,
+    update_returns: UpdateReturns = "result",
 ) -> OperationRegistry:
     """Build document operation registry.
 
@@ -245,8 +262,15 @@ def build_document_registry(
         an op.
     :param mappers: Document mappers.
     :param ns: Optional namespace.
+    :param update_returns: ``"result"`` (default) returns the record with its diff;
+        ``"record"`` returns the updated read model itself, and skips computing the diff.
     :returns: Operation registry with all supported operations.
     """
+
+    if not isinstance(update_returns, str) or update_returns not in _UPDATE_RETURNS:
+        raise exc.configuration(
+            f"update_returns must be one of {sorted(_UPDATE_RETURNS)}, not {update_returns!r}."
+        )
 
     # When omitted, the inbound DTOs are the spec's commands, so the derived ``C``/``U`` are
     # the spec's ``C_cmd``/``U_cmd`` — the cast records that identity for the type checker.
@@ -320,15 +344,27 @@ def build_document_registry(
             )
 
         if spec.supports_update() and dtos.update is not None:
+
+            def _update_mapper(ctx: Any) -> Any:
+                if mappers.update:
+                    return mappers.update(ctx)
+
+                return _default_update_mapper(spec, dtos)(ctx)
+
             reg = reg.set_handler(
                 ns.key(DocumentKernelOp.UPDATE),
-                lambda ctx: UpdateDocument[U, U_cmd, R](
-                    doc=ctx.doc.command(spec),
-                    mapper=(
-                        mappers.update(ctx)
-                        if mappers.update
-                        else _default_update_mapper(spec, dtos)(ctx)
-                    ),
+                (
+                    (
+                        lambda ctx: UpdateDocumentRecord[U, U_cmd, R](
+                            doc=ctx.doc.command(spec), mapper=_update_mapper(ctx)
+                        )
+                    )
+                    if update_returns == "record"
+                    else (
+                        lambda ctx: UpdateDocument[U, U_cmd, R](
+                            doc=ctx.doc.command(spec), mapper=_update_mapper(ctx)
+                        )
+                    )
                 ),
             )
 
@@ -337,6 +373,6 @@ def build_document_registry(
     reg = reg.bind(*_READ_OPS, namespace=ns).as_query().finish()
 
     # Attach catalog metadata (request/response schemas + descriptions).
-    reg = reg.set_descriptors(_build_document_descriptors(spec, dtos), namespace=ns)
+    reg = reg.set_descriptors(_build_document_descriptors(spec, dtos, update_returns), namespace=ns)
 
     return reg

@@ -180,6 +180,17 @@ class TestRestStyle:
         assert set(paths["/notes/{id}/delete"]) == {"post"}
         assert set(paths["/notes/{id}/restore"]) == {"post"}
 
+    def test_the_id_is_a_uuid_and_the_rev_an_integer(self) -> None:
+        # The id builders take each parameter's type from the input DTO; a document's is a
+        # UUID id and an integer rev, as the routes always published.
+        paths = _build_app("rest").openapi()["paths"]
+        update = {p["name"]: p for p in paths["/notes/{id}"]["patch"]["parameters"]}
+
+        assert update["id"]["in"] == "path"
+        assert update["id"]["schema"] == {"type": "string", "format": "uuid", "title": "Id"}
+        assert update["rev"]["in"] == "query"
+        assert update["rev"]["schema"] == {"type": "integer", "title": "Rev"}
+
     def test_soft_delete_and_restore(self) -> None:
         client = TestClient(_build_app("rest"))
 
