@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A delegation key's agent is checked, and cannot drop the operator's.** It must be another eligible principal (a `service` one with `authz_route` set), checked at issue and rotation. Over MCP it is chained under the operator's agent; with enforced grants that needs `may_act(operator, agent)`.
+
 - **A delegated identity cannot open a realtime connection.** WebSocket, Socket.IO and SSE refuse an identity with an actor at connect and at reauth (`delegate_denied`), since a connection is the principal's own stream, mailbox and cursors.
 
 - **Tenant provisioning reaches the tenant it provisions.** `ObjectStorageTenantProvisioner` creates an onboarded tenant's bucket on that tenant's backend with a routed client, and works with a plain one; `PostgresSchemaTenantProvisioner` refuses a routed client, as the Mongo provisioner already does.
