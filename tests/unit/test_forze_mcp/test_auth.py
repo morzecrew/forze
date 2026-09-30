@@ -279,6 +279,46 @@ class TestAccessTokenIdentityResolver:
         assert asked == [(key_agent, _PID), (operator.principal_id, key_agent)]
 
     @pytest.mark.asyncio
+    async def test_a_missing_operator_grant_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The user granted the key agent; the operator never granted its server that agent.
+        from forze.application.contracts.authz import AuthzScope, subject_from_authn
+        from forze.application.contracts.authz.value_objects.scoping import (
+            AuthzDocumentScope,
+            AuthzDocumentScopeRequest,
+        )
+        from forze.application.hooks.authz.plans import AuthzDocumentScopeWrap
+        from forze.base.exceptions import CoreException
+
+        key_agent, operator = uuid4(), AuthnIdentity(principal_id=uuid4())
+        self._token(monkeypatch, agent=str(key_agent))
+        identity, _ = await AccessTokenIdentityResolver(agent=operator).resolve()
+        assert identity is not None
+
+        class _Scope:
+            async def scope_document(self, request: object) -> AuthzDocumentScope:
+                return AuthzDocumentScope()
+
+        class _OnlyTheUsersGrant:
+            async def may_act(self, actor: UUID, subject: UUID, *, scope: object = None) -> bool:
+                return (actor, subject) == (key_agent, _PID)
+
+        request = AuthzDocumentScopeRequest(
+            subject=subject_from_authn(identity),
+            scope=AuthzScope(),
+            document_name="d",
+            operation="list",
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await AuthzDocumentScopeWrap._delegated_filters(  # pyright: ignore[reportPrivateUsage]
+                _Scope(), _OnlyTheUsersGrant(), request, None
+            )
+
+        assert caught.value.code == "delegation_not_granted"
+
+    @pytest.mark.asyncio
     async def test_unauthenticated_context_binds_nothing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
