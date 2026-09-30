@@ -1,5 +1,7 @@
 """Authorization helpers: policy principals, document-backed RBAC, execution wiring."""
 
+from forze.application.integrations.authz import ConfigGrants, ConfigGrantsProvider
+
 from .application import (
     AuthzResourceName,
     delegation_grant_spec,
@@ -27,6 +29,8 @@ __all__ = [
     "AuthzKernelConfig",
     "AuthzResourceName",
     "AuthzSharedServices",
+    "ConfigGrants",
+    "ConfigGrantsProvider",
     "ConfigurableAuthzDecision",
     "ConfigurableAuthzScope",
     "ConfigurableDelegationGrant",

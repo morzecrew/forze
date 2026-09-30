@@ -53,12 +53,16 @@ class PermissionProvider(Protocol):  # pragma: no cover
     declares — an outage or a typo must not become an authorization bypass.
     """
 
-    name: str
-    """What a derived grant is attributed to."""
+    @property
+    def name(self) -> str:
+        """What a derived grant is attributed to."""
+        ...
 
-    keys: frozenset[str]
-    """Every key this provider may grant or deny. Checked against the permission catalog when
-    the runtime starts; a result naming a key outside it is treated as a failure."""
+    @property
+    def keys(self) -> frozenset[str]:
+        """Every key this provider may grant or deny. Checked against the permission catalog when
+        the runtime starts; a result naming a key outside it is treated as a failure."""
+        ...
 
     async def derive(self, principal_id: UUID, ctx: "ExecutionContext") -> DerivedPermissions:
         """Derive grants and denials for *principal_id*."""

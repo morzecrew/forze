@@ -2,7 +2,7 @@
 
 from collections.abc import Sequence
 from datetime import timedelta
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
 
 import attrs
@@ -18,13 +18,18 @@ from forze.application.contracts.authz import (
 )
 from forze.application.contracts.document import DocumentQueryPort
 from forze.application.contracts.querying import QueryFilterExpression
-from forze.application.integrations.authz import DEFAULT_PROVIDER_TIMEOUT, derive_permissions
+from forze.application.integrations.authz import (
+    DEFAULT_PROVIDER_TIMEOUT,
+    ConfigGrantsProvider,
+    derive_permissions,
+)
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_FETCH_ALL_PAGES,
     check_page_limit,
 )
 from forze.base.exceptions import exc
 
+from .._logger import logger
 from ..domain.models.bindings import (
     ReadGroupPermissionBinding,
     ReadGroupPrincipalBinding,
@@ -282,7 +287,7 @@ class AuthzGrantResolver:
 
     async def _derive(self, principal_id: UUID) -> frozenset[DerivedPermissionRef]:
         if self.providers and self.key_check is not None:
-            await self.key_check.ensure(self.deps.permission_qry, self._invocation_tenant())
+            await self.key_check.ensure(self.deps, self._invocation_tenant())
 
         return await derive_permissions(
             self.providers, principal_id, self.ctx, timeout=self.provider_timeout
@@ -345,6 +350,21 @@ _IN_BATCH: Final = 1_000
 """The query parser's default ``$in`` limit."""
 
 
+async def _fetch_where_in[R: BaseModel](
+    query: DocumentQueryPort[R], field: str, values: Sequence[Any]
+) -> list[R]:
+    # In batches: a query may name at most _IN_BATCH values in one $in.
+    rows: list[R] = []
+
+    for first in range(0, len(values), _IN_BATCH):
+        rows += await fetch_all_document_hits(
+            query,
+            filters={"$values": {field: {"$in": list(values[first : first + _IN_BATCH])}}},
+        )
+
+    return rows
+
+
 async def check_declared_keys(
     query: DocumentQueryPort[ReadPermissionDefinition],
     providers: Sequence[PermissionProvider],
@@ -363,15 +383,7 @@ async def check_declared_keys(
     if not declared:
         return
 
-    known: set[str] = set()
-
-    # In batches: a query may name at most _IN_BATCH values in one $in.
-    for first in range(0, len(declared), _IN_BATCH):
-        rows = await fetch_all_document_hits(
-            query,
-            filters={"$values": {"permission_key": {"$in": declared[first : first + _IN_BATCH]}}},
-        )
-        known |= {row.permission_key for row in rows}
+    known = {row.permission_key for row in await _fetch_where_in(query, "permission_key", declared)}
 
     missing = {
         provider.name: sorted(provider.keys - known)
@@ -388,13 +400,84 @@ async def check_declared_keys(
         )
 
 
+async def find_config_grant_overlap(
+    query: DocumentQueryPort[ReadPermissionDefinition],
+    bindings: Sequence[DocumentQueryPort[Any]],
+    providers: Sequence[PermissionProvider],
+) -> list[str]:
+    """The keys a :class:`~forze.application.integrations.authz.ConfigGrantsProvider` owns that
+    any of the permission *bindings* (role, principal or group) also grants, sorted."""
+
+    owned = sorted(
+        {
+            key
+            for provider in providers
+            if isinstance(provider, ConfigGrantsProvider)
+            for key in provider.keys
+        }
+    )
+
+    if not owned:
+        return []
+
+    keys = {
+        row.id: row.permission_key for row in await _fetch_where_in(query, "permission_key", owned)
+    }
+    ids = sorted(keys, key=str)
+    bound: set[str] = set()
+
+    for binding in bindings:
+        bound |= {
+            keys[row.permission_id] for row in await _fetch_where_in(binding, "permission_id", ids)
+        }
+
+    return sorted(bound)
+
+
+async def check_config_grant_overlap(
+    query: DocumentQueryPort[ReadPermissionDefinition],
+    bindings: Sequence[DocumentQueryPort[Any]],
+    providers: Sequence[PermissionProvider],
+) -> None:
+    """Refuse when :func:`find_config_grant_overlap` finds a key.
+
+    Configuration and the catalog would otherwise be two sources of truth for one permission.
+    The config provider denies its keys to every principal it does not list, so the binding grants
+    nothing; this makes the contradiction a startup error instead of a silent no-op.
+
+    :raises CoreException: ``configuration`` (``authz_config_grant_overlap``), naming the keys.
+    """
+
+    if bound := await find_config_grant_overlap(query, bindings, providers):
+        raise exc.configuration(
+            f"Permission keys {bound} are granted by configuration and also through the "
+            "permission catalog. A key the configuration owns has one source: remove its catalog "
+            "bindings, or drop it from the configuration.",
+            code="authz_config_grant_overlap",
+        )
+
+
+async def check_provider_catalog(
+    query: DocumentQueryPort[ReadPermissionDefinition],
+    bindings: Sequence[DocumentQueryPort[Any]],
+    providers: Sequence[PermissionProvider],
+) -> None:
+    """:func:`check_declared_keys`, then :func:`check_config_grant_overlap`."""
+
+    await check_declared_keys(query, providers)
+    await check_config_grant_overlap(query, bindings, providers)
+
+
 @attrs.define(slots=True, kw_only=True)
 class ProviderKeyCheck:
     """:func:`check_declared_keys`, run per tenant per process until it first succeeds.
 
     The lifecycle step fails at boot, but only where a deployment registers it; this makes the
     check impossible to leave out. A failure is not remembered, so every decision refuses until
-    the keys are fixed. First decisions that overlap may each run the check: it is a read, so
+    the keys are fixed. A key a config provider owns that a binding also grants is logged
+    (``authz.config_grant_overlap``) rather than refused, once per tenant per process like the
+    rest; a binding written afterwards is not seen until the next start. First decisions that
+    overlap may each run the check: it is a read, so
     running it twice only costs a query, where a lock would serialize them.
     """
 
@@ -402,13 +485,20 @@ class ProviderKeyCheck:
 
     _verified: set[UUID | None] = attrs.field(factory=set[UUID | None], init=False)
 
-    async def ensure(
-        self,
-        query: DocumentQueryPort[ReadPermissionDefinition],
-        tenant_id: UUID | None,
-    ) -> None:
+    async def ensure(self, deps: AuthzGrantResolverDeps, tenant_id: UUID | None) -> None:
         if not self.providers or tenant_id in self._verified:
             return
 
-        await check_declared_keys(query, self.providers)
+        await check_declared_keys(deps.permission_qry, self.providers)
+
+        # Logged, not refused: the config provider's denial already makes such a binding grant
+        # nothing, and refusing here would let anyone who may write a binding stop every
+        # decision in the tenant. The startup step refuses it.
+        if bound := await find_config_grant_overlap(
+            deps.permission_qry,
+            (deps.rp_binding_qry, deps.pp_binding_qry, deps.gperm_binding_qry),
+            self.providers,
+        ):
+            logger.error("authz.config_grant_overlap", keys=bound, tenant_id=tenant_id)
+
         self._verified.add(tenant_id)

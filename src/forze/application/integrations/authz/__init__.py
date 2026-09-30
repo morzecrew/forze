@@ -1,5 +1,6 @@
 """Shared authz integration helpers over the authz contracts."""
 
+from .config_grants import ConfigGrants, ConfigGrantsProvider
 from .providers import (
     DEFAULT_PROVIDER_TIMEOUT,
     check_permission_providers,
@@ -11,6 +12,8 @@ from .providers import (
 
 __all__ = [
     "DEFAULT_PROVIDER_TIMEOUT",
+    "ConfigGrants",
+    "ConfigGrantsProvider",
     "check_permission_providers",
     "check_provider_timeout",
     "derive_permissions",

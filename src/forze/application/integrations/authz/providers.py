@@ -14,6 +14,8 @@ from forze.application.contracts.authz import (
 )
 from forze.base.exceptions import exc
 
+from .config_grants import check_config_grants_exclusive
+
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
 
@@ -24,12 +26,14 @@ DEFAULT_PROVIDER_TIMEOUT: Final = timedelta(seconds=2)
 
 
 def check_permission_providers(providers: Iterable[PermissionProvider]) -> None:
-    """Refuse a declaration nobody meant: a blank or repeated name, or keys that are not a
-    non-empty set of permission-key strings."""
+    """Refuse a declaration nobody meant: a blank or repeated name, keys that are not a
+    non-empty set of permission-key strings, or a key configuration grants own that another
+    provider declares too."""
 
+    declared = tuple(providers)
     names: set[str] = set()
 
-    for provider in providers:
+    for provider in declared:
         if not provider.name.strip() or provider.name in names:
             raise exc.configuration(
                 f"Permission provider name {provider.name!r} is blank or used twice; a derived "
@@ -57,6 +61,8 @@ def check_permission_providers(providers: Iterable[PermissionProvider]) -> None:
             )
 
         names.add(provider.name)
+
+    check_config_grants_exclusive(declared)
 
 
 def check_provider_timeout(timeout: timedelta | None) -> None:

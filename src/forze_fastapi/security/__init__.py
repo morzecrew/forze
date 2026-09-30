@@ -1,3 +1,4 @@
+from .authz import require_permission
 from .cookies import AuthnCookieCarrier
 from .openapi import apply_openapi_security
 from .resolvers import resolve_authn_ingress, resolve_tenant_identity
@@ -22,5 +23,6 @@ __all__ = [
     "apply_openapi_security",
     "resolve_authn_ingress",
     "origin_authority",
+    "require_permission",
     "resolve_tenant_identity",
 ]
