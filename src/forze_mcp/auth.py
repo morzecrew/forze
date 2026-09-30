@@ -26,9 +26,9 @@ False)``); finer per-agent ceilings come from the agent principal's authz grants
 The agent (delegation ``actor``) can come from the key itself: a key minted for a
 user→agent pair (``issue_api_key(..., actor_principal_id=...)``) carries its agent,
 so per-connection keys attribute to their own agent and revoke independently. The
-``agent=`` on :class:`AccessTokenIdentityResolver` is the **fallback** when the key
-carries none — pass it to give plain (non-delegation) keys a fixed agent, or omit it
-to bind the bare user.
+``agent=`` on :class:`AccessTokenIdentityResolver` is the operator's agent: a plain key
+binds it as the actor, and a delegation key's agent is chained under it, so both
+ceilings apply. Omit it to bind the bare user (or the user with the key's agent).
 """
 
 from uuid import UUID
@@ -200,11 +200,10 @@ class AccessTokenIdentityResolver(MCPIdentityResolver):
     attaches it as the delegation ``actor`` so the engine enforces the least-privilege
     intersection of the user's and the agent's grants.
 
-    :param agent: A **fallback** agent service principal attached as ``actor`` when
-        the verified key does not carry its own agent. A delegation key (one minted
-        for a user→agent pair) carries its agent on the credential and takes
-        precedence over this. ``None`` binds the bare user identity when the key
-        carries no agent either.
+    :param agent: The operator's agent service principal, attached as ``actor``. A
+        delegation key (one minted for a user→agent pair) carries its own agent, which is
+        chained under this one (user ← key agent ← operator agent) so both ceilings apply.
+        ``None`` binds the bare user identity, or the user with the key's agent.
     """
 
     agent: AuthnIdentity | None = None
@@ -219,14 +218,16 @@ class AccessTokenIdentityResolver(MCPIdentityResolver):
 
         identity = AuthnIdentity(principal_id=UUID(token.subject))
 
-        # A key-carried agent (a user→agent delegation key) wins over the fixed
-        # fallback, so per-connection keys attribute to their own agent.
+        # A key-carried agent (a user→agent delegation key) acts through the operator's
+        # agent rather than replacing it, so a user's key cannot drop the operator's
+        # ceiling: the engine intersects the user, the key's agent and the operator's.
         key_agent = token.claims.get(_AGENT_CLAIM)
-        actor = (
-            AuthnIdentity(principal_id=UUID(key_agent))
-            if isinstance(key_agent, str)
-            else self.agent
-        )
+        actor = self.agent
+
+        if isinstance(key_agent, str) and (
+            self.agent is None or UUID(key_agent) != self.agent.principal_id
+        ):
+            actor = AuthnIdentity(principal_id=UUID(key_agent), actor=self.agent)
 
         if actor is not None:
             identity = attrs.evolve(identity, actor=actor)

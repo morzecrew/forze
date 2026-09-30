@@ -174,26 +174,51 @@ class TestAccessTokenIdentityResolver:
         assert identity.actor is None
         assert tenant is None
 
+    @staticmethod
+    def _token(monkeypatch: pytest.MonkeyPatch, **claims: str) -> None:
+        token = AccessToken(token="t", client_id="c", scopes=[], subject=str(_PID), claims=claims)
+        monkeypatch.setattr(auth_mod, "get_access_token", lambda: token)
+
     @pytest.mark.asyncio
-    async def test_key_carried_agent_wins_over_fixed_fallback(
+    async def test_a_key_carried_agent_acts_through_the_operators(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Both ceilings apply: the user's key names its agent, and that agent acts through the
+        # agent the operator configured, so a key cannot drop the operator's agent.
+        key_agent = uuid4()
+        operator = AuthnIdentity(principal_id=uuid4())
+        self._token(monkeypatch, agent=str(key_agent))
+
+        identity, _ = await AccessTokenIdentityResolver(agent=operator).resolve()
+
+        assert identity == AuthnIdentity(
+            principal_id=_PID,
+            actor=AuthnIdentity(principal_id=key_agent, actor=operator),
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_key_naming_the_operators_agent_is_not_chained_twice(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        operator = AuthnIdentity(principal_id=uuid4())
+        self._token(monkeypatch, agent=str(operator.principal_id))
+
+        identity, _ = await AccessTokenIdentityResolver(agent=operator).resolve()
+
+        assert identity == AuthnIdentity(principal_id=_PID, actor=operator)
+
+    @pytest.mark.asyncio
+    async def test_a_key_carried_agent_without_an_operator_agent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         key_agent = uuid4()
-        fallback = AuthnIdentity(principal_id=uuid4())
-        token = AccessToken(
-            token="t",
-            client_id="c",
-            scopes=[],
-            subject=str(_PID),
-            claims={"agent": str(key_agent)},
+        self._token(monkeypatch, agent=str(key_agent))
+
+        identity, _ = await AccessTokenIdentityResolver().resolve()
+
+        assert identity == AuthnIdentity(
+            principal_id=_PID, actor=AuthnIdentity(principal_id=key_agent)
         )
-        monkeypatch.setattr(auth_mod, "get_access_token", lambda: token)
-
-        identity, _ = await AccessTokenIdentityResolver(agent=fallback).resolve()
-
-        assert identity is not None
-        assert identity.actor is not None
-        assert identity.actor.principal_id == key_agent  # the key's agent, not fallback
 
     @pytest.mark.asyncio
     async def test_unauthenticated_context_binds_nothing(

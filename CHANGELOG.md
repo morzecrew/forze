@@ -47,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A delegation key cannot name an arbitrary agent or drop the operator's.** Its agent must be another registered, active principal, checked at issue and rotation; over MCP it is chained under the operator's agent, so every ceiling applies.
+
 - **Tenant provisioning reaches the tenant it provisions.** `ObjectStorageTenantProvisioner` creates an onboarded tenant's bucket on that tenant's backend with a routed client, and works with a plain one; `PostgresSchemaTenantProvisioner` refuses a routed client, as the Mongo provisioner already does.
 
 - **A delegated call on a scope-guarded route is scoped for every principal in its chain.** `AuthzDocumentScopeWrap` scopes each actor too: a denied actor refuses the call, its row filters narrow the subject's, and an enforced delegation grant is checked. So does the sensitive-resource check.

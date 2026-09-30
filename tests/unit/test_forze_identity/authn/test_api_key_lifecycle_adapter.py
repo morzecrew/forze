@@ -391,3 +391,102 @@ class TestApiKeyPrefixConfig:
 
         with pytest.raises(exc, match="prefix"):
             svc.generate_key(prefix=" sk")
+
+
+# ....................... #
+
+
+def _eligible_except(*refused: object) -> AsyncMock:
+    """An eligibility gate refusing *refused*, as the policy-principal gate does."""
+
+    async def _check(principal_id: object) -> None:
+        if principal_id in refused:
+            raise exc.authentication("Principal not found")
+
+    return AsyncMock(side_effect=_check)
+
+
+class TestTheDelegationActorIsValidated:
+    """A delegation key names its agent: it must be another principal authentication accepts.
+
+    The same eligibility gate authentication runs on the actor, so a key cannot be minted
+    for an actor it could never authenticate with, nor name the subject as its own agent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_subject_cannot_be_its_own_actor(self) -> None:
+        pid = uuid4()
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = _eligible_except()
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=pid)
+
+        assert caught.value.kind.value == "validation"
+        assert caught.value.code == "delegate_invalid"
+        ak_cmd.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_actor_authentication_would_refuse_is_refused(self) -> None:
+        # Unknown and deactivated principals both fail the same gate.
+        pid, agent = uuid4(), uuid4()
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = _eligible_except(agent)
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=agent)
+
+        assert caught.value.kind.value == "validation"
+        assert caught.value.code == "delegate_invalid"
+        ak_cmd.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failure_checking_the_actor_is_not_masked(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        adapter = _adapter()
+
+        async def _check(principal_id: object) -> None:
+            if principal_id == agent:
+                raise exc.infrastructure("policy store down")
+
+        adapter.eligibility.require_authentication_allowed = AsyncMock(side_effect=_check)
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=agent)
+
+        assert caught.value.kind.value == "infrastructure"
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_an_actor_no_longer_eligible(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig())
+        key = "raw-key"
+        now = datetime.now(tz=UTC)
+        account = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=2,
+            created_at=now,
+            last_update_at=now,
+            principal_id=pid,
+            actor_principal_id=agent,
+            key_hash=svc.calculate_key_digest(key),
+            is_active=True,
+        )
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(return_value=account)
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        ak_cmd.update = AsyncMock()
+        adapter = _adapter(api_key_svc=svc, ak_qry=ak_qry, ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = _eligible_except(agent)
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.refresh_api_key(ApiKeyCredentials(key=key))
+
+        assert caught.value.code == "delegate_invalid"
+        ak_cmd.create.assert_not_awaited()
+        ak_cmd.update.assert_not_awaited()

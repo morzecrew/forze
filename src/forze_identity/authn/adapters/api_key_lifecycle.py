@@ -14,7 +14,7 @@ from forze.application.contracts.authn import (
     PrincipalEligibilityPort,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
 
@@ -108,12 +108,44 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
             )
 
         await self.eligibility.require_authentication_allowed(identity.principal_id)
+        await self._require_valid_actor(identity.principal_id, actor_principal_id)
 
         return await self._issue_for_principal(
             identity.principal_id,
             actor_principal_id=actor_principal_id,
             label=label,
         )
+
+    # ....................... #
+
+    async def _require_valid_actor(self, principal_id: UUID, actor_id: UUID | None) -> None:
+        """Refuse a delegation agent authentication would not accept for this key.
+
+        The actor is gated at authentication by the same eligibility check, so a key naming an
+        unknown or inactive principal could never be used; naming the subject itself would make
+        the key's owner its own agent. One message for every case, so a caller learns nothing
+        about which principal ids exist.
+        """
+
+        if actor_id is None:
+            return
+
+        refusal = exc.validation(
+            "The delegation agent must be another registered, active principal",
+            code="delegate_invalid",
+        )
+
+        if actor_id == principal_id:
+            raise refusal
+
+        try:
+            await self.eligibility.require_authentication_allowed(actor_id)
+
+        except CoreException as error:
+            if error.kind is not ExceptionKind.AUTHENTICATION:
+                raise
+
+            raise refusal from error
 
     # ....................... #
 
@@ -168,6 +200,8 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
             raise exc.authentication("Invalid API key")
 
         await self.eligibility.require_authentication_allowed(account.principal_id)
+        # An agent deactivated since issue would leave the rotated key unusable too.
+        await self._require_valid_actor(account.principal_id, account.actor_principal_id)
 
         # Rotate: issue a fresh key, then retire the presented one. Account fields
         # (prefix/expires_at/key_hash) are immutable, so refresh mints a new document
