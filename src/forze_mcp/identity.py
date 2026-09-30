@@ -91,7 +91,11 @@ class DelegatedIdentityResolver(MCPIdentityResolver):
 
 def _acting_through(identity: AuthnIdentity, agent: AuthnIdentity) -> AuthnIdentity:
     # A subject that is already a delegation keeps its chain: the agent acts through the
-    # innermost actor, so replacing that actor would drop its restrictions.
+    # innermost actor, so replacing that actor would drop its restrictions. An agent already
+    # innermost is not added again.
+    if identity.principal_id == agent.principal_id:
+        return identity
+
     if identity.actor is None:
         return attrs.evolve(identity, actor=agent)
 

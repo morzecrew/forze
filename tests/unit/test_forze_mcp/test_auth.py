@@ -135,6 +135,26 @@ class TestForzeApiKeyVerifier:
         assert token.claims["agent"] == str(agent)
 
 
+    @pytest.mark.asyncio
+    async def test_a_multi_hop_identity_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The bridge carries one agent; dropping the deeper hops would drop their ceilings.
+        async def _two_hops(self: object, credentials: object) -> AuthnResult:
+            return AuthnResult(
+                identity=AuthnIdentity(
+                    principal_id=_PID,
+                    actor=AuthnIdentity(
+                        principal_id=uuid4(), actor=AuthnIdentity(principal_id=uuid4())
+                    ),
+                )
+            )
+
+        monkeypatch.setattr(_StubApiKeyPort, "authenticate_with_api_key", _two_hops)
+
+        assert await _verifier().verify_token(_GOOD_KEY) is None
+
+
 # ....................... #
 
 
@@ -219,6 +239,44 @@ class TestAccessTokenIdentityResolver:
         assert identity == AuthnIdentity(
             principal_id=_PID, actor=AuthnIdentity(principal_id=key_agent)
         )
+
+    @pytest.mark.asyncio
+    async def test_an_enforced_grant_asks_each_hop_of_the_chain(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # With delegation grants enforced, the operator must grant may_act(op, K) for each
+        # agent its server runs, besides the user's may_act(K, user).
+        from forze.application.contracts.authz import AuthzScope, subject_from_authn
+        from forze.application.contracts.authz.value_objects.scoping import (
+            AuthzDocumentScope,
+            AuthzDocumentScopeRequest,
+        )
+        from forze.application.hooks.authz.plans import AuthzDocumentScopeWrap
+
+        key_agent, operator = uuid4(), AuthnIdentity(principal_id=uuid4())
+        self._token(monkeypatch, agent=str(key_agent))
+        identity, _ = await AccessTokenIdentityResolver(agent=operator).resolve()
+        assert identity is not None
+        asked: list[tuple[UUID, UUID]] = []
+
+        class _Scope:
+            async def scope_document(self, request: object) -> AuthzDocumentScope:
+                return AuthzDocumentScope()
+
+        class _Grants:
+            async def may_act(self, actor: UUID, subject: UUID, *, scope: object = None) -> bool:
+                asked.append((actor, subject))
+                return True
+
+        request = AuthzDocumentScopeRequest(
+            subject=subject_from_authn(identity),
+            scope=AuthzScope(),
+            document_name="d",
+            operation="list",
+        )
+        await AuthzDocumentScopeWrap._delegated_filters(_Scope(), _Grants(), request, None)  # pyright: ignore[reportPrivateUsage]
+
+        assert asked == [(key_agent, _PID), (operator.principal_id, key_agent)]
 
     @pytest.mark.asyncio
     async def test_unauthenticated_context_binds_nothing(

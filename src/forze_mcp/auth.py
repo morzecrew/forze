@@ -175,8 +175,12 @@ class ForzeApiKeyVerifier(TokenVerifier):
                 claims[_TENANT_KEY_CLAIM] = tenant.tenant_key
 
         # A delegation key resolves to an identity carrying its agent as actor; carry
-        # that agent's principal id so the resolver attaches it (single-hop in v1).
+        # that agent's principal id so the resolver attaches it. One hop only: a key stores
+        # one agent, and dropping deeper hops would drop their ceilings, so refuse them.
         if result.identity.actor is not None:
+            if result.identity.actor.actor is not None:
+                return None
+
             claims[_AGENT_CLAIM] = str(result.identity.actor.principal_id)
 
         return AccessToken(
