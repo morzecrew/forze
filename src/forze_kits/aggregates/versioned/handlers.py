@@ -177,7 +177,9 @@ class CorrectDocument[Out: BM, D: DocWithVersioning, C: BaseDTO, U: UpdateCmdWit
                 root_id=root_id,
                 from_id=args.id,
                 to_id=successor_id,
-                actor_id=identity.principal_id if identity is not None else None,
+                actor_id=identity.performer_id if identity is not None else None,
+                subject_id=identity.principal_id if identity is not None else None,
+                actor_ids=list(identity.actor_ids) if identity is not None else [],
                 reason=args.reason,
             ),
         )

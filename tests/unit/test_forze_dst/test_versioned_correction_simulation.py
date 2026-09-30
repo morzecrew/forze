@@ -84,6 +84,8 @@ class CorrectionRead(ReadDocument):
     from_id: Any = None
     to_id: Any = None
     actor_id: Any = None
+    subject_id: Any = None
+    actor_ids: list[Any] = []
     reason: str = ""
 
 

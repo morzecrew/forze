@@ -88,6 +88,8 @@ class CorrectionRead(ReadDocument):
     from_id: UUID
     to_id: UUID
     actor_id: UUID | None = None
+    subject_id: UUID | None = None
+    actor_ids: list[UUID] = []
     reason: str
 
 
@@ -149,6 +151,8 @@ async def _tables(pg_client: PostgresClient) -> tuple[str, str]:
             from_id uuid NOT NULL,
             to_id uuid NOT NULL,
             actor_id uuid,
+            subject_id uuid,
+            actor_ids uuid[] NOT NULL DEFAULT '{{}}',
             reason text NOT NULL
         );
         """

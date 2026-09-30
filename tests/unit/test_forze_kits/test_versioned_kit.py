@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -26,7 +26,7 @@ from forze.application.execution.operations import OperationKind, run_operation
 from forze.application.hooks.audit import Audited
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import utcnow
-from forze.domain.models import ReadDocument
+from forze.domain.models import Document, ReadDocument
 from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document.dto import (
     DocumentIdDTO,
@@ -93,6 +93,8 @@ class CorrectionRead(ReadDocument):
     from_id: UUID
     to_id: UUID
     actor_id: UUID | None = None
+    subject_id: UUID | None = None
+    actor_ids: list[UUID] = []
     reason: str
 
 
@@ -221,6 +223,75 @@ class TestACorrectionSupersedes:
         assert record.from_id == first.id
         assert record.to_id == second.id
         assert record.reason == "meter misread"
+
+    async def test_a_delegated_correction_records_the_agent_that_made_it(self) -> None:
+        # "Who corrected it" is the performer: for a delegated call, the agent, not the user
+        # it acted for.
+        from forze.application.contracts.authn import AuthnIdentity
+
+        user, agent = uuid4(), uuid4()
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+
+            with ctx.inv_ctx.bind_identity(
+                authn=AuthnIdentity(principal_id=user, actor=AuthnIdentity(principal_id=agent))
+            ):
+                await _correct(reg, ctx, first, kwh=120)
+
+            [record] = (await ctx.doc.query(CORRECTIONS).find_many()).hits
+
+        assert (record.actor_id, record.subject_id, record.actor_ids) == (agent, user, [agent])
+
+    async def test_a_correction_through_two_agents_records_the_whole_chain(self) -> None:
+        # The nearest agent performed it, on the user's behalf, acting through an inner agent:
+        # none of the three is lost from the record.
+        from forze.application.contracts.authn import AuthnIdentity
+
+        user, agent, inner = uuid4(), uuid4(), uuid4()
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+
+            with ctx.inv_ctx.bind_identity(
+                authn=AuthnIdentity(
+                    principal_id=user,
+                    actor=AuthnIdentity(principal_id=agent, actor=AuthnIdentity(principal_id=inner)),
+                )
+            ):
+                await _correct(reg, ctx, first, kwh=120)
+
+            [record] = (await ctx.doc.query(CORRECTIONS).find_many()).hits
+
+        assert (record.actor_id, record.subject_id, record.actor_ids) == (
+            agent,
+            user,
+            [agent, inner],
+        )
+
+    async def test_a_direct_correction_records_its_principal_twice_and_no_chain(self) -> None:
+        from forze.application.contracts.authn import AuthnIdentity
+
+        user = uuid4()
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+
+            with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=user)):
+                await _correct(reg, ctx, first, kwh=120)
+
+            [record] = (await ctx.doc.query(CORRECTIONS).find_many()).hits
+
+        assert (record.actor_id, record.subject_id, record.actor_ids) == (user, user, [])
 
     async def test_a_stale_expected_version_is_a_conflict(self) -> None:
         runtime = build_runtime(MockDepsModule())
@@ -963,6 +1034,22 @@ class TestOrdinaryWritesCannotForgeLineage:
 # ....................... #
 
 
+class _UnattributedRead(ReadDocument):
+    root_id: UUID
+    from_id: UUID
+    to_id: UUID
+    actor_id: UUID | None = None
+    reason: str
+
+
+class _UnattributedDoc(Document):
+    root_id: UUID
+    from_id: UUID
+    to_id: UUID
+    actor_id: UUID | None = None
+    reason: str
+
+
 class TestTheReadModelMustExposeWhatTheKitReads:
     @staticmethod
     def _spec(read: type, create: type = ReadingCreate) -> DocumentSpec:
@@ -992,6 +1079,46 @@ class TestTheReadModelMustExposeWhatTheKitReads:
 
         with pytest.raises(CoreException, match="does not expose"):
             AggregateKit(spec=self._spec(Partial), versioned=POLICY).registry(tx_route=_TX)
+
+    @pytest.mark.parametrize(
+        ("options", "missing"),
+        [
+            pytest.param({"read": _UnattributedRead}, ["actor_ids", "subject_id"], id="read-omits"),
+            pytest.param(
+                {
+                    "write": DocumentWriteTypes(
+                        domain=_UnattributedDoc, create_cmd=CreateCorrectionCmd
+                    )
+                },
+                ["actor_ids", "subject_id"],
+                id="domain-omits",
+            ),
+            pytest.param({"lenient_read_fields": {"actor_ids"}}, ["actor_ids"], id="lenient"),
+            pytest.param(
+                {"read_conformity": "lenient"},
+                ["actor_id", "actor_ids", "subject_id"],
+                id="lenient-conformity",
+            ),
+            pytest.param({"write_omit_fields": {"actor_ids"}}, ["actor_ids"], id="write-omitted"),
+        ],
+    )
+    def test_a_correction_spec_that_loses_its_attribution_is_refused(
+        self, options: dict[str, Any], missing: list[str]
+    ) -> None:
+        # Every correction records who made it and for whom; a field that is never stored, or is
+        # rehydrated from its default on read, reads back empty although the kit recorded it.
+        corrections = DocumentSpec(
+            **{"name": "reading_corrections", "read": CorrectionRead, "write": CORRECTIONS.write}
+            | options
+        )
+
+        with pytest.raises(CoreException) as caught:
+            AggregateKit(
+                spec=READINGS, versioned=VersionedPolicy(corrections=corrections)
+            ).registry(tx_route=_TX)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.details["missing"] == missing  # type: ignore[index]
 
     def test_a_write_omitted_field_cannot_be_counted_lost(self) -> None:
         """A field omitted from writes is on the read model by construction.

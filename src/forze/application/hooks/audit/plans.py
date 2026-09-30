@@ -28,7 +28,6 @@ from forze.application.contracts.audit import (
     AuditPort,
     AuditSpec,
 )
-from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.execution import (
     Failure,
     Finally,
@@ -135,8 +134,9 @@ class Audited:
         return AuditEntry(
             action=self.spec.action,
             outcome=outcome,
-            actor_id=_actor_id(identity),
+            actor_id=identity.performer_id if identity is not None else None,
             subject_id=identity.principal_id if identity is not None else None,
+            actor_ids=identity.actor_ids if identity is not None else (),
             at=utcnow(),
             object_ref=self.object_ref(args, result) if self.object_ref and not bare else None,
             metadata=self.spec.check_metadata(metadata),
@@ -193,13 +193,6 @@ class Audited:
 
 def _refused(error: Exception) -> bool:
     return isinstance(error, CoreException) and error.code == AUDIT_METADATA_REFUSED
-
-
-def _actor_id(identity: AuthnIdentity | None) -> UUID | None:
-    if identity is None:
-        return None
-
-    return identity.actor.principal_id if identity.actor is not None else identity.principal_id
 
 
 # ....................... #

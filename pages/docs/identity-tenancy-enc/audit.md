@@ -47,7 +47,11 @@ registry = audited.bind(
   refused when the spec is declared: an allowlist naming one is a declaration nobody meant.
 - **The actor and subject come from the authenticated identity**, never from the arguments.
   `subject_id` is the principal the call runs for; `actor_id` is who performed it — the same
-  principal, or the delegate when the call is delegated.
+  principal, or the nearest delegate when the call is delegated. `actor_ids` holds the whole
+  delegation chain, nearest first, so an agent acting through another is on record too, and the
+  trail can be read by any of them (`{"$values": {"actor_ids": {"$superset": [agent]}}}`). The
+  nearest actor is not always the one you configured: on the MCP path the server's own agent
+  sits deeper in the chain, and `actor_ids` has it.
 
 ## What gets recorded, and where
 
@@ -119,8 +123,8 @@ for it is logged, never raised in its place.
 
 ## The collection
 
-The trail is an ordinary document collection, so it is tenant-scoped, queryable, exportable and
-encryptable like any other. `forze_kits.integrations.audit` provides the spec and the port:
+The trail is an ordinary document collection, so it is tenant-scoped, queryable and exportable
+like any other; only its `metadata` can be sealed, since the other fields are what it is queried by. `forze_kits.integrations.audit` provides the spec and the port:
 
 ```python
 from forze_kits.integrations.audit import AuditDepsModule, audit_record_spec
@@ -144,11 +148,28 @@ CREATE TABLE audit_events (
     outcome text NOT NULL,
     actor_id uuid,
     subject_id uuid,
+    actor_ids uuid[] NOT NULL DEFAULT '{}',
     object_type text,
     object_id text,
     metadata jsonb NOT NULL DEFAULT '{}',
     at timestamptz NOT NULL
 );
+```
+
+A table created before `actor_ids` existed needs the column. Until it is added, startup schema
+validation refuses the table (`missing columns ['actor_ids']`), and without that validation
+every audited operation fails closed on the write:
+
+```sql
+ALTER TABLE audit_events ADD COLUMN actor_ids uuid[] NOT NULL DEFAULT '{}';
+```
+
+On MongoDB, rows written before the field existed have no `actor_ids` at all. They read back as
+`[]`, but `{"$empty": true}` does not match a missing field, so a "direct calls only" query there
+must also accept its absence:
+
+```python
+{"$or": [{"$values": {"actor_ids": {"$empty": True}}}, {"$values": {"actor_ids": {"$null": True}}}]}
 ```
 
 To keep the trail somewhere else, implement `AuditPort` — one `record(entry)` that joins the

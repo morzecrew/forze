@@ -134,7 +134,21 @@ default you can lower.
 
 A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
 route, its encryption policy and its retention are facts only you hold. Its create command must be
-`CreateCorrectionCmd`.
+`CreateCorrectionCmd`. Each correction records who made it, as an audit row does: `actor_id` is the
+principal, or for a delegated call the nearest actor in its chain; `subject_id` is the principal it
+acted for; `actor_ids` is the whole chain, nearest first. Its domain and read models must declare
+all three, and none may be lenient (`read_conformity="lenient"` makes every defaulted field lenient)
+or in `write_omit_fields`; otherwise the kit refuses the declaration rather than lose them on every
+write or read. A Postgres corrections table
+created before these existed needs them — until then every correction fails on the write:
+
+```sql
+ALTER TABLE <corrections> ADD COLUMN subject_id uuid;
+ALTER TABLE <corrections> ADD COLUMN actor_ids uuid[] NOT NULL DEFAULT '{}';
+```
+
+Rows a delegated correction wrote before this release hold the user it acted for in `actor_id`;
+later rows hold the agent.
 
 ## Reading what applied on a day
 

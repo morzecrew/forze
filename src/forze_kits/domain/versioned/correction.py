@@ -2,6 +2,8 @@
 
 from uuid import UUID
 
+from pydantic import Field
+
 from forze.domain.models import CoreModel, CreateDocumentCmd, Document
 
 # ----------------------- #
@@ -29,11 +31,20 @@ class CorrectionMixin(CoreModel):
     """The version that is current now."""
 
     actor_id: UUID | None = None
-    """Who corrected it, read from the invocation's identity.
+    """Who corrected it, read from the invocation's identity: the principal, or for a delegated
+    call the nearest actor in its chain.
 
     ``None`` when the correcting call carried no authenticated identity — a migration or an
     internal job. Recorded as absent rather than refused, because a correction with no actor is
     still a correction and losing the record would be worse than losing the name."""
+
+    subject_id: UUID | None = None
+    """On whose behalf it was corrected — the principal a delegated call acted for; the same as
+    ``actor_id`` for a direct call."""
+
+    actor_ids: list[UUID] = Field(default_factory=list)
+    """The whole delegation chain, nearest actor first (``actor_id`` is the first); empty for a
+    direct call."""
 
     reason: str
     """Why, in the author's own vocabulary."""

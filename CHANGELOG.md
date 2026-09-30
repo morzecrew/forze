@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Audit rows and versioned corrections record every principal of a delegation.** `actor_id` stays the nearest actor; `actor_ids` holds the whole chain, and a correction gains `subject_id`; its spec must store and read back all three. **Required migration** on Postgres (see docs); until then those writes fail closed.
+
+- **A delegated correction's `actor_id` is the agent that made it** (**behaviour change**). Rows written by 0.8.0 to 0.9.0 hold the user it acted for there; later rows hold the agent, and the user is in `subject_id`.
+
 - **An idempotency key reused by another delegation chain or tenant runs its own operation.** A claim is scoped to the subject and its whole actor chain, and a tenant-aware Postgres store scopes it by tenant, as the other stores do; direct callers' claims are unchanged.
 
 - **A delegation key's agent is checked, and cannot drop the operator's.** It must be another eligible principal (a `service` one with `authz_route` set), checked at issue and rotation. Over MCP it is chained under the operator's agent; with enforced grants that needs `may_act(operator, agent)`.

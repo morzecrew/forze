@@ -58,6 +58,7 @@ CREATE TABLE audit_events (
     outcome text NOT NULL,
     actor_id uuid,
     subject_id uuid,
+    actor_ids uuid[] NOT NULL DEFAULT '{}',
     object_type text,
     object_id text,
     metadata jsonb NOT NULL DEFAULT '{}',
@@ -281,3 +282,26 @@ async def test_every_metadata_scalar_survives_jsonb(pg_client: PostgresClient) -
         "none": None,
     }
     assert type(row.metadata["flag"]) is bool and type(row.metadata["count"]) is int
+
+
+async def test_a_delegation_chain_round_trips_and_is_queryable_by_any_actor(
+    pg_client: PostgresClient,
+) -> None:
+    agent, inner = uuid4(), uuid4()
+    chain = AuthnIdentity(
+        principal_id=USER,
+        actor=AuthnIdentity(principal_id=agent, actor=AuthnIdentity(principal_id=inner)),
+    )
+    ctx = _ctx(pg_client)
+
+    with ctx.inv_ctx.bind_identity(authn=chain):
+        await run_operation(_registry(Audited(spec=SPEC)), "op", _Args(), ctx)
+
+    await _run(_registry(Audited(spec=SPEC)), ctx)
+
+    page = await ctx.document.query(TRAIL).find_many(
+        filters={"$values": {"actor_ids": {"$superset": [inner]}}}
+    )
+
+    [row] = page.hits
+    assert (row.actor_id, row.subject_id, row.actor_ids) == (agent, USER, [agent, inner])
