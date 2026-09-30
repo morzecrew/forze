@@ -136,8 +136,10 @@ A correction writes two aggregates, so the corrections relation is yours to decl
 route, its encryption policy and its retention are facts only you hold. Its create command must be
 `CreateCorrectionCmd`. Each correction records who made it, as an audit row does: `actor_id` is the
 principal, or for a delegated call the nearest actor in its chain; `subject_id` is the principal it
-acted for; `actor_ids` is the whole chain, nearest first. Its read model must declare all three, or
-the kit refuses the declaration rather than drop them on every read. A Postgres corrections table
+acted for; `actor_ids` is the whole chain, nearest first. Its domain and read models must declare
+all three, and none may be lenient (`read_conformity="lenient"` makes every defaulted field lenient)
+or in `write_omit_fields`; otherwise the kit refuses the declaration rather than lose them on every
+write or read. A Postgres corrections table
 created before these existed needs them — until then every correction fails on the write:
 
 ```sql

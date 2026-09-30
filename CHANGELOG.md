@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Audit rows and versioned corrections record every principal of a delegation.** `actor_id` stays the nearest actor; new `actor_ids` holds the whole chain, and a correction gains `subject_id`, which its read model must declare. **Required migration** on Postgres (see the docs); until then those writes fail closed.
+- **Audit rows and versioned corrections record every principal of a delegation.** `actor_id` stays the nearest actor; `actor_ids` holds the whole chain, and a correction gains `subject_id`; its spec must store and read back all three. **Required migration** on Postgres (see docs); until then those writes fail closed.
 
 - **A delegated correction's `actor_id` is the agent that made it** (**behaviour change**). Rows written by 0.8.0 to 0.9.0 hold the user it acted for there; later rows hold the agent, and the user is in `subject_id`.
 

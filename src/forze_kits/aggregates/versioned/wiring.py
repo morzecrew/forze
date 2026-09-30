@@ -377,26 +377,33 @@ _CORRECTION_ATTRIBUTION: Final = ("actor_id", "subject_id", "actor_ids")
 """What a correction records about who made it and for whom."""
 
 
-def _assert_correction_read_model(corrections: DocumentSpec[Any, Any, Any, Any]) -> None:
-    """Refuse a correction read model that cannot read back who made a correction.
+def _assert_correction_attribution(corrections: DocumentSpec[Any, Any, Any, Any]) -> None:
+    """Refuse a correction spec that cannot store and read back who made a correction.
 
-    The kit writes the performer, the subject and the delegation chain on every correction; a
-    read model that does not declare them drops them on every read, so "who corrected this, and
-    for whom" has no answer although the store holds it.
+    The kit writes the performer, the subject and the delegation chain on every correction. A
+    field the domain model does not declare, or that :attr:`~DocumentSpec.write_omit_fields`
+    names, is never stored; one the read model does not declare, or that is lenient, is
+    rehydrated from its default on every read. Either way "who corrected this, and for whom"
+    reads back empty although the kit recorded it.
 
-    :raises CoreException: ``configuration`` naming what is missing.
+    :raises CoreException: ``configuration`` naming the fields that do not round-trip.
     """
 
-    missing = [
-        name for name in _CORRECTION_ATTRIBUTION if name not in corrections.read.model_fields
-    ]
+    domain = corrections.write["domain"].model_fields if corrections.write is not None else {}
+    dropped = corrections.resolved_lenient_read_fields | corrections.write_omit_fields
+    missing = sorted(
+        name
+        for name in _CORRECTION_ATTRIBUTION
+        if name not in corrections.read.model_fields or name not in domain or name in dropped
+    )
 
     if missing:
         raise exc.configuration(
-            f"Correction spec {corrections.name!r} has a read model that does not declare "
-            f"{sorted(missing)}. Every correction records who made it and for whom; declare "
-            "those fields so the record can be read back.",
-            details={"document": corrections.name, "missing": sorted(missing)},
+            f"Correction spec {corrections.name!r} does not store and read back {missing}. "
+            "Every correction records who made it and for whom; declare those fields on the "
+            "domain and read models, and keep them out of lenient_read_fields and "
+            "write_omit_fields (read_conformity='lenient' makes defaulted fields lenient).",
+            details={"document": corrections.name, "missing": missing},
         )
 
 
@@ -414,15 +421,16 @@ def versioned_wiring(
 ) -> VersionedWiring:
     """Build the reusable versioned-facts wiring for *spec*.
 
-    Refuses at construction on either of two counts, both of which would otherwise surface as a
+    Refuses at construction on any of three counts, each of which would otherwise surface as a
     wrong answer rather than an error: a spec that does not declare both storage guarantees (the
-    kit's correctness rests on them rather than on its own write path), and a read model that
-    does not expose everything the kit reads off it.
+    kit's correctness rests on them rather than on its own write path), a read model that does
+    not expose everything the kit reads off it, and a correction spec that cannot store and read
+    back who made a correction.
     """
 
     VersionedPolicy.assert_guarantees(spec)
     _assert_read_model(spec)
-    _assert_correction_read_model(policy.corrections)
+    _assert_correction_attribution(policy.corrections)
 
     return VersionedWiring(
         spec=spec,
