@@ -38,7 +38,14 @@ transaction, and the handler.
   operation and replays its own result, and neither is told the other used it. An agent
   retrying its own request for a user replays; the user, or another agent, reusing that
   key runs its own operation under its own authorization. Calls with no authenticated
-  principal share one anonymous space of their own.
+  principal share one anonymous space of their own. A tenant-aware store keeps each
+  tenant's claims apart, whichever caller took them.
+
+!!! note "Upgrading to chain-scoped claims"
+    A delegated call's claim taken before this scope was stored under the subject's own
+    key, so until its window lapses the subject acting directly replays a record an agent
+    produced. A tenant-aware Postgres store now carries the tenant in its keys, so a claim
+    taken there before the upgrade is not replayed after it, once, within its window.
 
 Two identities ride on a claim, and they answer different questions:
 

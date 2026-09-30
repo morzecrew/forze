@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **An idempotency key reused by a different delegation chain runs its own operation.** A claim is scoped to the subject and its whole actor chain, so a stored result is replayed only to the chain that produced it; direct callers' claims are unchanged.
+- **An idempotency key reused by another delegation chain or tenant runs its own operation.** A claim is scoped to the subject and its whole actor chain, and a tenant-aware Postgres store scopes it by tenant, as the other stores do; direct callers' claims are unchanged.
 
 - **Tenant provisioning reaches the tenant it provisions.** `ObjectStorageTenantProvisioner` creates an onboarded tenant's bucket on that tenant's backend with a routed client, and works with a plain one; `PostgresSchemaTenantProvisioner` refuses a routed client, as the Mongo provisioner already does.
 

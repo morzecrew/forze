@@ -49,6 +49,8 @@ they agree about it either.
     replays, while the subject acting directly, another agent, or the same agents in another
     order run their own operation — each under its own authorization — rather than being
     served a record another chain produced.
+17. A tenant-aware store keeps tenants apart: the same caller — one principal, one chain, or
+    no one — using one key in two tenants runs its own operation in each.
 
 Check 12 is the one that used to be impossible. Two duplicates of one request carry the
 same ``op``, key and ``payload_hash``, so an operation that outlived its window and found
@@ -91,6 +93,7 @@ from forze.application.contracts.idempotency import (
     IdempotencyRecord,
     scoped_claim_key,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
@@ -209,6 +212,16 @@ def as_principal(
         identity = AuthnIdentity(principal_id=principal, actor=actor)
 
     return attrs.evolve(store, principal_provider=lambda: identity)  # type: ignore[misc]
+
+
+def in_tenant(store: IdempotencyPort, tenant_id: UUID) -> IdempotencyPort:
+    """*store* made tenant-aware and bound to *tenant_id*, the way a tenant-aware route wires it."""
+
+    return attrs.evolve(  # type: ignore[misc]
+        store,
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant_id),
+    )
 
 
 Check = Callable[[IdempotencyHarness], Any]
@@ -572,6 +585,29 @@ async def check_another_chain_never_meets_a_claim(h: IdempotencyHarness) -> None
     assert spelled is None, h.backend
 
 
+
+async def check_two_tenants_with_one_key_never_meet(h: IdempotencyHarness) -> None:
+    """One caller, one key, two tenants: the second tenant runs its own operation.
+
+    A tenant-aware store may share one table, collection or keyspace across tenants, so the
+    claim itself has to say whose tenant it is, whoever the caller is.
+    """
+
+    user, agent = uuid4(), uuid4()
+    callers = {"principal": (user,), "chain": (user, agent), "anonymous": (None,)}
+
+    for name, (principal, *actors) in callers.items():
+        key = h.key()
+        first = in_tenant(as_principal(h.store, principal, *actors), uuid4())
+
+        assert await first.begin(OP, key, HASH_A) is None, (h.backend, name)
+        await first.commit(OP, key, HASH_A, _record(RESULT_A))
+
+        other = in_tenant(as_principal(h.store, principal, *actors), uuid4())
+
+        assert await other.begin(OP, key, HASH_A) is None, (h.backend, name)
+
+
 # ....................... #
 
 IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
@@ -592,4 +628,5 @@ IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
     check_the_anonymous_space_meets_no_principal,
     check_a_delegated_retry_replays_its_own_claim,
     check_another_chain_never_meets_a_claim,
+    check_two_tenants_with_one_key_never_meet,
 )

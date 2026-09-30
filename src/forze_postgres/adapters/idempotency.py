@@ -140,6 +140,22 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixi
 
     # ....................... #
 
+    def _stored_key(self, key: str) -> str:
+        """*key* scoped to its caller and, on a tenant-aware store, its tenant.
+
+        The table's identity is ``(op, idem_key)`` with no tenant column, and a tenant-aware
+        store may resolve one relation for every tenant, so the tenant rides in the key — as
+        the other stores carry it in theirs. A store that is not tenant-aware keeps its keys
+        byte-identical.
+        """
+
+        scoped = self.claim_key(key)
+        tenant_id = self.require_tenant_if_aware()
+
+        return scoped if tenant_id is None else f"t:{tenant_id}:{scoped}"
+
+    # ....................... #
+
     async def _has_owner_column(self, table: PostgresQualifiedName) -> bool:
         """Whether *table* carries the optional ``owner`` column.
 
@@ -336,7 +352,7 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixi
         if not key:
             return None
 
-        key = self.claim_key(key)
+        key = self._stored_key(key)
 
         table = await self._table()
         owner_column, owner_value, owner_update = self._owner_insert(
@@ -425,7 +441,7 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixi
         if not key:
             return
 
-        key = self.claim_key(key)
+        key = self._stored_key(key)
 
         table = await self._table()
         owner_sql, owner_params = self._owner_predicate(await self._has_owner_column(table))
@@ -472,7 +488,7 @@ class PostgresIdempotencyStore(TenancyMixin, ClaimOwnerMixin, ClaimPrincipalMixi
         if not key:
             return
 
-        key = self.claim_key(key)
+        key = self._stored_key(key)
 
         table = await self._table()
         owner_sql, owner_params = self._owner_predicate(await self._has_owner_column(table))
