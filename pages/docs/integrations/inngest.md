@@ -95,5 +95,6 @@ shutdown window.
 - The execution-context metadata travels in a `_forze` envelope and is restored
   in the worker. The identity and tenant it claims are bound only with
   `bind_identity_from_event=True`, for trusted producers; a delegated identity then keeps its
-  actor chain.
+  actor chain. An identity that does not decode is ignored by a function that does not bind
+  it, and stops one that does with a `NonRetriableError`; malformed tracing ids are dropped.
 - Steps resolve only inside a running function.
