@@ -30,6 +30,7 @@ class AuditDoc(Document):
     outcome: AuditOutcome
     actor_id: UUID | None = None
     subject_id: UUID | None = None
+    actor_ids: list[UUID] = Field(default_factory=list)
     object_type: str | None = None
     object_id: str | None = None
     metadata: dict[str, AuditScalar] = Field(default_factory=dict)
@@ -41,6 +42,7 @@ class AuditCreate(BaseDTO):
     outcome: AuditOutcome
     actor_id: UUID | None = None
     subject_id: UUID | None = None
+    actor_ids: list[UUID] = Field(default_factory=list)
     object_type: str | None = None
     object_id: str | None = None
     metadata: dict[str, AuditScalar] = Field(default_factory=dict)
@@ -62,6 +64,10 @@ class AuditRecord(ReadDocument):
     subject_id: UUID | None = None
     """On whose behalf it ran."""
 
+    actor_ids: list[UUID] = Field(default_factory=list)
+    """The whole delegation chain, nearest actor first (``actor_id`` is the first); empty for a
+    direct call."""
+
     object_type: str | None = None
     """The kind of object it acted on, when the operation said."""
 
@@ -81,7 +87,7 @@ AuditDocumentSpec = DocumentSpec[AuditRecord, AuditDoc, AuditCreate, BaseDTO]
 """The audit collection's spec type (only the read model is public)."""
 
 _QUERIED_FIELDS: Final = frozenset(
-    {"action", "outcome", "actor_id", "subject_id", "object_type", "object_id", "at"}
+    {"action", "outcome", "actor_id", "subject_id", "actor_ids", "object_type", "object_id", "at"}
 )
 """What a trail is read by: "every disclosure of this record", "everything this actor did"."""
 

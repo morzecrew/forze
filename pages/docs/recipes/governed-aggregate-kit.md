@@ -134,7 +134,8 @@ default you can lower.
 
 A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
 route, its encryption policy and its retention are facts only you hold. Its create command must be
-`CreateCorrectionCmd`.
+`CreateCorrectionCmd`. Each correction records who made it: the principal, or for a delegated call
+the agent that performed it.
 
 ## Reading what applied on a day
 

@@ -32,3 +32,22 @@ class AuthnIdentity:
         """Whether this identity is acting on behalf of another (an actor is attached)."""
 
         return self.actor is not None
+
+    @property
+    def performer_id(self) -> UUID:
+        """The principal performing the call: the nearest actor when delegated, else itself."""
+
+        return self.actor.principal_id if self.actor is not None else self.principal_id
+
+    @property
+    def actor_ids(self) -> tuple[UUID, ...]:
+        """The delegation chain, nearest actor first; empty for a direct call."""
+
+        chain: list[UUID] = []
+        actor = self.actor
+
+        while actor is not None:
+            chain.append(actor.principal_id)
+            actor = actor.actor
+
+        return tuple(chain)

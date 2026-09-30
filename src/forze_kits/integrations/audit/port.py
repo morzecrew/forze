@@ -40,6 +40,7 @@ class DocumentAuditPort(AuditPort):
             outcome=entry.outcome,
             actor_id=entry.actor_id,
             subject_id=entry.subject_id,
+            actor_ids=list(entry.actor_ids),
             object_type=ref.type if ref is not None else None,
             object_id=ref.id if ref is not None else None,
             metadata=dict(entry.metadata),

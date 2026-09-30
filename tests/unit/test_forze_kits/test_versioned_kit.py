@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -221,6 +221,28 @@ class TestACorrectionSupersedes:
         assert record.from_id == first.id
         assert record.to_id == second.id
         assert record.reason == "meter misread"
+
+    async def test_a_delegated_correction_records_the_agent_that_made_it(self) -> None:
+        # "Who corrected it" is the performer: for a delegated call, the agent, not the user
+        # it acted for.
+        from forze.application.contracts.authn import AuthnIdentity
+
+        user, agent = uuid4(), uuid4()
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+
+            with ctx.inv_ctx.bind_identity(
+                authn=AuthnIdentity(principal_id=user, actor=AuthnIdentity(principal_id=agent))
+            ):
+                await _correct(reg, ctx, first, kwh=120)
+
+            [record] = (await ctx.doc.query(CORRECTIONS).find_many()).hits
+
+        assert record.actor_id == agent
 
     async def test_a_stale_expected_version_is_a_conflict(self) -> None:
         runtime = build_runtime(MockDepsModule())

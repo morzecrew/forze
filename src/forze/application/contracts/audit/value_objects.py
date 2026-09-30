@@ -71,6 +71,10 @@ class AuditEntry:
     subject_id: UUID | None
     """The principal it ran for; ``None`` for an unauthenticated call."""
 
+    actor_ids: tuple[UUID, ...] = ()
+    """The whole delegation chain, nearest actor first — ``actor_id`` is its first entry;
+    empty for a direct or unauthenticated call. An agent acting through another is here too."""
+
     at: datetime
     """When it was recorded."""
 

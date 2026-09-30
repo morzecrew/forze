@@ -337,6 +337,46 @@ class TestTheActor:
 
         [row] = await _rows(ctx)
         assert (row.actor_id, row.subject_id) == (AGENT, USER)
+        assert row.actor_ids == [AGENT]
+
+    async def test_a_direct_call_records_no_chain(self) -> None:
+        ctx = _ctx()
+
+        await _run(_registry(Audited(spec=SPEC)), ctx)
+
+        [row] = await _rows(ctx)
+        assert (row.actor_id, row.actor_ids) == (USER, [])
+
+    async def test_every_hop_of_a_chain_is_recorded_nearest_first(self) -> None:
+        # The nearest actor stays in actor_id; the one it acted through is kept too, so an
+        # agent working through another is not lost from the trail.
+        ctx = _ctx()
+        inner = uuid4()
+        chain = AuthnIdentity(
+            principal_id=USER,
+            actor=AuthnIdentity(principal_id=AGENT, actor=AuthnIdentity(principal_id=inner)),
+        )
+
+        await _run(_registry(Audited(spec=SPEC)), ctx, identity=chain)
+
+        [row] = await _rows(ctx)
+        assert (row.actor_id, row.subject_id, row.actor_ids) == (AGENT, USER, [AGENT, inner])
+
+    async def test_the_trail_is_read_by_any_actor_in_a_chain(self) -> None:
+        ctx = _ctx()
+        inner = uuid4()
+        chain = AuthnIdentity(
+            principal_id=USER,
+            actor=AuthnIdentity(principal_id=AGENT, actor=AuthnIdentity(principal_id=inner)),
+        )
+
+        await _run(_registry(Audited(spec=SPEC)), ctx, identity=chain)
+        await _run(_registry(Audited(spec=SPEC)), ctx)
+
+        page = await ctx.document.query(TRAIL).find_many(
+            filters={"$values": {"actor_ids": {"$superset": [inner]}}}
+        )
+        assert [row.subject_id for row in page.hits] == [USER]
 
 
 class TestReads:
