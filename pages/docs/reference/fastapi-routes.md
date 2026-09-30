@@ -433,3 +433,38 @@ open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open
 
 This **documents** auth; it doesn't enforce it — enforcement stays in the engine
 (the `AuthnRequired`/authz hooks) and identity extraction in the middleware.
+
+## Match OpenAPI to what the app serves
+
+FastAPI documents its own 422 body (`HTTPValidationError`) on every route that
+takes input, but the Forze exception handlers answer errors — a failed request
+parse included — with the Forze envelope. Descriptions come from docstrings, so
+reST such as ``:class:`~shop.Order` `` reaches the rendered docs as written. One
+call fixes both:
+
+```python
+from forze_fastapi import apply_openapi_conventions
+
+# After every router is attached, and after apply_openapi_security:
+apply_openapi_conventions(app)
+```
+
+Each FastAPI 422 becomes the `ForzeErrorResponse` envelope (`detail`, optional
+`context`), and every operation without its own `default` response gains one in the same
+shape.
+The `X-Error-Code` header accompanies the errors that carry a code, so it is
+documented as optional. FastAPI's validation schemas are dropped once nothing
+references them. A 422 your route declares with its own model is left alone. A
+different model of yours already named `ForzeErrorResponse` is not overwritten:
+the schema request fails with a configuration error, since routers can still be
+attached after the call. Responses a route sends
+with no body at all, such as a storage download's `304` and `416`, are not
+envelopes; the `default` entry does not describe them.
+
+Every `description` and `summary` then has its reST rendered as Markdown without
+losing prose: roles and ``` ``literals`` ``` become code spans, field lists
+(`:param:`, `:returns:`, …) are dropped, `code-block` and `::` literal blocks
+become fenced blocks, and any other directive (`note`, `deprecated`,
+`versionadded`, …) becomes a labelled blockquote. Fenced blocks already in
+Markdown pass through as written. Call it last: text a later wrapper adds, such as a security scheme's
+description, stays as written.
