@@ -140,6 +140,33 @@ async def test_a_result_sealed_for_one_principal_does_not_open_for_another() -> 
         await as_(bob).begin("op", "k", "h")
 
 
+@pytest.mark.asyncio
+async def test_a_result_sealed_for_one_chain_does_not_open_for_another() -> None:
+    # The binding follows the claim: an agent acting for a user seals under that chain, and
+    # neither the user acting directly nor another agent opens it.
+    store = _FakeStore()
+    keyring = _keyring()
+    user = uuid4()
+    via_agent = AuthnIdentity(principal_id=user, actor=AuthnIdentity(principal_id=uuid4()))
+
+    def as_(identity: AuthnIdentity) -> EncryptingIdempotencyPort:
+        return EncryptingIdempotencyPort(
+            inner=store, cipher=keyring, tenant_provider=lambda: None, principal_provider=lambda: identity
+        )
+
+    await as_(via_agent).commit("op", "k", "h", IdempotencyRecord(result=b"agent's"))
+
+    replayed = await as_(via_agent).begin("op", "k", "h")
+    assert replayed is not None and replayed.result == b"agent's"
+
+    for other in (
+        AuthnIdentity(principal_id=user),
+        AuthnIdentity(principal_id=user, actor=AuthnIdentity(principal_id=uuid4())),
+    ):
+        with pytest.raises(CoreException):
+            await as_(other).begin("op", "k", "h")
+
+
 @attrs.define(slots=True)
 class _ScopedFakeStore(_FakeStore):
     """A store that scopes its claims to a principal, the way every shipped one does."""

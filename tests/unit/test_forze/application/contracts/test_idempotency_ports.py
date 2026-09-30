@@ -85,3 +85,39 @@ class TestIdempotencyRecord:
     def test_create_record(self) -> None:
         record = IdempotencyRecord(result=b"{}")
         assert record.result == b"{}"
+
+
+# ....................... #
+# The stored key names the subject and every actor of a delegated call.
+
+
+def test_a_direct_callers_key_is_unchanged() -> None:
+    # Claims taken before chains were keyed keep resolving to the same record.
+    from uuid import uuid4
+
+    from forze.application.contracts.idempotency import scoped_claim_key
+
+    principal = uuid4()
+
+    assert scoped_claim_key(principal, "k") == f"p:{principal}:k"
+    assert scoped_claim_key(None, "k") == "a:k"
+
+
+def test_no_two_chains_share_a_stored_key() -> None:
+    from uuid import uuid4
+
+    from forze.application.contracts.idempotency import scoped_claim_key
+
+    user, a, b = uuid4(), uuid4(), uuid4()
+    # A caller controls its key, so it may spell the next actor's id into it.
+    stored = {
+        scoped_claim_key(user, "k"),
+        scoped_claim_key(user, f"{a}:k"),
+        scoped_claim_key(user, f"1:{a}:k"),
+        scoped_claim_key(user, "k", actors=(a,)),
+        scoped_claim_key(user, f"{b}:k", actors=(a,)),
+        scoped_claim_key(user, "k", actors=(a, b)),
+        scoped_claim_key(user, "k", actors=(b, a)),
+    }
+
+    assert len(stored) == 7

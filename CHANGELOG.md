@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **An idempotency key reused by another delegation chain or tenant runs its own operation.** A claim is scoped to the subject and its whole actor chain, and a tenant-aware Postgres store scopes it by tenant, as the other stores do; direct callers' claims are unchanged.
+
 - **A delegation key's agent is checked, and cannot drop the operator's.** It must be another eligible principal (a `service` one with `authz_route` set), checked at issue and rotation. Over MCP it is chained under the operator's agent; with enforced grants that needs `may_act(operator, agent)`.
 
 - **A delegated identity cannot open a realtime connection.** WebSocket, Socket.IO and SSE refuse an identity with an actor at connect and at reauth (`delegate_denied`), since a connection is the principal's own stream, mailbox and cursors.

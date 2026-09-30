@@ -28,6 +28,7 @@ A store read under the bound tenant scopes itself — adapters call
 | Integration | Port(s) | `tenant_aware` | Resolver (`namespace`) | Routed client (`dedicated`) | Ceiling |
 |-------------|---------|----------------|------------------------|-----------------------------|---------|
 | Postgres | document, search, analytics, counter | `tagged` (`tenant_id` column) | schema | `RoutedPostgresClient` | `dedicated` |
+| Postgres | idempotency | `namespace` (key prefix) | schema | `RoutedPostgresClient` | `dedicated` |
 | Postgres | [dynamic read](../data-events/dynamic-read.md) | **refused** ‡ | schema (`query_schema`) | `RoutedPostgresClient` | `dedicated` |
 | Mongo | document, search, counter | `tagged` (column) | collection | `RoutedMongoClient` | `dedicated` |
 | Firestore | document, counter | `tagged` (column) | collection | `RoutedFirestoreClient` | `dedicated` |
