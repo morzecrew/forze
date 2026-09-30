@@ -49,7 +49,9 @@ registry = audited.bind(
   `subject_id` is the principal the call runs for; `actor_id` is who performed it — the same
   principal, or the nearest delegate when the call is delegated. `actor_ids` holds the whole
   delegation chain, nearest first, so an agent acting through another is on record too, and the
-  trail can be read by any of them (`{"$values": {"actor_ids": {"$superset": [agent]}}}`).
+  trail can be read by any of them (`{"$values": {"actor_ids": {"$superset": [agent]}}}`). The
+  nearest actor is not always the one you configured: on the MCP path the server's own agent
+  sits deeper in the chain, and `actor_ids` has it.
 
 ## What gets recorded, and where
 
@@ -154,11 +156,20 @@ CREATE TABLE audit_events (
 );
 ```
 
-A table created before `actor_ids` existed needs the column — startup schema validation refuses
-a write column the table lacks:
+A table created before `actor_ids` existed needs the column. Until it is added, startup schema
+validation refuses the table (`missing columns ['actor_ids']`), and without that validation
+every audited operation fails closed on the write:
 
 ```sql
 ALTER TABLE audit_events ADD COLUMN actor_ids uuid[] NOT NULL DEFAULT '{}';
+```
+
+On MongoDB, rows written before the field existed have no `actor_ids` at all. They read back as
+`[]`, but `{"$empty": true}` does not match a missing field, so a "direct calls only" query there
+must also accept its absence:
+
+```python
+{"$or": [{"$values": {"actor_ids": {"$empty": True}}}, {"$values": {"actor_ids": {"$null": True}}}]}
 ```
 
 To keep the trail somewhere else, implement `AuditPort` — one `record(entry)` that joins the

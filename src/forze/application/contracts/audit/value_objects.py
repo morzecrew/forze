@@ -65,8 +65,8 @@ class AuditEntry:
     """How the operation ended."""
 
     actor_id: UUID | None
-    """The principal that performed it — the delegate when the call is delegated; ``None``
-    for an unauthenticated call."""
+    """The principal that performed it — the nearest actor of the chain when the call is
+    delegated; ``None`` for an unauthenticated call."""
 
     subject_id: UUID | None
     """The principal it ran for; ``None`` for an unauthenticated call."""

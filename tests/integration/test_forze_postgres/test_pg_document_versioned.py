@@ -149,6 +149,8 @@ async def _tables(pg_client: PostgresClient) -> tuple[str, str]:
             from_id uuid NOT NULL,
             to_id uuid NOT NULL,
             actor_id uuid,
+            subject_id uuid,
+            actor_ids uuid[] NOT NULL DEFAULT '{{}}',
             reason text NOT NULL
         );
         """

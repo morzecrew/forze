@@ -59,7 +59,7 @@ class AuditRecord(ReadDocument):
     """``allowed``, ``denied`` or ``failed``."""
 
     actor_id: UUID | None = None
-    """Who performed it — the delegate, for a delegated call."""
+    """Who performed it — the nearest actor of the chain, for a delegated call."""
 
     subject_id: UUID | None = None
     """On whose behalf it ran."""

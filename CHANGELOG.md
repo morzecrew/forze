@@ -47,7 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **The audit trail records every agent in a delegation chain.** Audit rows gain `actor_ids`, the whole chain nearest first, and a versioned correction records the agent that made it rather than the user it acted for. **Postgres:** add `actor_ids uuid[] NOT NULL DEFAULT '{}'` to the audit table.
+- **Audit rows and versioned corrections record every principal of a delegation.** Both keep `actor_id`, the nearest actor, and gain `actor_ids`, the whole chain nearest first; a correction also gains `subject_id`. **Required migration** on Postgres: add the columns (see the docs); until then those writes fail closed.
+
+- **A delegated correction's `actor_id` is the agent that made it** (**behaviour change**). Rows written by 0.8.0 to 0.9.0 hold the user it acted for there; later rows hold the agent, and the user is in `subject_id`.
 
 - **Tenant provisioning reaches the tenant it provisions.** `ObjectStorageTenantProvisioner` creates an onboarded tenant's bucket on that tenant's backend with a routed client, and works with a plain one; `PostgresSchemaTenantProvisioner` refuses a routed client, as the Mongo provisioner already does.
 

@@ -93,6 +93,8 @@ class CorrectionRead(ReadDocument):
     from_id: UUID
     to_id: UUID
     actor_id: UUID | None = None
+    subject_id: UUID | None = None
+    actor_ids: list[UUID] = []
     reason: str
 
 
@@ -242,7 +244,54 @@ class TestACorrectionSupersedes:
 
             [record] = (await ctx.doc.query(CORRECTIONS).find_many()).hits
 
-        assert record.actor_id == agent
+        assert (record.actor_id, record.subject_id, record.actor_ids) == (agent, user, [agent])
+
+    async def test_a_correction_through_two_agents_records_the_whole_chain(self) -> None:
+        # The nearest agent performed it, on the user's behalf, acting through an inner agent:
+        # none of the three is lost from the record.
+        from forze.application.contracts.authn import AuthnIdentity
+
+        user, agent, inner = uuid4(), uuid4(), uuid4()
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+
+            with ctx.inv_ctx.bind_identity(
+                authn=AuthnIdentity(
+                    principal_id=user,
+                    actor=AuthnIdentity(principal_id=agent, actor=AuthnIdentity(principal_id=inner)),
+                )
+            ):
+                await _correct(reg, ctx, first, kwh=120)
+
+            [record] = (await ctx.doc.query(CORRECTIONS).find_many()).hits
+
+        assert (record.actor_id, record.subject_id, record.actor_ids) == (
+            agent,
+            user,
+            [agent, inner],
+        )
+
+    async def test_a_direct_correction_records_its_principal_twice_and_no_chain(self) -> None:
+        from forze.application.contracts.authn import AuthnIdentity
+
+        user = uuid4()
+        runtime = build_runtime(MockDepsModule())
+        reg = _kit().registry(tx_route=_TX)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            first = await _create(reg, ctx, "m-1", 100)
+
+            with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=user)):
+                await _correct(reg, ctx, first, kwh=120)
+
+            [record] = (await ctx.doc.query(CORRECTIONS).find_many()).hits
+
+        assert (record.actor_id, record.subject_id, record.actor_ids) == (user, user, [])
 
     async def test_a_stale_expected_version_is_a_conflict(self) -> None:
         runtime = build_runtime(MockDepsModule())
