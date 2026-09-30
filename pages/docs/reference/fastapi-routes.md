@@ -320,6 +320,56 @@ blob routes (under `storage_prefix`) onto one router with a single call, each
 sub-surface exactly as its dedicated attacher would. `tx_route` must match the
 transaction route the deps module registers.
 
+## Your own operation routes
+
+An operation no attacher ships gets its route from a binding table, not a hand-written
+endpoint. `attach_operation_routes` takes the table keyed by operation suffix under a
+namespace; the schema, `operation_id` (the namespaced key, e.g. `stock.add`) and dispatch
+come from the catalog, as for the generated routes.
+
+```python
+from forze.base.primitives import StrKeyNamespace
+from forze_fastapi.routes import (
+    RouteBinding,
+    attach_operation_routes,
+    body_endpoint,
+    id_endpoint,
+    query_endpoint,
+)
+
+attach_operation_routes(
+    router,
+    registry=registry,
+    ns=StrKeyNamespace(prefix="stock"),
+    ctx_dep=ctx_dep,
+    bindings={
+        "levels": RouteBinding(method="GET", path="/levels", build=query_endpoint),
+        "add": RouteBinding(method="POST", path="/add", build=body_endpoint, status_code=201),
+        "get": RouteBinding(method="GET", path="/{id}", build=id_endpoint),
+    },
+)
+```
+
+A binding whose operation is not registered is refused, so a typo fails at startup rather
+than answering 404; pass `skip_unregistered=True` to skip it instead.
+
+`query_endpoint` reads the whole input DTO from query parameters, one per field; a list
+field repeats (`?tag=a&tag=b`). A field a query string cannot carry, such as a nested
+model or `bytes`, is refused when the route is attached. The operation receives the DTO a
+body with the same keys would build: only the parameters sent count as set, so a patch built
+from it leaves the rest alone, and validators and extras behave as for a body. A parameter
+the DTO does not declare is ignored unless the DTO forbids or allows extra fields. A literal
+`+` in a value, such as a timezone offset, must be sent as `%2B`: a query string reads `+` as
+a space.
+
+`body_endpoint`, `id_endpoint`, `id_rev_endpoint` and `id_rev_body_endpoint` are the
+builders the document routes use. The id builders take `id` and `rev` from the path where it
+has their placeholder and from the query otherwise, typed and defaulted as the input DTO
+declares them. Each
+shipped builder names the placeholders it fills, and a path with any other placeholder is
+refused. An `EndpointBuilder` of your own takes `(runner, input_type, op)`; give it a
+`path_params` frozenset to have its paths checked the same way.
+
 ## Infrastructure routes
 
 - `attach_jwks_route(router, jwks_provider, *, path="/.well-known/jwks.json",
