@@ -391,3 +391,220 @@ class TestApiKeyPrefixConfig:
 
         with pytest.raises(exc, match="prefix"):
             svc.generate_key(prefix=" sk")
+
+
+# ....................... #
+
+
+def _eligible_except(*refused: object) -> AsyncMock:
+    """An eligibility gate refusing *refused*, as the policy-principal gate does."""
+
+    async def _check(principal_id: object) -> None:
+        if principal_id in refused:
+            raise exc.authentication("Principal not found")
+
+    return AsyncMock(side_effect=_check)
+
+
+class TestTheDelegationActorIsValidated:
+    """A delegation key names its agent: it must be another principal authentication accepts.
+
+    The same eligibility gate authentication runs on the actor, so a key cannot be minted
+    for an actor it could never authenticate with, nor name the subject as its own agent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_subject_cannot_be_its_own_actor(self) -> None:
+        pid = uuid4()
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = _eligible_except()
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=pid)
+
+        assert caught.value.kind.value == "validation"
+        assert caught.value.code == "delegate_invalid"
+        ak_cmd.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_actor_authentication_would_refuse_is_refused(self) -> None:
+        # Unknown and deactivated principals both fail the same gate.
+        pid, agent = uuid4(), uuid4()
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        adapter = _adapter(ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = _eligible_except(agent)
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=agent)
+
+        assert caught.value.kind.value == "validation"
+        assert caught.value.code == "delegate_invalid"
+        ak_cmd.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failure_checking_the_actor_is_not_masked(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        adapter = _adapter()
+
+        async def _check(principal_id: object) -> None:
+            if principal_id == agent:
+                raise exc.infrastructure("policy store down")
+
+        adapter.eligibility.require_authentication_allowed = AsyncMock(side_effect=_check)
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=agent)
+
+        assert caught.value.kind.value == "infrastructure"
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_an_actor_no_longer_eligible(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig())
+        key = "raw-key"
+        now = datetime.now(tz=UTC)
+        account = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=2,
+            created_at=now,
+            last_update_at=now,
+            principal_id=pid,
+            actor_principal_id=agent,
+            key_hash=svc.calculate_key_digest(key),
+            is_active=True,
+        )
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(return_value=account)
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        ak_cmd.update = AsyncMock()
+        adapter = _adapter(api_key_svc=svc, ak_qry=ak_qry, ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = _eligible_except(agent)
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.refresh_api_key(ApiKeyCredentials(key=key))
+
+        assert caught.value.code == "delegate_invalid"
+        ak_cmd.create.assert_not_awaited()
+        ak_cmd.update.assert_not_awaited()
+
+
+# ....................... #
+
+
+class _Registry:
+    """A principal registry knowing some principals by kind."""
+
+    def __init__(self, kinds: dict[object, str]) -> None:
+        self.kinds = kinds
+
+    async def get_principal(self, principal_id: object) -> object:
+        from forze.application.contracts.authz import PrincipalRef
+
+        kind = self.kinds.get(principal_id)
+
+        if kind is None:
+            return None
+
+        if kind == "inactive-service":
+            return PrincipalRef(principal_id=principal_id, kind="service", is_active=False)  # type: ignore[arg-type]
+
+        return PrincipalRef(principal_id=principal_id, kind=kind)  # type: ignore[arg-type]
+
+
+class TestTheDelegationAgentIsAService:
+    """With the authz principal registry wired, a key's agent must be a service principal."""
+
+    def _issuing(self, registry: _Registry) -> tuple[ApiKeyLifecycleAdapter, MagicMock]:
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        adapter = _adapter(ak_cmd=ak_cmd, principal_registry=registry)
+        adapter.eligibility.require_authentication_allowed = _eligible_except()
+        return adapter, ak_cmd
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "kind",
+        ["user", None, "inactive-service"],
+        # An inactive service passes an allow-all eligibility gate; the registry still refuses.
+        ids=["a-user", "unregistered", "inactive-service"],
+    )
+    async def test_an_agent_that_is_not_a_service_is_refused(self, kind: str | None) -> None:
+        pid, agent = uuid4(), uuid4()
+        adapter, ak_cmd = self._issuing(_Registry({agent: kind} if kind else {}))
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=agent)
+
+        assert caught.value.code == "delegate_invalid"
+        # One message for "not a service" and "not found": no principal enumeration.
+        assert str(caught.value.summary) == (
+            "The delegation agent must be another registered, active principal"
+        )
+        ak_cmd.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_service_agent_is_accepted(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        adapter, ak_cmd = self._issuing(_Registry({agent: "service"}))
+
+        await adapter.issue_api_key(AuthnIdentity(principal_id=pid), actor_principal_id=agent)
+
+        assert ak_cmd.create.await_args.args[0].actor_principal_id == agent
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_an_agent_that_is_not_a_service(self) -> None:
+        pid, agent = uuid4(), uuid4()
+        svc = ApiKeyService(pepper=b"x" * 32, config=ApiKeyConfig())
+        now = datetime.now(tz=UTC)
+        account = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=1,
+            created_at=now,
+            last_update_at=now,
+            principal_id=pid,
+            actor_principal_id=agent,
+            key_hash=svc.calculate_key_digest("raw-key"),
+            is_active=True,
+        )
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(return_value=account)
+        ak_cmd = _port()
+        ak_cmd.create = AsyncMock(return_value=_created_key())
+        ak_cmd.update = AsyncMock()
+        adapter = _adapter(
+            api_key_svc=svc, ak_qry=ak_qry, ak_cmd=ak_cmd, principal_registry=_Registry({agent: "user"})
+        )
+        adapter.eligibility.require_authentication_allowed = _eligible_except()
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.refresh_api_key(ApiKeyCredentials(key="raw-key"))
+
+        assert caught.value.code == "delegate_invalid"
+        ak_cmd.create.assert_not_awaited()
+
+
+def test_the_wired_lifecycle_takes_the_registry_from_the_authz_route() -> None:
+    from forze.application.contracts.authz import AuthzSpec
+    from forze_identity.authn.execution.deps.deps import ConfigurableApiKeyLifecycle
+
+    shared = MagicMock()
+    ctx = MagicMock()
+    registry = object()
+    ctx.authz.principal_registry = MagicMock(return_value=registry)
+    ctx.deps.provide = MagicMock(return_value=lambda _c, _s: MagicMock())
+
+    with patch(
+        "forze_identity.authn.execution.deps.deps.ApiKeyLifecycleAdapter"
+    ) as adapter_cls:
+        ConfigurableApiKeyLifecycle(shared=shared, authz_route="policy")(ctx, MagicMock())
+        wired = adapter_cls.call_args.kwargs["principal_registry"]
+        ConfigurableApiKeyLifecycle(shared=shared)(ctx, MagicMock())
+        unwired = adapter_cls.call_args.kwargs["principal_registry"]
+
+    assert wired is registry
+    ctx.authz.principal_registry.assert_called_once_with(AuthzSpec(name="policy"))
+    assert unwired is None

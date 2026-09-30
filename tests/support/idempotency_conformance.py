@@ -45,8 +45,12 @@ they agree about it either.
 15. A caller with no principal and a caller with one never share a claim, in either
     direction — including when the anonymous caller's key is chosen to spell the other's
     stored form.
-16. A delegated call is scoped to its subject: an agent acting for a user replays the user's
-    claim rather than running it again.
+16. A delegated call is scoped to its subject and its actor chain: the same chain retrying
+    replays, while the subject acting directly, another agent, or the same agents in another
+    order run their own operation — each under its own authorization — rather than being
+    served a record another chain produced.
+17. A tenant-aware store keeps tenants apart: the same caller — one principal, one chain, or
+    no one — using one key in two tenants runs its own operation in each.
 
 Check 12 is the one that used to be impossible. Two duplicates of one request carry the
 same ``op``, key and ``payload_hash``, so an operation that outlived its window and found
@@ -89,6 +93,7 @@ from forze.application.contracts.idempotency import (
     IdempotencyRecord,
     scoped_claim_key,
 )
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
@@ -187,10 +192,9 @@ class IdempotencyHarness:
 def as_principal(
     store: IdempotencyPort,
     principal: UUID | None,
-    *,
-    actor: UUID | None = None,
+    *actors: UUID,
 ) -> IdempotencyPort:
-    """*store* acting for *principal* (``None`` — no one), optionally through *actor*.
+    """*store* acting for *principal* (``None`` — no one), through *actors*, nearest first.
 
     Every store is an attrs class carrying the principal mixin, so the scope is swapped the
     way a factory sets it rather than through a per-store seam each leg would have to add.
@@ -200,12 +204,24 @@ def as_principal(
         identity = None
 
     else:
-        identity = AuthnIdentity(
-            principal_id=principal,
-            actor=AuthnIdentity(principal_id=actor) if actor is not None else None,
-        )
+        actor = None
+
+        for actor_id in reversed(actors):
+            actor = AuthnIdentity(principal_id=actor_id, actor=actor)
+
+        identity = AuthnIdentity(principal_id=principal, actor=actor)
 
     return attrs.evolve(store, principal_provider=lambda: identity)  # type: ignore[misc]
+
+
+def in_tenant(store: IdempotencyPort, tenant_id: UUID) -> IdempotencyPort:
+    """*store* made tenant-aware and bound to *tenant_id*, the way a tenant-aware route wires it."""
+
+    return attrs.evolve(  # type: ignore[misc]
+        store,
+        tenant_aware=True,
+        tenant_provider=lambda: TenantIdentity(tenant_id=tenant_id),
+    )
 
 
 Check = Callable[[IdempotencyHarness], Any]
@@ -510,18 +526,86 @@ async def check_the_anonymous_space_meets_no_principal(h: IdempotencyHarness) ->
     assert await anonymous.begin(OP, scoped_claim_key(principal, key), HASH_A) is None, h.backend
 
 
-async def check_a_delegated_call_is_scoped_to_its_subject(h: IdempotencyHarness) -> None:
-    """An agent acting for a user replays the user's claim instead of executing again."""
+async def check_a_delegated_retry_replays_its_own_claim(h: IdempotencyHarness) -> None:
+    """The same chain retrying the same key is served its own record."""
 
     key = h.key()
-    user = uuid4()
+    user, agent = uuid4(), uuid4()
+    chain = as_principal(h.store, user, agent)
 
-    assert await as_principal(h.store, user).begin(OP, key, HASH_A) is None, h.backend
-    await as_principal(h.store, user).commit(OP, key, HASH_A, _record(RESULT_A))
+    assert await chain.begin(OP, key, HASH_A) is None, h.backend
+    await chain.commit(OP, key, HASH_A, _record(RESULT_A))
 
-    replayed = await as_principal(h.store, user, actor=uuid4()).begin(OP, key, HASH_A)
+    replayed = await as_principal(h.store, user, agent).begin(OP, key, HASH_A)
 
     assert replayed is not None and replayed.result == RESULT_A, h.backend
+
+
+async def check_another_chain_never_meets_a_claim(h: IdempotencyHarness) -> None:
+    """A key reused by a different chain for the same subject runs its own operation.
+
+    The record was produced under the first chain's authorization, row scope included; handing
+    it to another chain would disclose what that chain's own scope never let it read.
+    """
+
+    user, agent, other = uuid4(), uuid4(), uuid4()
+    chains = {
+        "direct": (),
+        "agent": (agent,),
+        "other agent": (other,),
+        "two hops": (agent, other),
+        "two hops reversed": (other, agent),
+    }
+
+    for name, taken in chains.items():
+        key = h.key()
+        first = as_principal(h.store, user, *taken)
+
+        assert await first.begin(OP, key, HASH_A) is None, (h.backend, name)
+        await first.commit(OP, key, HASH_A, _record(RESULT_A))
+
+        for other_name, reused in chains.items():
+            if other_name == name:
+                continue
+
+            fresh = await as_principal(h.store, user, *reused).begin(OP, key, HASH_A)
+
+            assert fresh is None, (h.backend, name, other_name)
+
+    # A direct caller spelling a delegated claim's stored suffix into its own key lands in its
+    # own space, not on the agent's record.
+    key = h.key()
+    via_agent = as_principal(h.store, user, agent)
+
+    assert await via_agent.begin(OP, key, HASH_A) is None, h.backend
+    await via_agent.commit(OP, key, HASH_A, _record(RESULT_A))
+
+    spelled = await as_principal(h.store, user).begin(OP, f"1:{agent}:{key}", HASH_A)
+
+    assert spelled is None, h.backend
+
+
+
+async def check_two_tenants_with_one_key_never_meet(h: IdempotencyHarness) -> None:
+    """One caller, one key, two tenants: the second tenant runs its own operation.
+
+    A tenant-aware store may share one table, collection or keyspace across tenants, so the
+    claim itself has to say whose tenant it is, whoever the caller is.
+    """
+
+    user, agent = uuid4(), uuid4()
+    callers = {"principal": (user,), "chain": (user, agent), "anonymous": (None,)}
+
+    for name, (principal, *actors) in callers.items():
+        key = h.key()
+        first = in_tenant(as_principal(h.store, principal, *actors), uuid4())
+
+        assert await first.begin(OP, key, HASH_A) is None, (h.backend, name)
+        await first.commit(OP, key, HASH_A, _record(RESULT_A))
+
+        other = in_tenant(as_principal(h.store, principal, *actors), uuid4())
+
+        assert await other.begin(OP, key, HASH_A) is None, (h.backend, name)
 
 
 # ....................... #
@@ -542,5 +626,7 @@ IDEMPOTENCY_BATTERY: tuple[Check, ...] = (
     check_a_reclaimed_claim_is_not_the_previous_owners_to_finish,
     check_two_principals_with_one_key_never_meet,
     check_the_anonymous_space_meets_no_principal,
-    check_a_delegated_call_is_scoped_to_its_subject,
+    check_a_delegated_retry_replays_its_own_claim,
+    check_another_chain_never_meets_a_claim,
+    check_two_tenants_with_one_key_never_meet,
 )

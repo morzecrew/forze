@@ -40,6 +40,7 @@ __all__ = [
     "auth_payload",
     "client_identity",
     "present_credential",
+    "refuse_delegated_identity",
     "require_origin_attestation",
     "resolve_realtime_identity",
 ]
@@ -407,6 +408,27 @@ async def _tenant(
     )
 
     return resolved.tenant_id if resolved is not None else hint
+
+
+# ....................... #
+
+
+def refuse_delegated_identity(authn: AuthnIdentity | None) -> None:
+    """Refuse a realtime connection to a delegated identity (``delegate_denied``).
+
+    A connection is the subject's own stream: it joins the subject's principal room, replays
+    the subject's mailbox and advances the subject's device cursors. An agent acting for the
+    subject would receive everything addressed to it and could move what it has seen, with
+    nothing narrowing either to the agent. Transports call this on every identity they accept
+    — at connect and at reauth — whichever resolver produced it.
+    """
+
+    if authn is not None and authn.actor is not None:
+        raise exc.authorization(
+            "A delegated identity cannot open a realtime connection: the connection is the "
+            "subject's own stream and mailbox",
+            code="delegate_denied",
+        )
 
 
 # ....................... #

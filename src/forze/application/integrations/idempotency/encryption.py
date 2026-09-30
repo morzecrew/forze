@@ -20,7 +20,7 @@ from forze.application.contracts.crypto import BytesCipherPort
 from forze.application.contracts.idempotency import (
     IdempotencyPort,
     IdempotencyRecord,
-    scoped_claim_key,
+    claim_key_for,
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import payload_aad
@@ -99,7 +99,7 @@ class EncryptingIdempotencyPort:
         # records had before claims were scoped.
         provider = self.principal_provider or getattr(self.inner, "principal_provider", None)
         identity = provider() if provider is not None else None
-        scoped = scoped_claim_key(identity.principal_id if identity is not None else None, key)
+        scoped = claim_key_for(identity, key)
         record_id = f"{len(op)}:{op}:{scoped}"
         return payload_aad(IDEMPOTENCY_PAYLOAD_DOMAIN, tenant_id, record_id)
 

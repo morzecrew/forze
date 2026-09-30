@@ -41,6 +41,7 @@ from forze.application.integrations.realtime import (
     acknowledge_up_to,
     iter_backlog,
     negotiate_realtime_protocol,
+    refuse_delegated_identity,
     resolve_client_key,
 )
 from forze.application.integrations.realtime import (
@@ -145,7 +146,9 @@ ConnectionResolver = Callable[
 ]
 """Resolve a connection's identity at connect time. Return ``None`` for anonymous
 (no principal room joined), or raise a client-safe :class:`CoreException`
-(e.g. ``exc.authentication``) to refuse the connection."""
+(e.g. ``exc.authentication``) to refuse the connection. Return the identity with its
+``actor`` chain intact: a delegated identity is refused from it, and one normalized to its
+subject would join the subject's room as the subject."""
 
 
 # ....................... #
@@ -162,8 +165,12 @@ async def _resolve(
     connect: SocketIOConnect,
 ) -> RealtimeConnection | None:
     result = resolver(connect)
+    connection = await result if isawaitable(result) else result
 
-    return await result if isawaitable(result) else result
+    # Every accepted identity passes here, at connect and at reauth, whatever the resolver.
+    refuse_delegated_identity(connection.authn if connection is not None else None)
+
+    return connection
 
 
 # ....................... #

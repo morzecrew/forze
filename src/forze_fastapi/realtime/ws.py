@@ -64,6 +64,7 @@ from forze.application.integrations.realtime import (
     encode_frame,
     iter_backlog,
     negotiate_realtime_protocol,
+    refuse_delegated_identity,
     resolve_client_key,
 )
 from forze.base.exceptions import (
@@ -203,7 +204,9 @@ WsConnectionResolver = Callable[[WsConnect], "WsConnection | Awaitable[WsConnect
 
 Return ``None`` for anonymous — which this route refuses (replay, ack, and command
 dispatch all need a principal) — or raise a client-safe
-:class:`~forze.base.exceptions.CoreException` to refuse the connection.
+:class:`~forze.base.exceptions.CoreException` to refuse the connection. Return the identity
+with its ``actor`` chain intact: a delegated identity is refused from it, and one normalized
+to its subject would be served the subject's stream as the subject.
 """
 
 
@@ -238,8 +241,12 @@ def _egress_frame(*, event: str, event_id: str | None, payload: Mapping[str, Any
 
 async def _resolve(resolver: WsConnectionResolver, connect: WsConnect) -> WsConnection | None:
     result = resolver(connect)
+    connection = await result if isawaitable(result) else result
 
-    return await result if isawaitable(result) else result
+    # Every accepted identity passes here, at connect and at reauth, whatever the resolver.
+    refuse_delegated_identity(connection.authn if connection is not None else None)
+
+    return connection
 
 
 def _bind(ctx: ExecutionContext, connection: WsConnection) -> Any:
@@ -437,14 +444,17 @@ def attach_realtime_ws_route(
             topic_set = _parse_topics(websocket.query_params.get("topics"))
 
             if topic_set:
-                await _require_topic_grant(
-                    ctx,
-                    authorize_topics,
-                    principal=connection.principal,
-                    tenant=connection.tenant,
-                    requested=topic_set,
-                    max_topics=max_topics,
-                )
+                # Bound as for SSE, where the request already carries it: the app's topic
+                # authorizer can read the connection's identity from ctx.
+                with _bind(ctx, connection):
+                    await _require_topic_grant(
+                        ctx,
+                        authorize_topics,
+                        principal=connection.principal,
+                        tenant=connection.tenant,
+                        requested=topic_set,
+                        max_topics=max_topics,
+                    )
 
             return connection, topic_set
 
