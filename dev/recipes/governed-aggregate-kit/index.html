@@ -4366,6 +4366,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shaping-the-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shaping the writes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-escape-hatch" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6472,6 +6483,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#shaping-the-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shaping the writes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-escape-hatch" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6888,6 +6910,41 @@ your call, wired into the deps module:</p>
 (<code>rw_documents=</code> / <code>searches=</code> / <code>outboxes=</code>) and HTTP routes stay yours — wire them
 over <code>registry()</code> with your deps module and the
 <a href="../../integrations/fastapi/">route generators</a> — so the hexagonal layer split holds.</p>
+<h2 id="shaping-the-writes">Shaping the writes<a class="headerlink" href="#shaping-the-writes" title="Permanent link">&para;</a></h2>
+<p>Three options change how the generated writes behave without replacing a handler:</p>
+<div class="highlight"><pre><span></span><code><span class="n">kit</span> <span class="o">=</span> <span class="n">AggregateKit</span><span class="p">(</span>
+    <span class="n">spec</span><span class="o">=</span><span class="n">ORDER_SPEC</span><span class="p">,</span>
+    <span class="n">dtos</span><span class="o">=</span><span class="n">DocumentDTOs</span><span class="p">(</span><span class="n">read</span><span class="o">=</span><span class="n">OrderRead</span><span class="p">,</span> <span class="n">create</span><span class="o">=</span><span class="n">OrderRequest</span><span class="p">,</span> <span class="n">update</span><span class="o">=</span><span class="n">OrderUpdate</span><span class="p">),</span>
+    <span class="n">mappers</span><span class="o">=</span><span class="n">DocumentMappers</span><span class="p">(</span>
+        <span class="n">create</span><span class="o">=</span><span class="n">PydanticPipelineMapperFactory</span><span class="p">(</span>
+            <span class="n">in_</span><span class="o">=</span><span class="n">OrderRequest</span><span class="p">,</span>
+            <span class="n">out</span><span class="o">=</span><span class="n">CreateOrderCmd</span><span class="p">,</span>
+            <span class="n">step_factories</span><span class="o">=</span><span class="p">(</span><span class="n">NumberIdMappingStepFactory</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">ORDER_NO</span><span class="p">,</span> <span class="n">name_field</span><span class="o">=</span><span class="s2">"name"</span><span class="p">),),</span>
+        <span class="p">),</span>
+    <span class="p">),</span>
+    <span class="n">transactional_writes</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">update_returns</span><span class="o">=</span><span class="s2">"record"</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong><code>mappers=</code> / <code>dtos=</code></strong> — how an inbound DTO becomes the domain command, and which DTOs the
+  generated routes and tools advertise. As in <code>build_document_registry</code>, a slot left out
+  disables its operation (<code>DocumentDTOs(read=…, create=…)</code> is an aggregate with no <code>update</code>).
+  Your mappers are the base the other options compose on: <code>soft_delete</code> adds its
+  exclusion after your list mapper; <code>versioned</code> seeds the first version through your create
+  mapper, maps a correction through your update mapper as <code>update</code> does, and strips its lineage
+  fields from what that mapper produces. List mappers apply to the document list operations
+  only — not to <code>get</code>, search, or the versioned and temporal reads.</li>
+<li><strong><code>transactional_writes=True</code></strong> — create, update, kill and the soft-delete transitions run in a
+  transaction on the registry's <code>tx_route</code>, so the document reads and writes a mapper makes
+  commit or roll back with the write. A counter does not: counters allocate on their own
+  connection, so a create that fails after its number-id step leaves a gap. Off by default.</li>
+</ul>
+<p>A write option whose operation is not generated — a create mapper on a read-only spec,
+<code>update_returns="record"</code> with the update slot left empty — is refused when the kit is built.
+- <strong><code>update_returns="record"</code></strong> — the generated update returns the updated record instead of
+  <code>{data, diff}</code>, and its route advertises the read model. The typed facade keeps the default's
+  return type.</p>
 <h2 id="the-escape-hatch">The escape hatch<a class="headerlink" href="#the-escape-hatch" title="Permanent link">&para;</a></h2>
 <p>The kit gives the governed-CRUD floor; a bespoke lifecycle comes through a first-class
 escape hatch, not a fall-off-the-cliff:</p>

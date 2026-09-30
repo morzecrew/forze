@@ -8986,10 +8986,21 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>S3 buckets can be created at startup.</strong> <code>s3_bucket_lifecycle_step(buckets=[...])</code> runs after <code>s3_lifecycle_step</code> and creates each missing bucket, leaving existing ones alone; a bucket it cannot create fails startup. <code>s3_lifecycle_step</code> now provides <code>s3.client</code>, so a plan with two of them is refused.</p>
 </li>
+<li>
+<p><strong>An aggregate kit takes your mappers and DTOs, and can run its writes in a transaction.</strong> <code>AggregateKit(mappers=…, dtos=…)</code> composes your mappers under soft deletion and versioning; <code>transactional_writes=True</code> binds every generated write to <code>tx_route</code>; <code>update_returns="record"</code> returns the updated record.</p>
+</li>
+<li>
+<p><strong>The number-id step can name what it numbers.</strong> <code>NumberIdMappingStepFactory(spec, name_field="name")</code> also sets that field to <code>name_format</code> (<code>"{name} #{number}"</code> by default), so <code>"Order"</code> becomes <code>"Order #12"</code>; an empty value is left alone.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>Soft deletion's read mappers compose with the ones you pass.</strong> <code>SoftDeleteWiring.read_mappers(base)</code> runs its exclusion after each list-family mapper <code>base</code> carries instead of replacing it, so your own restriction still applies.</p>
+</li>
+<li>
+<p>...</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
