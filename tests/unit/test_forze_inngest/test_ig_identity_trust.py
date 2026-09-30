@@ -109,6 +109,10 @@ _MALFORMED_IDENTITY = [
     {"principal_id": 5},
     {"principal_id": str(_PRINCIPAL), "actor_ids": ["not-a-uuid"]},
     {"principal_id": str(_PRINCIPAL), "tenant_id": "not-a-uuid"},
+    {"principal_id": ""},
+    {"principal_id": 0},
+    {"tenant_id": ""},
+    {"actor_ids": [str(uuid4())]},
 ]
 
 
@@ -120,6 +124,7 @@ async def test_a_malformed_identity_is_ignored_when_not_bound(envelope: dict[str
     await fn._handler(_FakeContext({"_forze": envelope, "value": "ok"}))  # pyright: ignore[reportPrivateUsage]
 
     assert captured["authn"] is None
+    assert captured["tenant"] is None
 
 
 @pytest.mark.parametrize("envelope", _MALFORMED_IDENTITY)
@@ -153,3 +158,17 @@ def test_function_args_parse_past_a_malformed_envelope() -> None:
     )
 
     assert parsed.value == "ok"
+
+
+def test_a_valid_tenant_survives_a_malformed_principal() -> None:
+    # The tenant is decoded on its own: a sealed payload's AAD needs it even when the
+    # function does not bind the envelope's identity.
+    from forze_inngest.adapters.context import split_envelope
+
+    decoded, _ = split_envelope(
+        {"_forze": {"principal_id": "not-a-uuid", "tenant_id": str(_TENANT)}, "value": "ok"}
+    )
+
+    assert decoded.identity_malformed
+    assert decoded.authn is None
+    assert decoded.tenant is not None and decoded.tenant.tenant_id == _TENANT

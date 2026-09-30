@@ -122,25 +122,33 @@ def split_envelope(data: JsonDict) -> tuple[InngestDecodedContext, JsonDict]:
         # Tracing context, not an authority: dropped rather than trusted or fatal.
         metadata = None
 
+    # A claimed part is any key present with a value; one that does not decode marks the
+    # identity malformed. The principal chain and the tenant decode apart, because a sealed
+    # payload's AAD needs the tenant even where the identity is not bound.
+    principal_raw = raw.get(PRINCIPAL_ID_KEY)
+    actor_ids = raw.get(ACTOR_IDS_KEY)
+
     try:
-        if principal_raw := raw.get(PRINCIPAL_ID_KEY):
-            actor_ids = raw.get(ACTOR_IDS_KEY, [])
+        if actor_ids is not None and (principal_raw is None or not isinstance(actor_ids, list)):
+            raise ValueError("actor_ids needs a principal and must be a list")
 
-            if not isinstance(actor_ids, list):
-                raise ValueError("actor_ids is not a list")
-
+        if principal_raw is not None:
             actor = None
 
-            for actor_raw in reversed(cast(list[object], actor_ids)):
+            for actor_raw in reversed(cast(list[object], actor_ids or [])):
                 actor = AuthnIdentity(principal_id=UUID(str(actor_raw)), actor=actor)
 
             authn = AuthnIdentity(principal_id=UUID(str(principal_raw)), actor=actor)
 
-        if tenant_raw := raw.get(TENANT_ID_KEY):
+    except ValueError:
+        authn, identity_malformed = None, True
+
+    try:
+        if (tenant_raw := raw.get(TENANT_ID_KEY)) is not None:
             tenant = TenantIdentity(tenant_id=UUID(str(tenant_raw)))
 
     except ValueError:
-        authn, tenant, identity_malformed = None, None, True
+        tenant, identity_malformed = None, True
 
     return (
         InngestDecodedContext(
