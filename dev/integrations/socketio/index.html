@@ -6776,7 +6776,9 @@ delivery:</p>
 </code></pre></div>
 <p><code>attach_realtime_connection</code> is the <strong>single</strong> connect path — it authenticates <em>and</em>
 auto-joins the principal room, so do not also give <code>ForzeSocketIOAdapter</code> an
-<code>identity_resolver</code> on the same namespace. The publish-side <code>Audience.principal(id)</code> must
+<code>identity_resolver</code> on the same namespace. It refuses a delegated identity; a custom
+resolver must return the identity with its <code>actor</code> chain intact, not normalized to its
+subject. The publish-side <code>Audience.principal(id)</code> must
 use the same id the gateway joins with (<code>str(authn.principal_id)</code>).</p>
 <p><code>build_socketio_connection_resolver</code> builds <code>resolve_connection</code> for you: a fixed
 credential ladder (connect/reauth <code>auth</code> payload, then the cookie, then

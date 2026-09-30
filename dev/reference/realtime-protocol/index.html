@@ -6654,6 +6654,10 @@ carry a version, and a connection speaks exactly one version for its lifetime.</
 <li>A <code>device_id</code> is the stable cursor key for offline replay; without one the
   framework falls back to the authenticated session id (Socket.IO) or a shared
   per-principal cursor (<abbr title="Server-Side Encryption">SSE</abbr>).</li>
+<li>A <strong>delegated identity</strong> (an agent acting for a principal) is refused at connect, like
+  any other <a href="#errors">connect refusal</a>: a connection is the principal's own stream, mailbox
+  and cursors. The <code>delegate_denied</code> code reaches <abbr title="Server-Side Encryption">SSE</abbr> clients in <code>X-Error-Code</code>; Socket.IO
+  and WebSocket clients get the client-safe summary.</li>
 <li>Topic subscriptions are <strong>server-granted</strong>, never client-asserted: on Socket.IO
   the app joins the room after its own checks; on <abbr title="Server-Side Encryption">SSE</abbr> the <code>?topics=a,b</code> parameter
   is authorized by the app's resolver and the connection is refused with
@@ -6741,8 +6745,9 @@ to the in-flight bound) — sequence-dependent commands must wait for their acks
   routes render.</li>
 </ul>
 <h2 id="re-authentication">Re-authentication<a class="headerlink" href="#re-authentication" title="Permanent link">&para;</a></h2>
-<p>A rotating token is refreshed in place — same principal and tenant only; anything
-else is a re-login, which reconnects. The protocol version is <strong>not</strong> renegotiated
+<p>A rotating token is refreshed in place — same principal and tenant only, and never a
+delegated identity (an error ack with code <code>delegate_denied</code>); anything else is a re-login,
+which reconnects. The protocol version is <strong>not</strong> renegotiated
 (it is fixed per connection).</p>
 <ul>
 <li><strong>Socket.IO</strong>: <code>socket.emit("realtime.reauth", { token, … })</code>.</li>

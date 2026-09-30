@@ -9026,6 +9026,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A delegated identity cannot open a realtime connection.</strong> WebSocket, Socket.IO and <abbr title="Server-Side Encryption">SSE</abbr> refuse an identity with an actor at connect and at reauth (<code>delegate_denied</code>), since a connection is the principal's own stream, mailbox and cursors.</p>
+</li>
+<li>
 <p><strong>Tenant provisioning reaches the tenant it provisions.</strong> <code>ObjectStorageTenantProvisioner</code> creates an onboarded tenant's bucket on that tenant's backend with a routed client, and works with a plain one; <code>PostgresSchemaTenantProvisioner</code> refuses a routed client, as the Mongo provisioner already does.</p>
 </li>
 <li>
