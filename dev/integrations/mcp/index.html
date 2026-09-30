@@ -6583,13 +6583,20 @@ the user's.</p>
 <p>The agent can also ride the key itself: a <strong>delegation key</strong> minted for a
 user→agent pair (<code>issue_api_key(identity, actor_principal_id=agent)</code>) carries that
 agent, so a user's ChatGPT and Claude connections attribute and revoke
-independently. The <code>agent=AGENT_PRINCIPAL</code> on <code>AccessTokenIdentityResolver</code> is the
-<strong>fallback</strong> for plain keys that carry none — pass it for a fixed agent, omit it to
-bind the bare user.</p>
+independently. The key's agent must be a principal authentication accepts, other than the
+user; with <code>AuthnDepsModule(authz_route=...)</code> set, it must also be a registered <code>service</code>
+principal (under <code>eligibility="allow_all"</code> without it, any other id is accepted). The
+<code>agent=AGENT_PRINCIPAL</code> on <code>AccessTokenIdentityResolver</code> is the operator's agent: a plain
+key binds it as the actor, and a delegation key's agent is chained under it (user ← key
+agent ← operator agent), so a call gets the intersection of all three and a key cannot
+drop the operator's ceiling. Omit it to bind the bare user.</p>
+<p>With <code>enforce_delegation_grant</code> on the route's authz spec, every hop needs its own grant:
+<code>may_act(key agent, user)</code> from the user, and <code>may_act(operator agent, key agent)</code> for each
+agent the <abbr title="Model Context Protocol">MCP</abbr> server may run. A missing grant fails the call closed.</p>
 <p>Pass <strong>both</strong> <code>auth</code> and <code>identity</code> — <code>auth</code> rejects bad credentials, <code>identity</code>
 binds the good one. Read-only stays the default (<code>include_writes=False</code>); a
-write-capable agent needs <code>include_writes=True</code> <strong>and</strong> write grants on the agent
-principal. OAuth-based hosts (that can't paste a key) are a later, external concern —
+write-capable agent needs <code>include_writes=True</code> <strong>and</strong> write grants on every principal in
+the chain — the user, the key's agent and the operator's agent. OAuth-based hosts (that can't paste a key) are a later, external concern —
 forze stays the Resource Server and never runs an authorization server.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>

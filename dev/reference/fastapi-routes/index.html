@@ -7040,7 +7040,9 @@ decision to bring your own CSRF layer.</p>
 <p><code>attach_authn_routes</code> also generates <strong>self-service API-key management</strong> as a
 resource collection (all <code>AuthnRequired</code>): <code>POST /api-keys</code> issues a key for the
 caller — the raw secret is in the response <strong>once</strong>, optionally a user→agent
-delegation key (<code>actor_principal_id</code>) with a human <code>label</code> — <code>GET /api-keys</code>
+delegation key (<code>actor_principal_id</code>: another principal authentication accepts, and a
+registered <code>service</code> principal when <code>AuthnDepsModule(authz_route=...)</code> is set; otherwise
+<code>422 delegate_invalid</code>) with a human <code>label</code> — <code>GET /api-keys</code>
 lists the caller's keys as non-secret descriptors (a <code>hint</code> like <code>ab12…wxyz</code>,
 never the secret), and <code>DELETE /api-keys/{id}</code> revokes one. This is the minting
 surface for the <a href="../../integrations/mcp/#protect-it-with-api-key-auth"><abbr title="Model Context Protocol">MCP</abbr> API-key flow</a>:

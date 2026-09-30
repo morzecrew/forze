@@ -9026,6 +9026,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A delegation key's agent is checked, and cannot drop the operator's.</strong> It must be another eligible principal (a <code>service</code> one with <code>authz_route</code> set), checked at issue and rotation. Over <abbr title="Model Context Protocol">MCP</abbr> it is chained under the operator's agent; with enforced grants that needs <code>may_act(operator, agent)</code>.</p>
+</li>
+<li>
 <p><strong>A delegated identity cannot open a realtime connection.</strong> WebSocket, Socket.IO and <abbr title="Server-Side Encryption">SSE</abbr> refuse an identity with an actor at connect and at reauth (<code>delegate_denied</code>), since a connection is the principal's own stream, mailbox and cursors.</p>
 </li>
 <li>
