@@ -6816,7 +6816,18 @@ if the wired transaction manager does not report it. That is a deployment requir
 default you can lower.</p>
 <p>A correction writes two aggregates, so the corrections relation is yours to declare and wire: its
 route, its encryption policy and its retention are facts only you hold. Its create command must be
-<code>CreateCorrectionCmd</code>.</p>
+<code>CreateCorrectionCmd</code>. Each correction records who made it, as an audit row does: <code>actor_id</code> is the
+principal, or for a delegated call the nearest actor in its chain; <code>subject_id</code> is the principal it
+acted for; <code>actor_ids</code> is the whole chain, nearest first. Its domain and read models must declare
+all three, and none may be lenient (<code>read_conformity="lenient"</code> makes every defaulted field lenient)
+or in <code>write_omit_fields</code>; otherwise the kit refuses the declaration rather than lose them on every
+write or read. A Postgres corrections table
+created before these existed needs them — until then every correction fails on the write:</p>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">corrections</span><span class="o">&gt;</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">subject_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">;</span>
+<span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="o">&lt;</span><span class="n">corrections</span><span class="o">&gt;</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">actor_ids</span><span class="w"> </span><span class="n">uuid</span><span class="p">[]</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">'{}'</span><span class="p">;</span>
+</code></pre></div>
+<p>Rows a delegated correction wrote before this release hold the user it acted for in <code>actor_id</code>;
+later rows hold the agent.</p>
 <h2 id="reading-what-applied-on-a-day">Reading what applied on a day<a class="headerlink" href="#reading-what-applied-on-a-day" title="Permanent link">&para;</a></h2>
 <p>Contracts, price lists, tax rates and consent records are one shape: a key, a period, a payload,
 and the rule that two periods for one key may not overlap. <code>temporal=TemporalPolicy(...)</code> declares

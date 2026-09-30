@@ -6564,7 +6564,11 @@ introduced it.</p>
   refused when the spec is declared: an allowlist naming one is a declaration nobody meant.</li>
 <li><strong>The actor and subject come from the authenticated identity</strong>, never from the arguments.
   <code>subject_id</code> is the principal the call runs for; <code>actor_id</code> is who performed it — the same
-  principal, or the delegate when the call is delegated.</li>
+  principal, or the nearest delegate when the call is delegated. <code>actor_ids</code> holds the whole
+  delegation chain, nearest first, so an agent acting through another is on record too, and the
+  trail can be read by any of them (<code>{"$values": {"actor_ids": {"$superset": [agent]}}}</code>). The
+  nearest actor is not always the one you configured: on the <abbr title="Model Context Protocol">MCP</abbr> path the server's own agent
+  sits deeper in the chain, and <code>actor_ids</code> has it.</li>
 </ul>
 <h2 id="what-gets-recorded-and-where">What gets recorded, and where<a class="headerlink" href="#what-gets-recorded-and-where" title="Permanent link">&para;</a></h2>
 <p>An audited write ends in one row, with an outcome of <code>allowed</code>, <code>denied</code> or <code>failed</code>; reads
@@ -6643,8 +6647,8 @@ gap — so the choice is per action.</p>
 outage. And a <code>failed</code> or <code>denied</code> operation keeps its own error — a row that cannot be written
 for it is logged, never raised in its place.</p>
 <h2 id="the-collection">The collection<a class="headerlink" href="#the-collection" title="Permanent link">&para;</a></h2>
-<p>The trail is an ordinary document collection, so it is tenant-scoped, queryable, exportable and
-encryptable like any other. <code>forze_kits.integrations.audit</code> provides the spec and the port:</p>
+<p>The trail is an ordinary document collection, so it is tenant-scoped, queryable and exportable
+like any other; only its <code>metadata</code> can be sealed, since the other fields are what it is queried by. <code>forze_kits.integrations.audit</code> provides the spec and the port:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.audit</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuditDepsModule</span><span class="p">,</span> <span class="n">audit_record_spec</span>
 
 <span class="n">AUDIT</span> <span class="o">=</span> <span class="n">audit_record_spec</span><span class="p">()</span>           <span class="c1"># route "audit_events"; wire it like any document spec</span>
@@ -6663,11 +6667,22 @@ inventory. The collection is yours to create:</p>
 <span class="w">    </span><span class="n">outcome</span><span class="w"> </span><span class="nb">text</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
 <span class="w">    </span><span class="n">actor_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
 <span class="w">    </span><span class="n">subject_id</span><span class="w"> </span><span class="n">uuid</span><span class="p">,</span>
+<span class="w">    </span><span class="n">actor_ids</span><span class="w"> </span><span class="n">uuid</span><span class="p">[]</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">'{}'</span><span class="p">,</span>
 <span class="w">    </span><span class="n">object_type</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
 <span class="w">    </span><span class="n">object_id</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span>
 <span class="w">    </span><span class="n">metadata</span><span class="w"> </span><span class="n">jsonb</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">'{}'</span><span class="p">,</span>
 <span class="w">    </span><span class="k">at</span><span class="w"> </span><span class="n">timestamptz</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
 <span class="p">);</span>
+</code></pre></div>
+<p>A table created before <code>actor_ids</code> existed needs the column. Until it is added, startup schema
+validation refuses the table (<code>missing columns ['actor_ids']</code>), and without that validation
+every audited operation fails closed on the write:</p>
+<div class="highlight"><pre><span></span><code><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">audit_events</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="k">COLUMN</span><span class="w"> </span><span class="n">actor_ids</span><span class="w"> </span><span class="n">uuid</span><span class="p">[]</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="s1">'{}'</span><span class="p">;</span>
+</code></pre></div>
+<p>On MongoDB, rows written before the field existed have no <code>actor_ids</code> at all. They read back as
+<code>[]</code>, but <code>{"$empty": true}</code> does not match a missing field, so a "direct calls only" query there
+must also accept its absence:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$or"</span><span class="p">:</span> <span class="p">[{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"actor_ids"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$empty"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}}},</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"actor_ids"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$null"</span><span class="p">:</span> <span class="kc">True</span><span class="p">}}}]}</span>
 </code></pre></div>
 <p>To keep the trail somewhere else, implement <code>AuditPort</code> — one <code>record(entry)</code> that joins the
 open transaction when there is one — and register its factory under <code>AuditDepKey</code>, as

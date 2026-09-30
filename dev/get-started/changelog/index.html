@@ -9026,6 +9026,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Audit rows and versioned corrections record every principal of a delegation.</strong> <code>actor_id</code> stays the nearest actor; <code>actor_ids</code> holds the whole chain, and a correction gains <code>subject_id</code>; its spec must store and read back all three. <strong>Required migration</strong> on Postgres (see docs); until then those writes fail closed.</p>
+</li>
+<li>
+<p><strong>A delegated correction's <code>actor_id</code> is the agent that made it</strong> (<strong>behaviour change</strong>). Rows written by 0.8.0 to 0.9.0 hold the user it acted for there; later rows hold the agent, and the user is in <code>subject_id</code>.</p>
+</li>
+<li>
 <p><strong>An idempotency key reused by another delegation chain or tenant runs its own operation.</strong> A claim is scoped to the subject and its whole actor chain, and a tenant-aware Postgres store scopes it by tenant, as the other stores do; direct callers' claims are unchanged.</p>
 </li>
 <li>
