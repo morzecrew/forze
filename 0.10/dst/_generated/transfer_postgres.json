@@ -1,0 +1,298 @@
+[
+  {
+    "mutant_id": "T1-blind-write-payment",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "T3-payment-outside-tx",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "T3-torn-activation",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "T3-double-torn",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "T5-unchecked-reservation",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "T4-weakened-oncall",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "I1-retry-without-key",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "I2-naive-retry-loop",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "D2-early-lease-release",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "M2-consumer-without-inbox",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "M1-dual-write-shipment",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "I3-ack-before-processing",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "D1-skip-lock",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "D3-nonatomic-acquire",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "D4-unmerged-remote-hlc",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "D5-wall-clock-ordering",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "N3-unbound-cursor-walk",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "N1-drop-tenant-predicate",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "N2-stale-cache",
+    "engine": "postgres",
+    "expect_detected": true,
+    "mock": "detected",
+    "real": "detected",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-row-after-guard",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-row-before-guard-in-tx",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-unique-reservation",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-atomic-provision",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-atomic-pair",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-retry-with-key",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-idempotent-retry",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-serializable-oncall",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-release-after-write",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-inbox-consumer",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-outbox-in-tx",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-process-then-ack",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-lock-protocol",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-merged-relay",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-floored-append",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-bound-cursor-walk",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-tenant-filtered-browse",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  },
+  {
+    "mutant_id": "ctrl-cache-invalidate-in-tx",
+    "engine": "postgres",
+    "expect_detected": false,
+    "mock": "clean",
+    "real": "clean",
+    "classification": "agree"
+  }
+]
