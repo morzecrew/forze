@@ -114,6 +114,12 @@ async def _resolver(connect: WsConnect) -> WsConnection | None:
     if token == "other":
         return WsConnection(authn=AuthnIdentity(principal_id=uuid4()))
 
+    if token == "delegated":
+        # An agent acting for the principal: same subject, with an actor attached.
+        return WsConnection(
+            authn=AuthnIdentity(principal_id=_PRINCIPAL, actor=AuthnIdentity(principal_id=uuid4()))
+        )
+
     if token == "expired":
         from datetime import timedelta
 
@@ -160,6 +166,7 @@ def _build(
     mailbox = mailbox if mailbox is not None else InMemoryRealtimeMailbox()
     router = APIRouter()
     attach_kwargs.setdefault("cursors_factory", lambda _ctx: InMemoryMailboxCursors())
+    attach_kwargs.setdefault("authorize_topics", _allow_all)
     attach_realtime_ws_route(
         router,
         ctx_dep=lambda: ctx,
@@ -167,7 +174,6 @@ def _build(
         mailbox_factory=lambda _ctx: mailbox,
         hub=hub,
         presence=presence,
-        authorize_topics=_allow_all,
         registry=_registry() if with_commands else None,
         commands=_COMMANDS if with_commands else None,
         **attach_kwargs,
@@ -232,6 +238,39 @@ class TestHandshake:
 
         assert caught.value.code == 1008
         assert "Bad realtime token" in str(caught.value.reason)
+
+    def test_a_delegated_identity_is_refused(self) -> None:
+        # A connection joins the subject's own room and mailbox: an agent acting for the
+        # subject would receive everything addressed to it and could move its cursors.
+        # Seeded, so an accepted connection answers with the subject's replay at once.
+        mailbox = InMemoryRealtimeMailbox()
+        asyncio.run(_seed(mailbox))
+        client, _ = _build(mailbox=mailbox)
+
+        with client.websocket_connect("/realtime/ws?token=delegated") as ws:
+            with pytest.raises(WebSocketDisconnect) as caught:
+                ws.receive_json()
+
+        assert caught.value.code == 1008
+        assert "delegated" in str(caught.value.reason)
+
+    def test_the_topic_authorizer_sees_the_connection_identity(self) -> None:
+        # As on SSE, where the request carries it: the app's decision can read who asks.
+        seen: list[Any] = []
+
+        async def _recording(
+            ctx: ExecutionContext, _principal: str, _tenant: UUID | None, requested: frozenset[str]
+        ) -> frozenset[str]:
+            seen.append(ctx.inv_ctx.get_authn())
+            return requested
+
+        client, _ = _build(authorize_topics=_recording)
+
+        with client.websocket_connect("/realtime/ws?topics=t1") as ws:
+            ws.send_json({"type": "realtime.reauth", "cid": "x", "auth": {"token": "fresh"}})
+            ws.receive_json()
+
+        assert [identity.principal_id for identity in seen] == [_PRINCIPAL]
 
     def test_unsupported_protocol_is_refused(self) -> None:
         client, _ = _build()
@@ -662,6 +701,16 @@ class TestReauth:
         assert ack["cid"] == "r2"
         assert "same principal" in ack["error"]["detail"]
         assert ack["error"]["kind"] == "authentication"
+
+    def test_reauth_to_a_delegated_identity_is_refused(self) -> None:
+        client, _ = _build()
+
+        with client.websocket_connect("/realtime/ws") as ws:
+            ws.send_json({"type": "realtime.reauth", "cid": "r4", "auth": {"token": "delegated"}})
+            ack = ws.receive_json()
+
+        assert ack["cid"] == "r4"
+        assert ack["error"]["code"] == "delegate_denied"
 
     def test_reauth_resolving_anonymous_is_refused(self) -> None:
         client, _ = _build()

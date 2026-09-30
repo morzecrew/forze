@@ -17,6 +17,7 @@ from .auth import (
     auth_payload,
     client_identity,
     present_credential,
+    refuse_delegated_identity,
     require_origin_attestation,
     resolve_realtime_identity,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "auth_payload",
     "client_identity",
     "present_credential",
+    "refuse_delegated_identity",
     "require_origin_attestation",
     "resolve_realtime_identity",
     "MailboxEntry",
