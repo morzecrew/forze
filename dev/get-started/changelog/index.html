@@ -9005,6 +9005,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A malformed Inngest envelope no longer fails every retry.</strong> An identity that does not decode is ignored when the function does not bind it, and stops one that does with a <code>NonRetriableError</code>; malformed tracing ids are dropped.</p>
+</li>
+<li>
 <p><strong>A multi-tenant app no longer refuses authorization in every tenant but the first.</strong> Grant resolution compared a requested tenant with the tenant bound when its port was first built, then cached for the process, so other tenants' decisions failed with <code>authz.scope_tenant_mismatch</code>.</p>
 </li>
 <li>
