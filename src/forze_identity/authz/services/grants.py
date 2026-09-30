@@ -475,8 +475,8 @@ class ProviderKeyCheck:
     The lifecycle step fails at boot, but only where a deployment registers it; this makes the
     check impossible to leave out. A failure is not remembered, so every decision refuses until
     the keys are fixed. A key a config provider owns that a binding also grants is logged
-    (``authz.config_grant_overlap``) rather than refused, once per tenant per process like the
-    rest; a binding written afterwards is not seen until the next start. First decisions that
+    (``authz.config_grant_overlap``) rather than refused, when the tenant's check runs; a binding
+    written afterwards is not seen until the next start. First decisions that
     overlap may each run the check: it is a read, so
     running it twice only costs a query, where a lock would serialize them.
     """

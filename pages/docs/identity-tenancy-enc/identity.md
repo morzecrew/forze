@@ -168,7 +168,10 @@ class Settings(BaseModel):  # your settings root
     config_grants: ConfigGrants = ConfigGrants()
 
 
-settings = load_settings()  # a deployment sets {"grants": {"ops.break_glass": ["<principal id>"]}}
+# The deployment's value nests under the field you mounted it on:
+settings = Settings.model_validate(
+    {"config_grants": {"grants": {"ops.break_glass": ["<principal id>"]}}}
+)
 provider = ConfigGrantsProvider(
     keys=frozenset({"ops.break_glass"}),  # reviewed code, not configuration
     grants=settings.config_grants,
@@ -183,8 +186,9 @@ kernel = AuthzKernelConfig(permission_providers=(provider,))
   A role, principal or group binding of it grants nothing whenever it was written, because the
   provider denies each of its keys to every principal it does not list. The startup step, where
   registered, refuses such a binding in the tenant it reads under
-  (`authz_config_grant_overlap`); without it, a binding present at a tenant's first decision in
-  a process is logged once (`authz.config_grant_overlap`). Nor may another provider declare the
+  (`authz_config_grant_overlap`); without it, a binding present when a tenant's check first runs
+  in a process is logged (`authz.config_grant_overlap`), and one written later is not seen until
+  the next start. Nor may another provider declare the
   key: its grants of it would never count, so the declaration is refused.
 - The provider reads the configuration once, when it is built.
 - Its keys are checked against the catalog like any provider's, so each needs a permission row.
