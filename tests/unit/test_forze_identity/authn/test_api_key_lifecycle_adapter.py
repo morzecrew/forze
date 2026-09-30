@@ -505,7 +505,14 @@ class _Registry:
         from forze.application.contracts.authz import PrincipalRef
 
         kind = self.kinds.get(principal_id)
-        return None if kind is None else PrincipalRef(principal_id=principal_id, kind=kind)  # type: ignore[arg-type]
+
+        if kind is None:
+            return None
+
+        if kind == "inactive-service":
+            return PrincipalRef(principal_id=principal_id, kind="service", is_active=False)  # type: ignore[arg-type]
+
+        return PrincipalRef(principal_id=principal_id, kind=kind)  # type: ignore[arg-type]
 
 
 class TestTheDelegationAgentIsAService:
@@ -519,7 +526,12 @@ class TestTheDelegationAgentIsAService:
         return adapter, ak_cmd
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("kind", ["user", None], ids=["a-user", "unregistered"])
+    @pytest.mark.parametrize(
+        "kind",
+        ["user", None, "inactive-service"],
+        # An inactive service passes an allow-all eligibility gate; the registry still refuses.
+        ids=["a-user", "unregistered", "inactive-service"],
+    )
     async def test_an_agent_that_is_not_a_service_is_refused(self, kind: str | None) -> None:
         pid, agent = uuid4(), uuid4()
         adapter, ak_cmd = self._issuing(_Registry({agent: kind} if kind else {}))
