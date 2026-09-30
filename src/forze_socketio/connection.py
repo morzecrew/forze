@@ -41,6 +41,7 @@ from forze.application.integrations.realtime import (
     acknowledge_up_to,
     iter_backlog,
     negotiate_realtime_protocol,
+    refuse_delegated_identity,
     resolve_client_key,
 )
 from forze.application.integrations.realtime import (
@@ -162,8 +163,12 @@ async def _resolve(
     connect: SocketIOConnect,
 ) -> RealtimeConnection | None:
     result = resolver(connect)
+    connection = await result if isawaitable(result) else result
 
-    return await result if isawaitable(result) else result
+    # Every accepted identity passes here, at connect and at reauth, whatever the resolver.
+    refuse_delegated_identity(connection.authn if connection is not None else None)
+
+    return connection
 
 
 # ....................... #
