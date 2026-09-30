@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An app's own routes come from a binding table.** `forze_fastapi.routes` exports `attach_operation_routes`, `RouteBinding` and the endpoint builders, plus `query_endpoint` for a GET whose input arrives as query parameters. Each route is named by its operation key, e.g. `stock.add`; an unregistered binding is refused.
+
+- **The OpenAPI schema can document what a Forze app serves.** `apply_openapi_conventions(app)` documents the Forze error envelope in place of FastAPI's 422 body, adds a `default` error to every operation that lacks one, and renders reST in descriptions (roles, literals, field lists) as Markdown.
+
 - **Wall-clock times convert to instants without guessing.** `CivilZone`, `to_instant`, `local_day_bounds`, `month_bounds`, `spanned_local_days` and `elapsed_minutes` in `forze.base.primitives`: conversions refuse a repeated time without `fold`, a skipped one, or a result past years 1–9999; `AwareDatetime` refuses naive.
 
 - **Permissions can be derived from state per decision.** A `PermissionProvider` (declared on `AuthzKernelConfig(permission_providers=…)`) grants or denies keys from documents or config. A denial outranks every catalog binding, an unknown key is refused, and a late provider denies its keys; the mock decides with them.

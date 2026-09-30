@@ -320,6 +320,56 @@ blob routes (under `storage_prefix`) onto one router with a single call, each
 sub-surface exactly as its dedicated attacher would. `tx_route` must match the
 transaction route the deps module registers.
 
+## Your own operation routes
+
+An operation no attacher ships gets its route from a binding table, not a hand-written
+endpoint. `attach_operation_routes` takes the table keyed by operation suffix under a
+namespace; the schema, `operation_id` (the namespaced key, e.g. `stock.add`) and dispatch
+come from the catalog, as for the generated routes.
+
+```python
+from forze.base.primitives import StrKeyNamespace
+from forze_fastapi.routes import (
+    RouteBinding,
+    attach_operation_routes,
+    body_endpoint,
+    id_endpoint,
+    query_endpoint,
+)
+
+attach_operation_routes(
+    router,
+    registry=registry,
+    ns=StrKeyNamespace(prefix="stock"),
+    ctx_dep=ctx_dep,
+    bindings={
+        "levels": RouteBinding(method="GET", path="/levels", build=query_endpoint),
+        "add": RouteBinding(method="POST", path="/add", build=body_endpoint, status_code=201),
+        "get": RouteBinding(method="GET", path="/{id}", build=id_endpoint),
+    },
+)
+```
+
+A binding whose operation is not registered is refused, so a typo fails at startup rather
+than answering 404; pass `skip_unregistered=True` to skip it instead.
+
+`query_endpoint` reads the whole input DTO from query parameters, one per field; a list
+field repeats (`?tag=a&tag=b`). A field a query string cannot carry, such as a nested
+model or `bytes`, is refused when the route is attached. The operation receives the DTO a
+body with the same keys would build: only the parameters sent count as set, so a patch built
+from it leaves the rest alone, and validators and extras behave as for a body. A parameter
+the DTO does not declare is ignored unless the DTO forbids or allows extra fields. A literal
+`+` in a value, such as a timezone offset, must be sent as `%2B`: a query string reads `+` as
+a space.
+
+`body_endpoint`, `id_endpoint`, `id_rev_endpoint` and `id_rev_body_endpoint` are the
+builders the document routes use. The id builders take `id` and `rev` from the path where it
+has their placeholder and from the query otherwise, typed and defaulted as the input DTO
+declares them. Each
+shipped builder names the placeholders it fills, and a path with any other placeholder is
+refused. An `EndpointBuilder` of your own takes `(runner, input_type, op)`; give it a
+`path_params` frozenset to have its paths checked the same way.
+
 ## Infrastructure routes
 
 - `attach_jwks_route(router, jwks_provider, *, path="/.well-known/jwks.json",
@@ -383,3 +433,38 @@ open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open
 
 This **documents** auth; it doesn't enforce it — enforcement stays in the engine
 (the `AuthnRequired`/authz hooks) and identity extraction in the middleware.
+
+## Match OpenAPI to what the app serves
+
+FastAPI documents its own 422 body (`HTTPValidationError`) on every route that
+takes input, but the Forze exception handlers answer errors — a failed request
+parse included — with the Forze envelope. Descriptions come from docstrings, so
+reST such as ``:class:`~shop.Order` `` reaches the rendered docs as written. One
+call fixes both:
+
+```python
+from forze_fastapi import apply_openapi_conventions
+
+# After every router is attached, and after apply_openapi_security:
+apply_openapi_conventions(app)
+```
+
+Each FastAPI 422 becomes the `ForzeErrorResponse` envelope (`detail`, optional
+`context`), and every operation without its own `default` response gains one in the same
+shape.
+The `X-Error-Code` header accompanies the errors that carry a code, so it is
+documented as optional. FastAPI's validation schemas are dropped once nothing
+references them. A 422 your route declares with its own model is left alone. A
+different model of yours already named `ForzeErrorResponse` is not overwritten:
+the schema request fails with a configuration error, since routers can still be
+attached after the call. Responses a route sends
+with no body at all, such as a storage download's `304` and `416`, are not
+envelopes; the `default` entry does not describe them.
+
+Every `description` and `summary` then has its reST rendered as Markdown without
+losing prose: roles and ``` ``literals`` ``` become code spans, field lists
+(`:param:`, `:returns:`, …) are dropped, `code-block` and `::` literal blocks
+become fenced blocks, and any other directive (`note`, `deprecated`,
+`versionadded`, …) becomes a labelled blockquote. Fenced blocks already in
+Markdown pass through as written. Call it last: text a later wrapper adds, such as a security scheme's
+description, stays as written.

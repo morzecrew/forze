@@ -138,4 +138,5 @@ def attach_tenancy_routes(
         include=include,
         path_overrides=path_overrides,
         exclude_none=exclude_none,
+        skip_unregistered=True,
     )
