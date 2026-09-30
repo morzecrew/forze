@@ -147,8 +147,8 @@ ALTER TABLE <corrections> ADD COLUMN subject_id uuid;
 ALTER TABLE <corrections> ADD COLUMN actor_ids uuid[] NOT NULL DEFAULT '{}';
 ```
 
-Rows a delegated correction wrote before this release hold the user it acted for in `actor_id`;
-later rows hold the agent.
+Rows a delegated correction wrote on 0.9.0 or earlier hold the user it acted for in `actor_id`;
+rows from 0.10.0 on hold the agent.
 
 ## Reading what applied on a day
 

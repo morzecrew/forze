@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.10.0] - 2026-09-30
+
+### Added
+
 - **An app's own routes come from a binding table.** `forze_fastapi.routes` exports `attach_operation_routes`, `RouteBinding` and the endpoint builders, plus `query_endpoint` for a GET whose input arrives as query parameters. Each route is named by its operation key, e.g. `stock.add`; an unregistered binding is refused.
 
 - **The OpenAPI schema can document what a Forze app serves.** `apply_openapi_conventions(app)` documents the Forze error envelope in place of FastAPI's 422 body, adds a `default` error to every operation that lacks one, and renders reST in descriptions (roles, literals, field lists) as Markdown.
@@ -30,8 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Soft deletion's read mappers compose with the ones you pass.** `SoftDeleteWiring.read_mappers(base)` runs its exclusion after each list-family mapper `base` carries instead of replacing it, so your own restriction still applies.
-
-- ...
 
 ### Fixed
 
@@ -1894,7 +1906,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.9.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/morzecrew/forze/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/morzecrew/forze/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/morzecrew/forze/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/morzecrew/forze/compare/v0.6.0...v0.7.0
