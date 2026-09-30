@@ -94,6 +94,7 @@ def _build_client(
     cursors: InMemoryMailboxCursors,
     hub: RealtimeSseHub | None = None,
     authenticated: bool = True,
+    authn: AuthnIdentity | None = None,
 ) -> TestClient:
     ctx = context_from_deps(MockDepsModule(state=MockState())())
     router = APIRouter()
@@ -111,7 +112,7 @@ def _build_client(
     app.add_middleware(
         _BindIdentity,  # type: ignore[arg-type]
         ctx=ctx,
-        authn=AuthnIdentity(principal_id=_PRINCIPAL) if authenticated else None,
+        authn=authn or (AuthnIdentity(principal_id=_PRINCIPAL) if authenticated else None),
     )
 
     return TestClient(app)
@@ -339,6 +340,24 @@ class TestHandshake:
 
         assert client.get("/realtime/sse").status_code == 401
         assert client.post("/realtime/sse/ack", json={"up_to": "x"}).status_code == 401
+
+    def test_a_delegated_identity_is_refused(self) -> None:
+        # The stream is the subject's own mailbox and the ack moves its cursors: an agent
+        # acting for the subject gets neither.
+        from uuid import uuid4
+
+        client = _build_client(
+            mailbox=InMemoryRealtimeMailbox(),
+            cursors=InMemoryMailboxCursors(),
+            authn=AuthnIdentity(principal_id=_PRINCIPAL, actor=AuthnIdentity(principal_id=uuid4())),
+        )
+
+        stream = client.get("/realtime/sse")
+        ack = client.post("/realtime/sse/ack", json={"up_to": "x"})
+
+        for response in (stream, ack):
+            assert response.status_code == 403
+            assert response.headers["X-Error-Code"] == "delegate_denied"
 
     def test_unsupported_protocol_is_refused(self) -> None:
         client = _build_client(mailbox=InMemoryRealtimeMailbox(), cursors=InMemoryMailboxCursors())

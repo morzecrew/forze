@@ -111,6 +111,51 @@ async def test_resolver_can_refuse_connection() -> None:
         await sio.handlers["connect"](*_connect_args())
 
 
+async def test_a_delegated_identity_is_refused() -> None:
+    # A connection joins the subject's own room and mailbox: an agent acting for the subject
+    # would receive everything addressed to it and could move its cursors.
+    sio = _StubSio()
+    delegated = RealtimeConnection(
+        authn=AuthnIdentity(
+            principal_id=_PRINCIPAL,
+            actor=AuthnIdentity(principal_id=UUID("44444444-4444-4444-4444-444444444444")),
+        ),
+        tenant=_TENANT,
+    )
+
+    attach_realtime_connection(sio, resolve=_resolver(delegated))  # pyright: ignore[reportArgumentType]
+
+    with pytest.raises(SocketIOConnectionRefusedError) as caught:
+        await sio.handlers["connect"](*_connect_args())
+
+    assert "delegated" in str(caught.value)
+    assert sio.entered == []
+
+
+async def test_reauth_to_a_delegated_identity_is_refused() -> None:
+    sio = _StubSio()
+    first = RealtimeConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL), tenant=_TENANT)
+    delegated = RealtimeConnection(
+        authn=AuthnIdentity(
+            principal_id=_PRINCIPAL,
+            actor=AuthnIdentity(principal_id=UUID("44444444-4444-4444-4444-444444444444")),
+        ),
+        tenant=_TENANT,
+    )
+    outcomes = iter([first, delegated])
+
+    async def resolve(_c: SocketIOConnect) -> RealtimeConnection | None:
+        return next(outcomes)
+
+    attach_realtime_connection(sio, resolve=resolve)  # pyright: ignore[reportArgumentType]
+    await sio.handlers["connect"](*_connect_args())
+
+    ack = await sio.handlers["realtime.reauth"]("sid-1", {"token": "agent"})
+
+    assert ack["error"]["code"] == "delegate_denied"
+    assert sio.sessions["sid-1"][CONNECTION_SESSION_KEY] is first
+
+
 async def test_presence_counts_multiple_connections() -> None:
     presence = InMemoryRealtimePresence()
 

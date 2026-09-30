@@ -32,6 +32,10 @@ Rules:
 - A `device_id` is the stable cursor key for offline replay; without one the
   framework falls back to the authenticated session id (Socket.IO) or a shared
   per-principal cursor (SSE).
+- A **delegated identity** (an agent acting for a principal) is refused at connect, like
+  any other [connect refusal](#errors): a connection is the principal's own stream, mailbox
+  and cursors. The `delegate_denied` code reaches SSE clients in `X-Error-Code`; Socket.IO
+  and WebSocket clients get the client-safe summary.
 - Topic subscriptions are **server-granted**, never client-asserted: on Socket.IO
   the app joins the room after its own checks; on SSE the `?topics=a,b` parameter
   is authorized by the app's resolver and the connection is refused with
@@ -131,8 +135,9 @@ to the in-flight bound) — sequence-dependent commands must wait for their acks
 
 ## Re-authentication
 
-A rotating token is refreshed in place — same principal and tenant only; anything
-else is a re-login, which reconnects. The protocol version is **not** renegotiated
+A rotating token is refreshed in place — same principal and tenant only, and never a
+delegated identity (an error ack with code `delegate_denied`); anything else is a re-login,
+which reconnects. The protocol version is **not** renegotiated
 (it is fixed per connection).
 
 - **Socket.IO**: `socket.emit("realtime.reauth", { token, … })`.
