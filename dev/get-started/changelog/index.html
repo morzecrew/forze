@@ -8966,6 +8966,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>An app's own routes come from a binding table.</strong> <code>forze_fastapi.routes</code> exports <code>attach_operation_routes</code>, <code>RouteBinding</code> and the endpoint builders, plus <code>query_endpoint</code> for a GET whose input arrives as query parameters. Each route is named by its operation key, e.g. <code>stock.add</code>; an unregistered binding is refused.</p>
+</li>
+<li>
 <p><strong>The OpenAPI schema can document what a Forze app serves.</strong> <code>apply_openapi_conventions(app)</code> documents the Forze error envelope in place of FastAPI's 422 body, adds a <code>default</code> error to every operation that lacks one, and renders reST in descriptions (roles, literals, field lists) as Markdown.</p>
 </li>
 <li>
