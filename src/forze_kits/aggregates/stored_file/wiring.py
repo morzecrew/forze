@@ -1,4 +1,4 @@
-"""Freeze a stored-file registry with transaction and after-commit stages."""
+"""Bind a stored-file registry's write operations to their transaction and after-commit stages."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.base.primitives import StrKeyNamespace
 from forze_kits.domain.stored_file import StoredFileKitSpec
 
 from .factories import build_stored_file_registry
@@ -55,20 +56,25 @@ def _bind_write_op(
 # ....................... #
 
 
-def freeze_stored_file_registry(
+def bind_stored_file_writes(
     kit: StoredFileKitSpec,
     *,
     tx_route: str = "default",
     registry: OperationRegistry | None = None,
-) -> FrozenOperationRegistry:
-    """Build, patch, and freeze a stored-file operation registry.
+    ns: StrKeyNamespace | None = None,
+) -> OperationRegistry:
+    """Bind a stored-file registry's write operations, leaving it unfrozen.
 
     Write operations (``upload``, ``delete``) run in a transaction. Outbox rows
     flush on tx success; blob upload and purge run in ``after_commit`` hooks.
+    The registry stays open, so the app can layer its own guards (authn, authz)
+    on the stored-file operations before it freezes. Pass the *ns* a given *registry* was
+    built with (:func:`build_stored_file_registry`'s ``ns``); the default is the kit
+    document's namespace.
     """
 
-    reg = registry if registry is not None else build_stored_file_registry(kit)
-    ns = kit.document.default_namespace
+    ns = ns or kit.document.default_namespace
+    reg = registry if registry is not None else build_stored_file_registry(kit, ns=ns)
 
     reg = _bind_write_op(
         reg,
@@ -90,4 +96,20 @@ def freeze_stored_file_registry(
         after_commit_factory=stored_file_purge_blob_after_commit_factory,
     )
 
-    return reg.freeze()
+    return reg
+
+
+# ....................... #
+
+
+def freeze_stored_file_registry(
+    kit: StoredFileKitSpec,
+    *,
+    tx_route: str = "default",
+    registry: OperationRegistry | None = None,
+    ns: StrKeyNamespace | None = None,
+) -> FrozenOperationRegistry:
+    """:func:`bind_stored_file_writes`, frozen — for an app that adds nothing to the
+    stored-file operations."""
+
+    return bind_stored_file_writes(kit, tx_route=tx_route, registry=registry, ns=ns).freeze()
