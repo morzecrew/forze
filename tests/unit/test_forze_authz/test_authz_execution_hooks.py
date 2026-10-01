@@ -108,6 +108,32 @@ async def test_before_authorize_missing_identity_is_authentication() -> None:
 
 
 @pytest.mark.asyncio
+async def test_before_authorize_refuses_the_anonymous_before_the_factories_run() -> None:
+    # A factory reads the target; an anonymous caller must get 401, never what the read raised.
+    ctx = context_from_deps(Deps())
+    metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())
+    read: list[object] = []
+
+    def _resource(_ctx: Any, args: Any) -> Any:
+        read.append(args)
+        raise CoreException("Note 7 not found", kind=ExceptionKind.NOT_FOUND)
+
+    with (
+        patch.object(ctx.authz, "decision", return_value=_AllowDecision()),
+        ctx.inv_ctx.bind(metadata=metadata),
+    ):
+        hook = AuthzBeforeAuthorize(
+            spec=AuthzSpec(name="z"), action="x.read", resource_factory=_resource
+        )(ctx)
+
+        with pytest.raises(CoreException) as exc_info:
+            await hook("note-7")
+
+    assert exc_info.value.code == "auth_required"
+    assert read == []
+
+
+@pytest.mark.asyncio
 async def test_document_scope_wrap_missing_identity_is_authentication() -> None:
     ctx = context_from_deps(Deps())
     metadata = InvocationMetadata(execution_id=uuid4(), correlation_id=uuid4())

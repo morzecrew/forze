@@ -759,6 +759,67 @@ def denial_bodies_identical(*ops: str) -> Invariant:
     return named("denial_bodies_identical", _check)
 
 
+def no_permission_after_deactivation(deactivate: str, guarded: Iterable[str]) -> Invariant:
+    """No guarded operation succeeds once a deactivation has returned.
+
+    A permission derived from state (an active membership, an employed person) has to close when
+    the state does: a stale binding, a cached grant or a provider reading an old snapshot would
+    otherwise keep the door open. *deactivate* names the operation that deactivates the
+    principal; *guarded* names the operations that principal runs. Any guarded operation invoked
+    after a successful *deactivate* returned — in trace order, not wall time — must not succeed.
+
+    What it does not judge:
+
+    - Operations overlapping the deactivation. Either answer is linearizable, so neither is
+      flagged.
+    - An operation admitted that then failed for another reason. It reads success, and a failure
+      does not say whether authorization or something after it refused.
+    - Reactivation. The workload keeps the principal deactivated once it is; one that reactivates
+      needs its own statement.
+
+    A recorded operation carries no principal, so *guarded* must be operations only the
+    deactivated principal runs.
+    """
+
+    wanted = frozenset(guarded)
+
+    if not wanted:
+        raise ValueError("no_permission_after_deactivation needs at least one guarded operation")
+
+    if deactivate in wanted:
+        raise ValueError(f"{deactivate!r} cannot both deactivate and be guarded")
+
+    def _check(history: History) -> list[Violation]:
+        operations = history.of_kind("operation")
+        deactivations = [
+            event
+            for event in operations
+            if event.fields.get("op") == deactivate and event.fields.get("outcome") == "ok"
+        ]
+
+        if not deactivations:
+            return []
+
+        first = min(deactivations, key=lambda event: int(event.fields["end_seq"]))
+        closed_at = int(first.fields["end_seq"])
+
+        return [
+            Violation(
+                invariant="no_permission_after_deactivation",
+                message=(
+                    f"operation {event.fields.get('op')!r} succeeded after {deactivate!r} returned"
+                ),
+                events=(first, event),
+            )
+            for event in operations
+            if event.fields.get("op") in wanted
+            and event.fields.get("outcome") == "ok"
+            and int(event.fields["start_seq"]) > closed_at
+        ]
+
+    return named("no_permission_after_deactivation", _check)
+
+
 def completes_within(op: str, seconds: float) -> Invariant:
     """Every ``op`` operation must finish within *seconds* of **virtual** time (invoke→return).
 

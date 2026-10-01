@@ -1,4 +1,5 @@
-"""The boot check for permission providers: every key they declare exists in the catalog."""
+"""The boot check for permission providers: every key they declare exists in the catalog, and no
+key the configuration owns is also granted through it."""
 
 from collections.abc import Iterable
 from contextlib import nullcontext
@@ -12,8 +13,13 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.authz import check_permission_providers
 
-from ..application.specs import permission_definition_spec
-from ..services.grants import check_declared_keys
+from ..application.specs import (
+    group_permission_binding_spec,
+    permission_definition_spec,
+    principal_permission_binding_spec,
+    role_permission_binding_spec,
+)
+from ..services.grants import check_provider_catalog
 
 # ----------------------- #
 
@@ -32,7 +38,15 @@ class _CheckProviderKeys:
         )
 
         with binding:
-            await check_declared_keys(ctx.doc.query(permission_definition_spec), self.providers)
+            await check_provider_catalog(
+                ctx.doc.query(permission_definition_spec),
+                (
+                    ctx.doc.query(role_permission_binding_spec),
+                    ctx.doc.query(principal_permission_binding_spec),
+                    ctx.doc.query(group_permission_binding_spec),
+                ),
+                self.providers,
+            )
 
 
 def permission_providers_lifecycle_step(
@@ -41,7 +55,9 @@ def permission_providers_lifecycle_step(
     tenant: TenantIdentity | None = None,
     name: str = "authz_permission_providers",
 ) -> LifecycleStep:
-    """A startup step refusing to boot when a provider declares a key the catalog lacks.
+    """A startup step refusing to boot when a provider declares a key the catalog lacks, or when
+    a key a :class:`~forze_identity.authz.ConfigGrantsProvider` declares is also granted through
+    the catalog.
 
     Pass the providers given to ``AuthzKernelConfig(permission_providers=...)``. When the
     permission catalog is tenant-scoped, *tenant* is the tenant it is read under.
