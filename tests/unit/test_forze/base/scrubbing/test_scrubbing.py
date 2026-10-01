@@ -1122,6 +1122,7 @@ class TestShortTermsAreAnchored:
             "redirect_uri",
             "dburis",
             "dburi2",
+            "dburis2",
             "MONGOURIS",
             "mongouri1",
             "connectionuris",
@@ -1173,6 +1174,7 @@ class TestShortTermsAreAnchored:
             ),
             ("dburis=sig-0f9a8b7c", "sig-0f9a8b7c"),
             ("dburi2=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("dburis2=sig-0f9a8b7c", "sig-0f9a8b7c"),
             ('{"MONGOURIS": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
         ],
     )
