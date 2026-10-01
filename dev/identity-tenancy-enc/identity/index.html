@@ -1941,6 +1941,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#permissions-granted-by-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Permissions granted by configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gating-a-route-that-runs-no-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Gating a route that runs no operation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6468,6 +6490,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#permissions-granted-by-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Permissions granted by configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gating-a-route-that-runs-no-operation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Gating a route that runs no operation
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6799,7 +6843,69 @@ and the policy unions them with catalog grants:</p>
   query ports do not run providers.</li>
 <li>Derived grants sit in <code>EffectiveGrants.derived</code>, attributed to their provider and apart from the
   catalog's <code>permissions</code>, so an administered grant can be told from a derived one.</li>
+<li>The <abbr title="Deterministic Simulation Testing">DST</abbr> invariant <code>no_permission_after_deactivation</code> checks that a derived permission closes
+  when its state does: no guarded operation succeeds once a deactivation has returned.</li>
 </ul>
+<h3 id="permissions-granted-by-configuration">Permissions granted by configuration<a class="headerlink" href="#permissions-granted-by-configuration" title="Permanent link">&para;</a></h3>
+<p>Break-glass operators and one-off recipients are better as reviewed deployment config than as
+rows an admin can grant at runtime. <code>ConfigGrantsProvider</code> declares the keys in code;
+<code>ConfigGrants</code>, a settings model you mount on your own settings root, lists who holds each:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzKernelConfig</span><span class="p">,</span> <span class="n">ConfigGrants</span><span class="p">,</span> <span class="n">ConfigGrantsProvider</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Settings</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>  <span class="c1"># your settings root</span>
+    <span class="n">config_grants</span><span class="p">:</span> <span class="n">ConfigGrants</span> <span class="o">=</span> <span class="n">ConfigGrants</span><span class="p">()</span>
+
+
+<span class="c1"># The deployment's value nests under the field you mounted it on:</span>
+<span class="n">settings</span> <span class="o">=</span> <span class="n">Settings</span><span class="o">.</span><span class="n">model_validate</span><span class="p">(</span>
+    <span class="p">{</span><span class="s2">"config_grants"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"grants"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"ops.break_glass"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"&lt;principal id&gt;"</span><span class="p">]}}}</span>
+<span class="p">)</span>
+<span class="n">provider</span> <span class="o">=</span> <span class="n">ConfigGrantsProvider</span><span class="p">(</span>
+    <span class="n">keys</span><span class="o">=</span><span class="nb">frozenset</span><span class="p">({</span><span class="s2">"ops.break_glass"</span><span class="p">}),</span>  <span class="c1"># reviewed code, not configuration</span>
+    <span class="n">grants</span><span class="o">=</span><span class="n">settings</span><span class="o">.</span><span class="n">config_grants</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">AuthzKernelConfig</span><span class="p">(</span><span class="n">permission_providers</span><span class="o">=</span><span class="p">(</span><span class="n">provider</span><span class="p">,))</span>
+</code></pre></div>
+<ul>
+<li><strong>The keys are code.</strong> A configuration naming a key the provider does not declare is refused
+  when the provider is built; a declared key it omits, or lists nobody under, is granted to
+  nobody. Principals are exact ids: no wildcard, pattern or email match.</li>
+<li><strong>One source per key.</strong> A key the provider owns may not also be granted through the catalog.
+  A role, principal or group binding of it grants nothing whenever it was written, because the
+  provider denies each of its keys to every principal it does not list. The startup step, where
+  registered, refuses such a binding in the tenant it reads under
+  (<code>authz_config_grant_overlap</code>); without it, a binding present when a tenant's check first runs
+  in a process is logged (<code>authz.config_grant_overlap</code>), and one written later is not seen until
+  the next start. Nor may another provider declare the
+  key: its grants of it would never count, so the declaration is refused.</li>
+<li>The provider reads the configuration once, when it is built.</li>
+<li>Its keys are checked against the catalog like any provider's, so each needs a permission row.
+  A provider with no keys at all is refused, as any provider declaring nothing is.</li>
+</ul>
+<h3 id="gating-a-route-that-runs-no-operation">Gating a route that runs no operation<a class="headerlink" href="#gating-a-route-that-runs-no-operation" title="Permanent link">&para;</a></h3>
+<p>Where a hand-written route runs no operation, so no hook guards it, <code>require_permission</code> makes the
+same decision as a FastAPI dependency:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">Depends</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.security</span><span class="w"> </span><span class="kn">import</span> <span class="n">require_permission</span>
+
+<span class="n">ledger_write</span> <span class="o">=</span> <span class="n">require_permission</span><span class="p">(</span><span class="s2">"ledger.write"</span><span class="p">,</span> <span class="n">spec</span><span class="o">=</span><span class="n">AUTHZ</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">)</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"/ledger/import"</span><span class="p">,</span> <span class="n">dependencies</span><span class="o">=</span><span class="p">[</span><span class="n">Depends</span><span class="p">(</span><span class="n">ledger_write</span><span class="p">)])</span>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">import_ledger</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</code></pre></div>
+<p>It runs <code>AuthzBeforeAuthorize</code>'s own check (<code>authorize_action</code>): derived and config grants count,
+each actor of a delegated call is decided too, <code>may_act</code> is required when the spec enforces
+delegation grants, and the denial is the hook's. It decides an action, not an object: a route
+guarding one row by its owner needs an operation and the hook's <code>resource_factory</code>. Pass
+<code>resource_type=</code> when the route is about a resource type, so a
+<a href="../../reference/errors/#non-disclosing-denials">non-disclosing posture</a> renders a refused
+permission as that type's not-found; a missing <code>may_act</code> grant, like any refusal without a type,
+stays a 403.</p>
 <h2 id="authn-events-and-login-lockout">Authn events and login lockout<a class="headerlink" href="#authn-events-and-login-lockout" title="Permanent link">&para;</a></h2>
 <p>Authentication flows can narrate themselves. Wire an optional <strong>authn event
 sink</strong> and every flow emits a structured <code>AuthnEvent</code> — login success/failure,

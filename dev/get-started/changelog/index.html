@@ -9065,7 +9065,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.10.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>Deployment configuration can grant a permission, and be its only source.</strong> <code>ConfigGrantsProvider(keys=...)</code> grants each key to the principal ids a <code>ConfigGrants</code> settings model lists and denies it to everyone else, so a catalog binding of the key grants nothing, and the startup step refuses one.</p>
+</li>
+<li>
+<p><strong>A route that runs no operation can require a permission.</strong> <code>require_permission(key, spec=, ctx_dep=)</code> is a FastAPI dependency making the authz hook's own decision, delegated actors included, and raising its denial, which <code>resource_type=</code> lets a non-disclosing posture collapse.</p>
+</li>
+<li>
+<p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> can check that a deactivation closes a derived permission.</strong> <code>no_permission_after_deactivation(deactivate, guarded)</code> flags a guarded operation that succeeds after the deactivation returned.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
