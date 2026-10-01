@@ -58,22 +58,26 @@ app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context)
 `Idempotency-Key` header; `SecurityContextMiddleware` binds the authenticated
 identity and tenant.
 
-A request whose credential fails to verify is refused before routing — which is
-wrong for the handful of paths that exist *because* the caller has no working
-credential. Name them exactly:
+Outside a short list of exact paths, a request whose credential fails to verify is
+refused before routing, and so is one that no ingress authenticates at all
+(`AuthnRequirement(required=True)`, the default; a CORS preflight passes, for a CORS
+layer to answer). That list is the handful of paths that exist *because* the caller has
+no working credential — login, refresh, password reset, cookie-mode logout, and any
+public page such as FastAPI's `/docs` and `/openapi.json`. Name them exactly, as
+mounted:
 
 ```python
 app.add_middleware(
     SecurityContextMiddleware,
     ctx_dep=runtime.get_context,
-    anonymous_paths={"/auth/login", "/auth/refresh"},
+    anonymous_paths={"/auth/login", "/auth/refresh", "/docs", "/openapi.json"},
 )
 ```
 
-On those paths an **authentication-kind** failure — an expired or invalid
-credential, ambiguous credentials, a tenant mismatch — binds no identity instead
-of 401ing, so the route authenticates from its body exactly as it would for a
-request carrying nothing. A valid credential still binds normally, and every
+On those paths a missing credential, or an **authentication-kind** failure — an
+expired or invalid credential, ambiguous credentials, a tenant mismatch — binds no
+identity instead of 401ing, so the route authenticates from its body or serves
+anonymously. A valid credential still binds normally, and every
 other failure kind still returns the error response: a secrets-store outage is a
 server fault, not a missing credential. This matters most in
 [cookie mode](../reference/fastapi-routes.md#cookie-mode), where a stale access
@@ -320,7 +324,9 @@ Four things to know before you wire it:
   cross-site upgrade by itself and the handshake has no CORS preflight, so the
   server-side Origin check is the whole defense. The factory cannot see the attach
   call's argument, so it asks you to attest it — building cookie mode without
-  `origin_allowlist_attested=True` is a configuration error.
+  `origin_allowlist_attested=True` is a configuration error. Entries are exact
+  origins, or a port range on a loopback host for a dev server
+  (`http://localhost:5173-5199`, `http://localhost:*`).
 - **The query-parameter source is off by default.** Query strings land in access logs,
   proxy logs and anything that reads a URL. Enable `query_param="token"` only for
   clients that can set neither cookie nor header, with short-lived tokens.
@@ -365,9 +371,10 @@ runs them. The surface, at a glance:
 - **You write or generate routes.** Handlers resolve the context and run
   operations; the `attach_*_routes` helpers project a frozen registry, but you
   still mount the router.
-- **Identity is extracted, not enforced.** Middleware binds the principal;
-  enforcement lives in the engine's authn/authz hooks, and `apply_openapi_security`
-  only documents it. A hand-written route that runs no operation gates itself with
+- **Identity is required at the boundary, and authorized in the engine.** The
+  middleware refuses a request no ingress authenticates outside `anonymous_paths`
+  (`AuthnRequirement(required=False)` turns that off); authorization lives in the
+  engine's authz hooks, and `apply_openapi_security` only documents it. A hand-written route that runs no operation gates itself with
   [`require_permission`](../identity-tenancy-enc/identity.md#gating-a-route-that-runs-no-operation).
 - **Guard write-granting routes.** `deactivate`, presigned-upload, and
   multipart-session endpoints ship unguarded or grant write — bind authn/authz

@@ -45,9 +45,18 @@ app.add_middleware(
         ingress=(HeaderTokenAuthn(authn_spec=API, header_name="Authorization"),),
     ),
     when_multiple_credentials="first_in_order",
+    anonymous_paths={  # the generated routes reachable without a credential
+        "/auth/login",
+        "/auth/refresh",
+        "/auth/password-reset/request",
+        "/auth/password-reset/confirm",
+    },
 )
 app.add_middleware(InvocationMetadataMiddleware, ctx_dep=lambda: runtime.get_context())
 ```
+
+A request no ingress authenticates gets a 401 before routing, except on
+`anonymous_paths`; list there every route that exists without an identity.
 
 Ingress options are `HeaderTokenAuthn`, `HeaderApiKeyAuthn` (`header_name`), and
 `CookieTokenAuthn` (`cookie_name`) — each carries the `AuthnSpec` whose `name`

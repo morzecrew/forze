@@ -266,16 +266,19 @@ attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
 ```
 
 Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
-`access_cookie`, and list the login and refresh paths in the security
+`access_cookie`, and list the login, refresh and logout paths in the security
 middleware's [`anonymous_paths`](../integrations/fastapi.md#bind-request-context) —
-otherwise a stale access cookie 401s the very route that would replace it.
+otherwise a stale access cookie 401s the very route that would replace it, and a
+logout arriving with no cookie gets a 401 instead of having the cookies expired.
 Cookies are always `HttpOnly` and `Secure` by default, with `samesite="lax"` as
 the outbound browser-side default. Inbound, `CookieTokenAuthn` ships a
 server-side CSRF gate **on by default** (`CookieCsrf`): a request using the
 cookie on an unsafe method must prove a same-host origin via `Origin` (or
 `Referer`), so the defense holds even when a proxy strips `SameSite` or a
 `samesite="none"` deployment relies on it. A cross-origin frontend (a SPA on
-another host) lists itself in `CookieCsrf(allowed_origins={...})`; non-browser
+another host) lists itself in `CookieCsrf(allowed_origins={...})` — a dev server
+that picks a free port may be named as a range on a loopback host
+(`http://localhost:5173-5199`, or `http://localhost:*`); non-browser
 cookie clients that send neither header opt in with `allow_missing_origin=True`
 or authenticate via a header ingress. `csrf=None` disables the gate — a declared
 decision to bring your own CSRF layer.
@@ -433,8 +436,10 @@ derived at freeze from the plan's `AuthnRequired` or authz hooks, so protected
 routes advertise the scheme while token-minting routes (`/login`, `/refresh`) stay
 open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open.
 
-This **documents** auth; it doesn't enforce it — enforcement stays in the engine
-(the `AuthnRequired`/authz hooks) and identity extraction in the middleware.
+This **documents** auth; it doesn't enforce it. The middleware refuses a request no
+ingress authenticates outside its `anonymous_paths` (list the mounted `/auth/login` and `/auth/refresh`
+there), and per-operation enforcement stays in the engine's `AuthnRequired`/authz
+hooks.
 
 ## Match OpenAPI to what the app serves
 

@@ -835,6 +835,35 @@ class TestOriginAllowlist:
         with pytest.raises(CoreException, match="allowed_origins"):
             _build(allowed_origins=[])
 
+    def test_a_dev_server_port_range_connects_and_the_range_holds(self) -> None:
+        client, _ = _build(allowed_origins=["http://localhost:5173-5199"])
+
+        with client.websocket_connect(
+            "/realtime/ws", headers={"Origin": "http://localhost:5181"}
+        ) as ws:
+            ws.send_text(json.dumps({"type": "nope"}))
+            assert ws.receive_json()["type"] == "error"
+
+        with (
+            client.websocket_connect(
+                "/realtime/ws", headers={"Origin": "http://localhost:5200"}
+            ) as ws,
+            pytest.raises(WebSocketDisconnect) as caught,
+        ):
+            # An admitted socket answers with an error frame; a refused one is closed.
+            ws.send_text(json.dumps({"type": "nope"}))
+            ws.receive_json()
+
+        assert caught.value.code == 1008
+
+    @pytest.mark.parametrize(
+        "entry", ["app.example.com", "https://app.example.com:*", "http://localhost:9-1"]
+    )
+    def test_a_malformed_entry_is_refused_at_attach(self, entry: str) -> None:
+        # It would otherwise never match, refusing the frontend it was meant to admit.
+        with pytest.raises(CoreException, match="allowed_origins"):
+            _build(allowed_origins=[entry])
+
 
 class TestOriginFailClosedDefault:
     """No allowlist configured: ambient credentials still get a perimeter.

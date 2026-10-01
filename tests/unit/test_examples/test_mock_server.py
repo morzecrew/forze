@@ -60,6 +60,11 @@ class TestTheAppRunsUnchanged:
 
 
 class TestItIsStateful:
+    def test_the_docs_are_public_and_the_api_is_not(self, client: TestClient) -> None:
+        # A request with no key is refused by default; the interactive docs are listed open.
+        assert client.get("/openapi.json").status_code == 200
+        assert client.post("/products/list", json={}).status_code == 401
+
     def test_seeded_data_is_there_to_build_against(self, client: TestClient) -> None:
         assert {row["name"] for row in _list(client)} == {"Espresso", "Cortado", "Filter"}
 

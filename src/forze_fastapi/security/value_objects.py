@@ -1,6 +1,7 @@
 """Auth requirement value object for HTTP transport policies."""
 
 import re
+from collections.abc import Iterable
 from typing import Any, final
 from urllib.parse import urlsplit
 
@@ -41,6 +42,122 @@ def _with_description(scheme: dict[str, Any], description: str | None) -> dict[s
 # ....................... #
 
 
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+"""Hosts on which an allowlist entry may name a port range or ``*``."""
+
+_PORT_PATTERN = re.compile(
+    r"^(?P<scheme>https?)://(?P<host>\[[^\]]+\]|[^:/\[\]]+):(?P<ports>\*|\d{1,5}-\d{1,5})/?$",
+    re.IGNORECASE,
+)
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+@final
+@attrs.define(slots=True, frozen=True)
+class OriginAllowlist:
+    """Browser origins allowed to call with ambient credentials, normalized once.
+
+    An entry is an exact ``scheme://host[:port]`` origin, or — on a loopback host only
+    (``localhost``, ``127.0.0.1``, ``::1``) — a port range or any port:
+    ``http://localhost:5173-5199``, ``http://localhost:*``. A dev server picks a free port
+    from a range; a public host never needs one, and a pattern there would admit every
+    service on the machine.
+    """
+
+    exact: frozenset[str]
+    """Normalized exact origins."""
+
+    ranges: tuple[tuple[str, str, int, int], ...]
+    """``(scheme, host, first port, last port)`` per loopback pattern."""
+
+    # ....................... #
+
+    @classmethod
+    def parse(
+        cls, entries: Iterable[str], *, setting: str = "allowed_origins"
+    ) -> "OriginAllowlist":
+        """Validate and normalize *entries*.
+
+        :raises CoreException: ``configuration`` for an entry that is not an origin, a pattern
+            on a non-loopback host, or a port range that is empty or out of bounds.
+        """
+
+        exact: set[str] = set()
+        ranges: list[tuple[str, str, int, int]] = []
+
+        for entry in entries:
+            if (match := _PORT_PATTERN.match(entry.strip())) is not None:
+                host = match["host"].strip("[]").lower()
+
+                if host not in _LOOPBACK_HOSTS:
+                    raise exc.configuration(
+                        f"{setting} entry {entry!r} names a port pattern on {host!r}; a port "
+                        "range or '*' is allowed on a loopback host only",
+                    )
+
+                first, last = (
+                    (1, 65535)
+                    if match["ports"] == "*"
+                    else tuple(int(port) for port in match["ports"].split("-"))
+                )
+
+                if not 1 <= first <= last <= 65535:
+                    raise exc.configuration(
+                        f"{setting} entry {entry!r} names an empty or out-of-range port range",
+                    )
+
+                ranges.append((match["scheme"].lower(), host, first, last))
+                continue
+
+            normalized = _normalize_origin(entry)
+            # Split only once normalization has parsed it: an unmatched bracket raises here.
+            parts = urlsplit(entry.strip()) if normalized is not None else None
+
+            # Only scheme and authority: a path, query, fragment or userinfo would be dropped
+            # by normalization and silently admit a different origin than the one written.
+            if (
+                normalized is None
+                or parts is None
+                or not parts.scheme
+                or parts.path not in ("", "/")
+                or parts.query
+                or parts.fragment
+                or "@" in parts.netloc
+                or parts.netloc.endswith(":")
+            ):
+                raise exc.configuration(
+                    f"{setting} entry {entry!r} is not a valid scheme://host[:port] origin",
+                )
+
+            exact.add(normalized)
+
+        return cls(exact=frozenset(exact), ranges=tuple(ranges))
+
+    # ....................... #
+
+    def allows(self, origin: str) -> bool:
+        """Whether *origin* (an ``Origin`` header, or a ``Referer`` URL) is on the list."""
+
+        if _normalize_origin(origin) in self.exact:
+            return True
+
+        if not self.ranges or (authority := origin_authority(origin)) is None:
+            return False
+
+        scheme = urlsplit(origin.strip()).scheme.lower()
+        hostname, port = authority
+        port = port if port is not None else _DEFAULT_PORTS.get(scheme)
+
+        return port is not None and any(
+            scheme == allowed_scheme and hostname == host and first <= port <= last
+            for allowed_scheme, host, first, last in self.ranges
+        )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class CookieCsrf:
@@ -64,9 +181,11 @@ class CookieCsrf:
 
     allowed_origins: frozenset[str] = attrs.field(default=frozenset(), converter=frozenset)
     """Cross-origin callers allowed to use the cookie, as exact ``scheme://host[:port]``
-    origins (e.g. a SPA on ``https://app.example.com`` calling this API's host). The
-    request's own host is always allowed and need not be listed. Entries are validated
-    at construction — a malformed origin here would otherwise silently never match."""
+    origins (e.g. a SPA on ``https://app.example.com`` calling this API's host), or a port
+    range on a loopback host for a dev server (``http://localhost:5173-5199``,
+    ``http://localhost:*``; see :class:`OriginAllowlist`). The request's own host is always
+    allowed and need not be listed. Entries are validated at construction — a malformed
+    origin here would otherwise silently never match."""
 
     allow_missing_origin: bool = False
     """Accept an unsafe request that carries neither ``Origin`` nor ``Referer``.
@@ -75,14 +194,12 @@ class CookieCsrf:
     two, so the only callers this refuses are non-browser clients using the cookie —
     which a forged cross-site request cannot distinguish itself from."""
 
-    # ....................... #
-
-    def __attrs_post_init__(self) -> None:
-        for allowed in self.allowed_origins:
-            if _normalize_origin(allowed) is None or not urlsplit(allowed.strip()).scheme:
-                raise exc.configuration(
-                    f"allowed_origins entry {allowed!r} is not a valid scheme://host[:port] origin",
-                )
+    _allowlist: OriginAllowlist = attrs.field(
+        init=False,
+        default=attrs.Factory(
+            lambda self: OriginAllowlist.parse(self.allowed_origins), takes_self=True
+        ),
+    )
 
     # ....................... #
 
@@ -128,9 +245,7 @@ class CookieCsrf:
         if host is not None and source_authority == origin_authority(f"//{host}"):
             return None
 
-        if _normalize_origin(source) in {
-            _normalize_origin(allowed) for allowed in self.allowed_origins
-        }:
+        if self._allowlist.allows(source):
             return None
 
         return f"the request origin {source.strip()!r} is not this host or an allowed origin"
@@ -171,7 +286,10 @@ def _normalize_origin(value: str) -> str | None:
 
     hostname, port = authority
 
-    return f"{urlsplit(value.strip()).scheme.lower()}://{hostname}" + (
+    # An IPv6 host keeps its brackets: without them `[a::5:1]` and `[a::5]:1` read the same.
+    host = f"[{hostname}]" if ":" in hostname else hostname
+
+    return f"{urlsplit(value.strip()).scheme.lower()}://{host}" + (
         f":{port}" if port is not None else ""
     )
 
@@ -194,7 +312,9 @@ class CookieTokenAuthn:
     """Scheme label stored on :class:`AccessTokenCredentials`."""
 
     required: bool = False
-    """Whether a missing cookie should raise :class:`AuthenticationError`."""
+    """Whether a missing cookie should raise :class:`AuthenticationError`, even when another
+    ingress would authenticate the request. To require *some* credential, use
+    :attr:`AuthnRequirement.required` instead."""
 
     csrf: CookieCsrf | None = attrs.field(factory=CookieCsrf)
     """Server-side CSRF gate, **on by default** (see :class:`CookieCsrf`): an unsafe
@@ -238,7 +358,9 @@ class HeaderTokenAuthn:
     """Header name carrying the bearer token."""
 
     required: bool = False
-    """Whether a missing header should raise :class:`AuthenticationError`."""
+    """Whether a missing header should raise :class:`AuthenticationError`, even when another
+    ingress would authenticate the request. To require *some* credential, use
+    :attr:`AuthnRequirement.required` instead."""
 
     description: str | None = None
     """Human-readable description of the ingress method (informational only)."""
@@ -282,7 +404,9 @@ class HeaderApiKeyAuthn:
     """Header name carrying the API key."""
 
     required: bool = False
-    """Whether a missing header should raise :class:`AuthenticationError`."""
+    """Whether a missing header should raise :class:`AuthenticationError`, even when another
+    ingress would authenticate the request. To require *some* credential, use
+    :attr:`AuthnRequirement.required` instead."""
 
     description: str | None = None
     """Human-readable description of the ingress method (informational only)."""
@@ -315,6 +439,22 @@ class AuthnRequirement:
 
     ingress: tuple[AuthnIngress, ...]
     """Authentication ingress methods."""
+
+    required: bool = True
+    """Refuse a request that no ingress authenticates (``401 auth_required``) — on by default.
+
+    Otherwise such a request binds no identity, and a route with no ``AuthnRequired`` hook (a
+    hand-written route, say) serves it anonymously. List the routes that exist without an
+    identity — login, refresh, a public page — in the middleware's ``anonymous_paths``, and
+    probes in its ``bypass_paths``. A CORS preflight (``OPTIONS`` with ``Origin`` and
+    ``Access-Control-Request-Method``) carries no credential and is not refused; it is a CORS
+    layer's to answer — without one, it reaches a hand-written ``OPTIONS`` route with no
+    identity bound. ``False`` binds an identity when one is presented and leaves enforcement
+    to the operation hooks.
+
+    Unlike an ingress's own ``required``, which refuses when *that* ingress's credential is
+    missing even if another ingress would authenticate the request, this asks only that one
+    of them does."""
 
     # ....................... #
 

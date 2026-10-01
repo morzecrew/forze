@@ -8,6 +8,7 @@ from .value_objects import (
     CookieTokenAuthn,
     HeaderApiKeyAuthn,
     HeaderTokenAuthn,
+    OriginAllowlist,
     origin_authority,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "AuthnRequirement",
     "HeaderApiKeyAuthn",
     "HeaderTokenAuthn",
+    "OriginAllowlist",
     "AuthnCookieCarrier",
     "CookieCsrf",
     "CookieTokenAuthn",
