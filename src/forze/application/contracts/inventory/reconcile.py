@@ -180,7 +180,7 @@ _GUARD_HINT = (
 
 
 @final
-@attrs.define(slots=True, kw_only=True)
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class InventoryRouteGuard:
     """The resolve-time inventory check :func:`inventory_route_guard` returns.
 
