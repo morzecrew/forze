@@ -181,7 +181,11 @@ class SecurityContextMiddleware:
         anonymous = scope.get("path") in self.anonymous_paths
 
         try:
-            resolved = await self._resolve_authn(request, ctx)
+            # A preflight carries no credential, so an ingress's own `required` must not
+            # refuse it either; it is a CORS layer's to answer.
+            resolved = (
+                None if _is_cors_preflight(request) else await self._resolve_authn(request, ctx)
+            )
 
             # Not on an anonymous path, where tenancy still resolves for a request carrying no
             # credential; and not for a CORS preflight, which carries none by design.

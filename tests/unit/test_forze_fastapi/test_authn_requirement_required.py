@@ -76,6 +76,18 @@ class TestTheRequirement:
 
         assert (response.status_code, seen["authn"]) == (200, None)
 
+    def test_a_preflight_passes_an_ingress_that_requires_its_own_credential(self) -> None:
+        # An ingress's own `required` refuses a missing credential; a preflight carries none.
+        strict = HeaderTokenAuthn(authn_spec=_SPEC, header_name="Authorization", required=True)
+        client, seen = _client(requirement=AuthnRequirement(ingress=(strict,)))
+
+        response = client.options(
+            "/orders",
+            headers={"Origin": "https://app.example.com", "Access-Control-Request-Method": "POST"},
+        )
+
+        assert (response.status_code, seen["authn"]) == (200, None)
+
     def test_an_options_request_that_is_not_a_preflight_is_refused(self) -> None:
         # A hand-written OPTIONS route is a route like any other.
         client, seen = _client()
