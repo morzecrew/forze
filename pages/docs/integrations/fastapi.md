@@ -60,7 +60,7 @@ identity and tenant.
 
 A request whose credential fails to verify is refused before routing, and so is one
 that no ingress authenticates at all (`AuthnRequirement(required=True)`, the
-default; `OPTIONS` preflights pass). That is wrong for the handful of paths that
+default; a CORS preflight passes, for a CORS layer to answer). That is wrong for the handful of paths that
 exist *because* the caller has no working credential. Name them exactly:
 
 ```python

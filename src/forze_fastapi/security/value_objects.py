@@ -433,9 +433,11 @@ class AuthnRequirement:
     Otherwise such a request binds no identity, and a route with no ``AuthnRequired`` hook (a
     hand-written route, say) serves it anonymously. List the routes that exist without an
     identity — login, refresh, a public page — in the middleware's ``anonymous_paths``, and
-    probes in its ``bypass_paths``; an ``OPTIONS`` request (a CORS preflight, which carries no
-    credential) is never refused. ``False`` binds an identity when one is presented and leaves
-    enforcement to the operation hooks.
+    probes in its ``bypass_paths``. A CORS preflight (``OPTIONS`` with ``Origin`` and
+    ``Access-Control-Request-Method``) carries no credential and is not refused; it is a CORS
+    layer's to answer — without one, it reaches a hand-written ``OPTIONS`` route with no
+    identity bound. ``False`` binds an identity when one is presented and leaves enforcement
+    to the operation hooks.
 
     Unlike an ingress's own ``required``, which refuses when *that* ingress's credential is
     missing even if another ingress would authenticate the request, this asks only that one
