@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **DST can check that a deactivation closes a derived permission.** `no_permission_after_deactivation(deactivate, guarded)` flags a guarded operation that succeeds after the deactivation returned.
 
+- **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
+
 ### Changed
 
 - ...
@@ -24,6 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.
 
 - **Authorization and tenant membership read every binding on Firestore.** The grant resolver and tenancy management paged bindings by offset, which Firestore refuses past the first page, so a principal with more bindings than one page holds, or a tenant with more members, failed. They read by cursor now.
+
+- **The documented authn → authz hook chain freezes.** `AuthnRequired.to_step()` under its default id now provides the `authn.principal` capability that `AuthzBeforeAuthorize.to_step()` requires by default, so authorization runs after authentication; `AuthzBeforeAuthorize.to_step()` no longer needs a `step_id`.
+
+- **Words with "uri" inside them are no longer read as secrets.** The scrubber matched `uri` anywhere in a name, so an audit spec refused metadata such as `manufacturing` or `security`. It now matches only at either end of a segment (`uri_template`, `db_uri`, `dburi`), so a word ending in "uri" is still masked.
 
 ## [0.10.0] - 2026-09-30
 

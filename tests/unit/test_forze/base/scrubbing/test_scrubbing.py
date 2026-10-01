@@ -516,7 +516,8 @@ def _vocabulary_seeds() -> frozenset[str]:
     seeds: set[str] = set()
 
     for fragment in (*policy._LOGFIRE_SENSITIVE_FRAGMENTS, *policy._FORZE_KEY_EXTRAS):
-        term = fragment.lower()
+        # A term anchored at either end of a segment is one term, spelled twice.
+        term = fragment.lower().replace(policy._URI.lower(), "uri")
 
         for regex_noise in (policy._SEG.lower(), r"(?:\b|_)", r"(?!ors?\b)"):
             term = term.replace(regex_noise, "")
@@ -550,6 +551,9 @@ def _key_shapes(term: str) -> frozenset[str]:
             f"{term}2",  # digit-suffixed
             f"{term}_2",
             f"db{term}",  # flattened compound (mid-token for anchored short terms)
+            f"db{term}_value",  # flattened compound, then a snake suffix
+            f"db{term}s",  # flattened compound, plural
+            f"db{term}2",  # flattened compound, digit-suffixed
         }
     )
 
@@ -608,6 +612,9 @@ class TestVocabularyBehavioralProperty:
             lambda t: f"{t}s",
             lambda t: f"{t}2",
             lambda t: f"db{t}",
+            lambda t: f"db{t}_value",
+            lambda t: f"db{t}s",
+            lambda t: f"db{t}2",
         ):
             assert any(is_sensitive_key(shape_of(term)) for term in seeds)
 
@@ -618,11 +625,16 @@ class TestVocabularyBehavioralProperty:
         from forze.base.scrubbing import policy
 
         for fragment in policy._LOG_QUOTED_KEY_TERM_FRAGMENTS:
-            term = fragment.lower()
+            # A term anchored at either end of a segment is one term, spelled twice.
+            term = fragment.lower().replace(policy._URI.lower(), "uri")
             for regex_noise in (policy._SEG.lower(), r"(?:\b|_)", r"(?!ors?\b)"):
                 term = term.replace(regex_noise, "")
             term = term.replace(r"[._ -]?", "_")
 
+            assert term.replace("_", "").isalnum(), (
+                f"value-form fragment {fragment!r} uses a regex construct this test does not"
+                " normalize; teach it the construct so it tests the term, not punctuation"
+            )
             assert is_sensitive_key(term), (
                 f"value-form term {term!r} is not a sensitive key — add its key"
                 " heuristic or drop it from the value vocabulary"
@@ -1061,3 +1073,113 @@ class TestWalkBranches:
         out = walk_mapping({bad: "value"}, text_scrub=False, depth=0, max_depth=8)
         # A key that cannot be stringified is masked, never propagated.
         assert out[bad] == SECRET_PLACEHOLDER
+
+
+class TestShortTermsAreAnchored:
+    """``uri`` sits at one end of a segment, not in the middle of an ordinary word.
+
+    Unanchored, it matched ``security``, ``during`` and ``manufacturing``: an audit spec
+    refused such metadata names as secrets. Anchored only at the start, it lost every
+    separator-less compound (``dburi``, ``MONGOURI``) and leaked their values. It matches
+    at either end of a segment, so a word that merely ends in "uri" (``Missouri``) is masked
+    too: over-masking an ordinary word is the cheaper failure.
+    """
+
+    @pytest.mark.parametrize(
+        "key",
+        ["manufacturing", "security", "SECURITY", "during", "maturity", "curious", "purity"],
+    )
+    def test_an_ordinary_word_is_not_a_secret_key(self, key: str) -> None:
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        assert not is_sensitive_key(key)
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "uri",
+            "URI",
+            "uri2",
+            "uris",
+            "db_uri",
+            "DB_URI",
+            "DATABASE_URI",
+            "dbUri",
+            "redisUri",
+            "mongoURI",
+            "uri_template",
+            "uriTemplate",
+            "databaseUri",
+            "dburi",
+            "DBURI",
+            "mongouri",
+            "MONGOURI",
+            "databaseuri",
+            "connectionuri",
+            "JDBCURI",
+            "baseuri",
+            "kmskeyuri",
+            "redirect_uri",
+            "dburis",
+            "dburi2",
+            "dburis2",
+            "MONGOURIS",
+            "mongouri1",
+            "connectionuris",
+            "dburi_value",
+            "mongouri_primary",
+            # Term-initial, flattened: only the start arm sees these.
+            "uritemplate",
+            "URIPREFIX",
+            "urilist",
+        ],
+    )
+    def test_a_uri_key_is_still_a_secret_key(self, key: str) -> None:
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        assert is_sensitive_key(key)
+
+    @pytest.mark.parametrize("key", ["dburi", "MONGOURI", "connectionuri", "db_uri"])
+    def test_a_uri_keyed_value_is_masked(self, key: str) -> None:
+        from forze.base.scrubbing import sanitize
+
+        out = sanitize({key: "mongodb://admin:hunter2@db.internal/app"}, text_scrub=False)
+
+        assert out == {key: SECRET_PLACEHOLDER}
+
+    @pytest.mark.parametrize("text", ["during=the night", "security: high", "purity: 99"])
+    def test_an_ordinary_word_keeps_its_value(self, text: str) -> None:
+        assert scrub_log_string(text) == text
+
+    @pytest.mark.parametrize(
+        "text,secret",
+        [
+            # Opaque values: a user:password@ value is masked by the DSN rule whatever its
+            # key, so only a value with no userinfo shows the term doing the work.
+            ("db_uri=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("dbUri=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("dburi=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("baseuri=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ('{"mongoURI":"sig-0f9a8b7c"}', "sig-0f9a8b7c"),
+            ('{"MONGOURI": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
+            ('{"db_uri": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
+            # A suffix after a flattened compound: the suffix rule must still see it.
+            ("dburi_value=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("mongouri_primary=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("connectionuri_string: sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ('{"dburi_value": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
+            (
+                "webhookuri_prod=https://hooks.slack.com/services/T0/B0/hunter2SECRET",
+                "hunter2SECRET",
+            ),
+            ("dburis=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("dburi2=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("dburis2=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ('{"MONGOURIS": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
+        ],
+    )
+    def test_a_uri_value_is_still_masked(self, text: str, secret: str) -> None:
+        result = scrub_log_string(text)
+
+        assert SECRET_PLACEHOLDER in result
+        assert secret not in result

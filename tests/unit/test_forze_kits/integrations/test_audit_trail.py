@@ -217,6 +217,10 @@ class TestTheAllowlist:
         assert caught.value.code == AUDIT_METADATA_REFUSED
         assert type(value).__name__ in caught.value.summary
 
+    def test_an_ordinary_word_holding_a_short_secret_term_is_allowed(self) -> None:
+        # "manufacturing" contains "uri", "security" too: neither names a secret.
+        AuditSpec(action="a", allowed_metadata=frozenset({"manufacturing", "security"}))
+
     def test_a_refusal_names_the_key_never_the_value(self) -> None:
         with pytest.raises(CoreException) as caught:
             SPEC.check_metadata({"label": {"card": "4111-1111"}})
