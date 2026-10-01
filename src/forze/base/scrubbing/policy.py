@@ -78,8 +78,13 @@ _LOGFIRE_SENSITIVE_FRAGMENTS: tuple[str, ...] = (
 # ``dbUri``, ``dburi``, ``MONGOURI``). A word that merely ends in "uri" (``Missouri``) is
 # masked too: over-masking an ordinary word is the cheaper failure than leaking a
 # separator-less ``dburi``.
-_URI = rf"(?:{_SEG}uri|uri{_SEG})"
-"""``uri`` at the start or the end of a segment, never in the middle of a word."""
+_URI = rf"(?:{_SEG}uri|uri(?=(?:\d{{1,4}})?s?(?:\b|_|{_CAMEL_BOUND})))"
+"""``uri`` at the start or the end of a segment, never in the middle of a word.
+
+The end arm is a lookahead, and admits the plural and numbering affix before the
+boundary: consuming the boundary would swallow the ``_`` a compound suffix starts with
+(``dburi_value=`` would leak), and without the affix ``dburis`` and ``dburi2`` would not
+end a segment at all."""
 
 _FORZE_KEY_EXTRAS: tuple[str, ...] = (
     "token",
