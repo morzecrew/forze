@@ -266,9 +266,10 @@ attach_authn_routes(router, registry=registry, ctx_dep=ctx_dep, cookies=cookies)
 ```
 
 Point the inbound `CookieTokenAuthn`'s `cookie_name` at the same
-`access_cookie`, and list the login and refresh paths in the security
+`access_cookie`, and list the login, refresh and logout paths in the security
 middleware's [`anonymous_paths`](../integrations/fastapi.md#bind-request-context) —
-otherwise a stale access cookie 401s the very route that would replace it.
+otherwise a stale access cookie 401s the very route that would replace it, and a
+logout arriving with no cookie gets a 401 instead of having the cookies expired.
 Cookies are always `HttpOnly` and `Secure` by default, with `samesite="lax"` as
 the outbound browser-side default. Inbound, `CookieTokenAuthn` ships a
 server-side CSRF gate **on by default** (`CookieCsrf`): a request using the
@@ -436,7 +437,7 @@ routes advertise the scheme while token-minting routes (`/login`, `/refresh`) st
 open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open.
 
 This **documents** auth; it doesn't enforce it. The middleware refuses a request no
-ingress authenticates outside its `anonymous_paths` (list `/login` and `/refresh`
+ingress authenticates outside its `anonymous_paths` (list the mounted `/auth/login` and `/auth/refresh`
 there), and per-operation enforcement stays in the engine's `AuthnRequired`/authz
 hooks.
 

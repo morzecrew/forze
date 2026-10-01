@@ -58,16 +58,19 @@ app.add_middleware(SecurityContextMiddleware, ctx_dep=runtime.get_context)
 `Idempotency-Key` header; `SecurityContextMiddleware` binds the authenticated
 identity and tenant.
 
-A request whose credential fails to verify is refused before routing, and so is one
-that no ingress authenticates at all (`AuthnRequirement(required=True)`, the
-default; a CORS preflight passes, for a CORS layer to answer). That is wrong for the handful of paths that
-exist *because* the caller has no working credential. Name them exactly:
+Outside a short list of exact paths, a request whose credential fails to verify is
+refused before routing, and so is one that no ingress authenticates at all
+(`AuthnRequirement(required=True)`, the default; a CORS preflight passes, for a CORS
+layer to answer). That list is the handful of paths that exist *because* the caller has
+no working credential — login, refresh, password reset, cookie-mode logout, and any
+public page such as FastAPI's `/docs` and `/openapi.json`. Name them exactly, as
+mounted:
 
 ```python
 app.add_middleware(
     SecurityContextMiddleware,
     ctx_dep=runtime.get_context,
-    anonymous_paths={"/auth/login", "/auth/refresh"},
+    anonymous_paths={"/auth/login", "/auth/refresh", "/docs", "/openapi.json"},
 )
 ```
 

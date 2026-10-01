@@ -167,6 +167,7 @@ def build_app(
             ingress=(HeaderApiKeyAuthn(authn_spec=AUTHN, header_name="X-API-Key"),),
         ),
         when_multiple_credentials="first_in_order",
+        anonymous_paths={"/docs", "/openapi.json"},  # the interactive docs stay public
     )
 
     return app
