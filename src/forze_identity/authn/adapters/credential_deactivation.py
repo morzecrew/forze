@@ -8,6 +8,7 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     KeyedUpdate,
 )
+from forze.base.exceptions import exc
 
 from ..domain.models.account import (
     ApiKeyAccount,
@@ -26,22 +27,44 @@ from ._utils import find_password_account_by_principal_id
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthnCredentialDeactivationHelper:
-    """Deactivate password and API key credential rows for a principal."""
+    """Deactivate password and API key credential rows for a principal.
 
-    pa_qry: DocumentQueryPort[ReadPasswordAccount]
-    pa_cmd: DocumentCommandPort[
-        ReadPasswordAccount,
-        PasswordAccount,
-        Any,
-        UpdatePasswordAccountCmd,
-    ]
-    ak_qry: DocumentQueryPort[ReadApiKeyAccount]
-    ak_cmd: DocumentCommandPort[
-        ReadApiKeyAccount,
-        ApiKeyAccount,
-        CreateApiKeyAccountCmd,
-        UpdateApiKeyAccountCmd,
-    ]
+    Each store is optional: a deployment that never wired password or API-key authn has no
+    route for that store, and its leg is skipped. Pass both ports of a store or neither.
+    """
+
+    pa_qry: DocumentQueryPort[ReadPasswordAccount] | None = None
+    pa_cmd: (
+        DocumentCommandPort[
+            ReadPasswordAccount,
+            PasswordAccount,
+            Any,
+            UpdatePasswordAccountCmd,
+        ]
+        | None
+    ) = None
+    ak_qry: DocumentQueryPort[ReadApiKeyAccount] | None = None
+    ak_cmd: (
+        DocumentCommandPort[
+            ReadApiKeyAccount,
+            ApiKeyAccount,
+            CreateApiKeyAccountCmd,
+            UpdateApiKeyAccountCmd,
+        ]
+        | None
+    ) = None
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Half a store would skip its leg silently, leaving credentials active.
+        if (self.pa_qry is None) != (self.pa_cmd is None) or (self.ak_qry is None) != (
+            self.ak_cmd is None
+        ):
+            raise exc.configuration(
+                "AuthnCredentialDeactivationHelper takes both ports of a credential store or "
+                "neither."
+            )
 
     # ....................... #
 
@@ -52,6 +75,9 @@ class AuthnCredentialDeactivationHelper:
     # ....................... #
 
     async def _deactivate_password_account(self, principal_id: UUID) -> None:
+        if self.pa_qry is None or self.pa_cmd is None:
+            return
+
         account = await find_password_account_by_principal_id(self.pa_qry, principal_id)
 
         if account is None or not account.is_active:
@@ -67,6 +93,9 @@ class AuthnCredentialDeactivationHelper:
     # ....................... #
 
     async def _deactivate_api_keys(self, principal_id: UUID) -> None:
+        if self.ak_qry is None or self.ak_cmd is None:
+            return
+
         result = await self.ak_qry.find_many(
             filters={
                 "$values": {

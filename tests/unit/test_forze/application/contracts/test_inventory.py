@@ -11,6 +11,7 @@ are not written by its author.
 
 from __future__ import annotations
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
@@ -624,6 +625,18 @@ def test_uninventoried_keys_pass_the_resolve_guard() -> None:
     guard = inventory_route_guard(SpecRegistry().register(_document("orders")).freeze())
 
     guard("some_uninventoried_key", "whatever")  # not a plane key → no opinion
+
+
+def test_the_resolve_guard_cannot_be_loosened_after_the_runtime_installs_it() -> None:
+    # It sits inside frozen deps; a caller flipping it lenient would let every uncatalogued
+    # route resolve.
+    guard = inventory_route_guard(SpecRegistry().register(_document("orders")).freeze())
+
+    with pytest.raises(attrs.exceptions.FrozenInstanceError):
+        guard.allow_unregistered = True  # type: ignore[misc]
+
+    with pytest.raises(CoreException, match="invoices"):
+        guard(DocumentQueryDepKey.name, "invoices")
 
 
 def test_plain_provider_runtimes_with_different_catalogues_are_never_equal() -> None:
