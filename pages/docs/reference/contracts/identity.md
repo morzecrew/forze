@@ -34,7 +34,7 @@ Ports, via `ctx.authn.<x>(spec)`:
 | `password_reset` | `PasswordResetPort` | request / confirm a reset (the [recipe](../../recipes/password-reset.md)) |
 | `api_key_lifecycle` | `ApiKeyLifecyclePort` | mint / rotate / revoke API keys |
 | `password_account_provisioning` | `PasswordAccountProvisioningPort` | register / provision password accounts, issue + accept invites |
-| `principal_deactivation` | `PrincipalDeactivationPort` | deactivate a principal (cascades logout, and closes the password and API-key accounts the module wires) |
+| `principal_deactivation` | `PrincipalDeactivationPort` | deactivate a principal (cascades logout, and closes the password and API-key accounts of every store the application wires) |
 | `event_sink` | `AuthnEventSink` | structured authn events (login, lockout, refresh-reuse) |
 
 ## Authorization

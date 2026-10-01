@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Deactivating a principal works without password or API-key authn wired.** The cascade resolved both credential stores, and failed on a deployment that had no route for one. It now closes the stores the module wires: any route's API keys or password accounts, whichever route the deactivation comes through.
+- **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.
 
 - **Authorization and tenant membership read every binding on Firestore.** The grant resolver and tenancy management paged bindings by offset, which Firestore refuses past the first page, so a principal with more bindings than one page holds, or a tenant with more members, failed. They read by cursor now.
 

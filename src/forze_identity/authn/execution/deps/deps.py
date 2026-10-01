@@ -3,6 +3,7 @@
 from typing import final
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.authn import (
     ApiKeyLifecyclePort,
@@ -30,6 +31,13 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentCommandPort,
+    DocumentQueryDepKey,
+    DocumentQueryPort,
+    DocumentSpec,
+)
 from forze.application.execution import ExecutionContext
 from forze.application.integrations.authn import (
     LOCKOUT_COUNTER_ROUTE,
@@ -39,6 +47,7 @@ from forze.application.integrations.authn import (
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
+from forze.domain.models import BaseDTO, Document
 from forze_identity.authz.application import policy_principal_spec
 
 from ...adapters import (
@@ -370,6 +379,41 @@ class ConfigurableAllowAllEligibility:
 # ....................... #
 
 
+def _credential_store[R: BaseModel, D: Document, C: BaseDTO, U: BaseDTO](
+    ctx: ExecutionContext,
+    spec: DocumentSpec[R, D, C, U],
+) -> tuple[DocumentQueryPort[R] | None, DocumentCommandPort[R, D, C, U] | None]:
+    """The ports of a credential store the application wires, or ``(None, None)``.
+
+    Read from the composed dependencies, not from one module's routes: an application may
+    compose several authn modules, or serve a credential family from a store of its own, and a
+    key any of them issues must be revoked. A store is wired when the document plane resolves
+    it — a route under the spec's name, or the plain fallback.
+
+    :raises CoreException: ``configuration`` for a store whose query port is wired and command
+        port is not (or the reverse): deactivation could see its credentials but not close them.
+    """
+
+    wired = [
+        ctx.deps.exists(key, route=spec.name) or ctx.deps.exists(key)
+        for key in (DocumentQueryDepKey, DocumentCommandDepKey)
+    ]
+
+    if not any(wired):
+        return None, None
+
+    if not all(wired):
+        raise exc.configuration(
+            f"Credential store {spec.name!r} has a document query port but no command port, or "
+            "the reverse; principal deactivation needs both to close its credentials.",
+        )
+
+    return ctx.doc.query(spec), ctx.doc.command(spec)
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class ConfigurablePrincipalDeactivation:
@@ -377,12 +421,6 @@ class ConfigurablePrincipalDeactivation:
 
     authz_route: StrKey
     """Authz route name used to resolve :class:`PrincipalRegistryPort`."""
-
-    password_accounts: bool = True
-    """Whether the deployment keeps password accounts, so deactivation must close them."""
-
-    api_key_accounts: bool = True
-    """Whether the deployment keeps API-key accounts, so deactivation must revoke them."""
 
     def __call__(
         self,
@@ -394,12 +432,13 @@ class ConfigurablePrincipalDeactivation:
             ctx,
             spec,
         )
-        # Only the stores the deployment wires: an unwired store has no document route.
+        pa_qry, pa_cmd = _credential_store(ctx, password_account_spec)
+        ak_qry, ak_cmd = _credential_store(ctx, api_key_account_spec)
         credentials = AuthnCredentialDeactivationHelper(
-            pa_qry=ctx.doc.query(password_account_spec) if self.password_accounts else None,
-            pa_cmd=ctx.doc.command(password_account_spec) if self.password_accounts else None,
-            ak_qry=ctx.doc.query(api_key_account_spec) if self.api_key_accounts else None,
-            ak_cmd=ctx.doc.command(api_key_account_spec) if self.api_key_accounts else None,
+            pa_qry=pa_qry,
+            pa_cmd=pa_cmd,
+            ak_qry=ak_qry,
+            ak_cmd=ak_cmd,
         )
         return PrincipalDeactivationAdapter(
             principal_registry=registry,
