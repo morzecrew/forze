@@ -435,8 +435,10 @@ derived at freeze from the plan's `AuthnRequired` or authz hooks, so protected
 routes advertise the scheme while token-minting routes (`/login`, `/refresh`) stay
 open. Use `exclude={"orders.deactivate", ...}` to leave a flagged operation open.
 
-This **documents** auth; it doesn't enforce it — enforcement stays in the engine
-(the `AuthnRequired`/authz hooks) and identity extraction in the middleware.
+This **documents** auth; it doesn't enforce it. The middleware refuses a request no
+ingress authenticates outside its `anonymous_paths` (list `/login` and `/refresh`
+there), and per-operation enforcement stays in the engine's `AuthnRequired`/authz
+hooks.
 
 ## Match OpenAPI to what the app serves
 

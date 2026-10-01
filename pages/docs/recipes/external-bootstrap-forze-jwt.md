@@ -81,6 +81,9 @@ async def login(id_token: str = Body(..., embed=True)) -> dict:
 orchestrator is resolved) and returns an `AuthnResult` — pass `result.identity`
 to `issue_tokens`. The raw JWT string is `issued.access.token.token`.
 
+The caller has no Forze token yet, so list `/login` in the security middleware's
+`anonymous_paths`: it refuses a request no ingress authenticates everywhere else.
+
 ## Steady state
 
 Every other route is protected by the **`api`** `AuthnSpec` through the

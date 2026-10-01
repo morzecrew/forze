@@ -25,6 +25,19 @@ from .raw_websocket import refuse_raw_websocket, websocket_scope_refused
 # ----------------------- #
 
 
+def _is_cors_preflight(request: Request) -> bool:
+    """An ``OPTIONS`` request a browser sends before a cross-origin call — never credentialed."""
+
+    return (
+        request.method == "OPTIONS"
+        and "origin" in request.headers
+        and "access-control-request-method" in request.headers
+    )
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True)
 class SecurityContextMiddleware:
     app: ASGIApp
@@ -163,13 +176,21 @@ class SecurityContextMiddleware:
 
         request = Request(scope, receive)
         ctx = self.ctx_dep()
+        # The path routing reads: already percent-decoded. ``request.url`` is re-split from it,
+        # so an encoded ``?`` or ``#`` would end its path early and borrow an anonymous one.
+        anonymous = scope.get("path") in self.anonymous_paths
 
         try:
             resolved = await self._resolve_authn(request, ctx)
 
-            # Inside the try: on an anonymous path the refusal downgrades to no identity,
-            # like a failing credential. A CORS preflight carries no credential by design.
-            if resolved is None and self.authn.required and request.method != "OPTIONS":
+            # Not on an anonymous path, where tenancy still resolves for a request carrying no
+            # credential; and not for a CORS preflight, which carries none by design.
+            if (
+                resolved is None
+                and self.authn.required
+                and not anonymous
+                and not _is_cors_preflight(request)
+            ):
                 raise exc.authentication(
                     "Authentication credentials are required",
                     code="auth_required",
@@ -186,10 +207,7 @@ class SecurityContextMiddleware:
             )
 
         except CoreException as error:
-            if (
-                error.kind is ExceptionKind.AUTHENTICATION
-                and request.url.path in self.anonymous_paths
-            ):
+            if error.kind is ExceptionKind.AUTHENTICATION and anonymous:
                 # A failing CREDENTIAL on an anonymous path downgrades to no
                 # identity at all (see ``anonymous_paths``): the route is reachable
                 # without one by design, and a stale cookie must not lock the

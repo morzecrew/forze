@@ -7,7 +7,10 @@ The middleware used to bind no identity for such a request and pass it on, so a 
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
+from fastapi import FastAPI
+import pytest
 from starlette.testclient import TestClient
 
 from forze.application.contracts.authn import AuthnDepKey, AuthnSpec
@@ -28,6 +31,7 @@ def _client(**options: Any) -> tuple[TestClient, dict[str, object]]:
 
     async def _app(scope: Any, receive: Any, send: Any) -> None:
         seen["authn"] = ctx.inv_ctx.get_authn()
+        seen["tenant"] = ctx.inv_ctx.get_tenant()
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
 
@@ -65,9 +69,30 @@ class TestTheRequirement:
     def test_a_cors_preflight_is_never_refused(self) -> None:
         client, seen = _client()
 
-        response = client.options("/orders")
+        response = client.options(
+            "/orders",
+            headers={"Origin": "https://app.example.com", "Access-Control-Request-Method": "POST"},
+        )
 
         assert (response.status_code, seen["authn"]) == (200, None)
+
+    def test_an_options_request_that_is_not_a_preflight_is_refused(self) -> None:
+        # A hand-written OPTIONS route is a route like any other.
+        client, seen = _client()
+
+        response = client.options("/orders")
+
+        assert response.status_code == 401
+        assert "authn" not in seen
+
+    def test_an_anonymous_path_still_binds_the_gateway_tenant(self) -> None:
+        client, seen = _client(anonymous_paths={"/auth/login"}, trust_tenant_header=True)
+        tenant = uuid4()
+
+        response = client.post("/auth/login", headers={"X-Tenant-Id": str(tenant)})
+
+        assert response.status_code == 200
+        assert seen["tenant"] is not None and seen["tenant"].tenant_id == tenant
 
     def test_a_credential_on_any_ingress_satisfies_it(self) -> None:
         # Asked of the requirement, not of an ingress: a header client is not refused for
@@ -86,3 +111,43 @@ class TestTheRequirement:
         response = client.post("/orders")
 
         assert (response.status_code, seen["authn"]) == (200, None)
+
+
+class TestTheAnonymousPathIsTheRoutedPath:
+    """The check reads the path routing reads, not the URL Starlette rebuilds from it.
+
+    The scope's path is already percent-decoded, and the request URL is re-split from it: an
+    encoded ``?`` or ``#`` would end the URL's path early, and ``/%3F/reports`` would read as
+    the anonymous ``/`` while routing serves ``/{org}/reports`` with ``org="?"``.
+    """
+
+    def _app(self) -> TestClient:
+        ctx = context_from_deps(Deps.plain({AuthnDepKey: _TokenAuthFactory()}))
+        app = FastAPI()
+
+        @app.get("/")
+        def landing() -> dict[str, bool]:
+            return {"public": True}
+
+        @app.get("/{org}/reports")
+        def reports(org: str) -> dict[str, str]:
+            return {"org": org}
+
+        app.add_middleware(
+            SecurityContextMiddleware,  # type: ignore[arg-type]
+            ctx_dep=lambda: ctx,
+            authn=AuthnRequirement(ingress=(_HEADER,)),
+            when_multiple_credentials="first_in_order",
+            anonymous_paths={"/"},
+        )
+
+        return TestClient(app)
+
+    @pytest.mark.parametrize("path", ["/%3F/reports", "/%23/reports", "/%3f/reports"])
+    def test_an_encoded_query_or_fragment_does_not_borrow_an_anonymous_path(
+        self, path: str
+    ) -> None:
+        assert self._app().get(path).status_code == 401
+
+    def test_the_anonymous_path_itself_is_served(self) -> None:
+        assert self._app().get("/").status_code == 200

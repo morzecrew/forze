@@ -37,7 +37,9 @@ AuthnDepsModule(
 ```
 
 The two routes attach with the rest of the auth router (`attach_authn_routes`) — no extra
-projection step.
+projection step. Their callers carry no credential, so list both mounted paths (e.g.
+`/auth/password-reset/request` and `/auth/password-reset/confirm`) in the security
+middleware's `anonymous_paths`, beside login and refresh.
 
 ## Deliver the token
 
