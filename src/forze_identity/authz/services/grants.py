@@ -1,6 +1,7 @@
 """Resolve effective grants from catalog documents and binding edges."""
 
 from collections.abc import Sequence
+from contextlib import aclosing
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final
 from uuid import UUID
@@ -73,31 +74,30 @@ async def fetch_all_document_hits[R: BaseModel](
     page_size: int = 500,
     max_pages: int | None = DEFAULT_MAX_FETCH_ALL_PAGES,
 ) -> list[R]:
+    """Every row of *qry* matching *filters*, read in keyset batches of *page_size*.
+
+    By cursor, not offset: Firestore refuses an offset past the first page, and an offset scan
+    over rows written meanwhile skips or repeats some.
+
+    :raises CoreException: ``precondition`` for a non-positive *page_size*, or once more than
+        *max_pages* batches have been read.
+    """
+
     if page_size < 1:
         raise exc.precondition("page_size must be positive")
 
     hits: list[R] = []
-    offset = 0
     page_num = 0
 
-    while True:
-        check_page_limit(
-            pages=page_num,
-            max_pages=max_pages,
-            label="fetch_all_document_hits",
-        )
-
-        page = await qry.find_many(
-            filters=filters,
-            pagination={"limit": page_size, "offset": offset},
-        )
-        hits.extend(page.hits)
-
-        if len(page.hits) < page_size:
-            break
-
-        offset += page_size
-        page_num += 1
+    async with aclosing(qry.find_stream(filters=filters, chunk_size=page_size)) as batches:
+        async for batch in batches:
+            check_page_limit(
+                pages=page_num,
+                max_pages=max_pages,
+                label="fetch_all_document_hits",
+            )
+            hits.extend(batch)
+            page_num += 1
 
     return hits
 

@@ -11,7 +11,6 @@ import pytest
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import AuthzScope, RoleRef
 from forze.application.contracts.authz.specs import AuthzSpec
-from forze.application.contracts.base import Page
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
 from forze_identity.authz.adapters.role_assignment import RoleAssignmentAdapter
@@ -19,6 +18,7 @@ from forze_identity.authz.domain.models.bindings import ReadPrincipalRoleBinding
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
 from forze_identity.authz.domain.models.role_definition import ReadRoleDefinition
 from forze_identity.authz.services.grants import AuthzGrantResolver
+from tests.unit.test_forze_authz.test_grant_resolver_service import streaming
 
 
 def _secure_spec(name: str, model: type) -> DocumentSpec:
@@ -55,9 +55,7 @@ def _adapter(**kwargs: object) -> RoleAssignmentAdapter:
 
     pr_binding_qry = MagicMock()
     pr_binding_qry.spec = _secure_spec("pr_bindings", ReadPrincipalRoleBinding)
-    pr_binding_qry.find_many = AsyncMock(
-        return_value=Page(hits=[], count=0, page=1, size=500),
-    )
+    pr_binding_qry.find_stream = streaming()
 
     pr_binding_cmd = MagicMock()
     pr_binding_cmd.spec = _secure_spec("pr_bindings_cmd", ReadPrincipalRoleBinding)
@@ -116,9 +114,7 @@ async def test_assign_role_idempotent_when_binding_exists() -> None:
     adapter.role_qry.find = AsyncMock(  # type: ignore[method-assign]
         return_value=MagicMock(id=rid, role_key="admin"),
     )
-    adapter.pr_binding_qry.find_many = AsyncMock(  # type: ignore[method-assign]
-        return_value=Page(hits=[binding], count=1, page=1, size=500),
-    )
+    adapter.pr_binding_qry.find_stream = streaming(binding)  # type: ignore[method-assign]
     await adapter.assign_role(AuthnIdentity(principal_id=binding.principal_id), "admin")
     adapter.pr_binding_cmd.create.assert_not_awaited()  # type: ignore[attr-defined]
 
@@ -146,9 +142,7 @@ async def test_revoke_role_kills_binding() -> None:
     adapter.role_qry.find = AsyncMock(  # type: ignore[method-assign]
         return_value=MagicMock(id=rid, role_key="admin"),
     )
-    adapter.pr_binding_qry.find_many = AsyncMock(  # type: ignore[method-assign]
-        return_value=Page(hits=[binding], count=1, page=1, size=500),
-    )
+    adapter.pr_binding_qry.find_stream = streaming(binding)  # type: ignore[method-assign]
     await adapter.revoke_role(binding.principal_id, "admin")
     adapter.pr_binding_cmd.kill.assert_awaited_once_with(binding.id)  # type: ignore[attr-defined]
 

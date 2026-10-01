@@ -10,7 +10,6 @@ import pytest
 
 from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz.specs import AuthzSpec
-from forze.application.contracts.base import Page
 from forze.application.contracts.document import DocumentSpec
 from forze.base.exceptions import CoreException
 from forze_identity.authz.adapters.delegation import (
@@ -19,6 +18,7 @@ from forze_identity.authz.adapters.delegation import (
 )
 from forze_identity.authz.domain.models.bindings import ReadDelegationGrant
 from forze_identity.authz.domain.models.policy_principal import ReadPolicyPrincipal
+from tests.unit.test_forze_authz.test_grant_resolver_service import streaming
 
 pytestmark = pytest.mark.unit
 
@@ -67,9 +67,7 @@ def _grant_adapter(*, principal_exists: bool = True) -> DelegationGrantAdapter:
     grant_qry = MagicMock()
     grant_qry.spec = _secure_spec("delegation_grants", ReadDelegationGrant)
     grant_qry.find = AsyncMock(return_value=None)
-    grant_qry.find_many = AsyncMock(
-        return_value=Page(hits=[], count=0, page=1, size=500),
-    )
+    grant_qry.find_stream = streaming()
 
     grant_cmd = MagicMock()
     grant_cmd.spec = _secure_spec("delegation_grants_cmd", ReadDelegationGrant)
@@ -149,13 +147,8 @@ async def test_list_delegators_returns_subject_ids() -> None:
     adapter = _grant_adapter()
     actor = uuid4()
     subjects = [uuid4(), uuid4()]
-    adapter.grant_qry.find_many = AsyncMock(  # type: ignore[method-assign]
-        return_value=Page(
-            hits=[_read_grant(actor, s) for s in subjects],
-            count=2,
-            page=1,
-            size=500,
-        ),
+    adapter.grant_qry.find_stream = streaming(  # type: ignore[method-assign]
+        *[_read_grant(actor, s) for s in subjects]
     )
 
     result = await adapter.list_delegators(actor)

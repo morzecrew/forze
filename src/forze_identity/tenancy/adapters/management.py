@@ -142,23 +142,16 @@ class TenantManagementAdapter(TenantManagementPort):
         """Page through *every* binding matching *filters*.
 
         Membership lists feed the tenant selector and admin member list, so they must drain to
-        exhaustion rather than silently truncate at the default page size.
+        exhaustion rather than silently truncate at the default page size. Read by cursor, not
+        offset: Firestore refuses an offset past the first page.
         """
 
         hits: list[ReadPrincipalTenantBinding] = []
-        offset = 0
 
-        while True:
-            page = await self.binding_qry.find_many(
-                filters=filters,
-                pagination={"limit": _BINDING_PAGE_SIZE, "offset": offset},
-            )
-            hits.extend(page.hits)
-
-            if len(page.hits) < _BINDING_PAGE_SIZE:
-                break
-
-            offset += _BINDING_PAGE_SIZE
+        async for batch in self.binding_qry.find_stream(
+            filters=filters, chunk_size=_BINDING_PAGE_SIZE
+        ):
+            hits.extend(batch)
 
         return hits
 
