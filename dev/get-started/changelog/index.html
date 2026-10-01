@@ -9074,6 +9074,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> can check that a deactivation closes a derived permission.</strong> <code>no_permission_after_deactivation(deactivate, guarded)</code> flags a guarded operation that succeeds after the deactivation returned.</p>
 </li>
+<li>
+<p><strong>The stored-file kit's write wiring leaves room for your guards.</strong> <code>bind_stored_file_writes(kit, tx_route=...)</code> binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9081,6 +9084,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Deactivating a principal works without password or API-key accounts wired.</strong> The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.</p>
+</li>
 <li>
 <p><strong>Authorization and tenant membership read every binding on Firestore.</strong> The grant resolver and tenancy management paged bindings by offset, which Firestore refuses past the first page, so a principal with more bindings than one page holds, or a tenant with more members, failed. They read by cursor now.</p>
 </li>
