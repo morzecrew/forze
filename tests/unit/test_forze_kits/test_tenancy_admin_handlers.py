@@ -117,3 +117,33 @@ class TestDeactivateTenant:
 
         assert result is None
         assert mgmt.deactivated == tenant
+
+
+def test_the_documented_guard_loop_freezes() -> None:
+    """The registry's docstring binds authn and authz on every operation; run as written."""
+
+    from forze.application.contracts.authn import AuthnSpec
+    from forze.application.contracts.authz import AuthzSpec
+    from forze.application.hooks.authn import AuthnRequired
+    from forze.application.hooks.authz import AuthzBeforeAuthorize
+    from forze_kits.aggregates.tenancy_admin import (
+        TenancyAdminKernelOp,
+        build_tenancy_admin_registry,
+    )
+
+    ns = AuthnSpec(name="main", enabled_methods=frozenset({"token"})).default_namespace
+    reg = build_tenancy_admin_registry(ns)
+    authz = AuthzSpec(name="api")
+
+    for op in TenancyAdminKernelOp:
+        reg = (
+            reg.bind(ns.key(op))
+            .bind_outer()
+            .before(
+                AuthnRequired().to_step(),
+                AuthzBeforeAuthorize(spec=authz, action=f"tenants:{op}").to_step(),
+            )
+            .finish(deep=True)
+        )
+
+    reg.freeze()

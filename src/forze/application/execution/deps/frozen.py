@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, final
 
@@ -19,6 +19,7 @@ from forze.application.contracts.guarantees import (
     guarantees_of,
     validate_storage_guarantees,
 )
+from forze.application.contracts.inventory import InventoryRouteGuard
 from forze.application.execution.tracing import (
     NOOP_RUNTIME_TRACER,
     RuntimeTrace,
@@ -72,7 +73,7 @@ class FrozenDepsRegistry:
     this tracer (an OTel ``Tracer``; production observability, opt-in via
     ``DepsRegistry.with_otel_port_spans``). ``None`` leaves ports bare (zero cost)."""
 
-    inventory_guard: Callable[[str, str], None] | None = None
+    inventory_guard: InventoryRouteGuard | None = None
     """Resolve-time spec-inventory guard (see ``inventory_route_guard``): called with
     ``(key_name, route)`` on every routed configurable resolution when set, refusing
     routes missing from the declared inventory. Installed by the runtime; ``None``
@@ -123,7 +124,7 @@ class FrozenDeps:
     """When set, each resolved configurable port emits a per-call OpenTelemetry client span through
     this tracer (an OTel ``Tracer``); ``None`` leaves ports bare (zero cost)."""
 
-    inventory_guard: Callable[[str, str], None] | None = None
+    inventory_guard: InventoryRouteGuard | None = None
     """Resolve-time spec-inventory guard (see ``inventory_route_guard``): called with
     ``(key_name, route)`` on every routed configurable resolution when set, refusing
     routes missing from the declared inventory. Installed by the runtime; ``None``
@@ -399,3 +400,17 @@ class FrozenDeps:
         """Return ``True`` if the dependency is registered."""
 
         return self.store.exists(key, route=route)
+
+    # ....................... #
+
+    def resolvable[T](self, key: DepKey[T], *, route: StrKey) -> bool:
+        """Whether :meth:`resolve_configurable` would resolve *key* under *route*, without
+        resolving it: a provider registered for the route or as the plain fallback, and a
+        route the spec inventory admits when one is declared."""
+
+        found = self.store.exists(key, route=route) or self.store.exists(key)
+
+        if not found or self.inventory_guard is None:
+            return found
+
+        return self.inventory_guard.admits(key.name, str(route))
