@@ -1061,3 +1061,58 @@ class TestWalkBranches:
         out = walk_mapping({bad: "value"}, text_scrub=False, depth=0, max_depth=8)
         # A key that cannot be stringified is masked, never propagated.
         assert out[bad] == SECRET_PLACEHOLDER
+
+
+class TestShortTermsAreAnchored:
+    """``uri`` is a segment, not a run of letters inside an ordinary word.
+
+    Unanchored, it matched ``security``, ``during`` and ``manufacturing``: an audit spec
+    refused such metadata names as secrets, and a log line about Missouri lost its value.
+    """
+
+    @pytest.mark.parametrize(
+        "key", ["manufacturing", "security", "during", "maturity", "curious", "Missouri"]
+    )
+    def test_an_ordinary_word_is_not_a_secret_key(self, key: str) -> None:
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        assert not is_sensitive_key(key)
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "uri",
+            "URI",
+            "db_uri",
+            "DB_URI",
+            "dbUri",
+            "mongoURI",
+            "redis_uri",
+            "uri_template",
+            "uriTemplate",
+            "uris",
+            "databaseUri",
+        ],
+    )
+    def test_a_uri_key_is_still_a_secret_key(self, key: str) -> None:
+        from forze.base.scrubbing.policy import is_sensitive_key
+
+        assert is_sensitive_key(key)
+
+    @pytest.mark.parametrize("text", ["Missouri: hello", "during=the night", "security: high"])
+    def test_an_ordinary_word_keeps_its_value(self, text: str) -> None:
+        assert scrub_log_string(text) == text
+
+    @pytest.mark.parametrize(
+        "text,secret",
+        [
+            ("db_uri=postgres://u:p@h/db", "postgres://u:p@h/db"),
+            ("dbUri=redis://:pw@h", "redis://:pw@h"),
+            ('{"mongoURI":"mongodb://u:p@h"}', "mongodb://u:p@h"),
+        ],
+    )
+    def test_a_uri_value_is_still_masked(self, text: str, secret: str) -> None:
+        result = scrub_log_string(text)
+
+        assert SECRET_PLACEHOLDER in result
+        assert secret not in result

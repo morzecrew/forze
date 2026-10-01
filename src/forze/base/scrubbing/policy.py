@@ -72,11 +72,13 @@ _LOGFIRE_SENSITIVE_FRAGMENTS: tuple[str, ...] = (
 # Extra key terms for egress/log key masking (not all appear in Logfire defaults).
 # Short fragments are anchored with ``_SEG`` (the csrf/jwt convention above) so
 # ``pwd`` / ``db_pwd`` / ``pwd_hash`` / ``dbPwd`` match but a mid-token run
-# (``backupwd``) does not.
+# (``backupwd``) does not. ``uri`` is left-anchored the same way: unanchored it is a run
+# inside ordinary words (``security``, ``during``, ``manufacturing``), while ``db_uri``,
+# ``dbUri`` and ``uri_template`` all start a segment.
 _FORZE_KEY_EXTRAS: tuple[str, ...] = (
     "token",
     "dsn",
-    "uri",
+    rf"{_SEG}uri",
     "authorization",
     rf"{_SEG}pwd{_SEG}",
     "passphrase",
@@ -137,7 +139,7 @@ _LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
     "jwt",
     "ssn",
     "dsn",
-    "uri",
+    rf"{_SEG}uri",
 )
 
 # Quoted-key form of the same vocabulary — a credential inside a *serialized* body.
