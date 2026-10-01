@@ -273,7 +273,10 @@ def _normalize_origin(value: str) -> str | None:
 
     hostname, port = authority
 
-    return f"{urlsplit(value.strip()).scheme.lower()}://{hostname}" + (
+    # An IPv6 host keeps its brackets: without them `[a::5:1]` and `[a::5]:1` read the same.
+    host = f"[{hostname}]" if ":" in hostname else hostname
+
+    return f"{urlsplit(value.strip()).scheme.lower()}://{host}" + (
         f":{port}" if port is not None else ""
     )
 

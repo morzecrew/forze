@@ -61,6 +61,15 @@ class TestMatching:
         assert not ALLOWLIST.allows(origin)
 
 
+class TestIpv6Hosts:
+    def test_an_ipv6_host_keeps_its_brackets_when_compared(self) -> None:
+        # Unbracketed, `[2001:db8::5:1]` and `[2001:db8::5]:1` would both read 2001:db8::5:1.
+        allowlist = OriginAllowlist.parse(["http://[2001:db8::5:1]"])
+
+        assert allowlist.allows("http://[2001:db8::5:1]")
+        assert not allowlist.allows("http://[2001:db8::5]:1")
+
+
 class TestParsing:
     @pytest.mark.parametrize(
         "entry",
