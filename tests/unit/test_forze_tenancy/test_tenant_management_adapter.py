@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -244,6 +245,21 @@ async def test_deactivate_tenant() -> None:
     adapter.tenant_cmd.update.assert_awaited_once()
 
 
+def _streaming(*batches: list[object]) -> Any:
+    """A ``find_stream`` yielding *batches*, recording the arguments of each call."""
+
+    calls: list[dict[str, object]] = []
+
+    async def find_stream(**kwargs: object) -> Any:
+        calls.append(kwargs)
+
+        for batch in batches:
+            yield batch
+
+    find_stream.calls = calls  # type: ignore[attr-defined]
+    return find_stream
+
+
 @pytest.mark.asyncio
 async def test_list_principal_tenants_filters_inactive() -> None:
     pid = uuid4()
@@ -252,9 +268,7 @@ async def test_list_principal_tenants_filters_inactive() -> None:
     b1.tenant_id, b2.tenant_id = t1, t2
 
     adapter = _adapter()
-    adapter.binding_qry.find_many = AsyncMock(
-        return_value=Page(hits=[b1, b2], count=2, page=1, size=10),
-    )
+    adapter.binding_qry.find_stream = _streaming([b1, b2])
 
     def _get(tid: object) -> ReadTenant:
         now = datetime.now(tz=UTC)
@@ -282,36 +296,28 @@ async def test_list_tenant_principals_returns_binding_principals() -> None:
     b1.principal_id, b2.principal_id = p1, p2
 
     adapter = _adapter()
-    adapter.binding_qry.find_many = AsyncMock(
-        return_value=Page(hits=[b1, b2], count=2, page=1, size=10),
-    )
+    adapter.binding_qry.find_stream = stream = _streaming([b1, b2])
 
     result = await adapter.list_tenant_principals(tenant)
 
     assert list(result) == [p1, p2]
-    _, kwargs = adapter.binding_qry.find_many.await_args
-    assert kwargs["filters"] == {"$values": {"tenant_id": tenant}}
+    assert stream.calls[0]["filters"] == {"$values": {"tenant_id": tenant}}
 
 
 @pytest.mark.asyncio
 async def test_membership_lists_drain_all_pages() -> None:
-    # A full page must trigger another fetch — memberships beyond the first page are not dropped.
+    # Every keyset batch is read — memberships beyond the first page are not dropped — and by
+    # cursor, never by offset, which Firestore refuses past the first page.
     tenant = uuid4()
     full = [MagicMock(principal_id=uuid4()) for _ in range(_BINDING_PAGE_SIZE)]
     tail = [MagicMock(principal_id=uuid4()) for _ in range(3)]
 
     adapter = _adapter()
-    adapter.binding_qry.find_many = AsyncMock(
-        side_effect=[
-            Page(hits=full, count=0, page=1, size=_BINDING_PAGE_SIZE),
-            Page(hits=tail, count=0, page=2, size=_BINDING_PAGE_SIZE),
-        ],
-    )
+    adapter.binding_qry.find_stream = stream = _streaming(full, tail)
 
     result = await adapter.list_tenant_principals(tenant)
 
     assert len(result) == _BINDING_PAGE_SIZE + 3
-    assert adapter.binding_qry.find_many.await_count == 2
-    # Second fetch advanced the offset by one page.
-    _, kwargs = adapter.binding_qry.find_many.await_args_list[1]
-    assert kwargs["pagination"] == {"limit": _BINDING_PAGE_SIZE, "offset": _BINDING_PAGE_SIZE}
+    assert stream.calls == [
+        {"filters": {"$values": {"tenant_id": tenant}}, "chunk_size": _BINDING_PAGE_SIZE}
+    ]

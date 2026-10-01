@@ -9,12 +9,12 @@ and the pagination helper's boundaries.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 
 from forze.application.contracts.authz import AuthzScope
-from forze.application.contracts.base.value_objects import CountlessPage
 from forze.base.exceptions import CoreException
 from forze_identity.authz.domain.models.bindings import (
     ReadGroupPermissionBinding,
@@ -61,17 +61,29 @@ class FakeDocQuery:
     async def get(self, doc_id: UUID):
         return self._by_id[doc_id]
 
-    async def find_many(self, *, filters, pagination):
+    async def find_stream(self, *, filters, chunk_size):
+        # Keyset batches only, no offset page: a scan that went back to offsets fails here, as
+        # it would on Firestore.
         values: dict = filters["$values"]
-        limit = pagination["limit"]
-        offset = pagination["offset"]
 
         matched = [
             r
             for r in self._rows
             if all(getattr(r, k) == v for k, v in values.items())
         ]
-        return CountlessPage(hits=matched[offset : offset + limit], page=1, size=limit)
+
+        for first in range(0, len(matched), chunk_size):
+            yield matched[first : first + chunk_size]
+
+
+def streaming(*hits: object) -> Any:
+    """A stand-alone ``find_stream`` yielding *hits* as one batch."""
+
+    async def find_stream(**_kwargs: object) -> Any:
+        if hits:
+            yield list(hits)
+
+    return find_stream
 
 
 # ----------------------- #
