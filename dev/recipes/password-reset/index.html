@@ -6526,7 +6526,9 @@ the other credentials); a new request supersedes the previous outstanding one.</
 <span class="p">)</span>
 </code></pre></div>
 <p>The two routes attach with the rest of the auth router (<code>attach_authn_routes</code>) — no extra
-projection step.</p>
+projection step. Their callers carry no credential, so list both mounted paths (e.g.
+<code>/auth/password-reset/request</code> and <code>/auth/password-reset/confirm</code>) in the security
+middleware's <code>anonymous_paths</code>, beside login and refresh.</p>
 <h2 id="deliver-the-token">Deliver the token<a class="headerlink" href="#deliver-the-token" title="Permanent link">&para;</a></h2>
 <p>The raw token must reach the account holder <strong>out of band</strong>, never in the HTTP response.
 Set <code>reset_events</code> and a successful request stages an <code>authn.password_reset_requested</code>

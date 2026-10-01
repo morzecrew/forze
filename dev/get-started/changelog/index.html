@@ -758,6 +758,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -809,7 +820,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -920,7 +931,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -992,7 +1003,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_2" class="md-nav__link">
+  <a href="#security_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -1336,7 +1347,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_3" class="md-nav__link">
+  <a href="#security_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7687,6 +7698,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7738,7 +7760,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7849,7 +7871,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7921,7 +7943,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_2" class="md-nav__link">
+  <a href="#security_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8265,7 +8287,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_3" class="md-nav__link">
+  <a href="#security_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -9075,8 +9097,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><abbr title="Deterministic Simulation Testing">DST</abbr> can check that a deactivation closes a derived permission.</strong> <code>no_permission_after_deactivation(deactivate, guarded)</code> flags a guarded operation that succeeds after the deactivation returned.</p>
 </li>
 <li>
-<p><strong>The stored-file kit's write wiring leaves room for your guards.</strong> <code>bind_stored_file_writes(kit, tx_route=...)</code> binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.</p>
+<p><strong>An allowed origin can be a dev server's port range.</strong> <code>CookieCsrf</code> and the realtime WebSocket's <code>allowed_origins</code> accept <code>http://localhost:5173-5199</code> or <code>http://localhost:*</code> on a loopback host. The WebSocket route now refuses an entry that is not an origin (<code>null</code>, <code>*</code>) when attached.</p>
 </li>
+<li><strong>The stored-file kit's write wiring leaves room for your guards.</strong> <code>bind_stored_file_writes(kit, tx_route=...)</code> binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9090,6 +9113,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Authorization and tenant membership read every binding on Firestore.</strong> The grant resolver and tenancy management paged bindings by offset, which Firestore refuses past the first page, so a principal with more bindings than one page holds, or a tenant with more members, failed. They read by cursor now.</p>
 </li>
+<li>
+<p><strong>OpenAPI descriptions drop a relative target's leading dot.</strong> A docstring's <code>:class:`.Foo`</code> renders as <code>Foo</code>, as Sphinx shows it, instead of <code>.Foo</code>.</p>
+</li>
+</ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A request no ingress authenticates is refused by default</strong> (<strong>behaviour change</strong>). <code>AuthnRequirement(required=True)</code> answers 401 <code>auth_required</code> outside the middleware's <code>anonymous_paths</code>; list login, refresh and public pages there, or pass <code>required=False</code>. CORS preflights pass.</li>
 <li>
 <p><strong>The documented authn → authz hook chain freezes.</strong> <code>AuthnRequired.to_step()</code> under its default id now provides the <code>authn.principal</code> capability that <code>AuthzBeforeAuthorize.to_step()</code> requires by default, so authorization runs after authentication; <code>AuthzBeforeAuthorize.to_step()</code> no longer needs a <code>step_id</code>.</p>
 </li>
@@ -9153,7 +9183,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The temporal and versioned kits' reads are marked as reads.</strong> <code>effective_on</code>, <code>timeline</code>, <code>history</code> and <code>as_of</code> now run under the read-only guard and are listed as read-only in the operation catalog, so an <abbr title="Model Context Protocol">MCP</abbr> projection that includes only reads now includes them.</p>
 </li>
 </ul>
-<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Audit rows and versioned corrections record every principal of a delegation.</strong> <code>actor_id</code> stays the nearest actor; <code>actor_ids</code> holds the whole chain, and a correction gains <code>subject_id</code>; its spec must store and read back all three. <strong>Required migration</strong> on Postgres (see docs); until then those writes fail closed.</p>
@@ -9297,7 +9327,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>HttpAuthConfig</code> with no token sent <code>Authorization: Bearer None</code>.</strong> A config declaring no token still sent the header; it no longer does, and the same fix covers <code>HttpClientLifecycleStep.auth_token</code> and Meilisearch's <code>api_key</code>.</p>
 </li>
 </ul>
-<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
+<h3 id="security_2">Security<a class="headerlink" href="#security_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Two principals using one idempotency key no longer share its claim.</strong> A claim is scoped to the tenant and the acting principal, so a caller reusing another's key runs its own operation instead of being served that caller's stored result. A custom store inherits <code>ClaimPrincipalMixin</code>.</li>
 </ul>
@@ -9419,7 +9449,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A durable run or schedule registered for a tenant nothing is bound to now lands where that tenant looks for it.</strong> The relation came from the binding while the tag and the scoped id came from the argument, so on a per-tenant relation the row was written somewhere nobody reads and the schedule never fired.</p>
 </li>
 </ul>
-<h3 id="security_2">Security<a class="headerlink" href="#security_2" title="Permanent link">&para;</a></h3>
+<h3 id="security_3">Security<a class="headerlink" href="#security_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>A bound tenant can no longer reach another tenant's durable run.</strong> <code>begin</code>, <code>renew</code>, <code>load</code> and the terminal writes enforced no tenant; they now reach the bound tenant's runs and untagged ones. Postgres, Mongo and the mock.</p>
@@ -10827,7 +10857,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_temporal</code> and <code>forze[mcp]</code> workflow sandbox</strong> — the sandbox runner passes <code>beartype</code> and <code>coverage</code> through, fixing circular-import failures and a coverage-induced test hang.</p>
 </li>
 </ul>
-<h3 id="security_3">Security<a class="headerlink" href="#security_3" title="Permanent link">&para;</a></h3>
+<h3 id="security_4">Security<a class="headerlink" href="#security_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Password change revokes existing sessions (breaking by default)</strong> — <code>change_password</code> revokes all sessions (refresh families plus session-bound access JWTs); opt out explicitly, and missing session ports fail at startup.</p>

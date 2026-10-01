@@ -7023,16 +7023,19 @@ idempotently.</p>
 <span class="n">attach_authn_routes</span><span class="p">(</span><span class="n">router</span><span class="p">,</span> <span class="n">registry</span><span class="o">=</span><span class="n">registry</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx_dep</span><span class="p">,</span> <span class="n">cookies</span><span class="o">=</span><span class="n">cookies</span><span class="p">)</span>
 </code></pre></div>
 <p>Point the inbound <code>CookieTokenAuthn</code>'s <code>cookie_name</code> at the same
-<code>access_cookie</code>, and list the login and refresh paths in the security
+<code>access_cookie</code>, and list the login, refresh and logout paths in the security
 middleware's <a href="../../integrations/fastapi/#bind-request-context"><code>anonymous_paths</code></a> —
-otherwise a stale access cookie 401s the very route that would replace it.
+otherwise a stale access cookie 401s the very route that would replace it, and a
+logout arriving with no cookie gets a 401 instead of having the cookies expired.
 Cookies are always <code>HttpOnly</code> and <code>Secure</code> by default, with <code>samesite="lax"</code> as
 the outbound browser-side default. Inbound, <code>CookieTokenAuthn</code> ships a
 server-side CSRF gate <strong>on by default</strong> (<code>CookieCsrf</code>): a request using the
 cookie on an unsafe method must prove a same-host origin via <code>Origin</code> (or
 <code>Referer</code>), so the defense holds even when a proxy strips <code>SameSite</code> or a
 <code>samesite="none"</code> deployment relies on it. A cross-origin frontend (a SPA on
-another host) lists itself in <code>CookieCsrf(allowed_origins={...})</code>; non-browser
+another host) lists itself in <code>CookieCsrf(allowed_origins={...})</code> — a dev server
+that picks a free port may be named as a range on a loopback host
+(<code>http://localhost:5173-5199</code>, or <code>http://localhost:*</code>); non-browser
 cookie clients that send neither header opt in with <code>allow_missing_origin=True</code>
 or authenticate via a header ingress. <code>csrf=None</code> disables the gate — a declared
 decision to bring your own CSRF layer.</p>
@@ -7169,8 +7172,10 @@ catalog flagged as needing a bound principal. That flag (<code>requires_authn</c
 derived at freeze from the plan's <code>AuthnRequired</code> or authz hooks, so protected
 routes advertise the scheme while token-minting routes (<code>/login</code>, <code>/refresh</code>) stay
 open. Use <code>exclude={"orders.deactivate", ...}</code> to leave a flagged operation open.</p>
-<p>This <strong>documents</strong> auth; it doesn't enforce it — enforcement stays in the engine
-(the <code>AuthnRequired</code>/authz hooks) and identity extraction in the middleware.</p>
+<p>This <strong>documents</strong> auth; it doesn't enforce it. The middleware refuses a request no
+ingress authenticates outside its <code>anonymous_paths</code> (list the mounted <code>/auth/login</code> and <code>/auth/refresh</code>
+there), and per-operation enforcement stays in the engine's <code>AuthnRequired</code>/authz
+hooks.</p>
 <h2 id="match-openapi-to-what-the-app-serves">Match OpenAPI to what the app serves<a class="headerlink" href="#match-openapi-to-what-the-app-serves" title="Permanent link">&para;</a></h2>
 <p>FastAPI documents its own 422 body (<code>HTTPValidationError</code>) on every route that
 takes input, but the Forze exception handlers answer errors — a failed request

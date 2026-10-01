@@ -6603,9 +6603,17 @@ per-scope context:</p>
         <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderTokenAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">API</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">"Authorization"</span><span class="p">),),</span>
     <span class="p">),</span>
     <span class="n">when_multiple_credentials</span><span class="o">=</span><span class="s2">"first_in_order"</span><span class="p">,</span>
+    <span class="n">anonymous_paths</span><span class="o">=</span><span class="p">{</span>  <span class="c1"># the generated routes reachable without a credential</span>
+        <span class="s2">"/auth/login"</span><span class="p">,</span>
+        <span class="s2">"/auth/refresh"</span><span class="p">,</span>
+        <span class="s2">"/auth/password-reset/request"</span><span class="p">,</span>
+        <span class="s2">"/auth/password-reset/confirm"</span><span class="p">,</span>
+    <span class="p">},</span>
 <span class="p">)</span>
 <span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span><span class="n">InvocationMetadataMiddleware</span><span class="p">,</span> <span class="n">ctx_dep</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">())</span>
 </code></pre></div>
+<p>A request no ingress authenticates gets a 401 before routing, except on
+<code>anonymous_paths</code>; list there every route that exists without an identity.</p>
 <p>Ingress options are <code>HeaderTokenAuthn</code>, <code>HeaderApiKeyAuthn</code> (<code>header_name</code>), and
 <code>CookieTokenAuthn</code> (<code>cookie_name</code>) — each carries the <code>AuthnSpec</code> whose <code>name</code>
 selects the route's verifier and resolver.</p>

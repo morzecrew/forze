@@ -6723,19 +6723,23 @@ returns the current <code>ExecutionContext</code> — <code>runtime.get_context<
 <p><code>InvocationMetadataMiddleware</code> binds correlation/execution metadata and the
 <code>Idempotency-Key</code> header; <code>SecurityContextMiddleware</code> binds the authenticated
 identity and tenant.</p>
-<p>A request whose credential fails to verify is refused before routing — which is
-wrong for the handful of paths that exist <em>because</em> the caller has no working
-credential. Name them exactly:</p>
+<p>Outside a short list of exact paths, a request whose credential fails to verify is
+refused before routing, and so is one that no ingress authenticates at all
+(<code>AuthnRequirement(required=True)</code>, the default; a CORS preflight passes, for a CORS
+layer to answer). That list is the handful of paths that exist <em>because</em> the caller has
+no working credential — login, refresh, password reset, cookie-mode logout, and any
+public page such as FastAPI's <code>/docs</code> and <code>/openapi.json</code>. Name them exactly, as
+mounted:</p>
 <div class="highlight"><pre><span></span><code><span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
     <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
     <span class="n">ctx_dep</span><span class="o">=</span><span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">,</span>
-    <span class="n">anonymous_paths</span><span class="o">=</span><span class="p">{</span><span class="s2">"/auth/login"</span><span class="p">,</span> <span class="s2">"/auth/refresh"</span><span class="p">},</span>
+    <span class="n">anonymous_paths</span><span class="o">=</span><span class="p">{</span><span class="s2">"/auth/login"</span><span class="p">,</span> <span class="s2">"/auth/refresh"</span><span class="p">,</span> <span class="s2">"/docs"</span><span class="p">,</span> <span class="s2">"/openapi.json"</span><span class="p">},</span>
 <span class="p">)</span>
 </code></pre></div>
-<p>On those paths an <strong>authentication-kind</strong> failure — an expired or invalid
-credential, ambiguous credentials, a tenant mismatch — binds no identity instead
-of 401ing, so the route authenticates from its body exactly as it would for a
-request carrying nothing. A valid credential still binds normally, and every
+<p>On those paths a missing credential, or an <strong>authentication-kind</strong> failure — an
+expired or invalid credential, ambiguous credentials, a tenant mismatch — binds no
+identity instead of 401ing, so the route authenticates from its body or serves
+anonymously. A valid credential still binds normally, and every
 other failure kind still returns the error response: a secrets-store outage is a
 server fault, not a missing credential. This matters most in
 <a href="../../reference/fastapi-routes/#cookie-mode">cookie mode</a>, where a stale access
@@ -6945,7 +6949,9 @@ the connection rather than falling through to the next.</p>
   cross-site upgrade by itself and the handshake has no CORS preflight, so the
   server-side Origin check is the whole defense. The factory cannot see the attach
   call's argument, so it asks you to attest it — building cookie mode without
-  <code>origin_allowlist_attested=True</code> is a configuration error.</li>
+  <code>origin_allowlist_attested=True</code> is a configuration error. Entries are exact
+  origins, or a port range on a loopback host for a dev server
+  (<code>http://localhost:5173-5199</code>, <code>http://localhost:*</code>).</li>
 <li><strong>The query-parameter source is off by default.</strong> Query strings land in access logs,
   proxy logs and anything that reads a URL. Enable <code>query_param="token"</code> only for
   clients that can set neither cookie nor header, with short-lived tokens.</li>
@@ -7036,9 +7042,10 @@ runs them. The surface, at a glance:</p>
 <li><strong>You write or generate routes.</strong> Handlers resolve the context and run
   operations; the <code>attach_*_routes</code> helpers project a frozen registry, but you
   still mount the router.</li>
-<li><strong>Identity is extracted, not enforced.</strong> Middleware binds the principal;
-  enforcement lives in the engine's authn/authz hooks, and <code>apply_openapi_security</code>
-  only documents it. A hand-written route that runs no operation gates itself with
+<li><strong>Identity is required at the boundary, and authorized in the engine.</strong> The
+  middleware refuses a request no ingress authenticates outside <code>anonymous_paths</code>
+  (<code>AuthnRequirement(required=False)</code> turns that off); authorization lives in the
+  engine's authz hooks, and <code>apply_openapi_security</code> only documents it. A hand-written route that runs no operation gates itself with
   <a href="../../identity-tenancy-enc/identity/#gating-a-route-that-runs-no-operation"><code>require_permission</code></a>.</li>
 <li><strong>Guard write-granting routes.</strong> <code>deactivate</code>, presigned-upload, and
   multipart-session endpoints ship unguarded or grant write — bind authn/authz

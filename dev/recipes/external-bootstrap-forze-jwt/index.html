@@ -6565,6 +6565,8 @@ route's token lifecycle to issue the Forze JWTs:</p>
 <p><code>authenticate_with_token</code> takes only the credentials (the route is fixed when the
 orchestrator is resolved) and returns an <code>AuthnResult</code> — pass <code>result.identity</code>
 to <code>issue_tokens</code>. The raw JWT string is <code>issued.access.token.token</code>.</p>
+<p>The caller has no Forze token yet, so list <code>/login</code> in the security middleware's
+<code>anonymous_paths</code>: it refuses a request no ingress authenticates everywhere else.</p>
 <h2 id="steady-state">Steady state<a class="headerlink" href="#steady-state" title="Permanent link">&para;</a></h2>
 <p>Every other route is protected by the <strong><code>api</code></strong> <code>AuthnSpec</code> through the
 <a href="../authn-authz-tenancy-fastapi/"><code>SecurityContextMiddleware</code></a> — fast, local

@@ -6787,9 +6787,10 @@ to the list and documents go to Postgres while search, queues and storage stay i
         <span class="n">SecurityContextMiddleware</span><span class="p">,</span>
         <span class="n">ctx_dep</span><span class="o">=</span><span class="n">ctx</span><span class="p">,</span>
         <span class="n">authn</span><span class="o">=</span><span class="n">AuthnRequirement</span><span class="p">(</span>
-            <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderApiKeyAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">AUTHN</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">"X-API-Key"</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">),),</span>
+            <span class="n">ingress</span><span class="o">=</span><span class="p">(</span><span class="n">HeaderApiKeyAuthn</span><span class="p">(</span><span class="n">authn_spec</span><span class="o">=</span><span class="n">AUTHN</span><span class="p">,</span> <span class="n">header_name</span><span class="o">=</span><span class="s2">"X-API-Key"</span><span class="p">),),</span>
         <span class="p">),</span>
         <span class="n">when_multiple_credentials</span><span class="o">=</span><span class="s2">"first_in_order"</span><span class="p">,</span>
+        <span class="n">anonymous_paths</span><span class="o">=</span><span class="p">{</span><span class="s2">"/docs"</span><span class="p">,</span> <span class="s2">"/openapi.json"</span><span class="p">},</span>  <span class="c1"># the interactive docs stay public</span>
     <span class="p">)</span>
 
     <span class="k">return</span> <span class="n">app</span>
