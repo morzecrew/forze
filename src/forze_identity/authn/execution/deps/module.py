@@ -288,12 +288,20 @@ class AuthnDepsModule(DepsModule):
                 raise exc.internal(
                     "authz_route is required when principal_deactivation routes are registered",
                 )
+
+            # Module-wide, not per route: a credential any route issues must be revoked when
+            # its principal is deactivated, whichever route the deactivation comes through.
+            module_methods = frozenset[str]().union(*authn_map.values())
+            password_accounts = "password" in module_methods or bool(pl or pap or pr)
+            api_key_accounts = "api_key" in module_methods or bool(akl)
             merged = merged.merge(
                 Deps.routed(
                     {
                         PrincipalDeactivationDepKey: {
                             name: ConfigurablePrincipalDeactivation(
                                 authz_route=self.authz_route,
+                                password_accounts=password_accounts,
+                                api_key_accounts=api_key_accounts,
                             )
                             for name in pd
                         },

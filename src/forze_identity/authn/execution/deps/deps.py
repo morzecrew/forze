@@ -378,6 +378,12 @@ class ConfigurablePrincipalDeactivation:
     authz_route: StrKey
     """Authz route name used to resolve :class:`PrincipalRegistryPort`."""
 
+    password_accounts: bool = True
+    """Whether the deployment keeps password accounts, so deactivation must close them."""
+
+    api_key_accounts: bool = True
+    """Whether the deployment keeps API-key accounts, so deactivation must revoke them."""
+
     def __call__(
         self,
         ctx: ExecutionContext,
@@ -388,11 +394,12 @@ class ConfigurablePrincipalDeactivation:
             ctx,
             spec,
         )
+        # Only the stores the deployment wires: an unwired store has no document route.
         credentials = AuthnCredentialDeactivationHelper(
-            pa_qry=ctx.doc.query(password_account_spec),
-            pa_cmd=ctx.doc.command(password_account_spec),
-            ak_qry=ctx.doc.query(api_key_account_spec),
-            ak_cmd=ctx.doc.command(api_key_account_spec),
+            pa_qry=ctx.doc.query(password_account_spec) if self.password_accounts else None,
+            pa_cmd=ctx.doc.command(password_account_spec) if self.password_accounts else None,
+            ak_qry=ctx.doc.query(api_key_account_spec) if self.api_key_accounts else None,
+            ak_cmd=ctx.doc.command(api_key_account_spec) if self.api_key_accounts else None,
         )
         return PrincipalDeactivationAdapter(
             principal_registry=registry,
