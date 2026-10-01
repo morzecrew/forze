@@ -371,6 +371,8 @@ class TestMarkdown:
             (":py:class:`.Foo`", "`Foo`"),
             (":file:`.env`", "`.env`"),
             (":doc:`../guide/intro`", "`../guide/intro`"),
+            (":file:`~/.config/forze.toml`", "`~/.config/forze.toml`"),
+            (":doc:`~guide.intro`", "`~guide.intro`"),
         ],
         ids=[
             "tilde",
@@ -383,6 +385,8 @@ class TestMarkdown:
             "relative-py-domain",
             "file-keeps-its-dot",
             "doc-keeps-its-dots",
+            "file-keeps-its-tilde",
+            "doc-keeps-its-tilde",
         ],
     )
     def test_roles(self, text: str, expected: str) -> None:

@@ -132,15 +132,19 @@ _LABELS: Final = {"seealso": "See also", "versionadded": "Added in", "versioncha
 
 
 def _role_text(match: re.Match[str]) -> str:
-    # `text <target>` shows its text; a Python role's relative target (`.Foo`) drops its
-    # leading dots, as Sphinx renders it; `~a.b.C` shows its last component.
+    # `text <target>` shows its text. As Sphinx renders a Python role, a relative target
+    # (`.Foo`) drops its leading dots and `~a.b.C` shows its last component; other roles
+    # (`:file:`, `:doc:`) show their content as written.
     content = match["content"]
 
     if (explicit := re.match(r"^(.*?)\s*<[^>]+>$", content)) and explicit.group(1):
         return explicit.group(1)
 
     python = match["domain"] in (None, "py") and match["role"] in _PYTHON_ROLES
-    title = content.lstrip(".") if python else content
+    if not python:
+        return content
+
+    title = content.lstrip(".")
 
     if title.startswith("~"):
         return title[1:].rsplit(".", 1)[-1]
