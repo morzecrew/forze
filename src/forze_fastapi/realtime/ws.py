@@ -80,7 +80,7 @@ from forze.base.primitives import HlcTimestamp, utcnow, uuid7
 from forze.base.scrubbing import sanitize_pydantic_errors
 
 from ..middlewares.raw_websocket import GOVERNED_WEBSOCKET_ATTR
-from ..security.value_objects import origin_authority
+from ..security.value_objects import OriginAllowlist, origin_authority
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .sse import (
     TopicAuthorizer,
@@ -262,7 +262,7 @@ def _log_server_error(core: CoreException | None, error: BaseException) -> None:
     _logger.critical_exception("WebSocket realtime unit failed", exc=error)
 
 
-def _require_allowed_origin(websocket: WebSocket, allowed: frozenset[str] | None) -> None:
+def _require_allowed_origin(websocket: WebSocket, allowed: OriginAllowlist | None) -> None:
     """Refuse a browser upgrade whose ``Origin`` is not allowed.
 
     The browser is the one client that attaches ambient credentials (cookies) to a
@@ -287,7 +287,7 @@ def _require_allowed_origin(websocket: WebSocket, allowed: frozenset[str] | None
         return
 
     if allowed is not None:
-        if origin.strip().rstrip("/").lower() not in allowed:
+        if not allowed.allows(origin):
             raise exc.authorization(
                 "Origin not allowed for the realtime WebSocket",
                 code="realtime_origin_forbidden",
@@ -381,7 +381,9 @@ def attach_realtime_ws_route(
     *allowed_origins* is the browser perimeter: when set, an upgrade whose ``Origin``
     header is not in the list is refused (policy close) — the WS handshake has no CORS
     preflight, so this check is the only cross-site defense the transport gets. Pass
-    your app origins (e.g. ``["https://app.example.com"]``); requests without an
+    your app origins (e.g. ``["https://app.example.com"]``, or a loopback port range such
+    as ``"http://localhost:5173-5199"`` for a dev server; see
+    :class:`~forze_fastapi.security.OriginAllowlist`); requests without an
     ``Origin`` header (non-browser clients) pass. ``None`` (the default) still fails
     closed for ambient credentials: a browser upgrade carrying cookies must be
     same-host (see :func:`_require_allowed_origin`) — a cross-origin frontend that
@@ -396,16 +398,16 @@ def attach_realtime_ws_route(
     if max_topics <= 0:
         raise exc.configuration("max_topics must be positive")
 
-    origin_allowlist: frozenset[str] | None = None
+    origin_allowlist: OriginAllowlist | None = None
 
     if allowed_origins is not None:
-        origin_allowlist = frozenset(o.strip().rstrip("/").lower() for o in allowed_origins)
-
-        if not origin_allowlist or "" in origin_allowlist:
+        if not allowed_origins:
             raise exc.configuration(
                 "allowed_origins must be a non-empty list of origins "
                 "(e.g. ['https://app.example.com']); pass None to disable the check"
             )
+
+        origin_allowlist = OriginAllowlist.parse(allowed_origins)
 
     if max_frame_bytes <= 0:
         raise exc.configuration("max_frame_bytes must be positive")

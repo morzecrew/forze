@@ -320,7 +320,9 @@ Four things to know before you wire it:
   cross-site upgrade by itself and the handshake has no CORS preflight, so the
   server-side Origin check is the whole defense. The factory cannot see the attach
   call's argument, so it asks you to attest it — building cookie mode without
-  `origin_allowlist_attested=True` is a configuration error.
+  `origin_allowlist_attested=True` is a configuration error. Entries are exact
+  origins, or a port range on a loopback host for a dev server
+  (`http://localhost:5173-5199`, `http://localhost:*`).
 - **The query-parameter source is off by default.** Query strings land in access logs,
   proxy logs and anything that reads a URL. Enable `query_param="token"` only for
   clients that can set neither cookie nor header, with short-lived tokens.

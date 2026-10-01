@@ -275,7 +275,9 @@ server-side CSRF gate **on by default** (`CookieCsrf`): a request using the
 cookie on an unsafe method must prove a same-host origin via `Origin` (or
 `Referer`), so the defense holds even when a proxy strips `SameSite` or a
 `samesite="none"` deployment relies on it. A cross-origin frontend (a SPA on
-another host) lists itself in `CookieCsrf(allowed_origins={...})`; non-browser
+another host) lists itself in `CookieCsrf(allowed_origins={...})` — a dev server
+that picks a free port may be named as a range on a loopback host
+(`http://localhost:5173-5199`, or `http://localhost:*`); non-browser
 cookie clients that send neither header opt in with `allow_missing_origin=True`
 or authenticate via a header ingress. `csrf=None` disables the gate — a declared
 decision to bring your own CSRF layer.

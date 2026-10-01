@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **DST can check that a deactivation closes a derived permission.** `no_permission_after_deactivation(deactivate, guarded)` flags a guarded operation that succeeds after the deactivation returned.
 
+- **An allowed origin can be a dev server's port range.** `CookieCsrf(allowed_origins=...)` and the realtime WebSocket's `allowed_origins` accept `http://localhost:5173-5199` or `http://localhost:*` on a loopback host, and the cookie gate parses its list once rather than on every unsafe request.
+
 ### Changed
 
 - ...
