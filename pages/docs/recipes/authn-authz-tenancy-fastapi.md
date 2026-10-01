@@ -45,7 +45,12 @@ app.add_middleware(
         ingress=(HeaderTokenAuthn(authn_spec=API, header_name="Authorization"),),
     ),
     when_multiple_credentials="first_in_order",
-    anonymous_paths={"/auth/login", "/auth/refresh"},  # reachable without a credential
+    anonymous_paths={  # the generated routes reachable without a credential
+        "/auth/login",
+        "/auth/refresh",
+        "/auth/password-reset/request",
+        "/auth/password-reset/confirm",
+    },
 )
 app.add_middleware(InvocationMetadataMiddleware, ctx_dep=lambda: runtime.get_context())
 ```
