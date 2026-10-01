@@ -8,6 +8,7 @@ from forze.application.execution.operations.registry import (
     OperationRegistry,
 )
 from forze.application.hooks.authn import AuthnRequired
+from forze.base.primitives import StrKeyNamespace
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.aggregates.stored_file import (
     StoredFileKernelOp,
@@ -100,3 +101,17 @@ def test_the_binder_extends_a_registry_it_is_given() -> None:
 
     assert "authn.principal" in set(frozen.plans[upload].outer.before.steps)
     assert _stages(frozen, _PLAIN)[str(StoredFileKernelOp.UPLOAD)][0] == "mock"
+
+
+def test_the_binder_binds_the_namespace_the_registry_was_built_with() -> None:
+    # A registry built under its own namespace has none of the default-namespace keys.
+    media = StrKeyNamespace(prefix="media")
+    base = build_stored_file_registry(_PLAIN, ns=media)
+
+    frozen = bind_stored_file_writes(_PLAIN, tx_route="mock", registry=base, ns=media).freeze()
+    built = bind_stored_file_writes(_PLAIN, tx_route="mock", ns=media).freeze()
+    helper = freeze_stored_file_registry(_PLAIN, tx_route="mock", ns=media)
+
+    for registry in (frozen, built, helper):
+        for op in _STAGES:
+            assert registry.plans[media.key(op)].tx.route == "mock"
