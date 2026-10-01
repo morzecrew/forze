@@ -41,15 +41,22 @@ class AuthnRequired(BeforeFactory):
         *,
         step_id: StrKey = "authn.principal",
         requires: tuple[StrKey, ...] = (),
+        provides: tuple[StrKey, ...] = ("authn.principal",),
         depends_on: tuple[StrKey, ...] = (),
         priority: int = 10,
     ) -> BeforeStep:
-        """Build a :class:`BeforeStep` using this factory."""
+        """Build a :class:`BeforeStep` using this factory.
+
+        It provides the ``authn.principal`` capability, which
+        :meth:`~forze.application.hooks.authz.AuthzBeforeAuthorize.to_step` requires by
+        default, so an authorization step in the same plan runs after it.
+        """
 
         return required_guard_step(
             self,
             step_id=step_id,
             requires=requires,
+            provides=provides,
             depends_on=depends_on,
             priority=priority,
         )

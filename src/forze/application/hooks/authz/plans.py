@@ -266,12 +266,18 @@ class AuthzBeforeAuthorize(BeforeFactory):
     def to_step(
         self,
         *,
-        step_id: StrKey,
+        step_id: StrKey = "authz.authorize",
         requires: tuple[StrKey, ...] = ("authn.principal",),
         depends_on: tuple[StrKey, ...] = (),
         priority: int = 50,
     ) -> BeforeStep:
-        """Build a :class:`BeforeStep` using this factory."""
+        """Build a :class:`BeforeStep` using this factory.
+
+        It requires the ``authn.principal`` capability that
+        :meth:`~forze.application.hooks.authn.AuthnRequired.to_step` provides, so it runs after
+        authentication; a plan with no such step refuses to freeze. Pass ``requires=()`` to
+        authorize without one.
+        """
 
         return required_guard_step(
             self,

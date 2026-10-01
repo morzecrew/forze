@@ -37,6 +37,7 @@ def required_guard_step(
     *,
     step_id: StrKey,
     requires: tuple[StrKey, ...] = (),
+    provides: tuple[StrKey, ...] = (),
     depends_on: tuple[StrKey, ...] = (),
     priority: int = 0,
 ) -> BeforeStep:
@@ -46,6 +47,7 @@ def required_guard_step(
         id=step_id,
         factory=factory,
         requires=requires,
+        provides=provides,
         depends_on=depends_on,
         priority=priority,
     )
