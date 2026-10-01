@@ -365,8 +365,11 @@ class TestMarkdown:
             (":py:meth:`a.b.c()`", "`a.b.c()`"),
             (":doc:`the guide <guides/start>`", "`the guide`"),
             (":data:`MAX_PAGE_SIZE`", "`MAX_PAGE_SIZE`"),
+            (":class:`.Foo` here", "`Foo` here"),
+            (":meth:`.Foo.bar`", "`Foo.bar`"),
+            (":class:`~.a.Foo`", "`Foo`"),
         ],
-        ids=["tilde", "domain", "explicit-title", "plain"],
+        ids=["tilde", "domain", "explicit-title", "plain", "relative", "relative-dotted", "relative-tilde"],
     )
     def test_roles(self, text: str, expected: str) -> None:
         assert _markdown(text) == expected

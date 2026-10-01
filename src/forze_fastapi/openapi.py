@@ -125,14 +125,17 @@ _LABELS: Final = {"seealso": "See also", "versionadded": "Added in", "versioncha
 
 
 def _role_text(content: str) -> str:
-    # `text <target>` shows its text; `~a.b.C` shows its last component.
+    # `text <target>` shows its text; otherwise, as Sphinx renders a Python role, the leading
+    # dots of a relative target (`.Foo`) are dropped, and `~a.b.C` shows its last component.
     if (explicit := re.match(r"^(.*?)\s*<[^>]+>$", content)) and explicit.group(1):
         return explicit.group(1)
 
-    if content.startswith("~"):
-        return content[1:].rsplit(".", 1)[-1]
+    title = content.lstrip(".")
 
-    return content
+    if title.startswith("~"):
+        return title[1:].rsplit(".", 1)[-1]
+
+    return title
 
 
 def _indent(line: str) -> int:
