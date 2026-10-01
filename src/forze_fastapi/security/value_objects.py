@@ -296,7 +296,9 @@ class CookieTokenAuthn:
     """Scheme label stored on :class:`AccessTokenCredentials`."""
 
     required: bool = False
-    """Whether a missing cookie should raise :class:`AuthenticationError`."""
+    """Whether a missing cookie should raise :class:`AuthenticationError`, even when another
+    ingress would authenticate the request. To require *some* credential, use
+    :attr:`AuthnRequirement.required` instead."""
 
     csrf: CookieCsrf | None = attrs.field(factory=CookieCsrf)
     """Server-side CSRF gate, **on by default** (see :class:`CookieCsrf`): an unsafe
@@ -340,7 +342,9 @@ class HeaderTokenAuthn:
     """Header name carrying the bearer token."""
 
     required: bool = False
-    """Whether a missing header should raise :class:`AuthenticationError`."""
+    """Whether a missing header should raise :class:`AuthenticationError`, even when another
+    ingress would authenticate the request. To require *some* credential, use
+    :attr:`AuthnRequirement.required` instead."""
 
     description: str | None = None
     """Human-readable description of the ingress method (informational only)."""
@@ -384,7 +388,9 @@ class HeaderApiKeyAuthn:
     """Header name carrying the API key."""
 
     required: bool = False
-    """Whether a missing header should raise :class:`AuthenticationError`."""
+    """Whether a missing header should raise :class:`AuthenticationError`, even when another
+    ingress would authenticate the request. To require *some* credential, use
+    :attr:`AuthnRequirement.required` instead."""
 
     description: str | None = None
     """Human-readable description of the ingress method (informational only)."""
@@ -417,6 +423,20 @@ class AuthnRequirement:
 
     ingress: tuple[AuthnIngress, ...]
     """Authentication ingress methods."""
+
+    required: bool = True
+    """Refuse a request that no ingress authenticates (``401 auth_required``) — on by default.
+
+    Otherwise such a request binds no identity, and a route with no ``AuthnRequired`` hook (a
+    hand-written route, say) serves it anonymously. List the routes that exist without an
+    identity — login, refresh, a public page — in the middleware's ``anonymous_paths``, and
+    probes in its ``bypass_paths``; an ``OPTIONS`` request (a CORS preflight, which carries no
+    credential) is never refused. ``False`` binds an identity when one is presented and leaves
+    enforcement to the operation hooks.
+
+    Unlike an ingress's own ``required``, which refuses when *that* ingress's credential is
+    missing even if another ingress would authenticate the request, this asks only that one
+    of them does."""
 
     # ....................... #
 

@@ -126,6 +126,13 @@ def _build_secured_app(state: MockState, *, access_log: bool = False) -> FastAPI
             ingress=(HeaderTokenAuthn(authn_spec=AUTHN_SPEC, header_name="Authorization"),),
         ),
         when_multiple_credentials="first_in_order",
+        # The routes that authenticate from their body, reachable without a credential.
+        anonymous_paths={
+            "/auth/login",
+            "/auth/refresh",
+            "/auth/password-reset/request",
+            "/auth/password-reset/confirm",
+        },
     )
     app.add_middleware(
         InvocationMetadataMiddleware,  # type: ignore[arg-type]

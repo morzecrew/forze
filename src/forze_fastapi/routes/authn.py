@@ -16,9 +16,10 @@ Authentication posture (read this before exposing the router):
   ``/password-reset/confirm`` are *meant* to be reachable without a bearer
   token — the operations themselves authenticate (password / refresh-token /
   reset-token credentials in the body, or none at all for the reset request).
-  :class:`SecurityContextMiddleware` with non-required ingress simply binds no
-  identity and lets the request through; nothing in the generated routes
-  demands one.
+  List their mounted paths in :class:`SecurityContextMiddleware`'s
+  ``anonymous_paths``: it refuses a request no ingress authenticates everywhere
+  else. On those paths it binds no identity and lets the request through; nothing
+  in the generated routes demands one.
 - ``/password-reset/request`` answers a **uniform 202 acknowledgment** for
   known and unknown logins alike (no account enumeration) and never carries the
   reset token in its response — delivery happens out of band via the

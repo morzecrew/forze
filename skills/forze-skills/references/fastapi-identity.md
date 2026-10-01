@@ -47,7 +47,7 @@ Login and refresh then set and rotate two `HttpOnly` cookies and strip the token
 
 Two things break cookie mode if you skip them:
 
-- **`SecurityContextMiddleware(anonymous_paths={"/auth/login", "/auth/refresh"})`** — otherwise a stale access cookie 401s the exact route that would replace it. On those paths an authentication-kind failure binds no identity instead of refusing; other failure kinds still error.
+- **`SecurityContextMiddleware(anonymous_paths={"/auth/login", "/auth/refresh"})`** — a request no ingress authenticates is refused by default (`AuthnRequirement(required=True)`), and a stale access cookie would 401 the exact route that replaces it. On those paths a missing credential or an authentication-kind failure binds no identity instead of refusing; other failure kinds still error.
 - **CSRF posture** — cookies are `HttpOnly` always and `Secure` by default, and `samesite="lax"` (the default) is the shipped CSRF defense. A `samesite="none"` deployment must add its own CSRF layer; the carrier ships none.
 
 ### Principal eligibility

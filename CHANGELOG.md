@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's `:class:`.Foo`` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
 
+### Security
+
+- **A request no ingress authenticates is refused by default** (**behaviour change**). `AuthnRequirement(required=True)` answers 401 `auth_required` outside the middleware's `anonymous_paths`; list login, refresh and public pages there, or pass `required=False`. `OPTIONS` preflights pass.
+
 ## [0.10.0] - 2026-09-30
 
 ### Added

@@ -89,7 +89,7 @@ def build_app(runtime: ExecutionRuntime) -> FastAPI:
         SecurityContextMiddleware,
         ctx_dep=runtime.get_context,
         authn=AuthnRequirement(
-            ingress=(HeaderApiKeyAuthn(authn_spec=AUTHN, header_name="X-API-Key", required=True),),
+            ingress=(HeaderApiKeyAuthn(authn_spec=AUTHN, header_name="X-API-Key"),),
         ),
         when_multiple_credentials="first_in_order",
     )

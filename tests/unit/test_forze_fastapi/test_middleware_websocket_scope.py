@@ -38,7 +38,9 @@ _AUTHN = AuthnRequirement(
             authn_spec=AuthnSpec(name="main", enabled_methods=frozenset({"token"})),
             header_name="Authorization",
         ),
-    )
+    ),
+    # These legs are about websocket scopes; an anonymous HTTP request must reach routing.
+    required=False,
 )
 
 

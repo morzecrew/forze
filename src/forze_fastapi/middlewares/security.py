@@ -57,7 +57,8 @@ class SecurityContextMiddleware:
     anonymous_paths: frozenset[str] = attrs.field(
         default=frozenset(), kw_only=True, converter=frozenset
     )
-    """Exact request paths where a failing credential binds no identity instead of 401ing.
+    """Exact request paths where a missing or failing credential binds no identity instead of
+    401ing.
 
     A browser holding a stale access cookie would otherwise be refused on the very
     routes that exist without an identity — ``/auth/login`` (which replaces the
@@ -65,8 +66,9 @@ class SecurityContextMiddleware:
     **authentication-kind** failure (expired/invalid credential, ambiguous
     credentials, a tenant mismatch) downgrades to an **anonymous** request: no
     authn, no tenant bound — the route authenticates from its body or serves
-    anonymously, exactly as it would for a request carrying no credential at all.
-    A VALID credential still binds normally, and any other failure kind
+    anonymously. Under :attr:`AuthnRequirement.required` (the default) these are also the
+    only paths a request carrying no credential at all reaches. A VALID credential still
+    binds normally, and any other failure kind
     (infrastructure, configuration, internal) still returns the error response —
     a secrets-store outage is a server fault, not a missing credential.
     Exact paths, never prefixes — a prefix is one refactor away from an ungoverned
@@ -164,6 +166,15 @@ class SecurityContextMiddleware:
 
         try:
             resolved = await self._resolve_authn(request, ctx)
+
+            # Inside the try: on an anonymous path the refusal downgrades to no identity,
+            # like a failing credential. A CORS preflight carries no credential by design.
+            if resolved is None and self.authn.required and request.method != "OPTIONS":
+                raise exc.authentication(
+                    "Authentication credentials are required",
+                    code="auth_required",
+                )
+
             authn_res, authn_route = resolved if resolved is not None else (None, None)
             authn = authn_res.identity if authn_res is not None else None
             tenant = await resolve_tenant_identity(
