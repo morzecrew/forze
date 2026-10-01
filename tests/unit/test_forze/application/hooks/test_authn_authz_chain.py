@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from forze.application.contracts.authz import AuthzSpec
-from forze.application.contracts.execution import steps_graph_from_sequence
+from forze.application.contracts.execution import BeforeStep, steps_graph_from_sequence
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
 from forze.application.hooks.authz import AuthzBeforeAuthorize
@@ -63,3 +63,49 @@ def test_authorization_without_authentication_still_refuses_to_freeze() -> None:
 
     with pytest.raises(CoreException, match="authn.principal"):
         _registry(authz).freeze()
+
+
+def test_a_second_authn_step_under_its_own_id_freezes() -> None:
+    # A kit binds AuthnRequired().to_step(); an app adds its own under another id. Only the
+    # canonical step provides the capability, so the two do not collide as providers.
+    _registry(
+        AuthnRequired().to_step(),
+        AuthnRequired().to_step(step_id="authn.app"),
+        AuthzBeforeAuthorize(spec=AUTHZ, action="orders:create").to_step(),
+    ).freeze()
+
+
+def test_a_custom_step_providing_the_capability_beside_a_custom_authn_step_freezes() -> None:
+    _registry(
+        BeforeStep(id="my.authn", factory=AuthnRequired(), provides=("authn.principal",)),
+        AuthnRequired().to_step(step_id="authn.std"),
+        AuthzBeforeAuthorize(spec=AUTHZ, action="orders:create").to_step(),
+    ).freeze()
+
+
+def test_the_canonical_step_orders_before_authz_beside_a_second_one() -> None:
+    steps = (
+        AuthnRequired().to_step(step_id="authn.app"),
+        AuthnRequired().to_step(),
+        AuthzBeforeAuthorize(spec=AUTHZ, action="orders:create").to_step(),
+    )
+    graph = steps_graph_from_sequence(AbstractSequence(items=steps))
+    wave = {step_id: i for i, ids in enumerate(graph.waves) for step_id in ids}
+
+    assert wave["authn.principal"] < wave["authz.authorize"]
+
+
+def test_only_a_custom_id_authn_step_does_not_satisfy_the_default_authz_step() -> None:
+    # As on main: a renamed authentication step provides nothing unless asked to.
+    with pytest.raises(CoreException, match="authn.principal"):
+        _registry(
+            AuthnRequired().to_step(step_id="authn.app"),
+            AuthzBeforeAuthorize(spec=AUTHZ, action="orders:create").to_step(),
+        ).freeze()
+
+
+def test_an_explicit_provides_still_wins() -> None:
+    _registry(
+        AuthnRequired().to_step(step_id="authn.app", provides=("authn.principal",)),
+        AuthzBeforeAuthorize(spec=AUTHZ, action="orders:create").to_step(),
+    ).freeze()
