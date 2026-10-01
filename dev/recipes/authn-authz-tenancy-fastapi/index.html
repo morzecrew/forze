@@ -6647,7 +6647,7 @@ are <strong>before-hooks</strong> (<code>.before</code>); the authz scope filter
     <span class="o">.</span><span class="n">bind</span><span class="p">(</span><span class="n">CREATE</span><span class="p">)</span>
         <span class="o">.</span><span class="n">bind_outer</span><span class="p">()</span>
         <span class="o">.</span><span class="n">before</span><span class="p">(</span>
-            <span class="n">AuthnRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span>                                  <span class="c1"># step_id "authn.principal"</span>
+            <span class="n">AuthnRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(),</span>       <span class="c1"># provides "authn.principal", which authz requires</span>
             <span class="n">TenantRequired</span><span class="p">()</span><span class="o">.</span><span class="n">to_step</span><span class="p">(</span><span class="n">step_id</span><span class="o">=</span><span class="s2">"tenant.required"</span><span class="p">),</span>
             <span class="n">AuthzBeforeAuthorize</span><span class="p">(</span><span class="n">spec</span><span class="o">=</span><span class="n">AUTHZ</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="s2">"orders:create"</span><span class="p">)</span><span class="o">.</span><span class="n">to_step</span><span class="p">(</span><span class="n">step_id</span><span class="o">=</span><span class="s2">"authz.create"</span><span class="p">),</span>
         <span class="p">)</span>
