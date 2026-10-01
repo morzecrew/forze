@@ -356,6 +356,7 @@ runs them. The surface, at a glance:
 | `build_ws_connection_resolver` | the shipped connection resolver: reauth payload, then cookie, header and opt-in query; credential expiry |
 | `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |
 | `apply_openapi_security` | declare the auth scheme in the generated OpenAPI |
+| `require_permission` | a dependency gating a route that runs no operation, with the authz hook's own decision |
 
 ## Notes
 
@@ -366,7 +367,8 @@ runs them. The surface, at a glance:
   still mount the router.
 - **Identity is extracted, not enforced.** Middleware binds the principal;
   enforcement lives in the engine's authn/authz hooks, and `apply_openapi_security`
-  only documents it.
+  only documents it. A hand-written route that runs no operation gates itself with
+  [`require_permission`](../identity-tenancy-enc/identity.md#gating-a-route-that-runs-no-operation).
 - **Guard write-granting routes.** `deactivate`, presigned-upload, and
   multipart-session endpoints ship unguarded or grant write — bind authn/authz
   before exposing them.

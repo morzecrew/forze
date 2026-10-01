@@ -1,13 +1,15 @@
 """Wire authz into :class:`~forze.application.execution.operations.registry.OperationRegistry` plans."""
 
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from typing import Any, final
 
 import attrs
 from pydantic import BaseModel
 
 from forze.application._logger import logger
+from forze.application.contracts.authn import AuthnIdentity
 from forze.application.contracts.authz import (
+    AuthzDecisionPort,
     AuthzDocumentScopeRequest,
     AuthzRequest,
     AuthzResource,
@@ -122,6 +124,96 @@ def _existence_probe_args(args: Any, base_filters: Any, filter_attr: str) -> Any
 # ....................... #
 
 
+def _authenticated(ctx: ExecutionContext) -> AuthnIdentity:
+    identity = ctx.inv_ctx.get_authn()
+
+    if identity is None:
+        raise exc.authentication(
+            "Authentication required",
+            code="auth_required",
+        )
+
+    return identity
+
+
+async def authorize_action(
+    ctx: ExecutionContext,
+    decision_port: AuthzDecisionPort,
+    action: str,
+    *,
+    delegation_port: DelegationPort | None,
+    resource: AuthzResource | None = None,
+    context: Mapping[str, Any] | None = None,
+) -> None:
+    """Authorize *action* for the invocation's identity, and every actor it is delegated to.
+
+    The check :class:`AuthzBeforeAuthorize` makes, callable where no operation hook guards the
+    call (a transport dependency, say), so both refuse the same callers with the same denial.
+
+    :raises CoreException: ``authentication`` (``auth_required``) without an identity;
+        ``authorization`` — ``permission_denied`` for the subject, ``delegate_denied`` for an actor,
+        ``delegation_not_granted`` when *delegation_port* holds no ``may_act`` grant. Pass the
+        spec's delegation port when it enforces delegation grants; ``None`` asks no ``may_act``.
+        A denial about *resource* names its type, so a non-disclosing posture can render it as
+        not-found.
+    """
+
+    request = AuthzRequest(
+        subject=subject_from_authn(_authenticated(ctx)),
+        action=action,
+        scope=policy_scope_from_invocation(ctx),
+        resource=resource,
+        context=dict(context) if context is not None else {},
+    )
+    result = await decision_port.authorize(request)
+    # A denial about a resource names its type, so a non-disclosing posture can render it as
+    # that type's not-found; an action-level denial (no resource) stays a 403.
+    resource_type = resource.resource_type if resource is not None else None
+
+    if not result.allowed:
+        raise exc.authorization(
+            result.reason or f"Permission denied: {action!r}",
+            code="permission_denied",
+            resource_type=resource_type,
+        )
+
+    # Delegation (on-behalf-of): walk the actor chain. Each actor must be *independently*
+    # permitted the same action, so a delegated call can never exceed intersect(subject grants,
+    # actor grants) — the confused-deputy defense. When the route enforces delegation grants,
+    # each actor must additionally hold an explicit may_act grant for the principal it acts for.
+    node = request.subject
+
+    while node.actor is not None:
+        actor = node.actor
+        actor_result = await decision_port.authorize(attrs.evolve(request, subject=actor))
+
+        if not actor_result.allowed:
+            raise exc.authorization(
+                actor_result.reason or f"Delegate not permitted: {action!r}",
+                code="delegate_denied",
+                resource_type=resource_type,
+            )
+
+        if delegation_port is not None:
+            granted = await delegation_port.may_act(
+                actor.principal_id,
+                node.principal_id,
+                scope=request.scope,
+            )
+
+            if not granted:
+                raise exc.authorization(
+                    f"Delegation not granted: {actor.principal_id} may not act "
+                    f"on behalf of {node.principal_id}",
+                    code="delegation_not_granted",
+                )
+
+        node = actor
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthzBeforeAuthorize(BeforeFactory):
@@ -143,69 +235,18 @@ class AuthzBeforeAuthorize(BeforeFactory):
         )
 
         async def _before(args: Any) -> None:
-            identity = ctx.inv_ctx.get_authn()
+            # Before the factories run: an anonymous caller is refused before anything a factory
+            # reads or raises can answer it.
+            _authenticated(ctx)
 
-            if identity is None:
-                raise exc.authentication(
-                    "Authentication required",
-                    code="auth_required",
-                )
-
-            resource = self.resource_factory(ctx, args) if self.resource_factory else None
-            context = self.context_factory(ctx, args) if self.context_factory else {}
-
-            request = AuthzRequest(
-                subject=subject_from_authn(identity),
-                action=self.action,
-                scope=policy_scope_from_invocation(ctx),
-                resource=resource,
-                context=context,
+            await authorize_action(
+                ctx,
+                decision_port,
+                self.action,
+                delegation_port=delegation_port,
+                resource=self.resource_factory(ctx, args) if self.resource_factory else None,
+                context=self.context_factory(ctx, args) if self.context_factory else None,
             )
-            result = await decision_port.authorize(request)
-            # A denial about a resource names its type, so a non-disclosing posture can render
-            # it as that type's not-found; an action-level denial (no resource) stays a 403.
-            resource_type = resource.resource_type if resource is not None else None
-
-            if not result.allowed:
-                raise exc.authorization(
-                    result.reason or f"Permission denied: {self.action!r}",
-                    code="permission_denied",
-                    resource_type=resource_type,
-                )
-
-            # Delegation (on-behalf-of): walk the actor chain. Each actor must be
-            # *independently* permitted the same action, so a delegated call can never exceed
-            # intersect(subject grants, actor grants) — the confused-deputy defense. When the
-            # route enforces delegation grants, each actor must additionally hold an explicit
-            # may_act grant for the principal it acts for.
-            node = request.subject
-
-            while node.actor is not None:
-                actor = node.actor
-                actor_result = await decision_port.authorize(attrs.evolve(request, subject=actor))
-
-                if not actor_result.allowed:
-                    raise exc.authorization(
-                        actor_result.reason or f"Delegate not permitted: {self.action!r}",
-                        code="delegate_denied",
-                        resource_type=resource_type,
-                    )
-
-                if delegation_port is not None:
-                    granted = await delegation_port.may_act(
-                        actor.principal_id,
-                        node.principal_id,
-                        scope=request.scope,
-                    )
-
-                    if not granted:
-                        raise exc.authorization(
-                            f"Delegation not granted: {actor.principal_id} may not act "
-                            f"on behalf of {node.principal_id}",
-                            code="delegation_not_granted",
-                        )
-
-                node = actor
 
         return _before
 

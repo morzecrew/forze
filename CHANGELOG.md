@@ -9,7 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **Deployment configuration can grant a permission, and be its only source.** `ConfigGrantsProvider(keys=...)` grants each key to the principal ids a `ConfigGrants` settings model lists and denies it to everyone else, so a catalog binding of the key grants nothing, and the startup step refuses one.
+
+- **A route that runs no operation can require a permission.** `require_permission(key, spec=, ctx_dep=)` is a FastAPI dependency making the authz hook's own decision, delegated actors included, and raising its denial, which `resource_type=` lets a non-disclosing posture collapse.
+
+- **DST can check that a deactivation closes a derived permission.** `no_permission_after_deactivation(deactivate, guarded)` flags a guarded operation that succeeds after the deactivation returned.
 
 ### Changed
 

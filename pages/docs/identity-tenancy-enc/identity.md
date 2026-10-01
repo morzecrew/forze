@@ -149,6 +149,76 @@ startup = permission_providers_lifecycle_step(providers)  # optional: fail at bo
   query ports do not run providers.
 - Derived grants sit in `EffectiveGrants.derived`, attributed to their provider and apart from the
   catalog's `permissions`, so an administered grant can be told from a derived one.
+- The DST invariant `no_permission_after_deactivation` checks that a derived permission closes
+  when its state does: no guarded operation succeeds once a deactivation has returned.
+
+### Permissions granted by configuration
+
+Break-glass operators and one-off recipients are better as reviewed deployment config than as
+rows an admin can grant at runtime. `ConfigGrantsProvider` declares the keys in code;
+`ConfigGrants`, a settings model you mount on your own settings root, lists who holds each:
+
+```python
+from pydantic import BaseModel
+
+from forze_identity.authz import AuthzKernelConfig, ConfigGrants, ConfigGrantsProvider
+
+
+class Settings(BaseModel):  # your settings root
+    config_grants: ConfigGrants = ConfigGrants()
+
+
+# The deployment's value nests under the field you mounted it on:
+settings = Settings.model_validate(
+    {"config_grants": {"grants": {"ops.break_glass": ["<principal id>"]}}}
+)
+provider = ConfigGrantsProvider(
+    keys=frozenset({"ops.break_glass"}),  # reviewed code, not configuration
+    grants=settings.config_grants,
+)
+kernel = AuthzKernelConfig(permission_providers=(provider,))
+```
+
+- **The keys are code.** A configuration naming a key the provider does not declare is refused
+  when the provider is built; a declared key it omits, or lists nobody under, is granted to
+  nobody. Principals are exact ids: no wildcard, pattern or email match.
+- **One source per key.** A key the provider owns may not also be granted through the catalog.
+  A role, principal or group binding of it grants nothing whenever it was written, because the
+  provider denies each of its keys to every principal it does not list. The startup step, where
+  registered, refuses such a binding in the tenant it reads under
+  (`authz_config_grant_overlap`); without it, a binding present when a tenant's check first runs
+  in a process is logged (`authz.config_grant_overlap`), and one written later is not seen until
+  the next start. Nor may another provider declare the
+  key: its grants of it would never count, so the declaration is refused.
+- The provider reads the configuration once, when it is built.
+- Its keys are checked against the catalog like any provider's, so each needs a permission row.
+  A provider with no keys at all is refused, as any provider declaring nothing is.
+
+### Gating a route that runs no operation
+
+Where a hand-written route runs no operation, so no hook guards it, `require_permission` makes the
+same decision as a FastAPI dependency:
+
+```python
+from fastapi import Depends
+
+from forze_fastapi.security import require_permission
+
+ledger_write = require_permission("ledger.write", spec=AUTHZ, ctx_dep=ctx_dep)
+
+
+@app.post("/ledger/import", dependencies=[Depends(ledger_write)])
+async def import_ledger() -> None: ...
+```
+
+It runs `AuthzBeforeAuthorize`'s own check (`authorize_action`): derived and config grants count,
+each actor of a delegated call is decided too, `may_act` is required when the spec enforces
+delegation grants, and the denial is the hook's. It decides an action, not an object: a route
+guarding one row by its owner needs an operation and the hook's `resource_factory`. Pass
+`resource_type=` when the route is about a resource type, so a
+[non-disclosing posture](../reference/errors.md#non-disclosing-denials) renders a refused
+permission as that type's not-found; a missing `may_act` grant, like any refusal without a type,
+stays a 403.
 
 ## Authn events and login lockout
 

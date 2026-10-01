@@ -41,6 +41,10 @@ The generic `expect(kind, predicate, message=...)` covers most domain rules: it 
 
     Every refusal of an op renders one response: all its 403s and 404s must be the same rendered envelope. The property a [non-disclosing posture](../reference/errors.md#non-disclosing-denials) promises — it fires on a handler's own untagged not-found, or on a posture never bound. Reads a digest of the envelope from the trace, never the text.
 
+-   :lucide-user-x: **`no_permission_after_deactivation(deactivate, guarded)`**
+
+    Once a *deactivate* op has returned, no *guarded* op started after it succeeds — the property a [permission derived from state](../identity-tenancy-enc/identity.md#permissions-derived-from-state) promises, broken by a cached grant or a binding synced late. Ops overlapping the deactivation may go either way and are not judged; nor is an op admitted that then failed for another reason. An op carries no principal, so *guarded* names ops only the deactivated principal runs, and the workload must not reactivate it.
+
 -   :lucide-eye: **`read_your_writes(surface, value_field=…)` · `expect_value(surface, predicate)`**
 
     Value-level (opt into `capture_values`): a keyed read must observe the last value written to it (stale-read guard); every captured write/read value must satisfy a predicate (the *wrong-value* guard).
