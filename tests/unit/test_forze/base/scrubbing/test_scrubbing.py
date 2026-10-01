@@ -516,7 +516,8 @@ def _vocabulary_seeds() -> frozenset[str]:
     seeds: set[str] = set()
 
     for fragment in (*policy._LOGFIRE_SENSITIVE_FRAGMENTS, *policy._FORZE_KEY_EXTRAS):
-        term = fragment.lower()
+        # A term anchored at either end of a segment is one term, spelled twice.
+        term = fragment.lower().replace(policy._URI.lower(), "uri")
 
         for regex_noise in (policy._SEG.lower(), r"(?:\b|_)", r"(?!ors?\b)"):
             term = term.replace(regex_noise, "")
@@ -1064,14 +1065,17 @@ class TestWalkBranches:
 
 
 class TestShortTermsAreAnchored:
-    """``uri`` is a segment, not a run of letters inside an ordinary word.
+    """``uri`` sits at one end of a segment, not in the middle of an ordinary word.
 
     Unanchored, it matched ``security``, ``during`` and ``manufacturing``: an audit spec
-    refused such metadata names as secrets, and a log line about Missouri lost its value.
+    refused such metadata names as secrets. Anchored only at the start, it lost every
+    separator-less compound (``dburi``, ``MONGOURI``) and leaked their values. It matches
+    at either end of a segment, so a word that merely ends in "uri" (``Missouri``) is masked
+    too: over-masking an ordinary word is the cheaper failure.
     """
 
     @pytest.mark.parametrize(
-        "key", ["manufacturing", "security", "during", "maturity", "curious", "Missouri"]
+        "key", ["manufacturing", "security", "during", "maturity", "curious", "purity"]
     )
     def test_an_ordinary_word_is_not_a_secret_key(self, key: str) -> None:
         from forze.base.scrubbing.policy import is_sensitive_key
@@ -1083,15 +1087,27 @@ class TestShortTermsAreAnchored:
         [
             "uri",
             "URI",
+            "uri2",
+            "uris",
             "db_uri",
             "DB_URI",
+            "DATABASE_URI",
             "dbUri",
+            "redisUri",
             "mongoURI",
-            "redis_uri",
             "uri_template",
             "uriTemplate",
-            "uris",
             "databaseUri",
+            "dburi",
+            "DBURI",
+            "mongouri",
+            "MONGOURI",
+            "databaseuri",
+            "connectionuri",
+            "JDBCURI",
+            "baseuri",
+            "kmskeyuri",
+            "redirect_uri",
         ],
     )
     def test_a_uri_key_is_still_a_secret_key(self, key: str) -> None:
@@ -1099,16 +1115,30 @@ class TestShortTermsAreAnchored:
 
         assert is_sensitive_key(key)
 
-    @pytest.mark.parametrize("text", ["Missouri: hello", "during=the night", "security: high"])
+    @pytest.mark.parametrize("key", ["dburi", "MONGOURI", "connectionuri", "db_uri"])
+    def test_a_uri_keyed_value_is_masked(self, key: str) -> None:
+        from forze.base.scrubbing import sanitize
+
+        out = sanitize({key: "mongodb://admin:hunter2@db.internal/app"}, text_scrub=False)
+
+        assert out == {key: SECRET_PLACEHOLDER}
+
+    @pytest.mark.parametrize("text", ["during=the night", "security: high", "purity: 99"])
     def test_an_ordinary_word_keeps_its_value(self, text: str) -> None:
         assert scrub_log_string(text) == text
 
     @pytest.mark.parametrize(
         "text,secret",
         [
-            ("db_uri=postgres://u:p@h/db", "postgres://u:p@h/db"),
-            ("dbUri=redis://:pw@h", "redis://:pw@h"),
-            ('{"mongoURI":"mongodb://u:p@h"}', "mongodb://u:p@h"),
+            # Opaque values: a user:password@ value is masked by the DSN rule whatever its
+            # key, so only a value with no userinfo shows the term doing the work.
+            ("db_uri=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("dbUri=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("dburi=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ("baseuri=sig-0f9a8b7c", "sig-0f9a8b7c"),
+            ('{"mongoURI":"sig-0f9a8b7c"}', "sig-0f9a8b7c"),
+            ('{"MONGOURI": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
+            ('{"db_uri": "sig-0f9a8b7c"}', "sig-0f9a8b7c"),
         ],
     )
     def test_a_uri_value_is_still_masked(self, text: str, secret: str) -> None:
