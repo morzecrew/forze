@@ -117,20 +117,30 @@ _FENCE = re.compile(r"^\s*(`{3,}(?!.*`)|~{3,})")
 _DIRECTIVE = re.compile(r"^(\s*)\.\.\s+([\w-]+)::\s*(.*)$")
 _FIELD = re.compile(r"^(\s*):(?:param|type|returns?|rtype|raises?)\b[^:]*:")
 _OPTION = re.compile(r"^\s*:[\w-]+:")
-_ROLE = re.compile(r"(?<![\w`]):(?:[A-Za-z][\w-]*:)?[A-Za-z][\w-]*:`([^`]+)`")
+_ROLE = re.compile(
+    r"(?<![\w`]):(?:(?P<domain>[A-Za-z][\w-]*):)?(?P<role>[A-Za-z][\w-]*):`(?P<content>[^`]+)`"
+)
 _LITERAL = re.compile(r"(?<!`)``(?![\s`])([^`]*?[^\s`])``(?!`)")
+
+_PYTHON_ROLES: Final = frozenset(
+    {"class", "func", "meth", "attr", "mod", "data", "const", "exc", "obj", "type"}
+)
+"""Python-domain roles, the ones whose relative targets (``.Foo``) Sphinx displays undotted."""
 
 _CODE_DIRECTIVES: Final = frozenset({"code-block", "code", "sourcecode"})
 _LABELS: Final = {"seealso": "See also", "versionadded": "Added in", "versionchanged": "Changed in"}
 
 
-def _role_text(content: str) -> str:
-    # `text <target>` shows its text; otherwise, as Sphinx renders a Python role, the leading
-    # dots of a relative target (`.Foo`) are dropped, and `~a.b.C` shows its last component.
+def _role_text(match: re.Match[str]) -> str:
+    # `text <target>` shows its text; a Python role's relative target (`.Foo`) drops its
+    # leading dots, as Sphinx renders it; `~a.b.C` shows its last component.
+    content = match["content"]
+
     if (explicit := re.match(r"^(.*?)\s*<[^>]+>$", content)) and explicit.group(1):
         return explicit.group(1)
 
-    title = content.lstrip(".")
+    python = match["domain"] in (None, "py") and match["role"] in _PYTHON_ROLES
+    title = content.lstrip(".") if python else content
 
     if title.startswith("~"):
         return title[1:].rsplit(".", 1)[-1]
@@ -174,7 +184,7 @@ def _fenced(language: str, body: list[str]) -> str:
 
 
 def _inline(text: str) -> str:
-    text = _ROLE.sub(lambda match: f"`{_role_text(match.group(1))}`", text)
+    text = _ROLE.sub(lambda match: f"`{_role_text(match)}`", text)
 
     return _LITERAL.sub(r"`\1`", text)
 

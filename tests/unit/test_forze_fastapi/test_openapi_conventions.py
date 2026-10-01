@@ -368,8 +368,22 @@ class TestMarkdown:
             (":class:`.Foo` here", "`Foo` here"),
             (":meth:`.Foo.bar`", "`Foo.bar`"),
             (":class:`~.a.Foo`", "`Foo`"),
+            (":py:class:`.Foo`", "`Foo`"),
+            (":file:`.env`", "`.env`"),
+            (":doc:`../guide/intro`", "`../guide/intro`"),
         ],
-        ids=["tilde", "domain", "explicit-title", "plain", "relative", "relative-dotted", "relative-tilde"],
+        ids=[
+            "tilde",
+            "domain",
+            "explicit-title",
+            "plain",
+            "relative",
+            "relative-dotted",
+            "relative-tilde",
+            "relative-py-domain",
+            "file-keeps-its-dot",
+            "doc-keeps-its-dots",
+        ],
     )
     def test_roles(self, text: str, expected: str) -> None:
         assert _markdown(text) == expected
