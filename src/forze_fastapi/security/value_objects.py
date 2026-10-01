@@ -111,8 +111,21 @@ class OriginAllowlist:
                 continue
 
             normalized = _normalize_origin(entry)
+            # Split only once normalization has parsed it: an unmatched bracket raises here.
+            parts = urlsplit(entry.strip()) if normalized is not None else None
 
-            if normalized is None or not urlsplit(entry.strip()).scheme:
+            # Only scheme and authority: a path, query, fragment or userinfo would be dropped
+            # by normalization and silently admit a different origin than the one written.
+            if (
+                normalized is None
+                or parts is None
+                or not parts.scheme
+                or parts.path not in ("", "/")
+                or parts.query
+                or parts.fragment
+                or "@" in parts.netloc
+                or parts.netloc.endswith(":")
+            ):
                 raise exc.configuration(
                     f"{setting} entry {entry!r} is not a valid scheme://host[:port] origin",
                 )

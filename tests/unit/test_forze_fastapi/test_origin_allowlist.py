@@ -71,6 +71,9 @@ class TestIpv6Hosts:
 
 
 class TestParsing:
+    def test_a_trailing_slash_is_still_an_origin(self) -> None:
+        assert OriginAllowlist.parse(["https://app.example.com/"]).allows("https://app.example.com")
+
     @pytest.mark.parametrize(
         "entry",
         [
@@ -80,6 +83,11 @@ class TestParsing:
             pytest.param("http://localhost:0-10", id="port-zero"),
             pytest.param("http://localhost:65535-70000", id="past-the-last-port"),
             pytest.param("app.example.com", id="no-scheme"),
+            pytest.param("https://app.example.com/path", id="path"),
+            pytest.param("https://app.example.com?x=1", id="query"),
+            pytest.param("https://app.example.com#top", id="fragment"),
+            pytest.param("https://user@app.example.com", id="userinfo"),
+            pytest.param("https://app.example.com:", id="empty-port"),
         ],
     )
     def test_an_entry_that_would_never_match_or_admit_too_much_is_refused(
