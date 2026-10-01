@@ -99,7 +99,7 @@ registry = (
     .bind(CREATE)
         .bind_outer()
         .before(
-            AuthnRequired().to_step(),                                  # step_id "authn.principal"
+            AuthnRequired().to_step(),       # provides "authn.principal", which authz requires
             TenantRequired().to_step(step_id="tenant.required"),
             AuthzBeforeAuthorize(spec=AUTHZ, action="orders:create").to_step(step_id="authz.create"),
         )

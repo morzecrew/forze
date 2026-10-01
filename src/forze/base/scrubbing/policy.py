@@ -72,11 +72,24 @@ _LOGFIRE_SENSITIVE_FRAGMENTS: tuple[str, ...] = (
 # Extra key terms for egress/log key masking (not all appear in Logfire defaults).
 # Short fragments are anchored with ``_SEG`` (the csrf/jwt convention above) so
 # ``pwd`` / ``db_pwd`` / ``pwd_hash`` / ``dbPwd`` match but a mid-token run
-# (``backupwd``) does not.
+# (``backupwd``) does not. ``uri`` is anchored at either end of a segment (``_URI``):
+# unanchored it is a run inside ordinary words (``security``, ``during``,
+# ``manufacturing``), while a URI name puts it first (``uri_template``) or last (``db_uri``,
+# ``dbUri``, ``dburi``, ``MONGOURI``). A word that merely ends in "uri" (``Missouri``) is
+# masked too: over-masking an ordinary word is the cheaper failure than leaking a
+# separator-less ``dburi``.
+_URI = rf"(?:{_SEG}uri|uri(?=s?(?:\d{{1,4}})?s?(?:\b|_|{_CAMEL_BOUND})))"
+"""``uri`` at the start or the end of a segment, never in the middle of a word.
+
+The end arm is a lookahead, and admits a plural and a number (either order) before the
+boundary: consuming the boundary would swallow the ``_`` a compound suffix starts with
+(``dburi_value=`` would leak), and without the affix ``dburis`` and ``dburi2`` would not
+end a segment at all."""
+
 _FORZE_KEY_EXTRAS: tuple[str, ...] = (
     "token",
     "dsn",
-    "uri",
+    _URI,
     "authorization",
     rf"{_SEG}pwd{_SEG}",
     "passphrase",
@@ -137,7 +150,7 @@ _LOG_ASSIGNMENT_TERM_FRAGMENTS: tuple[str, ...] = (
     "jwt",
     "ssn",
     "dsn",
-    "uri",
+    _URI,
 )
 
 # Quoted-key form of the same vocabulary — a credential inside a *serialized* body.
@@ -192,8 +205,9 @@ _COMPOUND_SUFFIX = r"(?>(?:[._-]\w+|(?-i:[A-Z][a-z0-9]*)){0,6})"
 # form leaked exactly the names the key path masks. Digits are bounded; the
 # single optional ``s`` cannot re-admit the deliberate non-secrets
 # (``secretary=`` / ``tokenizer=`` continue with other lowercase letters, so
-# the required ``=``/``:`` still never lines up).
-_TERM_AFFIX = r"(?:\d{1,4})?s?"
+# the required ``=``/``:`` still never lines up). The plural may come either side of
+# the number (``tokens2=`` as well as ``token2s=``), as the key heuristic reads both.
+_TERM_AFFIX = r"s?(?:\d{1,4})?s?"
 
 _LOG_ASSIGNMENT_FRAGMENTS: tuple[str, ...] = (
     "(?:"
