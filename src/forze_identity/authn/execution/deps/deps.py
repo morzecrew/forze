@@ -387,15 +387,16 @@ def _credential_store[R: BaseModel, D: Document, C: BaseDTO, U: BaseDTO](
 
     Read from the composed dependencies, not from one module's routes: an application may
     compose several authn modules, or serve a credential family from a store of its own, and a
-    key any of them issues must be revoked. A store is wired when the document plane resolves
-    it — a route under the spec's name, or the plain fallback.
+    key any of them issues must be revoked. A store is wired when the document plane would
+    resolve it: a route under the spec's name or the plain fallback, which a declared spec
+    inventory also admits.
 
     :raises CoreException: ``configuration`` for a store whose query port is wired and command
         port is not (or the reverse): deactivation could see its credentials but not close them.
     """
 
     wired = [
-        ctx.deps.exists(key, route=spec.name) or ctx.deps.exists(key)
+        ctx.deps.resolvable(key, route=spec.name)
         for key in (DocumentQueryDepKey, DocumentCommandDepKey)
     ]
 

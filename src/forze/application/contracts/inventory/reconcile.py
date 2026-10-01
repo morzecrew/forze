@@ -11,7 +11,10 @@ So the inventory is reconciled, in both directions, against the dependency regis
 static frame list — the one thing that already knows every ``(key, route)`` the app bound.
 """
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
+from typing import final
+
+import attrs
 
 from forze.base.exceptions import exc
 from forze.base.logging import get_logger
@@ -170,11 +173,69 @@ def reconcile_specs(
 # ....................... #
 
 
+_GUARD_HINT = (
+    "if a framework contribution helper was narrowed to a subset, this route may "
+    "belong to a part it excluded"
+)
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class InventoryRouteGuard:
+    """The resolve-time inventory check :func:`inventory_route_guard` returns.
+
+    Called with ``(key_name, route)`` on a configurable resolution, it refuses (or warns
+    about) a route the inventory does not catalogue; :meth:`admits` answers the same question
+    without raising, for a caller deciding whether a plane is wired at all.
+    """
+
+    catalogued: frozenset[tuple[SpecPlane, str]]
+    allow_unregistered: bool = False
+    _warned: set[tuple[SpecPlane, str]] = attrs.field(factory=set, init=False)
+
+    # ....................... #
+
+    def admits(self, key_name: str, route: str) -> bool:
+        """Whether a resolution of *key_name* under *route* passes this guard."""
+
+        plane = plane_of_key(key_name)
+
+        return plane is None or (plane, route) in self.catalogued or self.allow_unregistered
+
+    # ....................... #
+
+    def __call__(self, key_name: str, route: str) -> None:
+        plane = plane_of_key(key_name)
+
+        if plane is None or (plane, route) in self.catalogued:
+            return
+
+        if self.allow_unregistered:
+            if (plane, route) not in self._warned:
+                self._warned.add((plane, route))
+                logger.warning(
+                    "Uncatalogued route resolved: %s:%s (via %s) is missing from the "
+                    "spec inventory — an export would silently omit it; %s",
+                    plane.value,
+                    route,
+                    key_name,
+                    _GUARD_HINT,
+                )
+
+            return
+
+        raise exc.configuration(
+            f"{plane.value}:{route} resolved (via {key_name}) but missing from the spec "
+            f"inventory — an export would silently omit it. Catalogue the spec, or start "
+            f"with allow_unregistered=True during incremental adoption. And {_GUARD_HINT}."
+        )
+
+
 def inventory_route_guard(
     registry: FrozenSpecRegistry,
     *,
     allow_unregistered: bool = False,
-) -> Callable[[str, str], None]:
+) -> InventoryRouteGuard:
     """The resolve-time half of reconciliation — closes the routeless-provider gap.
 
     :func:`reconcile_specs` checks *registrations*, and a plain provider registers no
@@ -190,41 +251,11 @@ def inventory_route_guard(
     warning per route, for incremental adoption.
     """
 
-    catalogued = frozenset((entry.plane, entry.name) for entry in registry.entries)
-    warned: set[tuple[SpecPlane, str]] = set()
-    # One clause for both branches. The lenient path is the one an application adopting the
+    # The hint is in both branches. The lenient path is the one an application adopting the
     # inventory actually reads — it is looking at warnings precisely because it does not yet
     # know what it is missing — so a hint only the refusal carries reaches the reader who
     # needs it least.
-    hint = (
-        "if a framework contribution helper was narrowed to a subset, this route may "
-        "belong to a part it excluded"
+    return InventoryRouteGuard(
+        catalogued=frozenset((entry.plane, entry.name) for entry in registry.entries),
+        allow_unregistered=allow_unregistered,
     )
-
-    def _guard(key_name: str, route: str) -> None:
-        plane = plane_of_key(key_name)
-
-        if plane is None or (plane, route) in catalogued:
-            return
-
-        if allow_unregistered:
-            if (plane, route) not in warned:
-                warned.add((plane, route))
-                logger.warning(
-                    "Uncatalogued route resolved: %s:%s (via %s) is missing from the "
-                    "spec inventory — an export would silently omit it; %s",
-                    plane.value,
-                    route,
-                    key_name,
-                    hint,
-                )
-
-            return
-
-        raise exc.configuration(
-            f"{plane.value}:{route} resolved (via {key_name}) but missing from the spec "
-            f"inventory — an export would silently omit it. Catalogue the spec, or start "
-            f"with allow_unregistered=True during incremental adoption. And {hint}."
-        )
-
-    return _guard

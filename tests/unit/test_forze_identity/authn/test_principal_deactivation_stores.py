@@ -15,13 +15,16 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import attrs
 import pytest
 
 from forze.application.contracts.authn import AuthnIdentity, AuthnSpec
 from forze.application.contracts.authz import PrincipalRegistryDepKey
 from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
-from forze.application.execution import Deps
+from forze.application.contracts.inventory import SpecRegistry, inventory_route_guard
+from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.testing import frozen_deps_from_deps
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
@@ -60,13 +63,16 @@ def _ctx(
     plain: bool = False,
     query_only: tuple[Any, ...] = (),
     command_only: tuple[Any, ...] = (),
+    inventory: tuple[Any, ...] | None = None,
+    allow_unregistered: bool = False,
     **module: Any,
 ) -> tuple[Any, MagicMock]:
     """A context wiring the session store plus *stores*, and a principal registry stub.
 
     *others* are further authn modules composed beside the deactivating one; *plain* wires
     every document through the plain fallback instead of per-spec routes; *query_only* and
-    *command_only* wire one port of a store without the other.
+    *command_only* wire one port of a store without the other; *inventory* declares the
+    spec inventory the runtime would guard resolutions with.
     """
 
     mock = MockDepsModule()
@@ -106,7 +112,15 @@ def _ctx(
         .merge(Deps.plain({MockStateDepKey: mock.state}))
     )
 
-    return context_from_deps(deps), registry
+    if inventory is None:
+        return context_from_deps(deps), registry
+
+    declared = SpecRegistry().register(*inventory, identity=True).freeze()
+    guard = inventory_route_guard(declared, allow_unregistered=allow_unregistered)
+
+    return ExecutionContext(
+        deps=attrs.evolve(frozen_deps_from_deps(deps), inventory_guard=guard)
+    ), registry
 
 
 async def _active_keys(ctx: Any, principal: Any) -> list[bool]:
@@ -244,6 +258,61 @@ class TestTheStoresAreTheApplications:
             await ctx.authn.principal_deactivation(SPEC).deactivate(uuid4())
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
+
+
+class TestADeclaredInventory:
+    """A store the declared spec inventory leaves out is not wired, even when a plain document
+    provider would serve it: resolving it is refused, so deactivation must not try."""
+
+    INVENTORY = (session_spec, policy_principal_spec, api_key_account_spec)
+
+    async def test_a_store_outside_it_is_left_alone(self) -> None:
+        ctx, _ = _ctx(authn={ROUTE: {"token", "api_key"}}, plain=True, inventory=self.INVENTORY)
+        principal = (
+            await ctx.doc.command(policy_principal_spec).create(
+                CreatePolicyPrincipalCmd(kind="user")
+            )
+        ).id
+        await ctx.authn.token_lifecycle(SPEC).issue_tokens(AuthnIdentity(principal_id=principal))
+
+        await ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+        sessions = await ctx.doc.query(session_spec).find_many(
+            filters={"$values": {"principal_id": principal}}
+        )
+        assert sessions.hits and all(row.revoked_at is not None for row in sessions.hits)
+
+    async def test_a_store_inside_it_is_closed(self) -> None:
+        ctx, _ = _ctx(authn={ROUTE: {"token", "api_key"}}, plain=True, inventory=self.INVENTORY)
+        principal = uuid4()
+        await ctx.doc.command(api_key_account_spec).create(
+            CreateApiKeyAccountCmd(principal_id=principal, key_hash="h")
+        )
+
+        await ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+        assert await _active_keys(ctx, principal) == [False]
+
+    async def test_a_lenient_inventory_still_closes_what_it_would_serve(self) -> None:
+        # With allow_unregistered the uncatalogued store still resolves (with a warning), so
+        # its accounts are live credentials and must be closed.
+        ctx, _ = _ctx(
+            authn={ROUTE: {"token"}},
+            plain=True,
+            inventory=self.INVENTORY,
+            allow_unregistered=True,
+        )
+        principal = uuid4()
+        await ctx.doc.command(password_account_spec).create(
+            CreatePasswordAccountCmd(principal_id=principal, username="someone", password_hash="h")
+        )
+
+        await ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+        accounts = await ctx.doc.query(password_account_spec).find_many(
+            filters={"$values": {"principal_id": principal}}
+        )
+        assert [row.is_active for row in accounts.hits] == [False]
 
 
 def test_half_a_store_is_refused() -> None:
