@@ -79,6 +79,9 @@ async def fetch_all_document_hits[R: BaseModel](
     By cursor, not offset: Firestore refuses an offset past the first page, and an offset scan
     over rows written meanwhile skips or repeats some.
 
+    *max_pages* is this scan's own limit, checked as each batch arrives; ``None`` sets none.
+    The query adapter's stream limit (its ``max_stream_pages``) applies either way.
+
     :raises CoreException: ``precondition`` for a non-positive *page_size*, or once more than
         *max_pages* batches have been read.
     """
