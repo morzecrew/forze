@@ -1,13 +1,14 @@
 """Unit tests for Meilisearch search parameter helpers."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
-from forze.base.exceptions import CoreException
-from forze_meilisearch.adapters.search._offset_run import page_sort
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze_meilisearch.adapters.search._offset_run import _MeilisearchOffsetHooks, page_sort
 from forze_meilisearch.adapters.search._search_params import (
     attributes_to_search_on,
     build_search_query_string,
@@ -99,3 +100,46 @@ def test_an_explicit_null_placement_is_refused() -> None:
 def test_an_index_pinned_without_the_id_is_not_sorted_by_it() -> None:
     # The engine would refuse a sort on an attribute the index does not declare sortable.
     assert page_sort(_gw(sortable=["title", "rank"]), _SPEC, None, ranked=False) == ["rank:desc"]
+
+
+# ....................... #
+
+
+def _refusal(attribute: str) -> SimpleNamespace:
+    # The engine names the refused attribute, then lists the sortable ones.
+    return SimpleNamespace(
+        code="invalid_search_sort",
+        message=(
+            f"Error message: Index `rows`: Attribute `{attribute}` is not sortable. "
+            "Available sortable attributes are: `id`."
+        ),
+    )
+
+
+def _hooks(spec_sort: tuple[str, ...]) -> _MeilisearchOffsetHooks:
+    return _MeilisearchOffsetHooks(
+        gw=MagicMock(),
+        client=MagicMock(),
+        query_string="",
+        filter_str=None,
+        attrs=None,
+        sort_list=None,
+        pagination_dict={},
+        return_count=False,
+        return_fields=None,
+        spec_sort=spec_sort,
+    )
+
+
+def test_an_unsortable_attribute_the_request_named_is_the_callers_error() -> None:
+    # ``id`` is in the spec's part of the sort and in the engine's list; ``title`` is refused.
+    refusal = _hooks(("id",))._unsortable(_refusal("title"))  # pyright: ignore[reportPrivateUsage]
+
+    assert refusal is not None and refusal.kind is ExceptionKind.PRECONDITION
+
+
+def test_an_unsortable_attribute_the_spec_added_is_a_configuration_error() -> None:
+    refusal = _hooks(("rank", "id"))._unsortable(_refusal("rank"))  # pyright: ignore[reportPrivateUsage]
+
+    assert refusal is not None and refusal.kind is ExceptionKind.CONFIGURATION
+    assert "ensure_index" in str(refusal)

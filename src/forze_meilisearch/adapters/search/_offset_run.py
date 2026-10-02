@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -62,6 +63,9 @@ _MEILI_DEFAULT_SEARCH_LIMIT = 20
 
 # ----------------------- #
 
+_UNSORTABLE = re.compile(r"Attribute `([^`]+)` is not sortable")
+"""The attribute in Meilisearch's refusal; the same message also lists the sortable ones."""
+
 
 @attrs.define(slots=True)
 class _MeilisearchOffsetHooks:
@@ -106,22 +110,25 @@ class _MeilisearchOffsetHooks:
         return int(total) if total is not None else None
 
     def _unsortable(self, error: MeilisearchApiError) -> CoreException | None:
-        """A configuration error when the index cannot sort by what the spec added.
+        """Who is at fault when the index cannot sort by an attribute the page asked for.
 
-        Raised loud rather than retried without the sort: an index provisioned before the spec
-        set a ``default_sort``, or managed outside forze, would otherwise answer in an order
-        the spec does not promise.
+        One the spec added, its default or the id, is a configuration error, raised loud rather
+        than retried without the sort: an index provisioned before the spec set a
+        ``default_sort``, or managed outside forze, would otherwise answer in an order the spec
+        does not promise. One the request named is the caller's.
         """
 
         if error.code != "invalid_search_sort":
             return None
 
-        if not (named := [a for a in self.spec_sort if f"`{a}`" in error.message]):
-            return None
+        named = _UNSORTABLE.search(error.message)
+
+        if named is None or named.group(1) not in self.spec_sort:
+            return exc.precondition(f"Meilisearch refused the sort: {error.message}")
 
         return exc.configuration(
-            f"The Meilisearch index cannot sort by {named}, which the search spec orders an "
-            "unsorted page by: re-run ensure_index, or add them to sortable_attributes. "
+            f"The Meilisearch index cannot sort by {named.group(1)!r}, which the search spec "
+            "orders an unsorted page by: re-run ensure_index, or add it to sortable_attributes. "
             f"{error.message}",
         )
 
