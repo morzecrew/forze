@@ -27,6 +27,7 @@ from forze.application.integrations.search import (
     resolve_snapshot_cipher,
     search_spec_encrypts,
 )
+from forze.base.exceptions import exc
 from forze_meilisearch.adapters.search._command import (
     MeilisearchSearchCommandAdapter,
     MeilisearchSearchManagementAdapter,
@@ -82,11 +83,34 @@ def _encrypting_spec[M: BaseModel](context: ExecutionContext, spec: SearchSpec[M
     )
 
 
+def _refuse_an_unsortable_default_sort(spec: SearchSpec[Any], c: MeilisearchSearchConfig) -> None:
+    """Refuse a pinned ``sortable_attributes`` that leaves out a ``default_sort`` field.
+
+    An unsorted page sorts by ``default_sort``, and the engine refuses a sort on an attribute
+    the index does not declare sortable, so such a port would fail every unsorted request.
+    """
+
+    pinned = c.sortable_attributes
+
+    if pinned is None or not spec.default_sort:
+        return
+
+    if missing := [f for f in spec.default_sort if f not in pinned]:
+        raise exc.configuration(
+            f"Meilisearch search {spec.name!r}: sortable_attributes leaves out the "
+            f"default_sort field(s) {missing}; list them, or leave sortable_attributes unset.",
+        )
+
+
+# ....................... #
+
+
 def meilisearch_search_adapter[M: BaseModel](
     context: ExecutionContext,
     member_spec: SearchSpec[M],
     c: MeilisearchSearchConfig,
 ) -> MeilisearchSimpleSearchAdapter[M]:
+    _refuse_an_unsortable_default_sort(member_spec, c)
     client = context.deps.provide(MeilisearchClientDepKey)
     tenant_aware = c.tenant_aware
 

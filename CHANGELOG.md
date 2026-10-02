@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sorting by a `NOT NULL` Postgres column can read from a plain index.** The `ORDER BY` now leaves out the null placement for such a column, which a plain btree does not hold, so a document list or blank-query search sorted by it no longer sorts the whole filtered set first. Results are unchanged.
 
-- **Meilisearch's `ensure_index` makes the `default_sort` fields sortable**, since an unsorted page now sorts by them. A pinned `sortable_attributes` must list them, or an unsorted page is refused.
+- **Meilisearch's `ensure_index` makes the `default_sort` fields sortable**, since an unsorted page now sorts by them. A pinned `sortable_attributes` must list them: the search port refuses one that does not when it is built.
 
 ### Fixed
 

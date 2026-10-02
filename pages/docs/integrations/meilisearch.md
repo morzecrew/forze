@@ -75,8 +75,8 @@ lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://loca
   resilience does not retry something that will fail identically forever.
 - **Sorting needs sortable attributes.** Left unset, `sortable_attributes` covers the
   primary key, the searchable fields and the spec's `default_sort`. If you pin it, list the
-  `default_sort` fields too, or an unsorted page is refused; leave out the id and ties keep
-  the engine's order instead of the id's.
+  `default_sort` fields too: the search port refuses to build without them. Leave out the id
+  and ties keep the engine's order instead of the id's.
 - Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the [Query DSL](../reference/query-syntax.md).
 - Federated routes merge ≥2 member indexes (`federation` or in-process RRF).
