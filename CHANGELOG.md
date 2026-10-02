@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
 
-- **A document can declare that its rows are never erased.** `DocumentSpec(hard_delete=False)` drops the generated `kill` operation, so no route or tool reaches it, and the command port refuses `kill` and `kill_many` from any caller with `hard_delete_forbidden`.
+- **A document can turn off hard deletes.** `DocumentSpec(hard_delete=False)` drops the generated `kill` operation, so no route or tool reaches it, and the command port refuses `kill` and `kill_many` with `hard_delete_forbidden`. A provisioner's `drop_on_deprovision=True` and raw statements can still delete rows.
 
 - **A soft-deleted row can still be read by id.** `soft_delete_wiring(spec, get_deleted="read")`, or the same option on `AggregateKit`, makes `GET` return the row with `is_deleted` set instead of a 404. Lists still leave it out.
 
