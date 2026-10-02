@@ -29,6 +29,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    parse_sort_value,
     validate_aggregate_capabilities,
     validate_query_capabilities,
 )
@@ -191,7 +192,11 @@ class MongoQueryRenderer:
         if bad:
             raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
 
-        return [(field, 1 if direction == "asc" else -1) for field, direction in sorts.items()]
+        # A value may be the object form, `{"dir": ..., "nulls": ...}`, not only "asc"/"desc".
+        return [
+            (field, 1 if parse_sort_value(value, field=field)[0] == "asc" else -1)
+            for field, value in sorts.items()
+        ]
 
     # ....................... #
 

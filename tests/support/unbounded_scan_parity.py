@@ -273,6 +273,8 @@ async def _check_unbounded_aggregate(query: Any) -> None:
     cases: tuple[tuple[Any, list[str]], ...] = (
         (None, tags),
         ({"n": "desc"}, tags[::-1]),
+        ({"tag": {"dir": "asc"}}, tags),  # the object form of a direction
+        ({"tag": {"dir": "desc"}}, tags[::-1]),
     )
 
     for sorts, expected in cases:
