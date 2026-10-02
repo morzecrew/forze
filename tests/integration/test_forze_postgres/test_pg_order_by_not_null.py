@@ -10,7 +10,7 @@ same with or without the clause, so it is left out there and kept everywhere els
 from __future__ import annotations
 
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg import sql
@@ -147,3 +147,55 @@ async def test_a_blank_search_cursor_page_is_read_from_the_index_too(
 
     assert "Index Scan" in plan and "Sort" not in plan, plan
 
+
+class _Labelled(BaseModel):
+    id: UUID
+    label: str
+    m: int | None = None
+
+
+async def test_a_ranked_cursor_walk_meets_every_row_of_a_nullable_sort(
+    pg_client: PostgresClient,
+) -> None:
+    # The seek reads a null as the smallest value; an order that put nulls last on an
+    # ascending key would walk past them.
+    table = f"ranked_nulls_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"CREATE TABLE {table} (id uuid PRIMARY KEY, label text NOT NULL, m int); "
+        f"CREATE INDEX {table}_fts ON {table} USING gin (to_tsvector('english', label)); "
+        f"INSERT INTO {table} SELECT gen_random_uuid(), 'alpha', "
+        "CASE WHEN g % 2 = 0 THEN NULL ELSE g END FROM generate_series(1, 6) g;"
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", f"{table}_fts"),
+                        read=("public", table),
+                        engine=FtsEngine(groups={"A": ("label",)}),
+                    )
+                ),
+            }
+        )
+    )
+    port = ctx.search.query(SearchSpec(name="rows", model_type=_Labelled, fields=["label"]))
+
+    walked: list[UUID] = []
+    cursor: dict[str, Any] = {"limit": 1}
+
+    for _ in range(10):
+        page = await port.search_cursor("alpha", None, cursor, {"m": "asc"})
+        walked += [hit.id for hit in page.hits]
+
+        if not page.has_more:
+            break
+
+        cursor = {"limit": 1, "after": page.next_cursor}
+
+    offset = await port.search("alpha", None, {"limit": 10}, {"m": "asc"})
+
+    assert walked == [hit.id for hit in offset.hits]
+    assert [hit.m for hit in offset.hits][:3] == [None, None, None]

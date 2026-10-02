@@ -186,21 +186,14 @@ def build_ranked_cursor_order_by_sql(
     rank_key: str,
     flip: bool = False,
 ) -> sql.Composable:
-    """Like :func:`build_order_by_sql` but applies ``NULLS LAST`` / ``NULLS FIRST`` on *rank_key*."""
-    parts: list[sql.Composable] = []
+    """:func:`build_order_by_sql` for a ranked cursor, whose keys carry no explicit placement.
 
-    for ex, d_raw, sk in zip(exprs, directions, sort_keys, strict=True):
-        d = ("desc" if d_raw == "asc" else "asc") if flip else d_raw
+    Every key, the rank included, takes the canonical placement for its direction, which is
+    what the seek assumes: a null sorts as the smallest value. Postgres's own default puts
+    nulls last ascending, so a walk ordered that way would seek past them. No index serves
+    an order that leads with the rank, so a ``NOT NULL`` key keeps its placement here.
+    """
 
-        if sk == rank_key:
-            if d == "desc":
-                parts.append(sql.SQL("{} DESC NULLS LAST").format(ex))
+    _ = sort_keys, rank_key
 
-            else:
-                parts.append(sql.SQL("{} ASC NULLS FIRST").format(ex))
-
-        else:
-            suf = "ASC" if d == "asc" else "DESC"
-            parts.append(sql.SQL("{} {}").format(ex, sql.SQL(suf)))
-
-    return sql.SQL(", ").join(parts)
+    return build_order_by_sql(exprs, directions, flip=flip)

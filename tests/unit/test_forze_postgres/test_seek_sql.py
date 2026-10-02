@@ -4,7 +4,11 @@ import pytest
 from psycopg import sql
 
 from forze.base.exceptions import CoreException
-from forze_postgres.kernel.sql.seek import build_order_by_sql, build_seek_condition
+from forze_postgres.kernel.sql.seek import (
+    build_order_by_sql,
+    build_ranked_cursor_order_by_sql,
+    build_seek_condition,
+)
 
 
 def test_build_seek_after_asc() -> None:
@@ -148,3 +152,26 @@ class TestNullAwareSeek:
         assert ob.count("NULLS") == 1
         assert ob.index("NULLS") > ob.index("'b'")
 
+
+class TestRankedCursorOrder:
+    rank = sql.Identifier("s", "rank")
+    m = sql.Identifier("v", "m")
+
+    @pytest.mark.parametrize(
+        ("flip", "expected"),
+        [
+            (False, ["'DESC'", "'NULLS LAST'", "'ASC'", "'NULLS FIRST'"]),
+            (True, ["'ASC'", "'NULLS FIRST'", "'DESC'", "'NULLS LAST'"]),
+        ],
+    )
+    def test_every_key_takes_the_placement_the_seek_assumes(
+        self, flip: bool, expected: list[str]
+    ) -> None:
+        ob = str(
+            build_ranked_cursor_order_by_sql(
+                [self.rank, self.m], ["rank", "m"], ["desc", "asc"], rank_key="rank", flip=flip
+            )
+        )
+        positions = [ob.index(token) for token in expected]
+
+        assert positions == sorted(positions)
