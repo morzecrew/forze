@@ -14,15 +14,19 @@ import pytest
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.querying import (
     FULL_QUERY_CAPABILITIES,
+    AggregatesExpressionParser,
     QueryCapabilities,
     QueryFilterExpressionParser,
+    validate_aggregate_capabilities,
     validate_query_capabilities,
 )
 from forze_mock.adapters import MockDocumentAdapter, MockState
 from tests.support.query_dsl_corpus import (
+    CORPUS_FILTER_LIMITS,
     CorpusCreate,
     CorpusDoc,
     CorpusRead,
+    parse_corpus_filter,
     run_parity_cases,
 )
 
@@ -37,6 +41,7 @@ def _doc() -> MockDocumentAdapter[CorpusRead, CorpusDoc, CorpusCreate, Any]:
             domain=CorpusDoc,
             create_cmd=CorpusCreate,
         ),
+        filter_limits=CORPUS_FILTER_LIMITS,
     )
 
     return MockDocumentAdapter(
@@ -70,10 +75,31 @@ class _RestrictedDoc:
 
     async def find_many(self, *, filters: Any, pagination: Any) -> Any:
         validate_query_capabilities(
-            QueryFilterExpressionParser.parse(filters), self._caps, backend="restricted"
+            parse_corpus_filter(filters), self._caps, backend="restricted"
         )
 
         return await self._inner.find_many(filters=filters, pagination=pagination)
+
+    def _check_aggregates(self, aggregates: Any) -> None:
+        # Metric filters and `$having` are filters too, held to the same capabilities.
+        validate_aggregate_capabilities(aggregates, self._caps, backend="restricted")
+        parsed = AggregatesExpressionParser.parse(
+            aggregates, filter_parser=QueryFilterExpressionParser(limits=CORPUS_FILTER_LIMITS)
+        )
+        filters = [c.parsed_filter for c in parsed.computed_fields if c.parsed_filter is not None]
+
+        for expr in [*filters, *([parsed.having] if parsed.having is not None else [])]:
+            validate_query_capabilities(expr, self._caps, backend="restricted")
+
+    async def aggregate_many(self, aggregates: Any, *, pagination: Any) -> Any:
+        self._check_aggregates(aggregates)
+
+        return await self._inner.aggregate_many(aggregates, pagination=pagination)
+
+    async def aggregate_page(self, aggregates: Any, *, pagination: Any) -> Any:
+        self._check_aggregates(aggregates)
+
+        return await self._inner.aggregate_page(aggregates, pagination=pagination)
 
 
 @pytest.mark.asyncio

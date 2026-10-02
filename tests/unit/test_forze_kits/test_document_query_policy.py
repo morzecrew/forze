@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from forze.application.contracts.document import DocumentSpec
-from forze.application.contracts.querying import QueryFieldPolicy
+from forze.application.contracts.querying import QueryFieldPolicy, QueryFilterLimits
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException
 from forze.domain.models import ReadDocument
@@ -74,6 +74,20 @@ class TestGovernedOperationEnforcement:
     async def test_no_policy_allows_any_field(self) -> None:
         spec, reg = _registry(None)
         res = await _run_list(reg, spec, filters={"$values": {"body": "x"}})
+        assert res.count == 0
+
+    async def test_a_long_membership_runs_under_the_spec_filter_limits(self) -> None:
+        spec = DocumentSpec(
+            name="notes",
+            read=NoteRead,
+            query_policy=_RESTRICTED,
+            filter_limits=QueryFilterLimits(max_in_size=2_000),
+        )
+        reg = build_document_registry(spec, DocumentDTOs(read=NoteRead)).freeze()
+        titles = [f"t{i}" for i in range(1_500)]
+
+        res = await _run_list(reg, spec, filters={"$values": {"title": {"$in": titles}}})
+
         assert res.count == 0
 
 

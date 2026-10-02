@@ -273,12 +273,17 @@ class PsycopgQueryRenderer:
     def render_aggregates(
         self,
         aggregates: AggregatesExpression,
+        *,
+        filter_parser: QueryFilterExpressionParser | None = None,
     ) -> tuple[ParsedAggregates, sql.Composable, sql.Composable | None, list[Any]]:
-        """Render aggregate SELECT and GROUP BY clauses."""
+        """Render aggregate SELECT and GROUP BY clauses.
+
+        :param filter_parser: Parses the metric filters and ``$having`` (the spec's limits).
+        """
 
         validate_aggregate_capabilities(aggregates, POSTGRES_QUERY_CAPABILITIES, backend="postgres")
 
-        parsed = AggregatesExpressionParser.parse(aggregates)
+        parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=filter_parser)
         select_parts: list[sql.Composable] = []
         group_parts: list[sql.Composable] = []
 

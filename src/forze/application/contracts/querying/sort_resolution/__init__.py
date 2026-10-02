@@ -13,6 +13,7 @@ from .resolution import (
     normalize_sorts_with_id,
     resolve_effective_sorts,
     resolve_sort_keys,
+    with_id_tiebreaker,
 )
 from .validation import validate_runtime_sort_fields, validate_sort_fields
 from .value import assert_default_null_ordering, default_nulls, parse_sort_value
@@ -31,4 +32,5 @@ __all__ = [
     "resolve_sort_keys",
     "validate_runtime_sort_fields",
     "validate_sort_fields",
+    "with_id_tiebreaker",
 ]

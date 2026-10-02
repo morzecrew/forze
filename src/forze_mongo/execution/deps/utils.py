@@ -7,6 +7,7 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
     document_codecs_for_write_types,
 )
+from forze.application.contracts.querying import QueryFilterLimits
 from forze.application.contracts.resolution import RelationSpec
 from forze.application.execution import ExecutionContext, resolve_resilience_executor
 from forze.base.serialization import ModelCodec, default_model_codec
@@ -32,6 +33,7 @@ def read_gw(
     computed_null_ordering: bool = False,
     lenient_read_fields: frozenset[str] = frozenset(),
     sealed_fields: frozenset[str] = frozenset(),
+    filter_limits: QueryFilterLimits | None = None,
 ) -> MongoReadGateway[Any]:
     """Build a read gateway for a source and model."""
     client = ctx.deps.provide(MongoClientDepKey)
@@ -49,6 +51,7 @@ def read_gw(
         computed_null_ordering=computed_null_ordering,
         lenient_read_fields=lenient_read_fields,
         sealed_fields=sealed_fields,
+        filter_limits=filter_limits,
     )
 
 
@@ -94,6 +97,7 @@ def doc_write_gw(
     history_enabled: bool = False,
     tenant_aware: bool,
     write_omit_fields: frozenset[str] = frozenset(),
+    filter_limits: QueryFilterLimits | None = None,
 ) -> MongoWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -130,6 +134,7 @@ def doc_write_gw(
         tenant_aware=tenant_aware,
         codec=domain_codec,
         lenient_read_fields=write_omit_fields,
+        filter_limits=filter_limits,
     )
     hist = None
 
@@ -151,6 +156,7 @@ def doc_write_gw(
 
     return MongoWriteGateway(
         relation=write_relation,
+        filter_limits=filter_limits,
         client=client,
         model_type=write_types["domain"],
         codec=domain_codec,

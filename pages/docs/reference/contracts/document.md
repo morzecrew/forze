@@ -41,6 +41,7 @@ plus per-aggregate policy:
 | `write_omit_fields` | `frozenset[str]` | `∅` | domain fields with **no** column: **silently stripped** from every write and hydrated from the domain default on read-back (the write-side of `lenient_read_fields`; explicit-only, requires `write`) |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort applied when a caller omits `sorts` (required if the read model has no `id`) |
 | `query_policy` | `QueryFieldPolicy \| None` | `None` | allow-sets restricting which fields a governed caller may filter / sort / aggregate |
+| `filter_limits` | `QueryFilterLimits \| None` | `None` | bounds on the filters the document's queries accept, on every backend and on generated routes; `None` keeps the defaults (see [Limits](../query-syntax.md#limits)) |
 | `query_params` | `type[BaseModel] \| None` | `None` | typed [query-parameter](../../data-events/query-parameters.md) contract, bound via `with_parameters` |
 | `encryption` | `FieldEncryption \| None` | `None` | field-level [encryption](../../identity-tenancy-enc/encryption.md) policy (share the same object with the table's `SearchSpec`) |
 | `cache` | `CacheSpec \| None` | `None` | read-through [cache](../../data-events/caching.md) for `get` |
@@ -299,6 +300,23 @@ Each comes in `find` / `project` / `select` flavors and `_many` / `_page` /
 
 `filters`, `sorts`, and `aggregates` use the [query DSL](../query-syntax.md);
 `pagination` is `{"limit": …, "offset": …}`.
+
+Without a `limit`, a read returns every matching row, fetched in batches. Rows come
+back in the effective sort (`sorts`, else `default_sort`, else `id`), with `id`
+breaking ties when the read model has one, and each batch starts after the last row
+of the one before. Some reads are paged by offset instead, still with the `id`
+tie-breaker: a projection or returned model that leaves out a sort key, and on
+MongoDB any sort other than `id` alone. Firestore refuses offsets, so there such a
+read is one query with no limit, streamed whole. A read model without `id` has no
+tie-breaker, so rows tied on its whole sort can still repeat or go missing across
+offset batches.
+
+The `id` tie-breaker shapes the index such a read wants. On MongoDB, a `{key: 1}`
+index cannot serve the `{key: 1, _id: 1}` sort, which then runs in memory; add a
+compound `{key: 1, _id: 1}` index for a large collection read this way. Firestore
+breaks ties on the document name, which forze sets to the id and every index already
+ends in, so a single-field index still serves a read sorted by one key; a sort led by
+`id` keeps ordering by the stored `id` field.
 
 ## Command port
 

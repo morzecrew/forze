@@ -9,6 +9,7 @@ import pytest
 from forze.application.contracts.querying import (
     QueryFieldGuard,
     QueryFieldPolicy,
+    QueryFilterLimits,
     collect_aggregate_field_roots,
     collect_aggregate_filter_expressions,
     collect_filter_field_roots,
@@ -172,6 +173,32 @@ class TestValidateAggregatable:
                 _AGG, allowed=frozenset({"category"}), spec_name="orders"
             )
         assert ei.value.code == "field_not_aggregatable"
+
+
+class TestGuardFilterLimits:
+    _FILTERS = {"$values": {"title": {"$in": [f"t{i}" for i in range(1_500)]}}}
+
+    def test_parses_under_the_spec_limits(self) -> None:
+        QueryFieldGuard(
+            policy=QueryFieldPolicy(filterable={"title"}),
+            spec_name="notes",
+            filter_limits=QueryFilterLimits(max_in_size=2_000),
+        ).check(filters=self._FILTERS)
+
+    def test_parses_aggregate_filters_under_the_spec_limits(self) -> None:
+        aggregates = {"$computed": {"n": {"$count": {"filter": self._FILTERS}}}}
+
+        QueryFieldGuard(
+            policy=QueryFieldPolicy(filterable={"title"}, aggregatable={"title"}),
+            spec_name="notes",
+            filter_limits=QueryFilterLimits(max_in_size=2_000),
+        ).check(aggregates=aggregates)
+
+    def test_keeps_the_default_limits_without_them(self) -> None:
+        guard = QueryFieldGuard(policy=QueryFieldPolicy(filterable={"title"}), spec_name="notes")
+
+        with pytest.raises(CoreException, match="1000"):
+            guard.check(filters=self._FILTERS)
 
 
 class TestGuardAggregates:

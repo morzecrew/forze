@@ -26,6 +26,7 @@ from forze.application.contracts.querying import (
     UNSUPPORTED_QUERY_FEATURE_CODE,
     QueryCapabilities,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     validate_query_capabilities,
 )
 from forze.base.exceptions import CoreException
@@ -96,6 +97,30 @@ SEED: dict[str, CorpusCreate] = {
 # ....................... #
 
 
+CORPUS_FILTER_LIMITS = QueryFilterLimits(max_in_size=2_000)
+"""Filter limits every corpus spec declares (``DocumentSpec(filter_limits=...)``).
+
+Raised past the 1,000-value default so the long-membership case proves a spec's limits reach
+the backend that parses the filter, not only the parser's defaults."""
+
+_CORPUS_PARSER = QueryFilterExpressionParser(limits=CORPUS_FILTER_LIMITS)
+
+
+def parse_corpus_filter(filters: Any) -> Any:
+    """Parse *filters* under :data:`CORPUS_FILTER_LIMITS`, as a corpus spec's backend does."""
+
+    return _CORPUS_PARSER.parse_filter(filters)
+
+
+def _names_padded_to(count: int) -> list[str]:
+    """``alice`` and ``bob``, then names no seeded row carries, *count* values in all."""
+
+    return ["alice", "bob", *(f"absent-{i}" for i in range(count - 2))]
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class QueryCase:
     """One filter and the row keys it must match (the oracle)."""
@@ -111,6 +136,20 @@ CASES: tuple[QueryCase, ...] = (
     QueryCase(name="ord_gt", filters={"$values": {"age": {"$gt": 28}}},
               expected=frozenset({"alice", "carol", "dave"})),
     QueryCase(name="membership_in", filters={"$values": {"name": {"$in": ["alice", "bob"]}}},
+              expected=frozenset({"alice", "bob"})),
+    # Past Firestore's 30-value `in`: a backend that cannot send it must refuse it up front.
+    QueryCase(name="membership_in_31", filters={"$values": {"name": {"$in": _names_padded_to(31)}}},
+              expected=frozenset({"alice", "bob"})),
+    # 6 x 6 = 36 disjunctions once expanded: past Firestore's 30, though each `in` is short.
+    QueryCase(name="membership_and_36_disjunctions",
+              filters={"$and": [
+                  {"$values": {"name": {"$in": _names_padded_to(6)}}},
+                  {"$values": {"nick": {"$in": ["alice", "robert", "a1", "a2", "a3", "a4"]}}},
+              ]},
+              expected=frozenset({"alice", "bob"})),
+    # Past the parser's 1,000-value default, within the corpus spec's own limit.
+    QueryCase(name="membership_in_past_default_limit",
+              filters={"$values": {"name": {"$in": _names_padded_to(1_500)}}},
               expected=frozenset({"alice", "bob"})),
     QueryCase(name="null_true", filters={"$values": {"score": {"$null": True}}},
               expected=frozenset({"bob"})),
@@ -165,6 +204,41 @@ CASES: tuple[QueryCase, ...] = (
               # all items qty in (1,9): bob[2]; carol[] vacuous; alice has 1 (no); dave 9 (no).
               expected=frozenset({"bob", "carol"})),
     # Membership inside a quantifier (Slice B — $in/$nin in element predicates).
+    # Every operand collection the parser accepts, at the top level and inside an element.
+    *(
+        case
+        for kind, make in (("tuple", tuple), ("set", set), ("frozenset", frozenset))
+        for case in (
+            QueryCase(name=f"membership_in_{kind}",
+                      filters={"$values": {"name": {"$in": make(["alice", "bob"])}}},
+                      expected=frozenset({"alice", "bob"})),
+            QueryCase(name=f"quant_any_scalar_in_{kind}",
+                      filters={"$values": {"tags": {"$any": {"$in": make(["z", "w"])}}}},
+                      expected=frozenset({"bob"})),
+            QueryCase(name=f"quant_any_object_in_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"sku": {"$in": make(["a"])}}}}}},
+                      expected=frozenset({"alice", "bob"})),
+            QueryCase(name=f"membership_in_number_{kind}",
+                      filters={"$values": {"age": {"$in": make([25, 40])}}},
+                      expected=frozenset({"bob", "carol"})),
+            QueryCase(name=f"quant_any_scalar_in_number_{kind}",
+                      filters={"$values": {"nums": {"$any": {"$in": make([3, 9])}}}},
+                      expected=frozenset({"bob", "dave"})),
+            QueryCase(name=f"quant_any_object_in_number_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"qty": {"$in": make([1, 9])}}}}}},
+                      expected=frozenset({"alice", "dave"})),
+            # A scalar array inside JSONB: the element `$in` renders through the JSONB path.
+            QueryCase(name=f"nested_any_any_in_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"tags": {"$any": {"$in": make(["hot"])}}}}}}},
+                      expected=frozenset({"alice", "dave"})),
+            QueryCase(name=f"saoa_any_any_in_{kind}",
+                      filters={"$values": {"matrix": {"$any": {"$any": {"$in": make(["hot"])}}}}},
+                      expected=frozenset({"alice", "dave"})),
+            QueryCase(name=f"quant_any_object_nin_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"sku": {"$nin": make(["a", "b"])}}}}}},
+                      expected=frozenset({"dave"})),
+        )
+    ),
     QueryCase(name="quant_any_scalar_in",
               filters={"$values": {"tags": {"$any": {"$in": ["z", "w"]}}}},
               # any tag in {z,w}: bob[y,z]; others none.
@@ -269,9 +343,7 @@ def case_supported_by(filters: dict[str, Any], caps: QueryCapabilities) -> bool:
     """
 
     try:
-        validate_query_capabilities(
-            QueryFilterExpressionParser.parse(cast(Any, filters)), caps, backend="probe"
-        )
+        validate_query_capabilities(parse_corpus_filter(cast(Any, filters)), caps, backend="probe")
         return True
 
     except CoreException as error:
@@ -300,6 +372,12 @@ class CombinedDocPort:
 
     async def find_many(self, *, filters: Any, pagination: Any) -> Any:
         return await self.query.find_many(filters=filters, pagination=pagination)
+
+    async def aggregate_many(self, aggregates: Any, *, pagination: Any) -> Any:
+        return await self.query.aggregate_many(aggregates, pagination=pagination)
+
+    async def aggregate_page(self, aggregates: Any, *, pagination: Any) -> Any:
+        return await self.query.aggregate_page(aggregates, pagination=pagination)
 
 
 async def run_parity_cases(
@@ -337,3 +415,16 @@ async def run_parity_cases(
                 await doc.find_many(filters=case.filters, pagination={"limit": 1000})
 
             assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, f"{label}: wrong error"
+
+    if caps.supports_aggregates:
+        # A metric filter and `$having` are filters too, parsed under the spec's limits.
+        names = {"$values": {"name": {"$in": _names_padded_to(1_500)}}}
+        aggregates = {
+            "$computed": {"n": {"$count": {"filter": names}}},
+            "$having": {"$values": {"n": {"$in": list(range(1_500))}}},
+        }
+        page = await doc.aggregate_page(aggregates, pagination={"limit": 10})
+
+        assert ([row["n"] for row in page.hits], page.count) == ([2], 1), (
+            f"{backend}/aggregate_past_default_limit"
+        )

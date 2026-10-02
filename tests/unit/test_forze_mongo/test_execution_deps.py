@@ -36,6 +36,8 @@ from forze.application.contracts.idempotency import (
     scoped_claim_key,
 )
 from forze.application.contracts.inbox import InboxDepKey, InboxSpec
+from forze.application.contracts.querying import QueryFilterLimits
+from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.context.invocation import InvocationMetadata
@@ -64,6 +66,7 @@ from forze_mongo.execution.deps import (
     MongoIdempotencyConfig,
     MongoInboxConfig,
     MongoReadOnlyDocumentConfig,
+    MongoSearchConfig,
     mongo_txmanager,
 )
 from forze_mongo.execution.deps.utils import doc_write_gw, read_gw
@@ -499,3 +502,30 @@ class TestMongoDurableWiring:
         )(ctx)
 
         assert store.cipher is None
+
+
+_LIMITS = QueryFilterLimits(max_in_size=5_000)
+
+
+def test_spec_filter_limits_reach_every_document_gateway() -> None:
+    spec = DocumentSpec(
+        name="mongo_dep",
+        read=_R,
+        write={"domain": _D, "create_cmd": _C, "update_cmd": _U},
+        filter_limits=_LIMITS,
+    )
+    adapter = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(read=("db", "c"), write=("db", "c")),
+    )(_ctx(), spec)
+
+    assert adapter.write_gw is not None
+    gateways = (adapter.read_gw, adapter.write_gw, adapter.write_gw.read_gw)
+    assert {gw.filter_parser.limits for gw in gateways} == {_LIMITS}
+
+
+def test_spec_filter_limits_reach_the_search_adapter() -> None:
+    adapter = ConfigurableMongoSearch(
+        config=MongoSearchConfig(read=("db", "c"), engine="text"),
+    )(_ctx(), SearchSpec(name="s", model_type=_R, fields=["title"], filter_limits=_LIMITS))
+
+    assert adapter.filter_parser.limits == _LIMITS

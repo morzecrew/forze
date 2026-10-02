@@ -1237,6 +1237,55 @@ class TestQueryCompareExpressionParser:
         with pytest.raises(CoreException, match="maximum size"):
             parser.parse_filter({"$values": {"x": {"$in": [1, 2]}}})  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            {"$values": {"x": (1, 2, 3)}},
+            {"$values": {"x": {1, 2, 3}}},
+            {"$values": {"x": frozenset({1, 2, 3})}},
+            {"$values": {"x": {"$in": frozenset({1, 2, 3})}}},
+            {"$values": {"x": {"$nin": frozenset({1, 2, 3})}}},
+            {"$values": {"x": {"$overlaps": frozenset({1, 2, 3})}}},
+        ],
+        ids=["tuple", "set", "frozenset", "in-frozenset", "nin-frozenset", "overlaps-frozenset"],
+    )
+    def test_every_operand_collection_is_bounded(self, expr: dict) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=2),
+        )
+        with pytest.raises(CoreException, match="maximum size"):
+            parser.parse_filter(expr)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        ("operand", "expected"),
+        [
+            (("c", "a", "b"), ["c", "a", "b"]),  # a sequence keeps its order
+            ({"c", "a", "b"}, ["a", "b", "c"]),  # a set is ordered canonically
+            (frozenset({"c", "a", "b"}), ["a", "b", "c"]),
+        ],
+        ids=["tuple", "set", "frozenset"],
+    )
+    @pytest.mark.parametrize("form", ["shortcut", "in", "superset"])
+    def test_every_operand_collection_reaches_renderers_as_a_list(
+        self, operand: object, expected: list[str], form: str
+    ) -> None:
+        # A renderer checking for a list (Postgres JSONB, Meilisearch) must never meet a
+        # set; a set's hash-seeded order must not reach a cursor fingerprint either.
+        value = operand if form == "shortcut" else {f"${form}": operand}
+        parsed = QueryFilterExpressionParser.parse({"$values": {"x": value}})  # type: ignore[dict-item]
+
+        assert parsed.items[0].value == expected  # type: ignore[union-attr]
+        assert type(parsed.items[0].value) is list  # type: ignore[union-attr]
+
+    def test_an_element_membership_operand_must_be_a_collection(self) -> None:
+        with pytest.raises(CoreException, match="Invalid value for \\$in"):
+            QueryFilterExpressionParser.parse({"$values": {"tags": {"$any": {"$in": "x"}}}})
+
+    def test_a_shortcut_operand_must_be_a_collection_the_parser_bounds(self) -> None:
+        # Any other iterable would reach the backend unsized.
+        with pytest.raises(CoreException, match="Invalid value"):
+            QueryFilterExpressionParser.parse({"$values": {"x": iter(range(5))}})  # type: ignore[dict-item]
+
     def test_parse_not(self) -> None:
         result = QueryFilterExpressionParser.parse(
             {"$not": {"$values": {"status": "archived"}}},

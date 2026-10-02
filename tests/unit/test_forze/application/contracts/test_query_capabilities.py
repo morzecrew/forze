@@ -154,6 +154,79 @@ class TestRejections:
             _check(expr, caps)
 
 
+class TestListOperandCap:
+    """A backend's own cap on an operand list, whatever the parser's limits allow."""
+
+    _CAPS = QueryCapabilities(max_in_size=3)
+
+    @pytest.mark.parametrize("op", ["$in", "$nin", "$superset", "$subset", "$overlaps", "$disjoint"])
+    def test_a_list_past_the_cap_is_refused(self, op: str) -> None:
+        with pytest.raises(CoreException) as ei:
+            _check({"$values": {"tags": {op: ["a", "b", "c", "d"]}}}, self._CAPS)
+
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+        assert "more than 3 values" in str(ei.value)
+
+    def test_a_list_at_the_cap_passes(self) -> None:
+        _check({"$values": {"tags": {"$in": ["a", "b", "c"]}}}, self._CAPS)
+
+    def test_no_cap_by_default(self) -> None:
+        _check({"$values": {"tags": {"$in": [str(i) for i in range(1_000)]}}}, QueryCapabilities())
+
+
+class TestDisjunctionCap:
+    """The disjunctions a filter expands to: ``$in`` values multiply under AND, add under OR."""
+
+    _CAPS = QueryCapabilities(max_disjunctions=30)
+
+    @staticmethod
+    def _in(field: str, n: int) -> dict:
+        return {"$values": {field: {"$in": [f"{field}{i}" for i in range(n)]}}}
+
+    @pytest.mark.parametrize(
+        ("expr", "allowed"),
+        [
+            ({"$and": [_in("a", 6), _in("b", 5)]}, True),
+            ({"$and": [_in("a", 6), _in("b", 6)]}, False),
+            ({"$or": [_in("a", 15), _in("b", 15)]}, True),
+            ({"$or": [_in("a", 16), _in("b", 15)]}, False),
+            ({"$or": [{"$values": {"a": i}} for i in range(31)]}, False),
+            ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 16)]}, False),
+            ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 15)]}, True),
+            # Negation flips AND and OR (De Morgan): NOT over one `$in` is a single conjunct...
+            ({"$not": _in("a", 31)}, True),
+            # ...and NOT over an AND is an OR of the negated parts.
+            ({"$not": {"$and": [_in("a", 6), _in("b", 6)]}}, True),
+            ({"$not": {"$or": [_in("a", 6), _in("b", 6)]}}, True),
+            ({"$and": [{"$not": {"$and": [{"$values": {"a": i}} for i in range(16)]}}, _in("b", 2)]}, False),
+        ],
+    )
+    def test_counts_like_the_server(self, expr: dict, allowed: bool) -> None:
+        if allowed:
+            _check(expr, self._CAPS)
+            return
+
+        with pytest.raises(CoreException) as ei:
+            _check(expr, self._CAPS)
+
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+        assert "disjunctions" in str(ei.value)
+
+    def test_no_cap_by_default(self) -> None:
+        _check({"$and": [self._in("a", 100), self._in("b", 100)]}, QueryCapabilities())
+
+    @pytest.mark.parametrize("op", ["$in", "$superset"])
+    def test_a_set_operand_counts_like_a_list(self, op: str) -> None:
+        expr = {"$values": {"tags": {op: set(range(31))}}}
+
+        with pytest.raises(CoreException):
+            _check(expr, QueryCapabilities(max_in_size=30))
+
+        if op == "$in":
+            with pytest.raises(CoreException):
+                _check(expr, self._CAPS)
+
+
 class TestAggregateCapabilities:
     """The aggregate axis is gated by its own validator, independent of the filter AST."""
 

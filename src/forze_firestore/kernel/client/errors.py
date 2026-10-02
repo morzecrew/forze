@@ -21,6 +21,17 @@ from forze.base.exceptions import (
 # ----------------------- #
 
 
+def _unrunnable_query(exc: gax_exceptions.FailedPrecondition) -> bool:
+    """Whether a precondition failure is a query Firestore cannot run, not a stale write."""
+
+    message = str(exc).lower()
+
+    return "index" in message or "key scan" in message
+
+
+# ....................... #
+
+
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
 def _firestore_eh(  # skipcq: PY-R1000
     exc: BaseException,
@@ -42,6 +53,14 @@ def _firestore_eh(  # skipcq: PY-R1000
         case gax_exceptions.AlreadyExists():
             return CoreException.conflict(
                 "Document already exists.",
+                details=details,
+            )
+
+        case gax_exceptions.FailedPrecondition() if _unrunnable_query(exc):
+            # A retry fails the same way: the query needs an index, or has a shape Firestore
+            # does not serve. Not contention, so not a conflict to retry.
+            return CoreException.configuration(
+                f"Firestore cannot run this query: {exc.message}",
                 details=details,
             )
 

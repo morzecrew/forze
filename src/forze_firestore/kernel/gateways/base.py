@@ -12,6 +12,7 @@ from uuid import UUID
 
 import attrs
 from google.cloud.firestore_v1.base_query import BaseFilter, FieldFilter
+from google.cloud.firestore_v1.field_path import FieldPath
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -314,10 +315,20 @@ class FirestoreGateway[M: BaseModel](
         resolved = resolve_sort_keys(sorts, sealed=self.sealed_fields)
         assert_default_null_ordering(resolved, backend="firestore")
 
+        ids = [index for index, (field, _, _) in enumerate(resolved) if field == ID_FIELD]
+
+        if ids:
+            # `id` is unique, so no key after it decides an order; it ends the sort.
+            resolved = resolved[: ids[0] + 1]
+
         out: list[tuple[str, str]] = []
 
-        for field, direction, _nulls in resolved:
-            target = ID_FIELD if field == ID_FIELD else field
+        for index, (field, direction, _nulls) in enumerate(resolved):
+            # A trailing `id` breaks ties: ordered by the document name (the id), which every
+            # index already ends in, it needs no composite index of its own. A leading `id`
+            # keeps the stored field: by name, a sole `id desc` is a descending key scan, which
+            # Firestore refuses.
+            target = FieldPath.document_id() if field == ID_FIELD and index else field
             out.append((target, "ASCENDING" if direction == "asc" else "DESCENDING"))
 
         return out

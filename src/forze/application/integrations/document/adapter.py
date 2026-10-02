@@ -69,7 +69,7 @@ class DocumentAdapter(
     enforce_primary_key_cursor_sort: bool = False
 
     max_scan_pages: int | None = DEFAULT_MAX_SCAN_PAGES  # type: ignore[override]
-    """Max offset-scan pages when ``limit`` is omitted; ``None`` for unlimited."""
+    """Max batches a read without ``limit`` fetches; ``None`` for unlimited."""
 
     max_stream_pages: int | None = DEFAULT_MAX_STREAM_PAGES  # type: ignore[override]
     """Max cursor pages per stream; ``None`` for unlimited."""

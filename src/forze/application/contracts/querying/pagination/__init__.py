@@ -9,6 +9,7 @@ from ..sort_resolution import (
     resolve_sort_keys,
     validate_runtime_sort_fields,
     validate_sort_fields,
+    with_id_tiebreaker,
 )
 from .cursor_page import (
     assemble_keyset_cursor_page,
@@ -76,4 +77,5 @@ __all__ = [
     "validate_cursor_token",
     "validate_runtime_sort_fields",
     "validate_sort_fields",
+    "with_id_tiebreaker",
 ]

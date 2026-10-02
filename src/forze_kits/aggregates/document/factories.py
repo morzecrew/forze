@@ -80,7 +80,9 @@ def _query_guard(spec: DocumentSpec[Any, Any, Any, Any]) -> QueryFieldGuard | No
     ):
         return None
 
-    return QueryFieldGuard(policy=policy, spec_name=str(spec.name))
+    return QueryFieldGuard(
+        policy=policy, spec_name=str(spec.name), filter_limits=spec.filter_limits
+    )
 
 
 def _parametrized(generic: Any, arg: Any) -> Any:
