@@ -14,15 +14,17 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from forze.application.contracts.base import CursorPage
 from forze.application.contracts.querying import decode_keyset_v1
-from forze.application.integrations.document._pagination import (
+from forze.application.integrations.document._pagination import (  # pyright: ignore[reportPrivateUsage]
     CursorQuery,
     DocumentPaginationMixin,
     OffsetQuery,
     StreamQuery,
+    _field_type,
+    _seek_values,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
 
@@ -1032,3 +1034,30 @@ async def test_offset_page_scan_drops_the_offset_prefix_as_it_arrives() -> None:
     )
 
     assert [r["id"] for r in page.hits] == ["d", "e"]
+
+
+def test_seek_values_read_fields_computed_fields_and_shared_parents() -> None:
+    class _Meta(BaseModel):
+        a: int
+        b: int
+
+    class _Scored(BaseModel):
+        id: str
+        meta: _Meta
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def score(self) -> int:
+            return self.meta.a * 10
+
+    row = _Scored(id="x", meta=_Meta(a=1, b=2))
+
+    assert _seek_values(row, ["meta.a", "meta.b", "score", "id"]) == {
+        "meta": {"a": 1, "b": 2},
+        "score": 10,
+        "id": "x",
+    }
+    assert (_field_type(_Scored, "id"), _field_type(_Scored, "nope")) == (str, None)
+
+    with pytest.raises(CoreException, match=r"does not carry sort key 'meta\.c'"):
+        _seek_values(row, ["meta.c"])
