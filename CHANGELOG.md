@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
-- **Authorization and tenant listing read rows in batches, not one at a time.** A decision reads once per kind of row and level of the role hierarchy, plus once per 30 roles or groups: one role under a parent with 18 permissions takes 7 reads, not 27. A principal's tenants are read in one batch, not one per membership.
+- **Authorization and tenant listing read rows in batches, not one at a time.** A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for one role under a parent with 18 permissions. On Firestore, each binding scan needs a composite index on its field and `id`.
 
 ### Fixed
 
