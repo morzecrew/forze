@@ -197,80 +197,83 @@ async def create_group(ctx: Any, key: str, *, active: bool, id: UUID | None = No
 async def wide_catalog(ctx: Any) -> tuple[UUID, set[str], set[str]]:
     """A principal past one ``$in`` batch on every axis, and the role and permission keys it holds.
 
-    35 roles under 3 parents under one root (39 roles to expand), 33 groups of which 2 are
-    inactive, 42 permissions, and a second principal whose bindings must not leak in. A role and
-    a permission only an inactive group grants are not held.
+    35 roles under 3 parents under one root; 33 groups, 2 of them inactive, each holding a role
+    and granting a permission of its own; a second principal whose bindings must not leak in.
+    Every role, group and permission is the only source of something held, so a read that drops
+    any batch on any axis — roles, lineage levels, groups, their roles or permissions — changes
+    the answer. What only an inactive group grants is not held.
     """
 
     cmd = ctx.doc.command
     principal_id, someone = uuid4(), uuid4()
+    roles: set[str] = set()
+    perms: set[str] = set()
 
-    async def role(key: str, parent: UUID | None = None) -> UUID:
+    async def role(key: str, parent: UUID | None = None, *, held: bool = True) -> UUID:
+        """A role granting a permission of its own."""
+
         row = await cmd(role_definition_spec).create(
             CreateRoleDefinitionCmd(role_key=key, parent_role_id=parent)
         )
+        await cmd(role_permission_binding_spec).create(
+            CreateRolePermissionBindingCmd(
+                role_id=row.id, permission_id=await permission(f"{key}-perm", held=held)
+            )
+        )
+
         return row.id
 
-    async def permission(key: str) -> UUID:
+    async def permission(key: str, *, held: bool = True) -> UUID:
         row = await cmd(permission_definition_spec).create(
             CreatePermissionDefinitionCmd(permission_key=key)
         )
-        return row.id
+        perms.update({key} if held else set())
 
-    async def grant(role_id: UUID, permission_id: UUID) -> None:
-        await cmd(role_permission_binding_spec).create(
-            CreateRolePermissionBindingCmd(role_id=role_id, permission_id=permission_id)
-        )
+        return row.id
 
     root = await role("root")
     parents = [await role(f"parent-{i}", root) for i in range(3)]
-    direct = [await role(f"role-{i}", parents[i % 3]) for i in range(35)]
-    perms = {f"perm-{i}": await permission(f"perm-{i}") for i in range(42)}
-    keys = list(perms)
 
-    # Each expanded role grants its own permission: losing any role in the lineage loses one.
-    for i, role_id in enumerate([root, *parents, *direct]):
-        await grant(role_id, perms[keys[i]])
-
-    for role_id in direct:
+    for i in range(35):
         await cmd(principal_role_binding_spec).create(
-            CreatePrincipalRoleBindingCmd(principal_id=principal_id, role_id=role_id)
+            CreatePrincipalRoleBindingCmd(
+                principal_id=principal_id, role_id=await role(f"role-{i}", parents[i % 3])
+            )
         )
+        roles.add(f"role-{i}")
 
     # Granted directly, and to someone else only.
     await cmd(principal_permission_binding_spec).create(
-        CreatePrincipalPermissionBindingCmd(principal_id=principal_id, permission_id=perms[keys[39]])
+        CreatePrincipalPermissionBindingCmd(
+            principal_id=principal_id, permission_id=await permission("direct")
+        )
     )
-    hidden = await permission("someone-elses")
     await cmd(principal_permission_binding_spec).create(
-        CreatePrincipalPermissionBindingCmd(principal_id=someone, permission_id=hidden)
+        CreatePrincipalPermissionBindingCmd(
+            principal_id=someone, permission_id=await permission("someone-elses", held=False)
+        )
     )
-
-    group_role = await role("group-role")
-    inactive_role = await role("inactive-group-role")
-    inactive_perm = await permission("inactive-group-perm")
 
     for i in range(33):
         active = i < 31
-        group = await create_group(ctx, f"group-{i}", active=active)
+        key = f"group-{i}" if active else f"inactive-group-{i}"
+        group = await create_group(ctx, key, active=active)
         await cmd(group_principal_binding_spec).create(
             CreateGroupPrincipalBindingCmd(group_id=group.id, principal_id=principal_id)
         )
         await cmd(group_role_binding_spec).create(
             CreateGroupRoleBindingCmd(
-                group_id=group.id, role_id=group_role if active else inactive_role
+                group_id=group.id, role_id=await role(f"{key}-role", held=active)
             )
         )
         await cmd(group_permission_binding_spec).create(
             CreateGroupPermissionBindingCmd(
-                group_id=group.id,
-                permission_id=perms[keys[40 + i % 2]] if active else inactive_perm,
+                group_id=group.id, permission_id=await permission(f"{key}-perm", held=active)
             )
         )
+        roles.update({f"{key}-role"} if active else set())
 
-    roles = {f"role-{i}" for i in range(35)} | {"group-role"}
-
-    return principal_id, roles, set(keys)
+    return principal_id, roles, perms
 
 
 async def resolve_both_ways(

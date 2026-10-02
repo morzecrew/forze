@@ -57,6 +57,7 @@ from tests.support.authz_grants import (
     resolve_both_ways,
     wide_catalog,
 )
+from tests.support.counting_ports import CountingQuery
 
 pytestmark = pytest.mark.unit
 
@@ -210,39 +211,10 @@ class TestTheBatchedResolutionAnswersAsTheRowByRowOne:
 # ----------------------- #
 
 
-class _Counting:
-    """A query port that counts the reads it serves: a ``get``, a non-empty ``get_many``, and a
-    scan with each batch past its first (an empty scan still reads once)."""
-
-    def __init__(self, inner: Any, reads: list[str], name: str) -> None:
-        self._inner, self._reads, self._name = inner, reads, name
-
-    async def get(self, pk: UUID, **kwargs: Any) -> Any:
-        self._reads.append(f"{self._name}.get")
-        return await self._inner.get(pk, **kwargs)
-
-    async def get_many(self, pks: Any, **kwargs: Any) -> Any:
-        if pks:
-            self._reads.append(f"{self._name}.get_many")
-
-        return await self._inner.get_many(pks, **kwargs)
-
-    async def find_stream(self, **kwargs: Any) -> Any:
-        self._reads.append(f"{self._name}.scan")
-        first = True
-
-        async for batch in self._inner.find_stream(**kwargs):
-            if not first:
-                self._reads.append(f"{self._name}.scan")
-
-            first = False
-            yield batch
-
-
 def _counting(deps: AuthzGrantResolverDeps, reads: list[str]) -> AuthzGrantResolverDeps:
     return AuthzGrantResolverDeps(
         **{
-            field: _Counting(getattr(deps, field), reads, field.removesuffix("_qry"))
+            field: CountingQuery(getattr(deps, field), reads, field.removesuffix("_qry"))
             for field in (
                 "permission_qry",
                 "role_qry",
