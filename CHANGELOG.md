@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Firestore refuses a filter it cannot run before sending it.** An `$in` past 30 values, or a filter past 30 disjunctions once expanded (`$in` values multiply under AND, add under OR), failed at the server with a validation error; it is now a clean `query_feature_unsupported` naming the cap.
 
+- **A Firestore query it cannot run is no longer reported as a transaction conflict.** A query needing an index, or a shape Firestore refuses, failed as a retryable `concurrency` error; it is now a `configuration` error naming the reason.
+
 - **A cursor continues from the right row whatever the model does to a sort key.** A token took each key's value from the decoded row, so a key the model excluded, aliased, serialized or rewrote on read (`EmailStr` lowercasing a domain) made the next page skip or repeat rows. It now takes the stored value.
 
 - **A negative pagination offset is refused as the caller's mistake.** A document read sent it to the backend, which answered with a server error; it is now a `precondition`, on every backend and the mock.

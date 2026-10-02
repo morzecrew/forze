@@ -43,6 +43,27 @@ class TestFirestoreErrorHandler:
         assert isinstance(mapped, CoreException)
         assert mapped.kind == ExceptionKind.CONCURRENCY
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "The query requires an index. You can create it here: https://example.test",
+            "Firestore does not support descending key scans",
+        ],
+    )
+    def test_a_query_firestore_cannot_run_is_not_a_conflict(self, message: str) -> None:
+        # A retry would fail the same way: it is the query or the deployment, not contention.
+        mapped = _firestore_eh(gax_exceptions.FailedPrecondition(message), site="query")
+        assert isinstance(mapped, CoreException)
+        assert mapped.kind == ExceptionKind.CONFIGURATION
+
+    def test_an_expired_transaction_stays_a_conflict(self) -> None:
+        mapped = _firestore_eh(
+            gax_exceptions.FailedPrecondition("The referenced transaction has expired"),
+            site="tx",
+        )
+        assert isinstance(mapped, CoreException)
+        assert mapped.kind == ExceptionKind.CONCURRENCY
+
     def test_invalid_argument_maps_to_validation(self) -> None:
         mapped = _firestore_eh(
             gax_exceptions.InvalidArgument("bad field"),

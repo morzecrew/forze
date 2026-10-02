@@ -33,5 +33,15 @@ def test_an_id_key_orders_by_the_document_name() -> None:
     ]
 
 
+def test_a_leading_id_keeps_the_stored_field() -> None:
+    # Ordered by the document name, a sole `id desc` would be a descending key scan, which
+    # Firestore refuses; the stored `id` field is served by its own single-field index.
+    assert _gw().render_sorts({"id": "desc"}) == [("id", "DESCENDING")]
+    assert _gw().render_sorts({"id": "asc", "grp": "desc"}) == [
+        ("id", "ASCENDING"),
+        ("grp", "DESCENDING"),
+    ]
+
+
 def test_other_keys_keep_their_field() -> None:
     assert _gw().render_sorts({"grp": "asc"}) == [("grp", "ASCENDING")]

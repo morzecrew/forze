@@ -98,3 +98,13 @@ async def test_a_sorted_read_past_one_batch_is_refused_not_cut_short(
 
 async def test_a_cursor_sorted_by_id_first_orders_by_id(firestore_client: FirestoreClient) -> None:
     await run_id_first_cursor_parity(*_ports(firestore_client))
+
+
+async def test_a_page_sorted_by_id_descending_reads(firestore_client: FirestoreClient) -> None:
+    command, query = _ports(firestore_client)
+    created = await command.create_many(seed()[:12])
+    expected = sorted((row.id for row in created), reverse=True)
+
+    page = await query.find_page(sorts={"id": "desc"}, pagination={"limit": 5})
+
+    assert ([hit.id for hit in page.hits], page.count) == (expected[:5], 12)

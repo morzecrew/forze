@@ -307,11 +307,12 @@ class FirestoreGateway[M: BaseModel](
 
         out: list[tuple[str, str]] = []
 
-        for field, direction, _nulls in resolved:
-            # The document name is the id, and every index ends in it: ordered by the stored
-            # `id` field instead, a sort on another key plus the id tie-breaker would need a
-            # composite index of its own.
-            target = FieldPath.document_id() if field == ID_FIELD else field
+        for index, (field, direction, _nulls) in enumerate(resolved):
+            # A trailing `id` breaks ties: ordered by the document name (the id), which every
+            # index already ends in, it needs no composite index of its own. A leading `id`
+            # keeps the stored field: by name, a sole `id desc` is a descending key scan, which
+            # Firestore refuses.
+            target = FieldPath.document_id() if field == ID_FIELD and index else field
             out.append((target, "ASCENDING" if direction == "asc" else "DESCENDING"))
 
         return out

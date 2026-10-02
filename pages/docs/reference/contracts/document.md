@@ -307,7 +307,8 @@ The `id` tie-breaker shapes the index such a read wants. On MongoDB, a `{key: 1}
 index cannot serve the `{key: 1, _id: 1}` sort, which then runs in memory; add a
 compound `{key: 1, _id: 1}` index for a large collection read this way. Firestore
 breaks ties on the document name, which forze sets to the id and every index already
-ends in, so a single-field index still serves a read sorted by one key.
+ends in, so a single-field index still serves a read sorted by one key; a sort led by
+`id` keeps ordering by the stored `id` field.
 
 ## Command port
 
