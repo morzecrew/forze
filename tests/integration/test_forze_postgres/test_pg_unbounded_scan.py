@@ -7,10 +7,21 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.document import (
+    DocumentCommandDepKey,
+    DocumentQueryDepKey,
+    DocumentSpec,
+    DocumentWriteTypes,
+)
+from forze.application.execution import Deps
+from forze_postgres.execution.deps import ConfigurablePostgresDocument
+from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+from forze_postgres.execution.deps.keys import PostgresClientDepKey, PostgresIntrospectorDepKey
+from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.kernel.gateways.read import PostgresReadGateway
 from tests.integration.test_forze_postgres._document_fixtures import document_context
+from tests.support.execution_context import context_from_deps
 from tests.support.unbounded_scan_parity import (
     POSTGRES_COLUMNS,
     ScanCreate,
@@ -24,17 +35,42 @@ from tests.support.unbounded_scan_parity import (
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def test_a_read_without_a_limit_orders_ties_by_id(pg_client: PostgresClient) -> None:
+def _context(pg_client: PostgresClient, table: str, read_validation: Any) -> Any:
+    doc = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=("public", table),
+            write=("public", table),
+            bookkeeping_strategy="application",
+            read_validation=read_validation,
+        )
+    )
+
+    return context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: doc,
+                DocumentCommandDepKey: doc,
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize("read_validation", ["strict", "trusted"])
+async def test_a_read_without_a_limit_orders_ties_by_id(
+    pg_client: PostgresClient, read_validation: str
+) -> None:
+    # Trusted decoding refuses columns a model does not declare: a seek read's extra
+    # sort-key columns must not reach it.
     table = f"scan_{uuid4().hex[:12]}"
-
     await pg_client.execute(f"CREATE TABLE {table} ({POSTGRES_COLUMNS});")
-
     spec = DocumentSpec(
         name="scan",
         read=ScanRead,
         write=DocumentWriteTypes(domain=ScanDoc, create_cmd=ScanCreate),
     )
-    ctx = document_context(pg_client, table)
+    ctx = _context(pg_client, table, read_validation)
 
     await run_unbounded_scan_parity(ctx.document.command(spec), ctx.document.query(spec))
 

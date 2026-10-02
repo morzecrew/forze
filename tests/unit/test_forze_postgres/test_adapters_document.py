@@ -251,6 +251,12 @@ def _tread(pk: UUID | None = None, *, rev: int = 1) -> TRead:
         title="t",
     )
 
+def _seek_pages(*pages: list[TRead]) -> AsyncMock:
+    """A seek read returning each page with the stored ids it was read with."""
+
+    return AsyncMock(side_effect=[(rows, [{ID_FIELD: r.id} for r in rows]) for rows in pages])
+
+
 def _tdoc(pk: UUID | None = None, *, rev: int = 1) -> TDoc:
     pk = pk or uuid4()
     now = datetime.now(tz=UTC)
@@ -531,7 +537,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         first = [_tread() for _ in range(10)]
         second = [_tread()]
         # A batch fetches one row past its size; the extra row says another batch follows.
-        read_gw.find_many_with_cursor = AsyncMock(side_effect=[first + second, second])
+        read_gw.find_many_with_cursor_seek = _seek_pages(first + second, second)
 
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
@@ -543,7 +549,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         page = await adapter.find_many(filters={"x": 1})
 
         assert page.hits == first + second
-        c0, c1 = read_gw.find_many_with_cursor.await_args_list
+        c0, c1 = read_gw.find_many_with_cursor_seek.await_args_list
         assert c0.kwargs["cursor"] == {"limit": 10}
         assert c0.kwargs["sorts"] == {ID_FIELD: "asc"}
         assert c1.kwargs["cursor"]["limit"] == 10 and c1.kwargs["cursor"]["after"]
@@ -630,7 +636,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
     async def test_find_many_unbounded_skips_the_initial_offset(self) -> None:
         read_gw = _read_gw_full()
         rows = [_tread() for _ in range(8)]
-        read_gw.find_many_with_cursor = AsyncMock(return_value=rows)
+        read_gw.find_many_with_cursor_seek = _seek_pages(rows)
 
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
@@ -645,12 +651,11 @@ class TestPostgresDocumentAdapterQueryDelegation:
         )
 
         assert page.hits == rows[7:]
-        read_gw.find_many_with_cursor.assert_awaited_once_with(
+        read_gw.find_many_with_cursor_seek.assert_awaited_once_with(
             {"k": "v"},
             cursor={"limit": 20},
             sorts={ID_FIELD: "asc"},
             return_model=None,
-            return_fields=None,
         )
 
     @pytest.mark.asyncio
@@ -659,7 +664,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         first = [_tread() for _ in range(10)]
         second = [_tread()]
         read_gw.count = AsyncMock(return_value=11)
-        read_gw.find_many_with_cursor = AsyncMock(side_effect=[first + second, second])
+        read_gw.find_many_with_cursor_seek = _seek_pages(first + second, second)
 
         adapter = PostgresDocumentAdapter(
             spec=(ds := _full_spec()),
@@ -671,7 +676,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         page = await adapter.find_page(filters={"z": 1})
 
         assert page.hits == first + second and page.count == 11
-        assert read_gw.find_many_with_cursor.await_count == 2
+        assert read_gw.find_many_with_cursor_seek.await_count == 2
 
     @pytest.mark.asyncio
     async def test_aggregate_many_unbounded_chunks(self) -> None:

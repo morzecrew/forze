@@ -59,6 +59,12 @@ class ScanIdOnly(BaseModel):
     id: UUID
 
 
+class ScanNoId(BaseModel):
+    """Carries no ``id``, so an ``id``-ordered read cannot seek from its rows."""
+
+    grp: int
+
+
 class ScanExcluded(BaseModel):
     """Holds every sort key but dumps none of them, so a token built from a dump seeks wrong."""
 
@@ -249,6 +255,10 @@ async def run_unbounded_scan_parity(
         await _check_rewritten_keys(query)
         await _check_unbounded_aggregate(query)
 
+        # In `id` order, without the `id` to seek from on the returned rows.
+        no_id = await query.select_many(ScanNoId)
+        assert sorted(row.grp for row in no_id.hits) == sorted(r.grp for r in created)
+
 
 async def _check_unbounded_aggregate(query: Any) -> None:
     """An aggregate read without a limit pages its groups in the group keys' order.
@@ -260,10 +270,22 @@ async def _check_unbounded_aggregate(query: Any) -> None:
     aggregates = {"$groups": {"tag": "meta.tag"}, "$computed": {"n": {"$count": None}}}
     tags = sorted(f"t{i}" for i in range(ROWS))
 
-    for sorts, expected in ((None, tags), ({"n": "desc"}, tags[::-1])):
+    cases: tuple[tuple[Any, list[str]], ...] = (
+        (None, tags),
+        ({"n": "desc"}, tags[::-1]),
+    )
+
+    for sorts, expected in cases:
         page = await query.aggregate_many(aggregates, sorts=sorts)
 
         assert [row["tag"] for row in page.hits] == expected, f"aggregate sorts={sorts}"
+
+        if sorts is not None and "tag" in sorts:  # a bounded page orders only by its sort
+            bounded = await query.aggregate_many(
+                aggregates, sorts=sorts, pagination={"limit": 5}
+            )
+
+            assert [row["tag"] for row in bounded.hits] == expected[:5], f"bounded {sorts}"
 
 
 _REWRITTEN: tuple[tuple[type[BaseModel], str], ...] = (

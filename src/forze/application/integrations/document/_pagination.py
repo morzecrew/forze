@@ -306,8 +306,14 @@ class DocumentPaginationMixin(Generic[R]):
 
         if query.return_fields is None:
             # Model rows: a validator may have rewritten a key, so seek values must come with
-            # the page from the store. Without a gateway that returns them, only `id` is safe.
-            return keys == [ID_FIELD] or _seek_read(self.read_gw) is not None
+            # the page from the store. Without a gateway that returns them, only `id` is safe,
+            # and only read off a model that has one.
+            if _seek_read(self.read_gw) is not None:
+                return True
+
+            return keys == [ID_FIELD] and (
+                query.return_model is None or _field_type(query.return_model, ID_FIELD) is not None
+            )
 
         return all(_sort_key_in_projection(k, query.return_fields) for k in keys)
 
@@ -433,7 +439,7 @@ class DocumentPaginationMixin(Generic[R]):
         seek_read = _seek_read(self.read_gw)
         seek: dict[int, JsonDict] | None = None
 
-        if query.return_fields is None and sort_keys != [ID_FIELD] and seek_read is not None:
+        if query.return_fields is None and seek_read is not None:
             raw, seek_values = await seek_read(
                 filters, cursor=cursor, sorts=effective, return_model=query.return_model
             )
@@ -451,7 +457,7 @@ class DocumentPaginationMixin(Generic[R]):
         def _dump(o: R | JsonDict | BaseModel) -> JsonDict:
             # A projection's dict holds the stored values, and so does the seek read's record
             # of each model row: a model's own may differ, since a read validator can rewrite
-            # a key. Read off the model only for `id`, or where no seek read exists.
+            # a key, and may lack one. Read off the model only where no seek read exists.
             if isinstance(o, dict):
                 return o
 
