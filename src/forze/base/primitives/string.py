@@ -43,6 +43,29 @@ _TRANSLATE = str.maketrans(
 )
 
 
+def _is_normalized(s: str) -> bool:
+    """Whether :func:`normalize_string` would return *s* unchanged, checked without the scan.
+
+    Text read back from storage was normalized when it was written, so this is the common
+    case. Each condition rules out one thing the full pass changes:
+
+    * ``isprintable`` is false for every character the full pass drops or rewrites: controls
+      (tab, CR), format characters (BOM, ZWSP, bidi marks), surrogates, private use,
+      unassigned code points, line and paragraph separators, and every space but the ASCII
+      one (NBSP). ZWJ and ZWNJ are format characters the full pass keeps, so text carrying
+      them simply takes the full pass;
+    * no double space, since runs of spaces collapse;
+    * no space at either end of a line, since lines are trimmed;
+    * NFC, since a combining sequence such as ``e`` + U+0301 is printable but composes.
+
+    Newlines survive the full pass, so the per-line checks run on each line.
+    """
+
+    return unicodedata.is_normalized("NFC", s) and all(
+        line.isprintable() and "  " not in line and line == line.strip() for line in s.split("\n")
+    )
+
+
 @overload
 def normalize_string(s: str) -> str: ...
 
@@ -64,6 +87,9 @@ def normalize_string(s: str | None) -> str | None:
 
     if s is None:
         return None
+
+    if _is_normalized(s):
+        return s
 
     s = s.replace("\r\n", "\n").translate(_TRANSLATE)
 

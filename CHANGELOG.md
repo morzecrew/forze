@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.
 
 ### Fixed
 
