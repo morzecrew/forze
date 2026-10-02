@@ -23,6 +23,7 @@ from tests.integration.test_forze_authz.test_pg_authz_kernel_flow import (
     _authz_pg_deps,
     _authz_pg_setup,
 )
+from tests.support.authz_grants import resolve_both_ways, wide_catalog
 from tests.support.execution_context import (
     context_from_deps,
 )
@@ -271,3 +272,32 @@ async def test_authorize_via_group_permission(pg_client: PostgresClient) -> None
 
     assert decision.allowed is True
     assert decision.matched_permission_key == "comments.moderate"
+
+
+async def test_a_principal_past_one_in_batch_resolves_in_full(pg_client: PostgresClient) -> None:
+    # 39 roles to expand and 31 active groups: past one `$in` batch on every axis.
+    suffix = uuid4().hex[:8]
+    await _authz_role_grants_ctx(pg_client, suffix=suffix)
+    # Writes to the documents the shared deps leave read-only (permissions and direct
+    # permission bindings are writable there already).
+    tables = {
+        AuthzResourceName.ROLES: "role",
+        AuthzResourceName.GROUPS: "grp",
+        AuthzResourceName.ROLE_PERMISSION_BINDINGS: "rp",
+        AuthzResourceName.PRINCIPAL_ROLE_BINDINGS: "pr",
+        AuthzResourceName.GROUP_PRINCIPAL_BINDINGS: "gp",
+        AuthzResourceName.GROUP_ROLE_BINDINGS: "gr",
+        AuthzResourceName.GROUP_PERMISSION_BINDINGS: "gperm",
+    }
+    writes = {
+        name: ConfigurablePostgresDocument(config=_rw(f"authz_{table}_{suffix}"))
+        for name, table in tables.items()
+    }
+    ctx = context_from_deps(
+        _authz_pg_deps(pg_client, suffix=suffix).merge(
+            Deps.routed({DocumentCommandDepKey: writes})
+        )
+    )
+    principal_id, roles, permissions = await wide_catalog(ctx)
+
+    assert await resolve_both_ways(ctx, principal_id) == (roles, permissions)

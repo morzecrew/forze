@@ -161,15 +161,23 @@ class TenantManagementAdapter(TenantManagementPort):
         self,
         principal_id: UUID,
     ) -> Sequence[TenantIdentity]:
-        out: list[TenantIdentity] = []
+        """The active tenants *principal_id* belongs to, in the order its memberships are read.
 
-        for bind in await self._all_bindings({"$values": {"principal_id": principal_id}}):
-            tenant = await self.tenant_qry.get(bind.tenant_id)
+        The tenants are read together rather than one per membership; a membership naming a
+        tenant that does not exist raises not-found.
+        """
 
-            if tenant.is_active:
-                out.append(TenantIdentity(tenant_id=tenant.id, tenant_key=tenant.tenant_key))
+        bindings = await self._all_bindings({"$values": {"principal_id": principal_id}})
+        tenants = {
+            row.id: row
+            for row in await self.tenant_qry.get_many(sorted({b.tenant_id for b in bindings}))
+        }
 
-        return out
+        return [
+            TenantIdentity(tenant_id=tenant.id, tenant_key=tenant.tenant_key)
+            for tenant in (tenants[b.tenant_id] for b in bindings)
+            if tenant.is_active
+        ]
 
     # ....................... #
 
