@@ -193,7 +193,12 @@ class TestDisjunctionCap:
             ({"$or": [{"$values": {"a": i}} for i in range(31)]}, False),
             ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 16)]}, False),
             ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 15)]}, True),
-            ({"$not": _in("a", 31)}, False),
+            # Negation flips AND and OR (De Morgan): NOT over one `$in` is a single conjunct...
+            ({"$not": _in("a", 31)}, True),
+            # ...and NOT over an AND is an OR of the negated parts.
+            ({"$not": {"$and": [_in("a", 6), _in("b", 6)]}}, True),
+            ({"$not": {"$or": [_in("a", 6), _in("b", 6)]}}, True),
+            ({"$and": [{"$not": {"$and": [{"$values": {"a": i}} for i in range(16)]}}, _in("b", 2)]}, False),
         ],
     )
     def test_counts_like_the_server(self, expr: dict, allowed: bool) -> None:
@@ -209,6 +214,17 @@ class TestDisjunctionCap:
 
     def test_no_cap_by_default(self) -> None:
         _check({"$and": [self._in("a", 100), self._in("b", 100)]}, QueryCapabilities())
+
+    @pytest.mark.parametrize("op", ["$in", "$superset"])
+    def test_a_set_operand_counts_like_a_list(self, op: str) -> None:
+        expr = {"$values": {"tags": {op: set(range(31))}}}
+
+        with pytest.raises(CoreException):
+            _check(expr, QueryCapabilities(max_in_size=30))
+
+        if op == "$in":
+            with pytest.raises(CoreException):
+                _check(expr, self._CAPS)
 
 
 class TestAggregateCapabilities:

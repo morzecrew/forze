@@ -76,6 +76,9 @@ _LIST_OPERAND_OPS: Final[frozenset[str]] = frozenset(
 )
 """Operators whose operand is a list of values, bounded by :attr:`QueryCapabilities.max_in_size`."""
 
+_OPERAND_LISTS = (list, tuple, set, frozenset)
+"""The collection types the parser accepts as such an operand."""
+
 
 # ....................... #
 
@@ -208,21 +211,28 @@ def _cap_fail(backend: str, feature: str) -> None:
     )
 
 
-def _disjunctions(node: QueryExpr) -> int:
-    """How many disjunctions *node* expands to in disjunctive normal form."""
+def _disjunctions(node: QueryExpr, *, negated: bool = False) -> int:
+    """How many disjunctions *node* expands to in disjunctive normal form.
+
+    Negation flips AND and OR (De Morgan): a negated AND is an OR of the negated parts, so its
+    counts add, and a negated OR multiplies; a negated ``$in`` is a single conjunction of
+    inequalities.
+    """
 
     match node:
-        case QueryField(_, "$in", value) if isinstance(value, list | tuple):
-            return max(len(value), 1)  # pyright: ignore[reportUnknownArgumentType]
+        case QueryField(_, "$in", value) if isinstance(value, _OPERAND_LISTS):
+            return 1 if negated else max(len(value), 1)  # pyright: ignore[reportUnknownArgumentType]
 
         case QueryAnd(items):
-            return math.prod(_disjunctions(item) for item in items)
+            counts = [_disjunctions(item, negated=negated) for item in items]
+            return sum(counts) if negated else math.prod(counts)
 
         case QueryOr(items):
-            return sum(_disjunctions(item) for item in items)
+            counts = [_disjunctions(item, negated=negated) for item in items]
+            return math.prod(counts) if negated else sum(counts)
 
         case QueryNot(item):
-            return _disjunctions(item)
+            return _disjunctions(item, negated=not negated)
 
         case _:
             return 1
@@ -257,7 +267,7 @@ def _walk_caps(
             if (
                 caps.max_in_size is not None
                 and op in _LIST_OPERAND_OPS
-                and isinstance(value, list | tuple)
+                and isinstance(value, _OPERAND_LISTS)
                 and len(value) > caps.max_in_size  # pyright: ignore[reportUnknownArgumentType]
             ):
                 _cap_fail(backend, f"operator {op!r} with more than {caps.max_in_size} values")
