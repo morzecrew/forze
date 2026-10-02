@@ -147,8 +147,9 @@ class SoftDeleteWiring:
 
     get_deleted: GetDeleted = "not_found"
     """What GET answers for a soft-deleted row. ``"not_found"`` (default) answers 404, as if the row
-    were gone; ``"read"`` returns it with ``is_deleted`` set, so a reference to it still resolves.
-    The list operations exclude it either way."""
+    were gone; ``"read"`` returns it with ``is_deleted`` set, so a reference to it still resolves,
+    and needs the read model to expose a stored ``is_deleted``. The list operations exclude it
+    either way."""
 
     # ....................... #
 
@@ -157,6 +158,17 @@ class SoftDeleteWiring:
             raise exc.configuration(
                 f"get_deleted must be one of {list(get_args(GetDeleted))}, "
                 f"not {self.get_deleted!r}."
+            )
+
+        # A lenient flag is hydrated from its default, so it would read False on a deleted row.
+        if self.get_deleted == "read" and (
+            SOFT_DELETE_FIELD not in self.spec.read.model_fields
+            or SOFT_DELETE_FIELD in self.spec.resolved_lenient_read_fields
+        ):
+            raise exc.configuration(
+                f"get_deleted='read' on {self.spec.name!r} returns soft-deleted rows, so its read "
+                f"model must expose a stored {SOFT_DELETE_FIELD!r}; without it a client cannot "
+                "tell a deleted row from a live one.",
             )
 
     # ....................... #

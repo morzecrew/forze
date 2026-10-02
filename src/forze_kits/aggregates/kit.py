@@ -338,6 +338,10 @@ class AggregateKit(Generic[R, D, C, U]):
                 "take effect without soft_delete=True, because no row is ever soft-deleted.",
             )
 
+        if self.soft_delete:
+            # Built here only for its refusals, so they surface at declaration, not composition.
+            soft_delete_wiring(self.spec, purge=self.purge, get_deleted=self.get_deleted)
+
         if (
             self.soft_delete
             and self.search is not None

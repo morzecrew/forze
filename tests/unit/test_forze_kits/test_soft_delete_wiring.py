@@ -7,6 +7,7 @@ optional after-commit purge fires when a row is deleted.
 
 from __future__ import annotations
 
+import attrs
 import pytest
 
 from forze import build_runtime
@@ -14,6 +15,7 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, ReadDocument
+from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document import build_document_registry
 from forze_kits.aggregates.document.dto import (
     DocumentIdDTO,
@@ -61,6 +63,17 @@ NOTE_SPEC = DocumentSpec(
     write=DocumentWriteTypes(
         domain=Note, create_cmd=NoteCreate, update_cmd=NoteUpdate
     ),
+)
+
+
+class BareNoteRead(ReadDocument):
+    title: str = ""  # no is_deleted: a client could not tell a deleted row from a live one
+
+
+BARE_SPEC = DocumentSpec(
+    name="bare_notes",
+    read=BareNoteRead,
+    write=DocumentWriteTypes(domain=Note, create_cmd=NoteCreate, update_cmd=NoteUpdate),
 )
 
 
@@ -165,6 +178,26 @@ class TestReadSideExclusion:
             with pytest.raises(CoreException) as ei:
                 await run_operation(reg, _key(DocumentKernelOp.GET), DocumentIdDTO(id=gone.id), ctx)
             assert ei.value.kind is ExceptionKind.NOT_FOUND
+
+    def test_reading_deleted_rows_needs_the_flag_on_the_read_model(self) -> None:
+        with pytest.raises(CoreException, match="is_deleted") as ei:
+            soft_delete_wiring(BARE_SPEC, get_deleted="read")
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_reading_deleted_rows_needs_the_flag_stored(self) -> None:
+        # A lenient flag is hydrated from its default, so it would read False on a deleted row.
+        lenient = attrs.evolve(NOTE_SPEC, lenient_read_fields=frozenset({"is_deleted"}))
+
+        with pytest.raises(CoreException, match="is_deleted"):
+            soft_delete_wiring(lenient, get_deleted="read")
+
+    def test_hiding_deleted_rows_does_not_need_the_flag(self) -> None:
+        soft_delete_wiring(BARE_SPEC)
+
+    def test_the_kit_refuses_reading_unflagged_rows_when_built(self) -> None:
+        with pytest.raises(CoreException, match="is_deleted"):
+            AggregateKit(spec=BARE_SPEC, soft_delete=True, get_deleted="read")
 
     def test_an_unknown_get_deleted_is_refused(self) -> None:
         with pytest.raises(CoreException) as ei:
