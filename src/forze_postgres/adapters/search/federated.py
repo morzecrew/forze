@@ -46,6 +46,7 @@ from forze.application.integrations.search import (
     build_federated_highlight_index,
     execute_federated_thin_offset,
     federated_highlights_for_hits,
+    federated_member_sorts,
     federated_snapshot_rehydrator,
     federated_thin_eligible,
     federated_thin_format,
@@ -271,17 +272,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         )
 
         extras: dict[str, object] = {"thin": True} if effective_thin else {}
-        # A member orders equal ranks by its own default sort, which moves a hit's fused rank,
-        # so a snapshot must not outlive a change to one.
-        member_sorts = {
-            member.name: dict(member.default_sort)
-            for member in self.federated_spec.members
-            if member.default_sort
-        }
-
-        if member_sorts:
-            extras["member_sorts"] = member_sorts
-
+        extras |= federated_member_sorts(self.federated_spec.members)
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,

@@ -127,6 +127,34 @@ def _sha256_fingerprint_payload(payload: dict[str, object]) -> str:
 # ....................... #
 
 
+def ordered_sorts(sorts: Mapping[str, Any] | None) -> list[list[Any]] | None:
+    """A sort map as ordered ``[field, value]`` pairs, for a snapshot key.
+
+    The key is hashed with its mapping keys sorted, so a map would make ``a, b`` and
+    ``b, a`` one key while they are two orders.
+    """
+
+    return [[field, value] for field, value in sorts.items()] if sorts is not None else None
+
+
+# ....................... #
+
+
+def federated_member_sorts(members: Iterable[Any]) -> dict[str, object]:
+    """Snapshot-key extras for a federated search: each member's own ``default_sort``.
+
+    A member orders hits of equal rank by its default sort, which moves a hit's fused rank,
+    so a snapshot must not outlive a change to one. Empty when no member declares one.
+    """
+
+    sorts = {m.name: ordered_sorts(m.default_sort) for m in members if m.default_sort}
+
+    return {"member_sorts": sorts} if sorts else {}
+
+
+# ....................... #
+
+
 def _snapshot_write_policy(
     result_snapshot: SearchResultSnapshotOptions | None,
     rs_spec: SearchResultSnapshotSpec | None,
@@ -356,7 +384,7 @@ class SearchResultSnapshot:
             "spec": spec_name,
             "query": qpart,
             "filters": filters,
-            "sorts": dict(sorts) if sorts is not None else None,
+            "sorts": ordered_sorts(sorts),
             "extras": dict(extras) if extras else None,
         }
 
@@ -390,7 +418,7 @@ class SearchResultSnapshot:
             "hub": spec_name,
             "query": qpart,
             "filters": filters,
-            "sorts": dict(sorts) if sorts is not None else None,
+            "sorts": ordered_sorts(sorts),
             "members": members_weighted,
             "score_merge": score_merge,
             "combine": combine,
@@ -430,7 +458,7 @@ class SearchResultSnapshot:
             "federated": spec_name,
             "query": qpart,
             "filters": filters,
-            "sorts": dict(sorts) if sorts is not None else None,
+            "sorts": ordered_sorts(sorts),
         }
 
         if rrf_k is not None:

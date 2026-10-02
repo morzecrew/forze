@@ -1,6 +1,7 @@
 """Tests for :class:`~forze.application.integrations.search.SearchResultSnapshot`."""
 
 from datetime import timedelta
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -461,3 +462,47 @@ def test_hydrate_federated_record_key_errors() -> None:
             'unknown\0{"id":1,"t":""}',
             _fed(),
         )
+
+
+# ....................... #
+
+
+class TestTheKeyFollowsTheSortOrder:
+    """Two sorts over the same keys in a different order are different orders."""
+
+    _FIRST: ClassVar[dict[str, str]] = {"a": "asc", "b": "desc"}
+    _SECOND: ClassVar[dict[str, str]] = {"b": "desc", "a": "asc"}
+
+    def test_simple(self) -> None:
+        keys = {
+            SearchResultSnapshot.simple_search_fingerprint(
+                "q", None, sorts, spec_name="s", variant="fts"
+            )
+            for sorts in (self._FIRST, self._SECOND)
+        }
+
+        assert len(keys) == 2
+
+    def test_hub(self) -> None:
+        keys = {
+            SearchResultSnapshot.hub_search_fingerprint(
+                "q",
+                None,
+                sorts,
+                spec_name="h",
+                members_weighted=[],
+                score_merge="max",
+                combine="or",
+            )
+            for sorts in (self._FIRST, self._SECOND)
+        }
+
+        assert len(keys) == 2
+
+    def test_federated(self) -> None:
+        keys = {
+            SearchResultSnapshot.federated_fingerprint("q", None, sorts, spec_name="f")
+            for sorts in (self._FIRST, self._SECOND)
+        }
+
+        assert len(keys) == 2
