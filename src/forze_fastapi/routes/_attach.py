@@ -892,7 +892,13 @@ def attach_operation_routes(
 
         if entry is None:
             if include is not None or not skip_unregistered:
-                raise exc.configuration(f"Operation '{op}' is not registered")
+                hint = (
+                    f"; '{suffix}' is registered outside the namespace, and only keys "
+                    f"under '{ns.prefix}' are routed"
+                    if suffix in catalog
+                    else ""
+                )
+                raise exc.configuration(f"Operation '{op}' is not registered{hint}")
             continue
 
         descriptor = entry.descriptor
