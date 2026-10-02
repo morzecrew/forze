@@ -40,7 +40,14 @@ _SORTS = {
 }
 
 
-async def _port(client: PostgresClient, *, read: str, plan: str) -> Any:
+async def _port(
+    client: PostgresClient,
+    *,
+    read: str,
+    plan: str,
+    index_field_map: dict[str, str] | None = None,
+    model: type[BaseModel] = _Row,
+) -> Any:
     heap = f"plans_{uuid4().hex[:8]}"
     await client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga")
     await client.execute(
@@ -56,9 +63,7 @@ async def _port(client: PostgresClient, *, read: str, plan: str) -> Any:
     # Apart from the heap, ``twice`` is the projection's own: computed, or copied apart.
     if read == "view":
         projection = f"{heap}_v"
-        await client.execute(
-            f"CREATE VIEW {projection} AS SELECT id, title, twice FROM {heap}"
-        )
+        await client.execute(f"CREATE VIEW {projection} AS SELECT id, title, twice FROM {heap}")
 
     elif read == "second table":
         projection = f"{heap}_t"
@@ -76,13 +81,14 @@ async def _port(client: PostgresClient, *, read: str, plan: str) -> Any:
                         heap=("public", heap),
                         engine=PgroongaEngine(plan=plan),  # type: ignore[arg-type]
                         candidate_limit=1,
+                        field_map=index_field_map,
                     )
                 ),
             }
         )
     )
 
-    return ctx.search.query(SearchSpec(name="rows", model_type=_Row, fields=["title"]))
+    return ctx.search.query(SearchSpec(name="rows", model_type=model, fields=["title"]))
 
 
 @pytest.mark.parametrize("read", ["base table", "view", "second table"])
@@ -98,3 +104,32 @@ async def test_a_capped_page_is_the_cursors(
 
     assert len(offset.hits) == 5
     assert [hit.id for hit in offset.hits] == [hit.id for hit in cursor.hits]
+
+
+async def test_a_mapped_index_field_sort_keeps_index_first_on_a_view(
+    pg_client: PostgresClient,
+) -> None:
+    # The heap carries a field the index maps, so index-first orders its cap by the heap's own
+    # column, in the page's null placement, instead of giving way to filter-first.
+    port = await _port(
+        pg_client, read="view", plan="index_first", index_field_map={"title": "title"}
+    )
+
+    offset = await port.search("python", None, {"limit": 5}, {"title": "asc"})
+    cursor = await port.search_cursor("python", None, {"limit": 5}, {"title": "asc"})
+
+    assert len(offset.hits) == 5
+    assert [hit.id for hit in offset.hits] == [hit.id for hit in cursor.hits]
+
+
+class _NoId(BaseModel):
+    title: str
+
+
+async def test_a_capped_page_of_a_model_without_an_id(pg_client: PostgresClient) -> None:
+    # Nothing to order by after the rank but the join keys, which close the cap's order.
+    port = await _port(pg_client, read="base table", plan="filter_first", model=_NoId)
+
+    page = await port.search("python", None, {"limit": 5})
+
+    assert len(page.hits) == 5

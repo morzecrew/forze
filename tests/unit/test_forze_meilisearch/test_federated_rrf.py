@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -383,8 +382,13 @@ async def test_a_member_default_sort_is_part_of_the_snapshot_key(merge: str) -> 
 
     seen: list[str] = []
 
+    class _KeyRead(Exception):
+        """Raised by the store once the key is read: the search goes no further."""
+
     async def get_id_range(*_: object, expected_fingerprint: str) -> None:
         seen.append(expected_fingerprint)
+
+        raise _KeyRead
 
     store = MagicMock()
     store.get_id_range = AsyncMock(side_effect=get_id_range)
@@ -406,8 +410,8 @@ async def test_a_member_default_sort_is_part_of_the_snapshot_key(merge: str) -> 
             result_snapshot=SearchResultSnapshot(store=store),
         )
 
-        # The key is read before the legs run; a native leg has no client to answer it.
-        with contextlib.suppress(Exception):
+        # The key is read before the legs run, so the store stops the search right there.
+        with pytest.raises(_KeyRead):
             await adapter.search_page("q", snapshot={"id": "run-1"})
 
     assert len(seen) == 2 and seen[0] != seen[1]

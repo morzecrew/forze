@@ -73,10 +73,12 @@ async def test_a_custom_primary_key_is_what_the_id_sorts_by(meilisearch_client: 
     assert [hit.id for hit in by_id.hits] == sorted(hit.id for hit in by_id.hits)
 
 
-async def test_an_index_the_previous_ensure_index_provisioned_still_sorts(
+async def test_an_index_sortable_by_the_primary_key_not_the_id_attribute_still_sorts(
     meilisearch_client: Any,
 ) -> None:
-    # It declared the primary key sortable, not the ``id`` attribute a document also carries.
+    # An index that declares the primary key sortable, as ensure_index always has, but not the
+    # ``id`` attribute a document also carries: the id sorts by the key. An index provisioned
+    # before the spec set its default sort is the reprovision test below.
     config = MeilisearchSearchConfig(index_uid=f"sw_{uuid4().hex[:10]}", primary_key="doc_id")
     ctx = _ctx(meilisearch_client, config)
     spec = SearchSpec(name="rows", model_type=_Row, fields=["title"], default_sort={"rank": "desc"})
