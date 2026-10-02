@@ -70,6 +70,11 @@ HIERARCHY_OPS: Final[frozenset[str]] = frozenset({"$descendant_of", "$ancestor_o
 """Hierarchy operators — gated by :attr:`QueryCapabilities.supports_hierarchy`, not
 ``value_ops``, so adding them doesn't make every backend claim support."""
 
+_LIST_OPERAND_OPS: Final[frozenset[str]] = frozenset(
+    {"$in", "$nin", "$superset", "$subset", "$overlaps", "$disjoint"}
+)
+"""Operators whose operand is a list of values, bounded by :attr:`QueryCapabilities.max_in_size`."""
+
 
 # ....................... #
 
@@ -107,6 +112,12 @@ class QueryCapabilities:
     materialized-path field) compile. Off by default — only backends that can express
     label-aware path containment (Postgres ``ltree`` / text prefix, the in-memory oracle)
     advertise it; others reject these operators cleanly."""
+
+    max_in_size: int | None = None
+    """Most values a membership or set operand can carry on this backend, whatever a spec's
+    :class:`~forze.application.contracts.querying.QueryFilterLimits` allows. ``None`` when the
+    backend has no cap of its own (an array parameter, for one). A longer operand is refused
+    here rather than sent to a server that would refuse it."""
 
     supports_aggregates: bool = True
     """Whether group-by / aggregate pipelines (``find_many_aggregates`` / ``count_aggregates``)
@@ -193,7 +204,7 @@ def _walk_caps(
     # ``allowed`` (value_ops or element_ops for the current level) is threaded down so the
     # hot per-field check is one membership test with no re-derivation.
     match node:
-        case QueryField(_, op, _):
+        case QueryField(_, op, value):
             if op not in allowed:
                 # Hierarchy ops live on their own capability axis, not in value_ops, so
                 # they only reach this slow branch when not already allowed.
@@ -207,6 +218,14 @@ def _walk_caps(
                 else:
                     where = " inside element quantifiers" if in_element else ""
                     _cap_fail(backend, f"operator {op!r}{where}")
+
+            if (
+                caps.max_in_size is not None
+                and op in _LIST_OPERAND_OPS
+                and isinstance(value, list | tuple)
+                and len(value) > caps.max_in_size  # pyright: ignore[reportUnknownArgumentType]
+            ):
+                _cap_fail(backend, f"operator {op!r} with more than {caps.max_in_size} values")
 
         case QueryAnd(items) | QueryOr(items):
             for item in items:

@@ -9,6 +9,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
 )
+from forze.application.contracts.querying import QueryFilterLimits
 from forze.application.contracts.search import FacetBucket, SearchSpec
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import BaseDTO, CreateDocumentCmd, ReadDocument
@@ -234,3 +235,29 @@ async def test_filter_only_browse_has_no_scores() -> None:
     page = await search.search_page("", pagination={"limit": 10})
 
     assert page.scores is None
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_search_parses_its_filter_under_the_spec_limits() -> None:
+    state = MockState()
+    await _seed(state)
+    filters = {"$values": {"category": {"$in": ["books", *(f"c{i}" for i in range(1_500))]}}}
+    raised = MockSearchAdapter(
+        state=state,
+        spec=SearchSpec(
+            name="products",
+            model_type=_ProductSearch,
+            fields=["title"],
+            filter_limits=QueryFilterLimits(max_in_size=2_000),
+        ),
+    )
+
+    page = await raised.search_page("book", filters=filters)
+
+    assert page.count == 2
+
+    with pytest.raises(CoreException, match="1000"):
+        await _search_adapter(state).search_page("book", filters=filters)

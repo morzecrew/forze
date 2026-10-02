@@ -154,6 +154,26 @@ class TestRejections:
             _check(expr, caps)
 
 
+class TestListOperandCap:
+    """A backend's own cap on an operand list, whatever the parser's limits allow."""
+
+    _CAPS = QueryCapabilities(max_in_size=3)
+
+    @pytest.mark.parametrize("op", ["$in", "$nin", "$superset", "$subset", "$overlaps", "$disjoint"])
+    def test_a_list_past_the_cap_is_refused(self, op: str) -> None:
+        with pytest.raises(CoreException) as ei:
+            _check({"$values": {"tags": {op: ["a", "b", "c", "d"]}}}, self._CAPS)
+
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+        assert "more than 3 values" in str(ei.value)
+
+    def test_a_list_at_the_cap_passes(self) -> None:
+        _check({"$values": {"tags": {"$in": ["a", "b", "c"]}}}, self._CAPS)
+
+    def test_no_cap_by_default(self) -> None:
+        _check({"$values": {"tags": {"$in": [str(i) for i in range(1_000)]}}}, QueryCapabilities())
+
+
 class TestAggregateCapabilities:
     """The aggregate axis is gated by its own validator, independent of the filter AST."""
 

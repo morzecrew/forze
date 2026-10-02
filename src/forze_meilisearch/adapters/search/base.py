@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     QueryFilterExpression,
     QueryFilterExpressionParser,
-    QueryFilterLimits,
 )
 from forze.application.contracts.resolution import (
     is_static_named_resource,
@@ -359,11 +358,6 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     # ....................... #
 
-    filter_parser: QueryFilterExpressionParser = attrs.field(
-        factory=lambda: QueryFilterExpressionParser(limits=QueryFilterLimits()),
-        init=False,
-    )
-
     _index_uid_cell: OnceCell[str] = attrs.field(
         factory=OnceCell,
         init=False,
@@ -440,7 +434,17 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
 
     @property
     def filter_renderer(self) -> MeilisearchFilterRenderer:
-        return MeilisearchFilterRenderer(field_map=self.field_map, read_model=self.spec.model_type)
+        limits = self.spec.filter_limits
+
+        return MeilisearchFilterRenderer(
+            field_map=self.field_map,
+            read_model=self.spec.model_type,
+            parser=(
+                QueryFilterExpressionParser(limits=limits)
+                if limits is not None
+                else QueryFilterExpressionParser()
+            ),
+        )
 
     # ....................... #
 

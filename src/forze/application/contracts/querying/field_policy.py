@@ -31,7 +31,7 @@ from .internal.nodes import (
     QueryNot,
     QueryOr,
 )
-from .internal.parse import FIELDS_MIGRATION, QueryFilterExpressionParser
+from .internal.parse import FIELDS_MIGRATION, QueryFilterExpressionParser, QueryFilterLimits
 
 # ----------------------- #
 
@@ -42,20 +42,29 @@ def _root(path: str) -> str:
     return path.split(".", 1)[0]
 
 
-def collect_filter_field_roots(expr: QueryFilterExpression) -> frozenset[str]:  # type: ignore[valid-type]
+def collect_filter_field_roots(
+    expr: QueryFilterExpression,  # type: ignore[valid-type]
+    *,
+    parser: QueryFilterExpressionParser | None = None,
+) -> frozenset[str]:
     """Top-level field names referenced by a filter expression.
 
     Parses *expr* (which also structurally validates it) and walks the AST collecting the
     root segment of every referenced field path. Element-quantifier inner predicates are
     *not* descended into — their references are relative to the array element, so only the
     array field path itself (the quantifier's ``path``) is a top-level reference.
+
+    :param parser: Parser to validate with; the default limits when omitted. Pass the one
+        the filter will run under, so a spec's raised limits are not refused here first.
     """
 
-    return _field_roots(expr)[0]
+    return _field_roots(expr, parser=parser)[0]
 
 
 def _field_roots(
     expr: QueryFilterExpression,  # type: ignore[valid-type]
+    *,
+    parser: QueryFilterExpressionParser | None = None,
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Every referenced root, and the ones that are the right-hand side of a field compare."""
 
@@ -86,7 +95,9 @@ def _field_roots(
             case _:
                 pass
 
-    _walk(QueryFilterExpressionParser.parse(expr))
+    _walk(
+        parser.parse_filter(expr) if parser is not None else QueryFilterExpressionParser.parse(expr)
+    )
 
     return frozenset(roots), frozenset(compared)
 
@@ -99,13 +110,14 @@ def validate_filterable_fields(
     *,
     allowed: frozenset[str],
     spec_name: str,
+    parser: QueryFilterExpressionParser | None = None,
 ) -> None:
     """Raise when *filters* reference a field outside the *allowed* set."""
 
     if filters is None:
         return
 
-    forbidden = collect_filter_field_roots(filters) - allowed
+    forbidden = collect_filter_field_roots(filters, parser=parser) - allowed
 
     if forbidden:
         raise exc.precondition(
@@ -121,6 +133,7 @@ def validate_runtime_filter_fields(
     materialized: frozenset[str] = frozenset(),
     lenient: frozenset[str] = frozenset(),
     encrypted: frozenset[str] = frozenset(),
+    parser: QueryFilterExpressionParser | None = None,
 ) -> None:
     """Raise when a runtime filter references a top-level field absent from *model*.
 
@@ -146,13 +159,16 @@ def validate_runtime_filter_fields(
     in production cannot pass against a mock either. Deterministic
     (``searchable``) fields are *not* included: equality on them is rewritten to
     match the value at rest, and remains supported.
+
+    *parser* is the one the filter will run under (a spec's :class:`QueryFilterLimits`);
+    the default limits apply when it is omitted.
     """
 
     if filters is None:
         return
 
     fields = (frozenset(model.model_fields) | materialized) - lenient
-    roots, compared = _field_roots(filters)
+    roots, compared = _field_roots(filters, parser=parser)
     unknown = sorted(root for root in roots if root not in fields)
 
     if unknown:
@@ -312,6 +328,8 @@ class QueryFieldGuard:
 
     policy: QueryFieldPolicy
     spec_name: str
+    filter_limits: QueryFilterLimits | None = None
+    """The spec's filter limits, so the guard parses a filter under the bounds its port will."""
 
     # ....................... #
 
@@ -331,8 +349,13 @@ class QueryFieldGuard:
         """
 
         if self.policy.filterable is not None:
+            parser = (
+                QueryFilterExpressionParser(limits=self.filter_limits)
+                if self.filter_limits is not None
+                else None
+            )
             validate_filterable_fields(
-                filters, allowed=self.policy.filterable, spec_name=self.spec_name
+                filters, allowed=self.policy.filterable, spec_name=self.spec_name, parser=parser
             )
 
             if aggregates is not None:
@@ -341,6 +364,7 @@ class QueryFieldGuard:
                         metric_filter,
                         allowed=self.policy.filterable,
                         spec_name=self.spec_name,
+                        parser=parser,
                     )
 
         if self.policy.sortable is not None:

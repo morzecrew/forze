@@ -15,14 +15,15 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.application.contracts.querying import (
     FULL_QUERY_CAPABILITIES,
     QueryCapabilities,
-    QueryFilterExpressionParser,
     validate_query_capabilities,
 )
 from forze_mock.adapters import MockDocumentAdapter, MockState
 from tests.support.query_dsl_corpus import (
+    CORPUS_FILTER_LIMITS,
     CorpusCreate,
     CorpusDoc,
     CorpusRead,
+    parse_corpus_filter,
     run_parity_cases,
 )
 
@@ -37,6 +38,7 @@ def _doc() -> MockDocumentAdapter[CorpusRead, CorpusDoc, CorpusCreate, Any]:
             domain=CorpusDoc,
             create_cmd=CorpusCreate,
         ),
+        filter_limits=CORPUS_FILTER_LIMITS,
     )
 
     return MockDocumentAdapter(
@@ -70,7 +72,7 @@ class _RestrictedDoc:
 
     async def find_many(self, *, filters: Any, pagination: Any) -> Any:
         validate_query_capabilities(
-            QueryFilterExpressionParser.parse(filters), self._caps, backend="restricted"
+            parse_corpus_filter(filters), self._caps, backend="restricted"
         )
 
         return await self._inner.find_many(filters=filters, pagination=pagination)

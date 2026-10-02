@@ -30,6 +30,7 @@ from ..guarantees import (
 )
 from ..querying import (
     QueryFieldPolicy,
+    QueryFilterLimits,
     QuerySortExpression,
     collect_filter_field_roots,
 )
@@ -203,6 +204,14 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     """Optional allow-sets restricting which fields a governed caller may filter / sort by.
     ``None`` (default) allows every read-model field. Drives discovery and (when enforced)
     boundary validation."""
+
+    filter_limits: QueryFilterLimits | None = None
+    """Bounds on the filters this document's queries accept; ``None`` keeps the parser's defaults.
+
+    Every backend serving the spec parses filters under these limits, the mock included, and
+    so does a generated route or tool that passes a caller's filter through. Raise
+    ``max_in_size`` for internal reads that match against long id lists; a backend with a lower
+    hard cap of its own (Firestore's ``in``) still refuses past it."""
 
     query_params: type[BaseModel] | None = None
     """Optional **query-parameter contract** — a Pydantic model whose fields are typed values a

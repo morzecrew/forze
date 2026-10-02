@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An allowed origin can be a dev server's port range.** `CookieCsrf` and the realtime WebSocket's `allowed_origins` accept `http://localhost:5173-5199` or `http://localhost:*` on a loopback host. The WebSocket route now refuses an entry that is not an origin (`null`, `*`) when attached.
 - **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
 
+- **A spec can raise the limits its filters are parsed under.** `DocumentSpec(filter_limits=...)` and `SearchSpec(filter_limits=...)` take a `QueryFilterLimits`, so an internal read can match more than 1,000 ids. Every backend and the mock honour it, as do generated routes passing a caller's filter through.
+
 ### Changed
 
 - ...
@@ -29,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Authorization and tenant membership read every binding on Firestore.** The grant resolver and tenancy management paged bindings by offset, which Firestore refuses past the first page, so a principal with more bindings than one page holds, or a tenant with more members, failed. They read by cursor now.
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
+
+- **Firestore refuses an `$in` past 30 values before sending it.** The server rejected it with a validation error; it is now a clean `query_feature_unsupported` naming the cap, whatever the spec's filter limits allow.
 
 ### Security
 

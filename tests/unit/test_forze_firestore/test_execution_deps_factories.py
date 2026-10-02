@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.querying import QueryFilterLimits
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
@@ -133,3 +134,20 @@ class TestFirestoreTxManager:
         client = MagicMock()
         port = firestore_txmanager(_ctx(client))
         assert port.client is client
+
+
+def test_spec_filter_limits_reach_every_document_gateway() -> None:
+    limits = QueryFilterLimits(max_in_size=5_000)
+    spec = DocumentSpec(
+        name="docs",
+        read=_Read,
+        write={"domain": _Domain, "create_cmd": _Create, "update_cmd": _Update},
+        filter_limits=limits,
+    )
+    adapter = ConfigurableFirestoreDocument(
+        config=FirestoreDocumentConfig(read=("(default)", "r"), write=("(default)", "w")),
+    )(_ctx(), spec)
+
+    assert adapter.write_gw is not None
+    gateways = (adapter.read_gw, adapter.write_gw, adapter.write_gw.read_gw)
+    assert {gw.filter_parser.limits for gw in gateways} == {limits}

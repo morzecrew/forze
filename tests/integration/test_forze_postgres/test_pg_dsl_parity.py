@@ -22,6 +22,7 @@ from forze_postgres.kernel.client.client import PostgresClient
 from forze_postgres.kernel.sql.query.render import POSTGRES_QUERY_CAPABILITIES
 from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.query_dsl_corpus import (
+    CORPUS_FILTER_LIMITS,
     CombinedDocPort,
     CorpusCreate,
     CorpusDoc,
@@ -58,6 +59,7 @@ async def test_dsl_parity_postgres(pg_client: PostgresClient) -> None:
         name="dsl_corpus_ns",
         read=CorpusRead,
         write=DocumentWriteTypes(domain=CorpusDoc, create_cmd=CorpusCreate),
+        filter_limits=CORPUS_FILTER_LIMITS,
     )
     ctx = document_context(pg_client, t)
     doc = CombinedDocPort(

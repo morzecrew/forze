@@ -26,6 +26,7 @@ from forze.application.contracts.querying import (
     UNSUPPORTED_QUERY_FEATURE_CODE,
     QueryCapabilities,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     validate_query_capabilities,
 )
 from forze.base.exceptions import CoreException
@@ -96,6 +97,30 @@ SEED: dict[str, CorpusCreate] = {
 # ....................... #
 
 
+CORPUS_FILTER_LIMITS = QueryFilterLimits(max_in_size=2_000)
+"""Filter limits every corpus spec declares (``DocumentSpec(filter_limits=...)``).
+
+Raised past the 1,000-value default so the long-membership case proves a spec's limits reach
+the backend that parses the filter, not only the parser's defaults."""
+
+_CORPUS_PARSER = QueryFilterExpressionParser(limits=CORPUS_FILTER_LIMITS)
+
+
+def parse_corpus_filter(filters: Any) -> Any:
+    """Parse *filters* under :data:`CORPUS_FILTER_LIMITS`, as a corpus spec's backend does."""
+
+    return _CORPUS_PARSER.parse_filter(filters)
+
+
+def _names_padded_to(count: int) -> list[str]:
+    """``alice`` and ``bob``, then names no seeded row carries, *count* values in all."""
+
+    return ["alice", "bob", *(f"absent-{i}" for i in range(count - 2))]
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class QueryCase:
     """One filter and the row keys it must match (the oracle)."""
@@ -111,6 +136,13 @@ CASES: tuple[QueryCase, ...] = (
     QueryCase(name="ord_gt", filters={"$values": {"age": {"$gt": 28}}},
               expected=frozenset({"alice", "carol", "dave"})),
     QueryCase(name="membership_in", filters={"$values": {"name": {"$in": ["alice", "bob"]}}},
+              expected=frozenset({"alice", "bob"})),
+    # Past Firestore's 30-value `in`: a backend that cannot send it must refuse it up front.
+    QueryCase(name="membership_in_31", filters={"$values": {"name": {"$in": _names_padded_to(31)}}},
+              expected=frozenset({"alice", "bob"})),
+    # Past the parser's 1,000-value default, within the corpus spec's own limit.
+    QueryCase(name="membership_in_past_default_limit",
+              filters={"$values": {"name": {"$in": _names_padded_to(1_500)}}},
               expected=frozenset({"alice", "bob"})),
     QueryCase(name="null_true", filters={"$values": {"score": {"$null": True}}},
               expected=frozenset({"bob"})),
@@ -269,9 +301,7 @@ def case_supported_by(filters: dict[str, Any], caps: QueryCapabilities) -> bool:
     """
 
     try:
-        validate_query_capabilities(
-            QueryFilterExpressionParser.parse(cast(Any, filters)), caps, backend="probe"
-        )
+        validate_query_capabilities(parse_corpus_filter(cast(Any, filters)), caps, backend="probe")
         return True
 
     except CoreException as error:

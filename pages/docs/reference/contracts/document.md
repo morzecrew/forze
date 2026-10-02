@@ -40,6 +40,7 @@ plus per-aggregate policy:
 | `write_omit_fields` | `frozenset[str]` | `∅` | domain fields with **no** column: **silently stripped** from every write and hydrated from the domain default on read-back (the write-side of `lenient_read_fields`; explicit-only, requires `write`) |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort applied when a caller omits `sorts` (required if the read model has no `id`) |
 | `query_policy` | `QueryFieldPolicy \| None` | `None` | allow-sets restricting which fields a governed caller may filter / sort / aggregate |
+| `filter_limits` | `QueryFilterLimits \| None` | `None` | bounds on the filters the document's queries accept, on every backend and on generated routes; `None` keeps the defaults (see [Limits](../query-syntax.md#limits)) |
 | `query_params` | `type[BaseModel] \| None` | `None` | typed [query-parameter](../../data-events/query-parameters.md) contract, bound via `with_parameters` |
 | `encryption` | `FieldEncryption \| None` | `None` | field-level [encryption](../../identity-tenancy-enc/encryption.md) policy (share the same object with the table's `SearchSpec`) |
 | `cache` | `CacheSpec \| None` | `None` | read-through [cache](../../data-events/caching.md) for `get` |

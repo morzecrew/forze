@@ -111,6 +111,7 @@ class ConfigurableFirestoreReadOnlyDocument(DocumentQueryDepPort[R]):
 
         read = read_gw(
             ctx,
+            filter_limits=spec.filter_limits,
             read_type=spec.read,
             read_relation=self.config.read,
             tenant_aware=self.config.tenant_aware,
@@ -185,6 +186,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
 
         read = read_gw(
             ctx,
+            filter_limits=spec.filter_limits,
             read_type=spec.read,
             read_relation=config.read,
             tenant_aware=tenant_aware,
@@ -208,6 +210,7 @@ class ConfigurableFirestoreDocument(DocumentCommandDepPort[R, D, C, U]):
 
         write = doc_write_gw(
             ctx,
+            filter_limits=spec.filter_limits,
             write_types=spec.write,
             codecs=codecs,
             write_relation=config.write,

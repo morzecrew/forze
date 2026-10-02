@@ -455,6 +455,8 @@ def evaluate_filter(row: JsonDict, filters: QueryFilterExpression | None) -> boo
 
 def compile_filter(
     filters: QueryFilterExpression | None,
+    *,
+    parser: QueryFilterExpressionParser | None = None,
 ) -> Callable[[JsonDict], bool]:
     """Parse *filters* **once** into a reusable ``row -> bool`` predicate (``None`` ⇒ match-all).
 
@@ -462,12 +464,17 @@ def compile_filter(
     per call — for a caller that tests one filter against many rows (the DST predicate oracle matching
     a scan's filter against every concurrent write), this avoids re-parsing the expression each time.
     May raise at parse time on a malformed filter; the returned matcher itself does not parse.
+    *parser* carries a spec's filter limits; the default limits apply when it is omitted.
     """
 
     if filters is None:
         return lambda _row: True
 
-    expr = QueryFilterExpressionParser.parse(filters)
+    expr = (
+        parser.parse_filter(filters)
+        if parser is not None
+        else QueryFilterExpressionParser.parse(filters)
+    )
     return lambda row: _match_expr(row, expr)
 
 

@@ -260,7 +260,11 @@ page = await ctx.search.query(project_search_spec).search(
 ## Limits
 
 Filters are validated at parse time, before any query reaches the database.
-Defaults (override per gateway via `filter_limits`):
+The defaults below apply unless a `DocumentSpec` or `SearchSpec` sets
+`filter_limits=QueryFilterLimits(...)`. Every backend serving the spec uses those
+limits, the mock included, and so does a generated route or tool that passes a
+caller's filter through. Raising `max_in_size` for internal reads that match long
+id lists raises it for those callers too.
 
 | Limit | Default | Applies to |
 |-------|---------|------------|
@@ -273,6 +277,10 @@ Defaults (override per gateway via `filter_limits`):
 A violation — or an empty operator map, an unknown operator, a type mismatch, or a
 regex with unsafe nesting/repetition — raises a `precondition` `CoreException`
 (HTTP 400; the caller supplied a bad query) before the query runs.
+
+A backend can cap an operand list lower than any spec's limits. Firestore's `$in`
+takes at most 30 values; a longer one is refused with `query_feature_unsupported`
+before the query is sent.
 
 ## Backend notes
 

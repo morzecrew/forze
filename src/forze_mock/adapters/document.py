@@ -42,6 +42,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QuerySortExpression,
     assert_cursor_projection_includes_sort_keys,
     build_cursor_binding,
@@ -133,6 +134,16 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     query_params_source: MockQueryParamsSource | None = None
     derived_marked: frozenset[str] = attrs.field(factory=frozenset)
     """Derived fields declared with no join: their value comes from the stored row."""
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(
+            lambda self: QueryFilterExpressionParser(
+                limits=self.spec.filter_limits or QueryFilterLimits()
+            ),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Parses filters under the spec's limits, as the real gateways do."""
 
     derived: Mapping[str, ResolvedDerivedRead] = attrs.field(factory=dict[str, ResolvedDerivedRead])
     """Derived read fields with their sources located at wiring time.
@@ -409,6 +420,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 materialized=self.spec.materialized,
                 lenient=self._unqueryable(),
                 encrypted=(self.spec.encryption.encrypted if self.spec.encryption else frozenset()),
+                parser=self.filter_parser,
             )
 
     # ....................... #
@@ -541,7 +553,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if filters is None:
             return lambda _doc: True
 
-        expr = QueryFilterExpressionParser.parse(filters)
+        expr = self.filter_parser.parse_filter(filters)
         # The same string-operand cast the real backends get from the shared gateway
         # seam — without it the in-memory comparison would TypeError a string bound
         # against a stored Decimal/datetime into a silent no-match.
@@ -704,8 +716,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # cannot match its ciphertext. Passing the declaration keeps the *policy* identical on
             # both, so a query that fails in production fails in the test suite too.
             encrypted=self.spec.encryption.encrypted if self.spec.encryption else frozenset(),
+            parser=self.filter_parser,
         )
-        expr = QueryFilterExpressionParser.parse(filters)
+        expr = self.filter_parser.parse_filter(filters)
         validate_query_field_types(expr, self.read_model)
 
     # ....................... #
@@ -975,6 +988,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 sealed=self._sealed_fields(),
             )
             total = len(filtered)
+
             page_docs = _page_window(_sort_docs(filtered, sorts))
             if return_type is not None:
                 dict_rows: list[dict[str, Any]] = []
@@ -1434,7 +1448,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 # only. Using a spec name here would diverge from the backends the mock models.
                 spec_name=None,
                 tenant_id=self.require_tenant_if_aware(),
-                filter_expr=(QueryFilterExpressionParser.parse(filters) if filters else None),
+                filter_expr=(self.filter_parser.parse_filter(filters) if filters else None),
             )
             if cursor_protection_active()
             else None
