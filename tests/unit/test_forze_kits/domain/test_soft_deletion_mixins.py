@@ -164,6 +164,17 @@ class TestCompanionFields:
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
+    @pytest.mark.parametrize("declared", [None, 3, [1]], ids=["none", "int", "non-str-name"])
+    def test_a_declaration_that_is_not_a_set_of_names_is_refused(self, declared: object) -> None:
+        with pytest.raises(CoreException, match="field names") as ei:
+            type(
+                "Odd",
+                (DocWithSoftDeletion,),
+                {"soft_delete_companions": declared, "__module__": __name__},
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
     def test_a_bare_string_is_refused(self) -> None:
         with pytest.raises(CoreException, match="field names") as ei:
 

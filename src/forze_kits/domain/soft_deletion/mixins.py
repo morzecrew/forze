@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import Any, ClassVar, Self
 
 from forze.base.exceptions import exc
@@ -42,14 +43,17 @@ class SoftDeletionMixin(CoreModel):
             )
 
         declared: Any = cls.soft_delete_companions
+        names = (
+            None if isinstance(declared, str) or not isinstance(declared, Iterable) else [*declared]
+        )
 
-        if isinstance(declared, str):
+        if names is None or not all(isinstance(name, str) for name in names):
             raise exc.configuration(
                 f"{cls.__qualname__}.soft_delete_companions must be a set of field names, "
-                f"not the string {declared!r}.",
+                f"not {declared!r}.",
             )
 
-        cls.soft_delete_companions = frozenset(declared)
+        cls.soft_delete_companions = frozenset(names)
 
         if unknown := cls.soft_delete_companions - set(cls.model_fields):
             raise exc.configuration(
