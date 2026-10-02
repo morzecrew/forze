@@ -12,6 +12,7 @@ from forze.application.contracts.document import (
     DocumentSpec,
 )
 from forze.application.execution import Deps, ExecutionContext
+from forze.base.exceptions import CoreException
 from forze.domain.models import CreateDocumentCmd, ReadDocument
 from forze_kits.domain.soft_deletion.models import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze_postgres.execution.deps import ConfigurablePostgresDocument
@@ -147,3 +148,39 @@ async def test_soft_delete_many_via_sequential_updates(pg_client: PostgresClient
     ra = await cmd.update(a.id, da.rev, SoftUpdate(is_deleted=False))
     rb = await cmd.update(b.id, db.rev, SoftUpdate(is_deleted=False))
     assert not ra.is_deleted and not rb.is_deleted
+
+
+@pytest.mark.asyncio
+async def test_a_spec_without_hard_delete_keeps_its_rows(pg_client: PostgresClient) -> None:
+    t = f"soft_kept_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            is_deleted boolean NOT NULL DEFAULT false
+        );
+        """
+    )
+
+    ctx = _ctx(pg_client, t)
+    spec = DocumentSpec(
+        name="soft_kept_ns",
+        read=SoftRead,
+        write={"domain": SoftDoc, "create_cmd": SoftCreate, "update_cmd": SoftUpdate},
+        hard_delete=False,
+    )
+    cmd = ctx.document.command(spec)
+    doc = await cmd.create(SoftCreate(name="kept"))
+
+    for erase in (lambda: cmd.kill(doc.id), lambda: cmd.kill_many([doc.id])):
+        with pytest.raises(CoreException) as ei:
+            await erase()
+
+        assert ei.value.code == "hard_delete_forbidden"
+
+    rows = await pg_client.fetch_all(f"SELECT id FROM {t}")
+    assert [row["id"] for row in rows] == [doc.id]

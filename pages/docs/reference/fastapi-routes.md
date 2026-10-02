@@ -35,7 +35,8 @@ app.include_router(router)
 ```
 
 Only operations the registry actually holds are attached, so a read-only spec
-yields a read-only router; narrow further with `include={"get", "list"}`. A
+yields a read-only router, and a spec declaring `hard_delete=False` gets no
+`DELETE` route; narrow further with `include={"get", "list"}`. A
 plan-declared [deadline](../running-in-prod/deadlines.md) surfaces on each generated
 route as an `x-deadline-seconds` OpenAPI extension and a "Time budget" line in
 its description, so API clients can set their own timeouts. Merging a

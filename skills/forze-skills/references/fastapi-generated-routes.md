@@ -36,7 +36,8 @@ app.include_router(router)
   in both styles. `create` also posts its input DTO as a body, but mounts at the
   router root in REST (`POST ""`, 201) and at `POST /create` in RPC.
 - Only operations the registry holds are attached (a read-only spec yields a
-  read-only router); narrow with `include={"get", "list"}`.
+  read-only router, a spec with `hard_delete=False` no `DELETE` route); narrow with
+  `include={"get", "list"}`.
 - Merging `build_soft_deletion_registry(spec)` into the document registry adds
   soft delete/restore automatically — `POST /{id}/delete|restore?rev=` (REST) or
   `PATCH /delete|restore?id=&rev=` (RPC); hard delete keeps the `DELETE` verb.

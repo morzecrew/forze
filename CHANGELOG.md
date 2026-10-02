@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An allowed origin can be a dev server's port range.** `CookieCsrf` and the realtime WebSocket's `allowed_origins` accept `http://localhost:5173-5199` or `http://localhost:*` on a loopback host. The WebSocket route now refuses an entry that is not an origin (`null`, `*`) when attached.
 - **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
 
+- **A document can declare that its rows are never erased.** `DocumentSpec(hard_delete=False)` drops the generated `kill` operation, so no route or tool reaches it, and the command port refuses `kill` and `kill_many` from any caller with `hard_delete_forbidden`.
+
 ### Changed
 
 - ...
