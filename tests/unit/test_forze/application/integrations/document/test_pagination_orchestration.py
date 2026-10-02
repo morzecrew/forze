@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from forze.application.contracts.base import CursorPage
 from forze.application.contracts.querying import decode_keyset_v1
@@ -894,3 +894,43 @@ async def test_cursor_page_reads_seek_values_off_the_fields_not_the_dump() -> No
     )
 
     assert decode_keyset_v1(page.next_cursor)[3] == ["y", "b"]  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_seeks_on_a_computed_field() -> None:
+    # A materialized computed field is a sort key the model holds, though not in model_fields.
+    class _Scored(BaseModel):
+        id: str
+        raw: int
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def score(self) -> int:
+            return self.raw * 10
+
+    gateway = FakeReadGateway(
+        cursor_results=[[_Scored(id="a", raw=1), _Scored(id="b", raw=2), _Scored(id="c", raw=3)]]
+    )
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "raw", "score"}))
+
+    page = await harness._cursor_page(
+        CursorQuery(return_model=_Scored, return_fields=None),
+        filters=None,
+        cursor={"limit": 2},
+        sorts={"score": "asc"},
+    )
+
+    assert decode_keyset_v1(page.next_cursor)[3] == [20, "b"]  # type: ignore[arg-type]
+    assert harness._seekable(_offset_query(return_model=_Scored), {"score": "asc", "id": "asc"})
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_takes_a_string_offset() -> None:
+    gateway = FakeReadGateway(cursor_results=[[{"id": "a"}, {"id": "b"}]])
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(
+        _offset_query(), filters=None, pagination={"offset": "1"}, sorts=None  # type: ignore[typeddict-item]
+    )
+
+    assert [r["id"] for r in page.hits] == ["b"]

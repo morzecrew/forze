@@ -44,8 +44,22 @@ def _model_in(annotation: Any) -> Any:
     return annotation
 
 
+def _field_type(model: type[BaseModel], name: str) -> Any:
+    """The type *model* gives its field or computed field *name*; ``None`` when it has neither."""
+
+    if (field := model.model_fields.get(name)) is not None:
+        return _model_in(field.annotation)
+
+    if (computed := model.model_computed_fields.get(name)) is not None:
+        return _model_in(computed.return_type)
+
+    return None
+
+
 def _model_carries(model: type[BaseModel], key: str) -> bool:
     """Whether every segment of the sort *key* is a field of *model* and its nested models.
+
+    A computed field counts: a materialized one is a sort key its model holds.
 
     Past the last model on the path the value is a mapping or scalar the backend returns as
     stored, so a missing segment there is a missing stored value, which sorts as null.
@@ -57,12 +71,10 @@ def _model_carries(model: type[BaseModel], key: str) -> bool:
         if not (isinstance(node, type) and issubclass(node, BaseModel)):
             return True
 
-        field = node.model_fields.get(part)
+        node = _field_type(node, part)
 
-        if field is None:
+        if node is None:
             return False
-
-        node = _model_in(field.annotation)
 
     return True
 
@@ -85,7 +97,7 @@ def _seek_values(row: BaseModel, sort_keys: Sequence[str]) -> JsonDict:
 
         for part in parts:
             if isinstance(node, BaseModel):
-                if part not in type(node).model_fields:
+                if _field_type(type(node), part) is None:
                     raise exc.precondition(
                         f"The returned model does not carry sort key {key!r}, so a cursor "
                         "cannot continue from it; return a model that holds the key.",
@@ -202,7 +214,9 @@ class DocumentPaginationMixin(Generic[R]):
 
         pagination = pagination or {}
 
-        if (pagination.get("offset") or 0) < 0:
+        skip = int(pagination.get("offset") or 0)
+
+        if skip < 0:
             # Sliced, it would count from the end; sent on, a backend fails with a server error.
             raise exc.precondition("Pagination offset must not be negative.")
 
@@ -237,7 +251,7 @@ class DocumentPaginationMixin(Generic[R]):
 
             if self._seekable(query, scan_sorts):
                 res = await self._keyset_scan(query, filters=filters, sorts=scan_sorts)
-                res = res[offset or 0 :]
+                res = res[skip:]
 
             else:
                 res = await self._offset_scan(
