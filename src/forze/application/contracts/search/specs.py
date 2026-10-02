@@ -469,6 +469,17 @@ class SearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     @property
+    def stored_read_fields(self) -> frozenset[str]:
+        """Read-model fields with a stored value: declared and :attr:`materialized`, less the
+        lenient ones. What a sort may name."""
+
+        return (
+            read_fields_for_model(self.model_type) | self.materialized
+        ) - self.resolved_lenient_read_fields
+
+    # ....................... #
+
+    @property
     def resolved_lenient_read_fields(self) -> frozenset[str]:
         """Effective lenient read fields: explicit plus, under ``read_conformity``
         ``"lenient"``, the auto-derived eligible fields (indexed :attr:`fields` and

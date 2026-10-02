@@ -1,17 +1,20 @@
 """Unit tests for Meilisearch search parameter helpers."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_meilisearch.adapters.search._offset_run import _MeilisearchOffsetHooks, page_sort
+from forze_meilisearch.adapters.search._offset_run import _MeilisearchOffsetHooks, page_order
 from forze_meilisearch.adapters.search._search_params import (
     attributes_to_search_on,
     build_search_query_string,
+    build_sort,
+    render_user_sorts,
 )
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 
@@ -60,6 +63,12 @@ def _gw(*, sortable: list[str] | None = None, primary_key: str = "id") -> MagicM
 
 
 _SPEC = SearchSpec(name="s", model_type=_Row, fields=["title"], default_sort={"rank": "desc"})
+
+
+def page_sort(gw: Any, spec: SearchSpec[Any], sorts: Any, *, ranked: bool) -> list[str] | None:
+    """The ``sort`` parameter the offset run sends for a page."""
+
+    return build_sort(render_user_sorts(page_order(gw, spec, sorts, ranked=ranked), gw.config))
 
 
 def test_a_blank_page_takes_the_default_sort_then_the_id() -> None:
@@ -143,3 +152,80 @@ def test_an_unsortable_attribute_the_spec_added_is_a_configuration_error() -> No
 
     assert refusal is not None and refusal.kind is ExceptionKind.CONFIGURATION
     assert "ensure_index" in str(refusal)
+
+
+def test_a_malformed_null_placement_keeps_the_canonical_error() -> None:
+    # Read as a sort value first: a placement that is not one is malformed, not unsupported.
+    # Federated native search renders a request's sorts here with nothing checking them first.
+    with pytest.raises(CoreException) as refused:
+        render_user_sorts({"title": {"dir": "asc", "nulls": "middle"}}, _gw().config)
+
+    assert refused.value.code == "invalid_sort_value"
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [("python", {}), ("", {"rank": "desc", "id": "desc"})],
+    ids=["ranked", "blank"],
+)
+async def test_the_snapshot_is_keyed_on_the_order_meilisearch_is_asked_for(
+    monkeypatch: pytest.MonkeyPatch, query: str, expected: dict[str, str]
+) -> None:
+    # A ranked page sorts by the request alone, so a default sort it ignores is no part of the
+    # key, and changing it leaves the ranked snapshots reusable.
+    from forze_meilisearch.adapters.search import _offset_run
+
+    executor = AsyncMock()
+    monkeypatch.setattr(_offset_run, "execute_simple_offset_search_with_snapshot", executor)
+    gw = _gw()
+    gw.field_map = {}
+    gw.build_filter = MagicMock(return_value=None)
+
+    await _offset_run.execute_meilisearch_offset_search(
+        gw,
+        client=MagicMock(),
+        query=query,
+        filters=None,
+        spec=_SPEC,
+        variant="offset",
+        fingerprint_extras=None,
+        pagination={"limit": 5},
+        snapshot=None,
+        options=None,
+        sorts=None,
+        return_count=False,
+        return_type=None,
+        return_fields=None,
+        result_snapshot=None,
+    )
+
+    assert executor.await_args.kwargs["fingerprint_sorts"] == expected
+
+
+def test_another_engine_error_is_not_a_sort_refusal() -> None:
+    other = SimpleNamespace(code="invalid_search_filter", message="Error message: bad filter")
+
+    assert _hooks(("id",))._unsortable(other) is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_an_engine_error_that_is_no_sort_refusal_reaches_the_caller_unchanged() -> None:
+    from meilisearch_python_sdk.errors import MeilisearchApiError
+
+    error = MeilisearchApiError.__new__(MeilisearchApiError)
+    error.code, error.message = "invalid_search_filter", "Error message: bad filter"
+    index = MagicMock()
+    index.search = AsyncMock(side_effect=error)
+    hooks = _hooks(("id",))
+    hooks.gw.config = MagicMock(max_total_hits=1000)
+    hooks.gw._resolved_index_uid = AsyncMock(return_value="rows")  # pyright: ignore[reportPrivateUsage]
+    hooks.client.index = MagicMock(return_value=index)
+
+    with pytest.raises(MeilisearchApiError) as raised:
+        await hooks.fetch_rows(MagicMock(fetch_offset=0, fetch_limit=5), want_snap=False)
+
+    assert raised.value is error

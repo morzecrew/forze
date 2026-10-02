@@ -14,7 +14,6 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    read_fields_for_model,
 )
 from forze.application.contracts.search import (
     SearchOptions,
@@ -247,14 +246,14 @@ class _MeilisearchOffsetHooks:
 # ....................... #
 
 
-def page_sort(
+def page_order(
     gw: MeilisearchSearchGateway[Any],
     spec: SearchSpec[Any],
     sorts: QuerySortExpression | None,
     *,
     ranked: bool,
-) -> list[str] | None:
-    """The ``sort`` parameter for a page.
+) -> QuerySortExpression:
+    """The order a page sorts by, after the engine's relevance.
 
     With search text, only the request's own sorts: Meilisearch applies ``sort`` before its
     ``exactness`` rule, so a default or an id there would settle every relevance tie first,
@@ -263,17 +262,16 @@ def page_sort(
     """
 
     sortable_id = gw.primary_key in sortable_attributes(spec, gw.config)
-    order = resolve_search_sorts(
+
+    return resolve_search_sorts(
         sorts,
         default_sort=None if ranked else spec.default_sort,
-        read_fields=read_fields_for_model(spec.model_type) | spec.materialized,
+        read_fields=spec.stored_read_fields,
         # The id closes a blank page's order, where the index can sort by it.
         tiebreaker=ID_FIELD if sortable_id and not ranked else None,
         model=spec.model_type,
         spec_name=spec.name,
     )
-
-    return build_sort(render_user_sorts(order, gw.config))
 
 
 # ....................... #
@@ -303,7 +301,8 @@ async def execute_meilisearch_offset_search[M: BaseModel](
 
     filter_str = gw.build_filter(filters)
     search_attrs = attributes_to_search_on(spec, options, gw.field_map)
-    sort_list = page_sort(gw, spec, sorts, ranked=bool(terms))
+    order = page_order(gw, spec, sorts, ranked=bool(terms))
+    sort_list = build_sort(render_user_sorts(order, gw.config))
     requested = {attr for attr, _ in render_user_sorts(sorts, gw.config)}
     sorted_by = [entry.rsplit(":", 1)[0] for entry in sort_list or ()]
     pagination_dict: dict[str, Any] = dict(pagination or {})
@@ -319,6 +318,9 @@ async def execute_meilisearch_offset_search[M: BaseModel](
         query=query,
         filters=filters,
         sorts=sorts,
+        # The snapshot is keyed on the order the engine is asked for, which a ranked page
+        # takes from the request alone.
+        fingerprint_sorts=order,
         spec=spec,
         variant=variant,
         fingerprint_extras=fingerprint_extras,

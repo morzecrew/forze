@@ -154,11 +154,16 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
 
     if snapshots_enabled:
         # Keyed on the order the page is taken in, not the request's sorts alone: an unsorted
-        # request follows ``default_sort``, and a snapshot must not outlive a change to it.
-        fp_sorts = resolve_search_sorts(
-            fingerprint_sorts if fingerprint_sorts is not None else sorts,
-            default_sort=spec.default_sort,
-            read_fields=read_fields_for_model(spec.model_type),
+        # request follows ``default_sort``, and a snapshot must not outlive a change to it. A
+        # backend that orders otherwise names its own order in *fingerprint_sorts*.
+        fp_sorts = (
+            fingerprint_sorts
+            if fingerprint_sorts is not None
+            else resolve_search_sorts(
+                sorts,
+                default_sort=spec.default_sort,
+                read_fields=read_fields_for_model(spec.model_type),
+            )
         )
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,

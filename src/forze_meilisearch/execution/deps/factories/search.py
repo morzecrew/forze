@@ -33,6 +33,7 @@ from forze_meilisearch.adapters.search._command import (
     MeilisearchSearchManagementAdapter,
 )
 from forze_meilisearch.adapters.search._search_params import (
+    places_nulls,
     sort_attribute,
     sortable_attributes,
 )
@@ -88,14 +89,22 @@ def _encrypting_spec[M: BaseModel](context: ExecutionContext, spec: SearchSpec[M
 
 
 def _refuse_an_unsortable_default_sort(spec: SearchSpec[Any], c: MeilisearchSearchConfig) -> None:
-    """Refuse a pinned ``sortable_attributes`` that leaves out a ``default_sort`` field.
+    """Refuse a ``default_sort`` the index cannot sort an unsorted page by.
 
-    An unsorted page sorts by ``default_sort``, and the engine refuses a sort on an attribute
-    the index does not declare sortable, so such a port would fail every unsorted request.
+    A pinned ``sortable_attributes`` that leaves out one of its fields, or a null placement in
+    it, which Meilisearch cannot honour: either would fail every unsorted request, and as the
+    caller's error. Refused when a query or a provisioning port is built, so ``ensure_index``
+    never provisions an index its search port then refuses.
     """
 
     if not spec.default_sort:
         return
+
+    if placing := [f for f, value in spec.default_sort.items() if places_nulls(value)]:
+        raise exc.configuration(
+            f"Meilisearch search {spec.name!r}: Meilisearch cannot place nulls, which the "
+            f"default_sort asks for on {placing}; drop 'nulls' from them.",
+        )
 
     sortable = sortable_attributes(spec, c)
 
@@ -196,6 +205,8 @@ class ConfigurableMeilisearchSearchManagement(SearchManagementDepPort):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> SearchManagementPort:
+        _refuse_an_unsortable_default_sort(spec, self.config)
+
         return MeilisearchSearchManagementAdapter(
             spec=_encrypting_spec(context, spec),
             config=self.config,

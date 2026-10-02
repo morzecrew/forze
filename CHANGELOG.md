@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Meilisearch's `ensure_index` makes the `default_sort` fields sortable** (**behaviour change**), as an unsorted browse sorts by them. Re-run `ensure_index` after upgrading; until then such a browse fails naming the attribute. A port whose pinned `sortable_attributes` lacks them refuses to build.
 
-- **A search spec whose `default_sort` places nulls where its backend cannot is refused**, when a Mongo port is built, and on a Postgres search cursor as the spec's error, not the caller's.
+- **A search spec whose `default_sort` places nulls where its backend cannot is refused when the port is built**, on Mongo and Meilisearch, and on a Postgres search cursor as the spec's error, not the caller's.
 
 - **An explicit null placement no Postgres search cursor can keep is refused** (**behaviour change**), as Mongo does; offset pages still honour it. Meilisearch refuses one on any page. Before, the placement was dropped and the cursor walked a different order from the offset page.
 

@@ -79,6 +79,15 @@ def build_sort(spec_sorts: list[tuple[str, str]]) -> list[str] | None:
     return [f"{field}:{direction}" for field, direction in spec_sorts]
 
 
+def places_nulls(value: Any) -> bool:
+    """Whether a sort value names a null placement, which Meilisearch cannot honour."""
+
+    return isinstance(value, Mapping) and value.get("nulls") is not None  # pyright: ignore[reportUnknownMemberType]
+
+
+# ....................... #
+
+
 def sort_attribute(field: str, config: MeilisearchSearchConfig) -> str:
     """The index attribute a logical sort field reads: its mapped name, the id as the key.
 
@@ -121,14 +130,16 @@ def render_user_sorts(
     out: list[tuple[str, str]] = []
 
     for field, value in sorts.items():
-        if isinstance(value, Mapping) and value.get("nulls") is not None:  # pyright: ignore[reportUnknownMemberType]
+        # Through the canonical parser first, which reads the ``{"dir": ...}`` form and refuses
+        # a malformed value as such; only then is a well-formed placement unsupported here.
+        d, _ = parse_sort_value(value, field=field)
+
+        if places_nulls(value):
             raise exc.precondition(
                 f"Meilisearch cannot place nulls on a sort; drop 'nulls' from {field!r}.",
                 code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
-        # Through the canonical parser, which also reads the ``{"dir": ...}`` form.
-        d, _ = parse_sort_value(value, field=field)
         out.append((sort_attribute(field, config), d))
 
     return out
