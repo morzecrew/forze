@@ -13,9 +13,10 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from forze.application.contracts.base import CursorPage
+from forze.application.contracts.querying import decode_keyset_v1
 from forze.application.integrations.document._pagination import (
     CursorQuery,
     DocumentPaginationMixin,
@@ -829,3 +830,44 @@ async def test_stream_detects_stalled_cursor() -> None:
                 chunk_size=2,
             )
         )
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_refuses_a_returned_model_without_the_sort_key() -> None:
+    # A token built from a row missing the key would seek from null and drop rows silently.
+    gateway = FakeReadGateway(cursor_results=[[_Row(id="a"), _Row(id="b"), _Row(id="c")]])
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
+
+    with pytest.raises(CoreException, match="does not carry sort key 'name'"):
+        await harness._cursor_page(
+            CursorQuery(return_model=_Row, return_fields=None),
+            filters=None,
+            cursor={"limit": 2},
+            sorts={"name": "asc"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_reads_seek_values_off_the_fields_not_the_dump() -> None:
+    class _Hidden(BaseModel):
+        id: str
+        name: str = Field(exclude=True)
+
+    gateway = FakeReadGateway(
+        cursor_results=[
+            [_Hidden(id="a", name="x"), _Hidden(id="b", name="y"), _Hidden(id="c", name="z")]
+        ]
+    )
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
+
+    page = await harness._cursor_page(
+        CursorQuery(return_model=_Hidden, return_fields=None),
+        filters=None,
+        cursor={"limit": 2},
+        sorts={"name": "asc"},
+    )
+
+    assert decode_keyset_v1(page.next_cursor)[3] == ["y", "b"]  # type: ignore[arg-type]

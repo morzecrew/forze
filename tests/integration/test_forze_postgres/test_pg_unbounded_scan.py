@@ -10,6 +10,7 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.unbounded_scan_parity import (
+    POSTGRES_COLUMNS,
     ScanCreate,
     ScanDoc,
     ScanRead,
@@ -22,18 +23,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 async def test_a_read_without_a_limit_orders_ties_by_id(pg_client: PostgresClient) -> None:
     table = f"scan_{uuid4().hex[:12]}"
 
-    await pg_client.execute(
-        f"""
-        CREATE TABLE {table} (
-            id uuid PRIMARY KEY,
-            rev integer NOT NULL,
-            created_at timestamptz NOT NULL,
-            last_update_at timestamptz NOT NULL,
-            grp integer NOT NULL,
-            label text NOT NULL
-        );
-        """
-    )
+    await pg_client.execute(f"CREATE TABLE {table} ({POSTGRES_COLUMNS});")
 
     spec = DocumentSpec(
         name="scan",

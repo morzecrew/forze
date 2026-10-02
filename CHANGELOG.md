@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Firestore refuses an `$in` past 30 values before sending it.** The server rejected it with a validation error; it is now a clean `query_feature_unsupported` naming the cap, whatever the spec's filter limits allow.
 
+- **A cursor continues from the right row when the returned model hides a sort key.** Cursor tokens were built from the model's dump, so a key it excluded, aliased or serialized differently made the next page start in the wrong place. They now read the model's fields; a model without the key is refused.
+
 ### Security
 
 - **A request no ingress authenticates is refused by default** (**behaviour change**). `AuthnRequirement(required=True)` answers 401 `auth_required` outside the middleware's `anonymous_paths`; list login, refresh and public pages there, or pass `required=False`. CORS preflights pass.

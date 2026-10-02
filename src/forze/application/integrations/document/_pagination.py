@@ -1,10 +1,11 @@
 """Internal offset/cursor pagination for document queries."""
 
-from collections.abc import AsyncGenerator, Sequence
-from typing import Any, Generic, cast
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from typing import Any, Generic, cast, get_args
 
 import attrs
 from pydantic import BaseModel
+from pydantic_core import to_jsonable_python
 
 from forze.application.contracts.base import CursorPage, page_from_limit_offset
 from forze.application.contracts.document import DocumentReadGatewayPort
@@ -31,6 +32,91 @@ from ._limits import assert_cursor_advanced, check_page_limit
 from ._types import R
 
 # ----------------------- #
+
+
+def _model_in(annotation: Any) -> Any:
+    """The model class *annotation* holds, through ``Optional`` and unions; else *annotation*."""
+
+    for candidate in (annotation, *get_args(annotation)):
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            return candidate
+
+    return annotation
+
+
+def _model_carries(model: type[BaseModel], key: str) -> bool:
+    """Whether every segment of the sort *key* is a field of *model* and its nested models.
+
+    Past the last model on the path the value is a mapping or scalar the backend returns as
+    stored, so a missing segment there is a missing stored value, which sorts as null.
+    """
+
+    node: Any = model
+
+    for part in key.split("."):
+        if not (isinstance(node, type) and issubclass(node, BaseModel)):
+            return True
+
+        field = node.model_fields.get(part)
+
+        if field is None:
+            return False
+
+        node = _model_in(field.annotation)
+
+    return True
+
+
+def _seek_values(row: BaseModel, sort_keys: Sequence[str]) -> JsonDict:
+    """The sort keys' values on *row*, nested the way a cursor token reads them.
+
+    Read off the model's attributes rather than its dump: a dump can leave a key out
+    (``exclude``), rename it (an alias) or rewrite it (a serializer), and a token built from it
+    would seek from the wrong place, dropping rows without an error.
+
+    :raises CoreException: ``precondition`` when a model on a key's path has no field for it.
+    """
+
+    out: JsonDict = {}
+
+    for key in sort_keys:
+        parts = key.split(".")
+        node: Any = row
+
+        for part in parts:
+            if isinstance(node, BaseModel):
+                if part not in type(node).model_fields:
+                    raise exc.precondition(
+                        f"The returned model does not carry sort key {key!r}, so a cursor "
+                        "cannot continue from it; return a model that holds the key.",
+                    )
+
+                node = getattr(node, part)
+
+            elif isinstance(node, Mapping):
+                node = cast(Mapping[str, Any], node).get(part)
+
+            else:
+                # A null parent: the key reads as null, which is how it sorts.
+                node = None
+                break
+
+        target = out
+
+        for part in parts[:-1]:
+            nested = target.get(part)
+
+            if not isinstance(nested, dict):
+                nested = target[part] = {}
+
+            target = cast(JsonDict, nested)
+
+        target[parts[-1]] = to_jsonable_python(node)
+
+    return out
+
+
+# ....................... #
 
 
 @attrs.frozen
@@ -221,11 +307,10 @@ class DocumentPaginationMixin(Generic[R]):
         if id_only and keys != [ID_FIELD]:
             return False
 
-        projection = (
-            list(query.return_model.model_fields)
-            if query.return_model is not None
-            else query.return_fields
-        )
+        if query.return_model is not None:
+            return all(_model_carries(query.return_model, k) for k in keys)
+
+        projection = query.return_fields
 
         return projection is None or all(_sort_key_in_projection(k, projection) for k in keys)
 
@@ -357,10 +442,11 @@ class DocumentPaginationMixin(Generic[R]):
         )
 
         def _dump(o: R | JsonDict | BaseModel) -> JsonDict:
+            # A projection's dict holds the stored values; a model's are read off its fields.
             if isinstance(o, dict):
                 return o
 
-            return o.model_dump(mode="json")  # type: ignore[union-attr, err]
+            return _seek_values(o, sort_keys)
 
         page_raw, has_more, next_tok, prev_tok = assemble_keyset_cursor_page(
             raw,
