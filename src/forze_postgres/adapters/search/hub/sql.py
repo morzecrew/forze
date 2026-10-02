@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from forze_postgres._compat import require_psycopg
@@ -17,7 +17,6 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
 )
 from forze.domain.constants import ID_FIELD
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
 
 from ._leg_sql import HubLegSqlContext, build_hub_cte, build_hub_leg_sql_parts
 
@@ -162,36 +161,13 @@ class HubSearchSqlMixin[M: BaseModel](HubSearchMixinBase[M]):
         self,
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     ) -> sql.Composable | None:
-        """User sort keys on bare ``combo`` column names (matches ``SELECT * FROM combo``)."""
+        """User sort keys on the ``combo`` relation, placed exactly as the page order places them.
 
-        if not sorts:
-            return None
+        Rendered by the same rule as the outer read, nulls included: a cap ordered any other way
+        would keep a different set of rank-tied rows than the page then sorts.
+        """
 
-        host = self
-        types = await host.column_types()
-        parts: list[sql.Composable] = []
-
-        for field, value in sorts.items():
-            order = value.get("dir") if isinstance(value, Mapping) else value
-            nulls = value.get("nulls") if isinstance(value, Mapping) else None
-            key = sort_key_expr(
-                field=field,
-                column_types=types,
-                model_type=host.model_type,
-                nested_field_hints=host.nested_field_hints,
-                table_alias=None,
-            )
-            dir_sql = "ASC" if str(order).lower() == "asc" else "DESC"
-
-            if nulls is not None:
-                nulls_sql = "NULLS FIRST" if str(nulls).lower() == "first" else "NULLS LAST"
-                parts.append(
-                    sql.SQL("{} {} {}").format(key, sql.SQL(dir_sql), sql.SQL(nulls_sql)),
-                )
-            else:
-                parts.append(sql.SQL("{} {}").format(key, sql.SQL(dir_sql)))
-
-        return sql.SQL(", ").join(parts)
+        return await self.order_by_clause(sorts, table_alias="combo")
 
     # ....................... #
 

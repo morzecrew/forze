@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A capped Postgres vector search keeps the nearest rows.** The candidate cap, and a hub's per-leg cap, kept the lowest scores, which are the farthest rows, so on a table larger than the cap the nearest matches never reached the page.
 
-- **A ranked Postgres search's candidate cap keeps the same rows on every request.** Rows tying on rank at the cap's edge were kept in scan order, so pages sorted out of the pool could repeat or skip rows. The id now breaks the tie, on every engine and hub leg.
+- **A capped Postgres search page holds the rows the uncapped order puts there.** The candidate cap, and a hub's, kept rank ties at its edge in scan order (a hub's also put nulls last), so an offset page could differ between requests and from the cursor. The cap now orders as the page does, on every engine.
 
 - **A Mongo search cursor walks past rows whose sort key is null.** Its seek compared with `$gt`/`$lt`, which never match a null, so walking a sort over a nullable field stopped at the first or last null.
 

@@ -59,7 +59,6 @@ from ._pipeline_sql import (
     build_pgroonga_index_first_pipeline,
     outer_join_on_scored,
     scored_key_columns,
-    scored_key_order,
     validate_join_pairs,
 )
 from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
@@ -449,6 +448,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         snapshot: SearchResultSnapshotOptions | None = None,
         parsed_filters: Any = None,
         for_cursor: bool = False,
+        sorts: Any = None,
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
@@ -538,6 +538,17 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             candidate_cap,
         )
 
+        # Index-first caps the heap before it meets the projection, so it cannot order the cap
+        # by projection columns; a sort on one runs filter-first, where the cap can.
+        joined = {projection for projection, _ in join}
+
+        if (
+            resolved_plan == "index_first"
+            and not coalesced
+            and any(field.split(".", 1)[0] not in joined for field in sorts or ())
+        ):
+            resolved_plan = "filter_first"
+
         join_vs = outer_join_on_scored(
             join,
             projection_alias=self.pipeline.projection,
@@ -572,7 +583,9 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 proj_fw=fw,
                 heap_row_limit=heap_limit,
                 scored_order=scored_order,
-                scored_tiebreak=scored_key_order(join),
+                scored_tiebreak=(
+                    await self._capped_order(sorts, coalesced=coalesced, join_pairs=join)
+                )[0],
             )
             count_with, count_from = build_pgroonga_index_first_pipeline(
                 aliases=self.pipeline,
@@ -605,13 +618,16 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             )
 
         cap_kw: dict[str, Any] = {}
+        filtered_extra: sql.Composable | None = None
 
         if candidate_cap is not None:
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order,
-                "scored_tiebreak": scored_key_order(join),
             }
+            cap_kw["scored_tiebreak"], filtered_extra = await self._capped_order(
+                sorts, coalesced=coalesced, join_pairs=join
+            )
 
         heap_fw: sql.Composable | None = None
         heap_fp: list[Any] = []
@@ -640,6 +656,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             heap_fp=heap_fp,
             cap_kw=cap_kw,
             emit_exact_count_sql=bool(terms),
+            filtered_extra=filtered_extra,
         )
 
         return ranked_parts_to_sql(

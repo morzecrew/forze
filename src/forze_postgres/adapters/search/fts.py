@@ -29,7 +29,6 @@ from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
-    scored_key_order,
     scored_order_by_rank_alias,
     validate_join_pairs,
 )
@@ -125,6 +124,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         snapshot: Any = None,
         parsed_filters: Any = None,
         for_cursor: bool = False,
+        sorts: Any = None,
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
@@ -168,10 +168,15 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order_by_rank_alias(self.search_rank_column),
-                "scored_tiebreak": scored_key_order(join),
             }
 
         coalesced = self._is_coalesced_read_heap_for(self.join_pairs)
+        filtered_extra: sql.Composable | None = None
+
+        if cap_kw:
+            cap_kw["scored_tiebreak"], filtered_extra = await self._capped_order(
+                sorts, coalesced=coalesced, join_pairs=join
+            )
         heap_fw: sql.Composable | None = None
         heap_fp: list[Any] = []
 
@@ -199,6 +204,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             heap_fp=heap_fp,
             cap_kw=cap_kw,
             emit_exact_count_sql=bool(terms),
+            filtered_extra=filtered_extra,
         )
 
         return ranked_parts_to_sql(

@@ -30,6 +30,7 @@ What each check pins:
 12. The default sort never outranks relevance.
 13. An explicit null placement is honoured or refused, never dropped.
 14. A sort on a field the read model lacks is the caller's error, wherever it sits.
+15. A page cut from a capped candidate pool holds the rows the uncapped order puts there.
 
 Not asserted, on purpose: blank-query semantics. ``search("")`` means "everything, filters
 only" on some engines and "nothing" on others, and which one is right is a genuine product
@@ -143,6 +144,10 @@ class SearchHarness:
     Meilisearch does not: its ``sort`` rule runs before ``exactness``, so sorting a ranked
     page by anything the request did not ask for would settle ties relevance still had to
     decide. Such a backend leaves them in the engine's order."""
+
+    capped: SearchQueryPort[Any] | None = None
+    """A port over :func:`capped_rows`, seeded alone and configured with the smallest candidate
+    cap the backend has, so a first page reaches it. ``None`` on a backend with no cap."""
 
     exact_match_ranks_first: bool = False
     """Whether relevance tells an exact match from a longer one: ``manual`` above
@@ -449,6 +454,25 @@ async def check_an_unknown_sort_field_is_the_callers_error(h: SearchHarness) -> 
         assert refused.value.code == "field_not_on_read_model", f"{h.backend}: {sorts}"
 
 
+async def check_a_capped_page_is_a_prefix_of_the_page_order(h: SearchHarness) -> None:
+    """A capped offset page holds the rows the uncapped cursor walk puts at its place.
+
+    Every row ties on relevance, so the cap's edge falls among ties: a pool cut by rank alone
+    keeps an arbitrary few, and the page sorted out of it differs from the cursor's.
+    """
+
+    if h.capped is None:
+        return
+
+    for sorts in ({"title": "desc"}, {"rank": "asc"}, {"rank": "desc", "title": "asc"}):
+        offset = await h.capped.search(PROBE_TERM, None, {"limit": 10}, sorts)
+        cursor = await h.capped.search_cursor(PROBE_TERM, None, {"limit": 10}, sorts)
+
+        assert [hit.id for hit in offset.hits] == [hit.id for hit in cursor.hits], (
+            f"{h.backend}: {sorts}"
+        )
+
+
 # ....................... #
 
 async def check_windows_partition_under_a_non_unique_sort(h: SearchHarness) -> None:
@@ -599,6 +623,7 @@ SEARCH_BATTERY: tuple[Check, ...] = (
     check_relevance_outranks_the_default_sort,
     check_an_explicit_null_placement_is_kept_or_refused,
     check_an_unknown_sort_field_is_the_callers_error,
+    check_a_capped_page_is_a_prefix_of_the_page_order,
 )
 
 
@@ -763,6 +788,26 @@ def corpus_rows(id_factory: Callable[[], Any]) -> list[dict[str, Any]]:
             "rank": rank,
         }
         for title, content, category, price, rank in CORPUS
+    ]
+
+
+CAPPED_ROWS = 80
+"""More rows than a first page's candidate cap: the page plus the cap's margin of 50."""
+
+
+def capped_rows(id_factory: Callable[[], Any]) -> list[dict[str, Any]]:
+    """Rows that all match :data:`PROBE_TERM` equally, a third of them with a null ``rank``."""
+
+    return [
+        {
+            "id": id_factory(),
+            "title": f"capped {n:02d}",
+            "content": PROBE_TERM,
+            "category": "capped",
+            "price": Decimal(n),
+            "rank": None if n % 3 == 0 else n % 7,
+        }
+        for n in range(CAPPED_ROWS)
     ]
 
 

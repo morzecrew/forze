@@ -53,7 +53,12 @@ from ._engine import RankedPipelineSql
 from ._materialize_hits import search_trust_source
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
 from ._pgroonga_plan import is_coalesced_read_heap
-from ._pipeline_sql import PipelineAliases, build_rank_first_order, build_rank_select
+from ._pipeline_sql import (
+    PipelineAliases,
+    build_rank_first_order,
+    build_rank_select,
+    scored_key_order,
+)
 from ._port import PostgresSearchPortMixin
 from ._search_count import effective_search_count, resolve_ranked_approximate_total
 
@@ -217,8 +222,12 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         snapshot: SearchResultSnapshotOptions | None = None,
         parsed_filters: Any = None,
         for_cursor: bool = False,
+        sorts: QuerySortExpression | None = None,  # type: ignore[valid-type]
     ) -> RankedPipelineSql:
         """Assemble pipeline CTEs; engine-specific leg SQL is built inside subclasses.
+
+        *sorts* is the page order after the rank, which a capped CTE keeps (see
+        :meth:`_capped_order`).
 
         ``for_cursor`` disables the ranked-candidate cap for keyword/text engines: cursor
         pagination walks the full ranked set one keyset page at a time, and the cap (a top-N
@@ -264,6 +273,50 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def _capped_order(
+        self,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+        *,
+        coalesced: bool,
+        join_pairs: Sequence[tuple[str, str]],
+    ) -> tuple[sql.Composable, sql.Composable | None]:
+        """The page order after the rank, inside a capped CTE, and what the filtered CTE carries.
+
+        A cap ordered by rank alone keeps an arbitrary few of the rows tying at its edge; ordered
+        as the page is, it keeps exactly the page order's first rows, so an offset page cut from
+        it matches the uncapped cursor. The key columns close the order where the sort does not.
+        On a projection apart from the heap, the sort's columns ride the filtered CTE, which the
+        capped CTE joins.
+        """
+
+        keys = scored_key_order(join_pairs)
+
+        if not sorts:
+            return keys, None
+
+        if coalesced:
+            on_heap = await self.order_by_clause(sorts, table_alias=self.pipeline.index)
+
+            return sql.SQL("{}, {}").format(on_heap, keys), None
+
+        joined = {projection for projection, _ in join_pairs}
+        roots = dict.fromkeys(field.split(".", 1)[0] for field in sorts)
+        carried = [
+            sql.SQL("{} AS {}").format(
+                sql.Identifier(self.pipeline.projection, root), sql.Identifier(root)
+            )
+            for root in roots
+            if root not in joined
+        ]
+        on_filtered = await self.order_by_clause(sorts, table_alias=self.pipeline.filtered)
+
+        return (
+            sql.SQL("{}, {}").format(on_filtered, keys),
+            sql.SQL(", ").join(carried) if carried else None,
+        )
+
+    # ....................... #
+
     async def _projection_order_by_clause(
         self,
         sorts: QuerySortExpression | None,  # type: ignore[valid-type]
@@ -289,6 +342,13 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         parsed_filters = self.compile_filters(filters)
         fw, fp = await self.where_clause(filters, parsed=parsed_filters)
         terms = tuple(normalize_search_queries(query))
+        page_order = resolve_search_sorts(
+            sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=self.read_fields,
+            model=self.model_type,
+            spec_name=self.spec.name,
+        )
         pipeline_sql = await self._build_ranked_pipeline_sql(
             query=query,
             filters=filters,
@@ -299,16 +359,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             pagination=pagination,
             snapshot=snapshot,
             parsed_filters=parsed_filters,
+            sorts=page_order,
         )
-        extra_ob = await self._projection_order_by_clause(
-            resolve_search_sorts(
-                sorts,
-                default_sort=self.spec.default_sort,
-                read_fields=self.read_fields,
-                model=self.model_type,
-                spec_name=self.spec.name,
-            )
-        )
+        extra_ob = await self._projection_order_by_clause(page_order)
         order_sql = build_rank_first_order(
             aliases=self.pipeline,
             extra_order=extra_ob,
@@ -435,6 +488,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             snapshot=None,
             parsed_filters=parsed_filters,
             for_cursor=True,
+            sorts=resolve_search_sorts(
+                sorts or self.spec.default_sort, default_sort=None, read_fields=self.read_fields
+            ),
         )
 
         return await execute_ranked_pipeline_cursor(

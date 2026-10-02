@@ -8,6 +8,7 @@ offset pipeline but not its blank-query browse, so both run the battery.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -38,6 +39,7 @@ from tests.support.search_conformance import (
     SEARCH_BATTERY,
     Check,
     SearchHarness,
+    capped_rows,
     corpus_rows,
     searchable_fields,
 )
@@ -64,9 +66,11 @@ _INDEXES = {"fts": _FTS, "pgroonga": "USING pgroonga ((ARRAY[title, content]))",
 _FTS_GROUPS = FtsEngine(groups={"A": ("title",), "B": ("content",)})
 
 
-@pytest_asyncio.fixture(params=["fts", "pgroonga", "hub"])
-async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> SearchHarness:
-    engine: str = request.param
+async def _port(
+    pg_client: PostgresClient, engine: str, rows: list[dict[str, Any]], *, capped: bool
+) -> Any:
+    """A port over *rows* in a table of their own; *capped* takes the smallest candidate cap."""
+
     table = f"search_conf_{uuid4().hex[:10]}"
     index = f"idx_{table}"
 
@@ -85,13 +89,14 @@ async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> 
         """
     )
 
-    for row in corpus_rows(lambda: str(uuid4())):
+    for row in rows:
         await pg_client.execute(
             f"INSERT INTO {table} (id, title, content, category, price, rank) "
             "VALUES (%(id)s, %(title)s, %(content)s, %(category)s, %(price)s, %(rank)s)",
             row,
         )
 
+    cap: dict[str, Any] = {"candidate_limit": 1} if capped else {}
     ctx = context_from_deps(
         Deps.plain(
             {
@@ -102,41 +107,53 @@ async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> 
                         index=("public", index),
                         read=("public", table),
                         engine=_FTS_GROUPS if engine == "fts" else "pgroonga",
+                        **cap,
                     )
                 ),
             }
         )
     )
 
-    spec = SearchSpec(
-        name="rows", model_type=_Row, fields=searchable_fields(), default_sort=DEFAULT_SORT
-    )
-
-    if engine == "hub":
-        # One leg over the hub table itself: each row is its own leg match.
-        leg = SearchSpec(name="leg", model_type=_Leg, fields=searchable_fields())
-        hub = ConfigurablePostgresHubSearch(
-            config=PostgresHubSearchConfig(
-                hub=("public", table),
-                members={
-                    "leg": PostgresHubSearchMemberConfig(
-                        index=("public", index),
-                        read=("public", table),
-                        hub_fk="id",
-                        engine=_FTS_GROUPS,
-                    )
-                },
+    if engine != "hub":
+        return ctx.search.query(
+            SearchSpec(
+                name="rows", model_type=_Row, fields=searchable_fields(), default_sort=DEFAULT_SORT
             )
         )
-        query = hub(
-            ctx,
-            HubSearchSpec(name="rows", model_type=_Row, members=(leg,), default_sort=DEFAULT_SORT),
+
+    # One leg over the hub table itself: each row is its own leg match.
+    leg = SearchSpec(name="leg", model_type=_Leg, fields=searchable_fields())
+    hub = ConfigurablePostgresHubSearch(
+        config=PostgresHubSearchConfig(
+            hub=("public", table),
+            members={
+                "leg": PostgresHubSearchMemberConfig(
+                    index=("public", index),
+                    read=("public", table),
+                    hub_fk="id",
+                    engine=_FTS_GROUPS,
+                )
+            },
+            combo_limit=1 if capped else None,
         )
+    )
 
-    else:
-        query = ctx.search.query(spec)
+    return hub(
+        ctx,
+        HubSearchSpec(name="rows", model_type=_Row, members=(leg,), default_sort=DEFAULT_SORT),
+    )
 
-    return SearchHarness(query=query, backend=f"pg_{engine}", blank_query_matches_all=True)
+
+@pytest_asyncio.fixture(params=["fts", "pgroonga", "hub"])
+async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> SearchHarness:
+    engine: str = request.param
+
+    return SearchHarness(
+        query=await _port(pg_client, engine, corpus_rows(lambda: str(uuid4())), capped=False),
+        backend=f"pg_{engine}",
+        blank_query_matches_all=True,
+        capped=await _port(pg_client, engine, capped_rows(lambda: str(uuid4())), capped=True),
+    )
 
 
 @pytest.mark.conformance(plane="search", engine="postgres")

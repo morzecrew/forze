@@ -81,6 +81,12 @@ resolve to a `MultiSourceSearchOptions` port that also carries member selection
 strategy (`"rrf"` / `"weighted"`); passing those keys to a single-index `query(...)` port is
 a type error.
 
+A sort on a field the read model lacks is refused as the caller's error, a key after `id`
+included. On Postgres, a ranked page reads a capped pool of candidates (`max_candidates`, or
+the route's `candidate_limit`), always widened to cover the page plus a margin. The pool is the
+first rows of the page order itself, so a capped offset page holds the rows the uncapped cursor
+puts there; a cursor walk is uncapped, except on a vector index, whose cap bounds it too.
+
 ### Streaming exports
 
 `search_stream` (and the `project_` / `select_` variants) iterate the **whole** matching set
