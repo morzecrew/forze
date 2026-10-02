@@ -393,7 +393,11 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             fp = SearchResultSnapshot.simple_search_fingerprint(
                 query,
                 filters,
-                sorts,
+                resolve_search_sorts(
+                    sorts,
+                    default_sort=self.spec.default_sort,
+                    read_fields=read_fields_for_model(self.spec.model_type),
+                ),
                 spec_name=str(self.spec.name),
                 variant="offset",
             )

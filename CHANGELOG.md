@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres hub search page breaks ties by `id`.** Rows of equal rank and sort keys had no final key on an offset page, so paging could repeat one row and skip another, and a cursor walk listed them in a different order than offset pages did.
 
+- **A search result snapshot replays only for the order it was taken in.** Its key named the request's sorts but not the `default_sort` an unsorted request follows, or a federated member's, and on Mongo not even the sorts, so a re-sorted request or a changed default could replay the old order.
+
 - **The in-memory search orders a ranked page by relevance before the sort**, as Postgres, Mongo and Meilisearch do, instead of sorting first.
 
 ### Security

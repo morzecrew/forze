@@ -14,13 +14,15 @@ import pytest_asyncio
 from pydantic import BaseModel
 
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
-from forze.application.contracts.search import SearchSpec
+from forze.application.contracts.search import SearchResultSnapshotSpec, SearchSpec
+from forze.application.integrations.search import SearchResultSnapshot
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import MockDocumentAdapter, MockSearchAdapter, MockState
 from forze_mock.adapters.search.command import (
     MockSearchCommandAdapter,
     MockSearchManagementAdapter,
 )
+from forze_mock.adapters.search.snapshot import MockSearchResultSnapshotAdapter
 from tests.support.search_conformance import (
     CORPUS,
     DEFAULT_SORT,
@@ -155,3 +157,58 @@ def write_harness() -> SearchWriteHarness:
 @pytest.mark.parametrize("check", SEARCH_WRITE_BATTERY, ids=lambda check: check.__name__)
 async def test_search_write_battery(check: WriteCheck, write_harness: SearchWriteHarness) -> None:
     await check(write_harness)
+
+
+async def test_a_snapshot_replays_only_for_the_order_it_was_taken_in() -> None:
+    """A snapshot taken under another default sort is not replayed: the page runs live."""
+
+    state = MockState()
+    documents = MockDocumentAdapter(
+        spec=DocumentSpec(
+            name="rows",
+            read=_Read,
+            write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create, update_cmd=_Update),
+        ),
+        state=state,
+        namespace="rows",
+        read_model=_Read,
+        domain_model=_Domain,
+    )
+    rows = [
+        await documents.create(_Create(title=title, content=content, category=category))
+        for title, content, category, _ in CORPUS
+    ]
+    rs_spec = SearchResultSnapshotSpec(name="snap", enabled=True)
+    store = MockSearchResultSnapshotAdapter(state=state, spec=rs_spec)
+
+    # Taken ascending, under the request alone: what the key held before it took the order in.
+    ascending = sorted(rows, key=lambda row: row.title)
+    stale = SearchResultSnapshot.simple_search_fingerprint(
+        "python", None, None, spec_name="rows", variant="offset"
+    )
+    await store.put_run(
+        run_id="run-1",
+        fingerprint=stale,
+        ordered_ids=[
+            SearchResultSnapshot.result_record_key_string(_Row.model_validate(row.model_dump()))
+            for row in ascending
+        ],
+        chunk_size=10,
+    )
+
+    port = MockSearchAdapter(
+        state=state,
+        spec=SearchSpec(
+            name="rows",
+            model_type=_Row,
+            fields=searchable_fields(),
+            default_sort={"title": "desc"},
+            snapshot=rs_spec,
+        ),
+        result_snapshot=SearchResultSnapshot(store=store),
+    )
+    page = await port.search_page(
+        "python", None, {"limit": 10}, snapshot={"id": "run-1", "fingerprint": stale}
+    )
+
+    assert [hit.title for hit in page.hits] == [row.title for row in reversed(ascending)]

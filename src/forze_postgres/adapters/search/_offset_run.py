@@ -29,6 +29,7 @@ from forze.application.contracts.search import (
     facet_size_of,
     normalize_search_queries,
     resolve_facet_fields,
+    resolve_search_sorts,
     search_page_from_limit_offset,
 )
 from forze.application.integrations.search import (
@@ -609,7 +610,7 @@ async def execute_hub_ranked_offset_search(
     fp_fingerprint = SearchResultSnapshot.hub_search_fingerprint(
         query,
         filters,
-        sorts,
+        resolve_search_sorts(sorts, default_sort=hub_spec.default_sort, read_fields=gw.read_fields),
         spec_name=hub_spec.name,
         members_weighted=members_weighted,
         score_merge=score_merge,

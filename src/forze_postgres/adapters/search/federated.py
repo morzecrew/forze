@@ -270,13 +270,25 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             self.federated_spec.members, thin_merge=self.federated_spec.thin_merge
         )
 
+        extras: dict[str, object] = {"thin": True} if effective_thin else {}
+        # A member orders equal ranks by its own default sort, which moves a hit's fused rank,
+        # so a snapshot must not outlive a change to one.
+        member_sorts = {
+            member.name: dict(member.default_sort)
+            for member in self.federated_spec.members
+            if member.default_sort
+        }
+
+        if member_sorts:
+            extras["member_sorts"] = member_sorts
+
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
             sorts,
             spec_name=self.federated_spec.name,
             rrf_k=int(self.rrf_k),
-            extras={"thin": True} if effective_thin else None,
+            extras=extras or None,
         )
 
         if (

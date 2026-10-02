@@ -129,6 +129,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
             ranked_pipeline=pipeline,
             query=query,
             filters=filters,
+            sorts=sorts,
             spec=self.spec,
             variant=self.search_variant,
             fingerprint_extras={"phrase_combine": str(combine)},

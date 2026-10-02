@@ -226,10 +226,13 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         # facet request runs live (no snapshot read or write).
         facet_fields = resolve_facet_fields(self.spec, options)
         count_policy = effective_search_count(options)
+        order = resolve_search_sorts(
+            sorts, default_sort=self.spec.default_sort, read_fields=self.read_fields
+        )
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
             filters,
-            sorts,
+            order,
             spec_name=self.spec.name,
             variant=self.search_variant,
             extras=self._fingerprint_extras(options),
@@ -253,10 +256,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         # A read model without an ``id`` and a request without a sort leave nothing to order
         # by but some column; the first field by name is at least the same one every time.
         order_sql = await self._projection_order_by_clause(
-            resolve_search_sorts(
-                sorts, default_sort=self.spec.default_sort, read_fields=self.read_fields
-            )
-            or {sorted(self.read_fields)[0]: "asc"}
+            order or {sorted(self.read_fields)[0]: "asc"}
         )
         proj_qname = await self._qname()
         count_stmt = sql.SQL(

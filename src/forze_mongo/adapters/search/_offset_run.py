@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
+    QuerySortExpression,
 )
 from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
@@ -157,6 +158,7 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
     ranked_pipeline: list[JsonDict],
     query: str | Sequence[str],
     filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+    sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     spec: SearchSpec[Any],
     variant: str,
     fingerprint_extras: dict[str, object] | None,
@@ -174,8 +176,7 @@ async def execute_mongo_ranked_offset_search[M: BaseModel](
     return await execute_simple_offset_search_with_snapshot(
         query=query,
         filters=filters,
-        sorts=None,
-        fingerprint_sorts=None,
+        sorts=sorts,
         spec=spec,
         variant=variant,
         fingerprint_extras=fingerprint_extras,
