@@ -231,8 +231,7 @@ class DocumentPaginationMixin(Generic[R]):
             )
 
             if self._seekable(query, scan_sorts):
-                res = await self._keyset_scan(query, filters=filters, sorts=scan_sorts)
-                res = res[skip:]
+                res = await self._keyset_scan(query, filters=filters, sorts=scan_sorts, skip=skip)
 
             else:
                 res = await self._offset_scan(
@@ -325,8 +324,13 @@ class DocumentPaginationMixin(Generic[R]):
         *,
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
         sorts: QuerySortExpression,
+        skip: int = 0,
     ) -> list[Any]:
-        """Every row, batch by batch, each batch seeking past the last row of the one before."""
+        """Every row past the first *skip*, batch by batch, each seeking past the last row.
+
+        A seek cannot jump ahead, so the rows before the offset are still read, but each is
+        dropped as its batch arrives rather than held; the page cap counts those batches too.
+        """
 
         rows: list[Any] = []
 
@@ -338,7 +342,9 @@ class DocumentPaginationMixin(Generic[R]):
             max_pages=self.max_scan_pages,
             label="Document scan",
         ):
-            rows.extend(batch)
+            dropped = min(skip, len(batch))
+            skip -= dropped
+            rows.extend(batch[dropped:])
 
         return rows
 
