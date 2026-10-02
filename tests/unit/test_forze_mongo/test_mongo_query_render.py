@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
     AggregateComputedField,
+    AggregatesExpressionParser,
     QueryAnd,
     QueryCompare,
     QueryElem,
@@ -1123,3 +1124,27 @@ class TestOperatorFieldGuard:
             r.render_expr_predicate(
                 QueryElem("tags", "$any", QueryField("$gt", "$eq", "z"))
             )
+
+
+class TestAggregateSortNulls:
+    """An aggregate sort, like any Mongo sort, cannot place nulls other than as smallest."""
+
+    _PARSED = AggregatesExpressionParser.parse(
+        {"$groups": {"g": "grp"}, "$computed": {"n": {"$count": None}}}
+    )
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [({"dir": "asc", "nulls": "first"}, 1), ({"dir": "desc", "nulls": "last"}, -1)],
+    )
+    def test_the_native_placement_renders(self, value: dict, expected: int) -> None:
+        assert MongoQueryRenderer.render_aggregate_sorts(self._PARSED, {"g": value}) == [
+            ("g", expected)
+        ]
+
+    @pytest.mark.parametrize("value", [{"dir": "asc", "nulls": "last"}, {"dir": "desc", "nulls": "first"}])
+    def test_another_placement_is_refused(self, value: dict) -> None:
+        with pytest.raises(CoreException) as ei:
+            MongoQueryRenderer.render_aggregate_sorts(self._PARSED, {"g": value})
+
+        assert ei.value.code == "query_feature_unsupported"

@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An aggregate read without a limit pages its groups in one order.** With no sort it asked for the read model's `id`, which no aggregate returns, and failed; with a sort that tied, groups could repeat or go missing between batches. The group keys now break every tie.
 
-- **A MongoDB aggregate read honours an object-form sort direction.** A sort written `{"n": {"dir": "asc"}}` returned the groups in reverse, as anything but the string `"asc"` read as descending.
+- **A MongoDB aggregate read honours an object-form sort direction.** A sort written `{"n": {"dir": "asc"}}` returned the groups in reverse, as anything but the string `"asc"` read as descending. A null placement MongoDB cannot express is now refused, as on other MongoDB reads.
 
 ### Security
 

@@ -28,6 +28,7 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     QueryValue,
     QueryValueCaster,
+    assert_default_null_ordering,
     elem_inner_is_scalar,
     parse_sort_value,
     validate_aggregate_capabilities,
@@ -192,11 +193,15 @@ class MongoQueryRenderer:
         if bad:
             raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
 
-        # A value may be the object form, `{"dir": ..., "nulls": ...}`, not only "asc"/"desc".
-        return [
-            (field, 1 if parse_sort_value(value, field=field)[0] == "asc" else -1)
-            for field, value in sorts.items()
+        # A value may be the object form, `{"dir": ..., "nulls": ...}`, not only "asc"/"desc";
+        # Mongo orders nulls as the smallest value, so any other placement is refused, as on
+        # the regular sort path.
+        resolved = [
+            (field, *parse_sort_value(value, field=field)) for field, value in sorts.items()
         ]
+        assert_default_null_ordering(resolved, backend="mongo")
+
+        return [(field, 1 if direction == "asc" else -1) for field, direction, _ in resolved]
 
     # ....................... #
 
