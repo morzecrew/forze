@@ -315,6 +315,12 @@ class FirestoreGateway[M: BaseModel](
         resolved = resolve_sort_keys(sorts, sealed=self.sealed_fields)
         assert_default_null_ordering(resolved, backend="firestore")
 
+        ids = [index for index, (field, _, _) in enumerate(resolved) if field == ID_FIELD]
+
+        if ids:
+            # `id` is unique, so no key after it decides an order; it ends the sort.
+            resolved = resolved[: ids[0] + 1]
+
         out: list[tuple[str, str]] = []
 
         for index, (field, direction, _nulls) in enumerate(resolved):

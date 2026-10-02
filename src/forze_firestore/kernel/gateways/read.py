@@ -62,7 +62,9 @@ class FirestoreReadGateway[M: BaseModel](
     """Read-only Firestore gateway."""
 
     cursor_sorts_by_id_only: ClassVar[bool] = True
-    """A cursor here seeks on ``id`` alone, so a read sorted otherwise is paged by offset."""
+    """A cursor here seeks on ``id`` alone, so a read sorted otherwise is paged by offset, which
+    Firestore refuses past the first batch: such a read fails rather than return part of the
+    rows."""
 
     read_validation: Literal["strict", "trusted"] = attrs.field(
         default="strict",

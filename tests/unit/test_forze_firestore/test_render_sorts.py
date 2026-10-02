@@ -14,6 +14,7 @@ from tests.unit._gateway_codec_helpers import codec_for
 
 class _Row(Document):
     grp: int
+    kind: str = ""
 
 
 def _gw() -> FirestoreReadGateway[_Row]:
@@ -37,11 +38,16 @@ def test_a_leading_id_keeps_the_stored_field() -> None:
     # Ordered by the document name, a sole `id desc` would be a descending key scan, which
     # Firestore refuses; the stored `id` field is served by its own single-field index.
     assert _gw().render_sorts({"id": "desc"}) == [("id", "DESCENDING")]
-    assert _gw().render_sorts({"id": "asc", "grp": "desc"}) == [
-        ("id", "ASCENDING"),
-        ("grp", "DESCENDING"),
-    ]
+    assert _gw().render_sorts({"id": "asc", "grp": "desc"}) == [("id", "ASCENDING")]
 
 
 def test_other_keys_keep_their_field() -> None:
     assert _gw().render_sorts({"grp": "asc"}) == [("grp", "ASCENDING")]
+
+
+def test_keys_after_id_are_dropped_so_the_name_stays_last() -> None:
+    # `id` is unique, so nothing after it decides; Firestore orders by `__name__` last.
+    assert _gw().render_sorts({"grp": "asc", "id": "asc", "kind": "desc"}) == [
+        ("grp", "ASCENDING"),
+        ("__name__", "ASCENDING"),
+    ]
