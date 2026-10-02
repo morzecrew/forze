@@ -276,6 +276,38 @@ class TestConcernsWiredThroughKit:
 # ....................... #
 
 
+class TestSoftDeletedGet:
+    async def test_the_kit_can_serve_a_soft_deleted_row(self) -> None:
+        kit = AggregateKit(spec=WIDGET_SPEC, soft_delete=True, get_deleted="read")
+        reg = kit.registry(tx_route=_TX)
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            widget = await _create(reg, ctx, "A", 1)
+            await run_operation(
+                reg,
+                _key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=widget.id, rev=widget.rev),
+                ctx,
+            )
+
+            fetched = await run_operation(
+                reg, _key(DocumentKernelOp.GET), DocumentIdDTO(id=widget.id), ctx
+            )
+
+            assert (fetched.id, fetched.is_deleted) == (widget.id, True)
+
+    def test_get_deleted_without_soft_delete_is_refused(self) -> None:
+        with pytest.raises(CoreException, match="get_deleted") as ei:
+            AggregateKit(spec=WIDGET_SPEC, get_deleted="read")
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+
+# ....................... #
+
+
 class TestSearchReadExclusion:
     """Kit search reads must never return a soft-deleted ghost, even one still indexed."""
 

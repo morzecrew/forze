@@ -34,6 +34,7 @@ plus per-aggregate policy:
 | `read` | `type[R]` | required | the read model returned from queries |
 | `write` | `DocumentWriteTypes \| None` | `None` | `{domain, create_cmd, update_cmd?}`; **omit for a read-only document** (no command port) |
 | `history_enabled` | `bool` | `False` | keep an audit trail of every revision |
+| `hard_delete` | `bool` | `True` | `False`: no document operation erases a row — no `kill` operation is generated and the command port refuses `kill`/`kill_many`. A provisioner's `drop_on_deprovision=True` and raw statements are outside the port and can still delete |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names persisted as columns, so they're filterable/sortable |
 | `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` from the read model (every statically-defaulted, non-identity, non-`materialized` field); explicit fields are added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | read-model fields with **no** backing column: dropped from the projection, hydrated from their default, removed from the filter/sort/aggregate allow-sets, and tolerated by relational startup schema checks (see below) |
@@ -133,6 +134,13 @@ learn its owner, which is one extra query, paid only by a spec that declares thi
 transactions that each hold the owner the other wants are a deadlock Postgres detects: one is
 refused as `concurrency`, which is retryable, and the in-memory store refuses the same cycle the
 same way. Mongo has no advisory-lock mechanism and refuses the declaration.
+
+Those locks add up in a long transaction. A transaction holds one for each distinct owner it writes
+under until it ends, and they all live in Postgres's shared lock table. Every session shares that
+table, which holds `max_locks_per_transaction` × (`max_connections` + `max_prepared_transactions`)
+locks. A request touches a few owners; a bulk load or a seed that writes under thousands in one
+transaction can fill the table and fail with `out of shared memory`. Commit such a load in batches,
+so a transaction holds only its own batch's owners.
 
 It **serializes, it does not validate**, and the difference is worth stating twice: the lock is
 taken before the *write*, so a handler that reads, decides, and then writes still made its
@@ -322,7 +330,8 @@ model(s), or `None` when you don't need them back.
 
 `kill(pk)` and `kill_many(pks)` **hard-delete** — there is no soft-delete or
 `restore` on the port (model soft-delete is a domain concern, applied via
-`update`).
+`update`). On a spec declaring `hard_delete=False` both refuse with a
+`configuration` error (`hard_delete_forbidden`), whoever calls them.
 
 ## Implemented by
 

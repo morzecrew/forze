@@ -174,7 +174,8 @@ class CurrentVersionGet[R: BaseModel](Handler[DocumentIdDTO, R]):
     """Document query port for the guarded get."""
 
     soft_deleted: bool = False
-    """Whether soft deletion is wired on this aggregate, and so whether to check its flag.
+    """Whether to refuse a soft-deleted row: soft deletion is wired on this aggregate and its GET
+    answers 404 for a deleted row (``get_deleted="not_found"``).
 
     Off by default, because ``is_deleted`` is an ordinary field name a domain may use for
     something of its own — refusing a row for carrying it would be this handler inventing a
@@ -222,7 +223,8 @@ class VersionedWiring:
     """Where correction records are stored."""
 
     soft_deleted: bool = False
-    """Whether the aggregate also composes soft deletion, so the GET guard checks its flag."""
+    """Whether the aggregate also composes soft deletion with a GET that 404s a deleted row, so
+    the GET guard checks its flag."""
 
     dtos: DocumentDTOs[Any, Any, Any] | None = None
     """Inbound DTOs, when they are not the spec's own commands."""

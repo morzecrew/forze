@@ -22,7 +22,12 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
+from forze.application.contracts.document import (
+    DocumentSpec,
+    KeyedCreate,
+    KeyedUpdate,
+    UpsertItem,
+)
 from forze.application.integrations.document._command import DocumentCommandMixin
 from forze.application.integrations.document._query import DocumentQueryMixin
 from forze.base.exceptions import CoreException
@@ -226,6 +231,7 @@ class CommandHarness(DocumentCommandMixin[_Row, _Domain, _Dto, _Dto]):
         cache: FakeCache | None = None,
         *,
         eff_batch_size: int = 50,
+        hard_delete: bool = True,
     ) -> None:
         self.write_gw = write_gw  # type: ignore[assignment]
         self.document_cache = cache or FakeCache()  # type: ignore[assignment]
@@ -233,8 +239,11 @@ class CommandHarness(DocumentCommandMixin[_Row, _Domain, _Dto, _Dto]):
 
         class _Spec:
             name = "thing"
+            require_hard_delete = DocumentSpec.require_hard_delete
 
-        self.spec = _Spec()  # type: ignore[assignment]
+        spec = _Spec()
+        spec.hard_delete = hard_delete  # type: ignore[attr-defined]
+        self.spec = spec  # type: ignore[assignment]
 
     @property
     def eff_batch_size(self) -> int:
@@ -831,6 +840,33 @@ async def test_kill_many_evicts_cache() -> None:
 
     assert cache.invalidated == [_UID_A, _UID_B]
     assert "kill_many" in write_gw.calls
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "erase",
+    [
+        lambda h: h.kill(_UID_A),
+        lambda h: h.kill_many([_UID_A]),
+        # The declaration is about the spec, not about how many rows a call names.
+        lambda h: h.kill_many([]),
+    ],
+    ids=["kill", "kill_many", "kill_many-empty"],
+)
+async def test_a_spec_without_hard_delete_refuses_before_the_gateway(erase: Any) -> None:
+    write_gw = FakeWriteGateway()
+    cache = FakeCache()
+    harness = CommandHarness(write_gw, cache, hard_delete=False)
+
+    with pytest.raises(CoreException) as ei:
+        await erase(harness)
+
+    assert ei.value.code == "hard_delete_forbidden"
+    assert not {"kill", "kill_many"} & set(write_gw.calls)
+    assert cache.invalidated == []
 
 
 # ....................... #

@@ -677,8 +677,11 @@ class DocumentCommandMixin(
         """Hard-delete a document and evict it from the cache.
 
         :param pk: Document primary key.
+        :raises CoreException: ``hard_delete_forbidden`` when the spec declares
+            ``hard_delete=False``.
         """
 
+        self.spec.require_hard_delete()
         w = self._require_write()
 
         await asyncio.gather(
@@ -692,8 +695,11 @@ class DocumentCommandMixin(
         """Hard-delete multiple documents and evict them from the cache.
 
         :param pks: Document primary keys.
+        :raises CoreException: ``hard_delete_forbidden`` when the spec declares
+            ``hard_delete=False``.
         """
 
+        self.spec.require_hard_delete()
         w = self._require_write()
 
         if not pks:

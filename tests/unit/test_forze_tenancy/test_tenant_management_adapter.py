@@ -281,7 +281,7 @@ async def test_list_principal_tenants_filters_inactive() -> None:
             is_active=(tid == t1),
         )
 
-    adapter.tenant_qry.get = AsyncMock(side_effect=_get)
+    adapter.tenant_qry.get_many = AsyncMock(side_effect=lambda ids: [_get(i) for i in ids])
 
     result = await adapter.list_principal_tenants(pid)
 
