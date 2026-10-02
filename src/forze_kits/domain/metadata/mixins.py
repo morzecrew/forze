@@ -1,7 +1,10 @@
-from pydantic import field_validator
+from typing import Any
 
+from pydantic import ValidationInfo, field_validator
+
+from forze.base.primitives import normalize_string
 from forze.domain.models import BaseDTO, CoreModel
-from forze_kits.domain.base.types import LongString, String
+from forze_kits.domain.base.types import LongString, String, decode_text_input
 
 # ----------------------- #
 
@@ -19,13 +22,19 @@ class _MetadataMixinOptionalFields(CoreModel):
 
     @field_validator("display_name", "description", mode="before")
     @classmethod
-    def _validate_metadata_fields(cls, v: str | None) -> str | None:
-        """Validate metadata fields."""
+    def _validate_metadata_fields(cls, v: Any, info: ValidationInfo) -> Any:
+        """Read a blank field as unset, whether it arrives as text or as UTF-8 bytes.
 
-        if v is None:
+        Blank is judged after normalization, so a value holding only invisible or control
+        characters is unset too. A value that is not text is left to the field's own validation.
+        """
+
+        v = decode_text_input(v, info)
+
+        if not isinstance(v, str):
             return v
 
-        v = v.strip()
+        v = normalize_string(v).strip()
 
         if not v:
             return None

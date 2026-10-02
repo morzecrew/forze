@@ -10,7 +10,8 @@ import structlog
 from structlog.contextvars import bound_contextvars
 
 from forze.base.logging import Logger, configure_logging
-from forze.base.logging.constants import RICH_EXC_INFO_KEY
+from forze.base.logging.constants import RICH_EXC_INFO_KEY, LogLevel
+from forze.base.logging.logger import set_configured_min_rank
 from forze.base.logging.renderers import ForzeConsoleRenderer
 
 # ----------------------- #
@@ -45,6 +46,7 @@ def _render_deep_exc(render: ForzeConsoleRenderer, depth: int) -> str:
 
 def _cleanup_logging() -> None:
     structlog.reset_defaults()
+    set_configured_min_rank("info")
     for name in (
         "forze.test",
         "test.module",
@@ -570,8 +572,10 @@ class TestForzeConsoleRenderer:
         assert "ValueError" in out
 
 
-def test_unconfigured_process_drops_trace_but_emits_info() -> None:
+def test_unconfigured_process_drops_trace_but_emits_debug_and_info() -> None:
     """Trace is opt-in: without ``configure_logging`` the gate defaults to INFO.
+
+    The debug gate starts open instead, so structlog's default still prints debug.
 
     Runs in a subprocess so the module-level default is observed untouched by
     other tests (the rank is process-global mutable state).
@@ -585,6 +589,7 @@ def test_unconfigured_process_drops_trace_but_emits_info() -> None:
         "assert lm._configured_min_rank == LogLevelToRank['info'], lm._configured_min_rank\n"
         "log = lm.Logger('unconfigured')\n"
         "log.trace('trace-firehose', n=1)\n"
+        "log.debug('debug-line')\n"
         "log.info('info-line')\n"
     )
     result = subprocess.run(
@@ -595,7 +600,8 @@ def test_unconfigured_process_drops_trace_but_emits_info() -> None:
     )
     out = result.stdout + result.stderr
     assert "trace-firehose" not in out  # unconfigured trace is dropped at the gate
-    assert "info-line" in out  # everything else keeps structlog default behavior
+    assert "debug-line" in out  # everything else keeps structlog default behavior
+    assert "info-line" in out
 
 
 def test_configure_logging_trace_level_opens_the_gate() -> None:
@@ -650,3 +656,122 @@ def test_trace_fast_skips_below_configured_level(monkeypatch: pytest.MonkeyPatch
         assert len(recorded) == 1  # passes the gate, reaches the backend
     finally:
         lm._configured_min_rank = original
+
+
+def test_debug_fast_skips_while_the_configured_wrapper_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``Logger.debug`` short-circuits before touching the backend when configured above debug."""
+
+    import forze.base.logging.logger as lm
+
+    recorded: list[str] = []
+
+    class _Recorder:
+        def debug(self, event: str, *args: object, **kwargs: object) -> None:
+            recorded.append(event)
+
+        def bind(self, **_kwargs: object) -> "_Recorder":
+            return self
+
+    monkeypatch.setattr(lm, "_structlog_get_logger", lambda _name: _Recorder())
+
+    log = lm.Logger("debug-gate-test")
+    cases: tuple[tuple[LogLevel, bool], ...] = (
+        ("info", False),
+        ("warning", False),
+        ("debug", True),
+        ("trace", True),
+        ("notset", True),
+    )
+
+    try:
+        for level, emitted in cases:
+            recorded.clear()
+            configure_logging(level=level, logger_names=["forze.test"], stream=io.StringIO())
+            log.debug("event")
+
+            assert recorded == (["event"] if emitted else []), level
+    finally:
+        _cleanup_logging()
+
+
+def test_debug_follows_structlog_reconfigured_after_configure_logging() -> None:
+    """Resetting structlog, or configuring another wrapper, brings debug back."""
+
+    def _captured(name: str) -> list[object]:
+        with structlog.testing.capture_logs() as logs:
+            Logger("forze.test").debug(name)
+
+        return [e["event"] for e in logs]
+
+    try:
+        configure_logging(level="info", logger_names=["forze.test"], stream=io.StringIO())
+        while_configured = _captured("while-configured")
+
+        structlog.reset_defaults()
+        after_reset = _captured("after-reset")
+
+        configure_logging(level="info", logger_names=["forze.test"], stream=io.StringIO())
+        structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG))
+        after_reconfigure = _captured("after-reconfigure")
+    finally:
+        _cleanup_logging()
+
+    assert while_configured == []
+    assert after_reset == ["after-reset"]
+    assert after_reconfigure == ["after-reconfigure"]
+
+
+def test_the_debug_gate_reads_structlogs_active_wrapper() -> None:
+    """The gate reads structlog's private config; a structlog that moves it fails here."""
+
+    import forze.base.logging.logger as lm
+
+    try:
+        configure_logging(level="info", logger_names=["forze.test"], stream=io.StringIO())
+        active = structlog.get_config()["wrapper_class"]
+
+        assert lm._STRUCTLOG_CONFIG.default_wrapper_class is active
+        assert lm._debug_dropping_wrapper is active
+    finally:
+        _cleanup_logging()
+
+
+def test_a_structlog_without_its_private_config_leaves_the_debug_gate_open() -> None:
+    """Importing still works if structlog renames its config module; debug is just not skipped."""
+
+    import subprocess
+
+    code = (
+        "import sys\n"
+        "import structlog\n"
+        "del structlog._config\n"  # as a rename would leave it
+        "sys.modules['structlog._config'] = None\n"
+        "import forze.base.logging.logger as lm\n"
+        "assert lm._STRUCTLOG_CONFIG is None, lm._STRUCTLOG_CONFIG\n"
+        "lm.set_configured_min_rank('info', wrapper_class=object())\n"
+        "assert lm._debug_dropping_wrapper is None, lm._debug_dropping_wrapper\n"
+        "lm.Logger('t').debug('still-callable')\n"
+        "print('OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert "OK" in result.stdout, result.stderr
+
+
+def test_a_structlog_config_module_without_the_object_reads_as_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import types
+
+    import forze.base.logging.logger as lm
+
+    monkeypatch.setattr(lm, "import_module", lambda _name: types.SimpleNamespace())
+
+    assert lm._structlog_live_config() is None

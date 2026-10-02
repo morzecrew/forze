@@ -241,13 +241,13 @@ def configure_logging(
     :param dedup_window: Default dedup window in seconds for ``_dedup_key`` events.
     """
 
-    set_configured_min_rank(level)
-
     wrapper_class = (
         structlog.make_filtering_bound_logger(level)
         if level != "trace"
         else structlog.make_filtering_bound_logger("debug")
     )
+
+    set_configured_min_rank(level, wrapper_class=wrapper_class)
 
     sampling: list[Processor] = (
         [SamplingDeduplicator(default_window=dedup_window)] if enable_sampling else []

@@ -1,5 +1,6 @@
 from enum import StrEnum
 from functools import cache
+from importlib import import_module
 from typing import Any, Final, Self, cast, final
 
 import attrs
@@ -16,6 +17,7 @@ from .constants import (
 # ----------------------- #
 
 _TRACE_RANK: Final[int] = LogLevelToRank["trace"]
+_DEBUG_RANK: Final[int] = LogLevelToRank["debug"]
 _configured_min_rank: int = LogLevelToRank["info"]
 """Configured minimum level rank; defaults to the INFO rank until configured.
 
@@ -25,8 +27,9 @@ Trace is opt-in: a process that never calls
 building the event dict and running the full structlog pipeline for output
 nobody asked for. ``configure_logging(level="trace")`` opens the gate.
 
-Only :meth:`Logger.trace` consults this rank — debug and above always go to
-the structlog backend, whose own (configured or default) filtering applies.
+:meth:`Logger.debug` has a gate of its own, :data:`_debug_dropping_wrapper`; info
+and above always go to the structlog backend, whose own (configured or default)
+filtering applies.
 
 :class:`~forze.base.logging.processors.TraceLevelResolver` drops a trace event
 (rank 5) whenever ``5 < configured_rank``, so :meth:`Logger.trace` can short-circuit
@@ -34,18 +37,59 @@ above that threshold without building the event or touching the backend.
 """
 
 
-def set_configured_min_rank(level: LogLevel) -> None:
-    """Record the configured minimum level so :meth:`Logger.trace` can fast-skip.
+def _structlog_live_config() -> Any:
+    """structlog's private configuration object, or ``None`` if structlog moved it."""
 
-    Called by :func:`~forze.base.logging.configure.configure_logging`; keeps the
-    per-call trace gate a single integer comparison instead of a structlog
-    pipeline pass. Until this runs, the gate sits at the INFO rank, so trace is
-    dropped in unconfigured processes; any explicitly configured level —
-    including ``"trace"`` — is honored as-is.
+    try:
+        return import_module("structlog._config")._CONFIG
+
+    except (ImportError, AttributeError):
+        return None
+
+
+_STRUCTLOG_CONFIG: Final[Any] = _structlog_live_config()
+"""structlog's live configuration, read for its active wrapper class.
+
+:func:`structlog.get_config` would copy the whole configuration into a dict on every
+debug call; this is one attribute read. If structlog ever moves it, the debug gate
+stays open, which costs speed and never output.
+"""
+
+_debug_dropping_wrapper: Any = None
+"""The filtering wrapper class ``configure_logging`` installed at a level above debug.
+
+That wrapper drops debug anyway, so while it is still structlog's active wrapper,
+:meth:`Logger.debug` returns before materializing the backend logger, which costs
+microseconds per call on per-statement paths. The gate follows the configuration
+actually in force: ``structlog.reset_defaults()`` or a ``structlog.configure`` with
+another wrapper class opens it, and a process that never configures logging keeps
+structlog's default, which prints debug.
+"""
+
+
+def set_configured_min_rank(level: LogLevel, *, wrapper_class: Any = None) -> None:
+    """Record the configured minimum level for the trace and debug fast-skip gates.
+
+    Called by :func:`~forze.base.logging.configure.configure_logging` with the filtering
+    *wrapper_class* it installs; keeps the per-call gates of :meth:`Logger.trace` and
+    :meth:`Logger.debug` a comparison or two instead of a structlog pipeline pass.
+
+    Until this runs, the trace gate sits at the INFO rank, so trace is dropped in
+    unconfigured processes; any explicitly configured level — including ``"trace"`` —
+    is honored as-is, and a later ``structlog.configure`` does not move it. The debug
+    gate closes only for a level above debug, and only while *wrapper_class* stays
+    structlog's active wrapper; without one it stays open. ``set_configured_min_rank("info")``
+    restores the unconfigured state.
     """
 
-    global _configured_min_rank
+    global _configured_min_rank, _debug_dropping_wrapper
     _configured_min_rank = LogLevelToRank.get(level, 0)
+    _debug_dropping_wrapper = (
+        wrapper_class
+        if _configured_min_rank > _DEBUG_RANK
+        and hasattr(_STRUCTLOG_CONFIG, "default_wrapper_class")
+        else None
+    )
 
 
 # ----------------------- #
@@ -114,7 +158,16 @@ class Logger:
         exc_info: bool = False,
         **extras: Any,
     ) -> None:
-        """Log at DEBUG level."""
+        """Log at DEBUG level.
+
+        Fast-skips while the wrapper ``configure_logging`` installed above debug is still
+        structlog's active one, like :meth:`trace`; see :data:`_debug_dropping_wrapper`.
+        """
+
+        gate = _debug_dropping_wrapper
+
+        if gate is not None and _STRUCTLOG_CONFIG.default_wrapper_class is gate:
+            return
 
         self.backend.debug(event, *sub, exc_info=exc_info, **extras)
 
