@@ -15,15 +15,23 @@ import pytest
 
 from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
 from forze.application.execution import Deps
+from forze.application.integrations.authz import ConfigGrants, ConfigGrantsProvider
+from forze.base.exceptions import CoreException
 from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     FirestoreDocumentConfig,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
-from forze_identity.authz.application.specs import principal_permission_binding_spec
+from forze_identity.authz.application.specs import (
+    permission_definition_spec,
+    principal_permission_binding_spec,
+)
 from forze_identity.authz.domain.models.bindings import CreatePrincipalPermissionBindingCmd
-from forze_identity.authz.services.grants import fetch_all_document_hits
+from forze_identity.authz.domain.models.permission_definition import (
+    CreatePermissionDefinitionCmd,
+)
+from forze_identity.authz.services.grants import check_declared_keys, fetch_all_document_hits
 from forze_identity.tenancy.adapters.management import (
     _BINDING_PAGE_SIZE,  # pyright: ignore[reportPrivateUsage]
     TenantManagementAdapter,
@@ -107,3 +115,28 @@ async def test_a_tenant_with_more_members_than_one_page_lists_them_all(
     )
 
     assert set(await adapter.list_tenant_principals(tenant)) == members
+
+
+async def test_a_provider_declaring_more_keys_than_one_in_batch_is_checked(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    ctx = _context(firestore_client, f"perms_{unique_collection}")
+    keys = [f"ops.key_{i}" for i in range(31)]
+
+    for key in keys:
+        await ctx.document.command(permission_definition_spec).create(
+            CreatePermissionDefinitionCmd(permission_key=key)
+        )
+
+    def provider(*declared: str) -> ConfigGrantsProvider:
+        return ConfigGrantsProvider(keys=frozenset(declared), grants=ConfigGrants())
+
+    query = ctx.document.query(permission_definition_spec)
+    await check_declared_keys(query, [provider(*keys)])
+
+    with pytest.raises(CoreException) as refused:
+        await check_declared_keys(query, [provider(*keys, "ops.missing")])
+
+    assert refused.value.code == "authz_provider_unknown_keys"
+    assert "ops.missing" in str(refused.value)

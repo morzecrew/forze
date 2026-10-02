@@ -349,14 +349,17 @@ class AuthzGrantResolver:
 
 # ....................... #
 
-_IN_BATCH: Final = 1_000
-"""The query parser's default ``$in`` limit."""
+_IN_BATCH: Final = 30
+"""Values in one ``$in``: Firestore's limit, the smallest of any backend, so a batch runs on
+every one."""
 
 
 async def _fetch_where_in[R: BaseModel](
     query: DocumentQueryPort[R], field: str, values: Sequence[Any]
 ) -> list[R]:
-    # In batches: a query may name at most _IN_BATCH values in one $in.
+    # In batches: a query may name at most _IN_BATCH values in one $in. One size for every
+    # backend costs Postgres a read per 30 values; ask the port for its own limit if a
+    # principal with hundreds of roles or groups ever makes that matter.
     rows: list[R] = []
 
     for first in range(0, len(values), _IN_BATCH):
