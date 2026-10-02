@@ -1,4 +1,3 @@
-import json
 from collections.abc import Sequence
 from typing import Any, cast, get_args
 
@@ -42,6 +41,7 @@ from ..types import (
     TextOp,
     UnaryOp,
 )
+from .canonical import canonical_sort_key
 from .nodes import (
     ELEM_SCALAR_FIELD,
     QueryAnd,
@@ -81,12 +81,12 @@ OPERAND_COLLECTIONS = (list, tuple, set, frozenset)
 def _operand_list(value: Any) -> list[Any]:
     """*value* as the list every renderer reads: no backend sees a tuple, set or frozenset.
 
-    A set's elements are ordered by their canonical JSON form, so its hash-seeded iteration
+    A set's elements are ordered by :func:`canonical_sort_key`, so its hash-seeded iteration
     order cannot differ between processes and change a cursor's filter fingerprint.
     """
 
     if isinstance(value, set | frozenset):
-        return sorted(value, key=lambda v: json.dumps(v, sort_keys=True, default=str))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+        return sorted(value, key=canonical_sort_key)  # pyright: ignore[reportUnknownArgumentType]
 
     return list(value)  # pyright: ignore[reportUnknownArgumentType]
 
