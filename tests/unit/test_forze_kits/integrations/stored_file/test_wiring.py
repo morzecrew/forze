@@ -2,7 +2,9 @@
 
 import pytest
 
+from forze import build_runtime
 from forze.application.contracts.outbox import OutboxSpec
+from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
@@ -11,13 +13,16 @@ from forze.application.hooks.authn import AuthnRequired
 from forze.base.primitives import StrKeyNamespace
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.aggregates.stored_file import (
+    StoredFileIdRevDTO,
     StoredFileKernelOp,
     StoredFileOutboxPayload,
+    UploadStoredFileRequestDTO,
     bind_stored_file_writes,
     build_stored_file_registry,
 )
 from forze_kits.domain.stored_file import StoredFileKitSpec
 from forze_kits.integrations.stored_file import freeze_stored_file_registry
+from forze_mock import MockDepsModule
 
 # ----------------------- #
 
@@ -146,3 +151,34 @@ def test_the_blob_is_purged_by_default() -> None:
     frozen = bind_stored_file_writes(_SEARCHED, tx_route="mock").freeze()
 
     assert _delete_stages(frozen, _SEARCHED) == ("mock", {"stored_file_purge_blob"})
+
+
+@pytest.mark.parametrize("purge", [True, False], ids=["purge", "keep"])
+async def test_a_delete_through_the_registry_keeps_or_purges_the_blob(purge: bool) -> None:
+    # End to end, so the stage behind each step id is what is checked, not the id.
+    reg = freeze_stored_file_registry(_SEARCHED, tx_route="mock", purge_on_delete=purge)
+    key = _SEARCHED.document.default_namespace.key
+    runtime = build_runtime(MockDepsModule())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        index = ctx.search.query(_SEARCHED.search_spec)
+        uploaded = await run_operation(
+            reg,
+            key(StoredFileKernelOp.UPLOAD),
+            UploadStoredFileRequestDTO(filename="kept.txt", data=b"payload"),
+            ctx,
+        )
+        ready = await ctx.doc.query(_SEARCHED.document).get(uploaded.id)
+        assert [hit.id for hit in (await index.search("kept")).hits] == [ready.id]
+
+        await run_operation(
+            reg,
+            key(StoredFileKernelOp.DELETE),
+            StoredFileIdRevDTO(id=ready.id, rev=ready.rev),
+            ctx,
+        )
+
+        assert (await index.search("kept")).hits == []
+        listed = await ctx.storage.query(_SEARCHED.resolved_storage).list(limit=10, offset=0)
+        assert listed.total == (0 if purge else 1)
