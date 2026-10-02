@@ -10,6 +10,7 @@ through their cap/limit/empty/boundary branches.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -385,8 +386,23 @@ async def test_offset_page_scan_seeks_then_skips_the_offset() -> None:
         {"offset": "abc", "limit": 5},
         {"offset": 1.9},
         {"offset": True},
+        {"offset": ""},
+        {"offset": []},
+        {"offset": Decimal("1.5")},
+        {"offset": Decimal("Infinity")},
     ],
-    ids=["unbounded", "limited", "text-unbounded", "text-limited", "float", "bool"],
+    ids=[
+        "unbounded",
+        "limited",
+        "text-unbounded",
+        "text-limited",
+        "float",
+        "bool",
+        "empty",
+        "list",
+        "decimal",
+        "infinity",
+    ],
 )
 @pytest.mark.asyncio
 async def test_offset_page_refuses_a_negative_offset(pagination: dict[str, int]) -> None:
@@ -981,3 +997,38 @@ async def test_unbounded_aggregates_order_batches_by_the_group_keys() -> None:
         {"g": "asc"},
         {"n": "desc", "g": "desc"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_pages_a_string_offset_by_its_value() -> None:
+    # The offset fallback adds the batch size to the offset; a string there raised.
+    gateway = FakeReadGateway(find_many_results=[[{"id": "a"}, {"id": "b"}], [{"id": "c"}]])
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(
+        _offset_query(return_fields=("name",)),
+        filters=None,
+        pagination={"offset": "4"},  # type: ignore[typeddict-item]
+        sorts=None,
+    )
+
+    assert [r["id"] for r in page.hits] == ["a", "b", "c"]
+    assert [call["offset"] for call in gateway.find_many_calls] == [4, 6]
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_drops_the_offset_prefix_as_it_arrives() -> None:
+    gateway = FakeReadGateway(
+        cursor_results=[
+            [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+            [{"id": "c"}, {"id": "d"}, {"id": "e"}],
+            [{"id": "e"}],
+        ]
+    )
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(
+        _offset_query(), filters=None, pagination={"offset": 3}, sorts=None
+    )
+
+    assert [r["id"] for r in page.hits] == ["d", "e"]

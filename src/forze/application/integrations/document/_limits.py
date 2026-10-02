@@ -47,6 +47,30 @@ def assert_cursor_advanced(
 # ....................... #
 
 
+def _exact_int(raw: Any) -> int:
+    """*raw* as an integer, refusing what ``int()`` would take silently.
+
+    ``int()`` reads ``True`` as 1, truncates ``1.9`` or ``Decimal("1.5")`` to 1, and turns an
+    empty container into nothing at all once a caller writes ``raw or 0``.
+    """
+
+    if isinstance(raw, bool):
+        raise TypeError(raw)
+
+    if isinstance(raw, str):
+        return int(raw)
+
+    value = int(raw)
+
+    if value != raw:
+        raise ValueError(raw)
+
+    return value
+
+
+# ....................... #
+
+
 def page_offset(pagination: Mapping[str, Any]) -> int:
     """The offset *pagination* asks for, as an integer (``0`` when it gives none).
 
@@ -56,16 +80,14 @@ def page_offset(pagination: Mapping[str, Any]) -> int:
 
     raw = pagination.get("offset")
 
-    if isinstance(raw, bool) or (isinstance(raw, float) and not raw.is_integer()):
-        # `int()` would quietly take `True` as 1 and truncate 1.9 to 1.
+    if raw is None:
+        return 0
+
+    try:
+        offset = _exact_int(raw)
+
+    except (TypeError, ValueError, ArithmeticError):
         offset = -1
-
-    else:
-        try:
-            offset = int(raw or 0)
-
-        except (TypeError, ValueError):
-            offset = -1
 
     if offset < 0:
         raise exc.precondition(f"Pagination offset must be a non-negative integer, got {raw!r}.")

@@ -222,7 +222,6 @@ class DocumentPaginationMixin(Generic[R]):
                 )
 
         limit = pagination.get("limit")
-        offset = pagination.get("offset")
 
         res: list[Any]
 
@@ -240,7 +239,7 @@ class DocumentPaginationMixin(Generic[R]):
                     query,
                     filters=filters,
                     sorts=scan_sorts,
-                    offset=offset,
+                    offset=skip,
                     parsed_filters=parsed_filters,
                 )
 
@@ -249,7 +248,7 @@ class DocumentPaginationMixin(Generic[R]):
                 query,
                 filters=filters,
                 sorts=with_group_tiebreakers(query.aggregates, sorts),
-                offset=offset,
+                offset=skip,
                 parsed_filters=parsed_filters,
             )
 
@@ -257,7 +256,7 @@ class DocumentPaginationMixin(Generic[R]):
             res = await self.read_gw.find_many_aggregates(
                 filters=filters,
                 limit=limit,
-                offset=offset,
+                offset=skip,
                 sorts=sorts,
                 aggregates=query.aggregates,
                 return_model=query.return_model,
@@ -267,7 +266,7 @@ class DocumentPaginationMixin(Generic[R]):
             res = await self.read_gw.find_many(  # type: ignore[misc]
                 filters=filters,
                 limit=limit,
-                offset=offset,
+                offset=skip,
                 sorts=sorts,
                 return_model=query.return_model,  # type: ignore[arg-type]
                 return_fields=query.return_fields,  # type: ignore[arg-type]
