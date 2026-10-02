@@ -54,13 +54,18 @@ def page_offset(pagination: Mapping[str, Any]) -> int:
         negative one would slice from the end, and a backend answers either with a server error.
     """
 
-    raw = pagination.get("offset") or 0
+    raw = pagination.get("offset")
 
-    try:
-        offset = int(raw)
-
-    except (TypeError, ValueError):
+    if isinstance(raw, bool) or (isinstance(raw, float) and not raw.is_integer()):
+        # `int()` would quietly take `True` as 1 and truncate 1.9 to 1.
         offset = -1
+
+    else:
+        try:
+            offset = int(raw or 0)
+
+        except (TypeError, ValueError):
+            offset = -1
 
     if offset < 0:
         raise exc.precondition(f"Pagination offset must be a non-negative integer, got {raw!r}.")

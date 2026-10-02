@@ -383,8 +383,10 @@ async def test_offset_page_scan_seeks_then_skips_the_offset() -> None:
         {"offset": -1, "limit": 5},
         {"offset": "abc"},
         {"offset": "abc", "limit": 5},
+        {"offset": 1.9},
+        {"offset": True},
     ],
-    ids=["unbounded", "limited", "text-unbounded", "text-limited"],
+    ids=["unbounded", "limited", "text-unbounded", "text-limited", "float", "bool"],
 )
 @pytest.mark.asyncio
 async def test_offset_page_refuses_a_negative_offset(pagination: dict[str, int]) -> None:
