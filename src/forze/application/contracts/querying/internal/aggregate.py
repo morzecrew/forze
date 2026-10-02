@@ -8,7 +8,17 @@ import attrs
 
 from forze.base.exceptions import exc
 
-from ..expressions import AggregateFunction, AggregatesExpression, QueryFilterExpression
+from ..expressions import (
+    AggregateFunction,
+    AggregatesExpression,
+    QueryFilterExpression,
+    QuerySortExpression,
+    QuerySortValue,
+)
+from ..sort_resolution.value import (
+    _tiebreaker_direction,  # pyright: ignore[reportPrivateUsage]
+    parse_sort_value,
+)
 from .nodes import (
     QueryAnd,
     QueryCompare,
@@ -456,3 +466,37 @@ class AggregatesExpressionParser:
             raise exc.precondition(f"$percentile 'p' must be a number in [0, 1], got {p!r}")
 
         return float(p)
+
+
+# ....................... #
+
+
+def with_group_tiebreakers(
+    aggregates: AggregatesExpression,
+    sorts: QuerySortExpression | None,
+) -> QuerySortExpression | None:
+    """*sorts* with the aggregate's group keys appended, the order a batched read needs.
+
+    Each output row is one group, so its keys are unique to it and break every tie the
+    caller's sort leaves: read in batches, no group repeats or goes missing. They take the
+    sort's direction when every key shares one, else ``asc``. Without groups there is one row,
+    and *sorts* is returned as given.
+    """
+
+    groups = AggregatesExpressionParser._group_keys(  # pyright: ignore[reportPrivateUsage]
+        aggregates.get("$groups", {})
+    )
+
+    if not groups:
+        return sorts
+
+    out: dict[str, QuerySortValue] = dict(sorts or {})
+    direction = _tiebreaker_direction(
+        [parse_sort_value(value, field=field)[0] for field, value in out.items()]
+    )
+    tie: Literal["asc", "desc"] = "desc" if direction == "desc" else "asc"
+
+    for group in groups:
+        out.setdefault(group.alias, tie)
+
+    return out

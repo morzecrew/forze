@@ -971,3 +971,24 @@ async def test_cursor_page_without_id_reads_the_fields_not_the_dump() -> None:
         tokens.append(decode_keyset_v1(page.next_cursor)[3])  # type: ignore[arg-type]
 
     assert tokens == [[1], [None]]
+
+
+@pytest.mark.asyncio
+async def test_unbounded_aggregates_order_batches_by_the_group_keys() -> None:
+    # The read model's `id` default is no aggregate output; the group keys are, and they are
+    # unique per row, so they give the batches one order.
+    gateway = FakeReadGateway(find_many_results=[[{"g": 1, "n": 2}]])
+    harness = PaginationHarness(gateway)
+    aggregates = {"$groups": {"g": "grp"}, "$computed": {"n": {"$count": None}}}
+
+    await harness._offset_page(
+        _offset_query(aggregates=aggregates), filters=None, pagination=None, sorts=None
+    )
+    await harness._offset_page(
+        _offset_query(aggregates=aggregates), filters=None, pagination=None, sorts={"n": "desc"}
+    )
+
+    assert [call["sorts"] for call in gateway.find_many_aggregates_calls] == [
+        {"g": "asc"},
+        {"n": "desc", "g": "desc"},
+    ]

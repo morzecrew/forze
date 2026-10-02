@@ -18,6 +18,7 @@ from forze.application.contracts.querying import (
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
     normalize_sorts_for_keyset,
+    with_group_tiebreakers,
     with_id_tiebreaker,
 )
 from forze.application.contracts.querying.pagination.cursor_page import (
@@ -236,11 +237,11 @@ class DocumentPaginationMixin(Generic[R]):
                     parsed_filters=parsed_filters,
                 )
 
-        elif limit is None:
+        elif limit is None and query.aggregates is not None:
             res = await self._offset_scan(
                 query,
                 filters=filters,
-                sorts=self._resolve_sorts(sorts),
+                sorts=with_group_tiebreakers(query.aggregates, sorts),
                 offset=offset,
                 parsed_filters=parsed_filters,
             )
@@ -337,7 +338,7 @@ class DocumentPaginationMixin(Generic[R]):
         query: OffsetQuery,
         *,
         filters: QueryFilterExpression | None,  # type: ignore[valid-type]
-        sorts: QuerySortExpression,
+        sorts: QuerySortExpression | None,
         offset: int | None,
         parsed_filters: Any,
     ) -> list[Any]:

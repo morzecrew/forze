@@ -101,6 +101,7 @@ from .internal import (
     elem_inner_is_scalar,
     evaluate_filter,
     value_at_path,
+    with_group_tiebreakers,
 )
 from .pagination import (
     CursorBinding,
@@ -165,6 +166,7 @@ __all__ = [
     "AggregateTruncUnit",
     "AggregatesExpression",
     "AggregatesExpressionParser",
+    "with_group_tiebreakers",
     "GroupKey",
     "GroupField",
     "GroupTrunc",

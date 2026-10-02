@@ -243,6 +243,23 @@ async def run_unbounded_scan_parity(
 
     if custom_sorts:
         await _check_rewritten_keys(query)
+        await _check_unbounded_aggregate(query)
+
+
+async def _check_unbounded_aggregate(query: Any) -> None:
+    """An aggregate read without a limit pages its groups in the group keys' order.
+
+    One group per row, so the groups outnumber a batch, and every count ties: a caller's
+    sort on the count alone leaves the group keys to order them.
+    """
+
+    aggregates = {"$groups": {"tag": "meta.tag"}, "$computed": {"n": {"$count": None}}}
+    tags = sorted(f"t{i}" for i in range(ROWS))
+
+    for sorts, expected in ((None, tags), ({"n": "desc"}, tags[::-1])):
+        page = await query.aggregate_many(aggregates, sorts=sorts)
+
+        assert [row["tag"] for row in page.hits] == expected, f"aggregate sorts={sorts}"
 
 
 _REWRITTEN: tuple[tuple[type[BaseModel], str], ...] = (

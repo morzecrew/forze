@@ -56,6 +56,7 @@ from forze.application.contracts.querying import (
     validate_query_field_types,
     validate_runtime_filter_fields,
     validate_runtime_sort_fields,
+    with_group_tiebreakers,
     with_id_tiebreaker,
 )
 from forze.application.integrations.document import DocumentNotFoundTagging
@@ -1003,6 +1004,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             self._validate_aggregate_fields(aggregates)
             aggregate_rows = _aggregate_docs(filtered, aggregates, self.filter_parser)
             total = len(aggregate_rows)
+
+            if limit is None:
+                # As a real backend drains it in batches: tied groups ordered by their keys.
+                sorts = with_group_tiebreakers(aggregates, sorts)
 
             page_rows = _page_window(_sort_docs(aggregate_rows, sorts))
             rows = (

@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A cursor sorted by `id` first pages in `id` order.** A sort such as `{id: asc, x: desc}` moved `id` to the end and ordered by `x` first. `id` now stays where it is put and the keys after it, which can never decide, are dropped, so MongoDB and Firestore cursors accept such a sort too.
 
+- **An aggregate read without a limit pages its groups in one order.** With no sort it asked for the read model's `id`, which no aggregate returns, and failed; with a sort that tied, groups could repeat or go missing between batches. The group keys now break every tie.
+
 ### Security
 
 - **A request no ingress authenticates is refused by default** (**behaviour change**). `AuthnRequirement(required=True)` answers 401 `auth_required` outside the middleware's `anonymous_paths`; list login, refresh and public pages there, or pass `required=False`. CORS preflights pass.
