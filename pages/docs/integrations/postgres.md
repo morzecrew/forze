@@ -130,3 +130,8 @@ lifecycle = LifecyclePlan.from_modules(
   module so the catalog cache partitions by tenant.
 - **Relations** can be static `(schema, table)` tuples or per-tenant resolvers —
   see [Multi-tenancy](../identity-tenancy-enc/multi-tenancy.md).
+- **Indexes for sorted pages.** A sort on a `NOT NULL` column renders without a null
+  placement, so a plain btree index serves it in either direction. A nullable column keeps
+  the canonical placement (ascending nulls first, descending nulls last), which a plain
+  index does not hold: index it with the placement your pages use, for example
+  `(created_at DESC NULLS LAST)`. A view's columns all read as nullable.

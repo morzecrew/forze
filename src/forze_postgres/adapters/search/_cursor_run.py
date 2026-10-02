@@ -41,7 +41,7 @@ from forze_postgres.kernel.sql import (
     build_ranked_cursor_order_by_sql,
     build_seek_condition,
 )
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
+from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 
 from ...kernel.gateways import PostgresGateway
 from ._engine import RankedPipelineSql
@@ -190,7 +190,12 @@ async def execute_projection_keyset_cursor[M: BaseModel](
         where_fin = sql.SQL("({} AND ({}))").format(fw, sk)
         params = params + sp_seek
 
-    order_sql = build_order_by_sql(exprs, directions, flip=use_before)
+    order_sql = build_order_by_sql(
+        exprs,
+        directions,
+        not_null=[sort_key_not_null(k, types) for k in sort_keys],
+        flip=use_before,
+    )
     cols = gw.return_clause(
         return_type,
         select_rf,

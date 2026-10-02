@@ -140,6 +140,7 @@ def build_order_by_sql(
     directions: list[str],
     *,
     nulls: list[str] | None = None,
+    not_null: list[bool] | None = None,
     flip: bool = False,
 ) -> sql.Composable:
     """Build ``ORDER BY`` from per-key expressions; *flip* reverses traversal.
@@ -148,12 +149,16 @@ def build_order_by_sql(
     canonical default) so Postgres conforms to the order the keyset seek and the in-memory
     oracle use (its own default — nulls last on asc — would otherwise disagree). *flip*
     reverses the traversal for a ``before`` page, inverting both direction **and** null
-    placement.
+    placement. A key *not_null* marks as never ``NULL`` gets no placement: it orders the same
+    without one, and only without one can a plain btree index serve it.
     """
 
     parts: list[sql.Composable] = []
+    never_null = not_null if not_null is not None else [False] * len(exprs)
 
-    for ex, d, np in zip(exprs, directions, _default_nulls(directions, nulls), strict=True):
+    for ex, d, np, nn in zip(
+        exprs, directions, _default_nulls(directions, nulls), never_null, strict=True
+    ):
         if flip:
             d_out = "desc" if d == "asc" else "asc"
             n_out = "last" if np == "first" else "first"
@@ -162,8 +167,13 @@ def build_order_by_sql(
             d_out, n_out = d, np
 
         dir_st = "ASC" if d_out == "asc" else "DESC"
-        null_st = "NULLS FIRST" if n_out == "first" else "NULLS LAST"
-        parts.append(sql.SQL("{} {} {}").format(ex, sql.SQL(dir_st), sql.SQL(null_st)))
+        part = sql.SQL("{} {}").format(ex, sql.SQL(dir_st))
+
+        if not nn:
+            null_st = "NULLS FIRST" if n_out == "first" else "NULLS LAST"
+            part = sql.SQL("{} {}").format(part, sql.SQL(null_st))
+
+        parts.append(part)
 
     return sql.SQL(", ").join(parts)
 

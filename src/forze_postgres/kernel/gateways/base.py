@@ -47,7 +47,7 @@ from forze_postgres.kernel.relation import (
     resolve_postgres_qname,
 )
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
+from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 from forze_postgres.kernel.sql.query.render import PsycopgValueCoercer
 
 # ----------------------- #
@@ -348,8 +348,13 @@ class PostgresGateway[M: BaseModel](
                 table_alias=alias,
             )
             dir_st = sql.SQL("ASC") if direction == "asc" else sql.SQL("DESC")
-            null_st = sql.SQL("NULLS FIRST") if nulls == "first" else sql.SQL("NULLS LAST")
-            parts.append(sql.SQL("{} {} {}").format(key, dir_st, null_st))
+            part = sql.SQL("{} {}").format(key, dir_st)
+
+            if not sort_key_not_null(field, types):
+                null_st = sql.SQL("NULLS FIRST") if nulls == "first" else sql.SQL("NULLS LAST")
+                part = sql.SQL("{} {}").format(part, null_st)
+
+            parts.append(part)
 
         return sql.SQL(", ").join(parts)
 

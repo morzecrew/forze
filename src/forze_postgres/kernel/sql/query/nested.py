@@ -427,3 +427,19 @@ def sort_key_expr(
         return sql.Identifier(table_alias, field)
 
     return sql.Identifier(field)
+
+
+# ....................... #
+
+
+def sort_key_not_null(field: str, column_types: PostgresColumnTypes) -> bool:
+    """Whether a sort key can never be ``NULL``: a column the catalog declares ``NOT NULL``.
+
+    Its null placement then orders nothing, and leaving it out is what lets a plain btree
+    index serve the order. A nested path, a view's column and a missing column all can be
+    ``NULL``, so they keep theirs.
+    """
+
+    column = column_types.get(field)
+
+    return column is not None and column.not_null

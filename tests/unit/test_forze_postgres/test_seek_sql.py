@@ -137,3 +137,14 @@ class TestNullAwareSeek:
         # The Composed repr renders each fragment separately, so check the pieces.
         assert "'ASC'" in ob and "'NULLS FIRST'" in ob
         assert "'DESC'" in ob and "'NULLS LAST'" in ob
+
+    @pytest.mark.parametrize("flip", [False, True])
+    def test_a_never_null_key_carries_no_placement(self, flip: bool) -> None:
+        # Only the nullable key keeps one, in either traversal.
+        a = sql.Identifier("h", "a")
+        b = sql.Identifier("h", "b")
+        ob = str(build_order_by_sql([a, b], ["asc", "desc"], not_null=[True, False], flip=flip))
+
+        assert ob.count("NULLS") == 1
+        assert ob.index("NULLS") > ob.index("'b'")
+

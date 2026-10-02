@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
+- **Sorting by a `NOT NULL` Postgres column can read from a plain index.** The `ORDER BY` now leaves out the null placement for such a column, which a plain btree does not hold, so a document list or blank-query search sorted by it no longer sorts the whole filtered set first. Results are unchanged.
+
 ### Fixed
 
 - **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.
