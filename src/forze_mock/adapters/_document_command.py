@@ -1257,6 +1257,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     # ....................... #
 
     async def kill(self, pk: UUID) -> None:
+        self.spec.require_hard_delete()
         self._ensure_writable()
         await self._serialize_stored(pk)
 
@@ -1267,6 +1268,8 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
     # ....................... #
 
     async def kill_many(self, pks: Sequence[UUID]) -> None:
+        self.spec.require_hard_delete()
+
         if len(set(pks)) != len(pks):
             raise exc.internal("Primary keys must be unique")
 

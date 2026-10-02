@@ -4,6 +4,7 @@ from .factories import build_soft_deletion_registry
 from .handlers import DeleteDocument, RestoreDocument
 from .operations import SoftDeletionKernelOp
 from .wiring import (
+    GetDeleted,
     PurgeHook,
     SoftDeleteAwareGet,
     SoftDeleteWiring,
@@ -18,6 +19,7 @@ __all__ = [
     "RestoreDocument",
     "SoftDeletionKernelOp",
     "build_soft_deletion_registry",
+    "GetDeleted",
     "PurgeHook",
     "SoftDeleteAwareGet",
     "SoftDeleteWiring",

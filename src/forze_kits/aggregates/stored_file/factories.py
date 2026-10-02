@@ -49,6 +49,7 @@ def build_stored_file_registry(
             ns.key(StoredFileKernelOp.UPLOAD): lambda ctx: UploadStoredFile(
                 doc=ctx.doc.command(doc_spec),
                 outbox=(ctx.outbox.command(kit.outbox) if kit.outbox is not None else None),
+                max_bytes=kit.max_bytes,
             ),
             ns.key(StoredFileKernelOp.GET): lambda ctx: GetStoredFile(
                 doc=ctx.doc.query(doc_spec),

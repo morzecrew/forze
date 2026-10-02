@@ -39,6 +39,7 @@ Once a `DepsRegistry` registers document adapters for that `name`, handlers obta
 | `read` | Read model type |
 | `write` | `domain`, `create_cmd`, optional `update_cmd`; omit / shape for read-only |
 | `history_enabled` | Adapter may persist revision history when infra provides it |
+| `hard_delete` | `False` = no document operation erases a row: no `kill` op is generated and the port refuses `kill`/`kill_many` (a provisioner's `drop_on_deprovision=True` and raw statements still can) |
 | `cache` | Optional `CacheSpec` for read-through caching |
 | `encryption` | Optional `FieldEncryption` policy (fields sealed at rest) — see [field encryption](field-encryption.md) |
 

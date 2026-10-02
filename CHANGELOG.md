@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
 
+- **A document can turn off hard deletes.** `DocumentSpec(hard_delete=False)` drops the generated `kill` operation, so no route or tool reaches it, and the command port refuses `kill` and `kill_many` with `hard_delete_forbidden`. A provisioner's `drop_on_deprovision=True` and raw statements can still delete rows.
+
+- **A soft-deleted row can still be read by id.** `soft_delete_wiring(spec, get_deleted="read")`, or the same option on `AggregateKit`, makes `GET` return the row with `is_deleted` set instead of a 404. Lists still leave it out.
+
+- **A delete or restore can set its own markers in the same write.** A model on the soft-deletion mixin may list `soft_delete_companions`, such as a cascade marker: fields that change only in a write that flips `is_deleted`, so no other update can set or clear one.
+
+- **Stored-file delete can keep the object, and uploads can be capped.** `bind_stored_file_writes(..., purge_on_delete=False)` soft-deletes the row and keeps its blob, dropping only the search entry; `StoredFileKitSpec(max_bytes=...)` refuses a larger upload with `upload_too_large` before a row is written.
+
 ### Changed
 
 - **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.

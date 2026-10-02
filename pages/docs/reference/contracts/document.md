@@ -34,6 +34,7 @@ plus per-aggregate policy:
 | `read` | `type[R]` | required | the read model returned from queries |
 | `write` | `DocumentWriteTypes \| None` | `None` | `{domain, create_cmd, update_cmd?}`; **omit for a read-only document** (no command port) |
 | `history_enabled` | `bool` | `False` | keep an audit trail of every revision |
+| `hard_delete` | `bool` | `True` | `False`: no document operation erases a row — no `kill` operation is generated and the command port refuses `kill`/`kill_many`. A provisioner's `drop_on_deprovision=True` and raw statements are outside the port and can still delete |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names persisted as columns, so they're filterable/sortable |
 | `read_conformity` | `"strict" \| "lenient"` | `"strict"` | `"lenient"` auto-derives `lenient_read_fields` from the read model (every statically-defaulted, non-identity, non-`materialized` field); explicit fields are added on top |
 | `lenient_read_fields` | `frozenset[str]` | `∅` | read-model fields with **no** backing column: dropped from the projection, hydrated from their default, removed from the filter/sort/aggregate allow-sets, and tolerated by relational startup schema checks (see below) |
@@ -329,7 +330,8 @@ model(s), or `None` when you don't need them back.
 
 `kill(pk)` and `kill_many(pks)` **hard-delete** — there is no soft-delete or
 `restore` on the port (model soft-delete is a domain concern, applied via
-`update`).
+`update`). On a spec declaring `hard_delete=False` both refuse with a
+`configuration` error (`hard_delete_forbidden`), whoever calls them.
 
 ## Implemented by
 

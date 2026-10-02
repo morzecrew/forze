@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
-from forze.application.contracts.execution import OnSuccessFactory, OnSuccessStep
+from forze.application.contracts.execution import OnSuccessStep
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
@@ -30,8 +28,7 @@ def _bind_write_op(
     tx_route: str,
     kit: StoredFileKitSpec,
     flush_step_id: str,
-    after_commit_step_id: str,
-    after_commit_factory: Callable[[StoredFileKitSpec], OnSuccessFactory],
+    after_commit: OnSuccessStep | None,
 ) -> OperationRegistry:
     """Bind one transactional write op: optional outbox flush on success, then after-commit."""
 
@@ -45,12 +42,31 @@ def _bind_write_op(
             )
         )
 
-    return plan.after_commit(
-        OnSuccessStep(
-            id=after_commit_step_id,
-            factory=after_commit_factory(kit),
+    if after_commit is not None:
+        plan = plan.after_commit(after_commit)
+
+    return plan.finish(deep=True)
+
+
+# ....................... #
+
+
+def _delete_after_commit(kit: StoredFileKitSpec, *, purge_on_delete: bool) -> OnSuccessStep | None:
+    """The after-commit stage ``delete`` gets: purge the blob, only unindex it, or none."""
+
+    if purge_on_delete:
+        return OnSuccessStep(
+            id="stored_file_purge_blob",
+            factory=stored_file_purge_blob_after_commit_factory(kit),
         )
-    ).finish(deep=True)
+
+    if kit.search_spec is not None:
+        return OnSuccessStep(
+            id="stored_file_unindex",
+            factory=stored_file_purge_blob_after_commit_factory(kit, keep_blob=True),
+        )
+
+    return None
 
 
 # ....................... #
@@ -62,6 +78,7 @@ def bind_stored_file_writes(
     tx_route: str = "default",
     registry: OperationRegistry | None = None,
     ns: StrKeyNamespace | None = None,
+    purge_on_delete: bool = True,
 ) -> OperationRegistry:
     """Bind a stored-file registry's write operations, leaving it unfrozen.
 
@@ -71,6 +88,9 @@ def bind_stored_file_writes(
     on the stored-file operations before it freezes. Pass the *ns* a given *registry* was
     built with (:func:`build_stored_file_registry`'s ``ns``); the default is the kit
     document's namespace.
+
+    With ``purge_on_delete=False``, ``delete`` soft-deletes the row and leaves its object in
+    storage; a search entry is still dropped, so the file stops appearing in search.
     """
 
     ns = ns or kit.document.default_namespace
@@ -82,8 +102,10 @@ def bind_stored_file_writes(
         tx_route=tx_route,
         kit=kit,
         flush_step_id="stored_file_outbox_flush_upload",
-        after_commit_step_id="stored_file_complete_upload",
-        after_commit_factory=stored_file_complete_upload_after_commit_factory,
+        after_commit=OnSuccessStep(
+            id="stored_file_complete_upload",
+            factory=stored_file_complete_upload_after_commit_factory(kit),
+        ),
     )
 
     reg = _bind_write_op(
@@ -92,8 +114,7 @@ def bind_stored_file_writes(
         tx_route=tx_route,
         kit=kit,
         flush_step_id="stored_file_outbox_flush_delete",
-        after_commit_step_id="stored_file_purge_blob",
-        after_commit_factory=stored_file_purge_blob_after_commit_factory,
+        after_commit=_delete_after_commit(kit, purge_on_delete=purge_on_delete),
     )
 
     return reg
@@ -108,8 +129,15 @@ def freeze_stored_file_registry(
     tx_route: str = "default",
     registry: OperationRegistry | None = None,
     ns: StrKeyNamespace | None = None,
+    purge_on_delete: bool = True,
 ) -> FrozenOperationRegistry:
     """:func:`bind_stored_file_writes`, frozen — for an app that adds nothing to the
     stored-file operations."""
 
-    return bind_stored_file_writes(kit, tx_route=tx_route, registry=registry, ns=ns).freeze()
+    return bind_stored_file_writes(
+        kit,
+        tx_route=tx_route,
+        registry=registry,
+        ns=ns,
+        purge_on_delete=purge_on_delete,
+    ).freeze()

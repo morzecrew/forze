@@ -51,10 +51,19 @@ class UploadStoredFile(Handler[UploadStoredFileRequestDTO, StoredFileRead]):
         StoredFileUpdateCmd,
     ]
     outbox: OutboxCommandPort[StoredFileOutboxPayload] | None = attrs.field(default=None)
+    max_bytes: int | None = attrs.field(default=None)
+    """Largest upload accepted, in bytes; ``None`` sets no limit."""
 
     # ....................... #
 
     async def __call__(self, args: UploadStoredFileRequestDTO) -> StoredFileRead:
+        if self.max_bytes is not None and len(args.data) > self.max_bytes:
+            raise exc.validation(
+                f"Uploaded file exceeds the maximum allowed size of {self.max_bytes} bytes",
+                code="upload_too_large",
+                details={"max_bytes": self.max_bytes},
+            )
+
         created = await self.doc.create(upload_request_to_create_cmd(args))
 
         if self.outbox is not None:

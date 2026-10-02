@@ -91,6 +91,16 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     history_enabled: bool = False
     """Enable history for the document aggregate. Defaults to ``False``."""
 
+    hard_delete: bool = True
+    """Whether a row of this aggregate may be erased. Defaults to ``True``.
+
+    ``False`` declares that no document operation erases a row: the document factory registers
+    no ``kill`` operation, so no generated route or tool reaches one, and the command port
+    refuses ``kill``/``kill_many`` from any caller. Soft deletion is unaffected. Outside the
+    document port, a tenant provisioner with ``drop_on_deprovision=True`` still drops a tenant's
+    whole schema or database, and a statement run through a backend client or a raw-query
+    escape hatch can still delete rows."""
+
     materialized: frozenset[str] = attrs.field(
         factory=frozenset,
         converter=frozenset,
@@ -670,6 +680,24 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             return read_fields
 
         return self.query_policy.resolve_aggregatable(read_fields)
+
+    # ....................... #
+
+    def require_hard_delete(self) -> None:
+        """Refuse a hard delete this spec does not allow.
+
+        :raises CoreException: ``configuration`` (``hard_delete_forbidden``) when
+            :attr:`hard_delete` is ``False``.
+        """
+
+        if self.hard_delete:
+            return
+
+        raise exc.configuration(
+            f"Document {self.name!r} declares hard_delete=False, so its rows cannot be erased.",
+            code="hard_delete_forbidden",
+            details={"spec": str(self.name)},
+        )
 
     # ....................... #
 

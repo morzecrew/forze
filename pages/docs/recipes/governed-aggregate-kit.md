@@ -39,7 +39,13 @@ cross-record invariant, and event-relaying:
 Each concern is opt-in and independently useful on its own:
 
 - **`soft_delete`** — the generated `LIST` excludes soft-deleted rows and `GET` 404s
-  one; you get `delete`/`restore` ops and an optional after-commit `purge`.
+  one; you get `delete`/`restore` ops and an optional after-commit `purge`. With
+  `get_deleted="read"`, `GET` returns the deleted row with `is_deleted` set instead, so a
+  reference to it still resolves. A model can name companion fields that change only in the
+  write that deletes or restores the row (`soft_delete_companions = frozenset({"deleted_with"})`),
+  such as a cascade marker the delete sets and the restore clears; any other update that
+  touches one is refused. Declare `hard_delete=False` on the spec when no document operation
+  may erase a row: the kit then generates no `kill` and refuses a handler that adds one.
 - **`search`** — the external index is kept in sync on every committed write
   ([search stays consistent](../data-events/events-sagas.md)); a searchable aggregate
   that silently drifts is worse than no search. Delivery is after-commit best-effort by
