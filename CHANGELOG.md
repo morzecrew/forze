@@ -73,6 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A MongoDB aggregate read honours an object-form sort direction.** A sort written `{"n": {"dir": "asc"}}` returned the groups in reverse, as anything but the string `"asc"` read as descending. A null placement MongoDB cannot express is now refused, as on other MongoDB reads.
 
+- **A membership operand given as a set or frozenset works on every backend.** The parser handed it on as is: Postgres could not bind one inside a JSONB element and answered with a server error, and Meilisearch refused a set. Every operand now reaches the backend as a list.
+
 ### Security
 
 - **Firestore reads and deletes by id check the tenant first.** A tenant-aware `get`, `get_many` or `kill` without a bound tenant is refused before it reads the store, as the filtered reads already were.

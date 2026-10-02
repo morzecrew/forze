@@ -1256,6 +1256,27 @@ class TestQueryCompareExpressionParser:
         with pytest.raises(CoreException, match="maximum size"):
             parser.parse_filter(expr)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize(
+        ("operand", "expected"),
+        [
+            (("c", "a", "b"), ["c", "a", "b"]),  # a sequence keeps its order
+            ({"c", "a", "b"}, ["a", "b", "c"]),  # a set is ordered canonically
+            (frozenset({"c", "a", "b"}), ["a", "b", "c"]),
+        ],
+        ids=["tuple", "set", "frozenset"],
+    )
+    @pytest.mark.parametrize("form", ["shortcut", "in", "superset"])
+    def test_every_operand_collection_reaches_renderers_as_a_list(
+        self, operand: object, expected: list[str], form: str
+    ) -> None:
+        # A renderer checking for a list (Postgres JSONB, Meilisearch) must never meet a
+        # set; a set's hash-seeded order must not reach a cursor fingerprint either.
+        value = operand if form == "shortcut" else {f"${form}": operand}
+        parsed = QueryFilterExpressionParser.parse({"$values": {"x": value}})  # type: ignore[dict-item]
+
+        assert parsed.items[0].value == expected  # type: ignore[union-attr]
+        assert type(parsed.items[0].value) is list  # type: ignore[union-attr]
+
     def test_a_shortcut_operand_must_be_a_collection_the_parser_bounds(self) -> None:
         # Any other iterable would reach the backend unsized.
         with pytest.raises(CoreException, match="Invalid value"):

@@ -204,6 +204,41 @@ CASES: tuple[QueryCase, ...] = (
               # all items qty in (1,9): bob[2]; carol[] vacuous; alice has 1 (no); dave 9 (no).
               expected=frozenset({"bob", "carol"})),
     # Membership inside a quantifier (Slice B — $in/$nin in element predicates).
+    # Every operand collection the parser accepts, at the top level and inside an element.
+    *(
+        case
+        for kind, make in (("tuple", tuple), ("set", set), ("frozenset", frozenset))
+        for case in (
+            QueryCase(name=f"membership_in_{kind}",
+                      filters={"$values": {"name": {"$in": make(["alice", "bob"])}}},
+                      expected=frozenset({"alice", "bob"})),
+            QueryCase(name=f"quant_any_scalar_in_{kind}",
+                      filters={"$values": {"tags": {"$any": {"$in": make(["z", "w"])}}}},
+                      expected=frozenset({"bob"})),
+            QueryCase(name=f"quant_any_object_in_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"sku": {"$in": make(["a"])}}}}}},
+                      expected=frozenset({"alice", "bob"})),
+            QueryCase(name=f"membership_in_number_{kind}",
+                      filters={"$values": {"age": {"$in": make([25, 40])}}},
+                      expected=frozenset({"bob", "carol"})),
+            QueryCase(name=f"quant_any_scalar_in_number_{kind}",
+                      filters={"$values": {"nums": {"$any": {"$in": make([3, 9])}}}},
+                      expected=frozenset({"bob", "dave"})),
+            QueryCase(name=f"quant_any_object_in_number_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"qty": {"$in": make([1, 9])}}}}}},
+                      expected=frozenset({"alice", "dave"})),
+            # A scalar array inside JSONB: the element `$in` renders through the JSONB path.
+            QueryCase(name=f"nested_any_any_in_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"tags": {"$any": {"$in": make(["hot"])}}}}}}},
+                      expected=frozenset({"alice", "dave"})),
+            QueryCase(name=f"saoa_any_any_in_{kind}",
+                      filters={"$values": {"matrix": {"$any": {"$any": {"$in": make(["hot"])}}}}},
+                      expected=frozenset({"alice", "dave"})),
+            QueryCase(name=f"quant_any_object_nin_{kind}",
+                      filters={"$values": {"items": {"$any": {"$values": {"sku": {"$nin": make(["a", "b"])}}}}}},
+                      expected=frozenset({"dave"})),
+        )
+    ),
     QueryCase(name="quant_any_scalar_in",
               filters={"$values": {"tags": {"$any": {"$in": ["z", "w"]}}}},
               # any tag in {z,w}: bob[y,z]; others none.

@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 from typing import Any, cast, get_args
 
@@ -75,6 +76,20 @@ _QUANTIFIER_OPS: frozenset[str] = frozenset(get_args(QueryElementQuantifier))
 
 OPERAND_COLLECTIONS = (list, tuple, set, frozenset)
 """The collections a membership or set operand may be; each is bounded by ``max_in_size``."""
+
+
+def _operand_list(value: Any) -> list[Any]:
+    """*value* as the list every renderer reads: no backend sees a tuple, set or frozenset.
+
+    A set's elements are ordered by their canonical JSON form, so its hash-seeded iteration
+    order cannot differ between processes and change a cursor's filter fingerprint.
+    """
+
+    if isinstance(value, set | frozenset):
+        return sorted(value, key=lambda v: json.dumps(v, sort_keys=True, default=str))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+
+    return list(value)  # pyright: ignore[reportUnknownArgumentType]
+
 
 _COMBINATOR_KEYS = frozenset({"$and", "$or", "$not"})
 _CONSTRAINT_KEYS = frozenset({"$values", "$fields"})
@@ -360,7 +375,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for field {field}: {raw!r}")
 
             self._check_in_size(field, "$in", raw)
-            return [QueryField(field, "$in", raw)]
+            return [QueryField(field, "$in", _operand_list(raw))]
 
         if is_query_value_conjunction(raw):
             if not raw:
@@ -547,6 +562,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
             self._check_in_size(field, op, value)
+            value = _operand_list(value)
 
         return QueryField(field, op, value)  # type: ignore[arg-type]
 
@@ -659,6 +675,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
             self._check_in_size(field, op, value)
+            value = _operand_list(value)
 
         elif op in _UNARY_OPS:
             if not isinstance(value, bool):
@@ -669,6 +686,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
             self._check_in_size(field, op, value)
+            value = _operand_list(value)
 
         elif op in _HIERARCHY_OPS:
             return self._expand_hierarchy_op(field, op, value, ctx)
