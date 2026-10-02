@@ -981,6 +981,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         limit = int(limit_raw) if limit_raw is not None else None
         offset = int(pagination.get("offset") or 0)
 
+        if offset < 0:
+            raise exc.precondition("Pagination offset must not be negative.")
+
         def _page_window(ordered: list[Any]) -> list[Any]:
             # Slice to the requested page *before* projecting/decoding, so only the page's rows
             # are materialized — matching the real adapters' late materialization (the DB
@@ -1017,9 +1020,6 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             total = len(filtered)
 
             if limit is None:
-                if offset < 0:
-                    raise exc.precondition("Pagination offset must not be negative.")
-
                 sorts = self._scan_sorts(sorts)
 
             page_docs = _page_window(_sort_docs(filtered, sorts))

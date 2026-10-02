@@ -376,16 +376,23 @@ async def test_offset_page_scan_seeks_then_skips_the_offset() -> None:
 # ....................... #
 
 
+@pytest.mark.parametrize(
+    "pagination",
+    [{"offset": -1}, {"offset": -1, "limit": 5}],
+    ids=["unbounded", "limited"],
+)
 @pytest.mark.asyncio
-async def test_offset_page_scan_refuses_a_negative_offset() -> None:
-    # Sliced, it would count from the end and return the last rows.
-    gateway = FakeReadGateway(cursor_results=[[{"id": "a"}, {"id": "b"}]])
+async def test_offset_page_refuses_a_negative_offset(pagination: dict[str, int]) -> None:
+    # Sliced, it would count from the end; sent on, a backend answers with a server error.
+    gateway = FakeReadGateway(cursor_results=[[{"id": "a"}]], find_many_results=[[{"id": "a"}]])
     harness = PaginationHarness(gateway, eff_batch_size=2)
 
     with pytest.raises(CoreException, match="negative"):
         await harness._offset_page(
-            _offset_query(), filters=None, pagination={"offset": -1}, sorts=None
+            _offset_query(), filters=None, pagination=pagination, sorts=None
         )
+
+    assert (gateway.find_many_calls, gateway.cursor_calls) == ([], [])
 
 
 # ....................... #

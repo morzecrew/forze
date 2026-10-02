@@ -201,6 +201,11 @@ class DocumentPaginationMixin(Generic[R]):
             raise exc.precondition("Aggregates cannot be combined with return_fields")
 
         pagination = pagination or {}
+
+        if (pagination.get("offset") or 0) < 0:
+            # Sliced, it would count from the end; sent on, a backend fails with a server error.
+            raise exc.precondition("Pagination offset must not be negative.")
+
         parsed_filters = self.read_gw.compile_filters(filters)
         cnt = 0
         if query.return_count:
@@ -231,14 +236,8 @@ class DocumentPaginationMixin(Generic[R]):
             )
 
             if self._seekable(query, scan_sorts):
-                skip = offset or 0
-
-                if skip < 0:
-                    # A slice would count from the end and return the last rows.
-                    raise exc.precondition("Pagination offset must not be negative.")
-
                 res = await self._keyset_scan(query, filters=filters, sorts=scan_sorts)
-                res = res[skip:]
+                res = res[offset or 0 :]
 
             else:
                 res = await self._offset_scan(
