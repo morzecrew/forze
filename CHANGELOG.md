@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A debug call below the configured level costs a comparison.** While `configure_logging`'s level is above debug, `Logger.debug` returns before building the structlog logger, about 2 µs to 0.1 µs. Unconfigured, after `structlog.reset_defaults()` or under another wrapper class, debug reaches structlog as before.
 
-- **Authorization and tenant listing read rows in batches, not one at a time.** A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for one role under a parent with 18 permissions. On Firestore, each binding scan needs a composite index on its field and `id`.
+- **Authorization and tenant listing read in batches, not row by row.** A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for a role, its parent and 18 permissions. Tenants are read together, not per membership. Firestore scans need an index on field and `id`.
 
 ### Fixed
 
