@@ -60,7 +60,12 @@ _READ = frozenset({ID_FIELD, "title", "rank"})
     [
         (None, {"rank": "desc"}, _READ, {"rank": "desc", ID_FIELD: "desc"}),
         ({"title": "asc"}, {"rank": "desc"}, _READ, {"title": "asc", ID_FIELD: "asc"}),
-        ({"title": "asc", "rank": "desc"}, None, _READ, {"title": "asc", "rank": "desc", ID_FIELD: "asc"}),
+        (
+            {"title": "asc", "rank": "desc"},
+            None,
+            _READ,
+            {"title": "asc", "rank": "desc", ID_FIELD: "asc"},
+        ),
         ({ID_FIELD: "desc", "title": "asc"}, None, _READ, {ID_FIELD: "desc", "title": "asc"}),
         (None, None, _READ, {ID_FIELD: "asc"}),
         ({"title": "desc"}, None, frozenset({"title"}), {"title": "desc"}),
