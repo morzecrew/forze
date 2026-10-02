@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A negative pagination offset is refused as the caller's mistake.** A document read sent it to the backend, which answered with a server error; it is now a `precondition`, on every backend and the mock.
 
+- **A cursor sorted by `id` first pages in `id` order.** A sort such as `{id: asc, x: desc}` moved `id` to the end and ordered by `x` first. `id` now stays where it is put and the keys after it, which can never decide, are dropped, so MongoDB and Firestore cursors accept such a sort too.
+
 ### Security
 
 - **A request no ingress authenticates is refused by default** (**behaviour change**). `AuthnRequirement(required=True)` answers 401 `auth_required` outside the middleware's `anonymous_paths`; list login, refresh and public pages there, or pass `required=False`. CORS preflights pass.

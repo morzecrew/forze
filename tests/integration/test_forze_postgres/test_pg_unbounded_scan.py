@@ -14,6 +14,7 @@ from tests.support.unbounded_scan_parity import (
     ScanCreate,
     ScanDoc,
     ScanRead,
+    run_id_first_cursor_parity,
     run_unbounded_scan_parity,
 )
 
@@ -33,3 +34,16 @@ async def test_a_read_without_a_limit_orders_ties_by_id(pg_client: PostgresClien
     ctx = document_context(pg_client, table)
 
     await run_unbounded_scan_parity(ctx.document.command(spec), ctx.document.query(spec))
+
+
+async def test_a_cursor_sorted_by_id_first_orders_by_id(pg_client: PostgresClient) -> None:
+    table = f"scan_{uuid4().hex[:12]}"
+    await pg_client.execute(f"CREATE TABLE {table} ({POSTGRES_COLUMNS});")
+    spec = DocumentSpec(
+        name="scan",
+        read=ScanRead,
+        write=DocumentWriteTypes(domain=ScanDoc, create_cmd=ScanCreate),
+    )
+    ctx = document_context(pg_client, table)
+
+    await run_id_first_cursor_parity(ctx.document.command(spec), ctx.document.query(spec))

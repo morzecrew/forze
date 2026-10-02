@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -21,13 +22,14 @@ from tests.support.unbounded_scan_parity import (
     ScanCreate,
     ScanDoc,
     ScanRead,
+    run_id_first_cursor_parity,
     run_unbounded_scan_parity,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def test_a_read_without_a_limit_orders_ties_by_id(mongo_client: MongoClient) -> None:
+async def _ports(mongo_client: MongoClient) -> tuple[Any, Any]:
     collection = f"scan_{uuid4().hex[:8]}"
     db_name = (await mongo_client.db()).name
     configurable = ConfigurableMongoDocument(
@@ -48,4 +50,12 @@ async def test_a_read_without_a_limit_orders_ties_by_id(mongo_client: MongoClien
         write=DocumentWriteTypes(domain=ScanDoc, create_cmd=ScanCreate),
     )
 
-    await run_unbounded_scan_parity(ctx.document.command(spec), ctx.document.query(spec))
+    return ctx.document.command(spec), ctx.document.query(spec)
+
+
+async def test_a_read_without_a_limit_orders_ties_by_id(mongo_client: MongoClient) -> None:
+    await run_unbounded_scan_parity(*await _ports(mongo_client))
+
+
+async def test_a_cursor_sorted_by_id_first_orders_by_id(mongo_client: MongoClient) -> None:
+    await run_id_first_cursor_parity(*await _ports(mongo_client))

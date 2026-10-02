@@ -287,17 +287,20 @@ class DocumentPaginationMixin(Generic[R]):
     def _seekable(self, query: OffsetQuery, sorts: QuerySortExpression) -> bool:
         """Whether a read with no limit can seek past each batch instead of offsetting.
 
-        Seeking needs a unique last key, ``id``, and every sort key's value in the rows it
-        returns, since the next batch starts after the last row's values. A projection that
-        leaves a key out is paged by offset, as is any sort but ``id`` alone where the cursor
-        seeks on nothing else — a strict primary-key cursor, or a gateway declaring
+        Seeking needs ``id`` among the keys (the cursor ends the sort there, since nothing
+        after a unique key decides an order) and every key's value in the rows it returns,
+        since the next batch starts after the last row's values. A projection that leaves a
+        key out is paged by offset, as is any sort but ``id`` alone where the cursor seeks on
+        nothing else — a strict primary-key cursor, or a gateway declaring
         ``cursor_sorts_by_id_only``.
         """
 
         keys = list(sorts)
 
-        if keys[-1] != ID_FIELD:
+        if ID_FIELD not in keys:
             return False
+
+        keys = keys[: keys.index(ID_FIELD) + 1]
 
         id_only = self.enforce_primary_key_cursor_sort or (
             getattr(self.read_gw, "cursor_sorts_by_id_only", False) is True

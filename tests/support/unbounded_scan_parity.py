@@ -203,3 +203,32 @@ async def run_unbounded_scan_parity(
 
             summary = await query.select_many(ScanSummary, sorts=sorts)
             assert [row.id for row in summary.hits] == expected, f"{label}: nested subset"
+
+
+async def run_id_first_cursor_parity(command: Any, query: Any) -> None:
+    """A cursor sorted by ``id`` first orders by ``id``: the keys after it never decide.
+
+    ``id`` is unique, so ``{"id": "asc", "grp": "desc"}`` is ``id`` order. The keyset used to
+    move ``id`` to the end, ordering by ``grp`` first instead.
+    """
+
+    created = await command.create_many(seed()[:7])
+    ids = sorted(row.id for row in created)
+
+    for sorts, expected in (
+        ({"id": "asc", "grp": "desc"}, ids),
+        ({"id": "desc", "grp": "asc"}, ids[::-1]),
+    ):
+        got: list[UUID] = []
+        cursor: dict[str, Any] = {"limit": 3}
+
+        while True:
+            page = await query.find_cursor(sorts=sorts, cursor=cursor)
+            got += [hit.id for hit in page.hits]
+
+            if not page.has_more:
+                break
+
+            cursor = {"limit": 3, "after": page.next_cursor}
+
+        assert got == expected, sorts

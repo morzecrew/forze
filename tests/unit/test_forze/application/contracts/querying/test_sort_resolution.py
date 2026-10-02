@@ -97,6 +97,23 @@ def test_normalize_sorts_for_keyset_appends_id_when_present() -> None:
     assert out == [("name", "asc", "first"), (ID_FIELD, "asc", "first")]
 
 
+@pytest.mark.parametrize(
+    ("sorts", "keys"),
+    [
+        # `id` is unique, so nothing after it can decide an order; it stays where it was put.
+        ({"id": "asc", "x": "desc"}, [("id", "asc")]),
+        ({"x": "desc", "id": "asc", "y": "asc"}, [("x", "desc"), ("id", "asc")]),
+        ({"x": "desc", "id": "asc"}, [("x", "desc"), ("id", "asc")]),
+    ],
+)
+def test_normalize_sorts_for_keyset_keeps_id_where_the_caller_put_it(
+    sorts: dict[str, str], keys: list[tuple[str, str]]
+) -> None:
+    out = normalize_sorts_for_keyset(sorts, read_fields=frozenset({"id", "x", "y"}))
+
+    assert [(k, d) for k, d, _ in out] == keys
+
+
 def test_validate_sort_fields_unknown_field() -> None:
     fields = read_fields_for_model(_ViewRow)
     with pytest.raises(CoreException, match="not on read model"):

@@ -32,6 +32,7 @@ from tests.support.unbounded_scan_parity import (
     ScanDoc,
     ScanRead,
     expected_order,
+    run_id_first_cursor_parity,
     run_unbounded_scan_parity,
     seed,
 )
@@ -93,3 +94,7 @@ async def test_a_sorted_read_past_one_batch_is_refused_not_cut_short(
 
     with pytest.raises(CoreException, match="offset"):
         await query.find_many(sorts={"grp": "asc"})
+
+
+async def test_a_cursor_sorted_by_id_first_orders_by_id(firestore_client: FirestoreClient) -> None:
+    await run_id_first_cursor_parity(*_ports(firestore_client))

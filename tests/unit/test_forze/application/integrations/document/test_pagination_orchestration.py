@@ -418,8 +418,6 @@ async def test_offset_page_scan_breaks_ties_by_id() -> None:
     [
         # no id to break ties with: no key is unique
         (frozenset({"grp"}), {"grp": "asc"}, False),
-        # id first: it does not end the sort
-        (frozenset({"id", "grp"}), {"id": "asc", "grp": "desc"}, False),
         # a strict primary-key cursor refuses any other sort
         (frozenset({"id", "grp"}), {"grp": "asc"}, True),
     ],
@@ -436,6 +434,24 @@ async def test_offset_page_scan_pages_by_offset_when_it_cannot_seek(
     await harness._offset_page(_offset_query(), filters=None, pagination=None, sorts=sorts)
 
     assert (len(gateway.find_many_calls), gateway.cursor_calls) == (1, [])
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_seeks_on_id_alone_when_the_sort_starts_with_it() -> None:
+    # `id` is unique, so the keys after it never decide; an id-only cursor serves the read.
+    gateway = FakeReadGateway(cursor_results=[[{"id": "a", "grp": 1}]])
+    harness = PaginationHarness(
+        gateway, read_fields=frozenset({"id", "grp"}), enforce_primary_key_cursor_sort=True
+    )
+
+    await harness._offset_page(
+        _offset_query(), filters=None, pagination=None, sorts={"id": "asc", "grp": "desc"}
+    )
+
+    assert (len(gateway.cursor_calls), gateway.find_many_calls) == (1, [])
 
 
 # ....................... #

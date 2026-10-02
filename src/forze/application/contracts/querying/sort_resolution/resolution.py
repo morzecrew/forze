@@ -133,16 +133,22 @@ def _with_tiebreaker(
     append_tiebreaker: bool,
     spec_name: str,
 ) -> list[tuple[str, str, str]]:
-    """Build ``(field, direction, nulls)`` triples, appending a tie-breaker key.
+    """Build ``(field, direction, nulls)`` triples ending in a tie-breaker key.
 
-    The tie-breaker inherits the shared direction when the sort is uniform, else ``asc``,
-    with the canonical null placement for that direction.
+    A sort that names the tie-breaker keeps it where the caller put it, and drops every key
+    after it: the tie-breaker is unique, so those keys can never decide an order, and moving
+    it to the end would order by them first. Otherwise it is appended when
+    *append_tiebreaker*, inheriting the shared direction when the sort is uniform, else
+    ``asc``, with the canonical null placement for that direction.
     """
 
     parsed = {k: parse_sort_value(v, field=k, spec_name=spec_name) for k, v in s.items()}
-    order_keys = [k for k in s if k != tiebreaker]
+    order_keys = list(s)
 
-    if tiebreaker in s or append_tiebreaker:
+    if tiebreaker in s:
+        order_keys = order_keys[: order_keys.index(tiebreaker) + 1]
+
+    elif append_tiebreaker:
         order_keys.append(tiebreaker)
 
     tb_dir = _tiebreaker_direction([d for d, _ in parsed.values()])

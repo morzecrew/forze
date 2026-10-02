@@ -11,6 +11,7 @@ from tests.support.unbounded_scan_parity import (
     ScanCreate,
     ScanDoc,
     ScanRead,
+    run_id_first_cursor_parity,
     run_unbounded_scan_parity,
 )
 
@@ -41,3 +42,9 @@ async def test_a_read_without_a_limit_orders_ties_by_id() -> None:
 async def test_a_read_refuses_a_negative_offset(pagination: dict[str, int]) -> None:
     with pytest.raises(CoreException, match="negative"):
         await _doc().find_many(pagination=pagination)
+
+
+async def test_a_cursor_sorted_by_id_first_orders_by_id() -> None:
+    doc = _doc()
+
+    await run_id_first_cursor_parity(doc, doc)
