@@ -106,7 +106,7 @@ def build_seek_condition(
     n = len(exprs)
     never_null = not_null if not_null is not None else [False] * n
 
-    if n != len(values) or n != len(directions) or n != len(null_order) or n < 1:
+    if n < 1 or any(len(part) != n for part in (values, directions, null_order, never_null)):
         raise exc.precondition("Invalid keyset shape")
 
     after = nav == "after"

@@ -192,13 +192,30 @@ class TestRankedCursorOrder:
 
 @pytest.mark.parametrize(
     ("direction", "nav", "op"),
-    [("asc", "after", ">"), ("desc", "after", "<"), ("asc", "before", "<"), ("desc", "before", ">")],
+    [
+        ("asc", "after", ">"),
+        ("desc", "after", "<"),
+        ("asc", "before", "<"),
+        ("desc", "before", ">"),
+    ],
 )
 def test_a_never_null_key_seeks_by_the_bare_range(direction: str, nav: str, op: str) -> None:
     # No null branch: the record id has no null rows, and the bare range is what an index serves.
     cond, params = build_seek_condition(
-        [sql.Identifier("id")], [direction], ["k"], nav, not_null=[True]  # type: ignore[arg-type]
+        [sql.Identifier("id")],
+        [direction],
+        ["k"],
+        nav,
+        not_null=[True],  # type: ignore[arg-type]
     )
 
     assert "NULL" not in str(cond)
     assert f"'{op}'" in str(cond) and params == ["k"]
+
+
+@pytest.mark.parametrize("not_null", [[True], [True, False, True]])
+def test_a_never_null_vector_of_the_wrong_length_is_an_invalid_shape(not_null: list[bool]) -> None:
+    exprs = [sql.Identifier("a"), sql.Identifier("id")]
+
+    with pytest.raises(CoreException, match="Invalid keyset shape"):
+        build_seek_condition(exprs, ["asc", "asc"], [1, "k"], "after", not_null=not_null)
