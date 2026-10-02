@@ -222,7 +222,11 @@ def validate_sortable_fields(
 # ....................... #
 
 
-def collect_aggregate_field_roots(aggregates: AggregatesExpression) -> frozenset[str]:  # type: ignore[valid-type]
+def collect_aggregate_field_roots(
+    aggregates: AggregatesExpression,  # type: ignore[valid-type]
+    *,
+    parser: QueryFilterExpressionParser | None = None,
+) -> frozenset[str]:
     """Top-level field names a group-by / computed-metric expression reads.
 
     Covers group dimensions (plain refs and ``$trunc`` sources) and the source field of each
@@ -231,7 +235,7 @@ def collect_aggregate_field_roots(aggregates: AggregatesExpression) -> frozenset
     filterable axis.
     """
 
-    parsed = AggregatesExpressionParser.parse(aggregates)
+    parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=parser)
 
     roots = {_root(group.expr.field) for group in parsed.groups}
     roots |= {_root(field.field) for field in parsed.computed_fields if field.field is not None}
@@ -241,10 +245,12 @@ def collect_aggregate_field_roots(aggregates: AggregatesExpression) -> frozenset
 
 def collect_aggregate_filter_expressions(
     aggregates: AggregatesExpression,  # type: ignore[valid-type]
+    *,
+    parser: QueryFilterExpressionParser | None = None,
 ) -> tuple[QueryFilterExpression, ...]:  # type: ignore[valid-type]
     """Per-metric ``filter`` sub-expressions declared on computed aggregate fields."""
 
-    parsed = AggregatesExpressionParser.parse(aggregates)
+    parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=parser)
 
     return tuple(field.filter for field in parsed.computed_fields if field.filter is not None)
 
@@ -254,13 +260,14 @@ def validate_aggregatable_fields(
     *,
     allowed: frozenset[str],
     spec_name: str,
+    parser: QueryFilterExpressionParser | None = None,
 ) -> None:
     """Raise when *aggregates* group/aggregate a field outside the *allowed* set."""
 
     if aggregates is None:
         return
 
-    forbidden = collect_aggregate_field_roots(aggregates) - allowed
+    forbidden = collect_aggregate_field_roots(aggregates, parser=parser) - allowed
 
     if forbidden:
         raise exc.precondition(
@@ -348,18 +355,21 @@ class QueryFieldGuard:
         skipped.
         """
 
+        parser = (
+            QueryFilterExpressionParser(limits=self.filter_limits)
+            if self.filter_limits is not None
+            else None
+        )
+
         if self.policy.filterable is not None:
-            parser = (
-                QueryFilterExpressionParser(limits=self.filter_limits)
-                if self.filter_limits is not None
-                else None
-            )
             validate_filterable_fields(
                 filters, allowed=self.policy.filterable, spec_name=self.spec_name, parser=parser
             )
 
             if aggregates is not None:
-                for metric_filter in collect_aggregate_filter_expressions(aggregates):
+                for metric_filter in collect_aggregate_filter_expressions(
+                    aggregates, parser=parser
+                ):
                     validate_filterable_fields(
                         metric_filter,
                         allowed=self.policy.filterable,
@@ -372,7 +382,10 @@ class QueryFieldGuard:
 
         if self.policy.aggregatable is not None:
             validate_aggregatable_fields(
-                aggregates, allowed=self.policy.aggregatable, spec_name=self.spec_name
+                aggregates,
+                allowed=self.policy.aggregatable,
+                spec_name=self.spec_name,
+                parser=parser,
             )
 
 

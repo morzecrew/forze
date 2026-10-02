@@ -411,9 +411,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             aggregates,
             allowed=allowed,
             spec_name=str(self.spec.name),
+            parser=self.filter_parser,
         )
 
-        for expression in collect_aggregate_filter_expressions(aggregates):
+        for expression in collect_aggregate_filter_expressions(
+            aggregates, parser=self.filter_parser
+        ):
             # A per-metric filter is an ordinary filter and gets the ordinary check.
             validate_runtime_filter_fields(
                 expression,
@@ -1000,7 +1003,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # because its value does not exist until the read. Both disagree with
             # `aggregatable_fields()`, and the second is silently wrong.
             self._validate_aggregate_fields(aggregates)
-            aggregate_rows = _aggregate_docs(filtered, aggregates)
+            aggregate_rows = _aggregate_docs(filtered, aggregates, self.filter_parser)
             total = len(aggregate_rows)
             page_rows = _page_window(_sort_docs(aggregate_rows, sorts))
             rows = (

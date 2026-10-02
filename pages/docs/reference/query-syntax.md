@@ -262,9 +262,11 @@ page = await ctx.search.query(project_search_spec).search(
 Filters are validated at parse time, before any query reaches the database.
 The defaults below apply unless a `DocumentSpec` or `SearchSpec` sets
 `filter_limits=QueryFilterLimits(...)`. Every backend serving the spec uses those
-limits, the mock included, and so does a generated route or tool that passes a
-caller's filter through. Raising `max_in_size` for internal reads that match long
-id lists raises it for those callers too.
+limits for its filters, aggregate metric filters and `$having`, the mock included,
+and so does a generated route or tool that passes a caller's filter through.
+Raising `max_in_size` for internal reads that match long id lists raises it for
+those callers too. A `HubSearchSpec` has no `filter_limits`: hub search filters
+always use the defaults.
 
 | Limit | Default | Applies to |
 |-------|---------|------------|

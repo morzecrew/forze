@@ -338,6 +338,9 @@ class CombinedDocPort:
     async def find_many(self, *, filters: Any, pagination: Any) -> Any:
         return await self.query.find_many(filters=filters, pagination=pagination)
 
+    async def aggregate_many(self, aggregates: Any, *, pagination: Any) -> Any:
+        return await self.query.aggregate_many(aggregates, pagination=pagination)
+
 
 async def run_parity_cases(
     doc: Any,
@@ -374,3 +377,16 @@ async def run_parity_cases(
                 await doc.find_many(filters=case.filters, pagination={"limit": 1000})
 
             assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, f"{label}: wrong error"
+
+    if caps.supports_aggregates:
+        # A metric filter and `$having` are filters too, parsed under the spec's limits.
+        names = {"$values": {"name": {"$in": _names_padded_to(1_500)}}}
+        page = await doc.aggregate_many(
+            {
+                "$computed": {"n": {"$count": {"filter": names}}},
+                "$having": {"$values": {"n": {"$in": list(range(1_500))}}},
+            },
+            pagination={"limit": 10},
+        )
+
+        assert [row["n"] for row in page.hits] == [2], f"{backend}/aggregate_past_default_limit"

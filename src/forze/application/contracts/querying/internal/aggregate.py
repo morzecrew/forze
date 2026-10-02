@@ -23,6 +23,8 @@ from .time_bucket import ResolvedTimeBucketTimezone, parse_aggregate_timezone
 
 # ----------------------- #
 
+_DEFAULT_FILTER_PARSER = QueryFilterExpressionParser()
+
 _ALIAS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FUNCTIONS: frozenset[str] = frozenset(get_args(AggregateFunction))
 _UNITS: frozenset[str] = frozenset(("hour", "day", "week", "month"))
@@ -167,8 +169,19 @@ class AggregatesExpressionParser:
     """Parser for :class:`~forze.application.contracts.querying.AggregatesExpression`."""
 
     @classmethod
-    def parse(cls, expr: AggregatesExpression) -> ParsedAggregates:
-        """Validate and parse an aggregate expression."""
+    def parse(
+        cls,
+        expr: AggregatesExpression,
+        *,
+        filter_parser: QueryFilterExpressionParser | None = None,
+    ) -> ParsedAggregates:
+        """Validate and parse an aggregate expression.
+
+        :param filter_parser: Parses each metric ``filter`` and ``$having``; the default limits
+            when omitted. Pass the spec's, so they get the bounds its other filters get.
+        """
+
+        parser = filter_parser or _DEFAULT_FILTER_PARSER
 
         raw_computed_obj: object = expr.get("$computed", {})
 
@@ -179,7 +192,9 @@ class AggregatesExpressionParser:
 
         groups_obj: object = expr.get("$groups", {})
         groups = cls._group_keys(groups_obj)
-        computed_fields = tuple(cls._computed(alias, spec) for alias, spec in raw_computed.items())
+        computed_fields = tuple(
+            cls._computed(alias, spec, parser) for alias, spec in raw_computed.items()
+        )
 
         if not computed_fields:
             raise exc.precondition("Aggregates expression requires $computed")
@@ -190,7 +205,7 @@ class AggregatesExpressionParser:
         if duplicates:
             raise exc.precondition(f"Duplicate aggregate aliases: {duplicates}")
 
-        having = cls._having(expr.get("$having"), frozenset(aliases))
+        having = cls._having(expr.get("$having"), frozenset(aliases), parser)
 
         return ParsedAggregates(
             groups=groups,
@@ -205,13 +220,14 @@ class AggregatesExpressionParser:
         cls,
         raw: QueryFilterExpression | None,
         aliases: frozenset[str],
+        parser: QueryFilterExpressionParser,
     ) -> QueryExpr | None:
         """Parse and validate the ``$having`` filter over the output aliases."""
 
         if not raw:
             return None
 
-        expr = QueryFilterExpressionParser.parse(raw)
+        expr = parser.parse_filter(raw)
         referenced = _having_field_roots(expr)
         unknown = sorted(referenced - aliases)
 
@@ -339,7 +355,9 @@ class AggregatesExpressionParser:
     # ....................... #
 
     @classmethod
-    def _computed(cls, alias: str, spec: object) -> AggregateComputedField:
+    def _computed(
+        cls, alias: str, spec: object, parser: QueryFilterExpressionParser
+    ) -> AggregateComputedField:
         alias = cls._alias(alias)
 
         if not isinstance(spec, Mapping):
@@ -357,7 +375,7 @@ class AggregatesExpressionParser:
         if function not in _FUNCTIONS:
             raise exc.precondition(f"Invalid aggregate function: {function!r}")
 
-        field_path, filter_expr, parsed_filter, p = cls._function_arg(function, field)
+        field_path, filter_expr, parsed_filter, p = cls._function_arg(function, field, parser)
 
         return AggregateComputedField(
             alias=alias,
@@ -375,6 +393,7 @@ class AggregatesExpressionParser:
         cls,
         function: object,
         raw: object,
+        parser: QueryFilterExpressionParser,
     ) -> tuple[str | None, QueryFilterExpression | None, QueryExpr | None, float | None]:  # type: ignore[valid-type]
         fieldless = function == "$count"  # only plain count takes no field
         needs_p = function == "$percentile"
@@ -405,7 +424,7 @@ class AggregatesExpressionParser:
 
         parsed_filter: QueryExpr | None = None
         if filter_expr is not None:
-            parsed_filter = QueryFilterExpressionParser.parse(filter_expr)  # type: ignore[arg-type]
+            parsed_filter = parser.parse_filter(filter_expr)  # type: ignore[arg-type]
 
         return (
             cls._field(field) if field is not None else None,

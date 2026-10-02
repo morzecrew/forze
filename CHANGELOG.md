@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An allowed origin can be a dev server's port range.** `CookieCsrf` and the realtime WebSocket's `allowed_origins` accept `http://localhost:5173-5199` or `http://localhost:*` on a loopback host. The WebSocket route now refuses an entry that is not an origin (`null`, `*`) when attached.
 - **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
 
-- **A spec can raise the limits its filters are parsed under.** `DocumentSpec(filter_limits=...)` and `SearchSpec(filter_limits=...)` take a `QueryFilterLimits`, so an internal read can match more than 1,000 ids. Every backend and the mock honour it, as do generated routes passing a caller's filter through.
+- **A spec can raise the limits its filters are parsed under.** `DocumentSpec(filter_limits=...)` and `SearchSpec(filter_limits=...)` take a `QueryFilterLimits`, so an internal read can match more than 1,000 ids. Backends and the mock apply it to filters, aggregate filters and `$having`, as do generated routes.
 
 - **A backend can declare caps its server enforces on a filter.** `QueryCapabilities(max_in_size=..., max_disjunctions=...)` bound an operand list and the disjunctions a filter expands to; a filter past either is refused with `query_feature_unsupported` before it is sent.
 
@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
 
-- **A read without a limit returns every row exactly once** (**behaviour change**). Batches were taken by offset, so rows tied on the sort could repeat or go missing, and on Firestore a read in `id` order failed past the first batch. Each batch now starts after the last row of the one before, and tied rows come back in `id` order.
+- **A read without a limit no longer repeats or drops rows tied on its sort** (**behaviour change**). Ties now break by `id` and each batch seeks past the last row. A projection without a sort key, a model without `id`, or a non-`id` sort on MongoDB or Firestore pages by offset, which Firestore refuses past one batch.
 
 - **Firestore refuses a filter it cannot run before sending it.** An `$in` past 30 values, or a filter past 30 disjunctions once expanded (`$in` values multiply under AND, add under OR), failed at the server with a validation error; it is now a clean `query_feature_unsupported` naming the cap.
 

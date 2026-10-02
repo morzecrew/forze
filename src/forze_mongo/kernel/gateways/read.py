@@ -551,6 +551,7 @@ class MongoReadGateway[M: BaseModel](
             sorts=sorts,
             limit=eff_limit,
             skip=offset,
+            filter_parser=self.filter_parser,
         )
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=eff_limit)
 
@@ -582,6 +583,7 @@ class MongoReadGateway[M: BaseModel](
         parsed_, pipeline = self.renderer.render_aggregates(
             aggregates,
             match=match or None,
+            filter_parser=self.filter_parser,
         )
         pipeline.append({"$count": "count"})
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=1)

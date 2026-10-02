@@ -77,6 +77,9 @@ class _RestrictedDoc:
 
         return await self._inner.find_many(filters=filters, pagination=pagination)
 
+    async def aggregate_many(self, aggregates: Any, *, pagination: Any) -> Any:
+        return await self._inner.aggregate_many(aggregates, pagination=pagination)
+
 
 @pytest.mark.asyncio
 async def test_runner_handles_a_restricted_backend() -> None:

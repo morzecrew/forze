@@ -122,12 +122,13 @@ class MongoQueryRenderer:
         sorts: QuerySortExpression | None = None,
         limit: int | None = None,
         skip: int | None = None,
+        filter_parser: QueryFilterExpressionParser | None = None,
     ) -> tuple[ParsedAggregates, list[JsonDict]]:
         """Render an aggregate expression into a Mongo aggregation pipeline."""
 
         validate_aggregate_capabilities(aggregates, MONGO_QUERY_CAPABILITIES, backend="mongo")
 
-        parsed = AggregatesExpressionParser.parse(aggregates)
+        parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=filter_parser)
         pipeline: list[JsonDict] = []
 
         if match:

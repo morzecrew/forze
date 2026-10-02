@@ -729,6 +729,7 @@ class PostgresReadGateway[M: BaseModel](
         )
         parsed_, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
             aggregates,
+            filter_parser=self.filter_parser,
         )
         params = list(aggregate_params) + list(params)
         sort_clause = renderer.render_aggregate_order_by(parsed_, sorts)
@@ -796,6 +797,7 @@ class PostgresReadGateway[M: BaseModel](
         )
         parsed_, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
             aggregates,
+            filter_parser=self.filter_parser,
         )
         params = list(aggregate_params) + list(params)
 

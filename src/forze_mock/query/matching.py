@@ -26,6 +26,7 @@ from forze.application.contracts.querying import (
     AggregatesExpressionParser,
     GroupField,
     GroupTrunc,
+    QueryFilterExpressionParser,
     QuerySortExpression,
     compile_filter,
     ordered_compare,
@@ -222,14 +223,16 @@ def _group_key_part(doc: JsonDict, expr: GroupField | GroupTrunc) -> Any:
 
 
 def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
-    docs: Sequence[JsonDict], aggregates: AggregatesExpression
+    docs: Sequence[JsonDict],
+    aggregates: AggregatesExpression,
+    parser: QueryFilterExpressionParser | None = None,
 ) -> list[JsonDict]:
-    parsed = AggregatesExpressionParser.parse(aggregates)
+    parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=parser)
 
     # Compile each computed field's filter once (not per group, per document) into a
     # reusable predicate; ``None`` means the aggregate sees every group member.
     computed_matchers = [
-        compile_filter(computed.filter) if computed.filter is not None else None
+        compile_filter(computed.filter, parser=parser) if computed.filter is not None else None
         for computed in parsed.computed_fields
     ]
 

@@ -295,11 +295,13 @@ Each comes in `find` / `project` / `select` flavors and `_many` / `_page` /
 
 Without a `limit`, a read returns every matching row, fetched in batches. Rows come
 back in the effective sort (`sorts`, else `default_sort`, else `id`), with `id`
-breaking ties when the read model has one, so tied rows neither repeat nor go
-missing. Each batch starts after the last row of the one before. A projection that
-leaves out a sort key is paged by offset instead, and on MongoDB and Firestore so
-is any sort other than `id` alone. Firestore refuses offsets, so there such a read
-fails once it needs a second batch.
+breaking ties when the read model has one, and each batch starts after the last row
+of the one before. Some reads are paged by offset instead, still with the `id`
+tie-breaker: a projection or returned model that leaves out a sort key, and on
+MongoDB and Firestore any sort other than `id` alone. A read model without `id` has
+no tie-breaker, so rows tied on its whole sort can still repeat or go missing across
+batches. Firestore refuses offsets, so there an offset-paged read fails once it
+needs a second batch rather than returning part of the rows.
 
 The `id` tie-breaker shapes the index such a read wants. On MongoDB, a `{key: 1}`
 index cannot serve the `{key: 1, _id: 1}` sort, which then runs in memory; add a
