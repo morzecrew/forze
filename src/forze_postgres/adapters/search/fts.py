@@ -144,15 +144,21 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
-        candidate_cap = effective_ranked_candidate_limit(
-            # Cursor walks the whole ranked set; capping candidates would truncate a deep
-            # walk / stream export at the cap (see ``_build_ranked_pipeline_sql``).
-            config_limit=None if for_cursor else self.ranked_candidate_limit,
-            options=options,
-            pagination=dict(pagination or {}),
-            snapshot=snapshot,
-            result_snapshot=self.result_snapshot,
-            rs_spec=rs_spec,
+        # The cap keeps the best-ranked rows. A blank query ranks every row the same, so a cap
+        # would keep whichever rows the scan met first and sort only those.
+        candidate_cap = (
+            effective_ranked_candidate_limit(
+                # Cursor walks the whole ranked set; capping candidates would truncate a deep
+                # walk / stream export at the cap (see ``_build_ranked_pipeline_sql``).
+                config_limit=None if for_cursor else self.ranked_candidate_limit,
+                options=options,
+                pagination=dict(pagination or {}),
+                snapshot=snapshot,
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+            )
+            if terms
+            else None
         )
 
         cap_kw: dict[str, Any] = {}

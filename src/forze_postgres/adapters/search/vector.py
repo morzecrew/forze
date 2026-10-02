@@ -168,13 +168,19 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
-        candidate_cap = effective_ranked_candidate_limit(
-            config_limit=self.ranked_candidate_limit,
-            options=options,
-            pagination=dict(pagination or {}),
-            snapshot=snapshot,
-            result_snapshot=self.result_snapshot,
-            rs_spec=rs_spec,
+        # A blank query has no embedding to rank by, so there is no top-k to bound: capping
+        # it would keep whichever rows the scan met first and sort only those.
+        candidate_cap = (
+            effective_ranked_candidate_limit(
+                config_limit=self.ranked_candidate_limit,
+                options=options,
+                pagination=dict(pagination or {}),
+                snapshot=snapshot,
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+            )
+            if terms
+            else None
         )
 
         cap_kw: dict[str, Any] = {}

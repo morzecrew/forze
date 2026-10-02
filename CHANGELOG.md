@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
 
+- **A blank Postgres full-text or vector search sorts every matching row.** Its candidate cap kept the first rows the scan met, so a sorted page over a table larger than the cap could miss the rows that belonged on it.
+
 - **A ranked Postgres search cursor reaches rows whose sort key is null.** The page's order put them last on an ascending key while the cursor's seek reads them as the smallest value, so walking the pages skipped them.
 
 ### Security
