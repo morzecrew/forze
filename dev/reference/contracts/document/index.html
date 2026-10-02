@@ -6786,6 +6786,12 @@ plus per-aggregate policy:</p>
 <td>keep an audit trail of every revision</td>
 </tr>
 <tr>
+<td><code>hard_delete</code></td>
+<td><code>bool</code></td>
+<td><code>True</code></td>
+<td><code>False</code>: no document operation erases a row — no <code>kill</code> operation is generated and the command port refuses <code>kill</code>/<code>kill_many</code>. A provisioner's <code>drop_on_deprovision=True</code> and raw statements are outside the port and can still delete</td>
+</tr>
+<tr>
 <td><code>materialized</code></td>
 <td><code>frozenset[str]</code></td>
 <td><code>∅</code></td>
@@ -7309,7 +7315,8 @@ model(s), or <code>None</code> when you don't need them back.</p>
 <h3 id="delete">Delete<a class="headerlink" href="#delete" title="Permanent link">&para;</a></h3>
 <p><code>kill(pk)</code> and <code>kill_many(pks)</code> <strong>hard-delete</strong> — there is no soft-delete or
 <code>restore</code> on the port (model soft-delete is a domain concern, applied via
-<code>update</code>).</p>
+<code>update</code>). On a spec declaring <code>hard_delete=False</code> both refuse with a
+<code>configuration</code> error (<code>hard_delete_forbidden</code>), whoever calls them.</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

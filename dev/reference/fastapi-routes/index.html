@@ -6791,7 +6791,8 @@ what each generator produces.</p>
 <span class="n">app</span><span class="o">.</span><span class="n">include_router</span><span class="p">(</span><span class="n">router</span><span class="p">)</span>
 </code></pre></div>
 <p>Only operations the registry actually holds are attached, so a read-only spec
-yields a read-only router; narrow further with <code>include={"get", "list"}</code>. A
+yields a read-only router, and a spec declaring <code>hard_delete=False</code> gets no
+<code>DELETE</code> route; narrow further with <code>include={"get", "list"}</code>. A
 plan-declared <a href="../../running-in-prod/deadlines/">deadline</a> surfaces on each generated
 route as an <code>x-deadline-seconds</code> OpenAPI extension and a "Time budget" line in
 its description, so API clients can set their own timeouts. Merging a

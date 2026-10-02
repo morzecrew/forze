@@ -9102,6 +9102,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>The stored-file kit's write wiring leaves room for your guards.</strong> <code>bind_stored_file_writes(kit, tx_route=...)</code> binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.</p>
 </li>
+<li>
+<p><strong>A document can turn off hard deletes.</strong> <code>DocumentSpec(hard_delete=False)</code> drops the generated <code>kill</code> operation, so no route or tool reaches it, and the command port refuses <code>kill</code> and <code>kill_many</code> with <code>hard_delete_forbidden</code>. A provisioner's <code>drop_on_deprovision=True</code> and raw statements can still delete rows.</p>
+</li>
+<li>
+<p><strong>A soft-deleted row can still be read by id.</strong> <code>soft_delete_wiring(spec, get_deleted="read")</code>, or the same option on <code>AggregateKit</code>, makes <code>GET</code> return the row with <code>is_deleted</code> set instead of a 404. Lists still leave it out.</p>
+</li>
+<li>
+<p><strong>A delete or restore can set its own markers in the same write.</strong> A model on the soft-deletion mixin may list <code>soft_delete_companions</code>, such as a cascade marker: fields that change only in a write that flips <code>is_deleted</code>, so no other update can set or clear one.</p>
+</li>
+<li>
+<p><strong>Stored-file delete can keep the object, and uploads can be capped.</strong> <code>bind_stored_file_writes(..., purge_on_delete=False)</code> soft-deletes the row and keeps its blob, dropping only the search entry; <code>StoredFileKitSpec(max_bytes=...)</code> refuses a larger upload with <code>upload_too_large</code> before a row is written.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9111,9 +9123,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A debug call below the configured level costs a comparison.</strong> While <code>configure_logging</code>'s level is above debug, <code>Logger.debug</code> returns before building the structlog logger, about 2 µs to 0.1 µs. Unconfigured, after <code>structlog.reset_defaults()</code> or under another wrapper class, debug reaches structlog as before.</p>
 </li>
+<li>
+<p><strong>Authorization and tenant listing read in batches, not row by row.</strong> A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for a role, its parent and 18 permissions. Tenants are read together, not per membership. Firestore scans need an index on field and <code>id</code>.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong><code>get_many</code> on Firestore finds a document by its name, as <code>get</code> does.</strong> It queried the <code>id</code> field in the document body, so a document written without that field (by the console, a migration or another service) was found by <code>get</code> and reported missing by <code>get_many</code>.</p>
+</li>
+<li>
+<p><strong>Permission providers declaring more than 30 keys work on Firestore.</strong> The check that their keys exist in the permission catalog named them all in one <code>in</code>, past Firestore's limit of 30 values, so every decision failed. It now reads 30 at a time.</p>
+</li>
 <li>
 <p><strong>Normalized text drops control characters</strong> (<strong>behaviour change</strong>). <code>normalize_string</code>, behind the kits' <code>String</code> and <code>LongString</code>, kept NUL, ESC, DEL and other controls that are not whitespace; Postgres refuses NUL. They are removed now; an accent a removed character separated from its letter is stored composed.</p>
 </li>
@@ -9132,6 +9153,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Firestore reads and deletes by id check the tenant first.</strong> A tenant-aware <code>get</code>, <code>get_many</code> or <code>kill</code> without a bound tenant is refused before it reads the store, as the filtered reads already were.</p>
+</li>
 <li>
 <p><strong>A request no ingress authenticates is refused by default</strong> (<strong>behaviour change</strong>). <code>AuthnRequirement(required=True)</code> answers 401 <code>auth_required</code> outside the middleware's <code>anonymous_paths</code>; list login, refresh and public pages there, or pass <code>required=False</code>. CORS preflights pass.</p>
 </li>
