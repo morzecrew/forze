@@ -7101,6 +7101,9 @@ come from the catalog, as for the generated routes.</p>
 </code></pre></div>
 <p>A binding whose operation is not registered is refused, so a typo fails at startup rather
 than answering 404; pass <code>skip_unregistered=True</code> to skip it instead.</p>
+<p>Every routed operation's key lives under the namespace, as <code>&lt;prefix&gt;.&lt;suffix&gt;</code>. A key
+registered without one, such as a bare <code>add</code>, cannot be bound: register it as <code>stock.add</code>
+instead. The refusal names a bare key it finds, so the cause is not mistaken for a typo.</p>
 <p><code>query_endpoint</code> reads the whole input DTO from query parameters, one per field; a list
 field repeats (<code>?tag=a&amp;tag=b</code>). A field a query string cannot carry, such as a nested
 model or <code>bytes</code>, is refused when the route is attached. The operation receives the DTO a

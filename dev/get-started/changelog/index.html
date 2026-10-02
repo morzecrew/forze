@@ -9099,14 +9099,27 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>An allowed origin can be a dev server's port range.</strong> <code>CookieCsrf</code> and the realtime WebSocket's <code>allowed_origins</code> accept <code>http://localhost:5173-5199</code> or <code>http://localhost:*</code> on a loopback host. The WebSocket route now refuses an entry that is not an origin (<code>null</code>, <code>*</code>) when attached.</p>
 </li>
-<li><strong>The stored-file kit's write wiring leaves room for your guards.</strong> <code>bind_stored_file_writes(kit, tx_route=...)</code> binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.</li>
+<li>
+<p><strong>The stored-file kit's write wiring leaves room for your guards.</strong> <code>bind_stored_file_writes(kit, tx_route=...)</code> binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>Already-normalized text skips normalization when it is read back.</strong> <code>normalize_string</code>, behind the kits' <code>String</code> and <code>LongString</code>, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.</p>
+</li>
+<li>
+<p><strong>A debug call below the configured level costs a comparison.</strong> While <code>configure_logging</code>'s level is above debug, <code>Logger.debug</code> returns before building the structlog logger, about 2 µs to 0.1 µs. Unconfigured, after <code>structlog.reset_defaults()</code> or under another wrapper class, debug reaches structlog as before.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Normalized text drops control characters</strong> (<strong>behaviour change</strong>). <code>normalize_string</code>, behind the kits' <code>String</code> and <code>LongString</code>, kept NUL, ESC, DEL and other controls that are not whitespace; Postgres refuses NUL. They are removed now; an accent a removed character separated from its letter is stored composed.</p>
+</li>
+<li>
+<p><strong>A kits text field answers 422 to a value that is not text.</strong> <code>String</code>, <code>LongString</code> and the metadata mixin's <code>display_name</code> and <code>description</code> called string methods on any input, so a JSON number, list, object or boolean answered 500. Pydantic now refuses it; UTF-8 bytes are decoded and normalized.</p>
+</li>
 <li>
 <p><strong>Deactivating a principal works without password or API-key accounts wired.</strong> The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.</p>
 </li>
@@ -9119,7 +9132,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>A request no ingress authenticates is refused by default</strong> (<strong>behaviour change</strong>). <code>AuthnRequirement(required=True)</code> answers 401 <code>auth_required</code> outside the middleware's <code>anonymous_paths</code>; list login, refresh and public pages there, or pass <code>required=False</code>. CORS preflights pass.</li>
+<li>
+<p><strong>A request no ingress authenticates is refused by default</strong> (<strong>behaviour change</strong>). <code>AuthnRequirement(required=True)</code> answers 401 <code>auth_required</code> outside the middleware's <code>anonymous_paths</code>; list login, refresh and public pages there, or pass <code>required=False</code>. CORS preflights pass.</p>
+</li>
 <li>
 <p><strong>The documented authn → authz hook chain freezes.</strong> <code>AuthnRequired.to_step()</code> under its default id now provides the <code>authn.principal</code> capability that <code>AuthzBeforeAuthorize.to_step()</code> requires by default, so authorization runs after authentication; <code>AuthzBeforeAuthorize.to_step()</code> no longer needs a <code>step_id</code>.</p>
 </li>
