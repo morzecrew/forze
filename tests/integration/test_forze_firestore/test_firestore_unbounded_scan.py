@@ -6,6 +6,7 @@ batch. A read in ``id`` order now seeks past each batch instead.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,7 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
 )
 from forze.application.execution import Deps
+from forze.base.exceptions import CoreException
 from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     FirestoreDocumentConfig,
@@ -25,18 +27,19 @@ from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
 from tests.support.execution_context import context_from_deps
 from tests.support.unbounded_scan_parity import (
+    SORTS,
     ScanCreate,
     ScanDoc,
     ScanRead,
+    expected_order,
     run_unbounded_scan_parity,
+    seed,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def test_a_read_without_a_limit_reads_every_batch(
-    firestore_client: FirestoreClient,
-) -> None:
+def _ports(client: FirestoreClient) -> tuple[Any, Any]:
     collection = f"scan_{uuid4().hex[:8]}"
     configurable = ConfigurableFirestoreDocument(
         config=FirestoreDocumentConfig(
@@ -46,7 +49,7 @@ async def test_a_read_without_a_limit_reads_every_batch(
     ctx = context_from_deps(
         Deps.plain(
             {
-                FirestoreClientDepKey: firestore_client,
+                FirestoreClientDepKey: client,
                 DocumentQueryDepKey: configurable,
                 DocumentCommandDepKey: configurable,
             }
@@ -58,7 +61,35 @@ async def test_a_read_without_a_limit_reads_every_batch(
         write=DocumentWriteTypes(domain=ScanDoc, create_cmd=ScanCreate),
     )
 
+    return ctx.document.command(spec), ctx.document.query(spec)
+
+
+async def test_a_read_without_a_limit_reads_every_batch(
+    firestore_client: FirestoreClient,
+) -> None:
     # Its cursor seeks on `id` alone and it refuses offsets, so only `id` order drains here.
-    await run_unbounded_scan_parity(
-        ctx.document.command(spec), ctx.document.query(spec), custom_sorts=False
-    )
+    await run_unbounded_scan_parity(*_ports(firestore_client), custom_sorts=False)
+
+
+async def test_a_sorted_read_within_one_batch_breaks_ties_by_document_name(
+    firestore_client: FirestoreClient,
+) -> None:
+    # The tie-breaker orders by `__name__`, the document name forze sets to the id; both
+    # directions must come back in the same order as the `id` field would give.
+    command, query = _ports(firestore_client)
+    created = await command.create_many(seed()[:150])
+
+    for sorts in SORTS:
+        page = await query.find_many(sorts=sorts)
+
+        assert [hit.id for hit in page.hits] == expected_order(created, sorts), sorts
+
+
+async def test_a_sorted_read_past_one_batch_is_refused_not_cut_short(
+    firestore_client: FirestoreClient,
+) -> None:
+    command, query = _ports(firestore_client)
+    await command.create_many(seed()[:250])
+
+    with pytest.raises(CoreException, match="offset"):
+        await query.find_many(sorts={"grp": "asc"})

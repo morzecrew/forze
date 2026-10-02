@@ -301,6 +301,12 @@ leaves out a sort key is paged by offset instead, and on MongoDB and Firestore s
 is any sort other than `id` alone. Firestore refuses offsets, so there such a read
 fails once it needs a second batch.
 
+The `id` tie-breaker shapes the index such a read wants. On MongoDB, a `{key: 1}`
+index cannot serve the `{key: 1, _id: 1}` sort, which then runs in memory; add a
+compound `{key: 1, _id: 1}` index for a large collection read this way. Firestore
+breaks ties on the document name, which forze sets to the id and every index already
+ends in, so a single-field index still serves a read sorted by one key.
+
 ## Command port
 
 Every mutating method takes `return_new: bool = True` — return the resulting read

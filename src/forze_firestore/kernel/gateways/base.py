@@ -12,6 +12,7 @@ from uuid import UUID
 
 import attrs
 from google.cloud.firestore_v1.base_query import BaseFilter, FieldFilter
+from google.cloud.firestore_v1.field_path import FieldPath
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -307,7 +308,10 @@ class FirestoreGateway[M: BaseModel](
         out: list[tuple[str, str]] = []
 
         for field, direction, _nulls in resolved:
-            target = ID_FIELD if field == ID_FIELD else field
+            # The document name is the id, and every index ends in it: ordered by the stored
+            # `id` field instead, a sort on another key plus the id tie-breaker would need a
+            # composite index of its own.
+            target = FieldPath.document_id() if field == ID_FIELD else field
             out.append((target, "ASCENDING" if direction == "asc" else "DESCENDING"))
 
         return out
