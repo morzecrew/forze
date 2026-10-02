@@ -38,6 +38,8 @@ Search-sync delivery is a choice:
 - **Default (after-commit, at-most-once)** — bounded in-place retry after commit; on exhaustion the index stays stale for that row until its next write (a reconcilable WARNING is logged).
 - **Durable (`search_delivery=OutboxSearchSync()`, from `forze_kits.aggregates.search`)** — an identity-only marker staged in the write's transaction, relayed at-least-once, applied by a consumer that re-reads committed state (idempotent, reorder-safe, inbox-deduped). Wire the reported `search_sync_route` — one name for its outbox, queue, and inbox — in the deps module; `lifecycle_steps(tx_route=...)` then carries the relay and consumer.
 
+With `soft_delete`, `GET` 404s a deleted row; `get_deleted="read"` returns it flagged instead. A model may declare `soft_delete_companions = frozenset({...})`: fields allowed to change in the same write as `is_deleted` (e.g. a cascade marker a restore clears).
+
 Composing `soft_delete` + `search`, the kit's search reads exclude soft-deleted rows, so the `SearchSpec` **must declare `is_deleted` in `facetable_fields`** (the external index must be able to filter it) — the kit fails closed at construction otherwise.
 
 The kit is a floor, not a ceiling: `handlers={DocumentKernelOp.UPDATE: MyCustomUpdate}` overrides a generated op's handler; `extra_ops=my_registry` merges bespoke operations; `build_unfrozen()` returns the composed registry for advanced merging before freeze. When the *entire* operation surface is bespoke, hand-wire with the registries below instead.

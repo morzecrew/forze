@@ -68,6 +68,7 @@ from forze_kits.aggregates.search import (
     build_search_registry,
 )
 from forze_kits.aggregates.soft_deletion import (
+    GetDeleted,
     PurgeHook,
     SoftDeletionKernelOp,
     exclude_soft_deleted_mapper,
@@ -189,6 +190,11 @@ class AggregateKit(Generic[R, D, C, U]):
 
     purge: PurgeHook | None = None
     """Optional after-commit purge run when a row is soft-deleted (only with :attr:`soft_delete`)."""
+
+    get_deleted: GetDeleted = "not_found"
+    """What ``GET`` answers for a soft-deleted row (only with :attr:`soft_delete`): ``"not_found"``
+    (default) or ``"read"``, which returns the row flagged. See
+    :attr:`~forze_kits.aggregates.soft_deletion.SoftDeleteWiring.get_deleted`."""
 
     search: SearchSpec[R] | None = None
     """Wire an external search index: its query ops plus index-on-write sync (delivery per
@@ -319,6 +325,12 @@ class AggregateKit(Generic[R, D, C, U]):
             # here (not only when the sync wiring is composed) so the drift is a declaration-time
             # error, not a runtime one.
             assert_search_encryption_parity(document=self.spec, search=self.search)
+
+        if self.get_deleted != "not_found" and not self.soft_delete:
+            raise exc.configuration(
+                f"AggregateKit {self.spec.name!r}: get_deleted={self.get_deleted!r} would never "
+                "take effect without soft_delete=True, because no row is ever soft-deleted.",
+            )
 
         if (
             self.soft_delete
@@ -681,7 +693,11 @@ class AggregateKit(Generic[R, D, C, U]):
         spec = self.spec
         ns = spec.default_namespace
 
-        soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
+        soft = (
+            soft_delete_wiring(spec, purge=self.purge, get_deleted=self.get_deleted)
+            if self.soft_delete
+            else None
+        )
         mappers: DocumentMappers[Any, Any, Any, Any] = self.mappers or DocumentMappers()
         dtos = self.dtos
         versioned = (

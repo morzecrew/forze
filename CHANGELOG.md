@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A document can declare that its rows are never erased.** `DocumentSpec(hard_delete=False)` drops the generated `kill` operation, so no route or tool reaches it, and the command port refuses `kill` and `kill_many` from any caller with `hard_delete_forbidden`.
 
+- **A soft-deleted row can still be read by id.** `soft_delete_wiring(spec, get_deleted="read")`, or the same option on `AggregateKit`, makes `GET` return the row with `is_deleted` set instead of a 404. Lists still leave it out.
+
+- **A restore can clear its own markers in the same write.** A model on the soft-deletion mixin may list `soft_delete_companions`: fields an update of a deleted row can change together with `is_deleted`, such as a cascade marker.
+
 ### Changed
 
 - ...

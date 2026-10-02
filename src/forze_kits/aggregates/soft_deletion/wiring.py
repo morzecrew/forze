@@ -5,7 +5,8 @@ and the `is_deleted` mixins. The gaps this closes — the reusable core of store
 generalized to any aggregate on the mixin — are:
 
 * **read-side exclusion**: the generated LIST family filters out soft-deleted rows (`is_deleted`
-  merged into every list op's filter), and GET 404s a soft-deleted row instead of returning it;
+  merged into every list op's filter), and GET 404s a soft-deleted row instead of returning it
+  (or, with ``get_deleted="read"``, returns it flagged);
 * **optional purge**: an after-commit hook run when a row is soft-deleted (e.g. drop its blob).
 
 Read exclusion for LIST rides the document factory's **mapper** seam, so it is applied at *build*
@@ -17,7 +18,7 @@ domain + update command on the ``is_deleted`` mixins (a type precondition, not m
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, Final, final
+from typing import TYPE_CHECKING, Any, Final, Literal, final, get_args
 
 import attrs
 from pydantic import BaseModel
@@ -52,6 +53,9 @@ PurgeHook = Callable[["ExecutionContext", Any], Awaitable[None]]
 """After-commit purge: ``(ctx, soft_deleted_read_model) -> None``, run when a row is deleted."""
 
 _PURGE_STEP_ID: Final[StrKey] = "soft_delete_purge"
+
+GetDeleted = Literal["not_found", "read"]
+"""What GET answers for a soft-deleted row: ``"not_found"`` (404) or ``"read"`` (the row, flagged)."""
 
 
 def _exclusion() -> QueryFilterExpression:
@@ -141,6 +145,20 @@ class SoftDeleteWiring:
     purge: PurgeHook | None = None
     """Optional after-commit purge run when a row is soft-deleted."""
 
+    get_deleted: GetDeleted = "not_found"
+    """What GET answers for a soft-deleted row. ``"not_found"`` (default) answers 404, as if the row
+    were gone; ``"read"`` returns it with ``is_deleted`` set, so a reference to it still resolves.
+    The list operations exclude it either way."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.get_deleted not in get_args(GetDeleted):
+            raise exc.configuration(
+                f"get_deleted must be one of {list(get_args(GetDeleted))}, "
+                f"not {self.get_deleted!r}."
+            )
+
     # ....................... #
 
     def read_mappers(
@@ -186,7 +204,7 @@ class SoftDeleteWiring:
         tx_route: StrKey = "default",
         ns: StrKeyNamespace | None = None,
     ) -> OperationRegistry:
-        """Merge DELETE/RESTORE, override GET to exclude soft-deleted, attach the optional purge.
+        """Merge DELETE/RESTORE, override GET per :attr:`get_deleted`, attach the optional purge.
 
         The purge is an after-commit best-effort hook on DELETE — the delete row commits, then the
         purge runs (a failure is logged, not raised); it makes DELETE transactional on *tx_route*.
@@ -196,7 +214,7 @@ class SoftDeleteWiring:
         reg = type(reg).merge(reg, build_soft_deletion_registry(self.spec, ns=ns))
 
         get_key = ns.key(DocumentKernelOp.GET)
-        if get_key in reg.operation_keys():
+        if self.get_deleted == "not_found" and get_key in reg.operation_keys():
             spec = self.spec
             reg = reg.set_handler(
                 get_key,
@@ -223,7 +241,12 @@ def soft_delete_wiring(
     spec: DocumentSpec[Any, Any, Any, Any],
     *,
     purge: PurgeHook | None = None,
+    get_deleted: GetDeleted = "not_found",
 ) -> SoftDeleteWiring:
-    """Build the reusable soft-delete wiring for *spec* (read exclusion + delete/restore + purge)."""
+    """Build the reusable soft-delete wiring for *spec* (read exclusion + delete/restore + purge).
 
-    return SoftDeleteWiring(spec=spec, purge=purge)
+    :param get_deleted: What GET answers for a soft-deleted row (see
+        :attr:`SoftDeleteWiring.get_deleted`).
+    """
+
+    return SoftDeleteWiring(spec=spec, purge=purge, get_deleted=get_deleted)
