@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -12,14 +13,17 @@ from forze_mongo.execution.deps import ConfigurableMongoDocument, MongoDocumentC
 from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
-from tests.support.tenant_memberships import TENANCY_SPECS, list_both_ways, wide_memberships
+from tests.support.tenant_memberships import (
+    TENANCY_SPECS,
+    list_both_ways,
+    refuses_a_missing_tenant,
+    wide_memberships,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
-async def test_a_principal_in_more_tenants_than_one_batch_lists_them_all(
-    mongo_client: MongoClient,
-) -> None:
+def _ctx(mongo_client: MongoClient) -> Any:
     db = f"tenancy_{uuid4().hex[:8]}"
     routes = {
         spec.name: ConfigurableMongoDocument(
@@ -27,13 +31,24 @@ async def test_a_principal_in_more_tenants_than_one_batch_lists_them_all(
         )
         for spec in TENANCY_SPECS
     }
-    ctx = context_from_deps(
+
+    return context_from_deps(
         Deps.plain({MongoClientDepKey: mongo_client}).merge(
             Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
         )
     )
+
+
+async def test_a_principal_in_more_tenants_than_one_batch_lists_them_all(
+    mongo_client: MongoClient,
+) -> None:
+    ctx = _ctx(mongo_client)
     principal_id, active = await wide_memberships(ctx)
 
     listed = await list_both_ways(ctx, principal_id)
 
     assert sorted(t.tenant_key for t in listed) == sorted([*active, "tenant-34"])
+
+
+async def test_a_membership_naming_no_tenant_fails_the_listing(mongo_client: MongoClient) -> None:
+    assert await refuses_a_missing_tenant(_ctx(mongo_client)) == "core.not_found"

@@ -45,6 +45,7 @@ from tests.support.execution_context import context_from_deps
 from tests.support.tenant_memberships import (
     TENANCY_SPECS,
     list_both_ways,
+    refuses_a_missing_tenant,
     wide_memberships,
 )
 
@@ -173,27 +174,42 @@ async def test_a_provider_declaring_more_keys_than_one_in_batch_is_checked(
     assert "ops.missing" in str(refused.value)
 
 
-async def test_a_principal_in_more_tenants_than_one_batch_lists_them_all(
-    firestore_client: FirestoreClient,
-    unique_collection: str,
-) -> None:
-    # 35 tenants: Firestore reads 30 ids at a time, so the batch read splits.
+
+def _tenancy_ctx(client: FirestoreClient, prefix: str) -> Any:
     routes = {
         spec.name: ConfigurableFirestoreDocument(
             config=FirestoreDocumentConfig(
-                read=("(default)", f"{unique_collection}_{spec.name}"),
-                write=("(default)", f"{unique_collection}_{spec.name}"),
+                read=("(default)", f"{prefix}_{spec.name}"),
+                write=("(default)", f"{prefix}_{spec.name}"),
             ),
         )
         for spec in TENANCY_SPECS
     }
-    ctx = context_from_deps(
-        Deps.plain({FirestoreClientDepKey: firestore_client}).merge(
+
+    return context_from_deps(
+        Deps.plain({FirestoreClientDepKey: client}).merge(
             Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
         )
     )
+
+
+async def test_a_principal_in_more_tenants_than_one_batch_lists_them_all(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    # 35 tenants, read together in one batched get by name.
+    ctx = _tenancy_ctx(firestore_client, unique_collection)
     principal_id, active = await wide_memberships(ctx)
 
     listed = await list_both_ways(ctx, principal_id)
 
     assert sorted(t.tenant_key for t in listed) == sorted([*active, "tenant-34"])
+
+
+async def test_a_membership_naming_no_tenant_fails_the_listing(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    ctx = _tenancy_ctx(firestore_client, unique_collection)
+
+    assert await refuses_a_missing_tenant(ctx) == "core.not_found"

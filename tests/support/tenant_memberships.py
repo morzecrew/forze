@@ -11,6 +11,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.base.exceptions import CoreException
 from forze_identity.tenancy.adapters.management import (
     _BINDING_PAGE_SIZE,  # pyright: ignore[reportPrivateUsage]
     TenantManagementAdapter,
@@ -86,7 +87,7 @@ async def join(ctx: Any, principal_id: UUID, tenant_id: UUID) -> None:
 
 
 async def wide_memberships(ctx: Any) -> tuple[UUID, set[str]]:
-    """A principal in 35 tenants — past Firestore's 30 ids in one read — 3 of them inactive,
+    """A principal in 35 tenants — more than one `in` batch would hold — 3 of them inactive,
     one joined twice, and the keys of the active ones. Another principal's membership must not
     show.
 
@@ -119,3 +120,34 @@ async def list_both_ways(ctx: Any, principal_id: UUID) -> list[TenantIdentity]:
         raise AssertionError("the batched and the row-by-row listing disagree")
 
     return listed
+
+
+async def refuses_a_missing_tenant(ctx: Any) -> str:
+    """The error code listing raises for a principal with a membership naming no tenant, after
+    checking the row-by-row listing raises the same.
+
+    The principal also belongs to 31 real tenants, so the missing one is not the only read.
+    """
+
+    principal_id = uuid4()
+
+    for i in range(31):
+        await join(ctx, principal_id, (await create_tenant(ctx, f"tenant-{i}")).id)
+
+    await join(ctx, principal_id, uuid4())
+    adapter = management(ctx)
+    codes = []
+
+    for listing in (
+        adapter.list_principal_tenants(principal_id),
+        oracle_principal_tenants(adapter, principal_id),
+    ):
+        try:
+            await listing
+        except CoreException as error:
+            codes.append(error.code)
+
+    if len(codes) != 2 or codes[0] != codes[1]:
+        raise AssertionError(f"the batched and the row-by-row listing disagree: {codes}")
+
+    return codes[0]
