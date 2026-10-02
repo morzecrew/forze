@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from forze.application.contracts.authz import AuthzScope
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_identity.authz.domain.models.bindings import (
     ReadGroupPermissionBinding,
     ReadGroupPrincipalBinding,
@@ -61,16 +61,24 @@ class FakeDocQuery:
     async def get(self, doc_id: UUID):
         return self._by_id[doc_id]
 
+    async def get_many(self, doc_ids):
+        if missing := [i for i in doc_ids if i not in self._by_id]:
+            raise exc.not_found(f"Some records not found: {missing}")
+
+        return [self._by_id[i] for i in doc_ids]
+
     async def find_stream(self, *, filters, chunk_size):
         # Keyset batches only, no offset page: a scan that went back to offsets fails here, as
         # it would on Firestore.
         values: dict = filters["$values"]
 
-        matched = [
-            r
-            for r in self._rows
-            if all(getattr(r, k) == v for k, v in values.items())
-        ]
+        def matches(row, field, want) -> bool:
+            if isinstance(want, dict):
+                return getattr(row, field) in want["$in"]
+
+            return getattr(row, field) == want
+
+        matched = [r for r in self._rows if all(matches(r, k, v) for k, v in values.items())]
 
         for first in range(0, len(matched), chunk_size):
             yield matched[first : first + chunk_size]
@@ -294,8 +302,8 @@ class TestAuthzGrantResolver:
         role_b = _role(b_id, "b", parent=a_id)
 
         deps = _empty_deps(role_qry=FakeDocQuery(by_id={a_id: role_a, b_id: role_b}))
-        lineage = await AuthzGrantResolver(deps=deps)._expand_role_lineage(a_id)
-        assert lineage == frozenset({a_id, b_id})
+        lineage = await AuthzGrantResolver(deps=deps)._expand_role_lineage({a_id})
+        assert lineage.keys() == {a_id, b_id}
 
     async def test_direct_principal_permissions(self) -> None:
         principal_id = uuid4()

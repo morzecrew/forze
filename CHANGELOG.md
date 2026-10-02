@@ -16,7 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DST can check that a deactivation closes a derived permission.** `no_permission_after_deactivation(deactivate, guarded)` flags a guarded operation that succeeds after the deactivation returned.
 
 - **An allowed origin can be a dev server's port range.** `CookieCsrf` and the realtime WebSocket's `allowed_origins` accept `http://localhost:5173-5199` or `http://localhost:*` on a loopback host. The WebSocket route now refuses an entry that is not an origin (`null`, `*`) when attached.
+
 - **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
+
+- **A document can turn off hard deletes.** `DocumentSpec(hard_delete=False)` drops the generated `kill` operation, so no route or tool reaches it, and the command port refuses `kill` and `kill_many` with `hard_delete_forbidden`. A provisioner's `drop_on_deprovision=True` and raw statements can still delete rows.
+
+- **A soft-deleted row can still be read by id.** `soft_delete_wiring(spec, get_deleted="read")`, or the same option on `AggregateKit`, makes `GET` return the row with `is_deleted` set instead of a 404. Lists still leave it out.
+
+- **A delete or restore can set its own markers in the same write.** A model on the soft-deletion mixin may list `soft_delete_companions`, such as a cascade marker: fields that change only in a write that flips `is_deleted`, so no other update can set or clear one.
+
+- **Stored-file delete can keep the object, and uploads can be capped.** `bind_stored_file_writes(..., purge_on_delete=False)` soft-deletes the row and keeps its blob, dropping only the search entry; `StoredFileKitSpec(max_bytes=...)` refuses a larger upload with `upload_too_large` before a row is written.
 
 - **A spec can raise the limits its filters are parsed under.** `DocumentSpec(filter_limits=...)` and `SearchSpec(filter_limits=...)` take a `QueryFilterLimits`, so an internal read can match more than 1,000 ids. Backends and the mock apply it to filters, aggregate filters and `$having`, as do generated routes.
 
@@ -24,9 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.
+
+- **A debug call below the configured level costs a comparison.** While `configure_logging`'s level is above debug, `Logger.debug` returns before building the structlog logger, about 2 µs to 0.1 µs. Unconfigured, after `structlog.reset_defaults()` or under another wrapper class, debug reaches structlog as before.
+
+- **Authorization and tenant listing read in batches, not row by row.** A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for a role, its parent and 18 permissions. Tenants are read together, not per membership. Firestore scans need an index on field and `id`.
 
 ### Fixed
+
+- **`get_many` on Firestore finds a document by its name, as `get` does.** It queried the `id` field in the document body, so a document written without that field (by the console, a migration or another service) was found by `get` and reported missing by `get_many`.
+
+- **Permission providers declaring more than 30 keys work on Firestore.** The check that their keys exist in the permission catalog named them all in one `in`, past Firestore's limit of 30 values, so every decision failed. It now reads 30 at a time.
+
+- **Normalized text drops control characters** (**behaviour change**). `normalize_string`, behind the kits' `String` and `LongString`, kept NUL, ESC, DEL and other controls that are not whitespace; Postgres refuses NUL. They are removed now; an accent a removed character separated from its letter is stored composed.
+
+- **A kits text field answers 422 to a value that is not text.** `String`, `LongString` and the metadata mixin's `display_name` and `description` called string methods on any input, so a JSON number, list, object or boolean answered 500. Pydantic now refuses it; UTF-8 bytes are decoded and normalized.
 
 - **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.
 
@@ -50,7 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Firestore reads and deletes by id check the tenant first.** A tenant-aware `get`, `get_many` or `kill` without a bound tenant is refused before it reads the store, as the filtered reads already were.
+
 - **A request no ingress authenticates is refused by default** (**behaviour change**). `AuthnRequirement(required=True)` answers 401 `auth_required` outside the middleware's `anonymous_paths`; list login, refresh and public pages there, or pass `required=False`. CORS preflights pass.
+
 - **The documented authn → authz hook chain freezes.** `AuthnRequired.to_step()` under its default id now provides the `authn.principal` capability that `AuthzBeforeAuthorize.to_step()` requires by default, so authorization runs after authentication; `AuthzBeforeAuthorize.to_step()` no longer needs a `step_id`.
 
 - **Words with "uri" inside them are no longer read as secrets.** The scrubber matched `uri` anywhere in a name, so an audit spec refused metadata such as `manufacturing` or `security`. It now matches only at either end of a segment (`uri_template`, `db_uri`, `dburi`), so a word ending in "uri" is still masked.

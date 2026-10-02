@@ -150,6 +150,14 @@ class RoutedFirestoreClient(
         inner = await self._get_client()
         return await inner.get_document(coll, doc_id)
 
+    async def get_documents(
+        self,
+        coll: AsyncCollectionReference,
+        doc_ids: Sequence[str],
+    ) -> dict[str, JsonDict]:
+        inner = await self._get_client()
+        return await inner.get_documents(coll, doc_ids)
+
     async def set_document(
         self,
         coll: AsyncCollectionReference,

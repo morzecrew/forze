@@ -46,7 +46,7 @@ from forze.application.execution.operations.registry import (
 from forze.application.hooks.audit import Audited
 from forze.application.integrations.search import assert_search_encryption_parity
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey
 from forze.domain.models import BaseDTO, Document
 from forze_kits.aggregates.document import (
     DocumentDTOs,
@@ -68,6 +68,7 @@ from forze_kits.aggregates.search import (
     build_search_registry,
 )
 from forze_kits.aggregates.soft_deletion import (
+    GetDeleted,
     PurgeHook,
     SoftDeletionKernelOp,
     exclude_soft_deleted_mapper,
@@ -190,6 +191,11 @@ class AggregateKit(Generic[R, D, C, U]):
     purge: PurgeHook | None = None
     """Optional after-commit purge run when a row is soft-deleted (only with :attr:`soft_delete`)."""
 
+    get_deleted: GetDeleted = "not_found"
+    """What ``GET`` answers for a soft-deleted row (only with :attr:`soft_delete`): ``"not_found"``
+    (default) or ``"read"``, which returns the row flagged. See
+    :attr:`~forze_kits.aggregates.soft_deletion.SoftDeleteWiring.get_deleted`."""
+
     search: SearchSpec[R] | None = None
     """Wire an external search index: its query ops plus index-on-write sync (delivery per
     :attr:`search_delivery`). With :attr:`soft_delete`, the kit's search query ops also
@@ -243,8 +249,10 @@ class AggregateKit(Generic[R, D, C, U]):
 
     handlers: Mapping[StrKey, OperationHandlerFactory] = attrs.field(
         factory=dict[StrKey, OperationHandlerFactory],
+        converter=MappingConverter.frozen,  # type: ignore[misc]
     )
-    """Escape hatch — override a generated op's handler (keyed by kernel op)."""
+    """Escape hatch — override a generated op's handler (keyed by kernel op). Held as a read-only
+    copy, so what the kit checked at construction is what it composes."""
 
     extra_ops: OperationRegistry | None = None
     """Escape hatch — merge bespoke operations into the composed registry."""
@@ -280,7 +288,10 @@ class AggregateKit(Generic[R, D, C, U]):
     ``"record"`` returns the updated read model itself. The typed facade's ``update`` keeps the
     default's static type, so call through the registry, or cast, in ``"record"`` mode."""
 
-    audit: Mapping[StrKey, Audited] = attrs.field(factory=dict[StrKey, Audited])
+    audit: Mapping[StrKey, Audited] = attrs.field(
+        factory=dict[StrKey, Audited],
+        converter=MappingConverter.frozen,  # type: ignore[misc]
+    )
     """Audit generated operations, keyed by kernel op like :attr:`handlers`.
 
     An audited write runs in a transaction on the registry's ``tx_route``, so its ``allowed``
@@ -293,6 +304,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
     def __attrs_post_init__(self) -> None:
         self._refuse_write_options_without_writes()
+        self._refuse_kill_on_a_kept_spec()
 
         if self.dtos is not None and self.dtos.read is not self.spec.read:
             raise exc.configuration(
@@ -320,6 +332,16 @@ class AggregateKit(Generic[R, D, C, U]):
             # error, not a runtime one.
             assert_search_encryption_parity(document=self.spec, search=self.search)
 
+        if self.get_deleted != "not_found" and not self.soft_delete:
+            raise exc.configuration(
+                f"AggregateKit {self.spec.name!r}: get_deleted={self.get_deleted!r} would never "
+                "take effect without soft_delete=True, because no row is ever soft-deleted.",
+            )
+
+        if self.soft_delete:
+            # Built here only for its refusals, so they surface at declaration, not composition.
+            soft_delete_wiring(self.spec, purge=self.purge, get_deleted=self.get_deleted)
+
         if (
             self.soft_delete
             and self.search is not None
@@ -344,6 +366,30 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"to filter {IS_CURRENT_FIELD!r}. Declare it on the search spec "
                 f"(facetable_fields={{{IS_CURRENT_FIELD!r}}}); an index that cannot filter it "
                 "would answer with facts that have since been corrected.",
+            )
+
+    # ....................... #
+
+    def _refuse_kill_on_a_kept_spec(self) -> None:
+        """Refuse an escape hatch that would put back the kill a ``hard_delete=False`` spec drops.
+
+        The port would still refuse the call, but only when it is made; a route or tool generated
+        for the operation would be advertised until then.
+        """
+
+        if self.spec.hard_delete:
+            return
+
+        kill = self.spec.default_namespace.key(DocumentKernelOp.KILL)
+        declared = {
+            "handlers": DocumentKernelOp.KILL in self.handlers,
+            "extra_ops": self.extra_ops is not None and kill in self.extra_ops.operation_keys(),
+        }
+
+        if adding := [name for name, found in declared.items() if found]:
+            raise exc.configuration(
+                f"AggregateKit {self.spec.name!r}: {', '.join(adding)} would add {kill!r}, but "
+                "the spec declares hard_delete=False, so its rows cannot be erased.",
             )
 
     # ....................... #
@@ -681,14 +727,19 @@ class AggregateKit(Generic[R, D, C, U]):
         spec = self.spec
         ns = spec.default_namespace
 
-        soft = soft_delete_wiring(spec, purge=self.purge) if self.soft_delete else None
+        soft = (
+            soft_delete_wiring(spec, purge=self.purge, get_deleted=self.get_deleted)
+            if self.soft_delete
+            else None
+        )
         mappers: DocumentMappers[Any, Any, Any, Any] = self.mappers or DocumentMappers()
         dtos = self.dtos
         versioned = (
             versioned_wiring(
                 spec,
                 self.versioned,
-                soft_deleted=self.soft_delete,
+                # The versioned GET replaces soft deletion's, so it carries get_deleted too.
+                soft_deleted=self.soft_delete and self.get_deleted == "not_found",
                 dtos=dtos,
                 create_mapper=mappers.create,
                 update_mapper=mappers.update,

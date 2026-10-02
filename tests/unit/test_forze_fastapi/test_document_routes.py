@@ -58,7 +58,9 @@ class _Note(DocWithSoftDeletion):
 # ....................... #
 
 
-def _spec(*, writable: bool = True) -> DocumentSpec[_NoteRead, _Note, _NoteCreate, _NoteUpdate]:
+def _spec(
+    *, writable: bool = True, hard_delete: bool = True
+) -> DocumentSpec[_NoteRead, _Note, _NoteCreate, _NoteUpdate]:
     return DocumentSpec(
         name="notes",
         read=_NoteRead,
@@ -69,6 +71,7 @@ def _spec(*, writable: bool = True) -> DocumentSpec[_NoteRead, _Note, _NoteCreat
             if writable
             else None
         ),
+        hard_delete=hard_delete,
     )
 
 
@@ -87,11 +90,12 @@ def _build_app(
     style,
     *,
     writable: bool = True,
+    hard_delete: bool = True,
     include=None,
     resource=None,
     path_overrides=None,
 ) -> FastAPI:
-    spec = _spec(writable=writable)
+    spec = _spec(writable=writable, hard_delete=hard_delete)
     state = MockState()
 
     router = APIRouter(prefix="/notes")
@@ -302,6 +306,17 @@ class TestCatalogProjection:
     def test_include_of_unregistered_operation_raises(self) -> None:
         with pytest.raises(CoreException, match="not registered"):
             _build_app("rest", writable=False, include={DocumentKernelOp.CREATE})
+
+    @pytest.mark.parametrize("style", ["rest", "rpc"])
+    def test_a_spec_without_hard_delete_attaches_no_kill(self, style: str) -> None:
+        assert _operation_ids(_build_app(style, hard_delete=False)) == _ALL_OP_IDS - {
+            "notes.kill"
+        }
+
+    def test_including_kill_on_a_spec_without_hard_delete_raises(self) -> None:
+        # Asked for by name, it is refused at wiring rather than skipped.
+        with pytest.raises(CoreException, match="not registered"):
+            _build_app("rest", hard_delete=False, include={DocumentKernelOp.KILL})
 
     def test_include_of_unknown_operation_raises(self) -> None:
         with pytest.raises(CoreException, match="Unknown operations"):

@@ -208,11 +208,12 @@ def _build_document_descriptors(
     }
 
     if spec.write is not None:
-        descriptors[DocumentKernelOp.KILL] = OperationDescriptor(
-            input_type=DocumentIdDTO,
-            output_type=None,
-            description="Permanently delete a document by primary key (hard delete).",
-        )
+        if spec.hard_delete:
+            descriptors[DocumentKernelOp.KILL] = OperationDescriptor(
+                input_type=DocumentIdDTO,
+                output_type=None,
+                description="Permanently delete a document by primary key (hard delete).",
+            )
 
         if dtos.create is not None:
             descriptors[DocumentKernelOp.CREATE] = OperationDescriptor(
@@ -266,7 +267,8 @@ def build_document_registry(
     :param ns: Optional namespace.
     :param update_returns: ``"result"`` (default) returns the record with its diff;
         ``"record"`` returns the updated read model itself, and skips computing the diff.
-    :returns: Operation registry with all supported operations.
+    :returns: Operation registry with all supported operations. A spec declaring
+        ``hard_delete=False`` gets no ``kill`` operation.
     """
 
     if not isinstance(update_returns, str) or update_returns not in _UPDATE_RETURNS:
@@ -327,10 +329,11 @@ def build_document_registry(
     )
 
     if spec.write is not None:
-        reg = reg.set_handler(
-            ns.key(DocumentKernelOp.KILL),
-            lambda ctx: KillDocument(doc=ctx.doc.command(spec)),
-        )
+        if spec.hard_delete:
+            reg = reg.set_handler(
+                ns.key(DocumentKernelOp.KILL),
+                lambda ctx: KillDocument(doc=ctx.doc.command(spec)),
+            )
 
         if dtos.create is not None:
             reg = reg.set_handler(

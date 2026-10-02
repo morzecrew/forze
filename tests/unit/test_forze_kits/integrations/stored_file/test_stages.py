@@ -73,3 +73,23 @@ class TestStoredFileStages:
 
         with pytest.raises(CoreException):
             await stub_ctx.storage.query(kit.resolved_storage).download(ready.storage_key)
+
+    @pytest.mark.asyncio
+    async def test_keeping_the_blob_still_drops_the_index_entry(self, stub_ctx) -> None:
+        kit = StoredFileKitSpec(name="files", search=StoredFileKitSpec.default_search("files"))
+        doc = stub_ctx.doc.command(kit.document)
+        index = stub_ctx.search.query(kit.search_spec)
+        args = UploadStoredFileRequestDTO(filename="kept.txt", data=b"payload")
+        pending = await UploadStoredFile(doc=doc)(args)
+
+        await stored_file_complete_upload_after_commit_factory(kit)(stub_ctx)(args, pending)
+        ready = await stub_ctx.doc.query(kit.document).get(pending.id)
+        assert [hit.id for hit in (await index.search("kept")).hits] == [ready.id]
+
+        deleted = await SoftDeleteStoredFile(doc=doc)(StoredFileIdRevDTO(id=ready.id, rev=ready.rev))
+        hook = stored_file_purge_blob_after_commit_factory(kit, keep_blob=True)(stub_ctx)
+        await hook(None, deleted)
+
+        stored = await stub_ctx.storage.query(kit.resolved_storage).download(ready.storage_key)
+        assert stored.data == b"payload"
+        assert (await index.search("kept")).hits == []

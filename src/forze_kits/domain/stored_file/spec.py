@@ -8,6 +8,7 @@ from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import StorageSpec
+from forze.base.exceptions import exc
 
 from .models import (
     StoredFileCreateCmd,
@@ -39,6 +40,24 @@ class StoredFileKitSpec:
 
     outbox: OutboxSpec[Any] | None = attrs.field(default=None)
     """Optional outbox spec for integration events."""
+
+    max_bytes: int | None = attrs.field(default=None)
+    """Largest upload accepted, in bytes; ``None`` (default) sets no limit. A larger upload is
+    refused with ``upload_too_large`` before a row is written. The kit still receives the whole
+    upload in memory, so cap the request body at the transport too."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.max_bytes is not None and (
+            isinstance(self.max_bytes, bool)  # pyright: ignore[reportUnnecessaryIsInstance]
+            or not isinstance(self.max_bytes, int)  # pyright: ignore[reportUnnecessaryIsInstance]
+            or self.max_bytes < 1
+        ):
+            raise exc.configuration(
+                f"StoredFileKitSpec {self.name!r}: max_bytes must be a positive number of bytes, "
+                f"not {self.max_bytes!r}.",
+            )
 
     # ....................... #
 

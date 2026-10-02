@@ -18,7 +18,6 @@ from typing import (
 from uuid import UUID
 
 import attrs
-from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel
 
 from forze.application.contracts.document.value_objects import (
@@ -51,9 +50,6 @@ from .base import FirestoreGateway
 T = TypeVar("T", bound=BaseModel)
 M = TypeVar("M", bound=BaseModel)
 
-_FIRESTORE_IN_LIMIT = 30
-"""Maximum number of comparison values Firestore accepts in an ``in`` query."""
-
 # ....................... #
 
 
@@ -84,19 +80,23 @@ class FirestoreReadGateway[M: BaseModel](
     # ....................... #
 
     async def get(self, pk: UUID, *, for_update: RowLockMode = False) -> M:
+        # One answer from the tenant provider, asked before any read, routes the read and
+        # accepts the row: a static collection, once resolved, no longer asks for it.
+        tenant_id = self._tenant_id_for_resolve()
+
         if row_lock_requires_transaction(for_update):
             log_non_postgres_lock_degrade(for_update, backend="firestore")
             self.client.require_transaction()
 
         raw = await self.client.get_document(
-            await self.coll(),
+            await self.coll_for(tenant_id),
             self._storage_pk(pk),
         )
 
         # Firestore cannot combine a by-id fetch with a query filter, so the
         # tenant scope is enforced on the fetched row: a document owned by
         # another tenant reads as not-found, matching the filtered read paths.
-        if raw is None or not self._row_matches_tenant(raw):
+        if raw is None or not self._row_matches_tenant(raw, tenant_id):
             raise exc.not_found(f"Record not found: {pk}")
 
         data = self._from_storage_doc(raw)
@@ -109,28 +109,28 @@ class FirestoreReadGateway[M: BaseModel](
         if not pks:
             return []
 
-        ids = [str(pk) for pk in pks]
-        coll = await self.coll()
-        by_pk: dict[str, JsonDict] = {}
+        # One answer from the tenant provider, asked before any read, routes the read and
+        # accepts the row: a static collection, once resolved, no longer asks for it.
+        tenant_id = self._tenant_id_for_resolve()
 
-        # Firestore caps ``in`` at 30 comparison values, so chunk the ids: a naive
-        # single ``in`` silently drops everything past the 30th id and reports those
-        # documents as not-found.
-        for offset in range(0, len(ids), _FIRESTORE_IN_LIMIT):
-            chunk = ids[offset : offset + _FIRESTORE_IN_LIMIT]
-            flt = self._add_tenant_filter(FieldFilter(ID_FIELD, "in", chunk))
-            rows = await self.client.query_stream(coll, filters=flt)
+        # By document name, as `get` reads one: a query on the body's `id` field misses a
+        # document written without it. The tenant scope is checked on each fetched row, as
+        # `get` checks it, so another tenant's document reads as missing.
+        found = await self.client.get_documents(
+            await self.coll_for(tenant_id), [self._storage_pk(pk) for pk in pks]
+        )
+        by_pk = {
+            name: self._from_storage_doc(raw)
+            for name, raw in found.items()
+            if self._row_matches_tenant(raw, tenant_id)
+        }
 
-            for row in rows:
-                normalized = self._from_storage_doc(row)
-                by_pk[str(normalized[ID_FIELD])] = normalized
-
-        missing = [pk for pk in pks if str(pk) not in by_pk]
+        missing = [pk for pk in pks if self._storage_pk(pk) not in by_pk]
 
         if missing:
             raise exc.not_found(f"Some records not found: {missing}")
 
-        ordered = [by_pk[str(pk)] for pk in pks]
+        ordered = [by_pk[self._storage_pk(pk)] for pk in pks]
 
         return await self._adecode_rows(ordered)
 

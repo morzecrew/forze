@@ -185,3 +185,37 @@ async def test_mongo_document_find_many_sorted(mongo_client: MongoClient) -> Non
         sorts={"name": "desc"},
     )
     assert [r.name for r in rows_desc.hits] == ["charlie", "bob"]
+
+
+@pytest.mark.asyncio
+async def test_a_spec_without_hard_delete_keeps_its_rows(mongo_client: MongoClient) -> None:
+    collection = f"kept_{uuid4().hex[:8]}"
+    db_name = (await mongo_client.db()).name
+    spec = DocumentSpec(
+        name="kept_docs_ns",
+        read=MyReadDoc,
+        write={"domain": MyDoc, "create_cmd": MyCreateDoc, "update_cmd": MyUpdateDoc},
+        hard_delete=False,
+    )
+    configurable = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(read=(db_name, collection), write=(db_name, collection))
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: mongo_client,
+                DocumentQueryDepKey: configurable,
+                DocumentCommandDepKey: configurable,
+            }
+        )
+    )
+    cmd = ctx.document.command(spec)
+    doc = await cmd.create(MyCreateDoc(name="kept"))
+
+    for erase in (lambda: cmd.kill(doc.id), lambda: cmd.kill_many([doc.id])):
+        with pytest.raises(CoreException) as ei:
+            await erase()
+
+        assert ei.value.code == "hard_delete_forbidden"
+
+    assert await cmd.count() == 1

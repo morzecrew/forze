@@ -6,7 +6,7 @@ require_firestore()
 
 # ....................... #
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 from uuid import UUID
 
@@ -110,12 +110,16 @@ class FirestoreGateway[M: BaseModel](
 
     # ....................... #
 
-    async def _resolved_collection(self) -> tuple[str, str]:
+    async def _resolved_collection(
+        self,
+        tenant: Callable[[], UUID | None] | None = None,
+    ) -> tuple[str, str]:
+        # *tenant* answers which tenant routes a per-tenant relation; by default the provider,
+        # asked only when the relation is resolved rather than read from the cache.
+        ask = tenant or self._tenant_id_for_resolve
+
         async def _factory() -> tuple[str, str]:
-            return await resolve_firestore_collection(
-                self.relation,
-                self._tenant_id_for_resolve(),
-            )
+            return await resolve_firestore_collection(self.relation, ask())
 
         return await self._relation_cell.resolve(
             _factory,
@@ -162,6 +166,19 @@ class FirestoreGateway[M: BaseModel](
 
     async def coll(self) -> Any:
         database, collection = await self._resolved_collection()
+
+        return await self.client.collection(collection, database=database)
+
+    # ....................... #
+
+    async def coll_for(self, tenant_id: UUID | None) -> Any:
+        """The collection for *tenant_id*, a tenant the operation has already resolved.
+
+        An operation that also checks rows against its tenant routes by the same answer, so a
+        tenant provider that answers differently on a second call cannot split the two.
+        """
+
+        database, collection = await self._resolved_collection(lambda: tenant_id)
 
         return await self.client.collection(collection, database=database)
 
@@ -223,25 +240,18 @@ class FirestoreGateway[M: BaseModel](
 
     # ....................... #
 
-    def _row_matches_tenant(self, raw: JsonDict) -> bool:
-        """Whether a stored document belongs to the current tenant.
+    def _row_matches_tenant(self, raw: JsonDict, tenant_id: UUID | None) -> bool:
+        """Whether a stored document belongs to *tenant_id*, the tenant the operation resolved.
 
         Always ``True`` for tenant-unaware gateways. For tenant-aware gateways it
-        compares the row's stored ``tenant_id`` against the resolved tenant, so a
-        by-id operation (which Firestore cannot combine with a query filter) can be
-        scoped to the caller's tenant instead of trusting the bare document id.
+        compares the row's stored ``tenant_id`` against *tenant_id*, so a by-id
+        operation (which Firestore cannot combine with a query filter) can be scoped to
+        the caller's tenant instead of trusting the bare document id. The caller resolves
+        *tenant_id* with :meth:`_tenant_id_for_resolve`, which refuses a missing one.
         """
 
         if not self.tenant_aware:
             return True
-
-        if self.tenant_provider is None:
-            raise exc.configuration("Tenant provider is required for the gateway")
-
-        tenant_id = self.require_tenant_if_aware()
-
-        if tenant_id is None:
-            raise exc.authentication("Tenant ID is required", code="tenant_required")
 
         # Stored tenant ids are coerced to strings on write (see
         # ``adapt_payload_for_write`` -> ``_coerce_query_value``); coerce the
