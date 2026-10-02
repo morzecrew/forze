@@ -14,10 +14,18 @@ import pytest
 import pytest_asyncio
 from pydantic import BaseModel
 
-from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
+from forze.application.contracts.search import HubSearchSpec, SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps
-from forze_postgres.execution.deps import ConfigurablePostgresSearch
-from forze_postgres.execution.deps.configs import FtsEngine, PostgresSearchConfig
+from forze_postgres.execution.deps import (
+    ConfigurablePostgresHubSearch,
+    ConfigurablePostgresSearch,
+)
+from forze_postgres.execution.deps.configs import (
+    FtsEngine,
+    PostgresHubSearchConfig,
+    PostgresHubSearchMemberConfig,
+    PostgresSearchConfig,
+)
 from forze_postgres.execution.deps.keys import (
     PostgresClientDepKey,
     PostgresIntrospectorDepKey,
@@ -45,13 +53,17 @@ class _Row(BaseModel):
     price: Decimal = Decimal(0)
 
 
-_INDEXES = {
-    "fts": "USING gin (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(content,'')))",
-    "pgroonga": "USING pgroonga ((ARRAY[title, content]))",
-}
+class _Leg(BaseModel):
+    title: str
+    content: str
 
 
-@pytest_asyncio.fixture(params=["fts", "pgroonga"])
+_FTS = "USING gin (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(content,'')))"
+_INDEXES = {"fts": _FTS, "pgroonga": "USING pgroonga ((ARRAY[title, content]))", "hub": _FTS}
+_FTS_GROUPS = FtsEngine(groups={"A": ("title",), "B": ("content",)})
+
+
+@pytest_asyncio.fixture(params=["fts", "pgroonga", "hub"])
 async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> SearchHarness:
     engine: str = request.param
     table = f"search_conf_{uuid4().hex[:10]}"
@@ -87,11 +99,7 @@ async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> 
                     config=PostgresSearchConfig(
                         index=("public", index),
                         read=("public", table),
-                        engine=(
-                            FtsEngine(groups={"A": ("title",), "B": ("content",)})
-                            if engine == "fts"
-                            else "pgroonga"
-                        ),
+                        engine=_FTS_GROUPS if engine == "fts" else "pgroonga",
                     )
                 ),
             }
@@ -102,11 +110,31 @@ async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> 
         name="rows", model_type=_Row, fields=searchable_fields(), default_sort=DEFAULT_SORT
     )
 
-    return SearchHarness(
-        query=ctx.search.query(spec),
-        backend=f"pg_{engine}",
-        blank_query_matches_all=True,
-    )
+    if engine == "hub":
+        # One leg over the hub table itself: each row is its own leg match.
+        leg = SearchSpec(name="leg", model_type=_Leg, fields=searchable_fields())
+        hub = ConfigurablePostgresHubSearch(
+            config=PostgresHubSearchConfig(
+                hub=("public", table),
+                members={
+                    "leg": PostgresHubSearchMemberConfig(
+                        index=("public", index),
+                        read=("public", table),
+                        hub_fk="id",
+                        engine=_FTS_GROUPS,
+                    )
+                },
+            )
+        )
+        query = hub(
+            ctx,
+            HubSearchSpec(name="rows", model_type=_Row, members=(leg,), default_sort=DEFAULT_SORT),
+        )
+
+    else:
+        query = ctx.search.query(spec)
+
+    return SearchHarness(query=query, backend=f"pg_{engine}", blank_query_matches_all=True)
 
 
 @pytest.mark.conformance(plane="search", engine="postgres")
