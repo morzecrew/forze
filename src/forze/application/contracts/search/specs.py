@@ -194,6 +194,25 @@ def _validate_search_facetable_highlightable(
 # ....................... #
 
 
+def _stored_read_fields(
+    model_type: type[BaseModel],
+    *,
+    materialized: frozenset[str],
+    lenient_read_fields: frozenset[str],
+) -> frozenset[str]:
+    """Read-model fields with a stored value, which are the fields a sort may name.
+
+    Materialized computed fields are persisted columns and so count; lenient read fields have
+    no column and so do not. The one definition both spec kinds' ``stored_read_fields`` and
+    their ``default_sort`` validation read, so the two cannot drift.
+    """
+
+    return (read_fields_for_model(model_type) | materialized) - lenient_read_fields
+
+
+# ....................... #
+
+
 def _validate_search_default_sort(
     *,
     spec_name: str,
@@ -202,19 +221,16 @@ def _validate_search_default_sort(
     lenient_read_fields: frozenset[str] = frozenset(),
     materialized: frozenset[str] = frozenset(),
 ) -> None:
-    """Validate a search spec's ``default_sort`` against the read model (nested-path aware).
-
-    Materialized computed fields are persisted columns and so may be sort keys; lenient
-    read fields have no column and so cannot be — the accepted field set adds the former
-    and removes the latter.
-    """
+    """Validate a search spec's ``default_sort`` against its stored fields (nested-path aware)."""
 
     if default_sort is None:
         return
 
     validate_sort_fields(
         default_sort,
-        read_fields=(read_fields_for_model(model_type) | materialized) - lenient_read_fields,
+        read_fields=_stored_read_fields(
+            model_type, materialized=materialized, lenient_read_fields=lenient_read_fields
+        ),
         spec_name=spec_name,
         model=model_type,
         client_facing=False,
@@ -470,12 +486,14 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
     @property
     def stored_read_fields(self) -> frozenset[str]:
-        """Read-model fields with a stored value: declared and :attr:`materialized`, less the
-        lenient ones. What a sort may name."""
+        """Read-model fields with a stored value, which a sort may name (see
+        :func:`_stored_read_fields`)."""
 
-        return (
-            read_fields_for_model(self.model_type) | self.materialized
-        ) - self.resolved_lenient_read_fields
+        return _stored_read_fields(
+            self.model_type,
+            materialized=self.materialized,
+            lenient_read_fields=self.resolved_lenient_read_fields,
+        )
 
     # ....................... #
 
@@ -667,6 +685,19 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
                     raise exc.configuration(
                         f"Default weight for search field '{member.name}' should be between 0.0 and 1.0."
                     )
+
+    # ....................... #
+
+    @property
+    def stored_read_fields(self) -> frozenset[str]:
+        """Hub-row fields with a stored value, which a sort may name (see
+        :func:`_stored_read_fields`)."""
+
+        return _stored_read_fields(
+            self.model_type,
+            materialized=self.materialized,
+            lenient_read_fields=self.resolved_lenient_read_fields,
+        )
 
     # ....................... #
 
