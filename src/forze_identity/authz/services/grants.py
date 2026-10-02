@@ -1,6 +1,6 @@
 """Resolve effective grants from catalog documents and binding edges."""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from contextlib import aclosing
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final
@@ -173,21 +173,25 @@ class AuthzGrantResolver:
 
     # ....................... #
 
-    async def _expand_role_lineage(self, root_role_id: UUID) -> frozenset[UUID]:
-        """Include ``root_role_id`` and ancestors via ``parent_role_id``."""
+    async def _expand_role_lineage(
+        self, role_ids: Collection[UUID]
+    ) -> dict[UUID, ReadRoleDefinition]:
+        """Each of *role_ids* and its ancestors via ``parent_role_id``, keyed by id.
 
-        lineage: set[UUID] = set()
-        visited: set[UUID] = set()
-        cur: UUID | None = root_role_id
+        One read per level of the hierarchy, whatever the number of roles: an ancestor two roles
+        share is read once.
+        """
 
-        while cur is not None and cur not in visited:
-            visited.add(cur)
-            lineage.add(cur)
+        rows: dict[UUID, ReadRoleDefinition] = {}
+        level = set(role_ids)
 
-            row = await self.deps.role_qry.get(cur)
-            cur = row.parent_role_id
+        while level:
+            batch = await _get_many(self.deps.role_qry, level)
+            rows.update((row.id, row) for row in batch)
+            level = {row.parent_role_id for row in batch if row.parent_role_id is not None}
+            level -= rows.keys()
 
-        return frozenset(lineage)
+        return rows
 
     # ....................... #
 
@@ -201,15 +205,13 @@ class AuthzGrantResolver:
 
         self._require_scope_matches_invocation(scope)
 
-        direct_ids = await self._direct_role_ids(principal_id)
+        group_ids = await self._active_member_group_ids(principal_id)
+        direct_ids = await self._direct_role_ids(principal_id, group_ids)
 
-        refs: dict[UUID, RoleRef] = {}
-
-        for rid in direct_ids:
-            row = await self.deps.role_qry.get(rid)
-            refs[rid] = RoleRef(role_id=row.id, role_key=row.role_key)
-
-        return frozenset(refs.values())
+        return frozenset(
+            RoleRef(role_id=row.id, role_key=row.role_key)
+            for row in await _get_many(self.deps.role_qry, direct_ids)
+        )
 
     # ....................... #
 
@@ -219,70 +221,47 @@ class AuthzGrantResolver:
         *,
         scope: AuthzScope | None = None,
     ) -> EffectiveGrants:
-        """Union permissions from expanded roles, direct principal and group grants."""
+        """Union permissions from expanded roles, direct principal and group grants.
+
+        Each kind of row is read in batches rather than one at a time: the reads grow with the
+        depth of the role hierarchy, and with the number of roles or groups only past 30 of them.
+        """
 
         self._require_scope_matches_invocation(scope)
 
         deps = self.deps
 
-        direct_role_ids = await self._direct_role_ids(principal_id)
+        group_ids = await self._active_member_group_ids(principal_id)
+        direct_role_ids = await self._direct_role_ids(principal_id, group_ids)
+        roles = await self._expand_role_lineage(direct_role_ids)
 
-        expanded_role_ids: set[UUID] = set()
-
-        for rid in direct_role_ids:
-            lineage = await self._expand_role_lineage(rid)
-            expanded_role_ids.update(lineage)
-
-        permission_ids: set[UUID] = set()
-
-        for rid in expanded_role_ids:
-            rp_rows = await fetch_all_document_hits(
-                deps.rp_binding_qry,
-                filters={"$values": {"role_id": rid}},
+        permission_ids = {
+            row.permission_id
+            for row in await _fetch_where_in(deps.rp_binding_qry, "role_id", sorted(roles))
+        }
+        permission_ids.update(
+            row.permission_id
+            for row in await fetch_all_document_hits(
+                deps.pp_binding_qry,
+                filters={"$values": {"principal_id": principal_id}},
             )
-
-            for rb in rp_rows:
-                permission_ids.add(rb.permission_id)
-
-        pp_rows = await fetch_all_document_hits(
-            deps.pp_binding_qry,
-            filters={"$values": {"principal_id": principal_id}},
+        )
+        permission_ids.update(
+            row.permission_id
+            for row in await _fetch_where_in(deps.gperm_binding_qry, "group_id", group_ids)
         )
 
-        for pb in pp_rows:
-            permission_ids.add(pb.permission_id)
-
-        group_ids = await self._active_member_group_ids(principal_id)
-
-        for gid in group_ids:
-            gp_rows = await fetch_all_document_hits(
-                deps.gperm_binding_qry,
-                filters={"$values": {"group_id": gid}},
-            )
-
-            for gb in gp_rows:
-                permission_ids.add(gb.permission_id)
-
-        perm_refs: dict[UUID, PermissionRef] = {}
-
-        for pid in permission_ids:
-            perm_row = await deps.permission_qry.get(pid)
-
-            perm_refs[pid] = PermissionRef(
-                permission_id=perm_row.id,
-                permission_key=perm_row.permission_key,
-            )
-
-        role_refs: dict[UUID, RoleRef] = {}
-
-        for rid in direct_role_ids:
-            role_row = await deps.role_qry.get(rid)
-
-            role_refs[rid] = RoleRef(role_id=role_row.id, role_key=role_row.role_key)
+        permissions = await _get_many(deps.permission_qry, permission_ids)
 
         return EffectiveGrants(
-            roles=frozenset(role_refs.values()),
-            permissions=frozenset(perm_refs.values()),
+            roles=frozenset(
+                RoleRef(role_id=roles[rid].id, role_key=roles[rid].role_key)
+                for rid in direct_role_ids
+            ),
+            permissions=frozenset(
+                PermissionRef(permission_id=row.id, permission_key=row.permission_key)
+                for row in permissions
+            ),
             derived=await self._derive(principal_id),
         )
 
@@ -298,53 +277,40 @@ class AuthzGrantResolver:
 
     # ....................... #
 
-    async def _direct_role_ids(self, principal_id: UUID) -> set[UUID]:
-        """Role ids from principal-role bindings plus group-role bindings for member groups."""
+    async def _direct_role_ids(self, principal_id: UUID, group_ids: Sequence[UUID]) -> set[UUID]:
+        """Role ids from principal-role bindings plus group-role bindings of *group_ids*."""
 
         deps = self.deps
 
-        out: set[UUID] = set()
-
-        pr_rows = await fetch_all_document_hits(
-            deps.pr_binding_qry,
-            filters={"$values": {"principal_id": principal_id}},
-        )
-
-        for pr in pr_rows:
-            out.add(pr.role_id)
-
-        group_ids = await self._active_member_group_ids(principal_id)
-
-        for gid in group_ids:
-            gr_rows = await fetch_all_document_hits(
-                deps.gr_binding_qry,
-                filters={"$values": {"group_id": gid}},
+        out = {
+            row.role_id
+            for row in await fetch_all_document_hits(
+                deps.pr_binding_qry,
+                filters={"$values": {"principal_id": principal_id}},
             )
-
-            for gr in gr_rows:
-                out.add(gr.role_id)
+        }
+        out.update(
+            row.role_id for row in await _fetch_where_in(deps.gr_binding_qry, "group_id", group_ids)
+        )
 
         return out
 
     # ....................... #
 
     async def _active_member_group_ids(self, principal_id: UUID) -> list[UUID]:
-        deps = self.deps
+        """The active groups *principal_id* belongs to, sorted.
 
-        gp_rows = await fetch_all_document_hits(
-            deps.gp_binding_qry,
+        Every group a binding names is read, active or not, so a binding to a missing group
+        fails the resolution.
+        """
+
+        rows = await fetch_all_document_hits(
+            self.deps.gp_binding_qry,
             filters={"$values": {"principal_id": principal_id}},
         )
+        groups = await _get_many(self.deps.group_qry, {row.group_id for row in rows})
 
-        active: list[UUID] = []
-
-        for row in gp_rows:
-            g = await deps.group_qry.get(row.group_id)
-
-            if g.is_active:
-                active.append(row.group_id)
-
-        return active
+        return [group.id for group in groups if group.is_active]
 
 
 # ....................... #
@@ -352,6 +318,13 @@ class AuthzGrantResolver:
 _IN_BATCH: Final = 30
 """Values in one ``$in``: Firestore's limit, the smallest of any backend, so a batch runs on
 every one."""
+
+
+async def _get_many[R: BaseModel](
+    query: DocumentQueryPort[R], ids: Collection[UUID]
+) -> Sequence[R]:
+    # Sorted, so the same ids make the same statement; a missing id raises not-found.
+    return await query.get_many(sorted(ids))
 
 
 async def _fetch_where_in[R: BaseModel](

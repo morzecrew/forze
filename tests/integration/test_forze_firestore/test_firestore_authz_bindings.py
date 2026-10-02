@@ -40,6 +40,7 @@ from forze_identity.tenancy.application.specs import principal_tenant_binding_sp
 from forze_identity.tenancy.domain.models.principal_tenant_binding import (
     CreatePrincipalTenantBindingCmd,
 )
+from tests.support.authz_grants import GRANT_SPECS, resolve_both_ways, wide_catalog
 from tests.support.execution_context import context_from_deps
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -115,6 +116,31 @@ async def test_a_tenant_with_more_members_than_one_page_lists_them_all(
     )
 
     assert set(await adapter.list_tenant_principals(tenant)) == members
+
+
+async def test_a_principal_past_one_in_batch_resolves_in_full(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    # Firestore takes at most 30 values in one `in`: 39 roles to expand and 31 active groups
+    # make every batched read split, and the grants must still match the row-by-row reads.
+    routes = {
+        spec.name: ConfigurableFirestoreDocument(
+            config=FirestoreDocumentConfig(
+                read=("(default)", f"{unique_collection}_{spec.name}"),
+                write=("(default)", f"{unique_collection}_{spec.name}"),
+            ),
+        )
+        for spec in GRANT_SPECS
+    }
+    ctx = context_from_deps(
+        Deps.plain({FirestoreClientDepKey: firestore_client}).merge(
+            Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
+        )
+    )
+    principal_id, roles, permissions = await wide_catalog(ctx)
+
+    assert await resolve_both_ways(ctx, principal_id) == (roles, permissions)
 
 
 async def test_a_provider_declaring_more_keys_than_one_in_batch_is_checked(

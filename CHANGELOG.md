@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
+- **An authorization decision's reads no longer grow with the principal's roles, groups or permissions.** Grant resolution reads each kind of row in batches, one per level of the role hierarchy: an administrator with one role under a parent and 18 permissions takes 7 reads instead of 27.
+
 ### Fixed
 
 - **Permission providers declaring more than 30 keys work on Firestore.** The check that their keys exist in the permission catalog named them all in one `in`, past Firestore's limit of 30 values, so every decision failed. It now reads 30 at a time.
