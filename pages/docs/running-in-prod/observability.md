@@ -215,7 +215,7 @@ rather than filtering noise *out* in steady state. Each level has a fixed meanin
 | Level | What the framework logs here | Steady-state volume |
 |-------|------------------------------|---------------------|
 | `trace` | per-row / per-message / per-port-call detail | **none in production** — the trace gate is one integer compare unless you configure `level="trace"` |
-| `debug` | per-operation internals, cache hits, dedup skips | opt-in — at a higher level, a debug call is one integer compare too |
+| `debug` | per-operation internals, cache hits, dedup skips | opt-in — at a higher level, a debug call returns after one cheap check |
 | `info` | lifecycle events only: startup, shutdown, saga pivot, relay batch summaries | rare |
 | `warning` | degraded-but-continuing: retries exhausted, breaker open, a callback failed | rare, deduped |
 | `error` | an unhandled server-side fault (a bug) | should be ~zero |
