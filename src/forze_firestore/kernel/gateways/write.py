@@ -481,12 +481,16 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             in the current tenant scope.
         """
 
+        # One answer from the tenant provider, asked before any read, routes the delete and
+        # accepts the row: a static collection, once resolved, no longer asks for it.
+        tenant_id = self._tenant_id_for_resolve()
+
         async with self.client.transaction():
-            coll = await self.coll()
+            coll = await self.coll_for(tenant_id)
             storage_pk = self._storage_pk(pk)
             raw = await self.client.get_document(coll, storage_pk)
 
-            if raw is None or not self._row_matches_tenant(raw):
+            if raw is None or not self._row_matches_tenant(raw, tenant_id):
                 raise exc.not_found(f"Record not found: {pk}")
 
             await self.client.delete_document(coll, storage_pk)

@@ -15,15 +15,23 @@ import pytest
 
 from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
 from forze.application.execution import Deps
+from forze.application.integrations.authz import ConfigGrants, ConfigGrantsProvider
+from forze.base.exceptions import CoreException
 from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     FirestoreDocumentConfig,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
-from forze_identity.authz.application.specs import principal_permission_binding_spec
+from forze_identity.authz.application.specs import (
+    permission_definition_spec,
+    principal_permission_binding_spec,
+)
 from forze_identity.authz.domain.models.bindings import CreatePrincipalPermissionBindingCmd
-from forze_identity.authz.services.grants import fetch_all_document_hits
+from forze_identity.authz.domain.models.permission_definition import (
+    CreatePermissionDefinitionCmd,
+)
+from forze_identity.authz.services.grants import check_declared_keys, fetch_all_document_hits
 from forze_identity.tenancy.adapters.management import (
     _BINDING_PAGE_SIZE,  # pyright: ignore[reportPrivateUsage]
     TenantManagementAdapter,
@@ -32,7 +40,14 @@ from forze_identity.tenancy.application.specs import principal_tenant_binding_sp
 from forze_identity.tenancy.domain.models.principal_tenant_binding import (
     CreatePrincipalTenantBindingCmd,
 )
+from tests.support.authz_grants import GRANT_SPECS, resolve_both_ways, wide_catalog
 from tests.support.execution_context import context_from_deps
+from tests.support.tenant_memberships import (
+    TENANCY_SPECS,
+    list_both_ways,
+    refuses_a_missing_tenant,
+    wide_memberships,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -107,3 +122,94 @@ async def test_a_tenant_with_more_members_than_one_page_lists_them_all(
     )
 
     assert set(await adapter.list_tenant_principals(tenant)) == members
+
+
+async def test_a_principal_past_one_in_batch_resolves_in_full(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    # Firestore takes at most 30 values in one `in`: 39 roles to expand and 31 active groups
+    # make every batched read split, and the grants must still match the row-by-row reads.
+    routes = {
+        spec.name: ConfigurableFirestoreDocument(
+            config=FirestoreDocumentConfig(
+                read=("(default)", f"{unique_collection}_{spec.name}"),
+                write=("(default)", f"{unique_collection}_{spec.name}"),
+            ),
+        )
+        for spec in GRANT_SPECS
+    }
+    ctx = context_from_deps(
+        Deps.plain({FirestoreClientDepKey: firestore_client}).merge(
+            Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
+        )
+    )
+    principal_id, roles, permissions = await wide_catalog(ctx)
+
+    assert await resolve_both_ways(ctx, principal_id) == (roles, permissions)
+
+
+async def test_a_provider_declaring_more_keys_than_one_in_batch_is_checked(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    ctx = _context(firestore_client, f"perms_{unique_collection}")
+    keys = [f"ops.key_{i}" for i in range(31)]
+
+    for key in keys:
+        await ctx.document.command(permission_definition_spec).create(
+            CreatePermissionDefinitionCmd(permission_key=key)
+        )
+
+    def provider(*declared: str) -> ConfigGrantsProvider:
+        return ConfigGrantsProvider(keys=frozenset(declared), grants=ConfigGrants())
+
+    query = ctx.document.query(permission_definition_spec)
+    await check_declared_keys(query, [provider(*keys)])
+
+    with pytest.raises(CoreException) as refused:
+        await check_declared_keys(query, [provider(*keys, "ops.missing")])
+
+    assert refused.value.code == "authz_provider_unknown_keys"
+    assert "ops.missing" in str(refused.value)
+
+
+
+def _tenancy_ctx(client: FirestoreClient, prefix: str) -> Any:
+    routes = {
+        spec.name: ConfigurableFirestoreDocument(
+            config=FirestoreDocumentConfig(
+                read=("(default)", f"{prefix}_{spec.name}"),
+                write=("(default)", f"{prefix}_{spec.name}"),
+            ),
+        )
+        for spec in TENANCY_SPECS
+    }
+
+    return context_from_deps(
+        Deps.plain({FirestoreClientDepKey: client}).merge(
+            Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
+        )
+    )
+
+
+async def test_a_principal_in_more_tenants_than_one_batch_lists_them_all(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    # 35 tenants, read together in one batched get by name.
+    ctx = _tenancy_ctx(firestore_client, unique_collection)
+    principal_id, active = await wide_memberships(ctx)
+
+    listed = await list_both_ways(ctx, principal_id)
+
+    assert sorted(t.tenant_key for t in listed) == sorted([*active, "tenant-34"])
+
+
+async def test_a_membership_naming_no_tenant_fails_the_listing(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    ctx = _tenancy_ctx(firestore_client, unique_collection)
+
+    assert await refuses_a_missing_tenant(ctx) == "core.not_found"
