@@ -1,9 +1,9 @@
 from typing import Any
 
-from pydantic import field_validator
+from pydantic import ValidationInfo, field_validator
 
 from forze.domain.models import BaseDTO, CoreModel
-from forze_kits.domain.base.types import LongString, String
+from forze_kits.domain.base.types import LongString, String, decode_text_input
 
 # ----------------------- #
 
@@ -21,11 +21,13 @@ class _MetadataMixinOptionalFields(CoreModel):
 
     @field_validator("display_name", "description", mode="before")
     @classmethod
-    def _validate_metadata_fields(cls, v: Any) -> Any:
-        """Read a blank field as unset.
+    def _validate_metadata_fields(cls, v: Any, info: ValidationInfo) -> Any:
+        """Read a blank field as unset, whether it arrives as text or as UTF-8 bytes.
 
-        A value that is not a string is left to the field's own validation.
+        A value that is not text is left to the field's own validation.
         """
+
+        v = decode_text_input(v, info)
 
         if not isinstance(v, str):
             return v

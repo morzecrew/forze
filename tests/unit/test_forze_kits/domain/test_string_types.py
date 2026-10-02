@@ -8,14 +8,14 @@ exception and a route answered 500 instead of 422.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import ConfigDict, Strict, ValidationError
 
 from forze.domain.models import BaseDTO
 from forze_kits.domain.base.types import LongString, String
-from forze_kits.domain.metadata import MetadataUpdateCmdMixin
+from forze_kits.domain.metadata import MetadataCreateCmdMixin, MetadataUpdateCmdMixin
 
 
 class _Body(BaseDTO):
@@ -79,3 +79,41 @@ class TestBytes:
     def test_that_are_not_utf8_are_a_validation_error(self) -> None:
         with pytest.raises(ValidationError, match="string_unicode"):
             _Body(name=b"\xff\xfe")  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("value", [b"   ", bytearray(b" "), "   "])
+    @pytest.mark.parametrize("field", ["display_name", "description"])
+    def test_that_are_blank_leave_a_metadata_field_unset(self, field: str, value: Any) -> None:
+        assert getattr(_Metadata.model_validate({field: value}), field) is None
+        assert getattr(MetadataCreateCmdMixin.model_validate({"name": "ok", field: value}), field) is None
+
+
+class _StrictBody(BaseDTO):
+    model_config = ConfigDict(strict=True)
+
+    name: String
+
+
+class _StrictMetadata(MetadataUpdateCmdMixin):
+    model_config = ConfigDict(strict=True)
+
+
+class TestAStrictModel:
+    @pytest.mark.parametrize("value", [b"ab", bytearray(b"ab")])
+    def test_refuses_bytes(self, value: bytes | bytearray) -> None:
+        with pytest.raises(ValidationError, match="string_type"):
+            _StrictBody.model_validate({"name": value})
+
+        with pytest.raises(ValidationError, match="string_type"):
+            _StrictMetadata.model_validate({"display_name": value})
+
+    def test_still_normalizes_text(self) -> None:
+        assert _StrictBody.model_validate({"name": "a  b"}).name == "a b"
+
+    def test_with_a_field_level_strict_still_decodes_bytes(self) -> None:
+        # A before-validator sees the model's config, not a field's own `Strict()` or a
+        # `model_validate(..., strict=True)` call, so bytes are decoded there as in lax mode.
+        class _FieldStrict(BaseDTO):
+            name: Annotated[String, Strict()]
+
+        assert _FieldStrict.model_validate({"name": b"a  b"}).name == "a b"
+        assert _Body.model_validate({"name": b"a  b"}, strict=True).name == "a b"

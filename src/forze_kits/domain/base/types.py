@@ -2,29 +2,44 @@
 
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, StringConstraints
+from pydantic import BeforeValidator, StringConstraints, ValidationInfo
 
 from forze.base.primitives import normalize_string
 
 # ----------------------- #
 
 
-def _normalize_text(value: Any) -> Any:
-    """Normalize a text field's input before pydantic validates it as a string.
+def decode_text_input(value: Any, info: ValidationInfo) -> Any:
+    """Decode UTF-8 ``bytes`` or ``bytearray`` input to ``str``, as pydantic's lax mode would.
 
-    Pydantic reads UTF-8 ``bytes`` and ``bytearray`` as a string, so they are decoded and
-    normalized like one. Anything else that is not a string, such as ``None``, a number from a
-    JSON body or bytes that are not UTF-8, is left to pydantic's own validation, which refuses
-    what is not text, rather than reaching :func:`~forze.base.primitives.normalize_string`,
-    which takes only text.
+    A before-validator runs ahead of pydantic's own string validation, so decoding here lets
+    the text be normalized or trimmed like any other string. Anything else, and bytes that are
+    not UTF-8, comes back unchanged for pydantic to judge. In a model whose config sets
+    ``strict=True`` bytes stay bytes, and pydantic refuses them. A field's own ``Strict()`` and
+    ``model_validate(..., strict=True)`` are not visible to a before-validator, so bytes are
+    still decoded there.
     """
 
-    if isinstance(value, bytes | bytearray):
-        try:
-            value = value.decode()
+    if not isinstance(value, bytes | bytearray) or (info.config or {}).get("strict"):
+        return value
 
-        except UnicodeDecodeError:
-            return value
+    try:
+        return value.decode()
+
+    except UnicodeDecodeError:
+        return value
+
+
+def _normalize_text(value: Any, info: ValidationInfo) -> Any:
+    """Normalize a text field's input before pydantic validates it as a string.
+
+    Anything that is not text after :func:`decode_text_input`, such as ``None`` or a number
+    from a JSON body, is left to pydantic's own validation, which refuses what is not text,
+    rather than reaching :func:`~forze.base.primitives.normalize_string`, which takes only
+    text.
+    """
+
+    value = decode_text_input(value, info)
 
     return normalize_string(value) if isinstance(value, str) else value
 
