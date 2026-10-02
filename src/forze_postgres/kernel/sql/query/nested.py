@@ -14,6 +14,7 @@ from psycopg import sql
 from pydantic import BaseModel
 
 from forze.base.exceptions import exc
+from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
 from forze_postgres.kernel.sql.type_cast import cast_sql_for_column_type
 
@@ -433,12 +434,16 @@ def sort_key_expr(
 
 
 def sort_key_not_null(field: str, column_types: PostgresColumnTypes) -> bool:
-    """Whether a sort key can never be ``NULL``: a column the catalog declares ``NOT NULL``.
+    """Whether a sort key can never be ``NULL``: the record id, or a ``NOT NULL`` column.
 
     Its null placement then orders nothing, and leaving it out is what lets a plain btree
-    index serve the order. A nested path, a view's column and a missing column all can be
-    ``NULL``, so they keep theirs.
+    index serve the order. The id is never null by the document contract, even where the
+    catalog cannot say so, as on a view. A nested path, another view column and a missing
+    column all can be ``NULL``, so they keep theirs.
     """
+
+    if field == ID_FIELD:
+        return True
 
     column = column_types.get(field)
 

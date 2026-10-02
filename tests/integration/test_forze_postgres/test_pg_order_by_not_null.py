@@ -199,3 +199,84 @@ async def test_a_ranked_cursor_walk_meets_every_row_of_a_nullable_sort(
 
     assert walked == [hit.id for hit in offset.hits]
     assert [hit.m for hit in offset.hits][:3] == [None, None, None]
+
+
+class _Keyed(BaseModel):
+    id: UUID
+    n: int
+
+
+async def _view_over_a_keyed_table(client: PostgresClient) -> tuple[str, str]:
+    """A table keyed by ``id`` and a view over it, whose columns all read as nullable."""
+
+    table = f"keyed_{uuid4().hex[:10]}"
+    await client.execute(
+        f"CREATE TABLE {table} (id uuid PRIMARY KEY, n int NOT NULL, label text NOT NULL); "
+        f"INSERT INTO {table} SELECT gen_random_uuid(), g, 'x' FROM generate_series(1, 20000) g; "
+        f"CREATE VIEW {table}_v AS SELECT id, n, label FROM {table}; "
+        f"ANALYZE {table};"
+    )
+
+    return table, f"{table}_v"
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+async def test_an_id_on_a_view_is_read_from_its_index(
+    pg_client: PostgresClient, direction: str
+) -> None:
+    # A record id is never null, whatever the catalog says of a view's column.
+    _, view = await _view_over_a_keyed_table(pg_client)
+    gateway = PostgresReadGateway(
+        relation=("public", view),
+        client=pg_client,
+        model_type=_Keyed,
+        codec=codec_for(_Keyed),
+        introspector=PostgresIntrospector(client=pg_client),
+        tenant_aware=False,
+    )
+    order = await gateway.order_by_clause({"id": direction})
+    plan = await _explain(
+        pg_client,
+        sql.SQL("SELECT * FROM {} ORDER BY {} LIMIT 20").format(sql.Identifier(view), order),
+    )
+
+    assert "Index Scan" in plan and "Sort" not in plan, plan
+
+
+async def test_a_blank_search_over_a_view_is_read_from_the_id_index(
+    pg_client: PostgresClient,
+) -> None:
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+    table, view = await _view_over_a_keyed_table(pg_client)
+    await pg_client.execute(f"CREATE INDEX {table}_pgr ON {table} USING pgroonga (label)")
+    recording = _Recording(pg_client)
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: recording,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", f"{table}_pgr"),
+                        read=("public", view),
+                        heap=("public", table),
+                        engine="pgroonga",
+                    )
+                ),
+            }
+        )
+    )
+    port = ctx.search.query(SearchSpec(name="rows", model_type=_Keyed, fields=["label"]))
+
+    await port.search("", None, {"limit": 20})
+
+    assert recording.last is not None
+    browse = await _explain(pg_client, *recording.last)
+
+    # A cursor's later page seeks by the id: a bare range, with no null branch in the way.
+    first = await port.search_cursor("", None, {"limit": 20})
+    await port.search_cursor("", None, {"limit": 20, "after": first.next_cursor})
+    seek = await _explain(pg_client, *recording.last)
+
+    for plan in (browse, seek):
+        assert "Index Scan" in plan and "Sort" not in plan, plan

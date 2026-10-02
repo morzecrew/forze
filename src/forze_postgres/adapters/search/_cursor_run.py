@@ -176,6 +176,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
 
     where_fin: sql.Composable = fw
     params: list[Any] = list(fp)
+    never_null = [sort_key_not_null(k, types) for k in sort_keys]
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
@@ -191,17 +192,13 @@ async def execute_projection_keyset_cursor[M: BaseModel](
             directions,
             tv,
             "before" if use_before else "after",
+            not_null=never_null,
         )
 
         where_fin = sql.SQL("({} AND ({}))").format(fw, sk)
         params = params + sp_seek
 
-    order_sql = build_order_by_sql(
-        exprs,
-        directions,
-        not_null=[sort_key_not_null(k, types) for k in sort_keys],
-        flip=use_before,
-    )
+    order_sql = build_order_by_sql(exprs, directions, not_null=never_null, flip=use_before)
     cols = gw.return_clause(
         return_type,
         select_rf,
@@ -304,6 +301,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
             )
 
     where_fin: sql.Composable = sql.SQL("TRUE")
+    never_null = [k != rank_col and sort_key_not_null(k, types) for k in sort_keys]
 
     # Highlight column placeholders sit in the SELECT list, between the WITH-clause params
     # and any from_outer params; splice them at that boundary (mirrors the offset path).
@@ -330,6 +328,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
             directions,
             tv,
             "before" if use_before else "after",
+            not_null=never_null,
         )
 
         where_fin = sk
@@ -340,6 +339,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         sort_keys,
         directions,
         rank_key=rank_col,
+        not_null=never_null,
         flip=use_before,
     )
 

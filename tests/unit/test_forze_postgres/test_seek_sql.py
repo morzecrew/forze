@@ -175,3 +175,30 @@ class TestRankedCursorOrder:
         positions = [ob.index(token) for token in expected]
 
         assert positions == sorted(positions)
+
+    def test_a_never_null_key_takes_no_placement_but_the_rank_keeps_its_own(self) -> None:
+        ob = str(
+            build_ranked_cursor_order_by_sql(
+                [self.rank, self.m],
+                ["rank", "m"],
+                ["desc", "asc"],
+                rank_key="rank",
+                not_null=[True, True],
+            )
+        )
+
+        assert ob.count("NULLS") == 1 and ob.index("NULLS") < ob.index("'m'")
+
+
+@pytest.mark.parametrize(
+    ("direction", "nav", "op"),
+    [("asc", "after", ">"), ("desc", "after", "<"), ("asc", "before", "<"), ("desc", "before", ">")],
+)
+def test_a_never_null_key_seeks_by_the_bare_range(direction: str, nav: str, op: str) -> None:
+    # No null branch: the record id has no null rows, and the bare range is what an index serves.
+    cond, params = build_seek_condition(
+        [sql.Identifier("id")], [direction], ["k"], nav, not_null=[True]  # type: ignore[arg-type]
+    )
+
+    assert "NULL" not in str(cond)
+    assert f"'{op}'" in str(cond) and params == ["k"]

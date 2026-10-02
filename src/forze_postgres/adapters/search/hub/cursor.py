@@ -39,7 +39,7 @@ from forze_postgres.kernel.sql import (
     build_ranked_cursor_order_by_sql,
     build_seek_condition,
 )
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
+from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 
 from ....kernel.gateways import PostgresGateway
 from .._cursor_run import parse_search_cursor
@@ -215,6 +215,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 )
 
         where_fin: sql.Composable = sql.SQL("TRUE")
+        never_null = [k != HUB_RANK and sort_key_not_null(k, types) for k in sort_keys]
 
         if use_after or use_before:
             token = str(c["after" if use_after else "before"])
@@ -230,6 +231,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
                 directions,
                 tv,
                 "before" if use_before else "after",
+                not_null=never_null,
             )
 
             where_fin = sk
@@ -240,6 +242,7 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
             sort_keys,
             directions,
             rank_key=HUB_RANK,
+            not_null=never_null,
             flip=use_before,
         )
 

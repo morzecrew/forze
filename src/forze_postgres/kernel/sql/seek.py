@@ -29,8 +29,12 @@ def _strict_seek_term(
     value: Any,
     *,
     after: bool,
+    never_null: bool = False,
 ) -> tuple[sql.Composable, list[Any]]:
     """Strict per-key seek term honoring an explicit null placement.
+
+    A *never_null* key (the record id, a ``NOT NULL`` column) takes the plain comparison: it
+    has no null rows to account for, and the bare range is what an index serves.
 
     Null placement is absolute (``NULLS FIRST``/``LAST``, independent of direction); only
     the non-null comparison flips with direction. Because the boundary *value* is known at
@@ -40,6 +44,11 @@ def _strict_seek_term(
     """
 
     asc = direction == "asc"
+
+    if never_null and value is not None:
+        op = sql.SQL(">") if asc == after else sql.SQL("<")
+
+        return sql.SQL("{} {} {}").format(col, op, sql.Placeholder()), [value]
 
     if value is None:
         # Boundary is a null. A non-null column is strictly past it only on the side the
@@ -83,6 +92,7 @@ def build_seek_condition(
     nav: Nav,
     *,
     nulls: list[str] | None = None,
+    not_null: list[bool] | None = None,
 ) -> tuple[sql.Composable, list[Any]]:
     """``after``: rows strictly after the cursor; ``before``: rows strictly before.
 
@@ -94,6 +104,7 @@ def build_seek_condition(
 
     null_order = _default_nulls(directions, nulls)
     n = len(exprs)
+    never_null = not_null if not_null is not None else [False] * n
 
     if n != len(values) or n != len(directions) or n != len(null_order) or n < 1:
         raise exc.precondition("Invalid keyset shape")
@@ -116,6 +127,7 @@ def build_seek_condition(
             null_order[i],
             values[i],
             after=after,
+            never_null=never_null[i],
         )
         and_terms.append(strict_sql)
         out_params.extend(strict_params)
@@ -184,16 +196,20 @@ def build_ranked_cursor_order_by_sql(
     directions: list[str],
     *,
     rank_key: str,
+    not_null: list[bool] | None = None,
     flip: bool = False,
 ) -> sql.Composable:
     """:func:`build_order_by_sql` for a ranked cursor, whose keys carry no explicit placement.
 
     Every key, the rank included, takes the canonical placement for its direction, which is
     what the seek assumes: a null sorts as the smallest value. Postgres's own default puts
-    nulls last ascending, so a walk ordered that way would seek past them. No index serves
-    an order that leads with the rank, so a ``NOT NULL`` key keeps its placement here.
+    nulls last ascending, so a walk ordered that way would seek past them. A key *not_null*
+    marks as never null, the rank aside, takes none, as on every other order.
     """
 
-    _ = sort_keys, rank_key
+    never_null = [
+        nn and key != rank_key
+        for nn, key in zip(not_null or [False] * len(exprs), sort_keys, strict=True)
+    ]
 
-    return build_order_by_sql(exprs, directions, flip=flip)
+    return build_order_by_sql(exprs, directions, not_null=never_null, flip=flip)
