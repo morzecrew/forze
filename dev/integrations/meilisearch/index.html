@@ -6624,6 +6624,20 @@ the base URL — see <a href="../#connection-settings">connection settings</a>.<
   reports a missing index, an unfilterable attribute or a refused document as
   <code>invalid_request</code>; those raise <code>precondition</code> carrying the engine's message, so
   resilience does not retry something that will fail identically forever.</li>
+<li><strong>Sorting needs sortable attributes.</strong> Left unset, <code>sortable_attributes</code> covers the
+  primary key, the searchable fields and the spec's <code>default_sort</code>. If you pin it, list the
+  <code>default_sort</code> fields too: the search port refuses to build without them. Leave out the id
+  and ties keep the engine's order instead of the id's. A sort on <code>id</code> sorts by the primary
+  key.</li>
+<li><strong>What orders a page.</strong> A blank query sorts by the request's <code>sorts</code>, else the spec's
+  <code>default_sort</code>, then the id. A query with search text sorts by the request's <code>sorts</code>
+  only: the <code>sort</code> ranking rule runs before <code>exactness</code>, so anything more would settle
+  relevance ties early, and those ties keep the engine's order. An explicit null placement
+  is refused.</li>
+<li><strong>After changing <code>default_sort</code>, re-run <code>ensure_index</code>.</strong> Until the index declares the
+  new fields sortable, an unsorted browse fails with a configuration error naming them.
+  Readiness checks the server, not each index's settings, which only a built search port
+  knows to ask about.</li>
 <li>Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the <a href="../../reference/query-syntax/">Query DSL</a>.</li>
 <li>Federated routes merge ≥2 member indexes (<code>federation</code> or in-process <abbr title="Reciprocal Rank Fusion">RRF</abbr>).</li>

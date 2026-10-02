@@ -7000,8 +7000,9 @@ map order is sort priority:</p>
 </code></pre></div>
 <p>A key may instead be an object to control null placement —
 <code>{"dir": "asc", "nulls": "first"}</code> (<code>"first"</code> / <code>"last"</code>). Omitted, nulls sort as
-the smallest value (<code>asc</code> → first, <code>desc</code> → last); some backends (Mongo, Firestore)
-support only that default and reject an explicit override. For
+the smallest value (<code>asc</code> → first, <code>desc</code> → last); some backends (Mongo, Firestore,
+Meilisearch, and search cursors on Postgres) support only that default and reject an
+explicit override. For
 <a href="../../data-events/reading-data/">cursor pagination</a> directions may be mixed — each
 key seeks in its own direction — and an <code>id</code> tie-breaker is appended automatically.
 Cursor tokens can be HMAC-signed (<code>&lt;payload&gt;.&lt;hmac&gt;</code>) or AEAD-encrypted (a leading

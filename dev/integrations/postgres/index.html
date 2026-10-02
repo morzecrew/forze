@@ -6718,6 +6718,12 @@ module, and open the pool from the lifecycle plan:</p>
   module so the catalog cache partitions by tenant.</li>
 <li><strong>Relations</strong> can be static <code>(schema, table)</code> tuples or per-tenant resolvers —
   see <a href="../../identity-tenancy-enc/multi-tenancy/">Multi-tenancy</a>.</li>
+<li><strong>Indexes for sorted pages.</strong> A sort on a <code>NOT NULL</code> column, or on the record <code>id</code>,
+  renders without a null placement, so a plain btree index serves it in either direction,
+  through a view too. A nullable column keeps the canonical placement (ascending nulls
+  first, descending nulls last), which a plain index does not hold: index it with the
+  placement your pages use, for example <code>(created_at DESC NULLS LAST)</code>. A view's columns
+  other than the <code>id</code> all read as nullable.</li>
 </ul>
 
 

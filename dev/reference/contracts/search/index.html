@@ -6642,7 +6642,7 @@ result-set snapshots.</p>
 <td><code>default_sort</code></td>
 <td><code>QuerySortExpression \| None</code></td>
 <td><code>None</code></td>
-<td>sort when a caller omits <code>sorts</code> (required if the model has no <code>id</code>)</td>
+<td>sort when a caller omits <code>sorts</code>, on offset and cursor pages alike (required if the model has no <code>id</code>)</td>
 </tr>
 <tr>
 <td><code>filter_limits</code></td>
@@ -6763,7 +6763,13 @@ argument; everything else mirrors the document side:</p>
 </tbody>
 </table>
 <p><code>query</code> is a string (or a sequence of strings); <code>filters</code> and <code>sorts</code> use the
-<a href="../../query-syntax/">query DSL</a>. <code>options: SearchOptions</code> is the backend- and
+<a href="../../query-syntax/">query DSL</a>. A page from a single index is ordered by relevance, then
+by <code>sorts</code> (or the spec's <code>default_sort</code> when the request has none), then by <code>id</code>, in the
+sort's direction when it has a single one. A sort that names <code>id</code> ends there. A blank query
+has no relevance, so the sort alone orders it, and the <code>id</code> gives rows that tie on every
+other key one place, so offset pages neither repeat nor skip them. Meilisearch is the
+exception for a query with search text: it sorts by the request's <code>sorts</code> only, and leaves
+relevance ties in the engine's order. <code>options: SearchOptions</code> is the backend- and
 topology-agnostic per-request surface — relevance <code>weights</code>, <code>fuzzy</code> matching, a per-request
 <code>fields</code> narrowing, multi-term combination (<code>phrase_combine</code>: <code>"any"</code> / <code>"all"</code>), the count
 policy (<code>search_count</code>), an advisory candidate cap (<code>max_candidates</code>), and the facet /
@@ -6772,6 +6778,11 @@ resolve to a <code>MultiSourceSearchOptions</code> port that also carries member
 (<code>member_weights</code> / <code>members</code>), a post-merge cap (<code>merge_candidates</code>), and the <code>fusion</code>
 strategy (<code>"rrf"</code> / <code>"weighted"</code>); passing those keys to a single-index <code>query(...)</code> port is
 a type error.</p>
+<p>A sort on a field the read model lacks is refused as the caller's error, a key after <code>id</code>
+included. On Postgres, a ranked page reads a capped pool of candidates (<code>max_candidates</code>, or
+the route's <code>candidate_limit</code>), always widened to cover the page plus a margin. The pool is the
+first rows of the page order itself, so a capped offset page holds the rows the uncapped cursor
+puts there; a cursor walk is uncapped, except on a vector index, whose cap bounds it too.</p>
 <h3 id="streaming-exports">Streaming exports<a class="headerlink" href="#streaming-exports" title="Permanent link">&para;</a></h3>
 <p><code>search_stream</code> (and the <code>project_</code> / <code>select_</code> variants) iterate the <strong>whole</strong> matching set
 in bounded-memory keyset chunks — peak memory is one chunk, there is no total count. Use it to
