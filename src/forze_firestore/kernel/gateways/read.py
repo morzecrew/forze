@@ -76,6 +76,9 @@ class FirestoreReadGateway[M: BaseModel](
     # ....................... #
 
     async def get(self, pk: UUID, *, for_update: RowLockMode = False) -> M:
+        # Before any read: a static collection, once resolved, no longer asks for the tenant.
+        self.require_tenant_if_aware()
+
         if row_lock_requires_transaction(for_update):
             log_non_postgres_lock_degrade(for_update, backend="firestore")
             self.client.require_transaction()
@@ -100,6 +103,9 @@ class FirestoreReadGateway[M: BaseModel](
     async def get_many(self, pks: Sequence[UUID]) -> list[M]:
         if not pks:
             return []
+
+        # Before any read: a static collection, once resolved, no longer asks for the tenant.
+        self.require_tenant_if_aware()
 
         # By document name, as `get` reads one: a query on the body's `id` field misses a
         # document written without it. The tenant scope is checked on each fetched row, as

@@ -38,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Firestore reads and deletes by id check the tenant first.** A tenant-aware `get`, `get_many` or `kill` without a bound tenant is refused before it reads the store, as the filtered reads already were.
+
 - **A request no ingress authenticates is refused by default** (**behaviour change**). `AuthnRequirement(required=True)` answers 401 `auth_required` outside the middleware's `anonymous_paths`; list login, refresh and public pages there, or pass `required=False`. CORS preflights pass.
 - **The documented authn → authz hook chain freezes.** `AuthnRequired.to_step()` under its default id now provides the `authn.principal` capability that `AuthzBeforeAuthorize.to_step()` requires by default, so authorization runs after authentication; `AuthzBeforeAuthorize.to_step()` no longer needs a `step_id`.
 

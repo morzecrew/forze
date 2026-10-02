@@ -481,6 +481,9 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             in the current tenant scope.
         """
 
+        # Before any read: a static collection, once resolved, no longer asks for the tenant.
+        self.require_tenant_if_aware()
+
         async with self.client.transaction():
             coll = await self.coll()
             storage_pk = self._storage_pk(pk)
