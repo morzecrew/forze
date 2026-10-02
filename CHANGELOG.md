@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.
 
+- **A debug call below the configured level costs a comparison.** Once `configure_logging` sets a level above debug, `Logger.debug` returns before building the structlog logger, 2 µs to 0.08 µs a call. A process that never configures logging still prints debug.
+
 ### Fixed
 
 - **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.

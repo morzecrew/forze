@@ -10,7 +10,7 @@ import structlog
 from structlog.contextvars import bound_contextvars
 
 from forze.base.logging import Logger, configure_logging
-from forze.base.logging.constants import RICH_EXC_INFO_KEY
+from forze.base.logging.constants import RICH_EXC_INFO_KEY, LogLevel
 from forze.base.logging.renderers import ForzeConsoleRenderer
 
 # ----------------------- #
@@ -570,8 +570,10 @@ class TestForzeConsoleRenderer:
         assert "ValueError" in out
 
 
-def test_unconfigured_process_drops_trace_but_emits_info() -> None:
+def test_unconfigured_process_drops_trace_but_emits_debug_and_info() -> None:
     """Trace is opt-in: without ``configure_logging`` the gate defaults to INFO.
+
+    The debug gate starts open instead, so structlog's default still prints debug.
 
     Runs in a subprocess so the module-level default is observed untouched by
     other tests (the rank is process-global mutable state).
@@ -585,6 +587,7 @@ def test_unconfigured_process_drops_trace_but_emits_info() -> None:
         "assert lm._configured_min_rank == LogLevelToRank['info'], lm._configured_min_rank\n"
         "log = lm.Logger('unconfigured')\n"
         "log.trace('trace-firehose', n=1)\n"
+        "log.debug('debug-line')\n"
         "log.info('info-line')\n"
     )
     result = subprocess.run(
@@ -595,7 +598,8 @@ def test_unconfigured_process_drops_trace_but_emits_info() -> None:
     )
     out = result.stdout + result.stderr
     assert "trace-firehose" not in out  # unconfigured trace is dropped at the gate
-    assert "info-line" in out  # everything else keeps structlog default behavior
+    assert "debug-line" in out  # everything else keeps structlog default behavior
+    assert "info-line" in out
 
 
 def test_configure_logging_trace_level_opens_the_gate() -> None:
@@ -650,3 +654,37 @@ def test_trace_fast_skips_below_configured_level(monkeypatch: pytest.MonkeyPatch
         assert len(recorded) == 1  # passes the gate, reaches the backend
     finally:
         lm._configured_min_rank = original
+
+
+def test_debug_fast_skips_once_configured_above_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Logger.debug`` short-circuits before touching the backend when configured above debug."""
+
+    import forze.base.logging.logger as lm
+
+    recorded: list[str] = []
+
+    class _Recorder:
+        def debug(self, event: str, *args: object, **kwargs: object) -> None:
+            recorded.append(event)
+
+        def bind(self, **_kwargs: object) -> "_Recorder":
+            return self
+
+    monkeypatch.setattr(lm, "_structlog_get_logger", lambda _name: _Recorder())
+    monkeypatch.setattr(lm, "_configured_min_rank", lm._configured_min_rank)
+    monkeypatch.setattr(lm, "_debug_gate_rank", lm._debug_gate_rank)
+
+    log = lm.Logger("debug-gate-test")
+    cases: tuple[tuple[LogLevel, bool], ...] = (
+        ("info", False),
+        ("debug", True),
+        ("trace", True),
+        ("notset", True),
+    )
+
+    for level, emitted in cases:
+        recorded.clear()
+        lm.set_configured_min_rank(level)
+        log.debug("event")
+
+        assert recorded == (["event"] if emitted else []), level

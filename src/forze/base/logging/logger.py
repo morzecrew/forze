@@ -16,6 +16,7 @@ from .constants import (
 # ----------------------- #
 
 _TRACE_RANK: Final[int] = LogLevelToRank["trace"]
+_DEBUG_RANK: Final[int] = LogLevelToRank["debug"]
 _configured_min_rank: int = LogLevelToRank["info"]
 """Configured minimum level rank; defaults to the INFO rank until configured.
 
@@ -25,27 +26,40 @@ Trace is opt-in: a process that never calls
 building the event dict and running the full structlog pipeline for output
 nobody asked for. ``configure_logging(level="trace")`` opens the gate.
 
-Only :meth:`Logger.trace` consults this rank — debug and above always go to
-the structlog backend, whose own (configured or default) filtering applies.
+:meth:`Logger.debug` has a gate of its own, :data:`_debug_gate_rank`; info and
+above always go to the structlog backend, whose own (configured or default)
+filtering applies.
 
 :class:`~forze.base.logging.processors.TraceLevelResolver` drops a trace event
 (rank 5) whenever ``5 < configured_rank``, so :meth:`Logger.trace` can short-circuit
 above that threshold without building the event or touching the backend.
 """
 
+_debug_gate_rank: int = LogLevelToRank["notset"]
+"""Configured minimum level rank for :meth:`Logger.debug`; open until configured.
+
+Once :func:`~forze.base.logging.configure.configure_logging` sets a level above
+debug, structlog's filtering logger drops debug anyway, so the gate drops it
+first without materializing the backend logger, which costs microseconds per call
+on per-statement paths. Unlike the trace gate it starts open: a process that never
+configures logging keeps structlog's default, which prints debug.
+"""
+
 
 def set_configured_min_rank(level: LogLevel) -> None:
-    """Record the configured minimum level so :meth:`Logger.trace` can fast-skip.
+    """Record the configured minimum level for the trace and debug fast-skip gates.
 
     Called by :func:`~forze.base.logging.configure.configure_logging`; keeps the
-    per-call trace gate a single integer comparison instead of a structlog
-    pipeline pass. Until this runs, the gate sits at the INFO rank, so trace is
-    dropped in unconfigured processes; any explicitly configured level —
-    including ``"trace"`` — is honored as-is.
+    per-call gates of :meth:`Logger.trace` and :meth:`Logger.debug` a single integer
+    comparison instead of a structlog pipeline pass. Until this runs, the trace gate
+    sits at the INFO rank, so trace is dropped in unconfigured processes, and the
+    debug gate is open; any explicitly configured level — including ``"trace"`` — is
+    honored as-is. A later ``structlog.configure`` that bypasses
+    :func:`~forze.base.logging.configure.configure_logging` does not move the gates.
     """
 
-    global _configured_min_rank
-    _configured_min_rank = LogLevelToRank.get(level, 0)
+    global _configured_min_rank, _debug_gate_rank
+    _configured_min_rank = _debug_gate_rank = LogLevelToRank.get(level, 0)
 
 
 # ----------------------- #
@@ -114,7 +128,13 @@ class Logger:
         exc_info: bool = False,
         **extras: Any,
     ) -> None:
-        """Log at DEBUG level."""
+        """Log at DEBUG level.
+
+        Fast-skips once logging is configured above debug, like :meth:`trace`.
+        """
+
+        if _debug_gate_rank > _DEBUG_RANK:
+            return
 
         self.backend.debug(event, *sub, exc_info=exc_info, **extras)
 
