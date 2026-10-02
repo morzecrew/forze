@@ -139,6 +139,27 @@ class TestTheGeneratedOperations:
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
+    def test_a_kill_handler_added_after_construction_never_reaches_the_registry(self) -> None:
+        # The kit keeps its own read-only copy, so the guard it ran at construction still holds.
+        spec = _spec(hard_delete=False)
+        handlers: dict = {}
+        kit = AggregateKit(spec=spec, handlers=handlers)
+        handlers[DocumentKernelOp.KILL] = lambda ctx: KillDocument(doc=ctx.doc.command(spec))
+
+        assert _KILL not in kit.registry(tx_route="mock").handlers
+
+        with pytest.raises(TypeError):
+            kit.handlers[DocumentKernelOp.KILL] = handlers[DocumentKernelOp.KILL]  # type: ignore[index]
+
+    def test_a_kill_put_into_a_merged_registry_later_never_reaches_it(self) -> None:
+        # A registry already keeps its own copy of the handlers it was given.
+        spec = _spec(hard_delete=False)
+        handlers: dict = {}
+        kit = AggregateKit(spec=spec, extra_ops=OperationRegistry(handlers=handlers))
+        handlers[_KILL] = lambda ctx: KillDocument(doc=ctx.doc.command(spec))
+
+        assert _KILL not in kit.build_unfrozen(tx_route="mock").operation_keys()
+
     def test_an_erasable_spec_keeps_its_kill_override(self) -> None:
         kit = AggregateKit(
             spec=_spec(),

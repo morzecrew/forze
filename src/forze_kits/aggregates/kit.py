@@ -46,7 +46,7 @@ from forze.application.execution.operations.registry import (
 from forze.application.hooks.audit import Audited
 from forze.application.integrations.search import assert_search_encryption_parity
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKey
+from forze.base.primitives import MappingConverter, StrKey
 from forze.domain.models import BaseDTO, Document
 from forze_kits.aggregates.document import (
     DocumentDTOs,
@@ -249,8 +249,10 @@ class AggregateKit(Generic[R, D, C, U]):
 
     handlers: Mapping[StrKey, OperationHandlerFactory] = attrs.field(
         factory=dict[StrKey, OperationHandlerFactory],
+        converter=MappingConverter.frozen,  # type: ignore[misc]
     )
-    """Escape hatch — override a generated op's handler (keyed by kernel op)."""
+    """Escape hatch — override a generated op's handler (keyed by kernel op). Held as a read-only
+    copy, so what the kit checked at construction is what it composes."""
 
     extra_ops: OperationRegistry | None = None
     """Escape hatch — merge bespoke operations into the composed registry."""
@@ -286,7 +288,10 @@ class AggregateKit(Generic[R, D, C, U]):
     ``"record"`` returns the updated read model itself. The typed facade's ``update`` keeps the
     default's static type, so call through the registry, or cast, in ``"record"`` mode."""
 
-    audit: Mapping[StrKey, Audited] = attrs.field(factory=dict[StrKey, Audited])
+    audit: Mapping[StrKey, Audited] = attrs.field(
+        factory=dict[StrKey, Audited],
+        converter=MappingConverter.frozen,  # type: ignore[misc]
+    )
     """Audit generated operations, keyed by kernel op like :attr:`handlers`.
 
     An audited write runs in a transaction on the registry's ``tx_route``, so its ``allowed``
