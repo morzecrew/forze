@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
 
-- **A read without a limit no longer repeats or drops rows tied on its sort** (**behaviour change**). Ties now break by `id` and each batch seeks past the last row. A projection without a sort key, a model without `id`, or a non-`id` sort on MongoDB or Firestore pages by offset, which Firestore refuses past one batch.
+- **A read without a limit no longer repeats or drops rows tied on its sort** (**behaviour change**). Ties now break by `id` and each batch seeks past the last row. A projection without a sort key, a model without `id`, or a non-`id` sort on MongoDB pages by offset; on Firestore, which refuses offsets, it is one query.
 
 - **Firestore refuses a filter it cannot run before sending it.** An `$in` past 30 values, or a filter past 30 disjunctions once expanded (`$in` values multiply under AND, add under OR), failed at the server with a validation error; it is now a clean `query_feature_unsupported` naming the cap.
 

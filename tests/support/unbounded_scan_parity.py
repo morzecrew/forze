@@ -198,13 +198,12 @@ async def run_unbounded_scan_parity(
     query: Any,
     *,
     custom_sorts: bool = True,
+    aggregates: bool = True,
 ) -> None:
     """Seed :data:`ROWS` rows and read them back without a limit, several ways.
 
     Each read runs unsorted (``id`` order) and, with *custom_sorts*, under every sort in
-    :data:`SORTS`. Pass ``False`` for a backend that cannot page a read sorted by anything
-    but ``id`` past one batch (Firestore: its cursor seeks on ``id`` alone and it refuses
-    offsets).
+    :data:`SORTS`. Pass ``aggregates=False`` for a backend that has none (Firestore).
     """
 
     created = await command.create_many(seed())
@@ -253,7 +252,9 @@ async def run_unbounded_scan_parity(
 
     if custom_sorts:
         await _check_rewritten_keys(query)
-        await _check_unbounded_aggregate(query)
+
+        if aggregates:
+            await _check_unbounded_aggregate(query)
 
         # In `id` order, without the `id` to seek from on the returned rows.
         no_id = await query.select_many(ScanNoId)

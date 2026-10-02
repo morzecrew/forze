@@ -230,8 +230,22 @@ class DocumentPaginationMixin(Generic[R]):
                 self._resolve_sorts(sorts), read_fields=self._read_fields
             )
 
+            unbounded = getattr(self.read_gw, "find_many_unbounded", None)
+
             if self._seekable(query, scan_sorts):
                 res = await self._keyset_scan(query, filters=filters, sorts=scan_sorts, skip=skip)
+
+            elif unbounded is not None:
+                # A gateway that can neither seek on this sort nor page by offset (Firestore)
+                # reads it as one query: the read holds every row either way.
+                rows = await unbounded(
+                    filters=filters,
+                    sorts=scan_sorts,
+                    return_model=query.return_model,
+                    return_fields=query.return_fields,
+                    parsed=parsed_filters,
+                )
+                res = list(rows)[skip:]
 
             else:
                 res = await self._offset_scan(

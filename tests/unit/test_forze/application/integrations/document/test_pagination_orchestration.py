@@ -1061,3 +1061,29 @@ def test_seek_values_read_fields_computed_fields_and_shared_parents() -> None:
 
     with pytest.raises(CoreException, match=r"does not carry sort key 'meta\.c'"):
         _seek_values(row, ["meta.c"])
+
+
+@pytest.mark.asyncio
+async def test_a_read_no_gateway_can_seek_or_offset_is_one_query() -> None:
+    # Firestore: its cursor seeks on `id` alone and it refuses offsets.
+    class _NoOffsetGateway(FakeReadGateway):
+        cursor_sorts_by_id_only = True
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.unbounded_calls: list[dict[str, Any]] = []
+
+        async def find_many_unbounded(self, **kwargs: Any) -> list[Any]:
+            self.unbounded_calls.append(kwargs)
+            return [{"id": i, "grp": 1} for i in ("a", "b", "c")]
+
+    gateway = _NoOffsetGateway()
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "grp"}))
+
+    page = await harness._offset_page(
+        _offset_query(), filters=None, pagination={"offset": 1}, sorts={"grp": "asc"}
+    )
+
+    assert [r["id"] for r in page.hits] == ["b", "c"]
+    assert [call["sorts"] for call in gateway.unbounded_calls] == [{"grp": "asc", "id": "asc"}]
+    assert (gateway.find_many_calls, gateway.cursor_calls) == ([], [])

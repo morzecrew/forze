@@ -1,7 +1,8 @@
 """A read with no limit on Firestore reads past its first batch.
 
 Firestore refuses an offset past zero, so a read drained by offset failed on its second
-batch. A read in ``id`` order now seeks past each batch instead.
+batch. A read in ``id`` order seeks past each batch; one sorted otherwise, which a cursor
+here cannot seek on, is a single query with no limit.
 """
 
 from __future__ import annotations
@@ -17,11 +18,12 @@ from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
 )
+from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps
-from forze.base.exceptions import CoreException
 from forze_firestore.execution.deps import (
     ConfigurableFirestoreDocument,
     FirestoreDocumentConfig,
+    firestore_txmanager,
 )
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
@@ -38,6 +40,43 @@ from tests.support.unbounded_scan_parity import (
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+def _context(client: FirestoreClient) -> tuple[Any, DocumentSpec[Any, Any, Any, Any]]:
+    collection = f"scan_{uuid4().hex[:8]}"
+    configurable = ConfigurableFirestoreDocument(
+        config=FirestoreDocumentConfig(
+            read=("(default)", collection), write=("(default)", collection)
+        ),
+    )
+    plain = Deps.plain(
+        {
+            FirestoreClientDepKey: client,
+            DocumentQueryDepKey: configurable,
+            DocumentCommandDepKey: configurable,
+        }
+    )
+    routed = Deps.routed({TransactionManagerDepKey: {"firestore": firestore_txmanager}})
+    spec = DocumentSpec(
+        name="scan",
+        read=ScanRead,
+        write=DocumentWriteTypes(domain=ScanDoc, create_cmd=ScanCreate),
+    )
+
+    return context_from_deps(plain.merge(routed)), spec
+
+
+async def test_a_sorted_read_without_a_limit_reads_inside_a_transaction(
+    firestore_client: FirestoreClient,
+) -> None:
+    # One query streamed inside the transaction, past more than two batches.
+    ctx, spec = _context(firestore_client)
+    created = await ctx.document.command(spec).create_many(seed())
+
+    async with ctx.tx_ctx.scope("firestore"):
+        page = await ctx.document.query(spec).find_many(sorts={"score": "desc"})
+
+    assert [hit.id for hit in page.hits] == expected_order(created, {"score": "desc"})
 
 
 def _ports(client: FirestoreClient) -> tuple[Any, Any]:
@@ -68,8 +107,9 @@ def _ports(client: FirestoreClient) -> tuple[Any, Any]:
 async def test_a_read_without_a_limit_reads_every_batch(
     firestore_client: FirestoreClient,
 ) -> None:
-    # Its cursor seeks on `id` alone and it refuses offsets, so only `id` order drains here.
-    await run_unbounded_scan_parity(*_ports(firestore_client), custom_sorts=False)
+    # Its cursor seeks on `id` alone and it refuses offsets: a read sorted otherwise is one
+    # query with no limit, streamed whole. No aggregates on Firestore.
+    await run_unbounded_scan_parity(*_ports(firestore_client), aggregates=False)
 
 
 async def test_a_sorted_read_within_one_batch_breaks_ties_by_document_name(
@@ -84,16 +124,6 @@ async def test_a_sorted_read_within_one_batch_breaks_ties_by_document_name(
         page = await query.find_many(sorts=sorts)
 
         assert [hit.id for hit in page.hits] == expected_order(created, sorts), sorts
-
-
-async def test_a_sorted_read_past_one_batch_is_refused_not_cut_short(
-    firestore_client: FirestoreClient,
-) -> None:
-    command, query = _ports(firestore_client)
-    await command.create_many(seed()[:250])
-
-    with pytest.raises(CoreException, match="offset"):
-        await query.find_many(sorts={"grp": "asc"})
 
 
 async def test_a_cursor_sorted_by_id_first_orders_by_id(firestore_client: FirestoreClient) -> None:
