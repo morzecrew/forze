@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A kits text field answers 422 to a value that is not text.** `String`, `LongString` and the metadata mixin's `display_name` and `description` called string methods on any input, so a JSON number, list, object or boolean answered 500. Pydantic now refuses it; UTF-8 bytes are decoded and normalized.
+
 - **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.
 
 - **Authorization and tenant membership read every binding on Firestore.** The grant resolver and tenancy management paged bindings by offset, which Firestore refuses past the first page, so a principal with more bindings than one page holds, or a tenant with more members, failed. They read by cursor now.

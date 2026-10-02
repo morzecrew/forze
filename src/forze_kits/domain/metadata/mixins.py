@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import field_validator
 
 from forze.domain.models import BaseDTO, CoreModel
@@ -19,10 +21,13 @@ class _MetadataMixinOptionalFields(CoreModel):
 
     @field_validator("display_name", "description", mode="before")
     @classmethod
-    def _validate_metadata_fields(cls, v: str | None) -> str | None:
-        """Validate metadata fields."""
+    def _validate_metadata_fields(cls, v: Any) -> Any:
+        """Read a blank field as unset.
 
-        if v is None:
+        A value that is not a string is left to the field's own validation.
+        """
+
+        if not isinstance(v, str):
             return v
 
         v = v.strip()
