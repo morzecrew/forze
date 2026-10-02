@@ -219,3 +219,40 @@ async def test_federated_unsupported_fusion_fails_closed() -> None:
     caps = SearchCapabilities(hybrid_fusion=frozenset({"rrf"}))
     with pytest.raises(CoreException, match="weighted fusion"):
         validate_fusion_supported(caps, "weighted", backend="postgres_federated")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("default_sort", "sorts"),
+    [({"title": "asc"}, None), (None, {"title": "asc"})],
+    ids=["hub default", "request"],
+)
+async def test_a_hub_sort_orders_rows_tied_on_the_hub_score(
+    default_sort: dict[str, str] | None, sorts: dict[str, str] | None
+) -> None:
+    # As the Postgres hub orders a page: the hub score, then the request's sorts or the hub's
+    # own default, then the id. Each leg ranks its one match first, so the two tie.
+    state = MockState()
+    leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
+    await MockSearchCommandAdapter(state=state, spec=leg_a).upsert(
+        [_Item(id="1", title="hello world")]
+    )
+    await MockSearchCommandAdapter(state=state, spec=leg_b).upsert(
+        [_Item(id="2", title="hello again")]
+    )
+    hub = HubSearchSpec(
+        name="hub", model_type=_Item, members=[leg_a, leg_b], default_sort=default_sort
+    )
+    adapter = MockHubSearchAdapter(
+        hub_spec=hub,
+        legs=[
+            ("a", MockSearchAdapter(state=state, spec=leg_a)),
+            ("b", MockSearchAdapter(state=state, spec=leg_b)),
+        ],
+    )
+
+    page = await adapter.search_page("hello", None, {"limit": 10}, sorts)
+
+    assert page.scores is not None and page.scores[0] == page.scores[1]
+    assert [hit.title for hit in page.hits] == ["hello again", "hello world"]

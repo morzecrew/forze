@@ -28,15 +28,20 @@ from forze.application.contracts.search import (
     resolve_facet_fields,
     resolve_fusion,
     resolve_highlight,
+    resolve_search_sorts,
     search_page_from_limit_offset,
 )
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.domain.constants import ID_FIELD
 from forze_mock.adapters.search._facets_highlights import (
     compute_facets,
     compute_highlights,
 )
 from forze_mock.adapters.search._unsupported import MockOffsetOnlySearchMixin
 from forze_mock.adapters.search.query import MockSearchAdapter
+from forze_mock.query.matching import (
+    _sort_docs,  # pyright: ignore[reportPrivateUsage]
+)
 
 # ----------------------- #
 
@@ -78,7 +83,20 @@ class MockHubSearchAdapter[M: BaseModel](
         sorts: QuerySortExpression | None,
         options: SearchOptions | None,
     ) -> list[tuple[dict[str, Any], float]]:
-        """Merge the legs and return ``(doc, hub_score)`` pairs in descending score order."""
+        """Merge the legs and return ``(doc, hub_score)`` pairs in the page order.
+
+        As the Postgres hub orders a page: each leg ranks its matches by relevance alone, ties
+        by id; the merged rows then go by hub score, then by the request's sorts or the hub's
+        own ``default_sort``, then by id.
+        """
+
+        order = resolve_search_sorts(
+            sorts,
+            default_sort=self.hub_spec.default_sort,
+            read_fields=self.hub_spec.stored_read_fields,
+            model=self.hub_spec.model_type,
+            spec_name=self.hub_spec.name,
+        )
 
         resolve_fusion(
             cast("MultiSourceSearchOptions", options or {}).get("fusion"),
@@ -96,7 +114,7 @@ class MockHubSearchAdapter[M: BaseModel](
             ordered = leg._full_ordered_search_documents(  # pyright: ignore[reportPrivateUsage]
                 query,
                 filters,
-                leg._page_order(sorts),  # pyright: ignore[reportPrivateUsage]
+                {ID_FIELD: "asc"},
                 leg_opts,
             )
             for rank, doc in enumerate(ordered, start=1):
@@ -113,8 +131,12 @@ class MockHubSearchAdapter[M: BaseModel](
                 else:
                     scores[key] += contrib
 
-        ranked = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
-        return [(docs[k], scores[k]) for k in ranked]
+        # The sort is stable: by the hub order first, then by score, keeping it within a score.
+        key_of = {id(doc): key for key, doc in docs.items()}
+        by_order = _sort_docs(list(docs.values()), order)
+        ranked = sorted(by_order, key=lambda doc: scores[key_of[id(doc)]], reverse=True)
+
+        return [(doc, scores[key_of[id(doc)]]) for doc in ranked]
 
     # ....................... #
 
