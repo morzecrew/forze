@@ -123,3 +123,13 @@ async def test_find_many_chunked_rejects_offset() -> None:
     with pytest.raises(CoreException, match="offset"):
         async for _chunk in gw.find_many_chunked(None, offset=5):
             pass
+
+
+@pytest.mark.asyncio
+async def test_an_unbounded_read_skips_the_implicit_cap() -> None:
+    # It stands in for paging the whole read, so a cap would silently drop rows past it.
+    gw, client = _gw()
+
+    await gw.find_many_unbounded(None, sorts={"title": "asc"})
+
+    assert client.query_stream.await_args.kwargs["limit"] is None
