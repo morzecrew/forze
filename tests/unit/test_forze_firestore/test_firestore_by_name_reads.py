@@ -56,9 +56,10 @@ _CODEC, _CREATE, _UPDATE = write_codecs_for(
 
 
 class _CountingClient:
-    """A Firestore client holding documents in memory and counting every read it serves."""
+    """A Firestore client holding documents in memory, by collection and name, and counting
+    every read it serves."""
 
-    def __init__(self, docs: dict[str, dict[str, Any]]) -> None:
+    def __init__(self, docs: dict[tuple[str, str], dict[str, Any]]) -> None:
         self.docs = docs
         self.reads = 0
 
@@ -67,63 +68,93 @@ class _CountingClient:
 
     async def get_document(self, coll: str, doc_id: str) -> dict[str, Any] | None:
         self.reads += 1
-        return self.docs.get(doc_id)
+        return self.docs.get((coll, doc_id))
 
     async def get_documents(self, coll: str, doc_ids: list[str]) -> dict[str, Any]:
         self.reads += 1
-        return {i: self.docs[i] for i in doc_ids if i in self.docs}
+        return {i: self.docs[(coll, i)] for i in doc_ids if (coll, i) in self.docs}
 
     @contextlib.asynccontextmanager
     async def transaction(self) -> AsyncIterator[None]:
         yield
 
     async def delete_document(self, coll: str, doc_id: str) -> None:
-        self.docs.pop(doc_id, None)
+        self.docs.pop((coll, doc_id), None)
+
+
+def _gateways(client: _CountingClient, relation: Any, provider: Any) -> tuple[Any, Any]:
+    common: dict[str, Any] = {
+        "relation": relation,
+        "client": client,
+        "model_type": _Doc,
+        "codec": _CODEC,
+        "tenant_aware": True,
+        "tenant_provider": provider,
+    }
+    read = FirestoreReadGateway(**common)
+    write = FirestoreWriteGateway(
+        **common,
+        create_cmd_type=_Create,
+        update_cmd_type=_Update,
+        read_gw=read,
+        create_codec=_CREATE,
+        update_codec=_UPDATE,
+    )
+
+    return read, write
+
+
+def _by_id(read: Any, write: Any, pk: UUID) -> dict[str, Any]:
+    return {
+        "get": lambda: read.get(pk),
+        "get_many": lambda: read.get_many([pk]),
+        "kill": lambda: write.kill(pk),
+    }
+
+
+def _doc(pk: UUID, tenant: UUID) -> dict[str, Any]:
+    return {"id": str(pk), "name": "n", "rev": 1, TENANT_ID_FIELD: str(tenant)}
 
 
 class TestAnUnboundCallerIsRefusedBeforeAnyRead:
-    def _gateways(self) -> tuple[_CountingClient, Any, Any, UUID, dict[str, Any]]:
-        tenant, pk = uuid4(), uuid4()
-        doc = {"id": str(pk), "name": "n", "rev": 1, TENANT_ID_FIELD: str(tenant)}
-        client = _CountingClient({str(pk): doc})
-        bound: dict[str, Any] = {"tenant": TenantIdentity(tenant_id=tenant)}
-        common: dict[str, Any] = {
-            "relation": ("(default)", "docs"),
-            "client": client,
-            "model_type": _Doc,
-            "codec": _CODEC,
-            "tenant_aware": True,
-            "tenant_provider": lambda: bound["tenant"],
-        }
-        read = FirestoreReadGateway(**common)
-        write = FirestoreWriteGateway(
-            **common,
-            create_cmd_type=_Create,
-            update_cmd_type=_Update,
-            read_gw=read,
-            create_codec=_CREATE,
-            update_codec=_UPDATE,
-        )
-
-        return client, read, write, pk, bound
-
     @pytest.mark.parametrize("call", ["get", "get_many", "kill"])
     async def test_after_the_collection_is_cached(self, call: str) -> None:
-        client, read, write, pk, bound = self._gateways()
+        tenant, pk = uuid4(), uuid4()
+        client = _CountingClient({("docs", str(pk)): _doc(pk, tenant)})
+        bound: dict[str, Any] = {"tenant": TenantIdentity(tenant_id=tenant)}
+        read, write = _gateways(client, ("(default)", "docs"), lambda: bound["tenant"])
         # Bound calls resolve and cache each gateway's static collection.
         await read.coll()
         await write.coll()
         bound["tenant"] = None
-        operations = {
-            "get": lambda: read.get(pk),
-            "get_many": lambda: read.get_many([pk]),
-            "kill": lambda: write.kill(pk),
-        }
 
         with pytest.raises(CoreException) as refused:
-            await operations[call]()
+            await _by_id(read, write, pk)[call]()
 
         assert (refused.value.code, client.reads) == ("tenant_required", 0)
+
+
+class TestOneOperationAnswersForOneTenant:
+    """The collection a by-id operation routes to and the rows it accepts come from one answer
+    of the tenant provider, so a provider that answers differently each time cannot route an
+    operation to one tenant's collection and accept the row as another's."""
+
+    @pytest.mark.parametrize("call", ["get", "get_many", "kill"])
+    async def test_a_provider_that_changes_its_answer(self, call: str) -> None:
+        owner, other, pk = uuid4(), uuid4(), uuid4()
+        client = _CountingClient({(f"docs_{owner}", str(pk)): _doc(pk, owner)})
+        answers = [owner, other, owner, other]
+
+        def provider() -> TenantIdentity:
+            return TenantIdentity(tenant_id=answers.pop(0))
+
+        read, write = _gateways(client, lambda tid: ("(default)", f"docs_{tid}"), provider)
+
+        await _by_id(read, write, pk)[call]()
+
+        # Asked once, and that answer both routed the read and accepted the row.
+        assert len(answers) == 3
+        assert (client.docs == {}) is (call == "kill")
 
 
 # ----------------------- #

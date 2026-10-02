@@ -76,22 +76,23 @@ class FirestoreReadGateway[M: BaseModel](
     # ....................... #
 
     async def get(self, pk: UUID, *, for_update: RowLockMode = False) -> M:
-        # Before any read: a static collection, once resolved, no longer asks for the tenant.
-        self.require_tenant_if_aware()
+        # One answer from the tenant provider, asked before any read, routes the read and
+        # accepts the row: a static collection, once resolved, no longer asks for it.
+        tenant_id = self._tenant_id_for_resolve()
 
         if row_lock_requires_transaction(for_update):
             log_non_postgres_lock_degrade(for_update, backend="firestore")
             self.client.require_transaction()
 
         raw = await self.client.get_document(
-            await self.coll(),
+            await self.coll_for(tenant_id),
             self._storage_pk(pk),
         )
 
         # Firestore cannot combine a by-id fetch with a query filter, so the
         # tenant scope is enforced on the fetched row: a document owned by
         # another tenant reads as not-found, matching the filtered read paths.
-        if raw is None or not self._row_matches_tenant(raw):
+        if raw is None or not self._row_matches_tenant(raw, tenant_id):
             raise exc.not_found(f"Record not found: {pk}")
 
         data = self._from_storage_doc(raw)
@@ -104,19 +105,20 @@ class FirestoreReadGateway[M: BaseModel](
         if not pks:
             return []
 
-        # Before any read: a static collection, once resolved, no longer asks for the tenant.
-        self.require_tenant_if_aware()
+        # One answer from the tenant provider, asked before any read, routes the read and
+        # accepts the row: a static collection, once resolved, no longer asks for it.
+        tenant_id = self._tenant_id_for_resolve()
 
         # By document name, as `get` reads one: a query on the body's `id` field misses a
         # document written without it. The tenant scope is checked on each fetched row, as
         # `get` checks it, so another tenant's document reads as missing.
         found = await self.client.get_documents(
-            await self.coll(), [self._storage_pk(pk) for pk in pks]
+            await self.coll_for(tenant_id), [self._storage_pk(pk) for pk in pks]
         )
         by_pk = {
             name: self._from_storage_doc(raw)
             for name, raw in found.items()
-            if self._row_matches_tenant(raw)
+            if self._row_matches_tenant(raw, tenant_id)
         }
 
         missing = [pk for pk in pks if self._storage_pk(pk) not in by_pk]
