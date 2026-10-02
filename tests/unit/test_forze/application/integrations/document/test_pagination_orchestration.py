@@ -378,8 +378,8 @@ async def test_offset_page_scan_seeks_then_skips_the_offset() -> None:
 
 @pytest.mark.parametrize(
     "pagination",
-    [{"offset": -1}, {"offset": -1, "limit": 5}],
-    ids=["unbounded", "limited"],
+    [{"offset": -1}, {"offset": -1, "limit": 5}, {"offset": "abc"}, {"offset": "abc", "limit": 5}],
+    ids=["unbounded", "limited", "text-unbounded", "text-limited"],
 )
 @pytest.mark.asyncio
 async def test_offset_page_refuses_a_negative_offset(pagination: dict[str, int]) -> None:
@@ -387,10 +387,12 @@ async def test_offset_page_refuses_a_negative_offset(pagination: dict[str, int])
     gateway = FakeReadGateway(cursor_results=[[{"id": "a"}]], find_many_results=[[{"id": "a"}]])
     harness = PaginationHarness(gateway, eff_batch_size=2)
 
-    with pytest.raises(CoreException, match="negative"):
+    with pytest.raises(CoreException, match="non-negative integer") as ei:
         await harness._offset_page(
             _offset_query(), filters=None, pagination=pagination, sorts=None
         )
+
+    assert ei.value.kind == ExceptionKind.PRECONDITION
 
     assert (gateway.find_many_calls, gateway.cursor_calls) == ([], [])
 

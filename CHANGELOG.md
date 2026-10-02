@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A cursor continues from the right row whatever the model does to a sort key.** A token took each key's value from the decoded row, so a key the model excluded, aliased, serialized or rewrote on read (`EmailStr` lowercasing a domain) made the next page skip or repeat rows. It now takes the stored value.
 
-- **A negative pagination offset is refused as the caller's mistake.** A document read sent it to the backend, which answered with a server error; it is now a `precondition`, on every backend and the mock.
+- **A negative or non-numeric pagination offset is refused as the caller's mistake.** A document read sent `-1` to the backend, which answered with a server error, and `"abc"` raised one itself; both are now a `precondition`, on every backend and the mock.
 
 - **A cursor sorted by `id` first pages in `id` order.** A sort such as `{id: asc, x: desc}` moved `id` to the end and ordered by `x` first. `id` now stays where it is put and the keys after it, which can never decide, are dropped, so MongoDB and Firestore cursors accept such a sort too.
 

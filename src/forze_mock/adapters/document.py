@@ -63,6 +63,7 @@ from forze.application.integrations.document._limits import (
     DEFAULT_MAX_STREAM_PAGES,
     assert_cursor_advanced,
     check_page_limit,
+    page_offset,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -982,10 +983,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # Normalize to ints up front (callers may pass string limit/offset) so the slicing
         # arithmetic in ``_page_window`` is always numeric.
         limit = int(limit_raw) if limit_raw is not None else None
-        offset = int(pagination.get("offset") or 0)
-
-        if offset < 0:
-            raise exc.precondition("Pagination offset must not be negative.")
+        offset = page_offset(pagination)
 
         def _page_window(ordered: list[Any]) -> list[Any]:
             # Slice to the requested page *before* projecting/decoding, so only the page's rows
@@ -1005,6 +1003,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             self._validate_aggregate_fields(aggregates)
             aggregate_rows = _aggregate_docs(filtered, aggregates, self.filter_parser)
             total = len(aggregate_rows)
+
             page_rows = _page_window(_sort_docs(aggregate_rows, sorts))
             rows = (
                 default_model_codec(return_type).decode_mapping_many(page_rows)

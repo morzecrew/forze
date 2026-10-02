@@ -38,9 +38,12 @@ async def test_a_read_without_a_limit_orders_ties_by_id() -> None:
     await run_unbounded_scan_parity(doc, doc)
 
 
-@pytest.mark.parametrize("pagination", [{"offset": -1}, {"offset": -1, "limit": 5}])
-async def test_a_read_refuses_a_negative_offset(pagination: dict[str, int]) -> None:
-    with pytest.raises(CoreException, match="negative"):
+@pytest.mark.parametrize(
+    "pagination",
+    [{"offset": -1}, {"offset": -1, "limit": 5}, {"offset": "abc"}, {"offset": "abc", "limit": 5}],
+)
+async def test_a_read_refuses_a_bad_offset(pagination: dict[str, int]) -> None:
+    with pytest.raises(CoreException, match="non-negative integer"):
         await _doc().find_many(pagination=pagination)
 
 

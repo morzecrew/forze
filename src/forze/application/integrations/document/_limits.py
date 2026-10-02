@@ -1,5 +1,8 @@
 """Pagination and stream safety limits for document adapters."""
 
+from collections.abc import Mapping
+from typing import Any
+
 from forze.base.exceptions import exc
 
 # ----------------------- #
@@ -39,3 +42,27 @@ def assert_cursor_advanced(
 
     if next_cursor is not None and prev_cursor is not None and next_cursor == prev_cursor:
         raise exc.internal("Cursor pagination did not advance")
+
+
+# ....................... #
+
+
+def page_offset(pagination: Mapping[str, Any]) -> int:
+    """The offset *pagination* asks for, as an integer (``0`` when it gives none).
+
+    :raises CoreException: ``precondition`` when the offset is not a non-negative integer: a
+        negative one would slice from the end, and a backend answers either with a server error.
+    """
+
+    raw = pagination.get("offset") or 0
+
+    try:
+        offset = int(raw)
+
+    except (TypeError, ValueError):
+        offset = -1
+
+    if offset < 0:
+        raise exc.precondition(f"Pagination offset must be a non-negative integer, got {raw!r}.")
+
+    return offset

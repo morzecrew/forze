@@ -28,7 +28,7 @@ from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 
 from ..persistence import document_cursor_binding
-from ._limits import assert_cursor_advanced, check_page_limit
+from ._limits import assert_cursor_advanced, check_page_limit, page_offset
 from ._types import R
 
 # ----------------------- #
@@ -192,11 +192,7 @@ class DocumentPaginationMixin(Generic[R]):
 
         pagination = pagination or {}
 
-        skip = int(pagination.get("offset") or 0)
-
-        if skip < 0:
-            # Sliced, it would count from the end; sent on, a backend fails with a server error.
-            raise exc.precondition("Pagination offset must not be negative.")
+        skip = page_offset(pagination)
 
         parsed_filters = self.read_gw.compile_filters(filters)
         cnt = 0
