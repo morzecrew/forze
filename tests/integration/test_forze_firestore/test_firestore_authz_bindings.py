@@ -42,6 +42,11 @@ from forze_identity.tenancy.domain.models.principal_tenant_binding import (
 )
 from tests.support.authz_grants import GRANT_SPECS, resolve_both_ways, wide_catalog
 from tests.support.execution_context import context_from_deps
+from tests.support.tenant_memberships import (
+    TENANCY_SPECS,
+    list_both_ways,
+    wide_memberships,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -166,3 +171,29 @@ async def test_a_provider_declaring_more_keys_than_one_in_batch_is_checked(
 
     assert refused.value.code == "authz_provider_unknown_keys"
     assert "ops.missing" in str(refused.value)
+
+
+async def test_a_principal_in_more_tenants_than_one_batch_lists_them_all(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+) -> None:
+    # 35 tenants: Firestore reads 30 ids at a time, so the batch read splits.
+    routes = {
+        spec.name: ConfigurableFirestoreDocument(
+            config=FirestoreDocumentConfig(
+                read=("(default)", f"{unique_collection}_{spec.name}"),
+                write=("(default)", f"{unique_collection}_{spec.name}"),
+            ),
+        )
+        for spec in TENANCY_SPECS
+    }
+    ctx = context_from_deps(
+        Deps.plain({FirestoreClientDepKey: firestore_client}).merge(
+            Deps.routed({DocumentQueryDepKey: routes, DocumentCommandDepKey: routes})
+        )
+    )
+    principal_id, active = await wide_memberships(ctx)
+
+    listed = await list_both_ways(ctx, principal_id)
+
+    assert sorted(t.tenant_key for t in listed) == sorted([*active, "tenant-34"])

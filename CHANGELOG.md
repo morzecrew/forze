@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
-- **An authorization decision's reads no longer grow with the principal's roles, groups or permissions.** Grant resolution reads each kind of row in batches, one per level of the role hierarchy: an administrator with one role under a parent and 18 permissions takes 7 reads instead of 27.
+- **Authorization and tenant listing read rows in batches, not one at a time.** One role under a parent with 18 permissions takes 7 reads per decision, not 27; past that, reads grow by one per 30 roles, groups or (on Firestore) ids. A principal's tenants are read in one batch, not one per membership.
 
 ### Fixed
 
