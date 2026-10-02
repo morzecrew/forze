@@ -736,3 +736,42 @@ def test_the_debug_gate_reads_structlogs_active_wrapper() -> None:
         assert lm._debug_dropping_wrapper is active
     finally:
         _cleanup_logging()
+
+
+def test_a_structlog_without_its_private_config_leaves_the_debug_gate_open() -> None:
+    """Importing still works if structlog renames its config module; debug is just not skipped."""
+
+    import subprocess
+
+    code = (
+        "import sys\n"
+        "import structlog\n"
+        "del structlog._config\n"  # as a rename would leave it
+        "sys.modules['structlog._config'] = None\n"
+        "import forze.base.logging.logger as lm\n"
+        "assert lm._STRUCTLOG_CONFIG is None, lm._STRUCTLOG_CONFIG\n"
+        "lm.set_configured_min_rank('info', wrapper_class=object())\n"
+        "assert lm._debug_dropping_wrapper is None, lm._debug_dropping_wrapper\n"
+        "lm.Logger('t').debug('still-callable')\n"
+        "print('OK')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert "OK" in result.stdout, result.stderr
+
+
+def test_a_structlog_config_module_without_the_object_reads_as_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import types
+
+    import forze.base.logging.logger as lm
+
+    monkeypatch.setattr(lm, "import_module", lambda _name: types.SimpleNamespace())
+
+    assert lm._structlog_live_config() is None

@@ -1,9 +1,9 @@
 from enum import StrEnum
 from functools import cache
+from importlib import import_module
 from typing import Any, Final, Self, cast, final
 
 import attrs
-from structlog import _config as _structlog_config
 from structlog import get_logger as _structlog_get_logger
 from structlog.typing import ExcInfo, FilteringBoundLogger
 
@@ -36,7 +36,18 @@ filtering applies.
 above that threshold without building the event or touching the backend.
 """
 
-_STRUCTLOG_CONFIG: Final[Any] = getattr(_structlog_config, "_CONFIG", None)
+
+def _structlog_live_config() -> Any:
+    """structlog's private configuration object, or ``None`` if structlog moved it."""
+
+    try:
+        return import_module("structlog._config")._CONFIG
+
+    except (ImportError, AttributeError):
+        return None
+
+
+_STRUCTLOG_CONFIG: Final[Any] = _structlog_live_config()
 """structlog's live configuration, read for its active wrapper class.
 
 :func:`structlog.get_config` would copy the whole configuration into a dict on every
