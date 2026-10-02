@@ -278,8 +278,10 @@ A violation — or an empty operator map, an unknown operator, a type mismatch, 
 regex with unsafe nesting/repetition — raises a `precondition` `CoreException`
 (HTTP 400; the caller supplied a bad query) before the query runs.
 
-A backend can cap an operand list lower than any spec's limits. Firestore's `$in`
-takes at most 30 values; a longer one is refused with `query_feature_unsupported`
+A backend can cap a filter lower than any spec's limits. On Firestore an `$in` takes
+at most 30 values, and a filter at most 30 disjunctions once expanded: an `$in`
+counts one per value, AND multiplies its parts' counts and OR adds them, so two
+6-value `$in`s under AND make 36. Either is refused with `query_feature_unsupported`
 before the query is sent.
 
 ## Backend notes

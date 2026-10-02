@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A spec can raise the limits its filters are parsed under.** `DocumentSpec(filter_limits=...)` and `SearchSpec(filter_limits=...)` take a `QueryFilterLimits`, so an internal read can match more than 1,000 ids. Every backend and the mock honour it, as do generated routes passing a caller's filter through.
 
+- **A backend can declare caps its server enforces on a filter.** `QueryCapabilities(max_in_size=..., max_disjunctions=...)` bound an operand list and the disjunctions a filter expands to; a filter past either is refused with `query_feature_unsupported` before it is sent.
+
 ### Changed
 
 - ...
@@ -34,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A read without a limit returns every row exactly once** (**behaviour change**). Batches were taken by offset, so rows tied on the sort could repeat or go missing, and on Firestore a read in `id` order failed past the first batch. Each batch now starts after the last row of the one before, and tied rows come back in `id` order.
 
-- **Firestore refuses an `$in` past 30 values before sending it.** The server rejected it with a validation error; it is now a clean `query_feature_unsupported` naming the cap, whatever the spec's filter limits allow.
+- **Firestore refuses a filter it cannot run before sending it.** An `$in` past 30 values, or a filter past 30 disjunctions once expanded (`$in` values multiply under AND, add under OR), failed at the server with a validation error; it is now a clean `query_feature_unsupported` naming the cap.
 
 - **A cursor continues from the right row when the returned model hides a sort key.** Cursor tokens were built from the model's dump, so a key it excluded, aliased or serialized differently made the next page start in the wrong place. They now read the model's fields; a model without the key is refused.
 

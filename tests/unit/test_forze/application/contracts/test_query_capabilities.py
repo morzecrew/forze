@@ -174,6 +174,42 @@ class TestListOperandCap:
         _check({"$values": {"tags": {"$in": [str(i) for i in range(1_000)]}}}, QueryCapabilities())
 
 
+class TestDisjunctionCap:
+    """The disjunctions a filter expands to: ``$in`` values multiply under AND, add under OR."""
+
+    _CAPS = QueryCapabilities(max_disjunctions=30)
+
+    @staticmethod
+    def _in(field: str, n: int) -> dict:
+        return {"$values": {field: {"$in": [f"{field}{i}" for i in range(n)]}}}
+
+    @pytest.mark.parametrize(
+        ("expr", "allowed"),
+        [
+            ({"$and": [_in("a", 6), _in("b", 5)]}, True),
+            ({"$and": [_in("a", 6), _in("b", 6)]}, False),
+            ({"$or": [_in("a", 15), _in("b", 15)]}, True),
+            ({"$or": [_in("a", 16), _in("b", 15)]}, False),
+            ({"$or": [{"$values": {"a": i}} for i in range(31)]}, False),
+            ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 16)]}, False),
+            ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 15)]}, True),
+        ],
+    )
+    def test_counts_like_the_server(self, expr: dict, allowed: bool) -> None:
+        if allowed:
+            _check(expr, self._CAPS)
+            return
+
+        with pytest.raises(CoreException) as ei:
+            _check(expr, self._CAPS)
+
+        assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+        assert "disjunctions" in str(ei.value)
+
+    def test_no_cap_by_default(self) -> None:
+        _check({"$and": [self._in("a", 100), self._in("b", 100)]}, QueryCapabilities())
+
+
 class TestAggregateCapabilities:
     """The aggregate axis is gated by its own validator, independent of the filter AST."""
 

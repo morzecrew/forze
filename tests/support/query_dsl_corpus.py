@@ -140,6 +140,13 @@ CASES: tuple[QueryCase, ...] = (
     # Past Firestore's 30-value `in`: a backend that cannot send it must refuse it up front.
     QueryCase(name="membership_in_31", filters={"$values": {"name": {"$in": _names_padded_to(31)}}},
               expected=frozenset({"alice", "bob"})),
+    # 6 x 6 = 36 disjunctions once expanded: past Firestore's 30, though each `in` is short.
+    QueryCase(name="membership_and_36_disjunctions",
+              filters={"$and": [
+                  {"$values": {"name": {"$in": _names_padded_to(6)}}},
+                  {"$values": {"nick": {"$in": ["alice", "robert", "a1", "a2", "a3", "a4"]}}},
+              ]},
+              expected=frozenset({"alice", "bob"})),
     # Past the parser's 1,000-value default, within the corpus spec's own limit.
     QueryCase(name="membership_in_past_default_limit",
               filters={"$values": {"name": {"$in": _names_padded_to(1_500)}}},

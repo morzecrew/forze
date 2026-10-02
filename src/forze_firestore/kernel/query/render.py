@@ -46,6 +46,7 @@ FIRESTORE_QUERY_CAPABILITIES = QueryCapabilities(
     supports_field_compare=False,
     supports_aggregates=False,
     max_in_size=30,
+    max_disjunctions=30,
 )
 """What the Firestore MVP renderer compiles: equality / ordering / membership /
 empty, plus ``$and`` / ``$or``. No ``$not``, set or text operators, array
@@ -53,8 +54,9 @@ element quantifiers, field-to-field comparison, or aggregates — the capability
 validators reject those up front; the renderer's inner raises are a defense-in-depth
 backstop.
 
-An ``in`` takes at most 30 values on Firestore, so a longer ``$in`` is refused up front
-whatever the spec's filter limits allow.
+An ``in`` takes at most 30 values on Firestore, and a filter at most 30 disjunctions once
+expanded (an ``$in`` counts one per value, AND multiplies, OR adds), so either is refused up
+front whatever the spec's filter limits allow.
 
 ``$neq``, ``$nin`` and ``$null`` are deliberately **not** advertised. The framework's
 agnostic semantics (matched by mock/Postgres/Mongo) treat an absent field as

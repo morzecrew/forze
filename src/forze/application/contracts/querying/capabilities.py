@@ -22,6 +22,7 @@ from the AST alone; those stay backend-internal but should raise the same
 ``query_feature_unsupported`` code rather than ``internal``.
 """
 
+import math
 from typing import Final
 
 import attrs
@@ -119,6 +120,11 @@ class QueryCapabilities:
     backend has no cap of its own (an array parameter, for one). A longer operand is refused
     here rather than sent to a server that would refuse it."""
 
+    max_disjunctions: int | None = None
+    """Most disjunctions a filter may expand to on this backend: an ``$in`` counts one per
+    value, an AND multiplies its children's counts and an OR adds them. ``None`` when the
+    backend sets no such cap. A filter past it is refused here rather than by the server."""
+
     supports_aggregates: bool = True
     """Whether group-by / aggregate pipelines (``find_many_aggregates`` / ``count_aggregates``)
     compile. On by default — most document backends aggregate natively. Unlike the axes above this
@@ -164,6 +170,15 @@ def validate_query_capabilities(
 
     _walk_caps(expr, caps, backend, caps.value_ops, in_element=False)
 
+    if caps.max_disjunctions is not None:
+        count = _disjunctions(expr)
+
+        if count > caps.max_disjunctions:
+            _cap_fail(
+                backend,
+                f"a filter of {count} disjunctions (at most {caps.max_disjunctions})",
+            )
+
 
 def validate_aggregate_capabilities(
     aggregates: AggregatesExpression | None,  # type: ignore[valid-type]
@@ -191,6 +206,26 @@ def _cap_fail(backend: str, feature: str) -> None:
         f"Query feature {feature} is not supported by the {backend!r} backend.",
         code=UNSUPPORTED_QUERY_FEATURE_CODE,
     )
+
+
+def _disjunctions(node: QueryExpr) -> int:
+    """How many disjunctions *node* expands to in disjunctive normal form."""
+
+    match node:
+        case QueryField(_, "$in", value) if isinstance(value, list | tuple):
+            return max(len(value), 1)  # pyright: ignore[reportUnknownArgumentType]
+
+        case QueryAnd(items):
+            return math.prod(_disjunctions(item) for item in items)
+
+        case QueryOr(items):
+            return sum(_disjunctions(item) for item in items)
+
+        case QueryNot(item):
+            return _disjunctions(item)
+
+        case _:
+            return 1
 
 
 def _walk_caps(
