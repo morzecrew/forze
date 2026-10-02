@@ -42,6 +42,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QuerySortExpression,
     assert_cursor_projection_includes_sort_keys,
     build_cursor_binding,
@@ -55,12 +56,15 @@ from forze.application.contracts.querying import (
     validate_query_field_types,
     validate_runtime_filter_fields,
     validate_runtime_sort_fields,
+    with_group_tiebreakers,
+    with_id_tiebreaker,
 )
 from forze.application.integrations.document import DocumentNotFoundTagging
 from forze.application.integrations.document._limits import (
     DEFAULT_MAX_STREAM_PAGES,
     assert_cursor_advanced,
     check_page_limit,
+    page_offset,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -133,6 +137,16 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
     query_params_source: MockQueryParamsSource | None = None
     derived_marked: frozenset[str] = attrs.field(factory=frozenset)
     """Derived fields declared with no join: their value comes from the stored row."""
+    filter_parser: QueryFilterExpressionParser = attrs.field(
+        default=attrs.Factory(
+            lambda self: QueryFilterExpressionParser(
+                limits=self.spec.filter_limits or QueryFilterLimits()
+            ),
+            takes_self=True,
+        ),
+        init=False,
+    )
+    """Parses filters under the spec's limits, as the real gateways do."""
 
     derived: Mapping[str, ResolvedDerivedRead] = attrs.field(factory=dict[str, ResolvedDerivedRead])
     """Derived read fields with their sources located at wiring time.
@@ -399,9 +413,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             aggregates,
             allowed=allowed,
             spec_name=str(self.spec.name),
+            parser=self.filter_parser,
         )
 
-        for expression in collect_aggregate_filter_expressions(aggregates):
+        for expression in collect_aggregate_filter_expressions(
+            aggregates, parser=self.filter_parser
+        ):
             # A per-metric filter is an ordinary filter and gets the ordinary check.
             validate_runtime_filter_fields(
                 expression,
@@ -409,7 +426,34 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 materialized=self.spec.materialized,
                 lenient=self._unqueryable(),
                 encrypted=(self.spec.encryption.encrypted if self.spec.encryption else frozenset()),
+                parser=self.filter_parser,
             )
+
+    # ....................... #
+
+    def _scan_sorts(self, sorts: QuerySortExpression | None) -> QuerySortExpression | None:
+        """The order a read with no limit takes on a real backend, which drains it in batches.
+
+        The effective sort with ``id`` breaking its ties, as a keyset scan gives. A read model
+        with neither ``id`` nor a ``default_sort`` keeps *sorts* as given.
+        """
+
+        read_fields = (
+            read_fields_for_model(self.read_model) | self.spec.materialized
+        ) - self._unqueryable()
+
+        if not (sorts or self.spec.default_sort or ID_FIELD in read_fields):
+            return sorts
+
+        effective = resolve_effective_sorts(
+            sorts=sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=read_fields,
+            spec_name=self.spec.name,
+            model=self.read_model,
+        )
+
+        return with_id_tiebreaker(effective, read_fields=read_fields)
 
     # ....................... #
 
@@ -541,7 +585,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         if filters is None:
             return lambda _doc: True
 
-        expr = QueryFilterExpressionParser.parse(filters)
+        expr = self.filter_parser.parse_filter(filters)
         # The same string-operand cast the real backends get from the shared gateway
         # seam — without it the in-memory comparison would TypeError a string bound
         # against a stored Decimal/datetime into a silent no-match.
@@ -704,8 +748,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # cannot match its ciphertext. Passing the declaration keeps the *policy* identical on
             # both, so a query that fails in production fails in the test suite too.
             encrypted=self.spec.encryption.encrypted if self.spec.encryption else frozenset(),
+            parser=self.filter_parser,
         )
-        expr = QueryFilterExpressionParser.parse(filters)
+        expr = self.filter_parser.parse_filter(filters)
         validate_query_field_types(expr, self.read_model)
 
     # ....................... #
@@ -939,7 +984,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
         # Normalize to ints up front (callers may pass string limit/offset) so the slicing
         # arithmetic in ``_page_window`` is always numeric.
         limit = int(limit_raw) if limit_raw is not None else None
-        offset = int(pagination.get("offset") or 0)
+        offset = page_offset(pagination)
 
         def _page_window(ordered: list[Any]) -> list[Any]:
             # Slice to the requested page *before* projecting/decoding, so only the page's rows
@@ -957,8 +1002,13 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # because its value does not exist until the read. Both disagree with
             # `aggregatable_fields()`, and the second is silently wrong.
             self._validate_aggregate_fields(aggregates)
-            aggregate_rows = _aggregate_docs(filtered, aggregates)
+            aggregate_rows = _aggregate_docs(filtered, aggregates, self.filter_parser)
             total = len(aggregate_rows)
+
+            if limit is None:
+                # As a real backend drains it in batches: tied groups ordered by their keys.
+                sorts = with_group_tiebreakers(aggregates, sorts)
+
             page_rows = _page_window(_sort_docs(aggregate_rows, sorts))
             rows = (
                 default_model_codec(return_type).decode_mapping_many(page_rows)
@@ -975,6 +1025,10 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 sealed=self._sealed_fields(),
             )
             total = len(filtered)
+
+            if limit is None:
+                sorts = self._scan_sorts(sorts)
+
             page_docs = _page_window(_sort_docs(filtered, sorts))
             if return_type is not None:
                 dict_rows: list[dict[str, Any]] = []
@@ -1434,7 +1488,7 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 # only. Using a spec name here would diverge from the backends the mock models.
                 spec_name=None,
                 tenant_id=self.require_tenant_if_aware(),
-                filter_expr=(QueryFilterExpressionParser.parse(filters) if filters else None),
+                filter_expr=(self.filter_parser.parse_filter(filters) if filters else None),
             )
             if cursor_protection_active()
             else None

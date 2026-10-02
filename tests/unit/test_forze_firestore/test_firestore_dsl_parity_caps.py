@@ -22,15 +22,16 @@ pytest.importorskip("google.cloud.firestore")
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.querying import (
     QueryCapabilities,
-    QueryFilterExpressionParser,
     validate_query_capabilities,
 )
 from forze_firestore.kernel.query.render import FIRESTORE_QUERY_CAPABILITIES
 from forze_mock.adapters import MockDocumentAdapter, MockState
 from tests.support.query_dsl_corpus import (
+    CORPUS_FILTER_LIMITS,
     CorpusCreate,
     CorpusDoc,
     CorpusRead,
+    parse_corpus_filter,
     run_parity_cases,
 )
 
@@ -42,6 +43,7 @@ def _mock_doc() -> MockDocumentAdapter[CorpusRead, CorpusDoc, CorpusCreate, Any]
         name="corpus",
         read=CorpusRead,
         write=DocumentWriteTypes(domain=CorpusDoc, create_cmd=CorpusCreate),
+        filter_limits=CORPUS_FILTER_LIMITS,
     )
     return MockDocumentAdapter(
         spec=spec,
@@ -64,7 +66,7 @@ class _CapsGatedDoc:
 
     async def find_many(self, *, filters: Any, pagination: Any) -> Any:
         validate_query_capabilities(
-            QueryFilterExpressionParser.parse(filters), self._caps, backend="firestore"
+            parse_corpus_filter(filters), self._caps, backend="firestore"
         )
         return await self._inner.find_many(filters=filters, pagination=pagination)
 

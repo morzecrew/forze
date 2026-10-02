@@ -26,6 +26,7 @@ from forze_mongo.kernel.client import MongoClient
 from forze_mongo.kernel.query.render import MONGO_QUERY_CAPABILITIES
 from tests.support.execution_context import context_from_deps
 from tests.support.query_dsl_corpus import (
+    CORPUS_FILTER_LIMITS,
     CombinedDocPort,
     CorpusCreate,
     CorpusDoc,
@@ -44,6 +45,7 @@ async def test_dsl_parity_mongo(mongo_client: MongoClient) -> None:
         name="dsl_corpus_ns",
         read=CorpusRead,
         write=DocumentWriteTypes(domain=CorpusDoc, create_cmd=CorpusCreate),
+        filter_limits=CORPUS_FILTER_LIMITS,
     )
     configurable = ConfigurableMongoDocument(
         config=MongoDocumentConfig(

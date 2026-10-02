@@ -20,7 +20,7 @@ from ..conformity import (
     validate_materialized_computed,
 )
 from ..crypto import FieldEncryption
-from ..querying import QuerySortExpression
+from ..querying import QueryFilterLimits, QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
 
 # ----------------------- #
@@ -316,6 +316,14 @@ class SearchSpec[M: BaseModel](BaseSpec):
 
     default_sort: QuerySortExpression | None = None
     """Default ``sorts`` when callers omit them (required for models without ``id``)."""
+
+    filter_limits: QueryFilterLimits | None = None
+    """Bounds on the filters this search accepts; ``None`` keeps the parser's defaults.
+
+    Every backend serving the spec parses filters under these limits, the mock included, and
+    so does a generated route or tool that passes a caller's filter through. Raise
+    ``max_in_size`` for internal reads that match against long id lists; a backend with a lower
+    hard cap of its own (Firestore's ``in``) still refuses past it."""
 
     materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
     """``@computed_field`` names on the read model that are persisted as real columns on

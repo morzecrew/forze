@@ -9,6 +9,7 @@ from forze.application.contracts.document import (
     document_codecs_for_write_types,
 )
 from forze.application.contracts.guarantees import SerializedBy
+from forze.application.contracts.querying import QueryFilterLimits
 from forze.application.execution import ExecutionContext, resolve_resilience_executor
 from forze.base.serialization import ModelCodec, default_model_codec
 from forze_postgres.kernel.relation import RelationSpec
@@ -41,6 +42,7 @@ def read_gw(
     params_required: bool = False,
     lenient_read_fields: frozenset[str] = frozenset(),
     sealed_fields: frozenset[str] = frozenset(),
+    filter_limits: QueryFilterLimits | None = None,
 ) -> PostgresReadGateway[Any]:
     """Build a read gateway for a relation and model.
 
@@ -53,6 +55,7 @@ def read_gw(
     :param lenient_read_fields: Read fields not stored on the relation (dropped from
         the projection and hydrated from their model default).
     :param sealed_fields: Fields stored as ciphertext; refused as sort keys.
+    :param filter_limits: The spec's filter limits; ``None`` keeps the parser's defaults.
     :returns: Postgres read gateway.
     """
 
@@ -75,6 +78,7 @@ def read_gw(
         params_required=params_required,
         lenient_read_fields=lenient_read_fields,
         sealed_fields=sealed_fields,
+        filter_limits=filter_limits,
     )
 
 
@@ -138,6 +142,7 @@ def doc_write_gw(
     write_omit_fields: frozenset[str] = frozenset(),
     serialized_by: tuple[SerializedBy, ...] = (),
     serialization_scope: str = "",
+    filter_limits: QueryFilterLimits | None = None,
 ) -> PostgresWriteGateway[Any, Any, Any]:
     """Build a write gateway for document CRUD with optional history.
 
@@ -155,6 +160,7 @@ def doc_write_gw(
     :param conflict_target: Optional ``ON CONFLICT`` columns; ``None`` infers PRIMARY KEY.
     :param serialized_by: The spec's ``SerializedBy`` declarations, whose writes are kept apart.
     :param serialization_scope: The spec's name, carried by every lock key.
+    :param filter_limits: The spec's filter limits; ``None`` keeps the parser's defaults.
     :returns: Postgres write gateway.
     """
 
@@ -189,6 +195,7 @@ def doc_write_gw(
         nested_field_hints=nested_field_hints,
         codec=domain_codec,
         lenient_read_fields=write_omit_fields,
+        filter_limits=filter_limits,
     )
     hist = None
 
@@ -211,6 +218,7 @@ def doc_write_gw(
 
     return PostgresWriteGateway(
         relation=write_relation,
+        filter_limits=filter_limits,
         client=client,
         introspector=introspector,
         model_type=write_types["domain"],

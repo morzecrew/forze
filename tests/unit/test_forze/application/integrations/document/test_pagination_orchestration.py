@@ -10,19 +10,23 @@ through their cap/limit/empty/boundary branches.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from decimal import Decimal
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from forze.application.contracts.base import CursorPage
-from forze.application.integrations.document._pagination import (
+from forze.application.contracts.querying import decode_keyset_v1
+from forze.application.integrations.document._pagination import (  # pyright: ignore[reportPrivateUsage]
     CursorQuery,
     DocumentPaginationMixin,
     OffsetQuery,
     StreamQuery,
+    _field_type,
+    _seek_values,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -272,7 +276,8 @@ async def test_offset_page_with_limit_no_count() -> None:
 
 @pytest.mark.asyncio
 async def test_offset_page_scan_loop_paginates_until_short_batch() -> None:
-    # batch size 2: full batch, then short batch terminates the scan
+    # batch size 2: full batch, then short batch terminates the scan. A projection without
+    # the sort key cannot seek, so the scan pages by offset.
     gateway = FakeReadGateway(
         find_many_results=[
             [{"id": "a"}, {"id": "b"}],
@@ -282,7 +287,7 @@ async def test_offset_page_scan_loop_paginates_until_short_batch() -> None:
     harness = PaginationHarness(gateway, eff_batch_size=2)
 
     page = await harness._offset_page(
-        _offset_query(),
+        _offset_query(return_fields=("name",)),
         filters=None,
         pagination=None,
         sorts=None,
@@ -307,7 +312,7 @@ async def test_offset_page_scan_respects_max_scan_pages_cap() -> None:
 
     with pytest.raises(CoreException, match="max_pages=2"):
         await harness._offset_page(
-            _offset_query(),
+            _offset_query(return_fields=("name",)),
             filters=None,
             pagination={"offset": 10},
             sorts=None,
@@ -323,13 +328,173 @@ async def test_offset_page_scan_uses_initial_offset() -> None:
     harness = PaginationHarness(gateway, eff_batch_size=2)
 
     await harness._offset_page(
-        _offset_query(),
+        _offset_query(return_fields=("name",)),
         filters=None,
         pagination={"offset": 6},
         sorts=None,
     )
 
     assert gateway.find_many_calls[0]["offset"] == 6
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_seeks_past_each_batch() -> None:
+    # page 1 over-fetches (3 > batch 2) -> has_more; page 2 seeks past "b" and ends
+    gateway = FakeReadGateway(
+        cursor_results=[
+            [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+            [{"id": "c"}],
+        ],
+    )
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(_offset_query(), filters=None, pagination=None, sorts=None)
+
+    assert [r["id"] for r in page.hits] == ["a", "b", "c"]
+    assert gateway.find_many_calls == []
+    assert [call["cursor"].get("after") is not None for call in gateway.cursor_calls] == [
+        False,
+        True,
+    ]
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_seeks_then_skips_the_offset() -> None:
+    gateway = FakeReadGateway(cursor_results=[[{"id": "a"}, {"id": "b"}]])
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(
+        _offset_query(), filters=None, pagination={"offset": 1}, sorts=None
+    )
+
+    assert [r["id"] for r in page.hits] == ["b"]
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize(
+    "pagination",
+    [
+        {"offset": -1},
+        {"offset": -1, "limit": 5},
+        {"offset": "abc"},
+        {"offset": "abc", "limit": 5},
+        {"offset": 1.9},
+        {"offset": True},
+        {"offset": ""},
+        {"offset": []},
+        {"offset": Decimal("1.5")},
+        {"offset": Decimal("Infinity")},
+    ],
+    ids=[
+        "unbounded",
+        "limited",
+        "text-unbounded",
+        "text-limited",
+        "float",
+        "bool",
+        "empty",
+        "list",
+        "decimal",
+        "infinity",
+    ],
+)
+@pytest.mark.asyncio
+async def test_offset_page_refuses_a_negative_offset(pagination: dict[str, int]) -> None:
+    # Sliced, it would count from the end; sent on, a backend answers with a server error.
+    gateway = FakeReadGateway(cursor_results=[[{"id": "a"}]], find_many_results=[[{"id": "a"}]])
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    with pytest.raises(CoreException, match="non-negative integer") as ei:
+        await harness._offset_page(
+            _offset_query(), filters=None, pagination=pagination, sorts=None
+        )
+
+    assert ei.value.kind == ExceptionKind.PRECONDITION
+
+    assert (gateway.find_many_calls, gateway.cursor_calls) == ([], [])
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_breaks_ties_by_id() -> None:
+    row = {"id": "a", "grp": 1}
+    gateway = _SeekGateway(pages=[([row], [row])])
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "grp"}))
+
+    await harness._offset_page(
+        _offset_query(), filters=None, pagination=None, sorts={"grp": "desc"}
+    )
+
+    assert gateway.seek_calls[0]["sorts"] == {"grp": "desc", "id": "desc"}
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize(
+    ("read_fields", "sorts", "strict"),
+    [
+        # no id to break ties with: no key is unique
+        (frozenset({"grp"}), {"grp": "asc"}, False),
+        # a strict primary-key cursor refuses any other sort
+        (frozenset({"id", "grp"}), {"grp": "asc"}, True),
+    ],
+)
+@pytest.mark.asyncio
+async def test_offset_page_scan_pages_by_offset_when_it_cannot_seek(
+    read_fields: frozenset[str], sorts: dict[str, str], strict: bool
+) -> None:
+    gateway = FakeReadGateway(find_many_results=[[{"id": "a", "grp": 1}]])
+    harness = PaginationHarness(
+        gateway, read_fields=read_fields, enforce_primary_key_cursor_sort=strict
+    )
+
+    await harness._offset_page(_offset_query(), filters=None, pagination=None, sorts=sorts)
+
+    assert (len(gateway.find_many_calls), gateway.cursor_calls) == (1, [])
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_seeks_on_id_alone_when_the_sort_starts_with_it() -> None:
+    # `id` is unique, so the keys after it never decide; an id-only cursor serves the read.
+    gateway = FakeReadGateway(cursor_results=[[{"id": "a", "grp": 1}]])
+    harness = PaginationHarness(
+        gateway, read_fields=frozenset({"id", "grp"}), enforce_primary_key_cursor_sort=True
+    )
+
+    await harness._offset_page(
+        _offset_query(), filters=None, pagination=None, sorts={"id": "asc", "grp": "desc"}
+    )
+
+    assert (len(gateway.cursor_calls), gateway.find_many_calls) == (1, [])
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_seeks_when_the_returned_model_carries_the_keys() -> None:
+    gateway = FakeReadGateway(cursor_results=[[_Row(id="a")]])
+    harness = PaginationHarness(gateway)
+
+    page = await harness._offset_page(
+        _offset_query(return_model=_Row), filters=None, pagination=None, sorts=None
+    )
+
+    assert ([r.id for r in page.hits], gateway.find_many_calls) == (["a"], [])
 
 
 # ....................... #
@@ -716,3 +881,209 @@ async def test_stream_detects_stalled_cursor() -> None:
                 chunk_size=2,
             )
         )
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_takes_a_string_offset() -> None:
+    gateway = FakeReadGateway(cursor_results=[[{"id": "a"}, {"id": "b"}]])
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(
+        _offset_query(), filters=None, pagination={"offset": "1"}, sorts=None  # type: ignore[typeddict-item]
+    )
+
+    assert [r["id"] for r in page.hits] == ["b"]
+
+
+class _Lowered(BaseModel):
+    id: str
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _lower(cls, value: str) -> str:
+        return value.lower()
+
+
+class _SeekGateway(FakeReadGateway):
+    """A gateway whose page read also returns each row's stored sort values."""
+
+    def __init__(self, *, pages: list[tuple[list[Any], list[dict[str, Any]]]]) -> None:
+        super().__init__()
+        self._pages = list(pages)
+        self.seek_calls: list[dict[str, Any]] = []
+
+    async def find_many_with_cursor_seek(self, filters: Any, **kwargs: Any) -> Any:
+        self.seek_calls.append({"filters": filters, **kwargs})
+        return self._pages.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_takes_token_values_from_the_seek_read() -> None:
+    # The model lowercases `name`; the store orders by what it holds, so the token must too,
+    # and the stored values come from the same statement as the page.
+    rows = [_Lowered(id=i, name=i.upper()) for i in ("a", "b", "c")]
+    gateway = _SeekGateway(pages=[(rows, [{"id": i, "name": i.upper()} for i in ("a", "b", "c")])])
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
+
+    page = await harness._cursor_page(
+        CursorQuery(return_model=_Lowered, return_fields=None),
+        filters=None,
+        cursor={"limit": 2},
+        sorts={"name": "asc"},
+    )
+
+    assert decode_keyset_v1(page.next_cursor)[3] == ["B", "b"]  # type: ignore[arg-type]
+    assert (len(gateway.seek_calls), gateway.cursor_calls, gateway.find_many_calls) == (1, [], [])
+
+
+def test_without_a_seek_read_a_model_seeks_on_id_alone() -> None:
+    plain = PaginationHarness(FakeReadGateway(), read_fields=frozenset({"id", "name"}))
+    seeking = PaginationHarness(_SeekGateway(pages=[]), read_fields=frozenset({"id", "name"}))
+    keyed = {"name": "asc", "id": "asc"}
+
+    assert not plain._seekable(_offset_query(return_model=_Lowered), keyed)
+    assert plain._seekable(_offset_query(return_model=_Lowered), {"id": "asc"})
+    assert seeking._seekable(_offset_query(return_model=_Lowered), keyed)
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_without_id_reads_the_fields_not_the_dump() -> None:
+    # No id to look stored values up by: the token reads the model's fields, never its dump.
+    # Past the model, a mapping holds what the backend stored; a null parent reads as null.
+    class _Bag(BaseModel):
+        id: str
+        meta: dict[str, int] | None = Field(default=None, exclude=True)
+
+    class _BagGateway(FakeReadGateway):
+        @property
+        def model_type(self) -> type[_Bag]:  # type: ignore[override]
+            return _Bag
+
+    rows = [_Bag(id="a", meta={"rank": 1}), _Bag(id="b"), _Bag(id="c")]
+    harness = PaginationHarness(_BagGateway(), read_fields=frozenset({"meta"}))
+    tokens = []
+
+    for limit in (1, 2):
+        harness.read_gw = _BagGateway(cursor_results=[rows[: limit + 1]])  # type: ignore[assignment]
+        page = await harness._cursor_page(
+            CursorQuery(return_model=_Bag, return_fields=None),
+            filters=None,
+            cursor={"limit": limit},
+            sorts={"meta.rank": "asc"},
+        )
+        tokens.append(decode_keyset_v1(page.next_cursor)[3])  # type: ignore[arg-type]
+
+    assert tokens == [[1], [None]]
+
+
+@pytest.mark.asyncio
+async def test_unbounded_aggregates_order_batches_by_the_group_keys() -> None:
+    # The read model's `id` default is no aggregate output; the group keys are, and they are
+    # unique per row, so they give the batches one order.
+    gateway = FakeReadGateway(find_many_results=[[{"g": 1, "n": 2}]])
+    harness = PaginationHarness(gateway)
+    aggregates = {"$groups": {"g": "grp"}, "$computed": {"n": {"$count": None}}}
+
+    await harness._offset_page(
+        _offset_query(aggregates=aggregates), filters=None, pagination=None, sorts=None
+    )
+    await harness._offset_page(
+        _offset_query(aggregates=aggregates), filters=None, pagination=None, sorts={"n": "desc"}
+    )
+
+    assert [call["sorts"] for call in gateway.find_many_aggregates_calls] == [
+        {"g": "asc"},
+        {"n": "desc", "g": "desc"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_pages_a_string_offset_by_its_value() -> None:
+    # The offset fallback adds the batch size to the offset; a string there raised.
+    gateway = FakeReadGateway(find_many_results=[[{"id": "a"}, {"id": "b"}], [{"id": "c"}]])
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(
+        _offset_query(return_fields=("name",)),
+        filters=None,
+        pagination={"offset": "4"},  # type: ignore[typeddict-item]
+        sorts=None,
+    )
+
+    assert [r["id"] for r in page.hits] == ["a", "b", "c"]
+    assert [call["offset"] for call in gateway.find_many_calls] == [4, 6]
+
+
+@pytest.mark.asyncio
+async def test_offset_page_scan_drops_the_offset_prefix_as_it_arrives() -> None:
+    gateway = FakeReadGateway(
+        cursor_results=[
+            [{"id": "a"}, {"id": "b"}, {"id": "c"}],
+            [{"id": "c"}, {"id": "d"}, {"id": "e"}],
+            [{"id": "e"}],
+        ]
+    )
+    harness = PaginationHarness(gateway, eff_batch_size=2)
+
+    page = await harness._offset_page(
+        _offset_query(), filters=None, pagination={"offset": 3}, sorts=None
+    )
+
+    assert [r["id"] for r in page.hits] == ["d", "e"]
+
+
+def test_seek_values_read_fields_computed_fields_and_shared_parents() -> None:
+    class _Meta(BaseModel):
+        a: int
+        b: int
+
+    class _Scored(BaseModel):
+        id: str
+        meta: _Meta
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def score(self) -> int:
+            return self.meta.a * 10
+
+    row = _Scored(id="x", meta=_Meta(a=1, b=2))
+
+    assert _seek_values(row, ["meta.a", "meta.b", "score", "id"]) == {
+        "meta": {"a": 1, "b": 2},
+        "score": 10,
+        "id": "x",
+    }
+    assert (_field_type(_Scored, "id"), _field_type(_Scored, "nope")) == (str, None)
+
+    with pytest.raises(CoreException, match=r"does not carry sort key 'meta\.c'"):
+        _seek_values(row, ["meta.c"])
+
+
+@pytest.mark.asyncio
+async def test_a_read_no_gateway_can_seek_or_offset_is_one_query() -> None:
+    # Firestore: its cursor seeks on `id` alone and it refuses offsets.
+    class _NoOffsetGateway(FakeReadGateway):
+        cursor_sorts_by_id_only = True
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.unbounded_calls: list[dict[str, Any]] = []
+
+        async def find_many_unbounded(self, **kwargs: Any) -> list[Any]:
+            self.unbounded_calls.append(kwargs)
+            return [{"id": i, "grp": 1} for i in ("a", "b", "c")]
+
+    gateway = _NoOffsetGateway()
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "grp"}))
+
+    page = await harness._offset_page(
+        _offset_query(), filters=None, pagination={"offset": 1}, sorts={"grp": "asc"}
+    )
+
+    assert [r["id"] for r in page.hits] == ["b", "c"]
+    assert [call["sorts"] for call in gateway.unbounded_calls] == [{"grp": "asc", "id": "asc"}]
+    assert (gateway.find_many_calls, gateway.cursor_calls) == ([], [])

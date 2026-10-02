@@ -20,6 +20,7 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
+    QueryFilterExpressionParser,
     QuerySortExpression,
     compile_filter,
 )
@@ -241,7 +242,11 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
         # Parse the filter once into a reusable predicate rather than re-parsing it
         # per document inside the scan.
-        matches = compile_filter(filters)
+        limits = self.spec.filter_limits
+        matches = compile_filter(
+            filters,
+            parser=QueryFilterExpressionParser(limits=limits) if limits is not None else None,
+        )
 
         ranked: list[tuple[float, JsonDict]] = []
         for doc in docs:

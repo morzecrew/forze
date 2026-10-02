@@ -101,6 +101,7 @@ from .internal import (
     elem_inner_is_scalar,
     evaluate_filter,
     value_at_path,
+    with_group_tiebreakers,
 )
 from .pagination import (
     CursorBinding,
@@ -137,6 +138,7 @@ from .pagination import (
     validate_cursor_token,
     validate_runtime_sort_fields,
     validate_sort_fields,
+    with_id_tiebreaker,
 )
 from .types import (
     ElementOp,
@@ -164,6 +166,7 @@ __all__ = [
     "AggregateTruncUnit",
     "AggregatesExpression",
     "AggregatesExpressionParser",
+    "with_group_tiebreakers",
     "GroupKey",
     "GroupField",
     "GroupTrunc",
@@ -277,6 +280,7 @@ __all__ = [
     "validate_cursor_token",
     "validate_runtime_sort_fields",
     "validate_sort_fields",
+    "with_id_tiebreaker",
     "row_value_for_sort_key",
     "QueryConjunction",
     "QueryDisjunction",

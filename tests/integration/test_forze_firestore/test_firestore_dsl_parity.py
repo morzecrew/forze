@@ -38,6 +38,7 @@ from forze_firestore.kernel.client import FirestoreClient
 from forze_firestore.kernel.query.render import FIRESTORE_QUERY_CAPABILITIES
 from tests.support.execution_context import context_from_deps
 from tests.support.query_dsl_corpus import (
+    CORPUS_FILTER_LIMITS,
     CombinedDocPort,
     CorpusCreate,
     CorpusDoc,
@@ -74,6 +75,7 @@ async def test_dsl_parity_firestore(firestore_client: FirestoreClient) -> None:
         name="dsl_corpus_ns",
         read=CorpusRead,
         write=DocumentWriteTypes(domain=CorpusDoc, create_cmd=CorpusCreate),
+        filter_limits=CORPUS_FILTER_LIMITS,
     )
     configurable = ConfigurableFirestoreDocument(
         config=FirestoreDocumentConfig(

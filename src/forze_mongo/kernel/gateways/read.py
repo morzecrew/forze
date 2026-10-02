@@ -9,6 +9,7 @@ require_mongo()
 from collections.abc import AsyncGenerator, Sequence
 from typing import (
     Any,
+    ClassVar,
     Literal,
     Never,
     TypeVar,
@@ -76,6 +77,9 @@ class MongoReadGateway[M: BaseModel](
     and counting. Results can be projected to a subset of fields or mapped to
     an alternative model type.
     """
+
+    cursor_sorts_by_id_only: ClassVar[bool] = True
+    """A cursor here seeks on ``id`` alone, so a read sorted otherwise is paged by offset."""
 
     read_validation: Literal["strict", "trusted"] = attrs.field(
         default="strict",
@@ -547,6 +551,7 @@ class MongoReadGateway[M: BaseModel](
             sorts=sorts,
             limit=eff_limit,
             skip=offset,
+            filter_parser=self.filter_parser,
         )
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=eff_limit)
 
@@ -578,6 +583,7 @@ class MongoReadGateway[M: BaseModel](
         parsed_, pipeline = self.renderer.render_aggregates(
             aggregates,
             match=match or None,
+            filter_parser=self.filter_parser,
         )
         pipeline.append({"$count": "count"})
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=1)

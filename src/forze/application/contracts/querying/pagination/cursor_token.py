@@ -18,6 +18,8 @@ from forze.base.codecs import B64UrlJsonCodec
 from forze.base.crypto import Aead, AesGcmAead
 from forze.base.exceptions import CoreException, exc
 
+from ..internal.canonical import canonical_sort_key
+
 # ----------------------- #
 
 _KEYSET_V1 = 1
@@ -222,8 +224,11 @@ def _canonical_filter_value(v: Any) -> Any:
         return [_canonical_filter_value(x) for x in cast(Sequence[Any], v)]
 
     if isinstance(v, (set, frozenset)):
-        items = [_canonical_filter_value(x) for x in cast(set[Any], v)]
-        return sorted(items, key=lambda c: json.dumps(c, sort_keys=True, default=str))
+        # Ordered by the raw values' kind-tagged key: their JSON forms can tie (a date and
+        # its ISO string), and a tie would keep the set's hash-seeded order.
+        return [
+            _canonical_filter_value(x) for x in sorted(cast(set[Any], v), key=canonical_sort_key)
+        ]
 
     return _jsonify_value(v)
 

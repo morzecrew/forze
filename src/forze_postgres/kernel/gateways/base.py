@@ -388,25 +388,27 @@ class PostgresGateway[M: BaseModel](
         if cached is not None:
             return cached
 
-        if return_type is not None:
-            # Drop lenient fields (no column) just like the default-read path below,
-            # so a return_type carrying one hydrates from its default instead of
-            # being rejected as an unknown projection field.
-            use = [
-                f
-                for f in default_model_codec(return_type).stored_field_names(
-                    include_computed=False,
-                )
-                if f not in self.lenient_read_fields
-            ]
-
-        else:
-            use = list(self.read_fields)
-
-        clause = self._build_return_clause(use, table_alias)
+        clause = self._build_return_clause(self.return_columns(return_type), table_alias)
         self._return_clause_cache[cache_key] = clause
 
         return clause
+
+    # ....................... #
+
+    def return_columns(self, return_type: type[BaseModel] | None = None) -> list[str]:
+        """The columns a read decoding into *return_type* (the read model when ``None``) selects."""
+
+        if return_type is None:
+            return list(self.read_fields)
+
+        # Drop lenient fields (no column) just like the default-read path, so a return_type
+        # carrying one hydrates from its default instead of being rejected as an unknown
+        # projection field.
+        return [
+            f
+            for f in default_model_codec(return_type).stored_field_names(include_computed=False)
+            if f not in self.lenient_read_fields
+        ]
 
     # ....................... #
 

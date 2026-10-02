@@ -31,8 +31,12 @@ def test_normalize_sorts_with_id_appends_tiebreak() -> None:
 
 def test_normalize_allows_mixed_directions() -> None:
     # Mixed asc/desc is supported; the tie-breaker (here id, given explicitly) keeps its
-    # own direction, and a mixed sort with an auto tie-breaker defaults that key to asc.
+    # own direction and its place, ending the sort there since nothing after a unique key
+    # decides; a mixed sort with an auto tie-breaker defaults that key to asc.
     assert normalize_sorts_with_id({ID_FIELD: "asc", "m": "desc"}) == [
+        (ID_FIELD, "asc", "first"),
+    ]
+    assert normalize_sorts_with_id({"m": "desc", ID_FIELD: "asc"}) == [
         ("m", "desc", "last"),
         (ID_FIELD, "asc", "first"),
     ]

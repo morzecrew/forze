@@ -28,7 +28,9 @@ from forze.application.contracts.querying import (
     QuerySortExpression,
     QueryValue,
     QueryValueCaster,
+    assert_default_null_ordering,
     elem_inner_is_scalar,
+    parse_sort_value,
     validate_aggregate_capabilities,
     validate_query_capabilities,
 )
@@ -122,12 +124,13 @@ class MongoQueryRenderer:
         sorts: QuerySortExpression | None = None,
         limit: int | None = None,
         skip: int | None = None,
+        filter_parser: QueryFilterExpressionParser | None = None,
     ) -> tuple[ParsedAggregates, list[JsonDict]]:
         """Render an aggregate expression into a Mongo aggregation pipeline."""
 
         validate_aggregate_capabilities(aggregates, MONGO_QUERY_CAPABILITIES, backend="mongo")
 
-        parsed = AggregatesExpressionParser.parse(aggregates)
+        parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=filter_parser)
         pipeline: list[JsonDict] = []
 
         if match:
@@ -190,7 +193,15 @@ class MongoQueryRenderer:
         if bad:
             raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
 
-        return [(field, 1 if direction == "asc" else -1) for field, direction in sorts.items()]
+        # A value may be the object form, `{"dir": ..., "nulls": ...}`, not only "asc"/"desc";
+        # Mongo orders nulls as the smallest value, so any other placement is refused, as on
+        # the regular sort path.
+        resolved = [
+            (field, *parse_sort_value(value, field=field)) for field, value in sorts.items()
+        ]
+        assert_default_null_ordering(resolved, backend="mongo")
+
+        return [(field, 1 if direction == "asc" else -1) for field, direction, _ in resolved]
 
     # ....................... #
 

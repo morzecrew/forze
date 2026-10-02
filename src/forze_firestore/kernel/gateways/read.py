@@ -8,6 +8,8 @@ require_firestore()
 
 from collections.abc import AsyncGenerator, Sequence
 from typing import (
+    Any,
+    ClassVar,
     Literal,
     Never,
     TypeVar,
@@ -59,6 +61,10 @@ class FirestoreReadGateway[M: BaseModel](
     FirestoreGateway[M],
 ):
     """Read-only Firestore gateway."""
+
+    cursor_sorts_by_id_only: ClassVar[bool] = True
+    """A cursor here seeks on ``id`` alone; a read without a limit sorted otherwise runs as one
+    query through :meth:`find_many_unbounded`, since Firestore refuses offsets."""
 
     read_validation: Literal["strict", "trusted"] = attrs.field(
         default="strict",
@@ -326,12 +332,59 @@ class FirestoreReadGateway[M: BaseModel](
                 "Firestore adapter does not support offset pagination; use cursor pagination"
             )
 
+        return await self._find_rows(
+            filters,
+            sorts,
+            limit=self._effective_find_limit(limit),
+            return_model=return_model,
+            return_fields=return_fields,
+            parsed=parsed,
+        )
+
+    # ....................... #
+
+    async def find_many_unbounded(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_model: type[BaseModel] | None = None,
+        return_fields: Sequence[str] | None = None,
+        parsed: QueryExpr | None = None,
+    ) -> list[Any]:
+        """Every matching row, in one query streamed whole, without the implicit cap.
+
+        For a read without a limit that can neither seek (the cursor seeks on ``id`` alone)
+        nor page by offset (Firestore refuses one): it would hold every row either way.
+        """
+
+        return await self._find_rows(
+            filters,
+            sorts,
+            limit=None,
+            return_model=return_model,
+            return_fields=return_fields,
+            parsed=parsed,
+        )
+
+    # ....................... #
+
+    async def _find_rows(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        *,
+        limit: int | None,
+        return_model: type[BaseModel] | None,
+        return_fields: Sequence[str] | None,
+        parsed: QueryExpr | None,
+    ) -> Any:
         flt = self.render_filters(filters, parsed=parsed)
         rows = await self.client.query_stream(
             await self.coll(),
             filters=flt,
             order_by=self.render_sorts(sorts),
-            limit=self._effective_find_limit(limit),
+            limit=limit,
         )
         normalized = [self._from_storage_doc(row) for row in rows]
 

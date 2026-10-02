@@ -4,9 +4,12 @@
 map once at construction instead of rebuilding it on every element.
 """
 
+import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import QueryFilterLimits
 from forze.application.contracts.search import SearchSpec
+from forze.base.exceptions import CoreException
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
 from forze_meilisearch.execution.deps.configs import MeilisearchSearchConfig
 
@@ -66,3 +69,21 @@ def test_from_hit_is_stable_across_calls() -> None:
     second = gw.from_hit(hit)
 
     assert first == second == {"title": "x", "id": "1"}
+
+
+def test_the_spec_filter_limits_bound_the_rendered_filter() -> None:
+    names = [f"n{i}" for i in range(1_500)]
+    raised = MeilisearchSearchGateway(
+        spec=SearchSpec(
+            name="items",
+            model_type=_Item,
+            fields=["title"],
+            filter_limits=QueryFilterLimits(max_in_size=2_000),
+        ),
+        config=MeilisearchSearchConfig(index_uid="items"),
+    )
+
+    assert raised.filter_renderer.render_filters({"$values": {"title": {"$in": names}}})
+
+    with pytest.raises(CoreException, match="1000"):
+        _gateway().filter_renderer.render_filters({"$values": {"title": {"$in": names}}})

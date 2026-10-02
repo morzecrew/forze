@@ -22,7 +22,6 @@ from forze.application.contracts.querying import (
     QueryField,
     QueryFilterExpression,
     QueryFilterExpressionParser,
-    QueryFilterLimits,
     QueryNot,
     QueryOr,
     coerce_query_ord_operands,
@@ -184,9 +183,8 @@ class MeilisearchFilterRenderer:
     field_map: dict[str, str] = attrs.field(factory=dict)
     """Logical field name → Meilisearch attribute."""
 
-    parser: QueryFilterExpressionParser = attrs.field(
-        factory=lambda: QueryFilterExpressionParser(limits=QueryFilterLimits()),
-    )
+    parser: QueryFilterExpressionParser = attrs.field(factory=QueryFilterExpressionParser)
+    """Parses filters under the spec's limits."""
 
     read_model: type[BaseModel] | None = attrs.field(kw_only=True)
     """The searchable read model, for operator–type validation and operand coercion.
@@ -217,7 +215,7 @@ class MeilisearchFilterRenderer:
         if filters is None:
             return None
 
-        expr = self.parser.parse(filters)
+        expr = self.parser.parse_filter(filters)
         validate_query_capabilities(expr, MEILISEARCH_QUERY_CAPABILITIES, backend="meilisearch")
 
         if self.read_model is not None:

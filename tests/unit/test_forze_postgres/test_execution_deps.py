@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import QueryFilterLimits
 from forze.base.exceptions import CoreException
 from tests.support.execution_context import (
     context_from_deps,
@@ -838,3 +839,43 @@ class TestPostgresIdempotencyFactory:
 
         assert isinstance(store, PostgresIdempotencyStore)
         assert store.introspector is not None
+
+
+class TestSpecFilterLimits:
+    """A spec's filter limits reach every gateway that parses its filters."""
+
+    _LIMITS = QueryFilterLimits(max_in_size=5_000)
+
+    def test_document_gateways(self) -> None:
+        spec = DocumentSpec(
+            name="dep_test",
+            read=_R,
+            write={"domain": _D, "create_cmd": _C, "update_cmd": _U},
+            filter_limits=self._LIMITS,
+        )
+        adapter = ConfigurablePostgresDocument(
+            config=PostgresDocumentConfig(
+                read=("public", "t"),
+                write=("public", "t"),
+                bookkeeping_strategy="application",
+            )
+        )(_ctx(), spec)
+
+        assert adapter.write_gw is not None
+        gateways = (adapter.read_gw, adapter.write_gw, adapter.write_gw.read_gw)
+        assert {gw.filter_parser.limits for gw in gateways} == {self._LIMITS}
+
+    def test_search_adapter(self) -> None:
+        class M(BaseModel):
+            title: str
+
+        adapter = ConfigurablePostgresSearch(
+            config=PostgresSearchConfig(
+                engine="pgroonga", index=("public", "gi"), read=("public", "gs")
+            )
+        )(
+            _ctx(),
+            SearchSpec(name="s", model_type=M, fields=["title"], filter_limits=self._LIMITS),
+        )
+
+        assert adapter.filter_parser.limits == self._LIMITS

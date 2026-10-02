@@ -1,10 +1,11 @@
 """Internal offset/cursor pagination for document queries."""
 
-from collections.abc import AsyncGenerator, Sequence
-from typing import Any, Generic, cast
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from typing import Any, Generic, cast, get_args
 
 import attrs
 from pydantic import BaseModel
+from pydantic_core import to_jsonable_python
 
 from forze.application.contracts.base import CursorPage, page_from_limit_offset
 from forze.application.contracts.document import DocumentReadGatewayPort
@@ -17,16 +18,103 @@ from forze.application.contracts.querying import (
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
     normalize_sorts_for_keyset,
+    with_group_tiebreakers,
+    with_id_tiebreaker,
+)
+from forze.application.contracts.querying.pagination.cursor_page import (
+    _sort_key_in_projection,  # pyright: ignore[reportPrivateUsage]
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.constants import ID_FIELD
 
 from ..persistence import document_cursor_binding
-from ._limits import assert_cursor_advanced, check_page_limit
+from ._limits import assert_cursor_advanced, check_page_limit, page_offset
 from ._types import R
 
 # ----------------------- #
+
+
+def _model_in(annotation: Any) -> Any:
+    """The model class *annotation* holds, through ``Optional`` and unions; else *annotation*."""
+
+    for candidate in (annotation, *get_args(annotation)):
+        if isinstance(candidate, type) and issubclass(candidate, BaseModel):
+            return candidate
+
+    return annotation
+
+
+def _field_type(model: type[BaseModel], name: str) -> Any:
+    """The type *model* gives its field or computed field *name*; ``None`` when it has neither."""
+
+    if (field := model.model_fields.get(name)) is not None:
+        return _model_in(field.annotation)
+
+    if (computed := model.model_computed_fields.get(name)) is not None:
+        return _model_in(computed.return_type)
+
+    return None
+
+
+def _seek_read(gateway: Any) -> Any:
+    """The gateway's ``find_many_with_cursor_seek``, which returns each row's stored sort
+    values from the page's own statement; ``None`` for a gateway without one."""
+
+    return getattr(gateway, "find_many_with_cursor_seek", None)
+
+
+def _seek_values(row: BaseModel, sort_keys: Sequence[str]) -> JsonDict:
+    """The sort keys' values on *row*, nested the way a cursor token reads them.
+
+    For a sort on ``id`` alone, and for a gateway with no seek read. Read off the model's
+    attributes rather than its dump: a dump can leave a key out (``exclude``), rename it (an
+    alias) or rewrite it (a serializer), and a token built from it would seek from the wrong
+    place, dropping rows without an error.
+
+    :raises CoreException: ``precondition`` when a model on a key's path has no field for it.
+    """
+
+    out: JsonDict = {}
+
+    for key in sort_keys:
+        parts = key.split(".")
+        node: Any = row
+
+        for part in parts:
+            if isinstance(node, BaseModel):
+                if _field_type(type(node), part) is None:
+                    raise exc.precondition(
+                        f"The returned model does not carry sort key {key!r}, so a cursor "
+                        "cannot continue from it; return a model that holds the key.",
+                    )
+
+                node = getattr(node, part)
+
+            elif isinstance(node, Mapping):
+                node = cast(Mapping[str, Any], node).get(part)
+
+            else:
+                # A null parent: the key reads as null, which is how it sorts.
+                node = None
+                break
+
+        target = out
+
+        for part in parts[:-1]:
+            nested = target.get(part)
+
+            if not isinstance(nested, dict):
+                nested = target[part] = {}
+
+            target = cast(JsonDict, nested)
+
+        target[parts[-1]] = to_jsonable_python(node)
+
+    return out
+
+
+# ....................... #
 
 
 @attrs.frozen
@@ -111,6 +199,9 @@ class DocumentPaginationMixin(Generic[R]):
             raise exc.precondition("Aggregates cannot be combined with return_fields")
 
         pagination = pagination or {}
+
+        skip = page_offset(pagination)
+
         parsed_filters = self.read_gw.compile_filters(filters)
         cnt = 0
         if query.return_count:
@@ -131,58 +222,54 @@ class DocumentPaginationMixin(Generic[R]):
                 )
 
         limit = pagination.get("limit")
-        offset = pagination.get("offset")
 
         res: list[Any]
 
-        if limit is None:
-            chunk = self.eff_batch_size
-            off = 0 if offset is None else offset
-            sorts_for_scan = self._resolve_sorts(sorts)
-            res = []
-            page_num = 0
+        if limit is None and query.aggregates is None:
+            scan_sorts = with_id_tiebreaker(
+                self._resolve_sorts(sorts), read_fields=self._read_fields
+            )
 
-            while True:
-                check_page_limit(
-                    pages=page_num,
-                    max_pages=self.max_scan_pages,
-                    label="Document offset scan",
+            unbounded = getattr(self.read_gw, "find_many_unbounded", None)
+
+            if self._seekable(query, scan_sorts):
+                res = await self._keyset_scan(query, filters=filters, sorts=scan_sorts, skip=skip)
+
+            elif unbounded is not None:
+                # A gateway that can neither seek on this sort nor page by offset (Firestore)
+                # reads it as one query: the read holds every row either way.
+                rows = await unbounded(
+                    filters=filters,
+                    sorts=scan_sorts,
+                    return_model=query.return_model,
+                    return_fields=query.return_fields,
+                    parsed=parsed_filters,
+                )
+                res = list(rows)[skip:]
+
+            else:
+                res = await self._offset_scan(
+                    query,
+                    filters=filters,
+                    sorts=scan_sorts,
+                    offset=skip,
+                    parsed_filters=parsed_filters,
                 )
 
-                if query.aggregates is not None:
-                    batch = await self.read_gw.find_many_aggregates(
-                        filters=filters,
-                        limit=chunk,
-                        offset=off,
-                        sorts=sorts_for_scan,
-                        aggregates=query.aggregates,
-                        return_model=query.return_model,
-                        parsed=parsed_filters,
-                    )
-                else:
-                    batch = await self.read_gw.find_many(  # type: ignore[misc]
-                        filters=filters,
-                        limit=chunk,
-                        offset=off,
-                        sorts=sorts_for_scan,
-                        return_model=query.return_model,  # type: ignore[arg-type]
-                        return_fields=query.return_fields,  # type: ignore[arg-type]
-                        parsed=parsed_filters,
-                    )
-
-                res.extend(batch)  # type: ignore[arg-type]
-
-                if len(batch) < chunk:  # type: ignore[arg-type]
-                    break
-
-                off += chunk
-                page_num += 1
+        elif limit is None and query.aggregates is not None:
+            res = await self._offset_scan(
+                query,
+                filters=filters,
+                sorts=with_group_tiebreakers(query.aggregates, sorts),
+                offset=skip,
+                parsed_filters=parsed_filters,
+            )
 
         elif query.aggregates is not None:
             res = await self.read_gw.find_many_aggregates(
                 filters=filters,
                 limit=limit,
-                offset=offset,
+                offset=skip,
                 sorts=sorts,
                 aggregates=query.aggregates,
                 return_model=query.return_model,
@@ -192,7 +279,7 @@ class DocumentPaginationMixin(Generic[R]):
             res = await self.read_gw.find_many(  # type: ignore[misc]
                 filters=filters,
                 limit=limit,
-                offset=offset,
+                offset=skip,
                 sorts=sorts,
                 return_model=query.return_model,  # type: ignore[arg-type]
                 return_fields=query.return_fields,  # type: ignore[arg-type]
@@ -204,6 +291,134 @@ class DocumentPaginationMixin(Generic[R]):
             pagination,
             total=cnt if query.return_count else None,
         )
+
+    def _seekable(self, query: OffsetQuery, sorts: QuerySortExpression) -> bool:
+        """Whether a read with no limit can seek past each batch instead of offsetting.
+
+        Seeking needs ``id`` among the keys (the cursor ends the sort there, since nothing
+        after a unique key decides an order) and every key's value in the rows it returns,
+        since the next batch starts after the last row's values. A projection that leaves a
+        key out is paged by offset, as is any sort but ``id`` alone where the cursor seeks on
+        nothing else — a strict primary-key cursor, or a gateway declaring
+        ``cursor_sorts_by_id_only``.
+        """
+
+        keys = list(sorts)
+
+        if ID_FIELD not in keys:
+            return False
+
+        keys = keys[: keys.index(ID_FIELD) + 1]
+
+        id_only = self.enforce_primary_key_cursor_sort or (
+            getattr(self.read_gw, "cursor_sorts_by_id_only", False) is True
+        )
+
+        if id_only and keys != [ID_FIELD]:
+            return False
+
+        if query.return_fields is None:
+            # Model rows: a validator may have rewritten a key, so seek values must come with
+            # the page from the store. Without a gateway that returns them, only `id` is safe,
+            # and only read off a model that has one.
+            if _seek_read(self.read_gw) is not None:
+                return True
+
+            return keys == [ID_FIELD] and (
+                query.return_model is None or _field_type(query.return_model, ID_FIELD) is not None
+            )
+
+        return all(_sort_key_in_projection(k, query.return_fields) for k in keys)
+
+    # ....................... #
+
+    async def _keyset_scan(
+        self,
+        query: OffsetQuery,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression,
+        skip: int = 0,
+    ) -> list[Any]:
+        """Every row past the first *skip*, batch by batch, each seeking past the last row.
+
+        A seek cannot jump ahead, so the rows before the offset are still read, but each is
+        dropped as its batch arrives rather than held; the page cap counts those batches too.
+        """
+
+        rows: list[Any] = []
+
+        async for batch in self._keyset_batches(
+            CursorQuery(return_model=query.return_model, return_fields=query.return_fields),
+            filters=filters,
+            sorts=sorts,
+            chunk=self.eff_batch_size,
+            max_pages=self.max_scan_pages,
+            label="Document scan",
+        ):
+            dropped = min(skip, len(batch))
+            skip -= dropped
+            rows.extend(batch[dropped:])
+
+        return rows
+
+    # ....................... #
+
+    async def _offset_scan(
+        self,
+        query: OffsetQuery,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        offset: int | None,
+        parsed_filters: Any,
+    ) -> list[Any]:
+        """Every row, batch by batch at growing offsets — for reads that cannot seek."""
+
+        chunk = self.eff_batch_size
+        off = 0 if offset is None else offset
+        res: list[Any] = []
+        page_num = 0
+
+        while True:
+            check_page_limit(
+                pages=page_num,
+                max_pages=self.max_scan_pages,
+                label="Document scan",
+            )
+
+            if query.aggregates is not None:
+                batch = await self.read_gw.find_many_aggregates(
+                    filters=filters,
+                    limit=chunk,
+                    offset=off,
+                    sorts=sorts,
+                    aggregates=query.aggregates,
+                    return_model=query.return_model,
+                    parsed=parsed_filters,
+                )
+            else:
+                batch = await self.read_gw.find_many(  # type: ignore[misc]
+                    filters=filters,
+                    limit=chunk,
+                    offset=off,
+                    sorts=sorts,
+                    return_model=query.return_model,  # type: ignore[arg-type]
+                    return_fields=query.return_fields,  # type: ignore[arg-type]
+                    parsed=parsed_filters,
+                )
+
+            res.extend(batch)  # type: ignore[arg-type]
+
+            if len(batch) < chunk:  # type: ignore[arg-type]
+                break
+
+            off += chunk
+            page_num += 1
+
+        return res
+
+    # ....................... #
 
     async def _cursor_page(
         self,
@@ -241,19 +456,35 @@ class DocumentPaginationMixin(Generic[R]):
                 "omit ``sorts`` or pass a single {id: asc|desc}.",
             )
 
-        raw = await self.read_gw.find_many_with_cursor(  # type: ignore[call-overload, misc]
-            filters,
-            cursor=cursor,
-            sorts=effective,
-            return_model=query.return_model,  # type: ignore[arg-type]
-            return_fields=query.return_fields,  # type: ignore[typeddict, arg-type, misc]
-        )
+        seek_read = _seek_read(self.read_gw)
+        seek: dict[int, JsonDict] | None = None
+
+        if query.return_fields is None and seek_read is not None:
+            raw, seek_values = await seek_read(
+                filters, cursor=cursor, sorts=effective, return_model=query.return_model
+            )
+            seek = {id(row): values for row, values in zip(raw, seek_values, strict=True)}
+
+        else:
+            raw = await self.read_gw.find_many_with_cursor(  # type: ignore[call-overload, misc]
+                filters,
+                cursor=cursor,
+                sorts=effective,
+                return_model=query.return_model,  # type: ignore[arg-type]
+                return_fields=query.return_fields,  # type: ignore[typeddict, arg-type, misc]
+            )
 
         def _dump(o: R | JsonDict | BaseModel) -> JsonDict:
+            # A projection's dict holds the stored values, and so does the seek read's record
+            # of each model row: a model's own may differ, since a read validator can rewrite
+            # a key, and may lack one. Read off the model only where no seek read exists.
             if isinstance(o, dict):
                 return o
 
-            return o.model_dump(mode="json")  # type: ignore[union-attr, err]
+            if seek is not None:
+                return seek[id(o)]
+
+            return _seek_values(o, sort_keys)
 
         page_raw, has_more, next_tok, prev_tok = assemble_keyset_cursor_page(
             raw,
@@ -298,40 +529,36 @@ class DocumentPaginationMixin(Generic[R]):
         sorts: QuerySortExpression | None,
         chunk_size: int,
     ) -> AsyncGenerator[Sequence[R] | Sequence[JsonDict] | Sequence[BaseModel]]:
-        eff = self._eff_stream_chunk_size(chunk_size)
-        cursor: CursorPaginationExpression = {"limit": eff}
-        page: CursorPage[R] | CursorPage[JsonDict] | CursorPage[BaseModel]
+        async for hits in self._keyset_batches(
+            CursorQuery(return_model=query.return_model, return_fields=query.return_fields),
+            filters=filters,
+            sorts=sorts,
+            chunk=self._eff_stream_chunk_size(chunk_size),
+            max_pages=self.max_stream_pages,
+            label="Document cursor stream",
+        ):
+            yield hits
+
+    # ....................... #
+
+    async def _keyset_batches(
+        self,
+        query: CursorQuery,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        chunk: int,
+        max_pages: int | None,
+        label: str,
+    ) -> AsyncGenerator[Sequence[R] | Sequence[JsonDict] | Sequence[BaseModel]]:
+        cursor: CursorPaginationExpression = {"limit": chunk}
         page_num = 0
         prev_cursor: str | None = None
 
         while True:
-            check_page_limit(
-                pages=page_num,
-                max_pages=self.max_stream_pages,
-                label="Document cursor stream",
-            )
+            check_page_limit(pages=page_num, max_pages=max_pages, label=label)
 
-            if query.return_model is not None:
-                page = await self._cursor_page(
-                    CursorQuery(return_model=query.return_model, return_fields=None),
-                    filters=filters,
-                    cursor=cursor,
-                    sorts=sorts,
-                )
-            elif query.return_fields is not None:
-                page = await self._cursor_page(
-                    CursorQuery(return_model=None, return_fields=query.return_fields),
-                    filters=filters,
-                    cursor=cursor,
-                    sorts=sorts,
-                )
-            else:
-                page = await self._cursor_page(
-                    CursorQuery(return_model=None, return_fields=None),
-                    filters=filters,
-                    cursor=cursor,
-                    sorts=sorts,
-                )
+            page = await self._cursor_page(query, filters=filters, cursor=cursor, sorts=sorts)
 
             if not page.hits:
                 break
@@ -347,5 +574,5 @@ class DocumentPaginationMixin(Generic[R]):
             )
 
             prev_cursor = page.next_cursor
-            cursor = {"limit": eff, "after": page.next_cursor}
+            cursor = {"limit": chunk, "after": page.next_cursor}
             page_num += 1

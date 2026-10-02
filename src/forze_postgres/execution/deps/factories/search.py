@@ -103,6 +103,7 @@ def postgres_search_port_for_config(
         "result_snapshot": snap,
         "read_validation": c.read_validation,
         "lenient_read_fields": member_spec.resolved_lenient_read_fields,
+        "filter_limits": member_spec.filter_limits,
     }
 
     match c.engine:

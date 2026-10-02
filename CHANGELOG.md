@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stored-file delete can keep the object, and uploads can be capped.** `bind_stored_file_writes(..., purge_on_delete=False)` soft-deletes the row and keeps its blob, dropping only the search entry; `StoredFileKitSpec(max_bytes=...)` refuses a larger upload with `upload_too_large` before a row is written.
 
+- **A spec can raise the limits its filters are parsed under.** `DocumentSpec(filter_limits=...)` and `SearchSpec(filter_limits=...)` take a `QueryFilterLimits`, so an internal read can match more than 1,000 ids. Backends and the mock apply it to filters, aggregate filters and `$having`, as do generated routes.
+
+- **A backend can declare caps its server enforces on a filter.** `QueryCapabilities(max_in_size=..., max_disjunctions=...)` bound an operand list and the disjunctions a filter expands to; a filter past either is refused with `query_feature_unsupported` before it is sent.
+
 ### Changed
 
 - **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.
@@ -58,6 +62,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Authorization and tenant membership read every binding on Firestore.** The grant resolver and tenancy management paged bindings by offset, which Firestore refuses past the first page, so a principal with more bindings than one page holds, or a tenant with more members, failed. They read by cursor now.
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
+
+- **A read without a limit no longer repeats or drops rows tied on its sort** (**behaviour change**). Ties now break by `id` and each batch seeks past the last row. A projection without a sort key, a model without `id`, or a non-`id` sort on MongoDB pages by offset; on Firestore, which refuses offsets, it is one query.
+
+- **Firestore refuses a filter it cannot run before sending it.** An `$in` past 30 values, or a filter past 30 disjunctions once expanded (`$in` values multiply under AND, add under OR), failed at the server with a validation error; it is now a clean `query_feature_unsupported` naming the cap.
+
+- **A Firestore query it cannot run is no longer reported as a transaction conflict.** A query needing an index, or a shape Firestore refuses, failed as a retryable `concurrency` error; it is now a `configuration` error naming the reason.
+
+- **A cursor continues from the right row whatever the model does to a sort key.** A token took each key's value from the decoded row, so a key the model excluded, aliased, serialized or rewrote on read (`EmailStr` lowercasing a domain) made the next page skip or repeat rows. It now takes the stored value.
+
+- **A pagination offset that is not a whole, non-negative number is refused as the caller's mistake.** A document read sent `-1` to the backend, which answered with a server error; `"abc"` raised one itself; and `True`, `1.9` or `""` were read as 1, 1 and 0. Each is now a `precondition`, on every backend and the mock.
+
+- **A membership filter's size limit holds for every operand collection** (**behaviour change**). A `frozenset` or other iterable given as a `$values` shortcut skipped the `max_in_size` check. A list, tuple, set or frozenset is bounded now, and any other iterable is refused.
+
+- **A cursor sorted by `id` first pages in `id` order** (**behaviour change**). A sort such as `{id: asc, x: desc}` moved `id` to the end and ordered by `x` first; `id` now stays put and later keys are dropped, so MongoDB and Firestore accept it. A token minted for such a sort earlier is refused; start over.
+
+- **An aggregate read without a limit pages its groups in one order.** With no sort it asked for the read model's `id`, which no aggregate returns, and failed; with a sort that tied, groups could repeat or go missing between batches. The group keys now break every tie.
+
+- **A MongoDB aggregate read honours an object-form sort direction.** A sort written `{"n": {"dir": "asc"}}` returned the groups in reverse, as anything but the string `"asc"` read as descending. A null placement MongoDB cannot express is now refused, as on other MongoDB reads.
+
+- **A membership operand given as a set or frozenset works on every backend.** The parser handed it on as is: Postgres could not bind one inside a JSONB element and answered with a server error, and Meilisearch refused a set. Every operand now reaches the backend as a list.
 
 - **A search page without a sort follows the spec's `default_sort`, then `id`** (**behaviour change**: page order). Offset search ignored it on Postgres, Mongo, Meilisearch and the in-memory search. On Meilisearch only a blank query takes them: with search text, relevance ties keep the engine's order.
 

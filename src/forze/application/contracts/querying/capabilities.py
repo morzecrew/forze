@@ -22,6 +22,7 @@ from the AST alone; those stay backend-internal but should raise the same
 ``query_feature_unsupported`` code rather than ``internal``.
 """
 
+import math
 from typing import Final
 
 import attrs
@@ -38,6 +39,7 @@ from .internal.nodes import (
     QueryNot,
     QueryOr,
 )
+from .internal.parse import OPERAND_COLLECTIONS
 from .types import ALL_VALUE_OPS as ALL_VALUE_OPS
 
 # ----------------------- #
@@ -69,6 +71,14 @@ ALL_ELEMENT_OPS: Final[frozenset[str]] = frozenset(
 HIERARCHY_OPS: Final[frozenset[str]] = frozenset({"$descendant_of", "$ancestor_of"})
 """Hierarchy operators — gated by :attr:`QueryCapabilities.supports_hierarchy`, not
 ``value_ops``, so adding them doesn't make every backend claim support."""
+
+_LIST_OPERAND_OPS: Final[frozenset[str]] = frozenset(
+    {"$in", "$nin", "$superset", "$subset", "$overlaps", "$disjoint"}
+)
+"""Operators whose operand is a list of values, bounded by :attr:`QueryCapabilities.max_in_size`."""
+
+_OPERAND_LISTS = OPERAND_COLLECTIONS
+"""The collection types the parser accepts as such an operand, so it bounds the same ones."""
 
 
 # ....................... #
@@ -107,6 +117,17 @@ class QueryCapabilities:
     materialized-path field) compile. Off by default — only backends that can express
     label-aware path containment (Postgres ``ltree`` / text prefix, the in-memory oracle)
     advertise it; others reject these operators cleanly."""
+
+    max_in_size: int | None = None
+    """Most values a membership or set operand can carry on this backend, whatever a spec's
+    :class:`~forze.application.contracts.querying.QueryFilterLimits` allows. ``None`` when the
+    backend has no cap of its own (an array parameter, for one). A longer operand is refused
+    here rather than sent to a server that would refuse it."""
+
+    max_disjunctions: int | None = None
+    """Most disjunctions a filter may expand to on this backend: an ``$in`` counts one per
+    value, an AND multiplies its children's counts and an OR adds them. ``None`` when the
+    backend sets no such cap. A filter past it is refused here rather than by the server."""
 
     supports_aggregates: bool = True
     """Whether group-by / aggregate pipelines (``find_many_aggregates`` / ``count_aggregates``)
@@ -153,6 +174,15 @@ def validate_query_capabilities(
 
     _walk_caps(expr, caps, backend, caps.value_ops, in_element=False)
 
+    if caps.max_disjunctions is not None:
+        count = _disjunctions(expr)
+
+        if count > caps.max_disjunctions:
+            _cap_fail(
+                backend,
+                f"a filter of {count} disjunctions (at most {caps.max_disjunctions})",
+            )
+
 
 def validate_aggregate_capabilities(
     aggregates: AggregatesExpression | None,  # type: ignore[valid-type]
@@ -182,6 +212,33 @@ def _cap_fail(backend: str, feature: str) -> None:
     )
 
 
+def _disjunctions(node: QueryExpr, *, negated: bool = False) -> int:
+    """How many disjunctions *node* expands to in disjunctive normal form.
+
+    Negation flips AND and OR (De Morgan): a negated AND is an OR of the negated parts, so its
+    counts add, and a negated OR multiplies; a negated ``$in`` is a single conjunction of
+    inequalities.
+    """
+
+    match node:
+        case QueryField(_, "$in", value) if isinstance(value, _OPERAND_LISTS):
+            return 1 if negated else max(len(value), 1)  # pyright: ignore[reportUnknownArgumentType]
+
+        case QueryAnd(items):
+            counts = [_disjunctions(item, negated=negated) for item in items]
+            return sum(counts) if negated else math.prod(counts)
+
+        case QueryOr(items):
+            counts = [_disjunctions(item, negated=negated) for item in items]
+            return math.prod(counts) if negated else sum(counts)
+
+        case QueryNot(item):
+            return _disjunctions(item, negated=not negated)
+
+        case _:
+            return 1
+
+
 def _walk_caps(
     node: QueryExpr,
     caps: QueryCapabilities,
@@ -193,7 +250,7 @@ def _walk_caps(
     # ``allowed`` (value_ops or element_ops for the current level) is threaded down so the
     # hot per-field check is one membership test with no re-derivation.
     match node:
-        case QueryField(_, op, _):
+        case QueryField(_, op, value):
             if op not in allowed:
                 # Hierarchy ops live on their own capability axis, not in value_ops, so
                 # they only reach this slow branch when not already allowed.
@@ -207,6 +264,14 @@ def _walk_caps(
                 else:
                     where = " inside element quantifiers" if in_element else ""
                     _cap_fail(backend, f"operator {op!r}{where}")
+
+            if (
+                caps.max_in_size is not None
+                and op in _LIST_OPERAND_OPS
+                and isinstance(value, _OPERAND_LISTS)
+                and len(value) > caps.max_in_size  # pyright: ignore[reportUnknownArgumentType]
+            ):
+                _cap_fail(backend, f"operator {op!r} with more than {caps.max_in_size} values")
 
         case QueryAnd(items) | QueryOr(items):
             for item in items:

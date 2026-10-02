@@ -7,6 +7,7 @@ from .aggregate import (
     GroupKey,
     GroupTrunc,
     ParsedAggregates,
+    with_group_tiebreakers,
 )
 from .cast import QueryValueCaster
 from .matching import compile_filter, evaluate_filter, value_at_path
@@ -29,6 +30,7 @@ from .text_pattern import like_pattern_to_regex, validate_text_pattern
 __all__ = [
     "AggregateComputedField",
     "AggregatesExpressionParser",
+    "with_group_tiebreakers",
     "GroupKey",
     "GroupField",
     "GroupTrunc",
