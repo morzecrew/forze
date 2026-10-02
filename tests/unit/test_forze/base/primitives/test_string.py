@@ -1,4 +1,6 @@
 
+from enum import StrEnum
+
 import hypothesis.strategies as st
 import pytest
 from hypothesis import given, settings
@@ -134,6 +136,11 @@ _CHANGED_BY_THE_FULL_PASS = [
     "a\u3000b",  # ideographic space
     "a\ue000b",  # private use
     "a\u0378b",  # unassigned
+    "a\x00b",  # NUL
+    "a\x1bb",  # ESC
+    "a\x7fb",  # DEL
+    "a\x85b",  # NEL, a C1 whitespace control
+    "a\x9fb",  # a C1 control
     "a\u200db",  # ZWJ: kept, but takes the full pass
     "a\u200cb",  # ZWNJ: kept, but takes the full pass
 ]
@@ -197,6 +204,9 @@ class TestTheAlreadyNormalizedFastPath:
                         "\ue000",
                         "\ufe0f",
                         "e",
+                        "\x00",
+                        "\x1b",
+                        "\x85",
                     ]
                 ),
                 st.characters(),
@@ -210,3 +220,35 @@ class TestTheAlreadyNormalizedFastPath:
 
         assert normalize_string(text) == normalized
         assert normalize_string(normalized) == _full_pass(normalized)
+
+
+_CONTROLS = [chr(c) for c in (*range(0x20), 0x7F, *range(0x80, 0xA0))]
+
+
+class TestControlCharacters:
+    """Control characters are dropped, except whitespace ones, which collapse like spaces.
+
+    Postgres text columns refuse NUL, and none of them render.
+    """
+
+    @pytest.mark.parametrize("ch", [c for c in _CONTROLS if not c.isspace()], ids=ord)
+    def test_one_that_is_not_whitespace_is_dropped(self, ch: str) -> None:
+        assert normalize_string(f"a{ch}b") == "ab"
+        assert normalize_string(f"\u0416{ch}b") == "\u0416b"
+
+    @pytest.mark.parametrize(
+        "ch", [c for c in _CONTROLS if c.isspace() and c not in "\n\r"], ids=ord
+    )
+    def test_one_that_is_whitespace_collapses_to_a_space(self, ch: str) -> None:
+        assert normalize_string(f"a{ch}b") == "a b"
+        assert normalize_string(f"\u0416{ch}b") == "\u0416 b"
+
+
+class TestAStringSubclass:
+    def test_comes_back_a_plain_string(self) -> None:
+        class _Choice(StrEnum):
+            ALPHA = "alpha"
+
+        out = normalize_string(_Choice.ALPHA)
+
+        assert (type(out), out) == (str, "alpha")

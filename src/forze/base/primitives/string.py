@@ -39,6 +39,10 @@ _TRANSLATE = str.maketrans(
         "\ufeff": None,  # BOM / ZERO WIDTH NO-BREAK SPACE
         "\u200b": None,  # ZERO WIDTH SPACE
         "\u2060": None,  # WORD JOINER
+        # Control characters that are not whitespace (NUL, ESC, DEL, most of C1): they never
+        # render, and Postgres text columns refuse NUL. Whitespace controls (tab, vertical
+        # tab, form feed, U+001C-U+001F, NEL) collapse like spaces instead.
+        **{chr(c): None for c in (*range(0x20), *range(0x7F, 0xA0)) if not chr(c).isspace()},
     }
 )
 
@@ -80,7 +84,8 @@ def normalize_string(s: str | None) -> str | None:
     The normalization:
 
     * normalizes Unicode to NFC,
-    * strips most invisible/control characters while preserving emoji shaping,
+    * drops control characters other than whitespace, and most invisible format
+      characters while preserving emoji shaping,
     * collapses whitespace (except newlines) to single spaces,
     * trims trailing/leading spaces on each line.
     """
@@ -88,7 +93,9 @@ def normalize_string(s: str | None) -> str | None:
     if s is None:
         return None
 
-    if _is_normalized(s):
+    # A ``str`` subclass, such as a ``StrEnum`` member, takes the full pass, which returns a
+    # plain ``str`` as it always has.
+    if type(s) is str and _is_normalized(s):
         return s
 
     s = s.replace("\r\n", "\n").translate(_TRANSLATE)
