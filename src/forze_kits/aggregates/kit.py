@@ -704,7 +704,8 @@ class AggregateKit(Generic[R, D, C, U]):
             versioned_wiring(
                 spec,
                 self.versioned,
-                soft_deleted=self.soft_delete,
+                # The versioned GET replaces soft deletion's, so it carries get_deleted too.
+                soft_deleted=self.soft_delete and self.get_deleted == "not_found",
                 dtos=dtos,
                 create_mapper=mappers.create,
                 update_mapper=mappers.update,

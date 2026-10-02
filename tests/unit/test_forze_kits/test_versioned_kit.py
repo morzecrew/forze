@@ -654,6 +654,59 @@ class TestComposedWithSoftDeletion:
 
         assert caught.value.kind is ExceptionKind.NOT_FOUND
 
+    async def test_get_deleted_read_serves_the_deleted_current_row(self) -> None:
+        # The versioned GET replaces soft deletion's, so the option has to reach it as well.
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(
+            spec=BOTH, soft_delete=True, versioned=POLICY, get_deleted="read"
+        ).registry(tx_route=_TX)
+        key = BOTH.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await run_operation(
+                reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="m"), ctx
+            )
+            await run_operation(
+                reg,
+                key(SoftDeletionKernelOp.DELETE),
+                DocumentIdRevDTO(id=row.id, rev=row.rev),
+                ctx,
+            )
+            got = await run_operation(reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx)
+
+        assert (got.id, got.is_deleted) == (row.id, True)
+
+    async def test_get_deleted_read_still_refuses_a_superseded_version(self) -> None:
+        # Reading deleted rows does not make an old version the answer to "this fact".
+        runtime = build_runtime(MockDepsModule())
+        reg = AggregateKit(
+            spec=BOTH, soft_delete=True, versioned=POLICY, get_deleted="read"
+        ).registry(tx_route=_TX)
+        key = BOTH.default_namespace.key
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            row = await run_operation(
+                reg, key(DocumentKernelOp.CREATE), _BothCreate(meter="m"), ctx
+            )
+            await run_operation(
+                reg,
+                key(VersionedKernelOp.CORRECT),
+                CorrectDocumentDTO(
+                    id=row.id,
+                    expected_version=row.version,
+                    dto=_BothUpdate(meter="n"),
+                    reason="misread",
+                ),
+                ctx,
+            )
+
+            with pytest.raises(CoreException) as caught:
+                await run_operation(reg, key(DocumentKernelOp.GET), DocumentIdDTO(id=row.id), ctx)
+
+        assert caught.value.kind is ExceptionKind.NOT_FOUND
+
     async def test_list_hides_a_row_that_is_current_and_deleted(self) -> None:
         # The other half of the shared mapper slot, and the one the composition actually broke:
         # the versioned list mapper replaced soft deletion's, so a deleted row that was still
