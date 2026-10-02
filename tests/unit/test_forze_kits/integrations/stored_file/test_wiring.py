@@ -115,3 +115,34 @@ def test_the_binder_binds_the_namespace_the_registry_was_built_with() -> None:
     for registry in (frozen, built, helper):
         for op in _STAGES:
             assert registry.plans[media.key(op)].tx.route == "mock"
+
+
+# ....................... #
+# Keeping the blob on delete: the row is soft-deleted, the object stays, the index forgets it.
+
+_SEARCHED = StoredFileKitSpec(name="files", search=StoredFileKitSpec.default_search("files"))
+
+
+def _delete_stages(frozen: FrozenOperationRegistry, kit: StoredFileKitSpec) -> tuple:
+    tx = frozen.plans[kit.document.default_namespace.key(StoredFileKernelOp.DELETE)].tx
+    return tx.route, set(tx.after_commit.steps)
+
+
+@pytest.mark.parametrize(
+    ("kit", "after_commit"),
+    [(_PLAIN, set()), (_SEARCHED, {"stored_file_unindex"})],
+    ids=["no-search", "search"],
+)
+def test_keeping_the_blob_drops_the_purge(kit: StoredFileKitSpec, after_commit: set) -> None:
+    binder = bind_stored_file_writes(kit, tx_route="mock", purge_on_delete=False).freeze()
+    helper = freeze_stored_file_registry(kit, tx_route="mock", purge_on_delete=False)
+
+    # Still transactional; only the after-commit purge changes.
+    assert _delete_stages(binder, kit) == ("mock", after_commit)
+    assert _delete_stages(helper, kit) == ("mock", after_commit)
+
+
+def test_the_blob_is_purged_by_default() -> None:
+    frozen = bind_stored_file_writes(_SEARCHED, tx_route="mock").freeze()
+
+    assert _delete_stages(frozen, _SEARCHED) == ("mock", {"stored_file_purge_blob"})

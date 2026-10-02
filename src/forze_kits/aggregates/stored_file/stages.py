@@ -59,8 +59,13 @@ def stored_file_complete_upload_after_commit_factory(
 
 def stored_file_purge_blob_after_commit_factory(
     kit: StoredFileKitSpec,
+    *,
+    keep_blob: bool = False,
 ) -> OnSuccessFactory:
-    """After-commit hook that deletes blob storage for a soft-deleted file."""
+    """After-commit hook that deletes blob storage and the search entry for a soft-deleted file.
+
+    :param keep_blob: Leave the stored object in place and drop only the search entry.
+    """
 
     def _factory(ctx: ExecutionContext) -> OnSuccess[Any, Any]:
         search = ctx.search.command(kit.search_spec) if kit.search_spec is not None else None
@@ -70,7 +75,7 @@ def stored_file_purge_blob_after_commit_factory(
                 kit=kit,
                 ctx=ctx,
                 file_id=result.id,
-                storage_key=result.storage_key,
+                storage_key=None if keep_blob else result.storage_key,
                 search=search,
             )
 

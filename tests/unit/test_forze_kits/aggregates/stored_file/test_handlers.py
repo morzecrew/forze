@@ -3,7 +3,8 @@
 import pytest
 
 from forze.application.contracts.outbox import OutboxSpec
-from forze.base.exceptions import CoreException
+from forze.application.execution.operations import run_operation
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.aggregates.stored_file import (
     DownloadStoredFile,
@@ -13,8 +14,10 @@ from forze_kits.aggregates.stored_file import (
     SoftDeleteStoredFile,
     StoredFileIdDTO,
     StoredFileIdRevDTO,
+    StoredFileKernelOp,
     UploadStoredFile,
     UploadStoredFileRequestDTO,
+    build_stored_file_registry,
 )
 from forze_kits.aggregates.stored_file.handlers._helpers import (
     complete_stored_file_upload,
@@ -199,3 +202,51 @@ class TestMergeListFilters:
             )
             is None
         )
+
+
+# ....................... #
+
+
+class TestUploadSizeLimit:
+    def _registry(self, kit: StoredFileKitSpec):
+        return build_stored_file_registry(kit).freeze()
+
+    @pytest.mark.asyncio
+    async def test_an_upload_over_the_limit_is_refused_before_anything_is_stored(
+        self, stub_ctx
+    ) -> None:
+        kit = StoredFileKitSpec(name="files", max_bytes=4)
+        upload = kit.document.default_namespace.key(StoredFileKernelOp.UPLOAD)
+
+        with pytest.raises(CoreException) as ei:
+            await run_operation(
+                self._registry(kit),
+                upload,
+                UploadStoredFileRequestDTO(filename="big.bin", data=b"12345"),
+                stub_ctx,
+            )
+
+        assert (ei.value.kind, ei.value.code) == (ExceptionKind.VALIDATION, "upload_too_large")
+        assert ei.value.details == {"max_bytes": 4}
+        assert await stub_ctx.doc.query(kit.document).count() == 0
+
+    @pytest.mark.asyncio
+    async def test_an_upload_at_the_limit_is_accepted(self, stub_ctx) -> None:
+        kit = StoredFileKitSpec(name="files", max_bytes=4)
+        upload = kit.document.default_namespace.key(StoredFileKernelOp.UPLOAD)
+
+        created = await run_operation(
+            self._registry(kit),
+            upload,
+            UploadStoredFileRequestDTO(filename="fits.bin", data=b"1234"),
+            stub_ctx,
+        )
+
+        assert created.status == StoredFileStatus.PENDING
+
+    @pytest.mark.parametrize("max_bytes", [0, -1, True])
+    def test_a_limit_that_admits_nothing_is_refused(self, max_bytes: int) -> None:
+        with pytest.raises(CoreException) as ei:
+            StoredFileKitSpec(name="files", max_bytes=max_bytes)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
