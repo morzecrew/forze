@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DST can check that a deactivation closes a derived permission.** `no_permission_after_deactivation(deactivate, guarded)` flags a guarded operation that succeeds after the deactivation returned.
 
 - **An allowed origin can be a dev server's port range.** `CookieCsrf` and the realtime WebSocket's `allowed_origins` accept `http://localhost:5173-5199` or `http://localhost:*` on a loopback host. The WebSocket route now refuses an entry that is not an origin (`null`, `*`) when attached.
+
 - **The stored-file kit's write wiring leaves room for your guards.** `bind_stored_file_writes(kit, tx_route=...)` binds upload and delete to their transaction, outbox flush and after-commit stages and returns the registry unfrozen, so authn and authz hooks can bind before it freezes.
 
 ### Changed
@@ -35,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - **A request no ingress authenticates is refused by default** (**behaviour change**). `AuthnRequirement(required=True)` answers 401 `auth_required` outside the middleware's `anonymous_paths`; list login, refresh and public pages there, or pass `required=False`. CORS preflights pass.
+
 - **The documented authn → authz hook chain freezes.** `AuthnRequired.to_step()` under its default id now provides the `authn.principal` capability that `AuthzBeforeAuthorize.to_step()` requires by default, so authorization runs after authentication; `AuthzBeforeAuthorize.to_step()` no longer needs a `step_id`.
 
 - **Words with "uri" inside them are no longer read as secrets.** The scrubber matched `uri` anywhere in a name, so an audit spec refused metadata such as `manufacturing` or `security`. It now matches only at either end of a segment (`uri_template`, `db_uri`, `dburi`), so a word ending in "uri" is still masked.
