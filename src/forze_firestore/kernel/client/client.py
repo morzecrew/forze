@@ -417,6 +417,34 @@ class FirestoreClient(FirestoreClientPort):
 
     # ....................... #
 
+    @exc_interceptor.coroutine("firestore.get_documents")  # type: ignore[untyped-decorator]
+    async def get_documents(
+        self,
+        coll: AsyncCollectionReference,
+        doc_ids: Sequence[str],
+    ) -> dict[str, JsonDict]:
+        """The documents named *doc_ids* that exist, keyed by name, read in one batched get.
+
+        Read by name, as :meth:`get_document` reads one. Firestore documents no limit on the
+        number of names in a batched get.
+        """
+
+        if not doc_ids:
+            return {}
+
+        tx = await self._transaction_for_op()
+        refs = [coll.document(doc_id) for doc_id in doc_ids]
+        found: dict[str, JsonDict] = {}
+
+        # Snapshots arrive in no particular order, one per distinct name.
+        async for snap in self.__require_client().get_all(refs, transaction=tx):
+            if snap.exists:
+                found[snap.id] = _snapshot_to_dict(snap)
+
+        return found
+
+    # ....................... #
+
     @exc_interceptor.coroutine("firestore.set_document")  # type: ignore[untyped-decorator]
     async def set_document(
         self,

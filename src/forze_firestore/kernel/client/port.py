@@ -45,6 +45,12 @@ class FirestoreClientPort(Protocol):
         doc_id: str,
     ) -> Awaitable[JsonDict | None]: ...  # pragma: no cover
 
+    def get_documents(
+        self,
+        coll: AsyncCollectionReference,
+        doc_ids: Sequence[str],
+    ) -> Awaitable[dict[str, JsonDict]]: ...  # pragma: no cover
+
     def set_document(
         self,
         coll: AsyncCollectionReference,

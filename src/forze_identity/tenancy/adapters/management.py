@@ -163,8 +163,8 @@ class TenantManagementAdapter(TenantManagementPort):
     ) -> Sequence[TenantIdentity]:
         """The active tenants *principal_id* belongs to, in the order its memberships are read.
 
-        The tenants are read together rather than one per membership (Firestore reads 30 ids at
-        a time); a membership naming a tenant that does not exist raises not-found.
+        The tenants are read together rather than one per membership; a membership naming a
+        tenant that does not exist raises not-found.
         """
 
         bindings = await self._all_bindings({"$values": {"principal_id": principal_id}})
