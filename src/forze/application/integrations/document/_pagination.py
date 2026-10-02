@@ -57,13 +57,20 @@ def _field_type(model: type[BaseModel], name: str) -> Any:
     return None
 
 
+def _seek_read(gateway: Any) -> Any:
+    """The gateway's ``find_many_with_cursor_seek``, which returns each row's stored sort
+    values from the page's own statement; ``None`` for a gateway without one."""
+
+    return getattr(gateway, "find_many_with_cursor_seek", None)
+
+
 def _seek_values(row: BaseModel, sort_keys: Sequence[str]) -> JsonDict:
     """The sort keys' values on *row*, nested the way a cursor token reads them.
 
-    For a sort on ``id`` alone, and for a read model with no ``id`` to look its stored values
-    up by. Read off the model's attributes rather than its dump: a dump can leave a key out
-    (``exclude``), rename it (an alias) or rewrite it (a serializer), and a token built from it
-    would seek from the wrong place, dropping rows without an error.
+    For a sort on ``id`` alone, and for a gateway with no seek read. Read off the model's
+    attributes rather than its dump: a dump can leave a key out (``exclude``), rename it (an
+    alias) or rewrite it (a serializer), and a token built from it would seek from the wrong
+    place, dropping rows without an error.
 
     :raises CoreException: ``precondition`` when a model on a key's path has no field for it.
     """
@@ -298,13 +305,12 @@ class DocumentPaginationMixin(Generic[R]):
         if id_only and keys != [ID_FIELD]:
             return False
 
-        if query.return_model is not None:
-            # The seek values come from the store, looked up by the row's id.
-            return _field_type(query.return_model, ID_FIELD) is not None
+        if query.return_fields is None:
+            # Model rows: a validator may have rewritten a key, so seek values must come with
+            # the page from the store. Without a gateway that returns them, only `id` is safe.
+            return keys == [ID_FIELD] or _seek_read(self.read_gw) is not None
 
-        projection = query.return_fields
-
-        return projection is None or all(_sort_key_in_projection(k, projection) for k in keys)
+        return all(_sort_key_in_projection(k, query.return_fields) for k in keys)
 
     # ....................... #
 
@@ -389,51 +395,6 @@ class DocumentPaginationMixin(Generic[R]):
 
     # ....................... #
 
-    async def _stored_sort_values(
-        self,
-        rows: Sequence[Any],
-        sort_keys: Sequence[str],
-    ) -> dict[str, JsonDict] | None:
-        """The stored sort-key values of the rows a cursor token may be minted from, by id.
-
-        A model row holds what its validators made of the stored row: one that lowercases an
-        email, say, or scales a number. The store orders and seeks by what it holds, so a token
-        built from the model would start the next page in the wrong place and skip rows.
-        Only the first and last two rows can bound a page, so at most four are read back, as a
-        projection of the sort keys.
-
-        ``None`` where the rows' own values serve: projections (already stored values), a sort
-        on ``id`` alone, and a read model with no ``id`` to look rows up by.
-
-        :raises CoreException: ``precondition`` when a returned model has no ``id``.
-        """
-
-        if (
-            not rows
-            or isinstance(rows[0], dict)
-            or ID_FIELD not in sort_keys
-            or list(sort_keys) == [ID_FIELD]
-        ):
-            return None
-
-        edges = [*rows[:2], *rows[-2:]]
-
-        if any(_field_type(type(row), ID_FIELD) is None for row in edges):
-            raise exc.precondition(
-                "A cursor sorted by a key besides id needs the returned model to carry id.",
-            )
-
-        ids = list(dict.fromkeys(getattr(row, ID_FIELD) for row in edges))
-        found = await self.read_gw.find_many(  # type: ignore[misc]
-            filters={"$values": {ID_FIELD: {"$in": ids}}},
-            limit=len(ids),
-            return_fields=list(dict.fromkeys(sort_keys)),  # type: ignore[arg-type]
-        )
-
-        return {str(row[ID_FIELD]): row for row in found}
-
-    # ....................... #
-
     async def _cursor_page(
         self,
         query: CursorQuery,
@@ -470,34 +431,35 @@ class DocumentPaginationMixin(Generic[R]):
                 "omit ``sorts`` or pass a single {id: asc|desc}.",
             )
 
-        raw = await self.read_gw.find_many_with_cursor(  # type: ignore[call-overload, misc]
-            filters,
-            cursor=cursor,
-            sorts=effective,
-            return_model=query.return_model,  # type: ignore[arg-type]
-            return_fields=query.return_fields,  # type: ignore[typeddict, arg-type, misc]
-        )
+        seek_read = _seek_read(self.read_gw)
+        seek: dict[int, JsonDict] | None = None
 
-        stored = await self._stored_sort_values(raw, sort_keys)
+        if query.return_fields is None and sort_keys != [ID_FIELD] and seek_read is not None:
+            raw, seek_values = await seek_read(
+                filters, cursor=cursor, sorts=effective, return_model=query.return_model
+            )
+            seek = {id(row): values for row, values in zip(raw, seek_values, strict=True)}
+
+        else:
+            raw = await self.read_gw.find_many_with_cursor(  # type: ignore[call-overload, misc]
+                filters,
+                cursor=cursor,
+                sorts=effective,
+                return_model=query.return_model,  # type: ignore[arg-type]
+                return_fields=query.return_fields,  # type: ignore[typeddict, arg-type, misc]
+            )
 
         def _dump(o: R | JsonDict | BaseModel) -> JsonDict:
-            # A projection's dict holds the stored values. A model's may differ, since a read
-            # validator can rewrite a key, so its token values come from the store by id.
+            # A projection's dict holds the stored values, and so does the seek read's record
+            # of each model row: a model's own may differ, since a read validator can rewrite
+            # a key. Read off the model only for `id`, or where no seek read exists.
             if isinstance(o, dict):
                 return o
 
-            if stored is None:
-                return _seek_values(o, sort_keys)
+            if seek is not None:
+                return seek[id(o)]
 
-            values = stored.get(str(getattr(o, ID_FIELD)))
-
-            if values is None:
-                raise exc.concurrency(
-                    "A row on this cursor page was removed while the page was read; "
-                    "read the page again.",
-                )
-
-            return values
+            return _seek_values(o, sort_keys)
 
         page_raw, has_more, next_tok, prev_tok = assemble_keyset_cursor_page(
             raw,

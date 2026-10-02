@@ -581,10 +581,13 @@ class TestPostgresDocumentAdapterQueryDelegation:
         read_gw = _read_gw_full()
         first = [_tread() for _ in range(10)]
         second = [_tread()]
-        read_gw.find_many_with_cursor = AsyncMock(side_effect=[first + second, second])
-        # A batch's token takes the sort values the store holds for its edge rows.
-        stored = [{ID_FIELD: str(r.id), "title": r.title} for r in first + second]
-        read_gw.find_many = AsyncMock(return_value=stored)
+        # A batch's token takes the sort values its own statement read from the store.
+        def _stored(rows: list[TRead]) -> list[dict[str, object]]:
+            return [{ID_FIELD: r.id, "title": r.title} for r in rows]
+
+        read_gw.find_many_with_cursor_seek = AsyncMock(
+            side_effect=[(first + second, _stored(first + second)), (second, _stored(second))]
+        )
 
         sorts = {"title": "desc"}
         adapter = PostgresDocumentAdapter(
@@ -597,7 +600,7 @@ class TestPostgresDocumentAdapterQueryDelegation:
         page = await adapter.find_many(filters=None, sorts=sorts)
 
         assert page.hits == first + second
-        for call in read_gw.find_many_with_cursor.await_args_list:
+        for call in read_gw.find_many_with_cursor_seek.await_args_list:
             assert call.kwargs["sorts"] == {"title": "desc", ID_FIELD: "desc"}
 
     @pytest.mark.asyncio

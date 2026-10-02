@@ -881,6 +881,63 @@ class PostgresReadGateway[M: BaseModel](
         return_model: type[T] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> list[M] | list[T] | list[JsonDict]:
+        raw_rows, _ = await self._cursor_rows(
+            filters, cursor, sorts, return_model=return_model, return_fields=return_fields
+        )
+
+        # At most *lim* + 1 rows; caller slices and derives ``has_more``.
+        if return_model is not None:
+            return await self._adecode_rows(raw_rows, model=return_model)
+
+        if return_fields is not None:
+            decrypted = await self._adecrypt_projection_rows(raw_rows)
+            return [build_projection(r, return_fields) for r in decrypted]
+
+        return await self._adecode_rows(raw_rows)
+
+    # ....................... #
+
+    async def find_many_with_cursor_seek(
+        self,
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        return_model: type[BaseModel] | None = None,
+    ) -> tuple[list[Any], list[JsonDict]]:
+        """A cursor page decoded into models, with each row's stored sort-key values.
+
+        Both come from the one statement that read the page. A model holds what its validators
+        made of the row (a lowercased email, say) while the store orders by what it holds, so a
+        token must seek from the stored values; read back in a second statement, they could
+        already have changed, and the next page would start in the wrong place.
+
+        :returns: The decoded rows and, aligned with them, each row's sort-key root values.
+        """
+
+        raw_rows, seek_values = await self._cursor_rows(
+            filters, cursor, sorts, return_model=return_model, with_seek_values=True
+        )
+        rows = (
+            await self._adecode_rows(raw_rows, model=return_model)
+            if return_model is not None
+            else await self._adecode_rows(raw_rows)
+        )
+
+        return list(rows), seek_values
+
+    # ....................... #
+
+    async def _cursor_rows(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        cursor: CursorPaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        *,
+        return_model: type[BaseModel] | None = None,
+        return_fields: Sequence[str] | None = None,
+        with_seek_values: bool = False,
+    ) -> tuple[list[JsonDict], list[JsonDict]]:
         c = dict(cursor or {})
 
         if c.get("after") and c.get("before"):
@@ -943,8 +1000,21 @@ class PostgresReadGateway[M: BaseModel](
         order_fwd = build_order_by_sql(exprs, directions, nulls=nulls, flip=False)
         order_bwd = build_order_by_sql(exprs, directions, nulls=nulls, flip=True)
 
+        roots = list(dict.fromkeys(key.split(".", 1)[0] for key in sort_keys))
+        extra: list[str] = []
+
+        if with_seek_values:
+            # Every sort key's column, even one the returned model leaves out, so the page's
+            # own statement carries the values a token seeks from.
+            base = self.return_columns(return_model)
+            extra = [root for root in roots if root not in base]
+            cols = self._build_return_clause(base + extra, None)
+
+        else:
+            cols = self.return_clause(return_model, return_fields)
+
         stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=self.return_clause(return_model, return_fields),
+            cols=cols,
             table=(await self._qname()).ident(),
             where=where_fin,
         )
@@ -960,15 +1030,16 @@ class PostgresReadGateway[M: BaseModel](
         if use_before:
             raw_rows = list(reversed(raw_rows))
 
-        # At most *lim* + 1 rows; caller slices and derives ``has_more``.
-        if return_model is not None:
-            return await self._adecode_rows(raw_rows, model=return_model)
+        seek_values = (
+            [{root: row.get(root) for root in roots} for row in raw_rows]
+            if with_seek_values
+            else []
+        )
 
-        if return_fields is not None:
-            decrypted = await self._adecrypt_projection_rows(raw_rows)
-            return [build_projection(r, return_fields) for r in decrypted]
+        if extra:
+            raw_rows = [{k: v for k, v in row.items() if k not in extra} for row in raw_rows]
 
-        return await self._adecode_rows(raw_rows)
+        return raw_rows, seek_values
 
     # ....................... #
 
