@@ -17,6 +17,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    resolve_sort_keys,
 )
 from forze.application.contracts.search import (
     SearchOptions,
@@ -59,6 +60,7 @@ from ._pipeline_sql import (
     build_pgroonga_index_first_pipeline,
     outer_join_on_scored,
     scored_key_columns,
+    scored_key_order,
     validate_join_pairs,
 )
 from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
@@ -159,6 +161,41 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             extras["candidate_limit"] = candidate_limit
 
         return extras
+
+    # ....................... #
+
+    def _heap_cap_order(
+        self,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+        join: Sequence[tuple[str, str]],
+    ) -> sql.Composable | None:
+        """The page order after the rank on the heap alone, for an index-first cap.
+
+        A sort key the heap carries, a join key or a mapped index field, reads its heap column;
+        ``None`` when one is the projection's own, which the heap cannot order by.
+        """
+
+        on_heap = dict(join) | dict(self.index_field_map or {})
+        parts: list[sql.Composable] = []
+
+        for field, direction, nulls in resolve_sort_keys(sorts, sealed=self.sealed_fields):
+            if (column := on_heap.get(field)) is None:
+                return None
+
+            part = sql.SQL("{} {}").format(
+                sql.Identifier(self.pipeline.index, column),
+                sql.SQL("ASC" if direction == "asc" else "DESC"),
+            )
+
+            # A record id is never null; another column takes the page's placement.
+            if field != ID_FIELD:
+                part = sql.SQL("{} {}").format(
+                    part, sql.SQL("NULLS FIRST" if nulls == "first" else "NULLS LAST")
+                )
+
+            parts.append(part)
+
+        return sql.SQL(", ").join([*parts, scored_key_order(join)])
 
     # ....................... #
 
@@ -538,16 +575,21 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             candidate_cap,
         )
 
-        # Index-first caps the heap before it meets the projection, so it cannot order the cap
-        # by projection columns; a sort on one runs filter-first, where the cap can.
-        joined = {projection for projection, _ in join}
+        # Index-first caps the heap before it meets the projection, so its cap orders by what
+        # the heap carries; a sort on a projection-only column runs filter-first, where it can.
+        index_first_order: sql.Composable | None = None
 
-        if (
-            resolved_plan == "index_first"
-            and not coalesced
-            and any(field.split(".", 1)[0] not in joined for field in sorts or ())
-        ):
-            resolved_plan = "filter_first"
+        if resolved_plan == "index_first":
+            if coalesced:
+                index_first_order, _ = await self._capped_order(
+                    sorts, coalesced=True, join_pairs=join
+                )
+
+            else:
+                index_first_order = self._heap_cap_order(sorts, join)
+
+            if index_first_order is None:
+                resolved_plan = "filter_first"
 
         join_vs = outer_join_on_scored(
             join,
@@ -583,9 +625,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 proj_fw=fw,
                 heap_row_limit=heap_limit,
                 scored_order=scored_order,
-                scored_tiebreak=(
-                    await self._capped_order(sorts, coalesced=coalesced, join_pairs=join)
-                )[0],
+                scored_tiebreak=index_first_order,
             )
             count_with, count_from = build_pgroonga_index_first_pipeline(
                 aliases=self.pipeline,
