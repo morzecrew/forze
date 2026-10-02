@@ -134,6 +134,12 @@ transactions that each hold the owner the other wants are a deadlock Postgres de
 refused as `concurrency`, which is retryable, and the in-memory store refuses the same cycle the
 same way. Mongo has no advisory-lock mechanism and refuses the declaration.
 
+Those locks add up in a long transaction. A transaction holds one for each distinct owner it writes
+under until it ends, and they all live in Postgres's shared lock table, whose size
+`max_locks_per_transaction` sets. A request touches a few owners; a bulk load or a seed that writes
+under thousands in one transaction can fill the table and fail with `out of shared memory`. Commit
+such a load in batches, so a transaction holds only its own batch's owners.
+
 It **serializes, it does not validate**, and the difference is worth stating twice: the lock is
 taken before the *write*, so a handler that reads, decides, and then writes still made its
 decision on an unprotected read. What the declaration removes is two writes landing at once;
