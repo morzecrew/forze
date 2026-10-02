@@ -358,6 +358,10 @@ attach_operation_routes(
 A binding whose operation is not registered is refused, so a typo fails at startup rather
 than answering 404; pass `skip_unregistered=True` to skip it instead.
 
+Every routed operation's key lives under the namespace, as `<prefix>.<suffix>`. A key
+registered without one, such as a bare `add`, cannot be bound: register it as `stock.add`
+instead. The refusal names a bare key it finds, so the cause is not mistaken for a typo.
+
 `query_endpoint` reads the whole input DTO from query parameters, one per field; a list
 field repeats (`?tag=a&tag=b`). A field a query string cannot carry, such as a nested
 model or `bytes`, is refused when the route is attached. The operation receives the DTO a

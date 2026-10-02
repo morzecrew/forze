@@ -341,6 +341,35 @@ class TestTheBindingTable:
         assert fetched.json() == {"id": str(item)}
 
 
+    def test_a_key_outside_the_namespace_is_refused_by_name(self) -> None:
+        # Routes are named `<prefix>.<suffix>`, so a bare registry key cannot be bound.
+        registry = OperationRegistry(
+            handlers={"add": lambda _c: _Echo(out=_Add)},
+            descriptors={"add": OperationDescriptor(input_type=_Add, output_type=_Add)},
+        ).freeze()
+
+        with pytest.raises(CoreException, match="'add' is registered outside the namespace"):
+            attach_operation_routes(
+                APIRouter(),
+                registry=registry,
+                ns=STOCK,
+                ctx_dep=lambda: context_from_modules(MockDepsModule()),
+                bindings={"add": _BINDINGS["add"]},
+            )
+
+    def test_a_typo_is_refused_without_the_namespace_hint(self) -> None:
+        with pytest.raises(CoreException, match="is not registered") as raised:
+            attach_operation_routes(
+                APIRouter(),
+                registry=_registry(),
+                ns=STOCK,
+                ctx_dep=lambda: context_from_modules(MockDepsModule()),
+                bindings={"addd": _BINDINGS["add"]},
+            )
+
+        assert "namespace" not in str(raised.value)
+
+
 class TestTheQueryRoute:
     def test_every_field_is_a_query_parameter(self) -> None:
         params = _app().openapi()["paths"]["/stock/levels"]["get"]["parameters"]
