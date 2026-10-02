@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.contracts.search import SearchResultSnapshotSpec, SearchSpec
 from forze.application.integrations.search import SearchResultSnapshot
+from forze.base.exceptions import CoreException
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
 from forze_mock.adapters import MockDocumentAdapter, MockSearchAdapter, MockState
 from forze_mock.adapters.search.command import (
@@ -218,3 +219,47 @@ async def test_a_snapshot_replays_only_for_the_order_it_was_taken_in() -> None:
     )
 
     assert [hit.title for hit in page.hits] == [row.title for row in reversed(ascending)]
+
+
+async def test_a_lenient_field_is_no_sort_key(harness: SearchHarness) -> None:
+    """A lenient field has no stored value, so the real backends refuse to sort by it."""
+
+    state = MockState()
+    spec = SearchSpec(
+        name="rows",
+        model_type=_Row,
+        fields=searchable_fields(),
+        lenient_read_fields=frozenset({"category"}),
+    )
+
+    with pytest.raises(CoreException) as refused:
+        await MockSearchAdapter(state=state, spec=spec).search(
+            "", None, {"limit": 5}, {"category": "asc"}
+        )
+
+    assert refused.value.code == "field_not_on_read_model"
+
+
+async def test_an_invalid_sort_is_refused_before_a_snapshot_is_read() -> None:
+    """A snapshot keyed on what the sort resolves to must not let an unknown key past."""
+
+    state = MockState()
+    rs_spec = SearchResultSnapshotSpec(name="snap", enabled=True)
+    store = MockSearchResultSnapshotAdapter(state=state, spec=rs_spec)
+    spec = SearchSpec(name="rows", model_type=_Row, fields=searchable_fields(), snapshot=rs_spec)
+    sorts = {"id": "asc", "nope": "asc"}
+    # Keyed as the unchecked sort resolves: ended at the id, the unknown key dropped.
+    key = SearchResultSnapshot.simple_search_fingerprint(
+        "python", None, {"id": "asc"}, spec_name="rows", variant="offset"
+    )
+    await store.put_run(run_id="run-1", fingerprint=key, ordered_ids=[], chunk_size=10)
+    port = MockSearchAdapter(
+        state=state, spec=spec, result_snapshot=SearchResultSnapshot(store=store)
+    )
+
+    with pytest.raises(CoreException) as refused:
+        await port.search_page(
+            "python", None, {"limit": 5}, sorts, snapshot={"id": "run-1", "fingerprint": key}
+        )
+
+    assert refused.value.code == "field_not_on_read_model"

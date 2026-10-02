@@ -96,7 +96,7 @@ class MockHubSearchAdapter[M: BaseModel](
             ordered = leg._full_ordered_search_documents(  # pyright: ignore[reportPrivateUsage]
                 query,
                 filters,
-                sorts,
+                leg._page_order(sorts),  # pyright: ignore[reportPrivateUsage]
                 leg_opts,
             )
             for rank, doc in enumerate(ordered, start=1):
