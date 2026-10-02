@@ -6645,6 +6645,12 @@ result-set snapshots.</p>
 <td>sort when a caller omits <code>sorts</code> (required if the model has no <code>id</code>)</td>
 </tr>
 <tr>
+<td><code>filter_limits</code></td>
+<td><code>QueryFilterLimits \| None</code></td>
+<td><code>None</code></td>
+<td>bounds on the filters a search accepts; <code>None</code> keeps the defaults (see <a href="../../query-syntax/#limits">Limits</a>). <code>HubSearchSpec</code> has none: hub filters use the defaults</td>
+</tr>
+<tr>
 <td><code>materialized</code></td>
 <td><code>frozenset[str]</code></td>
 <td><code>∅</code></td>

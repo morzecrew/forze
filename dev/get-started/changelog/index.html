@@ -9114,6 +9114,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Stored-file delete can keep the object, and uploads can be capped.</strong> <code>bind_stored_file_writes(..., purge_on_delete=False)</code> soft-deletes the row and keeps its blob, dropping only the search entry; <code>StoredFileKitSpec(max_bytes=...)</code> refuses a larger upload with <code>upload_too_large</code> before a row is written.</p>
 </li>
+<li>
+<p><strong>A spec can raise the limits its filters are parsed under.</strong> <code>DocumentSpec(filter_limits=...)</code> and <code>SearchSpec(filter_limits=...)</code> take a <code>QueryFilterLimits</code>, so an internal read can match more than 1,000 ids. Backends and the mock apply it to filters, aggregate filters and <code>$having</code>, as do generated routes.</p>
+</li>
+<li>
+<p><strong>A backend can declare caps its server enforces on a filter.</strong> <code>QueryCapabilities(max_in_size=..., max_disjunctions=...)</code> bound an operand list and the disjunctions a filter expands to; a filter past either is refused with <code>query_feature_unsupported</code> before it is sent.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9149,6 +9155,36 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>OpenAPI descriptions drop a relative target's leading dot.</strong> A docstring's <code>:class:`.Foo`</code> renders as <code>Foo</code>, as Sphinx shows it, instead of <code>.Foo</code>.</p>
+</li>
+<li>
+<p><strong>A read without a limit no longer repeats or drops rows tied on its sort</strong> (<strong>behaviour change</strong>). Ties now break by <code>id</code> and each batch seeks past the last row. A projection without a sort key, a model without <code>id</code>, or a non-<code>id</code> sort on MongoDB pages by offset; on Firestore, which refuses offsets, it is one query.</p>
+</li>
+<li>
+<p><strong>Firestore refuses a filter it cannot run before sending it.</strong> An <code>$in</code> past 30 values, or a filter past 30 disjunctions once expanded (<code>$in</code> values multiply under AND, add under OR), failed at the server with a validation error; it is now a clean <code>query_feature_unsupported</code> naming the cap.</p>
+</li>
+<li>
+<p><strong>A Firestore query it cannot run is no longer reported as a transaction conflict.</strong> A query needing an index, or a shape Firestore refuses, failed as a retryable <code>concurrency</code> error; it is now a <code>configuration</code> error naming the reason.</p>
+</li>
+<li>
+<p><strong>A cursor continues from the right row whatever the model does to a sort key.</strong> A token took each key's value from the decoded row, so a key the model excluded, aliased, serialized or rewrote on read (<code>EmailStr</code> lowercasing a domain) made the next page skip or repeat rows. It now takes the stored value.</p>
+</li>
+<li>
+<p><strong>A pagination offset that is not a whole, non-negative number is refused as the caller's mistake.</strong> A document read sent <code>-1</code> to the backend, which answered with a server error; <code>"abc"</code> raised one itself; and <code>True</code>, <code>1.9</code> or <code>""</code> were read as 1, 1 and 0. Each is now a <code>precondition</code>, on every backend and the mock.</p>
+</li>
+<li>
+<p><strong>A membership filter's size limit holds for every operand collection</strong> (<strong>behaviour change</strong>). A <code>frozenset</code> or other iterable given as a <code>$values</code> shortcut skipped the <code>max_in_size</code> check. A list, tuple, set or frozenset is bounded now, and any other iterable is refused.</p>
+</li>
+<li>
+<p><strong>A cursor sorted by <code>id</code> first pages in <code>id</code> order</strong> (<strong>behaviour change</strong>). A sort such as <code>{id: asc, x: desc}</code> moved <code>id</code> to the end and ordered by <code>x</code> first; <code>id</code> now stays put and later keys are dropped, so MongoDB and Firestore accept it. A token minted for such a sort earlier is refused; start over.</p>
+</li>
+<li>
+<p><strong>An aggregate read without a limit pages its groups in one order.</strong> With no sort it asked for the read model's <code>id</code>, which no aggregate returns, and failed; with a sort that tied, groups could repeat or go missing between batches. The group keys now break every tie.</p>
+</li>
+<li>
+<p><strong>A MongoDB aggregate read honours an object-form sort direction.</strong> A sort written <code>{"n": {"dir": "asc"}}</code> returned the groups in reverse, as anything but the string <code>"asc"</code> read as descending. A null placement MongoDB cannot express is now refused, as on other MongoDB reads.</p>
+</li>
+<li>
+<p><strong>A membership operand given as a set or frozenset works on every backend.</strong> The parser handed it on as is: Postgres could not bind one inside a JSONB element and answered with a server error, and Meilisearch refused a set. Every operand now reaches the backend as a list.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>

@@ -6828,6 +6828,12 @@ plus per-aggregate policy:</p>
 <td>allow-sets restricting which fields a governed caller may filter / sort / aggregate</td>
 </tr>
 <tr>
+<td><code>filter_limits</code></td>
+<td><code>QueryFilterLimits \| None</code></td>
+<td><code>None</code></td>
+<td>bounds on the filters the document's queries accept, on every backend and on generated routes; <code>None</code> keeps the defaults (see <a href="../../query-syntax/#limits">Limits</a>)</td>
+</tr>
+<tr>
 <td><code>query_params</code></td>
 <td><code>type[BaseModel] \| None</code></td>
 <td><code>None</code></td>
@@ -7230,6 +7236,21 @@ also renders like a denial.</p>
 </table>
 <p><code>filters</code>, <code>sorts</code>, and <code>aggregates</code> use the <a href="../../query-syntax/">query DSL</a>;
 <code>pagination</code> is <code>{"limit": …, "offset": …}</code>.</p>
+<p>Without a <code>limit</code>, a read returns every matching row, fetched in batches. Rows come
+back in the effective sort (<code>sorts</code>, else <code>default_sort</code>, else <code>id</code>), with <code>id</code>
+breaking ties when the read model has one, and each batch starts after the last row
+of the one before. Some reads are paged by offset instead, still with the <code>id</code>
+tie-breaker: a projection or returned model that leaves out a sort key, and on
+MongoDB any sort other than <code>id</code> alone. Firestore refuses offsets, so there such a
+read is one query with no limit, streamed whole. A read model without <code>id</code> has no
+tie-breaker, so rows tied on its whole sort can still repeat or go missing across
+offset batches.</p>
+<p>The <code>id</code> tie-breaker shapes the index such a read wants. On MongoDB, a <code>{key: 1}</code>
+index cannot serve the <code>{key: 1, _id: 1}</code> sort, which then runs in memory; add a
+compound <code>{key: 1, _id: 1}</code> index for a large collection read this way. Firestore
+breaks ties on the document name, which forze sets to the id and every index already
+ends in, so a single-field index still serves a read sorted by one key; a sort led by
+<code>id</code> keeps ordering by the stored <code>id</code> field.</p>
 <h2 id="command-port">Command port<a class="headerlink" href="#command-port" title="Permanent link">&para;</a></h2>
 <p>Every mutating method takes <code>return_new: bool = True</code> — return the resulting read
 model(s), or <code>None</code> when you don't need them back.</p>
