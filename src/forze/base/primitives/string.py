@@ -104,8 +104,6 @@ def normalize_string(s: str | None) -> str | None:
     # the normalization and per-character scan below are pure pass-throughs for it —
     # skip both and go straight to whitespace collapsing.
     if not s.isascii():
-        s = unicodedata.normalize("NFC", s)
-
         out: list[str] = []
 
         for ch in s:
@@ -126,7 +124,9 @@ def normalize_string(s: str | None) -> str | None:
 
             out.append(ch)
 
-        s = "".join(out)
+        # NFC after the drops: a character dropped between a letter and its accent would
+        # otherwise leave the pair uncomposed, and normalizing the result again would change it.
+        s = unicodedata.normalize("NFC", "".join(out))
 
     s = _ws.sub(" ", s)
     s = "\n".join(line.strip() for line in s.split("\n"))

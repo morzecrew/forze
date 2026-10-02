@@ -207,6 +207,8 @@ class TestTheAlreadyNormalizedFastPath:
                         "\x00",
                         "\x1b",
                         "\x85",
+                        "\u200e",
+                        "\u0378",
                     ]
                 ),
                 st.characters(),
@@ -219,7 +221,27 @@ class TestTheAlreadyNormalizedFastPath:
         normalized = _full_pass(text)
 
         assert normalize_string(text) == normalized
-        assert normalize_string(normalized) == _full_pass(normalized)
+        assert normalize_string(normalized) == _full_pass(normalized) == normalized
+
+
+class TestIdempotence:
+    """Normalizing normalized text changes nothing, so stored text takes the fast path."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "\x9be\u200e\x1b\u200e\u0301",  # dropped characters between a letter and its accent
+            "e\u200e\u0301",  # a format character
+            "e\u0378\u0301",  # an unassigned code point
+            "e\ue000\u0301",  # a private-use code point
+        ],
+    )
+    def test_a_dropped_character_does_not_strand_an_accent(self, text: str) -> None:
+        # Dropping it lets the letter and the accent compose, as NFC would have.
+        normalized = normalize_string(text)
+
+        assert normalized == "\u00e9"
+        assert normalize_string(normalized) == normalized
 
 
 _CONTROLS = [chr(c) for c in (*range(0x20), 0x7F, *range(0x80, 0xA0))]

@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Normalized text drops control characters** (**behaviour change**). `normalize_string`, behind the kits' `String` and `LongString`, kept NUL, ESC, DEL and other controls that are not whitespace; Postgres text columns refuse NUL. Stored values lose them now, and tab and other whitespace controls still become a space.
+- **Normalized text drops control characters** (**behaviour change**). `normalize_string`, behind the kits' `String` and `LongString`, kept NUL, ESC, DEL and other controls that are not whitespace; Postgres refuses NUL. They are removed now, and an accent a dropped character kept from its letter composes with it.
 
 - **A kits text field answers 422 to a value that is not text.** `String`, `LongString` and the metadata mixin's `display_name` and `description` called string methods on any input, so a JSON number, list, object or boolean answered 500. Pydantic now refuses it; UTF-8 bytes are decoded and normalized.
 
