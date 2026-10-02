@@ -1001,8 +1001,6 @@ class PostgresReadGateway[M: BaseModel](
         order_bwd = build_order_by_sql(exprs, directions, nulls=nulls, flip=True)
 
         roots = list(dict.fromkeys(key.split(".", 1)[0] for key in sort_keys))
-        extra: list[str] = []
-
         if with_seek_values:
             # Every sort key's column, even one the returned model leaves out, so the page's
             # own statement carries the values a token seeks from.
@@ -1035,9 +1033,6 @@ class PostgresReadGateway[M: BaseModel](
             if with_seek_values
             else []
         )
-
-        if extra:
-            raw_rows = [{k: v for k, v in row.items() if k not in extra} for row in raw_rows]
 
         return raw_rows, seek_values
 

@@ -18,7 +18,7 @@ from functools import cmp_to_key
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
@@ -52,6 +52,10 @@ class ScanRead(ReadDocument, _ScanFields):
 
 
 class ScanIdOnly(BaseModel):
+    # Forbids extras: a page read that selects sort-key columns for the seek must not hand
+    # them to a model that never asked for them.
+    model_config = ConfigDict(extra="forbid")
+
     id: UUID
 
 
