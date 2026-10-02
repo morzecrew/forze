@@ -24,9 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sorting by a `NOT NULL` Postgres column can read from a plain index.** The `ORDER BY` now leaves out the null placement for such a column, which a plain btree does not hold, so a document list or blank-query search sorted by it no longer sorts the whole filtered set first. Results are unchanged.
 
-- **Meilisearch's `ensure_index` makes the `default_sort` fields sortable**, since an unsorted page now sorts by them. A pinned `sortable_attributes` must list them: the search port refuses one that does not when it is built.
+- **Meilisearch's `ensure_index` makes the `default_sort` fields sortable** (**behaviour change**), as an unsorted browse sorts by them. Re-run `ensure_index` after upgrading; until then such a browse fails naming the attribute. A port whose pinned `sortable_attributes` lacks them refuses to build.
 
-- **An explicit null placement no Postgres search cursor can keep is refused** (**behaviour change**), as Mongo does; offset pages still honour it. Before, the placement was dropped and the cursor walked a different order from the offset page.
+- **An explicit null placement no Postgres search cursor can keep is refused** (**behaviour change**), as Mongo does; offset pages still honour it. Meilisearch refuses one on any page. Before, the placement was dropped and the cursor walked a different order from the offset page.
 
 ### Fixed
 
@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
 
-- **A search page without a sort follows the spec's `default_sort` on every backend** (**behaviour change**: page order). Postgres offset search, Mongo, Meilisearch and the in-memory search ignored it. Rows that tie on every key are then ordered by `id`, so offset pages no longer repeat or skip them.
+- **A search page without a sort follows the spec's `default_sort`, then `id`** (**behaviour change**: page order). Offset search ignored it on Postgres, Mongo, Meilisearch and the in-memory search. On Meilisearch only a blank query takes them: with search text, relevance ties keep the engine's order.
 
 - **A blank Postgres full-text or vector search sorts every matching row.** Its candidate cap kept the first rows the scan met, so a sorted page over a table larger than the cap could miss the rows that belonged on it.
 
@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A Mongo search cursor walks past rows whose sort key is null.** Its seek compared with `$gt`/`$lt`, which never match a null, so walking a sort over a nullable field stopped at the first or last null.
 
 - **A search sort that names `id` ends there**, so offset and cursor pages order by the same keys; a key after the id changed nothing but the cursor's order.
+
+- **Meilisearch sorts by the primary key wherever a sort names the id.** With a custom `primary_key`, an unsorted browse failed because the `id` tie-breaker named an attribute the index does not sort by.
 
 - **The in-memory search orders a ranked page by relevance before the sort**, as Postgres, Mongo and Meilisearch do, instead of sorting first.
 

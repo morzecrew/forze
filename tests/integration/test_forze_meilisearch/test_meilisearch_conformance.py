@@ -54,6 +54,7 @@ class _Row(BaseModel):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 @pytest_asyncio.fixture
@@ -61,7 +62,7 @@ async def harness(meilisearch_client) -> SearchHarness:
     config = MeilisearchSearchConfig(
         index_uid=f"search_conf_{uuid4().hex[:10]}",
         filterable_attributes=["category"],
-        sortable_attributes=["title", "category", "id"],
+        sortable_attributes=["title", "category", "id", "rank"],
     )
     ctx = context_from_deps(
         Deps.plain(
@@ -90,6 +91,8 @@ async def harness(meilisearch_client) -> SearchHarness:
         backend="meili",
         blank_query_matches_all=True,
         supports_cursor=False,
+        sorts_relevance_ties=False,
+        exact_match_ranks_first=True,
     )
 
 

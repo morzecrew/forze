@@ -376,7 +376,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 leg_opts,
                 adapter.field_map,
             )
-            sort_list = build_sort(render_user_sorts(sorts, adapter.field_map))
+            sort_list = build_sort(render_user_sorts(sorts, adapter.config))
 
             params_kwargs: dict[str, Any] = {
                 "index_uid": await adapter._resolved_index_uid(),  # pyright: ignore[reportPrivateUsage]

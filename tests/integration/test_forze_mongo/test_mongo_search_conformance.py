@@ -39,6 +39,7 @@ class _Row(BaseModel):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 @pytest_asyncio.fixture
@@ -76,6 +77,7 @@ async def harness(mongo_client: MongoClient) -> SearchHarness:
         query=ctx.search.query(spec),
         backend="mongo_text",
         blank_query_matches_all=True,
+        exact_match_ranks_first=True,
     )
 
 

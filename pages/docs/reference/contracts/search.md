@@ -67,9 +67,11 @@ argument; everything else mirrors the document side:
 `query` is a string (or a sequence of strings); `filters` and `sorts` use the
 [query DSL](../query-syntax.md). A page from a single index is ordered by relevance, then
 by `sorts` (or the spec's `default_sort` when the request has none), then by `id`, in the
-sort's direction when it has a single one. A blank query has no relevance, so the sort alone
-orders it, and the `id` gives rows that tie on every other key one place, so offset pages
-neither repeat nor skip them. `options: SearchOptions` is the backend- and
+sort's direction when it has a single one. A sort that names `id` ends there. A blank query
+has no relevance, so the sort alone orders it, and the `id` gives rows that tie on every
+other key one place, so offset pages neither repeat nor skip them. Meilisearch is the
+exception for a query with search text: it sorts by the request's `sorts` only, and leaves
+relevance ties in the engine's order. `options: SearchOptions` is the backend- and
 topology-agnostic per-request surface — relevance `weights`, `fuzzy` matching, a per-request
 `fields` narrowing, multi-term combination (`phrase_combine`: `"any"` / `"all"`), the count
 policy (`search_count`), an advisory candidate cap (`max_candidates`), and the facet /

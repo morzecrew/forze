@@ -51,6 +51,7 @@ class _Row(BaseModel):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 class _Leg(BaseModel):
@@ -77,7 +78,8 @@ async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> 
             title text NOT NULL,
             content text NOT NULL,
             category text NOT NULL,
-            price numeric NOT NULL
+            price numeric NOT NULL,
+            rank int
         );
         CREATE INDEX {index} ON {table} {_INDEXES[engine]};
         """
@@ -85,8 +87,8 @@ async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> 
 
     for row in corpus_rows(lambda: str(uuid4())):
         await pg_client.execute(
-            f"INSERT INTO {table} (id, title, content, category, price) "
-            "VALUES (%(id)s, %(title)s, %(content)s, %(category)s, %(price)s)",
+            f"INSERT INTO {table} (id, title, content, category, price, rank) "
+            "VALUES (%(id)s, %(title)s, %(content)s, %(category)s, %(price)s, %(rank)s)",
             row,
         )
 

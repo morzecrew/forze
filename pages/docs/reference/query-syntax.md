@@ -187,8 +187,9 @@ sorts = {"created_at": "desc", "id": "asc"}
 
 A key may instead be an object to control null placement —
 `{"dir": "asc", "nulls": "first"}` (`"first"` / `"last"`). Omitted, nulls sort as
-the smallest value (`asc` → first, `desc` → last); some backends (Mongo, Firestore)
-support only that default and reject an explicit override. For
+the smallest value (`asc` → first, `desc` → last); some backends (Mongo, Firestore,
+Meilisearch, and search cursors on Postgres) support only that default and reject an
+explicit override. For
 [cursor pagination](../data-events/reading-data.md) directions may be mixed — each
 key seeks in its own direction — and an `id` tie-breaker is appended automatically.
 Cursor tokens can be HMAC-signed (`<payload>.<hmac>`) or AEAD-encrypted (a leading

@@ -44,6 +44,7 @@ class _Row(BaseModel):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 class _Domain(Document):
@@ -51,6 +52,7 @@ class _Domain(Document):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 class _Read(ReadDocument):
@@ -58,6 +60,7 @@ class _Read(ReadDocument):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 class _Create(CreateDocumentCmd):
@@ -65,6 +68,7 @@ class _Create(CreateDocumentCmd):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 class _Update(BaseDTO):
@@ -90,9 +94,9 @@ async def harness() -> SearchHarness:
         domain_model=_Domain,
     )
 
-    for title, content, category, price in CORPUS:
+    for title, content, category, price, rank in CORPUS:
         await documents.create(
-            _Create(title=title, content=content, category=category, price=price)
+            _Create(title=title, content=content, category=category, price=price, rank=rank)
         )
 
     return SearchHarness(
@@ -133,6 +137,8 @@ async def test_relevance_orders_before_the_sort(harness: SearchHarness) -> None:
         "gamma notes",
         "alpha guide",
         "beta guide",
+        "manual",
+        "the unabridged manual",
     ]
 
 
@@ -176,7 +182,7 @@ async def test_a_snapshot_replays_only_for_the_order_it_was_taken_in() -> None:
     )
     rows = [
         await documents.create(_Create(title=title, content=content, category=category))
-        for title, content, category, _ in CORPUS
+        for title, content, category, *_ in CORPUS
     ]
     rs_spec = SearchResultSnapshotSpec(name="snap", enabled=True)
     store = MockSearchResultSnapshotAdapter(state=state, spec=rs_spec)

@@ -32,6 +32,10 @@ from forze_meilisearch.adapters.search._command import (
     MeilisearchSearchCommandAdapter,
     MeilisearchSearchManagementAdapter,
 )
+from forze_meilisearch.adapters.search._search_params import (
+    sort_attribute,
+    sortable_attributes,
+)
 from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
 )
@@ -90,12 +94,12 @@ def _refuse_an_unsortable_default_sort(spec: SearchSpec[Any], c: MeilisearchSear
     the index does not declare sortable, so such a port would fail every unsorted request.
     """
 
-    pinned = c.sortable_attributes
-
-    if pinned is None or not spec.default_sort:
+    if not spec.default_sort:
         return
 
-    if missing := [f for f in spec.default_sort if f not in pinned]:
+    sortable = sortable_attributes(spec, c)
+
+    if missing := [f for f in spec.default_sort if sort_attribute(f, c) not in sortable]:
         raise exc.configuration(
             f"Meilisearch search {spec.name!r}: sortable_attributes leaves out the "
             f"default_sort field(s) {missing}; list them, or leave sortable_attributes unset.",
