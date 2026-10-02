@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
-- **Authorization and tenant listing read rows in batches, not one at a time.** One role under a parent with 18 permissions takes 7 reads per decision, not 27; past that, reads grow by one per 30 roles, groups or (on Firestore) ids. A principal's tenants are read in one batch, not one per membership.
+- **Authorization and tenant listing read rows in batches, not one at a time.** A decision reads once per kind of row and level of the role hierarchy, plus once per 30 roles or groups: one role under a parent with 18 permissions takes 7 reads, not 27. A principal's tenants are read in one batch, not one per membership.
 
 ### Fixed
 
