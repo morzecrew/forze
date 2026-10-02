@@ -11,6 +11,7 @@ from structlog.contextvars import bound_contextvars
 
 from forze.base.logging import Logger, configure_logging
 from forze.base.logging.constants import RICH_EXC_INFO_KEY, LogLevel
+from forze.base.logging.logger import set_configured_min_rank
 from forze.base.logging.renderers import ForzeConsoleRenderer
 
 # ----------------------- #
@@ -45,6 +46,7 @@ def _render_deep_exc(render: ForzeConsoleRenderer, depth: int) -> str:
 
 def _cleanup_logging() -> None:
     structlog.reset_defaults()
+    set_configured_min_rank("info")
     for name in (
         "forze.test",
         "test.module",
@@ -656,7 +658,9 @@ def test_trace_fast_skips_below_configured_level(monkeypatch: pytest.MonkeyPatch
         lm._configured_min_rank = original
 
 
-def test_debug_fast_skips_once_configured_above_it(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_debug_fast_skips_while_the_configured_wrapper_is_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """``Logger.debug`` short-circuits before touching the backend when configured above debug."""
 
     import forze.base.logging.logger as lm
@@ -671,20 +675,64 @@ def test_debug_fast_skips_once_configured_above_it(monkeypatch: pytest.MonkeyPat
             return self
 
     monkeypatch.setattr(lm, "_structlog_get_logger", lambda _name: _Recorder())
-    monkeypatch.setattr(lm, "_configured_min_rank", lm._configured_min_rank)
-    monkeypatch.setattr(lm, "_debug_gate_rank", lm._debug_gate_rank)
 
     log = lm.Logger("debug-gate-test")
     cases: tuple[tuple[LogLevel, bool], ...] = (
         ("info", False),
+        ("warning", False),
         ("debug", True),
         ("trace", True),
         ("notset", True),
     )
 
-    for level, emitted in cases:
-        recorded.clear()
-        lm.set_configured_min_rank(level)
-        log.debug("event")
+    try:
+        for level, emitted in cases:
+            recorded.clear()
+            configure_logging(level=level, logger_names=["forze.test"], stream=io.StringIO())
+            log.debug("event")
 
-        assert recorded == (["event"] if emitted else []), level
+            assert recorded == (["event"] if emitted else []), level
+    finally:
+        _cleanup_logging()
+
+
+def test_debug_follows_structlog_reconfigured_after_configure_logging() -> None:
+    """Resetting structlog, or configuring another wrapper, brings debug back."""
+
+    def _captured(name: str) -> list[object]:
+        with structlog.testing.capture_logs() as logs:
+            Logger("forze.test").debug(name)
+
+        return [e["event"] for e in logs]
+
+    try:
+        configure_logging(level="info", logger_names=["forze.test"], stream=io.StringIO())
+        while_configured = _captured("while-configured")
+
+        structlog.reset_defaults()
+        after_reset = _captured("after-reset")
+
+        configure_logging(level="info", logger_names=["forze.test"], stream=io.StringIO())
+        structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG))
+        after_reconfigure = _captured("after-reconfigure")
+    finally:
+        _cleanup_logging()
+
+    assert while_configured == []
+    assert after_reset == ["after-reset"]
+    assert after_reconfigure == ["after-reconfigure"]
+
+
+def test_the_debug_gate_reads_structlogs_active_wrapper() -> None:
+    """The gate reads structlog's private config; a structlog that moves it fails here."""
+
+    import forze.base.logging.logger as lm
+
+    try:
+        configure_logging(level="info", logger_names=["forze.test"], stream=io.StringIO())
+        active = structlog.get_config()["wrapper_class"]
+
+        assert lm._STRUCTLOG_CONFIG.default_wrapper_class is active
+        assert lm._debug_dropping_wrapper is active
+    finally:
+        _cleanup_logging()

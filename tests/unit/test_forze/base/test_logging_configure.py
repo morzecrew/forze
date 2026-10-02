@@ -15,7 +15,7 @@ from forze.base.logging.configure import (
     build_renderer,
     configure_logging,
 )
-from forze.base.logging.logger import Logger
+from forze.base.logging.logger import Logger, set_configured_min_rank
 from forze.base.logging.processors import (
     ExceptionFieldsSanitizer,
     ExceptionInfoFormatter,
@@ -30,6 +30,7 @@ from forze.base.scrubbing import SECRET_PLACEHOLDER
 def _reset_logging() -> None:
     yield
     structlog.reset_defaults()
+    set_configured_min_rank("info")
     for name in ("foreign.test", "foreign.keep", "forze.test", "forze.other"):
         logger = logging.getLogger(name)
         logger.handlers.clear()
