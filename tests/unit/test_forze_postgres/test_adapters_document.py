@@ -582,6 +582,9 @@ class TestPostgresDocumentAdapterQueryDelegation:
         first = [_tread() for _ in range(10)]
         second = [_tread()]
         read_gw.find_many_with_cursor = AsyncMock(side_effect=[first + second, second])
+        # A batch's token takes the sort values the store holds for its edge rows.
+        stored = [{ID_FIELD: str(r.id), "title": r.title} for r in first + second]
+        read_gw.find_many = AsyncMock(return_value=stored)
 
         sorts = {"title": "desc"}
         adapter = PostgresDocumentAdapter(

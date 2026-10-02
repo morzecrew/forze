@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Firestore refuses a filter it cannot run before sending it.** An `$in` past 30 values, or a filter past 30 disjunctions once expanded (`$in` values multiply under AND, add under OR), failed at the server with a validation error; it is now a clean `query_feature_unsupported` naming the cap.
 
-- **A cursor continues from the right row when the returned model hides a sort key.** Cursor tokens were built from the model's dump, so a key it excluded, aliased or serialized differently made the next page start in the wrong place. They now read the model's fields; a model without the key is refused.
+- **A cursor continues from the right row whatever the model does to a sort key.** A token took each key's value from the decoded row, so a key the model excluded, aliased, serialized or rewrote on read (`EmailStr` lowercasing a domain) made the next page skip or repeat rows. It now takes the stored value.
 
 - **A negative pagination offset is refused as the caller's mistake.** A document read sent it to the backend, which answered with a server error; it is now a `precondition`, on every backend and the mock.
 

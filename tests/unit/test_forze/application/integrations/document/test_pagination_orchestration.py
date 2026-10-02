@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, field_validator
 
 from forze.application.contracts.base import CursorPage
 from forze.application.contracts.querying import decode_keyset_v1
@@ -23,7 +23,7 @@ from forze.application.integrations.document._pagination import (
     OffsetQuery,
     StreamQuery,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -859,72 +859,6 @@ async def test_stream_detects_stalled_cursor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cursor_page_refuses_a_returned_model_without_the_sort_key() -> None:
-    # A token built from a row missing the key would seek from null and drop rows silently.
-    gateway = FakeReadGateway(cursor_results=[[_Row(id="a"), _Row(id="b"), _Row(id="c")]])
-    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
-
-    with pytest.raises(CoreException, match="does not carry sort key 'name'"):
-        await harness._cursor_page(
-            CursorQuery(return_model=_Row, return_fields=None),
-            filters=None,
-            cursor={"limit": 2},
-            sorts={"name": "asc"},
-        )
-
-
-@pytest.mark.asyncio
-async def test_cursor_page_reads_seek_values_off_the_fields_not_the_dump() -> None:
-    class _Hidden(BaseModel):
-        id: str
-        name: str = Field(exclude=True)
-
-    gateway = FakeReadGateway(
-        cursor_results=[
-            [_Hidden(id="a", name="x"), _Hidden(id="b", name="y"), _Hidden(id="c", name="z")]
-        ]
-    )
-    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
-
-    page = await harness._cursor_page(
-        CursorQuery(return_model=_Hidden, return_fields=None),
-        filters=None,
-        cursor={"limit": 2},
-        sorts={"name": "asc"},
-    )
-
-    assert decode_keyset_v1(page.next_cursor)[3] == ["y", "b"]  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_cursor_page_seeks_on_a_computed_field() -> None:
-    # A materialized computed field is a sort key the model holds, though not in model_fields.
-    class _Scored(BaseModel):
-        id: str
-        raw: int
-
-        @computed_field  # type: ignore[prop-decorator]
-        @property
-        def score(self) -> int:
-            return self.raw * 10
-
-    gateway = FakeReadGateway(
-        cursor_results=[[_Scored(id="a", raw=1), _Scored(id="b", raw=2), _Scored(id="c", raw=3)]]
-    )
-    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "raw", "score"}))
-
-    page = await harness._cursor_page(
-        CursorQuery(return_model=_Scored, return_fields=None),
-        filters=None,
-        cursor={"limit": 2},
-        sorts={"score": "asc"},
-    )
-
-    assert decode_keyset_v1(page.next_cursor)[3] == [20, "b"]  # type: ignore[arg-type]
-    assert harness._seekable(_offset_query(return_model=_Scored), {"score": "asc", "id": "asc"})
-
-
-@pytest.mark.asyncio
 async def test_offset_page_scan_takes_a_string_offset() -> None:
     gateway = FakeReadGateway(cursor_results=[[{"id": "a"}, {"id": "b"}]])
     harness = PaginationHarness(gateway, eff_batch_size=2)
@@ -936,12 +870,84 @@ async def test_offset_page_scan_takes_a_string_offset() -> None:
     assert [r["id"] for r in page.hits] == ["b"]
 
 
+class _Lowered(BaseModel):
+    id: str
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _lower(cls, value: str) -> str:
+        return value.lower()
+
+
 @pytest.mark.asyncio
-async def test_cursor_page_reads_a_key_inside_a_mapping_or_under_a_null_parent() -> None:
+async def test_cursor_page_takes_token_values_from_the_store() -> None:
+    # The model lowercases `name`; the store orders by what it holds, so the token must too.
+    gateway = FakeReadGateway(
+        cursor_results=[[_Lowered(id=i, name=i.upper()) for i in ("a", "b", "c")]],
+        find_many_results=[[{"id": i, "name": i.upper()} for i in ("a", "b", "c")]],
+    )
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
+
+    page = await harness._cursor_page(
+        CursorQuery(return_model=_Lowered, return_fields=None),
+        filters=None,
+        cursor={"limit": 2},
+        sorts={"name": "asc"},
+    )
+
+    assert decode_keyset_v1(page.next_cursor)[3] == ["B", "b"]  # type: ignore[arg-type]
+    (lookup,) = gateway.find_many_calls
+    assert lookup["filters"] == {"$values": {"id": {"$in": ["a", "b", "c"]}}}
+    assert lookup["return_fields"] == ["name", "id"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_refuses_a_page_whose_edge_row_vanished() -> None:
+    gateway = FakeReadGateway(
+        cursor_results=[[_Lowered(id=i, name=i) for i in ("a", "b", "c")]],
+        find_many_results=[[]],
+    )
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
+
+    with pytest.raises(CoreException) as ei:
+        await harness._cursor_page(
+            CursorQuery(return_model=_Lowered, return_fields=None),
+            filters=None,
+            cursor={"limit": 2},
+            sorts={"name": "asc"},
+        )
+
+    assert ei.value.kind == ExceptionKind.CONCURRENCY
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_refuses_a_keyed_sort_whose_model_has_no_id() -> None:
+    class _Named(BaseModel):
+        name: str
+
+    gateway = FakeReadGateway(cursor_results=[[_Named(name=i) for i in ("a", "b", "c")]])
+    harness = PaginationHarness(gateway, read_fields=frozenset({"id", "name"}))
+
+    with pytest.raises(CoreException, match="carry id"):
+        await harness._cursor_page(
+            CursorQuery(return_model=_Named, return_fields=None),
+            filters=None,
+            cursor={"limit": 2},
+            sorts={"name": "asc"},
+        )
+
+    assert not harness._seekable(_offset_query(return_model=_Named), {"name": "asc", "id": "asc"})
+    assert harness._seekable(_offset_query(return_model=_Row), {"name": "asc", "id": "asc"})
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_without_id_reads_the_fields_not_the_dump() -> None:
+    # No id to look stored values up by: the token reads the model's fields, never its dump.
     # Past the model, a mapping holds what the backend stored; a null parent reads as null.
     class _Bag(BaseModel):
         id: str
-        meta: dict[str, int] | None = None
+        meta: dict[str, int] | None = Field(default=None, exclude=True)
 
     class _BagGateway(FakeReadGateway):
         @property
@@ -949,7 +955,7 @@ async def test_cursor_page_reads_a_key_inside_a_mapping_or_under_a_null_parent()
             return _Bag
 
     rows = [_Bag(id="a", meta={"rank": 1}), _Bag(id="b"), _Bag(id="c")]
-    harness = PaginationHarness(_BagGateway(), read_fields=frozenset({"id", "meta"}))
+    harness = PaginationHarness(_BagGateway(), read_fields=frozenset({"meta"}))
     tokens = []
 
     for limit in (1, 2):
@@ -962,5 +968,4 @@ async def test_cursor_page_reads_a_key_inside_a_mapping_or_under_a_null_parent()
         )
         tokens.append(decode_keyset_v1(page.next_cursor)[3])  # type: ignore[arg-type]
 
-    assert tokens == [[1, "a"], [None, "b"]]
-    assert harness._seekable(_offset_query(return_model=_Bag), {"meta.rank": "asc", "id": "asc"})
+    assert tokens == [[1], [None]]

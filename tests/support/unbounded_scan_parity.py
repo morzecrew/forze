@@ -18,7 +18,7 @@ from functools import cmp_to_key
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
@@ -35,6 +35,8 @@ class _ScanFields(BaseModel):
     kind: str  # text, three values
     score: int | None = None  # nullable, ties among the nulls too
     meta: ScanMeta = Field(default_factory=ScanMeta)
+    label: str = ""  # mixed case, which a validator can rewrite on read
+    email: str = ""  # legacy rows whose domain case was never normalized
 
 
 class ScanCreate(CreateDocumentCmd, _ScanFields):
@@ -63,6 +65,37 @@ class ScanExcluded(BaseModel):
     meta: ScanMeta = Field(default_factory=ScanMeta, exclude=True)
 
 
+class ScanScaled(BaseModel):
+    """Rewrites the stored ``grp`` on read: a seek from the read value starts past every row."""
+
+    id: UUID
+    grp: int
+
+    @field_validator("grp")
+    @classmethod
+    def _scale(cls, value: int) -> int:
+        return value * 10
+
+
+class ScanLowered(BaseModel):
+    """Lowercases the stored ``label`` on read, so it orders differently from the store."""
+
+    id: UUID
+    label: str
+
+    @field_validator("label")
+    @classmethod
+    def _lower(cls, value: str) -> str:
+        return value.lower()
+
+
+class ScanEmail(BaseModel):
+    """``EmailStr`` lowercases the domain: legacy mixed-case rows read back changed."""
+
+    id: UUID
+    email: EmailStr
+
+
 class _MetaTagOnly(BaseModel):
     tag: str = ""
 
@@ -85,7 +118,9 @@ POSTGRES_COLUMNS = """
     grp integer NOT NULL,
     kind text NOT NULL,
     score integer,
-    meta jsonb NOT NULL
+    meta jsonb NOT NULL,
+    label text NOT NULL,
+    email text NOT NULL
 """
 """The table a Postgres leg reads, matching :class:`ScanDoc`."""
 
@@ -108,6 +143,8 @@ def seed() -> list[ScanCreate]:
             kind=("b", "a", "c")[i % 3],
             score=None if i % 4 == 0 else i % 5,
             meta=ScanMeta(rank=None if i % 5 == 0 else i % 3, tag=f"t{i}"),
+            label=("Bx", "ax", "Cx")[i % 3],
+            email=f"user{i % 3}@" + ("Example.COM" if i % 2 == 0 else "example.com"),
         )
         for i in range(ROWS)
     ]
@@ -203,6 +240,39 @@ async def run_unbounded_scan_parity(
 
             summary = await query.select_many(ScanSummary, sorts=sorts)
             assert [row.id for row in summary.hits] == expected, f"{label}: nested subset"
+
+    if custom_sorts:
+        await _check_rewritten_keys(query)
+
+
+_REWRITTEN: tuple[tuple[type[BaseModel], str], ...] = (
+    (ScanScaled, "grp"),
+    (ScanLowered, "label"),
+    (ScanEmail, "email"),
+)
+
+
+async def _check_rewritten_keys(query: Any) -> None:
+    """A model whose validator rewrites a sort key on read still reads every row in order.
+
+    The store orders rows by what it holds; a seek from the rewritten value starts in the
+    wrong place. The oracle is the backend's own order for the same sort with ``id`` added,
+    read as one bounded page, so a text key's collation is the store's, not Python's.
+    """
+
+    for model, key in _REWRITTEN:
+        for direction in ("asc", "desc"):
+            sorts = {key: direction}
+            reference = await query.find_many(
+                sorts={key: direction, "id": direction}, pagination={"limit": 1_000}
+            )
+            expected = [hit.id for hit in reference.hits]
+
+            got = await query.select_many(model, sorts=sorts)
+            ids = [row.id for row in got.hits]
+
+            assert len(set(ids)) == len(ids) == ROWS, f"{model.__name__} {sorts}: {len(ids)} rows"
+            assert ids == expected, f"{model.__name__} {sorts}: out of order"
 
 
 async def run_id_first_cursor_parity(command: Any, query: Any) -> None:
