@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Meilisearch sorts by the primary key wherever a sort names the id.** With a custom `primary_key`, an unsorted browse failed because the `id` tie-breaker named an attribute the index does not sort by.
 
+- **A search sort naming a field the read model lacks is a 400 on every backend**, wherever it sits. Postgres answered with a database error, and a key after `id` was dropped unchecked.
+
 - **The in-memory search orders a ranked page by relevance before the sort**, as Postgres, Mongo and Meilisearch do, instead of sorting first.
 
 ### Security

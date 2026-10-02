@@ -302,7 +302,11 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         )
         extra_ob = await self._projection_order_by_clause(
             resolve_search_sorts(
-                sorts, default_sort=self.spec.default_sort, read_fields=self.read_fields
+                sorts,
+                default_sort=self.spec.default_sort,
+                read_fields=self.read_fields,
+                model=self.model_type,
+                spec_name=self.spec.name,
             )
         )
         order_sql = build_rank_first_order(

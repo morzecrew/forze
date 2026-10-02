@@ -151,6 +151,7 @@ def hub_order_key_spec(
         rank_field=rank_field,
         sorts=user_sorts,
         read_fields=read_fields,
+        model=model,
     )
 
 

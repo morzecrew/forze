@@ -29,6 +29,7 @@ What each check pins:
     directions and an ``id`` inside the sort included.
 12. The default sort never outranks relevance.
 13. An explicit null placement is honoured or refused, never dropped.
+14. A sort on a field the read model lacks is the caller's error, wherever it sits.
 
 Not asserted, on purpose: blank-query semantics. ``search("")`` means "everything, filters
 only" on some engines and "nothing" on others, and which one is right is a genuine product
@@ -433,6 +434,21 @@ async def check_an_explicit_null_placement_is_kept_or_refused(h: SearchHarness) 
     assert walked == [hit.id for hit in offset.hits], h.backend
 
 
+async def check_an_unknown_sort_field_is_the_callers_error(h: SearchHarness) -> None:
+    """A sort naming a field the read model lacks is refused as the caller's mistake.
+
+    After the ``id`` too, where the field orders nothing: refusing it there is what keeps a
+    typo from passing on one page and failing on the next.
+    """
+
+    for sorts in ({"nope": "asc"}, {"id": "asc", "nope": "asc"}):
+        with pytest.raises(CoreException) as refused:
+            await h.query.search(PROBE_TERM, None, {"limit": 5}, sorts)
+
+        assert refused.value.kind is ExceptionKind.PRECONDITION, f"{h.backend}: {sorts}"
+        assert refused.value.code == "field_not_on_read_model", f"{h.backend}: {sorts}"
+
+
 # ....................... #
 
 async def check_windows_partition_under_a_non_unique_sort(h: SearchHarness) -> None:
@@ -582,6 +598,7 @@ SEARCH_BATTERY: tuple[Check, ...] = (
     check_a_cursor_walk_follows_the_offset_order,
     check_relevance_outranks_the_default_sort,
     check_an_explicit_null_placement_is_kept_or_refused,
+    check_an_unknown_sort_field_is_the_callers_error,
 )
 
 

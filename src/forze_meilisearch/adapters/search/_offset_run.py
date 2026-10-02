@@ -262,15 +262,16 @@ def page_sort(
     else ``default_sort``, then the id when the index can sort by it.
     """
 
-    if ranked:
-        return build_sort(render_user_sorts(sorts, gw.config))
-
-    read_fields = read_fields_for_model(spec.model_type)
-
-    if gw.primary_key not in sortable_attributes(spec, gw.config):
-        read_fields -= {ID_FIELD}
-
-    order = resolve_search_sorts(sorts, default_sort=spec.default_sort, read_fields=read_fields)
+    sortable_id = gw.primary_key in sortable_attributes(spec, gw.config)
+    order = resolve_search_sorts(
+        sorts,
+        default_sort=None if ranked else spec.default_sort,
+        read_fields=read_fields_for_model(spec.model_type) | spec.materialized,
+        # The id closes a blank page's order, where the index can sort by it.
+        tiebreaker=ID_FIELD if sortable_id and not ranked else None,
+        model=spec.model_type,
+        spec_name=spec.name,
+    )
 
     return build_sort(render_user_sorts(order, gw.config))
 

@@ -86,7 +86,11 @@ class MongoSimpleSearchAdapter[M: BaseModel](
     ) -> list[tuple[str, int]] | None:
         return self.render_sorts(
             resolve_search_sorts(
-                sorts, default_sort=self.spec.default_sort, read_fields=self.read_fields
+                sorts,
+                default_sort=self.spec.default_sort,
+                read_fields=self.read_fields,
+                model=self.model_type,
+                spec_name=self.spec.name,
             )
         )
 

@@ -240,7 +240,9 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         order = resolve_search_sorts(
             sorts,
             default_sort=self.spec.default_sort,
-            read_fields=read_fields_for_model(self.spec.model_type),
+            read_fields=read_fields_for_model(self.spec.model_type) | self.spec.materialized,
+            model=self.spec.model_type,
+            spec_name=self.spec.name,
         )
         ordered = _sort_docs([d for _, d in ranked], order)
         # Relevance first, as the real engines rank: the sort only orders rows of equal score.

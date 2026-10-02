@@ -279,6 +279,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         rank_field=rank_col,
         sorts=user_sorts,
         read_fields=gw.read_fields,
+        model=gw.model_type,
     )
     sort_keys = [k for k, _ in key_spec]
     directions = [d for _, d in key_spec]

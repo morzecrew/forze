@@ -2,7 +2,13 @@
 
 from collections.abc import Sequence
 
-from forze.application.contracts.querying import QuerySortExpression, parse_sort_value
+from pydantic import BaseModel
+
+from forze.application.contracts.querying import (
+    QuerySortExpression,
+    parse_sort_value,
+    validate_sort_fields,
+)
 from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
@@ -46,7 +52,9 @@ def resolve_search_sorts(
     *,
     default_sort: QuerySortExpression | None,
     read_fields: frozenset[str],
-    tiebreaker: str = ID_FIELD,
+    tiebreaker: str | None = ID_FIELD,
+    model: type[BaseModel] | None = None,
+    spec_name: str = "<search>",
 ) -> QuerySortExpression:
     """The order a search page takes after relevance.
 
@@ -57,9 +65,20 @@ def resolve_search_sorts(
     a key after it orders nothing, and a cursor seeks by the same keys an offset page sorts by.
 
     Empty when there is nothing to order by; relevance alone then decides, or the engine.
+    ``None`` as *tiebreaker* leaves the order as given.
+
+    Given the read *model*, every key the caller names is checked against *read_fields*
+    first, a key after the tiebreaker included, so a field the model lacks is the caller's
+    error wherever it sits.
     """
 
+    if sorts and model is not None:
+        validate_sort_fields(sorts, read_fields=read_fields, spec_name=spec_name, model=model)
+
     out = dict(sorts or default_sort or {})
+
+    if tiebreaker is None:
+        return out
 
     if tiebreaker in out:
         keys = list(out)
@@ -86,11 +105,16 @@ def ranked_search_cursor_key_spec(
     sorts: QuerySortExpression | None,
     read_fields: frozenset[str],
     tiebreaker: str = ID_FIELD,
+    model: type[BaseModel] | None = None,
 ) -> list[tuple[str, str]]:
-    """``rank_field`` DESC, optional caller ``sorts``, then optional tie-breaker."""
+    """``rank_field`` DESC, optional caller ``sorts``, then optional tie-breaker.
+
+    Given the read *model*, the caller's keys are checked as :func:`resolve_search_sorts`
+    checks them.
+    """
 
     ordered = resolve_search_sorts(
-        sorts, default_sort=None, read_fields=read_fields, tiebreaker=tiebreaker
+        sorts, default_sort=None, read_fields=read_fields, tiebreaker=tiebreaker, model=model
     )
 
     return [

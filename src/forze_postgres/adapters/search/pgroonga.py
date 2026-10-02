@@ -228,7 +228,11 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         facet_fields = resolve_facet_fields(self.spec, options)
         count_policy = effective_search_count(options)
         order = resolve_search_sorts(
-            sorts, default_sort=self.spec.default_sort, read_fields=self.read_fields
+            sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=self.read_fields,
+            model=self.model_type,
+            spec_name=self.spec.name,
         )
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
