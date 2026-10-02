@@ -10,10 +10,12 @@ import pytest
 
 from forze import build_runtime
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, ReadDocument
 from forze_kits.aggregates import AggregateKit
 from forze_kits.aggregates.document import DocumentKernelOp, build_document_registry
+from forze_kits.aggregates.document.handlers import KillDocument
 from forze_kits.domain.soft_deletion import DocWithSoftDeletion, UpdateCmdWithSoftDeletion
 from forze_mock import MockDepsModule
 
@@ -106,9 +108,46 @@ class TestTheGeneratedOperations:
 
     def test_the_kit_composes_without_kill(self) -> None:
         # Every arm that binds the write ops checks which ones exist.
-        kit = AggregateKit(spec=_spec(hard_delete=False), soft_delete=True, transactional_writes=True)
+        kit = AggregateKit(
+            spec=_spec(hard_delete=False), soft_delete=True, transactional_writes=True
+        )
 
         assert _KILL not in kit.registry(tx_route="mock").handlers
+
+    def test_the_kit_refuses_a_kill_handler(self) -> None:
+        # The escape hatch would put back the operation the spec declared away.
+        spec = _spec(hard_delete=False)
+
+        with pytest.raises(CoreException, match="hard_delete") as ei:
+            AggregateKit(
+                spec=spec,
+                handlers={
+                    DocumentKernelOp.KILL: lambda ctx: KillDocument(doc=ctx.doc.command(spec))
+                },
+            )
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_the_kit_refuses_a_kill_merged_in(self) -> None:
+        spec = _spec(hard_delete=False)
+        extra = OperationRegistry(
+            handlers={_KILL: lambda ctx: KillDocument(doc=ctx.doc.command(spec))}
+        )
+
+        with pytest.raises(CoreException, match="hard_delete") as ei:
+            AggregateKit(spec=spec, extra_ops=extra)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_an_erasable_spec_keeps_its_kill_override(self) -> None:
+        kit = AggregateKit(
+            spec=_spec(),
+            handlers={
+                DocumentKernelOp.KILL: lambda ctx: KillDocument(doc=ctx.doc.command(_spec()))
+            },
+        )
+
+        assert _KILL in kit.registry(tx_route="mock").handlers
 
 
 # ....................... #

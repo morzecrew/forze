@@ -299,6 +299,7 @@ class AggregateKit(Generic[R, D, C, U]):
 
     def __attrs_post_init__(self) -> None:
         self._refuse_write_options_without_writes()
+        self._refuse_kill_on_a_kept_spec()
 
         if self.dtos is not None and self.dtos.read is not self.spec.read:
             raise exc.configuration(
@@ -356,6 +357,30 @@ class AggregateKit(Generic[R, D, C, U]):
                 f"to filter {IS_CURRENT_FIELD!r}. Declare it on the search spec "
                 f"(facetable_fields={{{IS_CURRENT_FIELD!r}}}); an index that cannot filter it "
                 "would answer with facts that have since been corrected.",
+            )
+
+    # ....................... #
+
+    def _refuse_kill_on_a_kept_spec(self) -> None:
+        """Refuse an escape hatch that would put back the kill a ``hard_delete=False`` spec drops.
+
+        The port would still refuse the call, but only when it is made; a route or tool generated
+        for the operation would be advertised until then.
+        """
+
+        if self.spec.hard_delete:
+            return
+
+        kill = self.spec.default_namespace.key(DocumentKernelOp.KILL)
+        declared = {
+            "handlers": DocumentKernelOp.KILL in self.handlers,
+            "extra_ops": self.extra_ops is not None and kill in self.extra_ops.operation_keys(),
+        }
+
+        if adding := [name for name, found in declared.items() if found]:
+            raise exc.configuration(
+                f"AggregateKit {self.spec.name!r}: {', '.join(adding)} would add {kill!r}, but "
+                "the spec declares hard_delete=False, so its rows cannot be erased.",
             )
 
     # ....................... #
