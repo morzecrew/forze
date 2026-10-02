@@ -22,7 +22,8 @@ class SoftDeletionMixin(CoreModel):
     """Fields that change only in the write that deletes or restores the row — e.g. a marker naming
     the cascade that deleted it, set by the delete and cleared by the restore. Any other update
     that changes one is refused, on a live row as on a deleted one. Each must be a field of the
-    model, and the declaration a ``ClassVar``; empty by default."""
+    model, and the declaration a ``ClassVar``; empty by default. The rule guards updates only:
+    leave companions out of the create command, or a create can set one on a new row."""
 
     is_deleted: bool = False
     """Flag indicating if the document is soft deleted."""
