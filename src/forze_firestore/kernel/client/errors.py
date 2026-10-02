@@ -26,7 +26,7 @@ def _unrunnable_query(exc: gax_exceptions.FailedPrecondition) -> bool:
 
     message = str(exc).lower()
 
-    return "transaction" not in message and ("index" in message or "key scan" in message)
+    return "index" in message or "key scan" in message
 
 
 # ....................... #
