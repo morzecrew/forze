@@ -44,8 +44,8 @@ Each concern is opt-in and independently useful on its own:
   reference to it still resolves. A model can name companion fields that change only in the
   write that deletes or restores the row (`soft_delete_companions = frozenset({"deleted_with"})`),
   such as a cascade marker the delete sets and the restore clears; any other update that
-  touches one is refused. Declare `hard_delete=False` on the spec when rows must never be
-  erased: the kit then generates no `kill`.
+  touches one is refused. Declare `hard_delete=False` on the spec when no document operation
+  may erase a row: the kit then generates no `kill` and refuses a handler that adds one.
 - **`search`** — the external index is kept in sync on every committed write
   ([search stays consistent](../data-events/events-sagas.md)); a searchable aggregate
   that silently drifts is worse than no search. Delivery is after-commit best-effort by

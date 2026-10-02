@@ -94,9 +94,12 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
     hard_delete: bool = True
     """Whether a row of this aggregate may be erased. Defaults to ``True``.
 
-    ``False`` declares that nothing erases a row: the document factory registers no ``kill``
-    operation, so no generated route or tool reaches one, and the command port refuses
-    ``kill``/``kill_many`` from any caller. Soft deletion is unaffected."""
+    ``False`` declares that no document operation erases a row: the document factory registers
+    no ``kill`` operation, so no generated route or tool reaches one, and the command port
+    refuses ``kill``/``kill_many`` from any caller. Soft deletion is unaffected. Outside the
+    document port, a tenant provisioner with ``drop_on_deprovision=True`` still drops a tenant's
+    whole schema or database, and a statement run through a backend client or a raw-query
+    escape hatch can still delete rows."""
 
     materialized: frozenset[str] = attrs.field(
         factory=frozenset,
