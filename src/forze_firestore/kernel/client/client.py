@@ -32,6 +32,16 @@ from .port import FirestoreClientPort
 # be added when a concrete deployment needs per-op deadlines.
 
 
+_GET_ALL_BATCH = 100
+"""Names in one batched get.
+
+Firestore takes requests of up to 10 MiB and streams the answer one document per message, a
+document being at most 1 MiB, so neither limit binds a batch of names. The bound is on what one
+call holds in flight: at most 100 documents (100 MiB at the document maximum, about 100 KiB
+for identity rows), for one more round trip per hundred ids.
+"""
+
+
 def _snapshot_to_dict(snapshot: Any) -> JsonDict:
     data: JsonDict = snapshot.to_dict() or {}
     out = dict(data)
@@ -423,23 +433,23 @@ class FirestoreClient(FirestoreClientPort):
         coll: AsyncCollectionReference,
         doc_ids: Sequence[str],
     ) -> dict[str, JsonDict]:
-        """The documents named *doc_ids* that exist, keyed by name, read in one batched get.
+        """The documents named *doc_ids* that exist, keyed by name, read in batched gets.
 
-        Read by name, as :meth:`get_document` reads one. Firestore documents no limit on the
-        number of names in a batched get.
+        Read by name, as :meth:`get_document` reads one, in requests of at most 100 distinct
+        names.
         """
 
-        if not doc_ids:
-            return {}
-
-        tx = await self._transaction_for_op()
-        refs = [coll.document(doc_id) for doc_id in doc_ids]
+        names = list(dict.fromkeys(doc_ids))
+        tx = await self._transaction_for_op() if names else None
         found: dict[str, JsonDict] = {}
 
-        # Snapshots arrive in no particular order, one per distinct name.
-        async for snap in self.__require_client().get_all(refs, transaction=tx):
-            if snap.exists:
-                found[snap.id] = _snapshot_to_dict(snap)
+        for first in range(0, len(names), _GET_ALL_BATCH):
+            refs = [coll.document(name) for name in names[first : first + _GET_ALL_BATCH]]
+
+            # Snapshots arrive in no particular order, one per name.
+            async for snap in self.__require_client().get_all(refs, transaction=tx):
+                if snap.exists:
+                    found[snap.id] = _snapshot_to_dict(snap)
 
         return found
 

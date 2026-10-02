@@ -22,6 +22,7 @@ from forze.base.exceptions import CoreException
 from forze_firestore.execution.deps import ConfigurableFirestoreDocument, FirestoreDocumentConfig
 from forze_firestore.execution.deps.keys import FirestoreClientDepKey
 from forze_firestore.kernel.client import FirestoreClient
+from forze_firestore.kernel.client import client as client_module
 from forze_identity.tenancy.application.specs import tenant_spec
 from forze_identity.tenancy.domain.models.tenant import CreateTenantCmd
 from tests.support.execution_context import context_from_deps
@@ -132,3 +133,24 @@ async def test_a_tenant_aware_read_without_a_tenant_is_refused_before_reading(
         await ctx.document.query(tenant_spec).get_many([uuid4()])
 
     assert refused.value.code == "tenant_required"
+
+
+async def test_names_past_several_requests_keep_order_repeats_and_misses(
+    firestore_client: FirestoreClient,
+    unique_collection: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Four names per request, so 35 ids take nine.
+    monkeypatch.setattr(client_module, "_GET_ALL_BATCH", 4)
+    ctx = _ctx(firestore_client, unique_collection)
+    command = ctx.document.command(tenant_spec)
+    ids = [(await command.create(CreateTenantCmd(tenant_key=f"t-{i}"))).id for i in range(35)]
+    query = ctx.document.query(tenant_spec)
+    asked = [*reversed(ids), ids[3], ids[30]]
+
+    assert [row.id for row in await query.get_many(asked)] == asked
+
+    with pytest.raises(CoreException) as missing:
+        await query.get_many([*ids, uuid4()])
+
+    assert missing.value.code == "core.not_found"
