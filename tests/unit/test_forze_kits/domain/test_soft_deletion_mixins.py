@@ -13,6 +13,7 @@ from forze_kits.domain.soft_deletion import (
     UpdateCmdWithSoftDeletion,
 )
 from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
+from forze_kits.domain.versioned import DocWithVersioning
 from forze_mock import MockDepsModule
 
 
@@ -219,3 +220,43 @@ class TestCompanionFields:
 
             assert ei.value.kind is ExceptionKind.DOMAIN
             assert (await cmd.get(part.id)).deleted_with is None
+
+
+# ....................... #
+# A versioned fact keeps what a version asserts; its companions still move with the flag.
+
+
+class Meter(DocWithVersioning, SoftDeletionMixin):
+    soft_delete_companions = frozenset({"deleted_with"})
+
+    reading: int = 0
+    deleted_with: UUID | None = None
+
+
+def _meter(**fields: object) -> Meter:
+    root = uuid4()
+    return Meter(id=root, root_id=root, version=1, **fields)
+
+
+class TestCompanionsOnAVersionedFact:
+    def test_a_delete_sets_the_marker_in_one_write(self) -> None:
+        deleted, diff = _meter().update({SOFT_DELETE_FIELD: True, "deleted_with": uuid4()})
+
+        assert deleted.is_deleted and deleted.deleted_with is not None
+        assert {SOFT_DELETE_FIELD, "deleted_with"} <= set(diff)
+
+    def test_a_restore_clears_the_marker_in_one_write(self) -> None:
+        before = _meter(is_deleted=True, deleted_with=uuid4())
+
+        restored, _ = before.update({SOFT_DELETE_FIELD: False, "deleted_with": None})
+
+        assert (restored.is_deleted, restored.deleted_with) == (False, None)
+
+    def test_the_marker_alone_is_still_refused(self) -> None:
+        with pytest.raises(CoreException):
+            _meter().update({"deleted_with": uuid4()})
+
+    def test_what_a_version_asserts_is_still_refused_with_the_flag(self) -> None:
+        # The companion carve-out is for the declared fields, not for anything riding a delete.
+        with pytest.raises(CoreException, match="correct"):
+            _meter().update({SOFT_DELETE_FIELD: True, "reading": 7})

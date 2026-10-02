@@ -10,6 +10,8 @@ from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.domain.models import CoreModel
 from forze.domain.validation import update_validator
+from forze_kits.domain.soft_deletion.constants import SOFT_DELETE_FIELD
+from forze_kits.domain.soft_deletion.mixins import SoftDeletionMixin
 
 from .constants import (
     ALLOWED_ORDINARY_DIFF_KEYS,
@@ -58,7 +60,7 @@ class VersionedMixin(CoreModel):
         changes one in place leaves no earlier value, no successor and nothing recording that
         anyone changed it. Two writes are not assertions and pass — the one that retires the
         version in force, stamped with when it stopped being so, and soft deletion, which hides
-        a row without contradicting it.
+        a row without contradicting it — with the companion fields its mixin declares.
 
         The guard sits on the model rather than on the generated operation because a repair
         script, a bulk update or a hand-written handler reaches the row without passing one.
@@ -89,7 +91,15 @@ class VersionedMixin(CoreModel):
                 "stamped with when it stopped being so.",
             )
 
-        if not keys <= ALLOWED_ORDINARY_DIFF_KEYS:
+        ordinary = ALLOWED_ORDINARY_DIFF_KEYS
+        model = type(before)
+
+        # A delete or restore may carry the fields soft deletion declares as its companions; that
+        # mixin refuses them in any write that does not flip the flag, so this admits nothing else.
+        if SOFT_DELETE_FIELD in keys and issubclass(model, SoftDeletionMixin):
+            ordinary = ordinary | model.soft_delete_companions
+
+        if not keys <= ordinary:
             raise exc.domain(
                 "Cannot overwrite what a version of a fact asserts — correct it instead, which "
                 "writes the new value as the next version and leaves this one readable.",
