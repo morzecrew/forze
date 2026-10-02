@@ -29,6 +29,7 @@ from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
+    scored_key_order,
     scored_order_by_rank_alias,
     validate_join_pairs,
 )
@@ -167,6 +168,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order_by_rank_alias(self.search_rank_column),
+                "scored_tiebreak": scored_key_order(join),
             }
 
         coalesced = self._is_coalesced_read_heap_for(self.join_pairs)

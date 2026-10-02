@@ -116,10 +116,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                 lr_alias="leg",
                 off_heap_csub_alias="csub",
             )
-            leg_order = hub_leg_order_limit(
-                engine=leg.engine,
-                per_leg_limit=per_leg_limit,
-            )
+            leg_order = hub_leg_order_limit(per_leg_limit=per_leg_limit)
             stmt = sql.SQL(
                 """
                 WITH {hub_cte},
@@ -161,10 +158,7 @@ class HubParallelSearchMixin(HubSearchSqlMixin[M]):
                     lr_alias="leg",
                     off_heap_csub_alias="csub",
                 )
-                leg_order = hub_leg_order_limit(
-                    engine=leg.engine,
-                    per_leg_limit=per_leg_limit,
-                )
+                leg_order = hub_leg_order_limit(per_leg_limit=per_leg_limit)
                 fk_join = leg.hub_fk_columns[0]
                 stmt = sql.SQL(
                     """

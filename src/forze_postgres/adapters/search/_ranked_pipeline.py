@@ -59,7 +59,6 @@ def build_filter_first_ranked_pipeline(
     heap_fw: sql.Composable | None,
     heap_fp: list[Any],
     cap_kw: dict[str, Any],
-    candidate_order_asc: bool = False,
     emit_exact_count_sql: bool = True,
 ) -> RankedPipelineParts:
     """Build capped data pipeline plus uncapped ``scored`` for exact ``COUNT(*)``."""
@@ -81,7 +80,6 @@ def build_filter_first_ranked_pipeline(
             sw=sw,
             heap_fw=heap_fw,
             first_in_with=True,
-            candidate_order_asc=candidate_order_asc,
             **cap_kw,
         )
         with_clause: sql.Composable = sql.SQL("WITH {}{}").format(
@@ -109,7 +107,6 @@ def build_filter_first_ranked_pipeline(
                 sw=sw,
                 heap_fw=heap_fw,
                 first_in_with=True,
-                candidate_order_asc=candidate_order_asc,
             )
             count_with = sql.SQL("WITH {}{}").format(scored_count, sql.SQL(""))
             count_from = from_outer
@@ -149,7 +146,6 @@ def build_filter_first_ranked_pipeline(
         heap_ident=heap_ident,
         join_sf=join_sf,
         sw=sw,
-        candidate_order_asc=candidate_order_asc,
         **cap_kw,
     )
     with_clause = build_pipeline_with_clause(filtered_cte, scored_data)
@@ -172,7 +168,6 @@ def build_filter_first_ranked_pipeline(
             heap_ident=heap_ident,
             join_sf=join_sf,
             sw=sw,
-            candidate_order_asc=candidate_order_asc,
         )
         count_with = build_pipeline_with_clause(filtered_cte, scored_count)
         count_from = filtered_from

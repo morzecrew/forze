@@ -16,19 +16,17 @@ from .runtime import HubLegRuntime, hub_leg_engine_for
 # ----------------------- #
 
 
-def hub_leg_order_limit(*, engine: str, per_leg_limit: int) -> sql.Composable:
-    """``ORDER BY … LIMIT`` suffix for capped hub leg CTEs."""
+def hub_leg_order_limit(*, per_leg_limit: int) -> sql.Composable:
+    """``ORDER BY … LIMIT`` suffix for capped hub leg CTEs: the best scores first.
 
-    score = sql.Identifier(LEG_SCORE)
+    Every engine's score is higher for a better match, the vector one being the negated
+    distance. The entity id breaks a tie at the cap's edge, so the leg keeps the same rows on
+    every request.
+    """
 
-    if engine == "vector":
-        return sql.SQL(" ORDER BY {} ASC NULLS LAST LIMIT {}").format(
-            score,
-            sql.Literal(int(per_leg_limit)),
-        )
-
-    return sql.SQL(" ORDER BY {} DESC NULLS LAST LIMIT {}").format(
-        score,
+    return sql.SQL(" ORDER BY {} DESC NULLS LAST, {} LIMIT {}").format(
+        sql.Identifier(LEG_SCORE),
+        sql.Identifier(LEG_EID),
         sql.Literal(int(per_leg_limit)),
     )
 
@@ -121,10 +119,7 @@ async def build_hub_leg_sql_parts(
     )
 
     leg_order = (
-        hub_leg_order_limit(
-            engine=leg.engine,
-            per_leg_limit=ctx.per_leg_limit,
-        )
+        hub_leg_order_limit(per_leg_limit=ctx.per_leg_limit)
         if ctx.per_leg_limit is not None
         else sql.SQL("")
     )

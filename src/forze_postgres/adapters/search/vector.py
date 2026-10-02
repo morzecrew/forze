@@ -32,6 +32,7 @@ from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
+    scored_key_order,
     scored_order_by_rank_alias,
     validate_join_pairs,
 )
@@ -189,6 +190,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order_by_rank_alias(self.search_rank_column),
+                "scored_tiebreak": scored_key_order(join),
             }
 
         coalesced = self._is_coalesced_read_heap_for(self.join_pairs)
@@ -218,7 +220,6 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             heap_fw=heap_fw,
             heap_fp=heap_fp,
             cap_kw=cap_kw,
-            candidate_order_asc=True,
             emit_exact_count_sql=bool(terms),
         )
 

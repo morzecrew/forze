@@ -59,6 +59,7 @@ from ._pipeline_sql import (
     build_pgroonga_index_first_pipeline,
     outer_join_on_scored,
     scored_key_columns,
+    scored_key_order,
     validate_join_pairs,
 )
 from ._ranked_pipeline import build_filter_first_ranked_pipeline, ranked_parts_to_sql
@@ -567,6 +568,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 proj_fw=fw,
                 heap_row_limit=heap_limit,
                 scored_order=scored_order,
+                scored_tiebreak=scored_key_order(join),
             )
             count_with, count_from = build_pgroonga_index_first_pipeline(
                 aliases=self.pipeline,
@@ -604,6 +606,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             cap_kw = {
                 "candidate_limit": candidate_cap,
                 "scored_order": scored_order,
+                "scored_tiebreak": scored_key_order(join),
             }
 
         heap_fw: sql.Composable | None = None
