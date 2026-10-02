@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
+    QuerySortExpression,
+    read_fields_for_model,
 )
 from forze.application.contracts.search import (
     SearchOptions,
@@ -18,6 +20,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
+    resolve_search_sorts,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.integrations.search.offset_executor import (
@@ -27,6 +30,7 @@ from forze.application.integrations.search.offset_executor import (
     offset_from_dict,
 )
 from forze.base.exceptions import exc
+from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._facets_highlights import (
     FacetPlan,
     HighlightPlan,
@@ -203,6 +207,31 @@ class _MeilisearchOffsetHooks:
 # ....................... #
 
 
+def page_sort(
+    gw: MeilisearchSearchGateway[Any],
+    spec: SearchSpec[Any],
+    sorts: QuerySortExpression | None,
+) -> list[str] | None:
+    """The ``sort`` parameter for a page: caller sorts, else ``default_sort``, then ``id``.
+
+    Meilisearch only sorts by attributes the index declares sortable. The id is one unless
+    ``sortable_attributes`` is pinned without it, and then the engine's own order closes ties.
+    """
+
+    read_fields = read_fields_for_model(spec.model_type)
+    pinned = gw.config.sortable_attributes
+
+    if pinned is not None and ID_FIELD not in pinned:
+        read_fields -= {ID_FIELD}
+
+    order = resolve_search_sorts(sorts, default_sort=spec.default_sort, read_fields=read_fields)
+
+    return build_sort(render_user_sorts(order, gw.field_map))
+
+
+# ....................... #
+
+
 async def execute_meilisearch_offset_search[M: BaseModel](
     gw: MeilisearchSearchGateway[M],
     *,
@@ -227,7 +256,7 @@ async def execute_meilisearch_offset_search[M: BaseModel](
 
     filter_str = gw.build_filter(filters)
     search_attrs = attributes_to_search_on(spec, options, gw.field_map)
-    sort_list = build_sort(render_user_sorts(sorts, gw.field_map))
+    sort_list = page_sort(gw, spec, sorts)
     pagination_dict: dict[str, Any] = dict(pagination or {})
     facet_plan = plan_facets(gw, spec, options)
     highlight_plan = plan_highlights(gw, spec, options)

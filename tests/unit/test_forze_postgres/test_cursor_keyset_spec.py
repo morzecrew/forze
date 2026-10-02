@@ -5,6 +5,7 @@ import pytest
 from forze.application.contracts.search import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
+    resolve_search_sorts,
 )
 from forze.base.exceptions import CoreException
 from forze.domain.constants import ID_FIELD
@@ -39,6 +40,44 @@ def test_ranked_search_cursor_key_spec_inherits_uniform_sort_direction_for_id() 
     assert keys[0] == "_r"
     assert keys[-1] == ID_FIELD
     assert spec[-1][1] == "desc"
+
+
+def test_ranked_search_cursor_key_spec_reads_the_long_form_direction() -> None:
+    spec = ranked_search_cursor_key_spec(
+        rank_field="_r",
+        sorts={"title": {"dir": "desc", "nulls": "last"}},
+        read_fields=frozenset({ID_FIELD, "title"}),
+    )
+
+    assert spec == [("_r", "desc"), ("title", "desc"), (ID_FIELD, "desc")]
+
+
+_READ = frozenset({ID_FIELD, "title", "rank"})
+
+
+@pytest.mark.parametrize(
+    ("sorts", "default_sort", "read_fields", "expected"),
+    [
+        (None, {"rank": "desc"}, _READ, {"rank": "desc", ID_FIELD: "desc"}),
+        ({"title": "asc"}, {"rank": "desc"}, _READ, {"title": "asc", ID_FIELD: "asc"}),
+        ({"title": "asc", "rank": "desc"}, None, _READ, {"title": "asc", "rank": "desc", ID_FIELD: "asc"}),
+        ({ID_FIELD: "desc", "title": "asc"}, None, _READ, {ID_FIELD: "desc", "title": "asc"}),
+        (None, None, _READ, {ID_FIELD: "asc"}),
+        ({"title": "desc"}, None, frozenset({"title"}), {"title": "desc"}),
+        (None, None, frozenset({"title"}), {}),
+    ],
+    ids=["default", "caller-wins", "mixed", "id-given", "nothing", "no-id", "empty"],
+)
+def test_resolve_search_sorts(
+    sorts: object, default_sort: object, read_fields: frozenset[str], expected: object
+) -> None:
+    resolved = resolve_search_sorts(
+        sorts,  # type: ignore[arg-type]
+        default_sort=default_sort,  # type: ignore[arg-type]
+        read_fields=read_fields,
+    )
+
+    assert list(resolved.items()) == list(expected.items())  # type: ignore[attr-defined]
 
 
 def test_ranked_search_cursor_key_spec_rejects_bad_direction() -> None:

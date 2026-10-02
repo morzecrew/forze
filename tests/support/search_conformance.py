@@ -23,6 +23,9 @@ What each check pins:
 6. An explicit sort determines page order, overriding relevance.
 7. Projection returns exactly the requested fields.
 8. ``search`` and ``search_page`` agree on hits; only the total distinguishes them.
+9. Without a sort, the spec's ``default_sort`` orders the page.
+10. Rows that tie on every sort key come back in ``id`` order, in the sort's direction.
+11. A cursor walk visits the rows in the order an offset page lists them.
 
 Not asserted, on purpose: blank-query semantics. ``search("")`` means "everything, filters
 only" on some engines and "nothing" on others, and which one is right is a genuine product
@@ -82,6 +85,13 @@ TITLES_ASC = ("alpha guide", "beta guide", "delta notes", "gamma notes")
 NOTES_TITLES = ("delta notes", "gamma notes")
 """Titles of the two ``category="notes"`` rows, sorted."""
 
+DEFAULT_SORT = {"title": "desc"}
+"""The ``default_sort`` every harness spec declares.
+
+Descending, so it is neither the order the corpus was written in nor the ascending order the
+other checks ask for.
+"""
+
 
 # ....................... #
 
@@ -98,7 +108,8 @@ class SearchHarness:
     """
 
     query: SearchQueryPort[Any]
-    """A port over a spec whose searchable fields are ``title`` and ``content``."""
+    """A port over a spec whose searchable fields are ``title`` and ``content``, and whose
+    ``default_sort`` is :data:`DEFAULT_SORT`."""
 
     backend: str
     """Label used in assertion messages, so a failure names the leg that disagreed."""
@@ -111,6 +122,9 @@ class SearchHarness:
     defensible, so the battery records the answer per backend rather than forcing one; what
     it does enforce is that the answer is *one of the two* and is stable.
     """
+
+    supports_cursor: bool = True
+    """Whether the backend serves ``search_cursor`` at all; one that does not refuses it."""
 
 
 Check = Callable[[SearchHarness], Any]
@@ -259,6 +273,71 @@ async def check_a_blank_query_is_declared_not_guessed(h: SearchHarness) -> None:
         assert list(page.hits) == [], h.backend
 
 
+async def check_the_default_sort_orders_a_page_without_one(h: SearchHarness) -> None:
+    """A request with no sort is ordered by the spec's ``default_sort``, not by chance.
+
+    Asked both with a query and without one: a blank query is a filter-only browse on every
+    backend here, and it is the list screen's usual request.
+    """
+
+    ranked = await h.query.search(PROBE_TERM, None, {"limit": 50})
+    browsed = await h.query.search("", None, {"limit": 50})
+
+    assert _titles(ranked) == list(reversed(TITLES_ASC)), h.backend
+    assert _titles(browsed) == list(reversed(TITLES_ASC)), h.backend
+
+
+async def check_a_tie_breaks_by_id_in_the_sort_direction(h: SearchHarness) -> None:
+    """Rows that tie on every sort key come back in ``id`` order, in the sort's direction.
+
+    Without a final key an offset page has no total order: the same request can return the
+    tied rows in a different order on the next page, which skips one row and repeats another.
+    """
+
+    for direction in ("asc", "desc"):
+        for query in (PROBE_TERM, ""):
+            page = await h.query.search(query, None, {"limit": 50}, {"category": direction})
+
+            for category in ("books", "notes"):
+                ids = [hit.id for hit in page.hits if hit.category == category]
+
+                assert len(ids) == 2, h.backend
+                assert ids == sorted(ids, reverse=direction == "desc"), (
+                    f"{h.backend}: {direction} {query!r} {category}"
+                )
+
+
+async def check_a_cursor_walk_follows_the_offset_order(h: SearchHarness) -> None:
+    """Walking cursor pages one row at a time visits the rows an offset page lists, in order.
+
+    The two paths build their order separately, and a cursor seeks past the last row it
+    returned by that order's keys: where they disagree, the walk skips or repeats a row.
+    """
+
+    if not h.supports_cursor:
+        with pytest.raises(CoreException):
+            await h.query.search_cursor(PROBE_TERM, None, {"limit": 1})
+
+        return
+
+    for query in (PROBE_TERM, ""):
+        for sorts in (None, {"category": "desc"}):
+            offset = await h.query.search(query, None, {"limit": 50}, sorts)
+            walked: list[Any] = []
+            cursor: dict[str, Any] = {"limit": 1}
+
+            for _ in range(len(CORPUS) + 1):
+                page = await h.query.search_cursor(query, None, cursor, sorts)
+                walked += [hit.id for hit in page.hits]
+
+                if not page.has_more:
+                    break
+
+                cursor = {"limit": 1, "after": page.next_cursor}
+
+            assert walked == [hit.id for hit in offset.hits], f"{h.backend}: {query!r} {sorts}"
+
+
 # ....................... #
 
 async def check_windows_partition_under_a_non_unique_sort(h: SearchHarness) -> None:
@@ -402,6 +481,9 @@ SEARCH_BATTERY: tuple[Check, ...] = (
     check_a_blank_query_is_declared_not_guessed,
     check_windows_partition_under_a_non_unique_sort,
     check_phrase_combine_is_honored,
+    check_the_default_sort_orders_a_page_without_one,
+    check_a_tie_breaks_by_id_in_the_sort_direction,
+    check_a_cursor_walk_follows_the_offset_order,
 )
 
 

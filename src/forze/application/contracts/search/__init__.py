@@ -12,6 +12,7 @@ from .capabilities import (
 from .cursor_keyset import (
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
+    resolve_search_sorts,
 )
 from .deps import (
     FederatedSearchQueryDepKey,
@@ -168,6 +169,7 @@ __all__ = [
     "prepare_federated_search_options",
     "prepare_hub_search_options",
     "ranked_search_cursor_key_spec",
+    "resolve_search_sorts",
     "search_options_for_simple_adapter",
     "SearchDeps",
 ]

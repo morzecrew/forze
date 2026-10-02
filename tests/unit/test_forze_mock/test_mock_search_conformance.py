@@ -23,6 +23,7 @@ from forze_mock.adapters.search.command import (
 )
 from tests.support.search_conformance import (
     CORPUS,
+    DEFAULT_SORT,
     SEARCH_BATTERY,
     SEARCH_WRITE_BATTERY,
     Check,
@@ -100,6 +101,7 @@ async def harness() -> SearchHarness:
                 model_type=_Row,
                 fields=searchable_fields(),
                 facetable_fields=frozenset({"category"}),
+                default_sort=DEFAULT_SORT,
             ),
         ),
         backend="mock",
@@ -112,6 +114,24 @@ async def harness() -> SearchHarness:
 @pytest.mark.parametrize("check", SEARCH_BATTERY, ids=lambda check: check.__name__)
 async def test_search_battery(check: Check, harness: SearchHarness) -> None:
     await check(harness)
+
+
+async def test_relevance_orders_before_the_sort(harness: SearchHarness) -> None:
+    """The oracle ranks as the real engines do: by score first, then by the request's sort.
+
+    Postgres and Mongo put the rank ahead of the sort keys, and Meilisearch's default ranking
+    rules put word matches ahead of ``sort``. An oracle that sorted first would answer a
+    ranked page in an order no backend gives.
+    """
+
+    page = await harness.query.search("python notes", None, {"limit": 50}, {"title": "asc"})
+
+    assert [hit.title for hit in page.hits] == [
+        "delta notes",
+        "gamma notes",
+        "alpha guide",
+        "beta guide",
+    ]
 
 
 # ....................... #

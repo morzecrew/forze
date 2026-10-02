@@ -222,8 +222,11 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
         if configured is not None:
             return [self.physical_path(f) for f in configured]
 
+        # The searchable fields, and whatever the spec orders an unsorted page by.
         pk = self.primary_key
-        fields = [self.physical_path(f) for f in self.spec.fields if f != pk]
+        fields = [
+            self.physical_path(f) for f in (*self.spec.fields, *(self.spec.default_sort or ()))
+        ]
         return list(dict.fromkeys([pk, *fields]))
 
     # ....................... #

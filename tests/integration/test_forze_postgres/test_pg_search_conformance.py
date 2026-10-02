@@ -1,7 +1,8 @@
-"""Postgres FTS against the shared search battery.
+"""Postgres FTS and PGroonga against the shared search battery.
 
 Postgres searches the system of record, so the corpus is inserted as rows and the adapter
-reads the same table an application would already own.
+reads the same table an application would already own. The two text engines share the
+offset pipeline but not its blank-query browse, so both run the battery.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
 from forze_postgres.kernel.client.client import PostgresClient
 from tests.support.execution_context import context_from_deps
 from tests.support.search_conformance import (
+    DEFAULT_SORT,
     SEARCH_BATTERY,
     Check,
     SearchHarness,
@@ -43,11 +45,19 @@ class _Row(BaseModel):
     price: Decimal = Decimal(0)
 
 
-@pytest_asyncio.fixture
-async def harness(pg_client: PostgresClient) -> SearchHarness:
+_INDEXES = {
+    "fts": "USING gin (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(content,'')))",
+    "pgroonga": "USING pgroonga ((ARRAY[title, content]))",
+}
+
+
+@pytest_asyncio.fixture(params=["fts", "pgroonga"])
+async def harness(request: pytest.FixtureRequest, pg_client: PostgresClient) -> SearchHarness:
+    engine: str = request.param
     table = f"search_conf_{uuid4().hex[:10]}"
     index = f"idx_{table}"
 
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
     await pg_client.execute(
         f"""
         CREATE TABLE {table} (
@@ -57,8 +67,7 @@ async def harness(pg_client: PostgresClient) -> SearchHarness:
             category text NOT NULL,
             price numeric NOT NULL
         );
-        CREATE INDEX {index} ON {table}
-        USING gin (to_tsvector('english', coalesce(title,'') || ' ' || coalesce(content,'')));
+        CREATE INDEX {index} ON {table} {_INDEXES[engine]};
         """
     )
 
@@ -78,18 +87,24 @@ async def harness(pg_client: PostgresClient) -> SearchHarness:
                     config=PostgresSearchConfig(
                         index=("public", index),
                         read=("public", table),
-                        engine=FtsEngine(groups={"A": ("title",), "B": ("content",)}),
+                        engine=(
+                            FtsEngine(groups={"A": ("title",), "B": ("content",)})
+                            if engine == "fts"
+                            else "pgroonga"
+                        ),
                     )
                 ),
             }
         )
     )
 
-    spec = SearchSpec(name="rows", model_type=_Row, fields=searchable_fields())
+    spec = SearchSpec(
+        name="rows", model_type=_Row, fields=searchable_fields(), default_sort=DEFAULT_SORT
+    )
 
     return SearchHarness(
         query=ctx.search.query(spec),
-        backend="pg_fts",
+        backend=f"pg_{engine}",
         blank_query_matches_all=True,
     )
 

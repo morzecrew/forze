@@ -150,7 +150,8 @@ async def test_vector_l2_knn_orders_by_nearest(pgvector_client: PostgresClient) 
     n_disj = __p.count
     assert n_disj == 2
     assert {row.id for row in disj} == {a_id, b_id}
-    assert disj[0].id == a_id
+    # Each row is exactly one of the two phrases, so they tie, and the id orders a tie.
+    assert [row.id for row in disj] == sorted([a_id, b_id])
 
     __p = await port.search_page(["alpha", "beta"], options={"phrase_combine": "all"})
     conj = __p.hits

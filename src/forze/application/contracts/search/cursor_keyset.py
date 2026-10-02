@@ -1,4 +1,4 @@
-"""Keyset cursor sort specs for ranked search (score + user sorts + id tie-break)."""
+"""Sort specs for search pages: the order after relevance, and the keyset cursor's keys."""
 
 from collections.abc import Sequence
 
@@ -41,6 +41,39 @@ def cursor_return_fields_for_select(
 # ....................... #
 
 
+def resolve_search_sorts(
+    sorts: QuerySortExpression | None,
+    *,
+    default_sort: QuerySortExpression | None,
+    read_fields: frozenset[str],
+    tiebreaker: str = ID_FIELD,
+) -> QuerySortExpression:
+    """The order a search page takes after relevance.
+
+    Caller *sorts* win, else the spec's *default_sort*. The *tiebreaker* then closes the order
+    when the read model has it, so rows that tie on every other key still have one place and
+    an offset window neither repeats nor skips them. It takes the sort's direction when that
+    is uniform, else ``asc``, as the document keyset does.
+
+    Empty when there is nothing to order by; relevance alone then decides, or the engine.
+    """
+
+    out = dict(sorts or default_sort or {})
+
+    if tiebreaker in out or tiebreaker not in read_fields:
+        return out
+
+    # Through the canonical parser: it reads both the ``"asc"`` shorthand and the
+    # ``{"dir", "nulls"}`` form, and refuses a bad value as a clean precondition.
+    directions = {parse_sort_value(value, field=str(field))[0] for field, value in out.items()}
+    out[tiebreaker] = "desc" if directions == {"desc"} else "asc"
+
+    return out
+
+
+# ....................... #
+
+
 def ranked_search_cursor_key_spec(
     *,
     rank_field: str,
@@ -50,28 +83,14 @@ def ranked_search_cursor_key_spec(
 ) -> list[tuple[str, str]]:
     """``rank_field`` DESC, optional caller ``sorts``, then optional tie-breaker."""
 
-    spec: list[tuple[str, str]] = [(rank_field, "desc")]
+    ordered = resolve_search_sorts(
+        sorts, default_sort=None, read_fields=read_fields, tiebreaker=tiebreaker
+    )
 
-    if sorts:
-        for field, direction in sorts.items():
-            # Route the caller-supplied direction through the canonical sort parser:
-            # it accepts both the ``"asc"``/``"desc"`` shorthand and the ``{"dir","nulls"}``
-            # form, and rejects a bad value with a clean precondition (``invalid_sort_value``)
-            # rather than an opaque internal.
-            d, _ = parse_sort_value(direction, field=str(field))
-            spec.append((str(field), d))
-
-    have = {k for k, _ in spec}
-
-    if tiebreaker not in have and tiebreaker in read_fields:
-        id_dir = "asc"
-
-        if sorts:
-            dirs = {str(v).lower() for v in sorts.values()}
-
-            if len(dirs) == 1:
-                id_dir = next(iter(dirs))
-
-        spec.append((tiebreaker, id_dir))
-
-    return spec
+    return [
+        (rank_field, "desc"),
+        *(
+            (str(field), parse_sort_value(value, field=str(field))[0])
+            for field, value in ordered.items()
+        ),
+    ]

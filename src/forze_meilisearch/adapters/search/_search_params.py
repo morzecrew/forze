@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from forze.application.contracts.querying import QuerySortExpression
+from forze.application.contracts.querying import QuerySortExpression, parse_sort_value
 from forze.application.contracts.search import (
     PhraseCombine,
     SearchOptions,
@@ -79,7 +79,8 @@ def render_user_sorts(
     out: list[tuple[str, str]] = []
 
     for field, direction in sorts.items():
-        d = str(direction).lower()
+        # Through the canonical parser, which also reads the ``{"dir", "nulls"}`` form.
+        d, _ = parse_sort_value(direction, field=field)
         phys = field_map.get(field, field)
         out.append((phys, d))
 

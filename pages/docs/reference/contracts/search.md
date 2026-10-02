@@ -28,7 +28,7 @@ result-set snapshots.
 | `fields` | `Sequence[str]` | required | indexed fields (non-empty, unique, never field-encrypted — the index would store ciphertext and content search would silently miss) |
 | `default_weights` | `Mapping[str, float] \| None` | `None` | per-field relevance weights |
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
-| `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts` (required if the model has no `id`) |
+| `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts`, on offset and cursor pages alike (required if the model has no `id`) |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of [`DocumentSpec.materialized`](document.md#spec); relational in-place only, **not** startup-validated) |
 | `facetable_fields` | `frozenset[str]` | `∅` | fields a query may compute term (value) facet distributions over (must be real, non-lenient, non-encrypted columns) |
 | `highlightable_fields` | `frozenset[str] \| None` | `None` | searchable fields a query may highlight; `None` = all searchable `fields`, `∅` = none |
@@ -65,7 +65,11 @@ argument; everything else mirrors the document side:
 | `search_stream` / `project_search_stream` / `select_search_stream` `(query, …, chunk_size=500)` | `AsyncGenerator` of chunks |
 
 `query` is a string (or a sequence of strings); `filters` and `sorts` use the
-[query DSL](../query-syntax.md). `options: SearchOptions` is the backend- and
+[query DSL](../query-syntax.md). A page from a single index is ordered by relevance, then
+by `sorts` (or the spec's `default_sort` when the request has none), then by `id`, in the
+sort's direction when it has a single one. A blank query has no relevance, so the sort alone
+orders it, and the `id` gives rows that tie on every other key one place, so offset pages
+neither repeat nor skip them. `options: SearchOptions` is the backend- and
 topology-agnostic per-request surface — relevance `weights`, `fuzzy` matching, a per-request
 `fields` narrowing, multi-term combination (`phrase_combine`: `"any"` / `"all"`), the count
 policy (`search_count`), an advisory candidate cap (`max_candidates`), and the facet /

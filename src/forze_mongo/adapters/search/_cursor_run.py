@@ -65,7 +65,7 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
     if terms:
         key_spec = ranked_search_cursor_key_spec(
             rank_field=MONGO_RANK_FIELD,
-            sorts=sorts,
+            sorts=sorts or gw.spec.default_sort,
             read_fields=gw.read_fields,
         )
         nulls = ["first" if d == "asc" else "last" for _, d in key_spec]

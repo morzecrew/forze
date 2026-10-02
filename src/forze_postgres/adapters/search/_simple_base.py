@@ -25,6 +25,7 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     normalize_search_queries,
+    resolve_search_sorts,
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import (
@@ -297,7 +298,11 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             snapshot=snapshot,
             parsed_filters=parsed_filters,
         )
-        extra_ob = await self._projection_order_by_clause(sorts)
+        extra_ob = await self._projection_order_by_clause(
+            resolve_search_sorts(
+                sorts, default_sort=self.spec.default_sort, read_fields=self.read_fields
+            )
+        )
         order_sql = build_rank_first_order(
             aliases=self.pipeline,
             extra_order=extra_ob,

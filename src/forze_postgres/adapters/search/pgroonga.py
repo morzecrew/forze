@@ -26,6 +26,7 @@ from forze.application.contracts.search import (
     facet_size_of,
     normalize_search_queries,
     resolve_facet_fields,
+    resolve_search_sorts,
     search_options_for_simple_adapter,
     search_page_from_limit_offset,
 )
@@ -249,20 +250,14 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
             if maybe_snap is not None:
                 return maybe_snap
 
-        extra_ob = await self._projection_order_by_clause(sorts)
-        order_parts: list[sql.Composable] = (  # type: ignore[assignment]
-            [extra_ob]
-            if extra_ob is not None
-            else [
-                sql.SQL("{} ASC").format(
-                    sql.Identifier(
-                        self.projection_alias,
-                        sorted(self.read_fields)[0],
-                    ),
-                ),
-            ]
+        # A read model without an ``id`` and a request without a sort leave nothing to order
+        # by but some column; the first field by name is at least the same one every time.
+        order_sql = await self._projection_order_by_clause(
+            resolve_search_sorts(
+                sorts, default_sort=self.spec.default_sort, read_fields=self.read_fields
+            )
+            or {sorted(self.read_fields)[0]: "asc"}
         )
-        order_sql = sql.SQL(", ").join(order_parts)
         proj_qname = await self._qname()
         count_stmt = sql.SQL(
             """

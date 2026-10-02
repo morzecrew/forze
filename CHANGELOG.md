@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sorting by a `NOT NULL` Postgres column can read from a plain index.** The `ORDER BY` now leaves out the null placement for such a column, which a plain btree does not hold, so a document list or blank-query search sorted by it no longer sorts the whole filtered set first. Results are unchanged.
 
+- **Meilisearch's `ensure_index` makes the `default_sort` fields sortable**, since an unsorted page now sorts by them. A pinned `sortable_attributes` must list them, or an unsorted page is refused.
+
 ### Fixed
 
 - **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.
@@ -32,9 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
 
+- **A search page without a sort follows the spec's `default_sort` on every backend** (**behaviour change**: page order). Postgres offset search, Mongo, Meilisearch and the in-memory search ignored it. Rows that tie on every key are then ordered by `id`, so offset pages no longer repeat or skip them.
+
 - **A blank Postgres full-text or vector search sorts every matching row.** Its candidate cap kept the first rows the scan met, so a sorted page over a table larger than the cap could miss the rows that belonged on it.
 
 - **A ranked Postgres search cursor reaches rows whose sort key is null.** The page's order put them last on an ascending key while the cursor's seek reads them as the smallest value, so walking the pages skipped them.
+
+- **The in-memory search orders a ranked page by relevance before the sort**, as Postgres, Mongo and Meilisearch do, instead of sorting first.
 
 ### Security
 
