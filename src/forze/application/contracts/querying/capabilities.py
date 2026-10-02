@@ -39,6 +39,7 @@ from .internal.nodes import (
     QueryNot,
     QueryOr,
 )
+from .internal.parse import OPERAND_COLLECTIONS
 from .types import ALL_VALUE_OPS as ALL_VALUE_OPS
 
 # ----------------------- #
@@ -76,8 +77,8 @@ _LIST_OPERAND_OPS: Final[frozenset[str]] = frozenset(
 )
 """Operators whose operand is a list of values, bounded by :attr:`QueryCapabilities.max_in_size`."""
 
-_OPERAND_LISTS = (list, tuple, set, frozenset)
-"""The collection types the parser accepts as such an operand."""
+_OPERAND_LISTS = OPERAND_COLLECTIONS
+"""The collection types the parser accepts as such an operand, so it bounds the same ones."""
 
 
 # ....................... #

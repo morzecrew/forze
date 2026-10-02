@@ -1237,6 +1237,30 @@ class TestQueryCompareExpressionParser:
         with pytest.raises(CoreException, match="maximum size"):
             parser.parse_filter({"$values": {"x": {"$in": [1, 2]}}})  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            {"$values": {"x": (1, 2, 3)}},
+            {"$values": {"x": {1, 2, 3}}},
+            {"$values": {"x": frozenset({1, 2, 3})}},
+            {"$values": {"x": {"$in": frozenset({1, 2, 3})}}},
+            {"$values": {"x": {"$nin": frozenset({1, 2, 3})}}},
+            {"$values": {"x": {"$overlaps": frozenset({1, 2, 3})}}},
+        ],
+        ids=["tuple", "set", "frozenset", "in-frozenset", "nin-frozenset", "overlaps-frozenset"],
+    )
+    def test_every_operand_collection_is_bounded(self, expr: dict) -> None:
+        parser = QueryFilterExpressionParser(
+            limits=QueryFilterLimits(max_depth=32, max_clauses=256, max_in_size=2),
+        )
+        with pytest.raises(CoreException, match="maximum size"):
+            parser.parse_filter(expr)  # type: ignore[arg-type]
+
+    def test_a_shortcut_operand_must_be_a_collection_the_parser_bounds(self) -> None:
+        # Any other iterable would reach the backend unsized.
+        with pytest.raises(CoreException, match="Invalid value"):
+            QueryFilterExpressionParser.parse({"$values": {"x": iter(range(5))}})  # type: ignore[dict-item]
+
     def test_parse_not(self) -> None:
         result = QueryFilterExpressionParser.parse(
             {"$not": {"$values": {"status": "archived"}}},

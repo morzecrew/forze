@@ -73,6 +73,9 @@ _HIERARCHY_OPS: frozenset[str] = frozenset(get_args(HierarchyOp))
 _IN_SIZE_OPS: frozenset[str] = _MEMB_OPS | _SET_REL_OPS | _HIERARCHY_OPS
 _QUANTIFIER_OPS: frozenset[str] = frozenset(get_args(QueryElementQuantifier))
 
+OPERAND_COLLECTIONS = (list, tuple, set, frozenset)
+"""The collections a membership or set operand may be; each is bounded by ``max_in_size``."""
+
 _COMBINATOR_KEYS = frozenset({"$and", "$or", "$not"})
 _CONSTRAINT_KEYS = frozenset({"$values", "$fields"})
 
@@ -352,6 +355,10 @@ class QueryFilterExpressionParser:
             if isinstance(raw, Scalar):
                 return [QueryField(field, "$eq", raw)]
 
+            if not isinstance(raw, OPERAND_COLLECTIONS):
+                # Any other iterable would reach the backend without its size checked.
+                raise exc.precondition(f"Invalid value for field {field}: {raw!r}")
+
             self._check_in_size(field, "$in", raw)
             return [QueryField(field, "$in", raw)]
 
@@ -536,7 +543,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _MEMB_OPS:
-            if not isinstance(value, list | tuple | set):
+            if not isinstance(value, OPERAND_COLLECTIONS):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
             self._check_in_size(field, op, value)
@@ -591,7 +598,7 @@ class QueryFilterExpressionParser:
         if op not in _IN_SIZE_OPS:
             return
 
-        if not isinstance(value, list | tuple | set):
+        if not isinstance(value, OPERAND_COLLECTIONS):
             return
 
         size = len(value)  # type: ignore[arg-type]
@@ -648,7 +655,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _MEMB_OPS:
-            if not isinstance(value, list | tuple | set):
+            if not isinstance(value, OPERAND_COLLECTIONS):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
             self._check_in_size(field, op, value)
@@ -658,7 +665,7 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
         elif op in _SET_REL_OPS:
-            if not isinstance(value, list | tuple | set):
+            if not isinstance(value, OPERAND_COLLECTIONS):
                 raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
 
             self._check_in_size(field, op, value)
