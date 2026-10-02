@@ -19,7 +19,11 @@ from forze.application.contracts.querying import (
     resolve_effective_sorts,
     resolved_cursor_limit,
 )
-from forze.application.contracts.search import SearchCursorPage, ranked_search_cursor_key_spec
+from forze.application.contracts.search import (
+    SearchCursorPage,
+    ranked_search_cursor_key_spec,
+    resolve_search_sorts,
+)
 from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -71,12 +75,17 @@ async def execute_mongo_ranked_cursor_search[M: BaseModel](
         nulls = ["first" if d == "asc" else "last" for _, d in key_spec]
 
     else:
-        effective = resolve_effective_sorts(
-            sorts=sorts,
-            default_sort=gw.spec.default_sort,
+        # Ended at the id as the offset page is, so both take the same keys.
+        effective = resolve_search_sorts(
+            resolve_effective_sorts(
+                sorts=sorts,
+                default_sort=gw.spec.default_sort,
+                read_fields=gw.read_fields,
+                spec_name=gw.spec.name,
+                model=gw.model_type,
+            ),
+            default_sort=None,
             read_fields=gw.read_fields,
-            spec_name=gw.spec.name,
-            model=gw.model_type,
         )
         _norm = list(
             normalize_sorts_for_keyset(

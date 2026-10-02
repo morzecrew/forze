@@ -66,7 +66,8 @@ _READ = frozenset({ID_FIELD, "title", "rank"})
             _READ,
             {"title": "asc", "rank": "desc", ID_FIELD: "asc"},
         ),
-        ({ID_FIELD: "desc", "title": "asc"}, None, _READ, {ID_FIELD: "desc", "title": "asc"}),
+        # The id is unique: a key after it orders nothing, so the sort ends there.
+        ({ID_FIELD: "desc", "title": "asc"}, None, _READ, {ID_FIELD: "desc"}),
         (None, None, _READ, {ID_FIELD: "asc"}),
         ({"title": "desc"}, None, frozenset({"title"}), {"title": "desc"}),
         (None, None, frozenset({"title"}), {}),

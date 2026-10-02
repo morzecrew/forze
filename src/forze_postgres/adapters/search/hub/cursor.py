@@ -17,9 +17,11 @@ from forze.application.contracts.querying import (
     CursorPaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    assert_default_null_ordering,
     build_cursor_binding,
     cursor_protection_active,
     keyset_page_bounds,
+    resolve_sort_keys,
     validate_cursor_token,
 )
 from forze.application.contracts.search import (
@@ -86,6 +88,12 @@ class HubSearchCursorMixin[T: BaseModel](HubParallelSearchMixin[T]):
         internally and stripped from the response.
         """
 
+        # The cursor seeks with a null as the smallest value; another placement would walk
+        # past rows, so it is refused here and honoured only on offset pages.
+        assert_default_null_ordering(
+            resolve_sort_keys(sorts or self.hub_spec.default_sort, sealed=self.sealed_fields),
+            backend="postgres hub cursor",
+        )
         resolve_fusion(
             cast("MultiSourceSearchOptions", options or {}).get("fusion"),
             self.search_capabilities,

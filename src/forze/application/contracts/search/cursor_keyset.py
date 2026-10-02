@@ -52,15 +52,21 @@ def resolve_search_sorts(
 
     Caller *sorts* win, else the spec's *default_sort*. The *tiebreaker* then closes the order
     when the read model has it, so rows that tie on every other key still have one place and
-    an offset window neither repeats nor skips them. It takes the sort's direction when that
-    is uniform, else ``asc``, as the document keyset does.
+    an offset window neither repeats nor skips them. Appended, it takes the sort's direction
+    when that is uniform, else ``asc``. Named in the sort, it ends it there: it is unique, so
+    a key after it orders nothing, and a cursor seeks by the same keys an offset page sorts by.
 
     Empty when there is nothing to order by; relevance alone then decides, or the engine.
     """
 
     out = dict(sorts or default_sort or {})
 
-    if tiebreaker in out or tiebreaker not in read_fields:
+    if tiebreaker in out:
+        keys = list(out)
+
+        return {key: out[key] for key in keys[: keys.index(tiebreaker) + 1]}
+
+    if tiebreaker not in read_fields:
         return out
 
     # Through the canonical parser: it reads both the ``"asc"`` shorthand and the

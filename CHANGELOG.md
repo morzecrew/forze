@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Meilisearch's `ensure_index` makes the `default_sort` fields sortable**, since an unsorted page now sorts by them. A pinned `sortable_attributes` must list them: the search port refuses one that does not when it is built.
 
+- **An explicit null placement no Postgres search cursor can keep is refused** (**behaviour change**), as Mongo does; offset pages still honour it. Before, the placement was dropped and the cursor walked a different order from the offset page.
+
 ### Fixed
 
 - **Deactivating a principal works without password or API-key accounts wired.** The cascade resolved both credential stores and failed on a deployment with no route for one. It now closes every store the application wires, from any authn module, and refuses a store wired with only one of its ports.
@@ -47,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A capped Postgres vector search keeps the nearest rows.** The candidate cap, and a hub's per-leg cap, kept the lowest scores, which are the farthest rows, so on a table larger than the cap the nearest matches never reached the page.
 
 - **A ranked Postgres search's candidate cap keeps the same rows on every request.** Rows tying on rank at the cap's edge were kept in scan order, so pages sorted out of the pool could repeat or skip rows. The id now breaks the tie, on every engine and hub leg.
+
+- **A Mongo search cursor walks past rows whose sort key is null.** Its seek compared with `$gt`/`$lt`, which never match a null, so walking a sort over a nullable field stopped at the first or last null.
+
+- **A search sort that names `id` ends there**, so offset and cursor pages order by the same keys; a key after the id changed nothing but the cursor's order.
 
 - **The in-memory search orders a ranked page by relevance before the sort**, as Postgres, Mongo and Meilisearch do, instead of sorting first.
 

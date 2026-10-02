@@ -21,7 +21,10 @@ from forze.application.contracts.querying.pagination.cursor_token import (
     compare_keyset_sort_values,
     row_value_for_sort_key,
 )
-from forze.application.contracts.search import ranked_search_cursor_key_spec
+from forze.application.contracts.search import (
+    ranked_search_cursor_key_spec,
+    resolve_search_sorts,
+)
 from forze.domain.constants import ID_FIELD
 
 from .constants import HUB_RANK, LEG_EID, LEG_SCORE
@@ -121,12 +124,17 @@ def hub_order_key_spec(
     model: type[BaseModel] | None = None,
 ) -> list[tuple[str, str]]:
     if not do_legs:
-        effective = resolve_effective_sorts(
-            sorts=sorts,
-            default_sort=default_sort,
+        # Ended at the id as the offset page is, so both take the same keys.
+        effective = resolve_search_sorts(
+            resolve_effective_sorts(
+                sorts=sorts,
+                default_sort=default_sort,
+                read_fields=read_fields,
+                spec_name=spec_name,
+                model=model,
+            ),
+            default_sort=None,
             read_fields=read_fields,
-            spec_name=spec_name,
-            model=model,
         )
         return [
             (k, d)

@@ -31,6 +31,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
+    resolve_search_sorts,
 )
 from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
@@ -123,12 +124,17 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     c = dict(cursor or {})
     proj_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
 
-    effective = resolve_effective_sorts(
-        sorts=sorts,
-        default_sort=spec.default_sort,
+    # Ended at the id as the offset page is, so both take the same keys.
+    effective = resolve_search_sorts(
+        resolve_effective_sorts(
+            sorts=sorts,
+            default_sort=spec.default_sort,
+            read_fields=gw.read_fields,
+            spec_name=spec.name,
+            model=gw.model_type,
+        ),
+        default_sort=None,
         read_fields=gw.read_fields,
-        spec_name=spec.name,
-        model=gw.model_type,
     )
     key_spec = [
         (k, d)
