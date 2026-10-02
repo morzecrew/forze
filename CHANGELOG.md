@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A soft-deleted row can still be read by id.** `soft_delete_wiring(spec, get_deleted="read")`, or the same option on `AggregateKit`, makes `GET` return the row with `is_deleted` set instead of a 404. Lists still leave it out.
 
-- **A restore can clear its own markers in the same write.** A model on the soft-deletion mixin may list `soft_delete_companions`: fields an update of a deleted row can change together with `is_deleted`, such as a cascade marker.
+- **A delete or restore can set its own markers in the same write.** A model on the soft-deletion mixin may list `soft_delete_companions`, such as a cascade marker: fields that change only in a write that flips `is_deleted`, so no other update can set or clear one.
 
 - **Stored-file delete can keep the object, and uploads can be capped.** `bind_stored_file_writes(..., purge_on_delete=False)` soft-deletes the row and keeps its blob, dropping only the search entry; `StoredFileKitSpec(max_bytes=...)` refuses a larger upload with `upload_too_large` before a row is written.
 

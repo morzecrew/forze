@@ -87,6 +87,28 @@ class TestCompanionFields:
         with pytest.raises(CoreException):
             Part._validate_soft_deletion(before, before, {"deleted_with": None})  # type: ignore[misc]
 
+    def test_a_companion_alone_is_refused_on_a_live_row_too(self) -> None:
+        # A live row's marker is no more editable than a deleted row's: only the write that
+        # flips the flag sets or clears it.
+        before = Part(title="bolt")
+
+        with pytest.raises(CoreException, match="deleted_with"):
+            Part._validate_soft_deletion(  # type: ignore[misc]
+                before, before, {"deleted_with": str(uuid4())}
+            )
+
+    def test_a_delete_sets_a_companion_on_a_live_row(self) -> None:
+        before = Part(title="bolt")
+
+        Part._validate_soft_deletion(  # type: ignore[misc]
+            before, before, {SOFT_DELETE_FIELD: True, "deleted_with": str(uuid4())}
+        )
+
+    def test_a_live_row_still_takes_ordinary_edits(self) -> None:
+        before = Part(title="bolt")
+
+        Part._validate_soft_deletion(before, before, {"title": "nut"})  # type: ignore[misc]
+
     def test_an_undeclared_field_is_still_refused(self) -> None:
         before = Part(is_deleted=True)
 
@@ -126,6 +148,21 @@ class TestCompanionFields:
         )
         assert Listed.soft_delete_companions == frozenset({"deleted_with"})
 
+    def test_a_declaration_without_classvar_is_refused(self) -> None:
+        # Annotated without ClassVar it would be a stored field, so each row's own data would
+        # decide what its deleted self may change.
+        with (
+            pytest.raises(CoreException, match="ClassVar") as ei,
+            pytest.warns(UserWarning, match="shadows an attribute"),
+        ):
+
+            class Stored(DocWithSoftDeletion):
+                soft_delete_companions: frozenset[str] = frozenset({"deleted_with"})
+
+                deleted_with: UUID | None = None
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
     def test_a_bare_string_is_refused(self) -> None:
         with pytest.raises(CoreException, match="field names") as ei:
 
@@ -164,3 +201,21 @@ class TestCompanionFields:
             )
 
             assert (restored.is_deleted, restored.deleted_with) == (False, None)
+
+    async def test_an_update_cannot_forge_a_marker_on_a_live_row(self) -> None:
+        spec = DocumentSpec(
+            name="parts",
+            read=PartRead,
+            write=DocumentWriteTypes(domain=Part, create_cmd=PartCreate, update_cmd=PartUpdate),
+        )
+        runtime = build_runtime(MockDepsModule())
+
+        async with runtime.scope():
+            cmd = runtime.get_context().document.command(spec)
+            part = await cmd.create(PartCreate(title="bolt"))
+
+            with pytest.raises(CoreException) as ei:
+                await cmd.update(part.id, part.rev, PartUpdate(deleted_with=uuid4()))
+
+            assert ei.value.kind is ExceptionKind.DOMAIN
+            assert (await cmd.get(part.id)).deleted_with is None

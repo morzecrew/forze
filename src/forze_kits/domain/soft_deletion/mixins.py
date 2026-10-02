@@ -19,10 +19,10 @@ class SoftDeletionMixin(CoreModel):
     """
 
     soft_delete_companions: ClassVar[frozenset[str]] = frozenset()
-    """Fields a deleted row's update may change alongside ``is_deleted`` — e.g. a marker naming the
-    cascade that deleted the row, cleared by the same write that restores it. A companion changes
-    only together with the flag, never on its own. Each must be a field of the model; empty by
-    default."""
+    """Fields that change only in the write that deletes or restores the row — e.g. a marker naming
+    the cascade that deleted it, set by the delete and cleared by the restore. Any other update
+    that changes one is refused, on a live row as on a deleted one. Each must be a field of the
+    model, and the declaration a ``ClassVar``; empty by default."""
 
     is_deleted: bool = False
     """Flag indicating if the document is soft deleted."""
@@ -32,6 +32,13 @@ class SoftDeletionMixin(CoreModel):
     @classmethod
     def __pydantic_init_subclass__(cls, **kwargs: Any) -> None:
         super().__pydantic_init_subclass__(**kwargs)
+
+        if "soft_delete_companions" in cls.model_fields:
+            raise exc.configuration(
+                f"{cls.__qualname__}.soft_delete_companions is declared as a field; annotate it "
+                "ClassVar[frozenset[str]] or leave it unannotated, so the model decides what a "
+                "delete or restore may change rather than each row's own data.",
+            )
 
         declared: Any = cls.soft_delete_companions
 
@@ -53,11 +60,17 @@ class SoftDeletionMixin(CoreModel):
 
     @update_validator
     def _validate_soft_deletion(before: Self, _: Self, diff: JsonDict) -> None:
-        """Reject updates to soft-deleted documents unless only is deleted and its companions change."""
+        """Reject updates to soft-deleted documents unless only is deleted and its companions
+        change, and a companion change on any row unless the same write flips is deleted."""
 
         keys = set(diff.keys())
-        allowed = ALLOWED_SOFT_DELETE_DIFF_KEYS | before.soft_delete_companions
-        soft_deletion = SOFT_DELETE_FIELD in keys and keys <= allowed
+        companions = type(before).soft_delete_companions
+        flips = SOFT_DELETE_FIELD in keys
 
-        if before.is_deleted and not soft_deletion:
+        if not flips and (changed := keys & companions):
+            raise exc.domain(
+                f"{sorted(changed)} change only when the document is deleted or restored.",
+            )
+
+        if before.is_deleted and not (flips and keys <= ALLOWED_SOFT_DELETE_DIFF_KEYS | companions):
             raise exc.domain("Cannot update a soft-deleted document.")
