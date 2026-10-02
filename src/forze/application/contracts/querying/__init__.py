@@ -137,6 +137,7 @@ from .pagination import (
     validate_cursor_token,
     validate_runtime_sort_fields,
     validate_sort_fields,
+    with_id_tiebreaker,
 )
 from .types import (
     ElementOp,
@@ -277,6 +278,7 @@ __all__ = [
     "validate_cursor_token",
     "validate_runtime_sort_fields",
     "validate_sort_fields",
+    "with_id_tiebreaker",
     "row_value_for_sort_key",
     "QueryConjunction",
     "QueryDisjunction",

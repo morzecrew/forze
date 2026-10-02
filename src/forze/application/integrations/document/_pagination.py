@@ -17,6 +17,10 @@ from forze.application.contracts.querying import (
     assemble_keyset_cursor_page,
     assert_cursor_projection_includes_sort_keys,
     normalize_sorts_for_keyset,
+    with_id_tiebreaker,
+)
+from forze.application.contracts.querying.pagination.cursor_page import (
+    _sort_key_in_projection,  # pyright: ignore[reportPrivateUsage]
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -135,48 +139,38 @@ class DocumentPaginationMixin(Generic[R]):
 
         res: list[Any]
 
-        if limit is None:
-            chunk = self.eff_batch_size
-            off = 0 if offset is None else offset
-            sorts_for_scan = self._resolve_sorts(sorts)
-            res = []
-            page_num = 0
+        if limit is None and query.aggregates is None:
+            scan_sorts = with_id_tiebreaker(
+                self._resolve_sorts(sorts), read_fields=self._read_fields
+            )
 
-            while True:
-                check_page_limit(
-                    pages=page_num,
-                    max_pages=self.max_scan_pages,
-                    label="Document offset scan",
+            if self._seekable(query, scan_sorts):
+                skip = offset or 0
+
+                if skip < 0:
+                    # A slice would count from the end and return the last rows.
+                    raise exc.precondition("Pagination offset must not be negative.")
+
+                res = await self._keyset_scan(query, filters=filters, sorts=scan_sorts)
+                res = res[skip:]
+
+            else:
+                res = await self._offset_scan(
+                    query,
+                    filters=filters,
+                    sorts=scan_sorts,
+                    offset=offset,
+                    parsed_filters=parsed_filters,
                 )
 
-                if query.aggregates is not None:
-                    batch = await self.read_gw.find_many_aggregates(
-                        filters=filters,
-                        limit=chunk,
-                        offset=off,
-                        sorts=sorts_for_scan,
-                        aggregates=query.aggregates,
-                        return_model=query.return_model,
-                        parsed=parsed_filters,
-                    )
-                else:
-                    batch = await self.read_gw.find_many(  # type: ignore[misc]
-                        filters=filters,
-                        limit=chunk,
-                        offset=off,
-                        sorts=sorts_for_scan,
-                        return_model=query.return_model,  # type: ignore[arg-type]
-                        return_fields=query.return_fields,  # type: ignore[arg-type]
-                        parsed=parsed_filters,
-                    )
-
-                res.extend(batch)  # type: ignore[arg-type]
-
-                if len(batch) < chunk:  # type: ignore[arg-type]
-                    break
-
-                off += chunk
-                page_num += 1
+        elif limit is None:
+            res = await self._offset_scan(
+                query,
+                filters=filters,
+                sorts=self._resolve_sorts(sorts),
+                offset=offset,
+                parsed_filters=parsed_filters,
+            )
 
         elif query.aggregates is not None:
             res = await self.read_gw.find_many_aggregates(
@@ -204,6 +198,119 @@ class DocumentPaginationMixin(Generic[R]):
             pagination,
             total=cnt if query.return_count else None,
         )
+
+    def _seekable(self, query: OffsetQuery, sorts: QuerySortExpression) -> bool:
+        """Whether a read with no limit can seek past each batch instead of offsetting.
+
+        Seeking needs a unique last key, ``id``, and every sort key's value in the rows it
+        returns, since the next batch starts after the last row's values. A projection that
+        leaves a key out is paged by offset, as is any sort but ``id`` alone where the cursor
+        seeks on nothing else — a strict primary-key cursor, or a gateway declaring
+        ``cursor_sorts_by_id_only``.
+        """
+
+        keys = list(sorts)
+
+        if keys[-1] != ID_FIELD:
+            return False
+
+        id_only = self.enforce_primary_key_cursor_sort or (
+            getattr(self.read_gw, "cursor_sorts_by_id_only", False) is True
+        )
+
+        if id_only and keys != [ID_FIELD]:
+            return False
+
+        projection = (
+            list(query.return_model.model_fields)
+            if query.return_model is not None
+            else query.return_fields
+        )
+
+        return projection is None or all(_sort_key_in_projection(k, projection) for k in keys)
+
+    # ....................... #
+
+    async def _keyset_scan(
+        self,
+        query: OffsetQuery,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression,
+    ) -> list[Any]:
+        """Every row, batch by batch, each batch seeking past the last row of the one before."""
+
+        rows: list[Any] = []
+
+        async for batch in self._keyset_batches(
+            CursorQuery(return_model=query.return_model, return_fields=query.return_fields),
+            filters=filters,
+            sorts=sorts,
+            chunk=self.eff_batch_size,
+            max_pages=self.max_scan_pages,
+            label="Document scan",
+        ):
+            rows.extend(batch)
+
+        return rows
+
+    # ....................... #
+
+    async def _offset_scan(
+        self,
+        query: OffsetQuery,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression,
+        offset: int | None,
+        parsed_filters: Any,
+    ) -> list[Any]:
+        """Every row, batch by batch at growing offsets — for reads that cannot seek."""
+
+        chunk = self.eff_batch_size
+        off = 0 if offset is None else offset
+        res: list[Any] = []
+        page_num = 0
+
+        while True:
+            check_page_limit(
+                pages=page_num,
+                max_pages=self.max_scan_pages,
+                label="Document scan",
+            )
+
+            if query.aggregates is not None:
+                batch = await self.read_gw.find_many_aggregates(
+                    filters=filters,
+                    limit=chunk,
+                    offset=off,
+                    sorts=sorts,
+                    aggregates=query.aggregates,
+                    return_model=query.return_model,
+                    parsed=parsed_filters,
+                )
+            else:
+                batch = await self.read_gw.find_many(  # type: ignore[misc]
+                    filters=filters,
+                    limit=chunk,
+                    offset=off,
+                    sorts=sorts,
+                    return_model=query.return_model,  # type: ignore[arg-type]
+                    return_fields=query.return_fields,  # type: ignore[arg-type]
+                    parsed=parsed_filters,
+                )
+
+            res.extend(batch)  # type: ignore[arg-type]
+
+            if len(batch) < chunk:  # type: ignore[arg-type]
+                break
+
+            off += chunk
+            page_num += 1
+
+        return res
+
+    # ....................... #
 
     async def _cursor_page(
         self,
@@ -298,40 +405,36 @@ class DocumentPaginationMixin(Generic[R]):
         sorts: QuerySortExpression | None,
         chunk_size: int,
     ) -> AsyncGenerator[Sequence[R] | Sequence[JsonDict] | Sequence[BaseModel]]:
-        eff = self._eff_stream_chunk_size(chunk_size)
-        cursor: CursorPaginationExpression = {"limit": eff}
-        page: CursorPage[R] | CursorPage[JsonDict] | CursorPage[BaseModel]
+        async for hits in self._keyset_batches(
+            CursorQuery(return_model=query.return_model, return_fields=query.return_fields),
+            filters=filters,
+            sorts=sorts,
+            chunk=self._eff_stream_chunk_size(chunk_size),
+            max_pages=self.max_stream_pages,
+            label="Document cursor stream",
+        ):
+            yield hits
+
+    # ....................... #
+
+    async def _keyset_batches(
+        self,
+        query: CursorQuery,
+        *,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        sorts: QuerySortExpression | None,
+        chunk: int,
+        max_pages: int | None,
+        label: str,
+    ) -> AsyncGenerator[Sequence[R] | Sequence[JsonDict] | Sequence[BaseModel]]:
+        cursor: CursorPaginationExpression = {"limit": chunk}
         page_num = 0
         prev_cursor: str | None = None
 
         while True:
-            check_page_limit(
-                pages=page_num,
-                max_pages=self.max_stream_pages,
-                label="Document cursor stream",
-            )
+            check_page_limit(pages=page_num, max_pages=max_pages, label=label)
 
-            if query.return_model is not None:
-                page = await self._cursor_page(
-                    CursorQuery(return_model=query.return_model, return_fields=None),
-                    filters=filters,
-                    cursor=cursor,
-                    sorts=sorts,
-                )
-            elif query.return_fields is not None:
-                page = await self._cursor_page(
-                    CursorQuery(return_model=None, return_fields=query.return_fields),
-                    filters=filters,
-                    cursor=cursor,
-                    sorts=sorts,
-                )
-            else:
-                page = await self._cursor_page(
-                    CursorQuery(return_model=None, return_fields=None),
-                    filters=filters,
-                    cursor=cursor,
-                    sorts=sorts,
-                )
+            page = await self._cursor_page(query, filters=filters, cursor=cursor, sorts=sorts)
 
             if not page.hits:
                 break
@@ -347,5 +450,5 @@ class DocumentPaginationMixin(Generic[R]):
             )
 
             prev_cursor = page.next_cursor
-            cursor = {"limit": eff, "after": page.next_cursor}
+            cursor = {"limit": chunk, "after": page.next_cursor}
             page_num += 1

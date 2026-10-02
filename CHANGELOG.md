@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI descriptions drop a relative target's leading dot.** A docstring's ``:class:`.Foo` `` renders as `Foo`, as Sphinx shows it, instead of `.Foo`.
 
+- **A read without a limit returns every row exactly once** (**behaviour change**). Batches were taken by offset, so rows tied on the sort could repeat or go missing, and on Firestore a read in `id` order failed past the first batch. Each batch now starts after the last row of the one before, and tied rows come back in `id` order.
+
 - **Firestore refuses an `$in` past 30 values before sending it.** The server rejected it with a validation error; it is now a clean `query_feature_unsupported` naming the cap, whatever the spec's filter limits allow.
 
 ### Security

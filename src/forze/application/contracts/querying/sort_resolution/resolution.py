@@ -208,6 +208,32 @@ def normalize_sorts_for_keyset(
 # ....................... #
 
 
+def with_id_tiebreaker(
+    sorts: QuerySortExpression,
+    *,
+    read_fields: frozenset[str],
+) -> QuerySortExpression:
+    """*sorts* with ``id`` appended as their last key, unless they name it or there is none.
+
+    The key takes the sort's direction when every key shares one, else ``asc`` — the same
+    tie-breaker a keyset cursor appends. A read drained in batches needs it: rows that tie on
+    the sort have no order of their own, so each batch could put them on a different side of
+    its boundary.
+    """
+
+    if ID_FIELD in sorts or ID_FIELD not in read_fields:
+        return sorts
+
+    directions = [parse_sort_value(value, field=field)[0] for field, value in sorts.items()]
+
+    direction = _tiebreaker_direction(directions)
+
+    return {**sorts, ID_FIELD: "desc" if direction == "desc" else "asc"}
+
+
+# ....................... #
+
+
 def normalize_sorts_with_id(
     sorts: QuerySortExpression | None,
 ) -> list[tuple[str, str, str]]:

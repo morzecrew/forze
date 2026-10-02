@@ -56,6 +56,7 @@ from forze.application.contracts.querying import (
     validate_query_field_types,
     validate_runtime_filter_fields,
     validate_runtime_sort_fields,
+    with_id_tiebreaker,
 )
 from forze.application.integrations.document import DocumentNotFoundTagging
 from forze.application.integrations.document._limits import (
@@ -422,6 +423,32 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 encrypted=(self.spec.encryption.encrypted if self.spec.encryption else frozenset()),
                 parser=self.filter_parser,
             )
+
+    # ....................... #
+
+    def _scan_sorts(self, sorts: QuerySortExpression | None) -> QuerySortExpression | None:
+        """The order a read with no limit takes on a real backend, which drains it in batches.
+
+        The effective sort with ``id`` breaking its ties, as a keyset scan gives. A read model
+        with neither ``id`` nor a ``default_sort`` keeps *sorts* as given.
+        """
+
+        read_fields = (
+            read_fields_for_model(self.read_model) | self.spec.materialized
+        ) - self._unqueryable()
+
+        if not (sorts or self.spec.default_sort or ID_FIELD in read_fields):
+            return sorts
+
+        effective = resolve_effective_sorts(
+            sorts=sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=read_fields,
+            spec_name=self.spec.name,
+            model=self.read_model,
+        )
+
+        return with_id_tiebreaker(effective, read_fields=read_fields)
 
     # ....................... #
 
@@ -988,6 +1015,12 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
                 sealed=self._sealed_fields(),
             )
             total = len(filtered)
+
+            if limit is None:
+                if offset < 0:
+                    raise exc.precondition("Pagination offset must not be negative.")
+
+                sorts = self._scan_sorts(sorts)
 
             page_docs = _page_window(_sort_docs(filtered, sorts))
             if return_type is not None:

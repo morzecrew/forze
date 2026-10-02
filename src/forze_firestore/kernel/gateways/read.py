@@ -8,6 +8,7 @@ require_firestore()
 
 from collections.abc import AsyncGenerator, Sequence
 from typing import (
+    ClassVar,
     Literal,
     Never,
     TypeVar,
@@ -63,6 +64,9 @@ class FirestoreReadGateway[M: BaseModel](
     FirestoreGateway[M],
 ):
     """Read-only Firestore gateway."""
+
+    cursor_sorts_by_id_only: ClassVar[bool] = True
+    """A cursor here seeks on ``id`` alone, so a read sorted otherwise is paged by offset."""
 
     read_validation: Literal["strict", "trusted"] = attrs.field(
         default="strict",

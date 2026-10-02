@@ -9,6 +9,7 @@ require_mongo()
 from collections.abc import AsyncGenerator, Sequence
 from typing import (
     Any,
+    ClassVar,
     Literal,
     Never,
     TypeVar,
@@ -76,6 +77,9 @@ class MongoReadGateway[M: BaseModel](
     and counting. Results can be projected to a subset of fields or mapped to
     an alternative model type.
     """
+
+    cursor_sorts_by_id_only: ClassVar[bool] = True
+    """A cursor here seeks on ``id`` alone, so a read sorted otherwise is paged by offset."""
 
     read_validation: Literal["strict", "trusted"] = attrs.field(
         default="strict",

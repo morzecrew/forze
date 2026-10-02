@@ -293,6 +293,14 @@ Each comes in `find` / `project` / `select` flavors and `_many` / `_page` /
 `filters`, `sorts`, and `aggregates` use the [query DSL](../query-syntax.md);
 `pagination` is `{"limit": …, "offset": …}`.
 
+Without a `limit`, a read returns every matching row, fetched in batches. Rows come
+back in the effective sort (`sorts`, else `default_sort`, else `id`), with `id`
+breaking ties when the read model has one, so tied rows neither repeat nor go
+missing. Each batch starts after the last row of the one before. A projection that
+leaves out a sort key is paged by offset instead, and on MongoDB and Firestore so
+is any sort other than `id` alone. Firestore refuses offsets, so there such a read
+fails once it needs a second batch.
+
 ## Command port
 
 Every mutating method takes `return_new: bool = True` — return the resulting read
