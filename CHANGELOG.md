@@ -63,11 +63,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A cursor continues from the right row whatever the model does to a sort key.** A token took each key's value from the decoded row, so a key the model excluded, aliased, serialized or rewrote on read (`EmailStr` lowercasing a domain) made the next page skip or repeat rows. It now takes the stored value.
 
-- **A negative or non-numeric pagination offset is refused as the caller's mistake.** A document read sent `-1` to the backend, which answered with a server error, and `"abc"` raised one itself; both are now a `precondition`, on every backend and the mock.
+- **A pagination offset that is not a whole, non-negative number is refused as the caller's mistake.** A document read sent `-1` on and the backend answered with a server error; `"abc"` raised one itself; `True`, `1.9` or `""` were read as 1, 1 or 0. All are now a `precondition`, on every backend and the mock.
 
 - **A cursor sorted by `id` first pages in `id` order** (**behaviour change**). A sort such as `{id: asc, x: desc}` moved `id` to the end and ordered by `x` first; `id` now stays put and later keys are dropped, so MongoDB and Firestore accept it. A token minted for such a sort earlier is refused; start over.
 
 - **An aggregate read without a limit pages its groups in one order.** With no sort it asked for the read model's `id`, which no aggregate returns, and failed; with a sort that tied, groups could repeat or go missing between batches. The group keys now break every tie.
+
+- **A MongoDB aggregate read honours an object-form sort direction.** A sort written `{"n": {"dir": "asc"}}` returned the groups in reverse, as anything but the string `"asc"` read as descending.
 
 ### Security
 
