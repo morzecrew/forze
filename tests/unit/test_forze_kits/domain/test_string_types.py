@@ -80,7 +80,11 @@ class TestBytes:
         with pytest.raises(ValidationError, match="string_unicode"):
             _Body(name=b"\xff\xfe")  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("value", [b"   ", bytearray(b" "), "   "])
+    @pytest.mark.parametrize(
+        "value",
+        # Blank once normalized: an invisible or control character alone is no content either.
+        [b"   ", bytearray(b" "), "   ", "﻿", "​ ​", "\x00", "\n \n", b"\xef\xbb\xbf"],
+    )
     @pytest.mark.parametrize("field", ["display_name", "description"])
     def test_that_are_blank_leave_a_metadata_field_unset(self, field: str, value: Any) -> None:
         assert getattr(_Metadata.model_validate({field: value}), field) is None
