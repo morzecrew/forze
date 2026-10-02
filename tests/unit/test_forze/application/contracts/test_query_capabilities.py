@@ -193,6 +193,7 @@ class TestDisjunctionCap:
             ({"$or": [{"$values": {"a": i}} for i in range(31)]}, False),
             ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 16)]}, False),
             ({"$and": [{"$or": [{"$values": {"b": 1}}, {"$values": {"b": 2}}]}, _in("a", 15)]}, True),
+            ({"$not": _in("a", 31)}, False),
         ],
     )
     def test_counts_like_the_server(self, expr: dict, allowed: bool) -> None:

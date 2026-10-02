@@ -934,3 +934,33 @@ async def test_offset_page_scan_takes_a_string_offset() -> None:
     )
 
     assert [r["id"] for r in page.hits] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_page_reads_a_key_inside_a_mapping_or_under_a_null_parent() -> None:
+    # Past the model, a mapping holds what the backend stored; a null parent reads as null.
+    class _Bag(BaseModel):
+        id: str
+        meta: dict[str, int] | None = None
+
+    class _BagGateway(FakeReadGateway):
+        @property
+        def model_type(self) -> type[_Bag]:  # type: ignore[override]
+            return _Bag
+
+    rows = [_Bag(id="a", meta={"rank": 1}), _Bag(id="b"), _Bag(id="c")]
+    harness = PaginationHarness(_BagGateway(), read_fields=frozenset({"id", "meta"}))
+    tokens = []
+
+    for limit in (1, 2):
+        harness.read_gw = _BagGateway(cursor_results=[rows[: limit + 1]])  # type: ignore[assignment]
+        page = await harness._cursor_page(
+            CursorQuery(return_model=_Bag, return_fields=None),
+            filters=None,
+            cursor={"limit": limit},
+            sorts={"meta.rank": "asc"},
+        )
+        tokens.append(decode_keyset_v1(page.next_cursor)[3])  # type: ignore[arg-type]
+
+    assert tokens == [[1, "a"], [None, "b"]]
+    assert harness._seekable(_offset_query(return_model=_Bag), {"meta.rank": "asc", "id": "asc"})
