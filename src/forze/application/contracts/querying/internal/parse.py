@@ -611,10 +611,8 @@ class QueryFilterExpressionParser:
     # ....................... #
 
     def _check_in_size(self, field: str, op: str, value: Any) -> None:
+        # Every caller has already checked that *value* is one of `OPERAND_COLLECTIONS`.
         if op not in _IN_SIZE_OPS:
-            return
-
-        if not isinstance(value, OPERAND_COLLECTIONS):
             return
 
         size = len(value)  # type: ignore[arg-type]

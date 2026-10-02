@@ -1277,6 +1277,10 @@ class TestQueryCompareExpressionParser:
         assert parsed.items[0].value == expected  # type: ignore[union-attr]
         assert type(parsed.items[0].value) is list  # type: ignore[union-attr]
 
+    def test_an_element_membership_operand_must_be_a_collection(self) -> None:
+        with pytest.raises(CoreException, match="Invalid value for \\$in"):
+            QueryFilterExpressionParser.parse({"$values": {"tags": {"$any": {"$in": "x"}}}})
+
     def test_a_shortcut_operand_must_be_a_collection_the_parser_bounds(self) -> None:
         # Any other iterable would reach the backend unsized.
         with pytest.raises(CoreException, match="Invalid value"):

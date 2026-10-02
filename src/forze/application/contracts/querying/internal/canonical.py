@@ -1,5 +1,6 @@
 """One ordering for values that arrive unordered, the same in every process."""
 
+import math
 from collections.abc import Mapping
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -27,7 +28,7 @@ def canonical_sort_key(value: Any) -> tuple[Any, ...]:
             return (1, value)
 
         case int() | float() | Decimal():
-            return (2, value)
+            return (2, *_number_key(value))
 
         case str():
             return (3, value)
@@ -65,3 +66,28 @@ def canonical_sort_key(value: Any) -> tuple[Any, ...]:
 
         case _:
             return (13, type(value).__qualname__, repr(value))
+
+
+def _number_key(value: float | Decimal) -> tuple[Any, ...]:
+    """Finite numbers by value, infinities at either end, NaN last: never compared as values.
+
+    A NaN compares as neither smaller nor larger than anything, and a ``Decimal`` NaN raises on
+    comparison, so neither may reach ``<``. Infinities and NaNs of different types carry their
+    type's name, so a float and a ``Decimal`` one do not tie.
+    """
+
+    if isinstance(value, Decimal):
+        if value.is_nan():
+            return (3, "Decimal", value.is_snan())
+
+        if value.is_infinite():
+            return (0 if value.is_signed() else 2, "Decimal")
+
+    elif isinstance(value, float):
+        if math.isnan(value):
+            return (3, "float", False)
+
+        if math.isinf(value):
+            return (0 if value < 0 else 2, "float")
+
+    return (1, value)
