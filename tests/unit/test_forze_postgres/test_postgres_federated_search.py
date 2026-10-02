@@ -668,3 +668,44 @@ def test_configurable_federated_search_searchspec_rejects_hub_shaped_config() ->
     )
     with pytest.raises(CoreException, match="not a HubSearchSpec"):
         factory(_federated_exec_context(), _fed())
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_taken_before_a_member_default_sort_runs_live() -> None:
+    """A member orders equal ranks by its default sort, which moves a hit's fused rank."""
+
+    stale = SearchResultSnapshot.federated_fingerprint("q", None, None, spec_name="fed", rrf_k=60)
+    row_key = SearchResultSnapshot.federated_record_key_string("a", _Hit(id=1, label="x"))
+
+    async def get_id_range(*_: object, expected_fingerprint: str) -> list[str] | None:
+        return [row_key] if expected_fingerprint == stale else None
+
+    store = MagicMock()
+    store.get_id_range = AsyncMock(side_effect=get_id_range)
+    store.get_meta = AsyncMock(return_value=None)
+    store.put_run = AsyncMock()
+    legs = []
+
+    for name in ("a", "b"):
+        leg = MagicMock()
+        leg.search = AsyncMock(return_value=CountlessPage(hits=[], page=1, size=10))
+        legs.append((name, leg))
+
+    sorted_member = SearchSpec(
+        name="a", model_type=_Hit, fields=["label"], default_sort={"label": "desc"}
+    )
+    adapter = PostgresFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(
+            name="fed",
+            members=(sorted_member, _mem("b")),
+            snapshot=SearchResultSnapshotSpec(name="snap", enabled=True),
+        ),
+        legs=tuple(legs),
+        rrf_per_leg_limit=10,
+        result_snapshot=SearchResultSnapshot(store=store),
+    )
+
+    await adapter.search_page("q", snapshot={"id": "run-1", "fingerprint": stale})
+
+    for _, leg in legs:
+        leg.search.assert_awaited_once()

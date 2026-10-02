@@ -24,7 +24,7 @@ from .multi_leg import (
     federated_highlights_for_hits,
 )
 from .port import SimpleSearchPortMixin
-from .snapshot import SearchResultSnapshot
+from .snapshot import SearchResultSnapshot, federated_member_sorts
 from .stream import DEFAULT_MAX_SEARCH_STREAM_PAGES, stream_search_pages
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     "execute_federated_thin_offset",
     "federated_snapshot_rehydrator",
     "federated_thin_eligible",
+    "federated_member_sorts",
     "federated_thin_format",
     "federated_highlights_for_hits",
     "assert_search_encryption_parity",

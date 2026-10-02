@@ -49,7 +49,7 @@ from forze_postgres.kernel.sql import (
     build_seek_condition,
 )
 from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
+from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 
 from .base import PostgresGateway
 
@@ -974,6 +974,7 @@ class PostgresReadGateway[M: BaseModel](
             for k, _, _ in normalized
         ]
 
+        never_null = [sort_key_not_null(k, types) for k in sort_keys]
         seek_params: list[Any] = []
         where_fin = where_base
 
@@ -993,12 +994,17 @@ class PostgresReadGateway[M: BaseModel](
                 tv,
                 "before" if use_before else "after",
                 nulls=nulls,
+                not_null=never_null,
             )
             where_fin = sql.SQL("({} AND ({}))").format(where_base, seek_sql)
             params = list(params) + seek_params  # type: ignore[operator]
 
-        order_fwd = build_order_by_sql(exprs, directions, nulls=nulls, flip=False)
-        order_bwd = build_order_by_sql(exprs, directions, nulls=nulls, flip=True)
+        order_fwd = build_order_by_sql(
+            exprs, directions, nulls=nulls, not_null=never_null, flip=False
+        )
+        order_bwd = build_order_by_sql(
+            exprs, directions, nulls=nulls, not_null=never_null, flip=True
+        )
 
         roots = list(dict.fromkeys(key.split(".", 1)[0] for key in sort_keys))
         extra: list[str] = []

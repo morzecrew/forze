@@ -73,6 +73,20 @@ lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://loca
   reports a missing index, an unfilterable attribute or a refused document as
   `invalid_request`; those raise `precondition` carrying the engine's message, so
   resilience does not retry something that will fail identically forever.
+- **Sorting needs sortable attributes.** Left unset, `sortable_attributes` covers the
+  primary key, the searchable fields and the spec's `default_sort`. If you pin it, list the
+  `default_sort` fields too: the search port refuses to build without them. Leave out the id
+  and ties keep the engine's order instead of the id's. A sort on `id` sorts by the primary
+  key.
+- **What orders a page.** A blank query sorts by the request's `sorts`, else the spec's
+  `default_sort`, then the id. A query with search text sorts by the request's `sorts`
+  only: the `sort` ranking rule runs before `exactness`, so anything more would settle
+  relevance ties early, and those ties keep the engine's order. An explicit null placement
+  is refused.
+- **After changing `default_sort`, re-run `ensure_index`.** Until the index declares the
+  new fields sortable, an unsorted browse fails with a configuration error naming them.
+  Readiness checks the server, not each index's settings, which only a built search port
+  knows to ask about.
 - Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the [Query DSL](../reference/query-syntax.md).
 - Federated routes merge ≥2 member indexes (`federation` or in-process RRF).

@@ -34,6 +34,7 @@ from forze_meilisearch.execution.deps.factories import (
 )
 from tests.support.execution_context import context_from_deps
 from tests.support.search_conformance import (
+    DEFAULT_SORT,
     SEARCH_BATTERY,
     SEARCH_WRITE_BATTERY,
     Check,
@@ -53,6 +54,7 @@ class _Row(BaseModel):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 @pytest_asyncio.fixture
@@ -60,7 +62,7 @@ async def harness(meilisearch_client) -> SearchHarness:
     config = MeilisearchSearchConfig(
         index_uid=f"search_conf_{uuid4().hex[:10]}",
         filterable_attributes=["category"],
-        sortable_attributes=["title", "category"],
+        sortable_attributes=["title", "category", "id", "rank"],
     )
     ctx = context_from_deps(
         Deps.plain(
@@ -73,7 +75,9 @@ async def harness(meilisearch_client) -> SearchHarness:
         )
     )
 
-    spec = SearchSpec(name="rows", model_type=_Row, fields=searchable_fields())
+    spec = SearchSpec(
+        name="rows", model_type=_Row, fields=searchable_fields(), default_sort=DEFAULT_SORT
+    )
 
     management = ctx.search.management(spec)
     await management.ensure_index()
@@ -86,6 +90,9 @@ async def harness(meilisearch_client) -> SearchHarness:
         query=ctx.search.query(spec),
         backend="meili",
         blank_query_matches_all=True,
+        supports_cursor=False,
+        sorts_relevance_ties=False,
+        exact_match_ranks_first=True,
     )
 
 

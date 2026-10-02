@@ -38,6 +38,20 @@ def scored_order_by_rank_alias(rank_column: str) -> sql.Composable:
     return sql.Identifier(rank_column)
 
 
+def scored_key_order(join_pairs: Sequence[tuple[str, str]]) -> sql.Composable:
+    """The scored CTE's key columns, by output name: what breaks a rank tie at a cap's edge.
+
+    The cap keeps the best-ranked rows; rows that tie on rank there would otherwise be kept in
+    whatever order the scan met them, and a page sorted out of the pool could differ between
+    requests.
+    """
+
+    return sql.SQL(", ").join(sql.Identifier(pc) for pc, _ in join_pairs)
+
+
+# ....................... #
+
+
 def build_rank_select(aliases: PipelineAliases) -> sql.Composable:
     """``, s.<rank> AS _score`` — appended to a ranked data SELECT to return the score.
 
@@ -188,7 +202,7 @@ def build_scored_cte(
     heap_fw: sql.Composable | None = None,
     candidate_limit: int | None = None,
     scored_order: sql.Composable | None = None,
-    candidate_order_asc: bool = False,
+    scored_tiebreak: sql.Composable | None = None,
     first_in_with: bool = False,
 ) -> sql.Composable:
     """``, scored AS (SELECT keys, rank FROM heap [JOIN filtered] WHERE match)``."""
@@ -225,10 +239,12 @@ def build_scored_cte(
     tail = sql.SQL("")
 
     if candidate_limit is not None and scored_order is not None:
-        order_suf = sql.SQL("ASC NULLS LAST") if candidate_order_asc else sql.SQL("DESC NULLS LAST")
-        tail = sql.SQL(" ORDER BY {ord} {suf} LIMIT {lim}").format(  # type: ignore[assignment]
+        # Every engine's rank is higher for a better match: a vector rank is the negated distance.
+        tail = sql.SQL(" ORDER BY {ord} DESC NULLS LAST{tb} LIMIT {lim}").format(  # type: ignore[assignment]
             ord=scored_order,
-            suf=order_suf,
+            tb=sql.SQL(", {}").format(scored_tiebreak)
+            if scored_tiebreak is not None
+            else sql.SQL(""),
             lim=sql.Literal(int(candidate_limit)),
         )
 
@@ -266,6 +282,7 @@ def build_pgroonga_index_first_pipeline(
     proj_fw: sql.Composable,
     heap_row_limit: int | None,
     scored_order: sql.Composable | None,
+    scored_tiebreak: sql.Composable | None = None,
 ) -> tuple[sql.Composable, sql.Composable]:
     """Index-first PGroonga: top-K on heap, then join projection with filters.
 
@@ -278,8 +295,11 @@ def build_pgroonga_index_first_pipeline(
     tail: sql.Composable = sql.SQL("")
 
     if heap_row_limit is not None and scored_order is not None:
-        tail = sql.SQL(" ORDER BY {ord} DESC NULLS LAST LIMIT {lim}").format(
+        tail = sql.SQL(" ORDER BY {ord} DESC NULLS LAST{tb} LIMIT {lim}").format(
             ord=scored_order,
+            tb=sql.SQL(", {}").format(scored_tiebreak)
+            if scored_tiebreak is not None
+            else sql.SQL(""),
             lim=sql.Literal(int(heap_row_limit)),
         )
 

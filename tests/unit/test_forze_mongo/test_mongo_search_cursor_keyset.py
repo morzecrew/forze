@@ -23,7 +23,32 @@ def test_keyset_seek_after_desc_rank() -> None:
 
     assert "$or" in match
     branches = match["$or"]
-    assert branches[0] == {"_mongo_rank": {"$lt": 0.9}}
+    # Toward the smaller values the nulls lie ahead too, and Mongo's $lt never matches one.
+    assert branches[0] == {"$or": [{"_mongo_rank": {"$lt": 0.9}}, {"_mongo_rank": None}]}
+
+
+@pytest.mark.parametrize(
+    ("direction", "value", "after", "expected"),
+    [
+        ("asc", None, True, [{"$and": [{"_id": "k"}, {"m": {"$ne": None}}]}]),
+        ("asc", None, False, []),
+        ("desc", None, True, []),
+        ("desc", None, False, [{"$and": [{"_id": "k"}, {"m": {"$ne": None}}]}]),
+        ("asc", 3, True, [{"$and": [{"_id": "k"}, {"m": {"$gt": 3}}]}]),
+        (
+            "asc",
+            3,
+            False,
+            [{"$and": [{"_id": "k"}, {"$or": [{"m": {"$lt": 3}}, {"m": None}]}]}],
+        ),
+    ],
+)
+def test_a_null_is_the_smallest_value_on_either_side(
+    direction: str, value: Any, after: bool, expected: list[Any]
+) -> None:
+    match = build_keyset_seek_match([("id", "asc"), ("m", direction)], ["k", value], after=after)
+
+    assert match["$or"][1:] == expected
 
 
 # ....................... #

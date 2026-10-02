@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Any
 
 import attrs
+from meilisearch_python_sdk.errors import MeilisearchApiError
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
+    QuerySortExpression,
 )
 from forze.application.contracts.search import (
     SearchOptions,
@@ -18,6 +21,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     effective_phrase_combine,
     normalize_search_queries,
+    resolve_search_sorts,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 from forze.application.integrations.search.offset_executor import (
@@ -26,7 +30,8 @@ from forze.application.integrations.search.offset_executor import (
     execute_simple_offset_search_with_snapshot,
     offset_from_dict,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
+from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._facets_highlights import (
     FacetPlan,
     HighlightPlan,
@@ -40,6 +45,7 @@ from forze_meilisearch.adapters.search._search_params import (
     build_search_query_string,
     build_sort,
     render_user_sorts,
+    sortable_attributes,
 )
 from forze_meilisearch.adapters.search.base import (
     _DECIMAL_EXACT_FIELD,  # pyright: ignore[reportPrivateUsage]
@@ -56,6 +62,9 @@ _MEILI_DEFAULT_SEARCH_LIMIT = 20
 
 # ----------------------- #
 
+_UNSORTABLE = re.compile(r"Attribute `([^`]+)` is not sortable")
+"""The attribute in Meilisearch's refusal; the same message also lists the sortable ones."""
+
 
 @attrs.define(slots=True)
 class _MeilisearchOffsetHooks:
@@ -70,6 +79,8 @@ class _MeilisearchOffsetHooks:
     return_fields: Sequence[str] | None
     facet_plan: FacetPlan | None = None
     highlight_plan: HighlightPlan | None = None
+    spec_sort: tuple[str, ...] = ()
+    """Sort attributes the spec added rather than the request: its default and the id."""
 
     async def fetch_count(self) -> int | None:
         # By default the total comes cheaply from the search result's ``estimatedTotalHits``
@@ -96,6 +107,31 @@ class _MeilisearchOffsetHooks:
         total = getattr(result, "total_hits", None)
 
         return int(total) if total is not None else None
+
+    def _unsortable(self, error: MeilisearchApiError) -> CoreException | None:
+        """Who is at fault when the index cannot sort by an attribute the page asked for.
+
+        One the spec added, its default or the id, is a configuration error, raised loud rather
+        than retried without the sort: an index provisioned before the spec set a
+        ``default_sort``, or managed outside forze, would otherwise answer in an order the spec
+        does not promise. One the request named is the caller's.
+        """
+
+        if error.code != "invalid_search_sort":
+            return None
+
+        named = _UNSORTABLE.search(error.message)
+
+        if named is None or named.group(1) not in self.spec_sort:
+            return exc.precondition(f"Meilisearch refused the sort: {error.message}")
+
+        return exc.configuration(
+            f"The Meilisearch index cannot sort by {named.group(1)!r}, which the search spec "
+            "orders an unsorted page by: re-run ensure_index, or add it to sortable_attributes. "
+            f"{error.message}",
+        )
+
+    # ....................... #
 
     async def fetch_rows(
         self,
@@ -175,7 +211,14 @@ class _MeilisearchOffsetHooks:
         index = self.client.index(
             await self.gw._resolved_index_uid()  # pyright: ignore[reportPrivateUsage]
         )
-        result = await index.search(self.query_string, **search_kwargs)
+        try:
+            result = await index.search(self.query_string, **search_kwargs)
+
+        except MeilisearchApiError as e:
+            if (refusal := self._unsortable(e)) is not None:
+                raise refusal from e
+
+            raise
 
         hits_raw = [dict(h) for h in getattr(result, "hits", []) or []]
         total = int(
@@ -198,6 +241,37 @@ class _MeilisearchOffsetHooks:
             facets=facets,
             highlights=highlights,
         )
+
+
+# ....................... #
+
+
+def page_order(
+    gw: MeilisearchSearchGateway[Any],
+    spec: SearchSpec[Any],
+    sorts: QuerySortExpression | None,
+    *,
+    ranked: bool,
+) -> QuerySortExpression:
+    """The order a page sorts by, after the engine's relevance.
+
+    With search text, only the request's own sorts: Meilisearch applies ``sort`` before its
+    ``exactness`` rule, so a default or an id there would settle every relevance tie first,
+    and relevance ties keep the engine's order. A blank query takes the request's sorts or
+    else ``default_sort``, then the id when the index can sort by it.
+    """
+
+    sortable_id = gw.primary_key in sortable_attributes(spec, gw.config)
+
+    return resolve_search_sorts(
+        sorts,
+        default_sort=None if ranked else spec.default_sort,
+        read_fields=spec.stored_read_fields,
+        # The id closes a blank page's order, where the index can sort by it.
+        tiebreaker=ID_FIELD if sortable_id and not ranked else None,
+        model=spec.model_type,
+        spec_name=spec.name,
+    )
 
 
 # ....................... #
@@ -227,7 +301,10 @@ async def execute_meilisearch_offset_search[M: BaseModel](
 
     filter_str = gw.build_filter(filters)
     search_attrs = attributes_to_search_on(spec, options, gw.field_map)
-    sort_list = build_sort(render_user_sorts(sorts, gw.field_map))
+    order = page_order(gw, spec, sorts, ranked=bool(terms))
+    sort_list = build_sort(render_user_sorts(order, gw.config))
+    requested = {attr for attr, _ in render_user_sorts(sorts, gw.config)}
+    sorted_by = [entry.rsplit(":", 1)[0] for entry in sort_list or ()]
     pagination_dict: dict[str, Any] = dict(pagination or {})
     facet_plan = plan_facets(gw, spec, options)
     highlight_plan = plan_highlights(gw, spec, options)
@@ -241,6 +318,9 @@ async def execute_meilisearch_offset_search[M: BaseModel](
         query=query,
         filters=filters,
         sorts=sorts,
+        # The snapshot is keyed on the order the engine is asked for, which a ranked page
+        # takes from the request alone.
+        fingerprint_sorts=order,
         spec=spec,
         variant=variant,
         fingerprint_extras=fingerprint_extras,
@@ -264,5 +344,6 @@ async def execute_meilisearch_offset_search[M: BaseModel](
             return_fields=return_fields,
             facet_plan=facet_plan,
             highlight_plan=highlight_plan,
+            spec_sort=tuple(attr for attr in sorted_by if attr not in requested),
         ),
     )

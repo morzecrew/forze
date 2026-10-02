@@ -39,6 +39,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     resolve_facet_fields,
     resolve_highlight,
+    resolve_search_sorts,
     search_options_for_simple_adapter,
     search_page_from_limit_offset,
     validate_stream_supported,
@@ -207,11 +208,28 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
     # ....................... #
 
+    def _page_order(self, sorts: QuerySortExpression | None) -> QuerySortExpression:  # type: ignore[valid-type]
+        """The order a page takes after relevance, every requested key checked first.
+
+        Resolved once per request, before a snapshot is read, so the snapshot's key and the
+        live order are the same order and an unknown or lenient key is refused either way.
+        """
+
+        return resolve_search_sorts(
+            sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=self.spec.stored_read_fields,
+            model=self.spec.model_type,
+            spec_name=self.spec.name,
+        )
+
+    # ....................... #
+
     def _full_ordered_search_documents(
         self,
         query: str | Sequence[str],
         filters: QueryFilterExpression | None,
-        sorts: QuerySortExpression | None,
+        order: QuerySortExpression,  # type: ignore[valid-type]
         options: SearchOptions | None,
     ) -> list[JsonDict]:
         options = search_options_for_simple_adapter(options)
@@ -240,11 +258,10 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
                 continue
             ranked.append((score, {**doc, _MOCK_RANK: score}))
 
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        ordered = [d for _, d in ranked]
-
-        if sorts:
-            ordered = _sort_docs(ordered, sorts)
+        ordered = _sort_docs([d for _, d in ranked], order)
+        # Relevance first, as the real engines rank: the sort only orders rows of equal score.
+        # The sort is stable, so it keeps that order within a score.
+        ordered.sort(key=lambda d: d[_MOCK_RANK], reverse=True)
 
         return ordered
 
@@ -388,11 +405,13 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         rs_spec = self.spec.snapshot
+        order = self._page_order(sorts)
+
         if self.result_snapshot is not None and rs_spec is not None:
             fp = SearchResultSnapshot.simple_search_fingerprint(
                 query,
                 filters,
-                sorts,
+                order,
                 spec_name=str(self.spec.name),
                 variant="offset",
             )
@@ -408,7 +427,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             )
             if maybe_snap is not None:
                 return maybe_snap
-        ordered = self._full_ordered_search_documents(query, filters, sorts, options)
+        ordered = self._full_ordered_search_documents(query, filters, order, options)
         total = len(ordered)
         pagination = pagination or {}
         limit = pagination.get("limit")
@@ -645,7 +664,9 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        ordered = self._full_ordered_search_documents(query, filters, sorts, options)
+        ordered = self._full_ordered_search_documents(
+            query, filters, self._page_order(sorts), options
+        )
         start, lim = _mock_cursor_start_and_limit(cursor)
         window = ordered[start : start + lim + 1]
         has_more = len(window) > lim

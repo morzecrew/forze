@@ -437,3 +437,45 @@ async def test_streaming_snapshot_deep_page_offset() -> None:
     assert page.snapshot is not None
     assert page.snapshot.total == 6
     assert [h.label for h in page.hits] == ["row-4", "row-5"]
+
+
+@pytest.mark.asyncio
+async def test_a_backend_that_names_its_own_order_keys_the_snapshot_on_it() -> None:
+    """A ranked Meilisearch page sorts by the request alone; a default it ignores is no key."""
+
+    result_snapshot, rs_spec = _snapshot_over_mock()
+    rows = _make_rows(3)
+
+    async def run(default: dict[str, str], hooks: _WindowedHooks, snapshot: Any) -> Any:
+        spec = SearchSpec(
+            name="t", model_type=_Hit, fields=["label"], default_sort=default, snapshot=rs_spec
+        )
+
+        return await execute_simple_offset_search_with_snapshot(
+            query="q",
+            filters=None,
+            sorts=None,
+            fingerprint_sorts={},
+            spec=spec,
+            variant="offset",
+            fingerprint_extras=None,
+            pagination={"limit": 3},
+            snapshot=snapshot,
+            return_count=True,
+            return_type=None,
+            return_fields=None,
+            model_type=_Hit,
+            codec=spec.resolved_read_codec,
+            result_snapshot=result_snapshot,
+            hooks=hooks,
+        )
+
+    taken = await run({"label": "asc"}, _WindowedHooks(rows), {"mode": True})
+    assert taken.snapshot is not None
+
+    replay_hooks = _WindowedHooks(rows)
+    handle = {"id": taken.snapshot.id, "fingerprint": taken.snapshot.fingerprint}
+    replay = await run({"label": "desc"}, replay_hooks, handle)
+
+    assert replay_hooks.fetch_rows_calls == 0
+    assert replay.snapshot is not None and replay.snapshot.id == taken.snapshot.id

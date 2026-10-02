@@ -124,6 +124,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         snapshot: Any = None,
         parsed_filters: Any = None,
         for_cursor: bool = False,
+        sorts: Any = None,
     ) -> RankedPipelineSql:
         _ = query, filters
         join = self._safe_join_pairs
@@ -144,15 +145,21 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
-        candidate_cap = effective_ranked_candidate_limit(
-            # Cursor walks the whole ranked set; capping candidates would truncate a deep
-            # walk / stream export at the cap (see ``_build_ranked_pipeline_sql``).
-            config_limit=None if for_cursor else self.ranked_candidate_limit,
-            options=options,
-            pagination=dict(pagination or {}),
-            snapshot=snapshot,
-            result_snapshot=self.result_snapshot,
-            rs_spec=rs_spec,
+        # The cap keeps the best-ranked rows. A blank query ranks every row the same, so a cap
+        # would keep whichever rows the scan met first and sort only those.
+        candidate_cap = (
+            effective_ranked_candidate_limit(
+                # Cursor walks the whole ranked set; capping candidates would truncate a deep
+                # walk / stream export at the cap (see ``_build_ranked_pipeline_sql``).
+                config_limit=None if for_cursor else self.ranked_candidate_limit,
+                options=options,
+                pagination=dict(pagination or {}),
+                snapshot=snapshot,
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+            )
+            if terms
+            else None
         )
 
         cap_kw: dict[str, Any] = {}
@@ -164,6 +171,12 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             }
 
         coalesced = self._is_coalesced_read_heap_for(self.join_pairs)
+        filtered_extra: sql.Composable | None = None
+
+        if cap_kw:
+            cap_kw["scored_tiebreak"], filtered_extra = await self._capped_order(
+                sorts, coalesced=coalesced, join_pairs=join
+            )
         heap_fw: sql.Composable | None = None
         heap_fp: list[Any] = []
 
@@ -191,6 +204,7 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             heap_fp=heap_fp,
             cap_kw=cap_kw,
             emit_exact_count_sql=bool(terms),
+            filtered_extra=filtered_extra,
         )
 
         return ranked_parts_to_sql(

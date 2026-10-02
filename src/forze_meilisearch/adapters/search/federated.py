@@ -48,6 +48,7 @@ from forze.application.integrations.search import (
     decrypt_search_rows,
     execute_federated_thin_offset,
     federated_highlights_for_hits,
+    federated_member_sorts,
     federated_snapshot_rehydrator,
     federated_thin_eligible,
     federated_thin_format,
@@ -323,7 +324,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             filters,
             sorts,
             spec_name=self.federated_spec.name,
-            extras={"merge": "federation"},
+            extras={"merge": "federation", **federated_member_sorts(self.federated_spec.members)},
         )
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot
@@ -375,7 +376,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 leg_opts,
                 adapter.field_map,
             )
-            sort_list = build_sort(render_user_sorts(sorts, adapter.field_map))
+            sort_list = build_sort(render_user_sorts(sorts, adapter.config))
 
             params_kwargs: dict[str, Any] = {
                 "index_uid": await adapter._resolved_index_uid(),  # pyright: ignore[reportPrivateUsage]
@@ -532,7 +533,10 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             self.federated_spec.members, thin_merge=self.federated_spec.thin_merge
         )
 
-        fp_extras: dict[str, object] = {"merge": "rrf"}
+        fp_extras: dict[str, object] = {
+            "merge": "rrf",
+            **federated_member_sorts(self.federated_spec.members),
+        }
 
         if effective_thin:
             fp_extras["thin"] = True

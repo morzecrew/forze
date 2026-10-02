@@ -27,9 +27,15 @@ from forze.application.integrations.search import (
     resolve_snapshot_cipher,
     search_spec_encrypts,
 )
+from forze.base.exceptions import exc
 from forze_meilisearch.adapters.search._command import (
     MeilisearchSearchCommandAdapter,
     MeilisearchSearchManagementAdapter,
+)
+from forze_meilisearch.adapters.search._search_params import (
+    places_nulls,
+    sort_attribute,
+    sortable_attributes,
 )
 from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
@@ -82,11 +88,42 @@ def _encrypting_spec[M: BaseModel](context: ExecutionContext, spec: SearchSpec[M
     )
 
 
+def _refuse_an_unsortable_default_sort(spec: SearchSpec[Any], c: MeilisearchSearchConfig) -> None:
+    """Refuse a ``default_sort`` the index cannot sort an unsorted page by.
+
+    A pinned ``sortable_attributes`` that leaves out one of its fields, or a null placement in
+    it, which Meilisearch cannot honour: either would fail every unsorted request, and as the
+    caller's error. Refused when a query or a provisioning port is built, so ``ensure_index``
+    never provisions an index its search port then refuses.
+    """
+
+    if not spec.default_sort:
+        return
+
+    if placing := [f for f, value in spec.default_sort.items() if places_nulls(value)]:
+        raise exc.configuration(
+            f"Meilisearch search {spec.name!r}: Meilisearch cannot place nulls, which the "
+            f"default_sort asks for on {placing}; drop 'nulls' from them.",
+        )
+
+    sortable = sortable_attributes(spec, c)
+
+    if missing := [f for f in spec.default_sort if sort_attribute(f, c) not in sortable]:
+        raise exc.configuration(
+            f"Meilisearch search {spec.name!r}: sortable_attributes leaves out the "
+            f"default_sort field(s) {missing}; list them, or leave sortable_attributes unset.",
+        )
+
+
+# ....................... #
+
+
 def meilisearch_search_adapter[M: BaseModel](
     context: ExecutionContext,
     member_spec: SearchSpec[M],
     c: MeilisearchSearchConfig,
 ) -> MeilisearchSimpleSearchAdapter[M]:
+    _refuse_an_unsortable_default_sort(member_spec, c)
     client = context.deps.provide(MeilisearchClientDepKey)
     tenant_aware = c.tenant_aware
 
@@ -168,6 +205,8 @@ class ConfigurableMeilisearchSearchManagement(SearchManagementDepPort):
         context: ExecutionContext,
         spec: SearchSpec[Any],
     ) -> SearchManagementPort:
+        _refuse_an_unsortable_default_sort(spec, self.config)
+
         return MeilisearchSearchManagementAdapter(
             spec=_encrypting_spec(context, spec),
             config=self.config,

@@ -20,6 +20,7 @@ from forze_meilisearch.adapters.search._filter_render import (
     format_literal,
     safe_attribute,
 )
+from forze_meilisearch.adapters.search._search_params import sortable_attributes
 from forze_meilisearch.adapters.search.base import MeilisearchSearchGateway
 from forze_meilisearch.kernel.client.port import MeilisearchClientPort
 
@@ -217,14 +218,7 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
         return attrs_list
 
     def _sortable_attributes(self) -> list[str]:
-        configured = self.config.sortable_attributes
-
-        if configured is not None:
-            return [self.physical_path(f) for f in configured]
-
-        pk = self.primary_key
-        fields = [self.physical_path(f) for f in self.spec.fields if f != pk]
-        return list(dict.fromkeys([pk, *fields]))
+        return sortable_attributes(self.spec, self.config)
 
     # ....................... #
 

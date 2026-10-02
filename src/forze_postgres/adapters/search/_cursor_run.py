@@ -31,6 +31,7 @@ from forze.application.contracts.search import (
     SearchSpec,
     cursor_return_fields_for_select,
     ranked_search_cursor_key_spec,
+    resolve_search_sorts,
 )
 from forze.application.integrations.search import decrypt_search_rows
 from forze.base.exceptions import exc
@@ -41,7 +42,7 @@ from forze_postgres.kernel.sql import (
     build_ranked_cursor_order_by_sql,
     build_seek_condition,
 )
-from forze_postgres.kernel.sql.query.nested import sort_key_expr
+from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 
 from ...kernel.gateways import PostgresGateway
 from ._engine import RankedPipelineSql
@@ -123,12 +124,17 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     c = dict(cursor or {})
     proj_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
 
-    effective = resolve_effective_sorts(
-        sorts=sorts,
-        default_sort=spec.default_sort,
+    # Ended at the id as the offset page is, so both take the same keys.
+    effective = resolve_search_sorts(
+        resolve_effective_sorts(
+            sorts=sorts,
+            default_sort=spec.default_sort,
+            read_fields=gw.read_fields,
+            spec_name=spec.name,
+            model=gw.model_type,
+        ),
+        default_sort=None,
         read_fields=gw.read_fields,
-        spec_name=spec.name,
-        model=gw.model_type,
     )
     key_spec = [
         (k, d)
@@ -170,6 +176,7 @@ async def execute_projection_keyset_cursor[M: BaseModel](
 
     where_fin: sql.Composable = fw
     params: list[Any] = list(fp)
+    never_null = [sort_key_not_null(k, types) for k in sort_keys]
 
     if use_after or use_before:
         token = str(c["after" if use_after else "before"])
@@ -185,12 +192,13 @@ async def execute_projection_keyset_cursor[M: BaseModel](
             directions,
             tv,
             "before" if use_before else "after",
+            not_null=never_null,
         )
 
         where_fin = sql.SQL("({} AND ({}))").format(fw, sk)
         params = params + sp_seek
 
-    order_sql = build_order_by_sql(exprs, directions, flip=use_before)
+    order_sql = build_order_by_sql(exprs, directions, not_null=never_null, flip=use_before)
     cols = gw.return_clause(
         return_type,
         select_rf,
@@ -268,6 +276,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         rank_field=rank_col,
         sorts=user_sorts,
         read_fields=gw.read_fields,
+        model=gw.model_type,
     )
     sort_keys = [k for k, _ in key_spec]
     directions = [d for _, d in key_spec]
@@ -292,6 +301,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
             )
 
     where_fin: sql.Composable = sql.SQL("TRUE")
+    never_null = [k != rank_col and sort_key_not_null(k, types) for k in sort_keys]
 
     # Highlight column placeholders sit in the SELECT list, between the WITH-clause params
     # and any from_outer params; splice them at that boundary (mirrors the offset path).
@@ -318,6 +328,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
             directions,
             tv,
             "before" if use_before else "after",
+            not_null=never_null,
         )
 
         where_fin = sk
@@ -328,6 +339,7 @@ async def execute_ranked_pipeline_cursor[M: BaseModel](
         sort_keys,
         directions,
         rank_key=rank_col,
+        not_null=never_null,
         flip=use_before,
     )
 

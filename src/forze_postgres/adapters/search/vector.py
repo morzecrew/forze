@@ -146,6 +146,7 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         snapshot: Any = None,
         parsed_filters: Any = None,
         for_cursor: bool = False,
+        sorts: Any = None,
     ) -> RankedPipelineSql:
         # Vector is top-k: its candidate cap is the retrieval bound, not an offset-page
         # optimization, so cursor pagination keeps it (unlike the keyword/text engines).
@@ -168,13 +169,19 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
-        candidate_cap = effective_ranked_candidate_limit(
-            config_limit=self.ranked_candidate_limit,
-            options=options,
-            pagination=dict(pagination or {}),
-            snapshot=snapshot,
-            result_snapshot=self.result_snapshot,
-            rs_spec=rs_spec,
+        # A blank query has no embedding to rank by, so there is no top-k to bound: capping
+        # it would keep whichever rows the scan met first and sort only those.
+        candidate_cap = (
+            effective_ranked_candidate_limit(
+                config_limit=self.ranked_candidate_limit,
+                options=options,
+                pagination=dict(pagination or {}),
+                snapshot=snapshot,
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+            )
+            if terms
+            else None
         )
 
         cap_kw: dict[str, Any] = {}
@@ -186,6 +193,12 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             }
 
         coalesced = self._is_coalesced_read_heap_for(self.join_pairs)
+        filtered_extra: sql.Composable | None = None
+
+        if cap_kw:
+            cap_kw["scored_tiebreak"], filtered_extra = await self._capped_order(
+                sorts, coalesced=coalesced, join_pairs=join
+            )
         heap_fw: sql.Composable | None = None
         heap_fp: list[Any] = []
 
@@ -212,8 +225,8 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             heap_fw=heap_fw,
             heap_fp=heap_fp,
             cap_kw=cap_kw,
-            candidate_order_asc=True,
             emit_exact_count_sql=bool(terms),
+            filtered_extra=filtered_extra,
         )
 
         return ranked_parts_to_sql(

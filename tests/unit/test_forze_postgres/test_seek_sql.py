@@ -4,7 +4,11 @@ import pytest
 from psycopg import sql
 
 from forze.base.exceptions import CoreException
-from forze_postgres.kernel.sql.seek import build_order_by_sql, build_seek_condition
+from forze_postgres.kernel.sql.seek import (
+    build_order_by_sql,
+    build_ranked_cursor_order_by_sql,
+    build_seek_condition,
+)
 
 
 def test_build_seek_after_asc() -> None:
@@ -137,3 +141,81 @@ class TestNullAwareSeek:
         # The Composed repr renders each fragment separately, so check the pieces.
         assert "'ASC'" in ob and "'NULLS FIRST'" in ob
         assert "'DESC'" in ob and "'NULLS LAST'" in ob
+
+    @pytest.mark.parametrize("flip", [False, True])
+    def test_a_never_null_key_carries_no_placement(self, flip: bool) -> None:
+        # Only the nullable key keeps one, in either traversal.
+        a = sql.Identifier("h", "a")
+        b = sql.Identifier("h", "b")
+        ob = str(build_order_by_sql([a, b], ["asc", "desc"], not_null=[True, False], flip=flip))
+
+        assert ob.count("NULLS") == 1
+        assert ob.index("NULLS") > ob.index("'b'")
+
+
+class TestRankedCursorOrder:
+    rank = sql.Identifier("s", "rank")
+    m = sql.Identifier("v", "m")
+
+    @pytest.mark.parametrize(
+        ("flip", "expected"),
+        [
+            (False, ["'DESC'", "'NULLS LAST'", "'ASC'", "'NULLS FIRST'"]),
+            (True, ["'ASC'", "'NULLS FIRST'", "'DESC'", "'NULLS LAST'"]),
+        ],
+    )
+    def test_every_key_takes_the_placement_the_seek_assumes(
+        self, flip: bool, expected: list[str]
+    ) -> None:
+        ob = str(
+            build_ranked_cursor_order_by_sql(
+                [self.rank, self.m], ["rank", "m"], ["desc", "asc"], rank_key="rank", flip=flip
+            )
+        )
+        positions = [ob.index(token) for token in expected]
+
+        assert positions == sorted(positions)
+
+    def test_a_never_null_key_takes_no_placement_but_the_rank_keeps_its_own(self) -> None:
+        ob = str(
+            build_ranked_cursor_order_by_sql(
+                [self.rank, self.m],
+                ["rank", "m"],
+                ["desc", "asc"],
+                rank_key="rank",
+                not_null=[True, True],
+            )
+        )
+
+        assert ob.count("NULLS") == 1 and ob.index("NULLS") < ob.index("'m'")
+
+
+@pytest.mark.parametrize(
+    ("direction", "nav", "op"),
+    [
+        ("asc", "after", ">"),
+        ("desc", "after", "<"),
+        ("asc", "before", "<"),
+        ("desc", "before", ">"),
+    ],
+)
+def test_a_never_null_key_seeks_by_the_bare_range(direction: str, nav: str, op: str) -> None:
+    # No null branch: the record id has no null rows, and the bare range is what an index serves.
+    cond, params = build_seek_condition(
+        [sql.Identifier("id")],
+        [direction],
+        ["k"],
+        nav,
+        not_null=[True],  # type: ignore[arg-type]
+    )
+
+    assert "NULL" not in str(cond)
+    assert f"'{op}'" in str(cond) and params == ["k"]
+
+
+@pytest.mark.parametrize("not_null", [[True], [True, False, True]])
+def test_a_never_null_vector_of_the_wrong_length_is_an_invalid_shape(not_null: list[bool]) -> None:
+    exprs = [sql.Identifier("a"), sql.Identifier("id")]
+
+    with pytest.raises(CoreException, match="Invalid keyset shape"):
+        build_seek_condition(exprs, ["asc", "asc"], [1, "k"], "after", not_null=not_null)

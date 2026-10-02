@@ -97,3 +97,64 @@ async def test_mongo_text_result_snapshot_reread(
     )
     assert second.count == 1
     assert len(second.hits) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_replays_only_for_the_order_it_was_taken_in(
+    mongo_client: MongoClient,
+    redis_client: RedisClient,
+) -> None:
+    """A request that sorts differently, or whose default sort changed, runs live."""
+
+    db_name = (await mongo_client.db()).name
+    collection = f"search_snap_{uuid4().hex[:10]}"
+    coll = await mongo_client.collection(collection, db_name=db_name)
+    await coll.create_index([("title", "text")])
+    titles = ["alpha snap", "beta snap", "gamma snap"]
+
+    for title in titles:
+        rid = str(uuid4())
+        await coll.insert_one({"_id": rid, "id": rid, "title": title})
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: mongo_client,
+                RedisClientDepKey: redis_client,
+                SearchResultSnapshotDepKey: ConfigurableRedisSearchResultSnapshot(
+                    config=RedisSearchResultSnapshotConfig(namespace=f"it:{collection}"),
+                ),
+                SearchQueryDepKey: ConfigurableMongoSearch(
+                    config=MongoSearchConfig(read=(db_name, collection), engine="text")
+                ),
+            }
+        )
+    )
+
+    def port(direction: str):
+        return ctx.search.query(
+            SearchSpec(
+                name="snap_order",
+                model_type=SnapRow,
+                fields=("title",),
+                default_sort={"title": direction},
+                snapshot=SearchResultSnapshotSpec(
+                    name="snap_order", enabled=True, ttl=timedelta(minutes=5)
+                ),
+            )
+        )
+
+    ascending = port("asc")
+    taken = await ascending.search_page("snap", None, {"limit": 3}, snapshot={"mode": True})
+
+    assert [hit.title for hit in taken.hits] == titles
+    assert taken.snapshot is not None
+
+    handle = {"id": taken.snapshot.id, "fingerprint": taken.snapshot.fingerprint}
+    resorted = await ascending.search_page(
+        "snap", None, {"limit": 3}, {"title": "desc"}, snapshot=handle
+    )
+    redefaulted = await port("desc").search_page("snap", None, {"limit": 3}, snapshot=handle)
+
+    assert [hit.title for hit in resorted.hits] == list(reversed(titles))
+    assert [hit.title for hit in redefaulted.hits] == list(reversed(titles))

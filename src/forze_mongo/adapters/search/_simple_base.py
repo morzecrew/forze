@@ -23,6 +23,7 @@ from forze.application.contracts.search import (
     normalize_search_queries,
     reject_unsupported_facets,
     reject_unsupported_highlight,
+    resolve_search_sorts,
     search_options_for_simple_adapter,
 )
 from forze.application.integrations.search import (
@@ -83,7 +84,15 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         self,
         sorts: QuerySortExpression | None,
     ) -> list[tuple[str, int]] | None:
-        return self.render_sorts(sorts)
+        return self.render_sorts(
+            resolve_search_sorts(
+                sorts,
+                default_sort=self.spec.default_sort,
+                read_fields=self.read_fields,
+                model=self.model_type,
+                spec_name=self.spec.name,
+            )
+        )
 
     # ....................... #
 
@@ -124,6 +133,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
             ranked_pipeline=pipeline,
             query=query,
             filters=filters,
+            sorts=sorts,
             spec=self.spec,
             variant=self.search_variant,
             fingerprint_extras={"phrase_combine": str(combine)},

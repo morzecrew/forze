@@ -64,6 +64,7 @@ class HubSearchMixinBase[M: BaseModel]:
         introspector: PostgresIntrospector
         client: PostgresClientPort
         read_validation: Literal["strict", "trusted"]
+        sealed_fields: frozenset[str]
 
         @property
         def read_fields(self) -> frozenset[str]: ...

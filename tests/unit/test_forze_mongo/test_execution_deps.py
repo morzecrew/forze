@@ -504,6 +504,27 @@ class TestMongoDurableWiring:
         assert store.cipher is None
 
 
+def test_a_default_sort_placing_nulls_where_mongo_cannot_is_the_specs_error() -> None:
+    # Mongo orders a null as the smallest value; every unsorted request would fail with a
+    # client error for a sort the caller never sent.
+    class _Rank(ReadDocument):
+        title: str
+        rank: int | None = None
+
+    spec = SearchSpec(
+        name="rows",
+        model_type=_Rank,
+        fields=["title"],
+        default_sort={"rank": {"dir": "asc", "nulls": "last"}},
+    )
+    factory = ConfigurableMongoSearch(config=MongoSearchConfig(read=("db", "c"), engine="text"))
+
+    with pytest.raises(CoreException) as refused:
+        factory(_ctx(), spec)
+
+    assert refused.value.kind is ExceptionKind.CONFIGURATION
+
+
 _LIMITS = QueryFilterLimits(max_in_size=5_000)
 
 

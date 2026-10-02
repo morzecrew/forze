@@ -46,6 +46,7 @@ from forze.application.integrations.search import (
     build_federated_highlight_index,
     execute_federated_thin_offset,
     federated_highlights_for_hits,
+    federated_member_sorts,
     federated_snapshot_rehydrator,
     federated_thin_eligible,
     federated_thin_format,
@@ -270,13 +271,15 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
             self.federated_spec.members, thin_merge=self.federated_spec.thin_merge
         )
 
+        extras: dict[str, object] = {"thin": True} if effective_thin else {}
+        extras |= federated_member_sorts(self.federated_spec.members)
         fp_computed = SearchResultSnapshot.federated_fingerprint(
             query,
             filters,
             sorts,
             spec_name=self.federated_spec.name,
             rrf_k=int(self.rrf_k),
-            extras={"thin": True} if effective_thin else None,
+            extras=extras or None,
         )
 
         if (

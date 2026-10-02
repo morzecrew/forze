@@ -23,6 +23,14 @@ What each check pins:
 6. An explicit sort determines page order, overriding relevance.
 7. Projection returns exactly the requested fields.
 8. ``search`` and ``search_page`` agree on hits; only the total distinguishes them.
+9. Without a sort, the spec's ``default_sort`` orders the page.
+10. Rows that tie on every sort key come back in ``id`` order, in the sort's direction.
+11. A cursor walk visits the rows in the order an offset page lists them: nulls, mixed
+    directions and an ``id`` inside the sort included.
+12. The default sort never outranks relevance.
+13. An explicit null placement is honoured or refused, never dropped.
+14. A sort on a field the read model lacks is the caller's error, wherever it sits.
+15. A page cut from a capped candidate pool holds the rows the uncapped order puts there.
 
 Not asserted, on purpose: blank-query semantics. ``search("")`` means "everything, filters
 only" on some engines and "nothing" on others, and which one is right is a genuine product
@@ -46,24 +54,31 @@ from forze.application.contracts.search import (
     SearchManagementPort,
     SearchQueryPort,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
 PROBE_TERM = "python"
 """A term every corpus document contains, so relevance never decides membership."""
 
-CORPUS: tuple[tuple[str, str, str, Decimal], ...] = (
-    ("alpha guide", "python basics", "books", Decimal("123.456789012345678901")),
-    ("beta guide", "python advanced", "books", Decimal("234.567890123456789012")),
-    ("gamma notes", "python tips", "notes", Decimal("345.678901234567890123")),
-    ("delta notes", "python tricks", "notes", Decimal("456.789012345678901234")),
+CORPUS: tuple[tuple[str, str, str, Decimal, int | None], ...] = (
+    ("alpha guide", "python basics", "books", Decimal("123.456789012345678901"), 2),
+    ("beta guide", "python advanced", "books", Decimal("234.567890123456789012"), None),
+    ("gamma notes", "python tips", "notes", Decimal("345.678901234567890123"), 1),
+    ("delta notes", "python tricks", "notes", Decimal("456.789012345678901234"), None),
+    ("manual", "python reference", "manuals", Decimal("567.890123456789012345"), 3),
+    ("the unabridged manual", "python reference", "manuals", Decimal("678.9012345678901"), None),
 )
-"""``(title, content, category, price)`` rows every leg seeds identically.
+"""``(title, content, category, price, rank)`` rows every leg seeds identically.
 
-Titles are distinct and sort unambiguously (alpha/beta/delta/gamma), so an explicit sort
-has exactly one correct answer on every engine. ``category`` splits the corpus 2/2 for the
-filter check and is never searched, so it stays an exact predicate rather than a text match.
+Titles are distinct and sort unambiguously, so an explicit sort has exactly one correct
+answer on every engine. ``category`` splits the corpus in pairs for the filter and tie
+checks and is never searched, so it stays an exact predicate rather than a text match.
+``rank`` is null on half the rows, so a sort on it has to place the nulls.
+
+The two manuals are the relevance pair: ``manual`` matches the query ``manual`` exactly and
+``the unabridged manual`` does not. Engines that weigh that rank the first above the
+second; the others tie them, and the default sort then orders them the other way round.
 
 ``price`` carries **21 significant digits**, which is the point of the number rather than an
 affectation: an f64 cannot hold it, so any backend that round-trips the value through a
@@ -73,14 +88,21 @@ alongside — a mechanism that has to be checked from the outside, since a round
 entirely reasonable until someone reconciles it against a ledger.
 """
 
-PRICES: tuple[Decimal, ...] = tuple(price for *_rest, price in CORPUS)
+PRICES: tuple[Decimal, ...] = tuple(row[3] for row in CORPUS)
 """The corpus prices, exact — what a projected read must return, digit for digit."""
 
-TITLES_ASC = ("alpha guide", "beta guide", "delta notes", "gamma notes")
+TITLES_ASC = tuple(sorted(row[0] for row in CORPUS))
 """The corpus titles in ascending order — the expected order under an explicit sort."""
 
 NOTES_TITLES = ("delta notes", "gamma notes")
 """Titles of the two ``category="notes"`` rows, sorted."""
+
+DEFAULT_SORT = {"title": "desc"}
+"""The ``default_sort`` every harness spec declares.
+
+Descending, so it is neither the order the corpus was written in nor the ascending order the
+other checks ask for.
+"""
 
 
 # ....................... #
@@ -98,7 +120,8 @@ class SearchHarness:
     """
 
     query: SearchQueryPort[Any]
-    """A port over a spec whose searchable fields are ``title`` and ``content``."""
+    """A port over a spec whose searchable fields are ``title`` and ``content``, and whose
+    ``default_sort`` is :data:`DEFAULT_SORT`."""
 
     backend: str
     """Label used in assertion messages, so a failure names the leg that disagreed."""
@@ -112,6 +135,25 @@ class SearchHarness:
     it does enforce is that the answer is *one of the two* and is stable.
     """
 
+    supports_cursor: bool = True
+    """Whether the backend serves ``search_cursor`` at all; one that does not refuses it."""
+
+    sorts_relevance_ties: bool = True
+    """Whether a page with search text orders relevance ties by the default sort and the id.
+
+    Meilisearch does not: its ``sort`` rule runs before ``exactness``, so sorting a ranked
+    page by anything the request did not ask for would settle ties relevance still had to
+    decide. Such a backend leaves them in the engine's order."""
+
+    capped: SearchQueryPort[Any] | None = None
+    """A port over :func:`capped_rows`, seeded alone and configured with the smallest candidate
+    cap the backend has, so a first page reaches it. ``None`` on a backend with no cap."""
+
+    exact_match_ranks_first: bool = False
+    """Whether relevance tells an exact match from a longer one: ``manual`` above
+    ``the unabridged manual`` for the query ``manual``. An engine that ties them leaves the
+    order to the default sort."""
+
 
 Check = Callable[[SearchHarness], Any]
 """One battery check. Async, but typed loosely so the tuple stays homogeneous."""
@@ -122,6 +164,24 @@ Check = Callable[[SearchHarness], Any]
 
 def _titles(page: Any) -> list[str]:
     return [hit.title for hit in page.hits]
+
+
+async def _walk(h: SearchHarness, query: str, sorts: Any) -> list[Any]:
+    """Every id a cursor walk visits, one row a page."""
+
+    walked: list[Any] = []
+    cursor: dict[str, Any] = {"limit": 1}
+
+    for _ in range(len(CORPUS) + 1):
+        page = await h.query.search_cursor(query, None, cursor, sorts)
+        walked += [hit.id for hit in page.hits]
+
+        if not page.has_more:
+            break
+
+        cursor = {"limit": 1, "after": page.next_cursor}
+
+    return walked
 
 
 async def _all_titles(h: SearchHarness) -> list[str]:
@@ -173,7 +233,7 @@ async def check_limit_offset_windows_partition_the_result_set(h: SearchHarness) 
     second = await h.query.search(PROBE_TERM, None, {"limit": 2, "offset": 2}, sorts)
 
     assert _titles(first) == list(TITLES_ASC[:2]), h.backend
-    assert _titles(second) == list(TITLES_ASC[2:]), h.backend
+    assert _titles(second) == list(TITLES_ASC[2:4]), h.backend
 
 
 async def check_an_offset_past_the_end_is_an_empty_page(h: SearchHarness) -> None:
@@ -259,6 +319,160 @@ async def check_a_blank_query_is_declared_not_guessed(h: SearchHarness) -> None:
         assert list(page.hits) == [], h.backend
 
 
+async def check_the_default_sort_orders_a_page_without_one(h: SearchHarness) -> None:
+    """A request with no sort is ordered by the spec's ``default_sort``, not by chance.
+
+    Asked both with a query and without one: a blank query is a filter-only browse on every
+    backend here, and it is the list screen's usual request.
+    """
+
+    browsed = await h.query.search("", None, {"limit": 50})
+
+    assert _titles(browsed) == list(reversed(TITLES_ASC)), h.backend
+
+    if h.sorts_relevance_ties:
+        ranked = await h.query.search(PROBE_TERM, None, {"limit": 50})
+
+        assert _titles(ranked) == list(reversed(TITLES_ASC)), h.backend
+
+
+async def check_a_tie_breaks_by_id_in_the_sort_direction(h: SearchHarness) -> None:
+    """Rows that tie on every sort key come back in ``id`` order, in the sort's direction.
+
+    Without a final key an offset page has no total order: the same request can return the
+    tied rows in a different order on the next page, which skips one row and repeats another.
+    """
+
+    queries = (PROBE_TERM, "") if h.sorts_relevance_ties else ("",)
+
+    for direction in ("asc", "desc"):
+        for query in queries:
+            page = await h.query.search(query, None, {"limit": 50}, {"category": direction})
+
+            for category in ("books", "notes", "manuals"):
+                ids = [hit.id for hit in page.hits if hit.category == category]
+
+                assert len(ids) == 2, h.backend
+                assert ids == sorted(ids, reverse=direction == "desc"), (
+                    f"{h.backend}: {direction} {query!r} {category}"
+                )
+
+
+async def check_a_cursor_walk_follows_the_offset_order(h: SearchHarness) -> None:
+    """Walking cursor pages one row at a time visits the rows an offset page lists, in order.
+
+    The two paths build their order separately, and a cursor seeks past the last row it
+    returned by that order's keys: where they disagree, the walk skips or repeats a row.
+    """
+
+    if not h.supports_cursor:
+        with pytest.raises(CoreException):
+            await h.query.search_cursor(PROBE_TERM, None, {"limit": 1})
+
+        return
+
+    orders: tuple[dict[str, Any] | None, ...] = (
+        None,
+        {"category": "desc"},
+        {"rank": "asc"},
+        {"category": "asc", "rank": "desc"},
+        {"id": "desc", "title": "asc"},
+    )
+
+    for query in (PROBE_TERM, ""):
+        for sorts in orders:
+            offset = await h.query.search(query, None, {"limit": 50}, sorts)
+            walked = await _walk(h, query, sorts)
+
+            assert walked == [hit.id for hit in offset.hits], f"{h.backend}: {query!r} {sorts}"
+
+
+async def check_relevance_outranks_the_default_sort(h: SearchHarness) -> None:
+    """A default sort orders rows relevance ties; it never outranks relevance.
+
+    Asked with the query ``manual``, which one manual matches exactly and the other only in
+    part. The default sort, title descending, would put the longer title first.
+    """
+
+    page = await h.query.search("manual", None, {"limit": 50})
+    expected = ["manual", "the unabridged manual"]
+
+    if not h.exact_match_ranks_first:
+        expected.reverse()
+
+    assert _titles(page) == expected, h.backend
+
+
+async def check_an_explicit_null_placement_is_kept_or_refused(h: SearchHarness) -> None:
+    """``{"dir": "asc", "nulls": "last"}`` is honoured or refused, never quietly dropped.
+
+    On an offset page and, where the backend has one, a cursor walk: a backend that cannot
+    keep the placement says so rather than answering in another order.
+    """
+
+    sorts = {"rank": {"dir": "asc", "nulls": "last"}}
+
+    try:
+        page = await h.query.search(PROBE_TERM, None, {"limit": 50}, sorts)
+
+    except CoreException as refused:
+        assert refused.kind is ExceptionKind.PRECONDITION, h.backend
+
+    else:
+        ranks = [hit.rank for hit in page.hits]
+
+        assert ranks[:3] == sorted(r for r in ranks if r is not None), f"{h.backend}: {ranks}"
+        assert ranks[3:] == [None, None, None], f"{h.backend}: {ranks}"
+
+    if not h.supports_cursor:
+        return
+
+    try:
+        walked = await _walk(h, PROBE_TERM, sorts)
+
+    except CoreException as refused:
+        assert refused.kind is ExceptionKind.PRECONDITION, h.backend
+        return
+
+    offset = await h.query.search(PROBE_TERM, None, {"limit": 50}, sorts)
+
+    assert walked == [hit.id for hit in offset.hits], h.backend
+
+
+async def check_an_unknown_sort_field_is_the_callers_error(h: SearchHarness) -> None:
+    """A sort naming a field the read model lacks is refused as the caller's mistake.
+
+    After the ``id`` too, where the field orders nothing: refusing it there is what keeps a
+    typo from passing on one page and failing on the next.
+    """
+
+    for sorts in ({"nope": "asc"}, {"id": "asc", "nope": "asc"}):
+        with pytest.raises(CoreException) as refused:
+            await h.query.search(PROBE_TERM, None, {"limit": 5}, sorts)
+
+        assert refused.value.kind is ExceptionKind.PRECONDITION, f"{h.backend}: {sorts}"
+        assert refused.value.code == "field_not_on_read_model", f"{h.backend}: {sorts}"
+
+
+async def check_a_capped_page_is_a_prefix_of_the_page_order(h: SearchHarness) -> None:
+    """A capped offset page holds the rows the uncapped cursor walk puts at its place.
+
+    Every row ties on relevance, so the cap's edge falls among ties: a pool cut by rank alone
+    keeps an arbitrary few, and the page sorted out of it differs from the cursor's.
+    """
+
+    if h.capped is None:
+        return
+
+    for sorts in ({"title": "desc"}, {"rank": "asc"}, {"rank": "desc", "title": "asc"}):
+        offset = await h.capped.search(PROBE_TERM, None, {"limit": 10}, sorts)
+        cursor = await h.capped.search_cursor(PROBE_TERM, None, {"limit": 10}, sorts)
+
+        assert [hit.id for hit in offset.hits] == [hit.id for hit in cursor.hits], (
+            f"{h.backend}: {sorts}"
+        )
+
+
 # ....................... #
 
 async def check_windows_partition_under_a_non_unique_sort(h: SearchHarness) -> None:
@@ -271,10 +485,11 @@ async def check_windows_partition_under_a_non_unique_sort(h: SearchHarness) -> N
     """
 
     sorts = {"category": "asc"}
-    first = await h.query.search(PROBE_TERM, None, {"limit": 2, "offset": 0}, sorts)
-    second = await h.query.search(PROBE_TERM, None, {"limit": 2, "offset": 2}, sorts)
+    seen: list[str] = []
 
-    seen = _titles(first) + _titles(second)
+    for offset in range(0, len(CORPUS), 2):
+        page = await h.query.search(PROBE_TERM, None, {"limit": 2, "offset": offset}, sorts)
+        seen += _titles(page)
 
     assert sorted(seen) == sorted(TITLES_ASC), f"{h.backend}: {seen}"
 
@@ -402,6 +617,13 @@ SEARCH_BATTERY: tuple[Check, ...] = (
     check_a_blank_query_is_declared_not_guessed,
     check_windows_partition_under_a_non_unique_sort,
     check_phrase_combine_is_honored,
+    check_the_default_sort_orders_a_page_without_one,
+    check_a_tie_breaks_by_id_in_the_sort_direction,
+    check_a_cursor_walk_follows_the_offset_order,
+    check_relevance_outranks_the_default_sort,
+    check_an_explicit_null_placement_is_kept_or_refused,
+    check_an_unknown_sort_field_is_the_callers_error,
+    check_a_capped_page_is_a_prefix_of_the_page_order,
 )
 
 
@@ -563,8 +785,29 @@ def corpus_rows(id_factory: Callable[[], Any]) -> list[dict[str, Any]]:
             "content": content,
             "category": category,
             "price": price,
+            "rank": rank,
         }
-        for title, content, category, price in CORPUS
+        for title, content, category, price, rank in CORPUS
+    ]
+
+
+CAPPED_ROWS = 80
+"""More rows than a first page's candidate cap: the page plus the cap's margin of 50."""
+
+
+def capped_rows(id_factory: Callable[[], Any]) -> list[dict[str, Any]]:
+    """Rows that all match :data:`PROBE_TERM` equally, a third of them with a null ``rank``."""
+
+    return [
+        {
+            "id": id_factory(),
+            "title": f"capped {n:02d}",
+            "content": PROBE_TERM,
+            "category": "capped",
+            "price": Decimal(n),
+            "rank": None if n % 3 == 0 else n % 7,
+        }
+        for n in range(CAPPED_ROWS)
     ]
 
 

@@ -373,3 +373,45 @@ async def test_rrf_legs_stay_in_relevance_order_under_a_sort() -> None:
         assert leg.search.await_args.args[3] is None  # relevance-ordered, never sorted
 
     assert len(page.hits) == 2  # the sort still tie-breaks the fused page
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merge", ["rrf", "federation"])
+async def test_a_member_default_sort_is_part_of_the_snapshot_key(merge: str) -> None:
+    """A snapshot taken under one member default sort is not read under another."""
+
+    seen: list[str] = []
+
+    class _KeyRead(Exception):
+        """Raised by the store once the key is read: the search goes no further."""
+
+    async def get_id_range(*_: object, expected_fingerprint: str) -> None:
+        seen.append(expected_fingerprint)
+
+        raise _KeyRead
+
+    store = MagicMock()
+    store.get_id_range = AsyncMock(side_effect=get_id_range)
+    store.get_meta = AsyncMock(return_value=None)
+    store.put_run = AsyncMock()
+
+    for direction in ("asc", "desc"):
+        sorted_member = SearchSpec(
+            name="a", model_type=_Hit, fields=["label"], default_sort={"label": direction}
+        )
+        adapter = MeilisearchFederatedSearchAdapter(
+            federated_spec=FederatedSearchSpec(
+                name="fed", members=(sorted_member, _mem("b")), snapshot=_snap_spec()
+            ),
+            legs=(("a", _rrf_leg("a", [])), ("b", _rrf_leg("b", []))),
+            client=MagicMock(),
+            merge=merge,  # type: ignore[arg-type]
+            rrf_k=60,
+            result_snapshot=SearchResultSnapshot(store=store),
+        )
+
+        # The key is read before the legs run, so the store stops the search right there.
+        with pytest.raises(_KeyRead):
+            await adapter.search_page("q", snapshot={"id": "run-1"})
+
+    assert len(seen) == 2 and seen[0] != seen[1]

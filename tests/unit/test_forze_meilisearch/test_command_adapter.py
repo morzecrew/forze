@@ -161,6 +161,31 @@ async def test_ensure_index_provisions_max_total_hits() -> None:
     assert settings.pagination.max_total_hits == 2500
 
 
+async def test_ensure_index_makes_the_default_sort_sortable() -> None:
+    """An unsorted page sorts by ``default_sort``, which the engine refuses unless declared."""
+
+    index = MagicMock()
+    index.update_settings = AsyncMock(return_value=MagicMock(task_uid=1))
+    client = _client_with_index(index)
+
+    class _Ranked(_Doc):
+        rank: int = 0
+
+    spec = SearchSpec(
+        name="items", model_type=_Ranked, fields=["title"], default_sort={"rank": "desc"}
+    )
+    adapter = MeilisearchSearchManagementAdapter(
+        spec=spec,
+        config=MeilisearchSearchConfig(index_uid="items_idx", wait_for_tasks=False),
+        client=client,
+    )
+
+    await adapter.ensure_index()
+
+    settings = index.update_settings.await_args[0][0]
+    assert settings.sortable_attributes == ["id", "title", "rank"]
+
+
 @pytest.mark.asyncio
 async def test_delete_by_id_is_tenant_scoped_when_tagged() -> None:
     """``delete(ids)`` under tagged tenancy scopes the delete to this tenant's rows."""

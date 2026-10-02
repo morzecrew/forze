@@ -138,3 +138,64 @@ async def test_hub_vector_leg_knn_single_and_multi_query(
 
     browse = await adapter.search_page("")
     assert browse.count == 2
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("execution", ["sql", "parallel"])
+async def test_a_capped_hub_vector_leg_keeps_the_nearest_rows(
+    pgvector_client: PostgresClient, execution: str
+) -> None:
+    """The leg score is the negated distance, higher nearer; the cap kept the lowest scores."""
+
+    await pgvector_client.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    suffix = uuid4().hex[:8]
+    items = f"hub_vc_it_{suffix}"
+    prov = MockHashEmbeddingsProvider(dimensions=3)
+    await pgvector_client.execute(
+        f"CREATE TABLE {items} (id uuid PRIMARY KEY, label text NOT NULL, emb vector(3) NOT NULL)"
+    )
+    ids: dict[str, UUID] = {}
+
+    for n in range(20):
+        ids[f"label {n}"] = uuid4()
+        emb = vector_param_literal(await prov.embed_one(f"label {n}"))
+        await pgvector_client.execute(
+            f"INSERT INTO {items} (id, label, emb) VALUES (%(id)s, 'x', '{emb}'::vector)",
+            {"id": ids[f"label {n}"]},
+        )
+
+    leg = SearchSpec(name="leg", model_type=VecItemFields, fields=["label"])
+    hub_cfg = PostgresHubSearchConfig(
+        hub=("public", items),
+        members={
+            "leg": PostgresHubSearchMemberConfig(
+                index=("public", items),
+                read=("public", items),
+                hub_fk="id",
+                engine=VectorEngine(column="emb", dimensions=3, embeddings_name="hub_vec_emb"),
+            ),
+        },
+        per_leg_limit=3,
+        execution=execution,  # type: ignore[arg-type]
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pgvector_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pgvector_client),
+                EmbeddingsProviderDepKey: _embeddings_factory,
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(
+        ctx, HubSearchSpec(name=f"hub_vc_{suffix}", model_type=_Item, members=(leg,))
+    )
+
+    page = await adapter.search_page("label 7", None, {"limit": 1})
+
+    assert [hit.id for hit in page.hits] == [ids["label 7"]]
+
+
+class _Item(BaseModel):
+    id: UUID

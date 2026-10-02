@@ -10,12 +10,14 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    read_fields_for_model,
 )
 from forze.application.contracts.search import (
     FacetResults,
     HitHighlights,
     SearchResultSnapshotOptions,
     SearchSpec,
+    resolve_search_sorts,
     search_page_from_limit_offset,
 )
 from forze.application.integrations.search._snapshot_stream import (
@@ -151,7 +153,18 @@ async def execute_simple_offset_search_with_snapshot[M: BaseModel](
     snapshots_enabled = result_snapshot is not None and rs_spec is not None
 
     if snapshots_enabled:
-        fp_sorts = fingerprint_sorts if fingerprint_sorts is not None else sorts
+        # Keyed on the order the page is taken in, not the request's sorts alone: an unsorted
+        # request follows ``default_sort``, and a snapshot must not outlive a change to it. A
+        # backend that orders otherwise names its own order in *fingerprint_sorts*.
+        fp_sorts = (
+            fingerprint_sorts
+            if fingerprint_sorts is not None
+            else resolve_search_sorts(
+                sorts,
+                default_sort=spec.default_sort,
+                read_fields=read_fields_for_model(spec.model_type),
+            )
+        )
         fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
             query,
             filters,

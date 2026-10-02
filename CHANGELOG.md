@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Authorization and tenant listing read in batches, not row by row.** A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for a role, its parent and 18 permissions. Tenants are read together, not per membership. Firestore scans need an index on field and `id`.
 
+- **Sorting by a `NOT NULL` Postgres column, or by the record `id`, can read from a plain index.** The `ORDER BY` now leaves out the null placement a plain btree does not hold, so a document list or blank-query search sorted by it, through a view too, no longer sorts the whole filtered set first.
+
+- **Meilisearch's `ensure_index` makes the `default_sort` fields sortable** (**behaviour change**), as an unsorted browse sorts by them; on an index without them that browse fails with a configuration error naming the attribute. A port whose pinned `sortable_attributes` lacks them refuses to build.
+
+- **A search spec whose `default_sort` places nulls where its backend cannot is refused when the port is built**, on Mongo and Meilisearch, and on a Postgres search cursor as the spec's error, not the caller's.
+
+- **An explicit null placement no Postgres search cursor can keep is refused** (**behaviour change**), as Mongo does; offset pages still honour it. Meilisearch refuses one on any page. Before, the placement was dropped and the cursor walked a different order from the offset page.
+
 ### Fixed
 
 - **`get_many` on Firestore finds a document by its name, as `get` does.** It queried the `id` field in the document body, so a document written without that field (by the console, a migration or another service) was found by `get` and reported missing by `get_many`.
@@ -74,6 +82,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A MongoDB aggregate read honours an object-form sort direction.** A sort written `{"n": {"dir": "asc"}}` returned the groups in reverse, as anything but the string `"asc"` read as descending. A null placement MongoDB cannot express is now refused, as on other MongoDB reads.
 
 - **A membership operand given as a set or frozenset works on every backend.** The parser handed it on as is: Postgres could not bind one inside a JSONB element and answered with a server error, and Meilisearch refused a set. Every operand now reaches the backend as a list.
+
+- **A search page without a sort follows the spec's `default_sort`, then `id`** (**behaviour change**: page order). Offset search ignored it on Postgres, Mongo, Meilisearch and the in-memory search. On Meilisearch only a blank query takes them: with search text, relevance ties keep the engine's order.
+
+- **A blank Postgres full-text or vector search sorts every matching row.** Its candidate cap kept the first rows the scan met, so a sorted page over a table larger than the cap could miss the rows that belonged on it.
+
+- **A ranked Postgres search cursor reaches rows whose sort key is null.** The page's order put them last on an ascending key while the cursor's seek reads them as the smallest value, so walking the pages skipped them.
+
+- **A Postgres hub search page breaks ties by `id`.** Rows of equal rank and sort keys had no final key on an offset page, so paging could repeat one row and skip another, and a cursor walk listed them in a different order than offset pages did.
+
+- **A search result snapshot replays only for the order it was taken in.** Its key named the request's sorts but not the `default_sort` an unsorted request follows, or a federated member's, and on Mongo not even the sorts, so a re-sorted request or a changed default could replay the old order.
+
+- **A capped Postgres vector search keeps the nearest rows.** The candidate cap, and a hub's per-leg cap, kept the lowest scores, which are the farthest rows, so on a table larger than the cap the nearest matches never reached the page.
+
+- **A capped Postgres search page holds the rows the uncapped order puts there.** The candidate cap, and a hub's, kept rank ties at its edge in scan order (a hub's also put nulls last), so an offset page could differ between requests and from the cursor. The cap now orders as the page does, on every engine.
+
+- **A Mongo search cursor walks past rows whose sort key is null.** Its seek compared with `$gt`/`$lt`, which never match a null, so walking a sort over a nullable field stopped at the first or last null.
+
+- **A search sort that names `id` ends there**, so offset and cursor pages order by the same keys; a key after the id changed nothing but the cursor's order.
+
+- **Meilisearch sorts by the primary key wherever a sort names the id.** With a custom `primary_key`, an unsorted browse failed because the `id` tie-breaker named an attribute the index does not sort by.
+
+- **A search sort naming a field the read model lacks is a 400 on every backend**, wherever it sits. Postgres answered with a database error, and a key after `id` was dropped unchecked.
+
+- **The in-memory search orders a ranked page by relevance before the sort**, as Postgres, Mongo and Meilisearch do, instead of sorting first.
 
 ### Security
 

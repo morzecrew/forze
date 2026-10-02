@@ -22,6 +22,7 @@ from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.execution_context import context_from_deps
 from tests.support.search_conformance import (
+    DEFAULT_SORT,
     SEARCH_BATTERY,
     Check,
     SearchHarness,
@@ -38,6 +39,7 @@ class _Row(BaseModel):
     content: str
     category: str = ""
     price: Decimal = Decimal(0)
+    rank: int | None = None
 
 
 @pytest_asyncio.fixture
@@ -67,12 +69,15 @@ async def harness(mongo_client: MongoClient) -> SearchHarness:
         )
     )
 
-    spec = SearchSpec(name="rows", model_type=_Row, fields=searchable_fields())
+    spec = SearchSpec(
+        name="rows", model_type=_Row, fields=searchable_fields(), default_sort=DEFAULT_SORT
+    )
 
     return SearchHarness(
         query=ctx.search.query(spec),
         backend="mongo_text",
         blank_query_matches_all=True,
+        exact_match_ranks_first=True,
     )
 
 

@@ -14,6 +14,7 @@ from forze.application.contracts.search import (
     SearchResultSnapshotOptions,
     normalize_search_queries,
     prepare_hub_search_options,
+    resolve_search_sorts,
 )
 from forze.application.integrations.search import SearchResultSnapshot
 
@@ -103,7 +104,14 @@ async def build_hub_search_plan(
     use_parallel = execution == "parallel" and do_legs and (mode == "cursor" or sorts is None)
 
     hub_spec = host.hub_spec
-    effective_sorts = sorts if sorts else hub_spec.default_sort
+    # After the rank, as on a single index: the request's sorts or the default, then the id.
+    effective_sorts = resolve_search_sorts(
+        sorts,
+        default_sort=hub_spec.default_sort,
+        read_fields=host.read_fields,
+        model=host.model_type,
+        spec_name=hub_spec.name,
+    )
     rs_spec = hub_spec.snapshot
 
     # Cursor pagination walks the whole ranked set one keyset page at a time, so the

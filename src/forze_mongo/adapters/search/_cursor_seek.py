@@ -14,15 +14,23 @@ def _storage_field(field: str) -> str:
     return "_id" if field == ID_FIELD else field
 
 
-def _cmp_op(direction: str, *, after: bool) -> str:
-    """Comparison operator for keyset seek on one column."""
+def _past(field: str, direction: str, value: Any, *, after: bool) -> JsonDict | None:
+    """Rows strictly past *value* on one key, a null being the smallest value.
 
-    asc = direction == "asc"
+    Mongo compares only within a type, so ``$gt``/``$lt`` never match a null: a walk past the
+    last null, or toward them, needs them named. ``None`` when no row lies that side.
+    """
 
-    if after:
-        return "$gt" if asc else "$lt"
+    sf = _storage_field(field)
+    larger = after == (direction == "asc")
 
-    return "$lt" if asc else "$gt"
+    if value is None:
+        return {sf: {"$ne": None}} if larger else None
+
+    if larger:
+        return {sf: {"$gt": value}}
+
+    return {"$or": [{sf: {"$lt": value}}, {sf: None}]}
 
 
 def build_keyset_sort_spec(
@@ -60,15 +68,12 @@ def build_keyset_seek_match(
     branches: list[JsonDict] = []
 
     for i, (field, direction) in enumerate(key_spec):
-        branch: JsonDict = {}
-        op = _cmp_op(direction, after=after)
-        sf = _storage_field(field)
+        past = _past(field, direction, values[i], after=after)
 
-        for j in range(i):
-            prev_field, _ = key_spec[j]
-            branch[_storage_field(prev_field)] = values[j]
+        if past is None:
+            continue
 
-        branch[sf] = {op: values[i]}
-        branches.append(branch)
+        branch: JsonDict = {_storage_field(f): values[j] for j, (f, _) in enumerate(key_spec[:i])}
+        branches.append({"$and": [branch, past]} if branch else past)
 
-    return {"$or": branches}
+    return {"$or": branches} if branches else {"_id": {"$exists": False}}
