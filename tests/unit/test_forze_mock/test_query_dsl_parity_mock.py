@@ -80,6 +80,9 @@ class _RestrictedDoc:
     async def aggregate_many(self, aggregates: Any, *, pagination: Any) -> Any:
         return await self._inner.aggregate_many(aggregates, pagination=pagination)
 
+    async def aggregate_page(self, aggregates: Any, *, pagination: Any) -> Any:
+        return await self._inner.aggregate_page(aggregates, pagination=pagination)
+
 
 @pytest.mark.asyncio
 async def test_runner_handles_a_restricted_backend() -> None:

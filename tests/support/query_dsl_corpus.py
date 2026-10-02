@@ -341,6 +341,9 @@ class CombinedDocPort:
     async def aggregate_many(self, aggregates: Any, *, pagination: Any) -> Any:
         return await self.query.aggregate_many(aggregates, pagination=pagination)
 
+    async def aggregate_page(self, aggregates: Any, *, pagination: Any) -> Any:
+        return await self.query.aggregate_page(aggregates, pagination=pagination)
+
 
 async def run_parity_cases(
     doc: Any,
@@ -381,12 +384,12 @@ async def run_parity_cases(
     if caps.supports_aggregates:
         # A metric filter and `$having` are filters too, parsed under the spec's limits.
         names = {"$values": {"name": {"$in": _names_padded_to(1_500)}}}
-        page = await doc.aggregate_many(
-            {
-                "$computed": {"n": {"$count": {"filter": names}}},
-                "$having": {"$values": {"n": {"$in": list(range(1_500))}}},
-            },
-            pagination={"limit": 10},
-        )
+        aggregates = {
+            "$computed": {"n": {"$count": {"filter": names}}},
+            "$having": {"$values": {"n": {"$in": list(range(1_500))}}},
+        }
+        page = await doc.aggregate_page(aggregates, pagination={"limit": 10})
 
-        assert [row["n"] for row in page.hits] == [2], f"{backend}/aggregate_past_default_limit"
+        assert ([row["n"] for row in page.hits], page.count) == ([2], 1), (
+            f"{backend}/aggregate_past_default_limit"
+        )

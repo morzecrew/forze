@@ -185,6 +185,15 @@ class TestGuardFilterLimits:
             filter_limits=QueryFilterLimits(max_in_size=2_000),
         ).check(filters=self._FILTERS)
 
+    def test_parses_aggregate_filters_under_the_spec_limits(self) -> None:
+        aggregates = {"$computed": {"n": {"$count": {"filter": self._FILTERS}}}}
+
+        QueryFieldGuard(
+            policy=QueryFieldPolicy(filterable={"title"}, aggregatable={"title"}),
+            spec_name="notes",
+            filter_limits=QueryFilterLimits(max_in_size=2_000),
+        ).check(aggregates=aggregates)
+
     def test_keeps_the_default_limits_without_them(self) -> None:
         guard = QueryFieldGuard(policy=QueryFieldPolicy(filterable={"title"}), spec_name="notes")
 
