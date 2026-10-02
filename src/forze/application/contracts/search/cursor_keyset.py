@@ -5,10 +5,14 @@ from collections.abc import Sequence
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
+    UNSUPPORTED_QUERY_FEATURE_CODE,
     QuerySortExpression,
+    default_nulls,
     parse_sort_value,
+    resolve_sort_keys,
     validate_sort_fields,
 )
+from forze.base.exceptions import exc
 from forze.domain.constants import ID_FIELD
 
 # ----------------------- #
@@ -94,6 +98,45 @@ def resolve_search_sorts(
     out[tiebreaker] = "desc" if directions == {"desc"} else "asc"
 
     return out
+
+
+# ....................... #
+
+
+def refuse_cursor_null_placement(
+    sorts: QuerySortExpression | None,
+    *,
+    default_sort: QuerySortExpression | None,
+    read_fields: frozenset[str],
+    backend: str,
+    sealed: frozenset[str] = frozenset(),
+) -> None:
+    """Refuse a null placement a keyset cursor cannot keep, on the keys it keeps.
+
+    The cursor seeks with a null as the smallest value. Only the order it walks is checked,
+    ended at the id as :func:`resolve_search_sorts` ends it, so a key after the id is dropped
+    rather than refused. A placement the request names is the caller's error; one the spec's
+    ``default_sort`` carries, on a request that named none, is the spec author's.
+    """
+
+    kept = resolve_search_sorts(sorts or default_sort, default_sort=None, read_fields=read_fields)
+
+    for field, direction, nulls in resolve_sort_keys(kept, sealed=sealed):
+        if nulls == default_nulls(direction):
+            continue
+
+        cannot = (
+            f"A {backend} seeks with a null as the smallest value and cannot keep "
+            f"NULLS {nulls.upper()} on {field!r}"
+        )
+
+        if sorts:
+            raise exc.precondition(
+                f"{cannot}; omit the per-key 'nulls' placement.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
+            )
+
+        raise exc.configuration(f"{cannot}, which the search spec's default_sort asks for.")
 
 
 # ....................... #

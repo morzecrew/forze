@@ -9,6 +9,7 @@ from forze.application.contracts.crypto import (
     KeyringDepKey,
 )
 from forze.application.contracts.embeddings import EmbeddingsSpec
+from forze.application.contracts.querying import default_nulls, parse_sort_value
 from forze.application.contracts.search import (
     SearchQueryDepPort,
     SearchResultSnapshotSpec,
@@ -66,6 +67,17 @@ def _mongo_search_port_for_config(
     c: MongoSearchConfig,
 ) -> MongoTextSearchAdapter[Any] | MongoAtlasSearchAdapter[Any] | MongoVectorSearchAdapter[Any]:
     c.validate_against_spec(member_spec)
+
+    # Mongo orders a null as the smallest value and cannot be told otherwise, so a default
+    # sort asking for another placement would fail every unsorted request as the caller's.
+    for field, value in (member_spec.default_sort or {}).items():
+        direction, nulls = parse_sort_value(value, field=field, client_facing=False)
+
+        if nulls != default_nulls(direction):
+            raise exc.configuration(
+                f"Search spec {member_spec.name!r}: Mongo orders nulls as the smallest value "
+                f"and cannot keep NULLS {nulls.upper()} on default_sort field {field!r}.",
+            )
 
     # Decrypt encrypted document fields out of in-place search results (the collection was
     # written encrypted by the document gateway; the wrapped codec reproduces its config).

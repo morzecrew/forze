@@ -18,8 +18,6 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
-    assert_default_null_ordering,
-    resolve_sort_keys,
 )
 from forze.application.contracts.search import (
     SearchCapabilities,
@@ -27,6 +25,7 @@ from forze.application.contracts.search import (
     SearchQueryPort,
     SearchResultSnapshotOptions,
     normalize_search_queries,
+    refuse_cursor_null_placement,
     resolve_search_sorts,
     search_options_for_simple_adapter,
 )
@@ -451,11 +450,21 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         reject_encrypted_sort_fields(
             sorts, encryption=self.spec.encryption, spec_name=self.spec.name
         )
-        # The cursor seeks with a null as the smallest value; another placement would walk
-        # past rows, so it is refused here and honoured only on offset pages.
-        assert_default_null_ordering(
-            resolve_sort_keys(sorts or self.spec.default_sort, sealed=self.sealed_fields),
-            backend="postgres search cursor",
+        # Checked against the read model before anything is built from it, as offset pages are.
+        page_order = resolve_search_sorts(
+            sorts or self.spec.default_sort,
+            default_sort=None,
+            read_fields=self.read_fields,
+            model=self.model_type,
+            spec_name=self.spec.name,
+        )
+        # A null placement the seek cannot keep is refused here; offset pages honour it.
+        refuse_cursor_null_placement(
+            sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=self.read_fields,
+            backend="Postgres search cursor",
+            sealed=self.sealed_fields,
         )
         options = search_options_for_simple_adapter(options)
         lim, _, _ = parse_search_cursor(cursor)
@@ -488,9 +497,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             snapshot=None,
             parsed_filters=parsed_filters,
             for_cursor=True,
-            sorts=resolve_search_sorts(
-                sorts or self.spec.default_sort, default_sort=None, read_fields=self.read_fields
-            ),
+            sorts=page_order,
         )
 
         return await execute_ranked_pipeline_cursor(
