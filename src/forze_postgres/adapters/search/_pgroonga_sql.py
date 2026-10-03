@@ -23,7 +23,6 @@ from ...kernel.gateways import PostgresQualifiedName
 from ._pgroonga_index_fields import (
     PgroongaCastType,
     PgroongaIndexElement,
-    parse_pgroonga_index_elements,
     resolve_pgroonga_index_alignment,
 )
 
@@ -160,18 +159,13 @@ async def pgroonga_match_clause(
     eff_float = calculate_effective_field_weights(search, options)
     eff_weights = {f: int(w * 100) for f, w in eff_float.items()}
 
-    _, weights, uses_array = resolve_pgroonga_index_alignment(
+    # The match names the index's own expression, element for element, or Postgres cannot
+    # serve it from the index and scans the whole table.
+    _, weights, uses_array, elements = resolve_pgroonga_index_alignment(
         search,
         index_info,
         index_field_map,
         eff_weights,
-        index_qname=index_qname,
-    )
-    # The match names the index's own expression, column for column, or Postgres cannot
-    # serve it from the index and scans the whole table.
-    elements = parse_pgroonga_index_elements(
-        index_info.expr,
-        index_info.columns,
         index_qname=index_qname,
     )
 

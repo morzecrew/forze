@@ -218,26 +218,6 @@ def pgroonga_index_uses_array_expr(expr: str | None) -> bool:
 # ....................... #
 
 
-def parse_pgroonga_index_heap_columns(
-    expr: str | None,
-    columns: tuple[str, ...],
-    *,
-    index_qname: PostgresQualifiedName,
-) -> tuple[str, ...]:
-    """Return heap column names in index declaration order.
-
-    See :func:`parse_pgroonga_index_elements` for the expressions accepted.
-    """
-
-    return tuple(
-        element.column
-        for element in parse_pgroonga_index_elements(expr, columns, index_qname=index_qname)
-    )
-
-
-# ....................... #
-
-
 def parse_pgroonga_index_elements(
     expr: str | None,
     columns: tuple[str, ...],
@@ -269,13 +249,47 @@ def parse_pgroonga_index_elements(
         if single is not None:
             return (single,)
 
-    if columns:
+    if columns and (expr is None or _is_column_key_list(expr, columns)):
         return tuple(PgroongaIndexElement(column) for column in columns)
 
     raise exc.internal(
         f"Cannot resolve PGroonga index columns from {qn}; "
         "index expression must be ARRAY[...] or a single column reference.",
     )
+
+
+# ....................... #
+
+
+def _is_column_key_list(expr: str, columns: tuple[str, ...]) -> bool:
+    """Whether *expr* lists exactly the plain index columns, each with its own options.
+
+    A column index deparses as its key list (``title, content`` or ``title COLLATE "C"
+    some_ops``), which leads with the columns in order. A mixed index's expression holds only
+    its expression keys (``lower(content)``), so it does not, and falling back to the plain
+    columns would search different fields than the index holds.
+    """
+
+    keys = [key.strip() for key in _split_top_level_commas(expr)]
+
+    if len(keys) != len(columns):
+        return False
+
+    for key, column in zip(keys, columns, strict=True):
+        quoted = _quoted_ident_at(key, 0)
+        if quoted is not None:
+            name, end = quoted
+        else:
+            word = _WORD_RE.match(key)
+            if word is None:
+                return False
+            name, end = word.group(), word.end()
+
+        # The column must be the whole key or be followed by its options, not by an operator.
+        if name != column or (end < len(key) and not key[end].isspace()):
+            return False
+
+    return True
 
 
 # ....................... #
@@ -589,14 +603,15 @@ def resolve_pgroonga_index_alignment(
     eff_weights: Mapping[str, int],
     *,
     index_qname: PostgresQualifiedName,
-) -> tuple[list[str], list[int], bool]:
-    """Resolve heap columns, weights, and whether the index uses ``ARRAY[...]``."""
+) -> tuple[list[str], list[int], bool, tuple[PgroongaIndexElement, ...]]:
+    """Resolve heap columns, weights, whether the index uses ``ARRAY[...]``, and its elements."""
 
-    index_heap = parse_pgroonga_index_heap_columns(
+    elements = parse_pgroonga_index_elements(
         index_info.expr,
         index_info.columns,
         index_qname=index_qname,
     )
+    index_heap = tuple(element.column for element in elements)
     index_logical = heap_columns_to_logical(index_heap, field_map)
     heap_cols, weights = align_pgroonga_search_columns(
         search,
@@ -607,4 +622,4 @@ def resolve_pgroonga_index_alignment(
     )
     uses_array = pgroonga_index_uses_array_expr(index_info.expr)
 
-    return heap_cols, weights, uses_array
+    return heap_cols, weights, uses_array, elements

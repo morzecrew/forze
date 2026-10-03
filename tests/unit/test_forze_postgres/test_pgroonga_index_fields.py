@@ -9,7 +9,6 @@ from forze_postgres.adapters.search._pgroonga_index_fields import (
     align_pgroonga_search_columns,
     heap_columns_to_logical,
     parse_pgroonga_index_elements,
-    parse_pgroonga_index_heap_columns,
     pgroonga_index_uses_array_expr,
     resolve_pgroonga_index_alignment,
 )
@@ -27,6 +26,16 @@ class _Doc(BaseModel):
 
 
 _IDX = PostgresQualifiedName("public", "idx_test")
+
+
+def parse_pgroonga_index_heap_columns(
+    expr: str | None, columns: tuple[str, ...], *, index_qname: PostgresQualifiedName
+) -> tuple[str, ...]:
+    """The heap columns an index reads, in declaration order."""
+
+    elements = parse_pgroonga_index_elements(expr, columns, index_qname=index_qname)
+
+    return tuple(element.column for element in elements)
 
 
 def _info(*, expr: str | None = None, columns: tuple[str, ...] = ()) -> PostgresIndexInfo:
@@ -308,7 +317,7 @@ def test_align_missing_spec_field_raises() -> None:
 
 def test_resolve_pgroonga_index_alignment_reversed_spec() -> None:
     spec = SearchSpec(name="t", model_type=_Doc, fields=["b", "a"])
-    heap, weights, uses_array = resolve_pgroonga_index_alignment(
+    heap, weights, uses_array, _ = resolve_pgroonga_index_alignment(
         spec,
         _info(expr="(ARRAY[col_a, col_b])"),
         {"a": "col_a", "b": "col_b"},
@@ -342,8 +351,8 @@ def test_resolve_pgroonga_index_alignment_coalesced_matches_bare() -> None:
         index_qname=_IDX,
     )
 
-    assert coalesced == bare
-    assert coalesced == (["col_a", "col_b"], [100, 1], True)
+    assert coalesced[:3] == bare[:3]
+    assert coalesced[:3] == (["col_a", "col_b"], [100, 1], True)
 
 
 # ....................... #
@@ -443,6 +452,21 @@ def test_the_match_operand_is_the_indexed_expression(
 def test_a_cast_that_is_not_a_type_name_is_refused(expr: str) -> None:
     with pytest.raises(CoreException):
         parse_pgroonga_index_elements(expr, (), index_qname=_IDX)
+
+
+@pytest.mark.parametrize(
+    ("expr", "columns"),
+    [
+        # A mixed index: ``pg_get_expr`` holds only the expression key, ``columns`` only the
+        # plain ones. Searching the plain columns alone would search the wrong fields.
+        ("lower(content)", ("title",)),
+        ("lower(title)", ("title",)),
+        ("title, lower(content)", ("title",)),
+    ],
+)
+def test_an_index_with_an_unsupported_key_is_refused(expr: str, columns: tuple[str, ...]) -> None:
+    with pytest.raises(CoreException, match="Cannot resolve PGroonga index columns"):
+        parse_pgroonga_index_elements(expr, columns, index_qname=_IDX)
 
 
 def test_parsing_a_long_unsupported_type_tail_stays_linear() -> None:
