@@ -69,6 +69,7 @@ from forze_meilisearch.adapters.search._search_params import (
     build_search_query_string,
     build_sort,
     render_user_sorts,
+    sortable_attributes,
 )
 from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
@@ -151,13 +152,16 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         """The spec's thin merge, where every member can re-read a page by id.
 
         The thin path re-reads the page with an ``id IN (...)`` filter on each member's ``id``
-        attribute, which Meilisearch accepts only when that attribute is filterable — not by
-        default under a custom ``primary_key``, nor when a pinned ``filterable_attributes``
-        leaves it out. Such a member keeps the federation on the full-fetch path.
+        attribute, ordered by its primary key. Meilisearch accepts the filter only when that
+        attribute is filterable — not by default under a custom ``primary_key``, nor when a
+        pinned ``filterable_attributes`` leaves it out — and the order only when the key is
+        sortable, which a pinned ``sortable_attributes`` may leave out. Such a member keeps
+        the federation on the full-fetch path.
         """
 
         return self.federated_spec.thin_merge and all(
             adapter.physical_path(ID_FIELD) in adapter.filterable_attributes()
+            and adapter.primary_key in sortable_attributes(adapter.spec, adapter.config)
             for _name, adapter in self.legs
         )
 

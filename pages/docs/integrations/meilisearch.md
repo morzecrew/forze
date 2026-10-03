@@ -95,4 +95,4 @@ lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://loca
   same primary key. Meilisearch refuses a federation whose queries sort differently, so
   otherwise each member sends the request's `sorts` alone and the merged order is the
   engine's. RRF re-reads only the page by id unless a member cannot filter by its `id`
-  attribute, which keeps that federation on the full merge.
+  attribute or sort by its primary key, which keeps that federation on the full merge.

@@ -342,10 +342,14 @@ def _hydrate(
     leg_opts: SearchOptions | None,
 ) -> Callable[[], Awaitable[Any]]:
     async def _run() -> Any:
+        # The caller reorders the rows, so the re-read asks for no order of its own: a sort
+        # naming ``id`` ends there on every backend, so a member's ``default_sort`` (which an
+        # older index may not be able to sort by) is never applied.
         return await port.search(
             query,
             _and_id_filter(filters, ids),
             {"limit": len(ids)},
+            {ID_FIELD: "asc"},
             options=leg_opts,
         )
 
