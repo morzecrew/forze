@@ -462,6 +462,8 @@ def test_a_cast_that_is_not_a_type_name_is_refused(expr: str) -> None:
         ("lower(content)", ("title",)),
         ("lower(title)", ("title",)),
         ("title, lower(content)", ("title",)),
+        # A function sharing the column's name is an expression key, not the column.
+        ("md5(content)", ("md5",)),
     ],
 )
 def test_an_index_with_an_unsupported_key_is_refused(expr: str, columns: tuple[str, ...]) -> None:
