@@ -178,7 +178,7 @@ async def test_federated_rrf_thin_merge_matches_full(meilisearch_client) -> None
     )
 
     def idents(page: object) -> list[tuple[str, str]]:
-        return sorted((h.member, h.hit.id) for h in page.hits)  # type: ignore[attr-defined]
+        return [(h.member, h.hit.id) for h in page.hits]  # type: ignore[attr-defined]
 
     assert idents(thin) == idents(full)
     assert thin.count == full.count
@@ -472,3 +472,51 @@ async def test_federated_members_that_disagree_still_answer(
         page = await ctx.search.federated(spec).search_page(query, pagination={"limit": 20})
 
         assert {(row.member, row.hit.id) for row in page.hits} == everyone
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_rrf_thin_pages_match_full_pages_in_order(meilisearch_client) -> None:
+    """Every page of a thin merge holds the full merge's rows, in its order, deep pages too."""
+    sfx = uuid4().hex[:6]
+    configs = {m: MeilisearchSearchConfig(index_uid=f"tvf_{m}_{sfx}") for m in ("a", "b")}
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
+                    config=MeilisearchFederatedSearchConfig(merge="rrf", members=configs),
+                ),
+            }
+        )
+    )
+
+    for member, config in configs.items():
+        spec = _ranked(member)
+        mgmt = ConfigurableMeilisearchSearchManagement(config=config)(ctx, spec)
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
+        # Relevance repeats every 7 rows, so ties span members and pages.
+        await ConfigurableMeilisearchSearchCommand(config=config)(ctx, spec).upsert(
+            [
+                Ranked(id=f"{member}{i:03}", label=" ".join(["tok"] * (i % 7 + 1)), rank=i)
+                for i in range(120)
+            ]
+        )
+
+    members = (_ranked("a"), _ranked("b"))
+    full = ctx.search.federated(
+        FederatedSearchSpec(name=f"tvf_full_{sfx}", members=members, thin_merge=False)
+    )
+    thin = ctx.search.federated(FederatedSearchSpec(name=f"tvf_thin_{sfx}", members=members))
+
+    for sorts in (None, {"rank": "desc"}):
+        for offset in (0, 20, 60, 100, 150, 200, 230):
+            window = {"limit": 10, "offset": offset}
+            want = await full.search_page("tok", pagination=window, sorts=sorts)
+            got = await thin.search_page("tok", pagination=window, sorts=sorts)
+
+            assert [(h.member, h.hit.id) for h in got.hits] == [
+                (h.member, h.hit.id) for h in want.hits
+            ], (sorts, offset)
+            assert got.count == want.count == 240

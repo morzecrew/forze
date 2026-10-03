@@ -23,6 +23,8 @@ from forze_postgres.execution.deps import (
     ConfigurablePostgresSearch,
 )
 from forze_postgres.execution.deps.configs import (
+    FtsEngine,
+    PgroongaEngine,
     PostgresFederatedSearchConfig,
     PostgresFederatedSearchLegSearch,
     PostgresSearchConfig,
@@ -344,7 +346,7 @@ async def test_federated_thin_merge_matches_full(pg_client: PostgresClient) -> N
     )
 
     def idents(page: object) -> list[tuple[str, str]]:
-        return sorted((h.member, str(h.hit.id)) for h in page.hits)  # type: ignore[attr-defined]
+        return [(h.member, str(h.hit.id)) for h in page.hits]  # type: ignore[attr-defined]
 
     assert idents(thin) == idents(full)
     assert thin.count == full.count == 4
@@ -453,3 +455,101 @@ async def test_federated_thin_merge_matches_full_with_sort(
     )
     assert ordered(asc) == [(leg_b, str(id_b)), (leg_a, str(id_a))]
     assert ordered(desc) == [(leg_a, str(id_a)), (leg_b, str(id_b))]
+
+
+
+class _Numbered(BaseModel):
+    id: UUID
+    label: str
+    n: int
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("a_engine", ["pgroonga_index_first", "pgroonga_filter_first", "fts"])
+async def test_federated_thin_pages_match_full_pages_in_order(
+    pg_client: PostgresClient, a_engine: str
+) -> None:
+    """Every page of a thin merge holds the full merge's rows, in its order, deep pages too."""
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+    suffix = uuid4().hex[:8]
+    tables: dict[str, str] = {}
+
+    for member in ("a", "b"):
+        table = f"fed_tvf_{member}_{suffix}"
+        await pg_client.execute(
+            f"CREATE TABLE {table} (id uuid PRIMARY KEY, label text NOT NULL, n int NOT NULL)"
+        )
+        # Ranks repeat every 7 rows, so relevance ties span members and pages.
+        await pg_client.execute(
+            f"INSERT INTO {table} SELECT gen_random_uuid(), "
+            "repeat('tok ', (g % 7) + 1) || 'x' || g, g FROM generate_series(1, 200) g"
+        )
+        await pg_client.execute(
+            f"CREATE INDEX {table}_pg ON {table} USING pgroonga ((ARRAY[label]))"
+        )
+        await pg_client.execute(
+            f"CREATE INDEX {table}_fts ON {table} "
+            "USING gin (to_tsvector('english', coalesce(label, '')))"
+        )
+        tables[member] = table
+
+    def leg(member: str, engine: str) -> PostgresFederatedSearchLegSearch:
+        table = tables[member]
+
+        if engine == "fts":
+            return PostgresFederatedSearchLegSearch(
+                search=PostgresSearchConfig(
+                    index=("public", f"{table}_fts"),
+                    read=("public", table),
+                    engine=FtsEngine(groups={"A": ("label",)}),
+                )
+            )
+
+        plan = "index_first" if engine.endswith("index_first") else "filter_first"
+
+        return PostgresFederatedSearchLegSearch(
+            search=PostgresSearchConfig(
+                index=("public", f"{table}_pg"),
+                read=("public", table),
+                engine=PgroongaEngine(plan=plan),
+                candidate_limit=1,
+            )
+        )
+
+    name_a, name_b = f"a{suffix}", f"b{suffix}"
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            name_a: leg("a", a_engine),
+                            name_b: leg("b", "pgroonga_filter_first"),
+                        }
+                    )
+                ),
+            }
+        )
+    )
+    members = (
+        SearchSpec(name=name_a, model_type=_Numbered, fields=["label"]),
+        SearchSpec(name=name_b, model_type=_Numbered, fields=["label"]),
+    )
+    full = ctx.search.federated(
+        FederatedSearchSpec(name=f"full{suffix}", members=members, thin_merge=False)
+    )
+    thin = ctx.search.federated(FederatedSearchSpec(name=f"thin{suffix}", members=members))
+
+    for sorts in (None, {"n": "desc"}):
+        for offset in (0, 20, 60, 100, 140, 180, 390):
+            window = {"limit": 10, "offset": offset}
+            want = await full.search_page("tok", pagination=window, sorts=sorts)
+            got = await thin.search_page("tok", pagination=window, sorts=sorts)
+
+            assert [(h.member, h.hit.id) for h in got.hits] == [
+                (h.member, h.hit.id) for h in want.hits
+            ], (sorts, offset)
+            assert got.count == want.count == 400
