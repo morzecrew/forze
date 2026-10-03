@@ -14,7 +14,6 @@ from forze.application.contracts.search import (
     SearchManagementPort,
     SearchSpec,
 )
-from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.base.exceptions import exc
 from forze_meilisearch.adapters.search._filter_render import (
     format_literal,
@@ -187,36 +186,6 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
 
         return self.physical_paths(self.spec.fields)
 
-    def _filterable_attributes(self) -> list[str]:
-        configured = self.config.filterable_attributes
-
-        attrs_list = (
-            [self.physical_path(f) for f in configured]
-            if configured is not None
-            else list(
-                dict.fromkeys(
-                    [
-                        self.primary_key,
-                        *[self.physical_path(f) for f in self.spec.fields],
-                    ]
-                )
-            )
-        )
-
-        if self.tenant_aware:
-            tenant_attr = self.physical_path(TENANT_ID_FIELD)
-            if tenant_attr not in attrs_list:
-                attrs_list.append(tenant_attr)
-
-        # Faceting requires the attribute to be filterable in Meilisearch, so a declared
-        # facetable field must appear here even when the caller pinned filterable_attributes.
-        for field in self.spec.facetable_fields:
-            facet_attr = self.physical_path(field)
-            if facet_attr not in attrs_list:
-                attrs_list.append(facet_attr)
-
-        return attrs_list
-
     def _sortable_attributes(self) -> list[str]:
         return sortable_attributes(self.spec, self.config)
 
@@ -240,7 +209,7 @@ class MeilisearchSearchManagementAdapter[M: BaseModel](
             searchable_attributes=self._searchable_attributes(),
             filterable_attributes=cast(
                 list[str | FilterableAttributes],
-                self._filterable_attributes(),
+                self.filterable_attributes(),
             ),
             sortable_attributes=self._sortable_attributes(),
             ranking_rules=list(rules) if rules is not None else None,

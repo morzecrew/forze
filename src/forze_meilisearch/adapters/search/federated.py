@@ -150,14 +150,14 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
     def _thin_merge(self) -> bool:
         """The spec's thin merge, where every member can re-read a page by id.
 
-        The thin path re-reads the page with an ``id IN (...)`` filter, which Meilisearch only
-        accepts on a filterable attribute: a member pinning ``filterable_attributes`` without
-        its primary key keeps the federation on the full-fetch path.
+        The thin path re-reads the page with an ``id IN (...)`` filter on each member's ``id``
+        attribute, which Meilisearch accepts only when that attribute is filterable — not by
+        default under a custom ``primary_key``, nor when a pinned ``filterable_attributes``
+        leaves it out. Such a member keeps the federation on the full-fetch path.
         """
 
         return self.federated_spec.thin_merge and all(
-            adapter.config.filterable_attributes is None
-            or bool({ID_FIELD, adapter.primary_key} & set(adapter.config.filterable_attributes))
+            adapter.physical_path(ID_FIELD) in adapter.filterable_attributes()
             for _name, adapter in self.legs
         )
 

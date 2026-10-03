@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 from pydantic import BaseModel
 
@@ -398,3 +400,75 @@ async def test_federated_native_blank_query_on_a_stale_index_is_a_configuration_
 
     assert refused.value.kind is ExceptionKind.CONFIGURATION
     assert "ensure_index" in str(refused.value)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merge", ["federation", "rrf"])
+@pytest.mark.parametrize(
+    "case", ["mixed_sorts", "one_default", "custom_pk", "custom_pk_same_sort", "pinned_no_pk"]
+)
+async def test_federated_members_that_disagree_still_answer(
+    meilisearch_client, merge: str, case: str
+) -> None:
+    # Members whose orders or keys differ: Meilisearch refuses a federation whose queries sort
+    # differently, and a custom primary key leaves ``id`` unfilterable for the thin re-read.
+    sfx = uuid4().hex[:6]
+    configs = {
+        "a": MeilisearchSearchConfig(index_uid=f"dis_a_{sfx}"),
+        "b": MeilisearchSearchConfig(index_uid=f"dis_b_{sfx}"),
+    }
+    specs = {
+        "a": SearchSpec(name="a", model_type=Ranked, fields=["label"], default_sort={"rank": "asc"}),
+        "b": SearchSpec(
+            name="b", model_type=Ranked, fields=["label"], default_sort={"label": "desc"}
+        ),
+    }
+
+    if case == "one_default":
+        specs["b"] = SearchSpec(name="b", model_type=Ranked, fields=["label"])
+    if case in ("custom_pk", "custom_pk_same_sort"):
+        configs["b"] = MeilisearchSearchConfig(index_uid=f"dis_b_{sfx}", primary_key="doc_id")
+    if case == "custom_pk_same_sort":
+        specs["b"] = SearchSpec(
+            name="b", model_type=Ranked, fields=["label"], default_sort={"rank": "asc"}
+        )
+    if case == "pinned_no_pk":
+        configs["b"] = MeilisearchSearchConfig(
+            index_uid=f"dis_b_{sfx}", filterable_attributes=["label"]
+        )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
+                    config=MeilisearchFederatedSearchConfig(
+                        merge=merge,  # type: ignore[arg-type]
+                        members=configs,
+                    ),
+                ),
+            }
+        )
+    )
+
+    for member in ("a", "b"):
+        mgmt = ConfigurableMeilisearchSearchManagement(config=configs[member])(ctx, specs[member])
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
+        await ConfigurableMeilisearchSearchCommand(config=configs[member])(
+            ctx, specs[member]
+        ).upsert(
+            [
+                Ranked(id=f"{member}{i}", label=f"row {chr(97 + i)}", rank=(i * 7) % 5)
+                for i in range(6)
+            ]
+        )
+
+    spec = FederatedSearchSpec(name=f"dis_{sfx}", members=(specs["a"], specs["b"]))
+    everyone = {(m, f"{m}{i}") for m in ("a", "b") for i in range(6)}
+
+    for query in ("", "row"):
+        page = await ctx.search.federated(spec).search_page(query, pagination={"limit": 20})
+
+        assert {(row.member, row.hit.id) for row in page.hits} == everyone
