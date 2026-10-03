@@ -576,6 +576,12 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = None
     """Default ``sorts`` for hub browse/cursor when callers omit them."""
 
+    filter_limits: QueryFilterLimits | None = None
+    """Bounds on the filters a hub search accepts; ``None`` keeps the parser's defaults.
+
+    A hub's filter applies to its hub rows and is parsed once, under these limits — its
+    members' own :attr:`SearchSpec.filter_limits` do not apply to it."""
+
     materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
     """``@computed_field`` names on the hub-row model persisted as real hub columns, so
     hub results can be filtered/sorted by the derived value. Mirror of

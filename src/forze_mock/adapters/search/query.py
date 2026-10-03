@@ -21,6 +21,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QuerySortExpression,
     compile_filter,
 )
@@ -85,6 +86,18 @@ def _without_mock_rank(doc: JsonDict) -> JsonDict:
 
 
 # ....................... #
+
+
+def filter_predicate(
+    filters: QueryFilterExpression | None,
+    limits: QueryFilterLimits | None,
+) -> Callable[[JsonDict], bool]:
+    """A document predicate for *filters*, parsed under *limits* (the defaults when ``None``)."""
+
+    return compile_filter(
+        filters,
+        parser=QueryFilterExpressionParser(limits=limits) if limits is not None else None,
+    )
 
 
 @final
@@ -231,7 +244,15 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         filters: QueryFilterExpression | None,
         order: QuerySortExpression,  # type: ignore[valid-type]
         options: SearchOptions | None,
+        *,
+        matches: Callable[[JsonDict], bool] | None = None,
     ) -> list[JsonDict]:
+        """Matching documents, ranked; *matches* replaces this spec's own filter parse.
+
+        A hub passes the predicate it parsed under its own limits, as the Postgres hub
+        parses a hub filter once for its hub rows.
+        """
+
         options = search_options_for_simple_adapter(options, spec=self.spec)
         fields, weights = self._resolve_fields(options)
         terms = normalize_search_queries(query)
@@ -242,11 +263,8 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
         # Parse the filter once into a reusable predicate rather than re-parsing it
         # per document inside the scan.
-        limits = self.spec.filter_limits
-        matches = compile_filter(
-            filters,
-            parser=QueryFilterExpressionParser(limits=limits) if limits is not None else None,
-        )
+        if matches is None:
+            matches = filter_predicate(filters, self.spec.filter_limits)
 
         ranked: list[tuple[float, JsonDict]] = []
         for doc in docs:

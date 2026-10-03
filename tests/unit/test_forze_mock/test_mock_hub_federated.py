@@ -3,11 +3,13 @@
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.querying import QueryFilterLimits
 from forze.application.contracts.search import (
     FederatedSearchSpec,
     HubSearchSpec,
     SearchSpec,
 )
+from forze.base.exceptions import CoreException
 from forze_mock.adapters.search.command import MockSearchCommandAdapter
 from forze_mock.adapters.search.federated import MockFederatedSearchAdapter
 from forze_mock.adapters.search.hub import MockHubSearchAdapter
@@ -256,3 +258,33 @@ async def test_a_hub_sort_orders_rows_tied_on_the_hub_score(
 
     assert page.scores is not None and page.scores[0] == page.scores[1]
     assert [hit.title for hit in page.hits] == ["hello again", "hello world"]
+
+
+async def _hub_with_limits(
+    *, hub_limits: QueryFilterLimits | None, leg_limits: QueryFilterLimits | None
+) -> MockHubSearchAdapter[_Item]:
+    state = MockState()
+    leg = SearchSpec(name="a", model_type=_Item, fields=["title"], filter_limits=leg_limits)
+    await MockSearchCommandAdapter(state=state, spec=leg).upsert([_Item(id="1", title="hello")])
+    hub = HubSearchSpec(name="hub", model_type=_Item, members=[leg], filter_limits=hub_limits)
+
+    return MockHubSearchAdapter(
+        hub_spec=hub, legs=[("a", MockSearchAdapter(state=state, spec=leg))]
+    )
+
+
+_WIDE = QueryFilterLimits(max_in_size=5_000)
+_MANY_IDS = {"$values": {"id": [str(i) for i in range(1_500)]}}
+
+
+@pytest.mark.asyncio
+async def test_a_hub_parses_its_filters_under_its_own_limits() -> None:
+    # As on Postgres, where the hub row's filter is parsed once, under the hub spec's limits.
+    wide_hub = await _hub_with_limits(hub_limits=_WIDE, leg_limits=None)
+    page = await wide_hub.search_page("hello", _MANY_IDS, pagination={"limit": 10})
+    assert [h.id for h in page.hits] == ["1"]
+
+    # A member's own limits do not widen the hub's.
+    wide_leg = await _hub_with_limits(hub_limits=None, leg_limits=_WIDE)
+    with pytest.raises(CoreException):
+        await wide_leg.search_page("hello", _MANY_IDS, pagination={"limit": 10})

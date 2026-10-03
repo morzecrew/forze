@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A hub search can raise the limits its filters are parsed under.** `HubSearchSpec(filter_limits=...)` bounds the hub's filter, parsed once for its hub rows on Postgres and in the in-memory hub alike; a member's own limits do not apply to it.
+
 - **A search spec can choose how an unasked page counts its total.** `SearchSpec(default_search_count="approximate")` (or `"none"`) applies when a request sets no `search_count`, so a large log need not run `COUNT(*)` on every page. The request option still wins; Postgres honours it.
 
 - **Deployment configuration can grant a permission, and be its only source.** `ConfigGrantsProvider(keys=...)` grants each key to the principal ids a `ConfigGrants` settings model lists and denies it to everyone else, so a catalog binding of the key grants nothing, and the startup step refuses one.
