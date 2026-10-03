@@ -132,6 +132,7 @@ async def test_federated_snapshot_reread_search_count_none(
     fed_spec = FederatedSearchSpec(
         name=f"fed_snap_{suffix}",
         members=(_mem(leg_a), _mem(leg_b)),
+        thin_merge=False,  # the full-record snapshot format
         snapshot=SearchResultSnapshotSpec(
             name="snap",
             enabled=True,
@@ -330,7 +331,7 @@ async def test_federated_thin_merge_matches_full(pg_client: PostgresClient) -> N
     )
 
     members = (_mem(leg_a), _mem(leg_b))
-    full_spec = FederatedSearchSpec(name=f"fed_full_{suffix}", members=members)
+    full_spec = FederatedSearchSpec(name=f"fed_full_{suffix}", members=members, thin_merge=False)
     thin_spec = FederatedSearchSpec(
         name=f"fed_thinm_{suffix}", members=members, thin_merge=True
     )
@@ -423,7 +424,9 @@ async def test_federated_thin_merge_matches_full_with_sort(
     )
 
     members = (_mem(leg_a), _mem(leg_b))
-    full_spec = FederatedSearchSpec(name=f"fed_sfull_{suffix}", members=members)
+    full_spec = FederatedSearchSpec(
+        name=f"fed_sfull_{suffix}", members=members, thin_merge=False
+    )
     thin_spec = FederatedSearchSpec(
         name=f"fed_sthin_{suffix}", members=members, thin_merge=True
     )

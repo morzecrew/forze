@@ -165,7 +165,7 @@ async def test_federated_rrf_thin_merge_matches_full(meilisearch_client) -> None
         await cmd.upsert(member_docs)
 
     members = (_mem("a"), _mem("b"))
-    full_spec = FederatedSearchSpec(name="fed_full", members=members)
+    full_spec = FederatedSearchSpec(name="fed_full", members=members, thin_merge=False)
     thin_spec = FederatedSearchSpec(name="fed_thin", members=members, thin_merge=True)
 
     full = await ctx.search.federated(full_spec).search_page(

@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Federated search merges thin by default** (**behaviour change**). `FederatedSearchSpec.thin_merge` now defaults to `True`: members return ids and only the page is re-read, bounding memory. Existing result snapshots miss once, and a row deleted between ranking and re-read shortens its page.
+
 - **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.
 
 - **A debug call below the configured level costs a comparison.** While `configure_logging`'s level is above debug, `Logger.debug` returns before building the structlog logger, about 2 µs to 0.1 µs. Unconfigured, after `structlog.reset_defaults()` or under another wrapper class, debug reaches structlog as before.

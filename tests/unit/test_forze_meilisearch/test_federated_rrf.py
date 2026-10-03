@@ -54,6 +54,7 @@ async def test_rrf_merge_calls_each_leg_search() -> None:
 
     adapter = MeilisearchFederatedSearchAdapter(
         federated_spec=FederatedSearchSpec(
+            thin_merge=False,
             name="fed_rrf",
             members=(_mem("a"), _mem("b")),
         ),
@@ -85,6 +86,7 @@ async def test_rrf_all_zero_weights_returns_empty() -> None:
 
     adapter = MeilisearchFederatedSearchAdapter(
         federated_spec=FederatedSearchSpec(
+            thin_merge=False,
             name="fed_rrf_empty",
             members=(_mem("a"), _mem("b")),
         ),
@@ -131,6 +133,7 @@ def _rrf_adapter(
 ) -> MeilisearchFederatedSearchAdapter:
     return MeilisearchFederatedSearchAdapter(
         federated_spec=FederatedSearchSpec(
+            thin_merge=False,
             name=name,
             members=(_mem("a"), _mem("b")),
             snapshot=snapshot,
@@ -357,7 +360,9 @@ async def test_rrf_legs_stay_in_relevance_order_under_a_sort() -> None:
     leg_b = _leg("b", [_Hit(id="2", label="alpha")])
 
     adapter = MeilisearchFederatedSearchAdapter(
-        federated_spec=FederatedSearchSpec(name="fed_rrf", members=(_mem("a"), _mem("b"))),
+        federated_spec=FederatedSearchSpec(
+            thin_merge=False, name="fed_rrf", members=(_mem("a"), _mem("b"))
+        ),
         legs=(("a", leg_a), ("b", leg_b)),
         client=MagicMock(),
         merge="rrf",
@@ -401,6 +406,7 @@ async def test_a_member_default_sort_is_part_of_the_snapshot_key(merge: str) -> 
         )
         adapter = MeilisearchFederatedSearchAdapter(
             federated_spec=FederatedSearchSpec(
+                thin_merge=False,
                 name="fed", members=(sorted_member, _mem("b")), snapshot=_snap_spec()
             ),
             legs=(("a", _rrf_leg("a", [])), ("b", _rrf_leg("b", []))),
