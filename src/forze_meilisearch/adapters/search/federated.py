@@ -14,6 +14,7 @@ from typing import (
 )
 
 import attrs
+from meilisearch_python_sdk.errors import MeilisearchApiError
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -54,12 +55,13 @@ from forze.application.integrations.search import (
     federated_thin_format,
     reject_encrypted_sort_fields,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import default_model_codec
 from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._offset_run import (
     _MEILI_DEFAULT_SEARCH_LIMIT,  # pyright: ignore[reportPrivateUsage]
     page_order,
+    unsortable_refusal,
 )
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.adapters.search._search_params import (
@@ -374,6 +376,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
         queries: list[SearchParams] = []
         leg_caps: list[int] = []
+        spec_sort: set[str] = set()  # attributes the members' specs, not the request, sort by
 
         for i, (name, adapter) in enumerate(self.legs):
             weight = member_weights[i]
@@ -400,6 +403,12 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
             # its primary key, which the federation merges across members.
             order = page_order(adapter, cast(SearchSpec[M], member_spec), sorts, ranked=bool(terms))
             sort_list = build_sort(render_user_sorts(order, adapter.config))
+            requested = {attr for attr, _ in render_user_sorts(sorts, adapter.config)}
+            spec_sort.update(
+                attr
+                for attr in (e.rsplit(":", 1)[0] for e in sort_list or ())
+                if attr not in requested
+            )
 
             params_kwargs: dict[str, Any] = {
                 "index_uid": await adapter._resolved_index_uid(),  # pyright: ignore[reportPrivateUsage]
@@ -456,7 +465,18 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         if limit is not None:
             federation["limit"] = int(limit)
 
-        result = await self.client.multi_search(queries, federation=federation)
+        try:
+            result = await self.client.multi_search(queries, federation=federation)
+
+        except CoreException as e:
+            cause = e.__cause__
+
+            if isinstance(cause, MeilisearchApiError) and (
+                refusal := unsortable_refusal(cause, spec_sort)
+            ):
+                raise refusal from e
+
+            raise
         hits_raw = list(getattr(result, "hits", []) or [])
         total = int(
             getattr(result, "estimated_total_hits", None)

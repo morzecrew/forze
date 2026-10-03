@@ -13,7 +13,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.execution import Deps
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_meilisearch.execution.deps import (
     ConfigurableMeilisearchFederatedSearch,
     ConfigurableMeilisearchSearchCommand,
@@ -369,3 +369,32 @@ async def test_federated_native_blank_query_orders_by_the_members_default_sort(
     page = await ctx.search.federated(spec).search_page("", pagination={"limit": 10})
 
     assert [row.hit.rank for row in page.hits] == [5, 10, 20, 30, 40, 50]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_native_blank_query_on_a_stale_index_is_a_configuration_error(
+    meilisearch_client,
+) -> None:
+    # Provisioned before the spec set a default_sort: the index cannot sort by it.
+    ctx = _fed_ctx(
+        meilisearch_client, merge="federation", a_uid="fed_stale_a", b_uid="fed_stale_b"
+    )
+
+    for member, uid in (("a", "fed_stale_a"), ("b", "fed_stale_b")):
+        config = MeilisearchSearchConfig(index_uid=uid)
+        old = SearchSpec(name=member, model_type=Ranked, fields=["label"])
+        mgmt = ConfigurableMeilisearchSearchManagement(config=config)(ctx, old)
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
+        await ConfigurableMeilisearchSearchCommand(config=config)(ctx, old).upsert(
+            [Ranked(id=f"{member}1", label="row", rank=1)]
+        )
+
+    spec = FederatedSearchSpec(name="fed_stale", members=(_ranked("a"), _ranked("b")))
+
+    with pytest.raises(CoreException) as refused:
+        await ctx.search.federated(spec).search_page("", pagination={"limit": 10})
+
+    assert refused.value.kind is ExceptionKind.CONFIGURATION
+    assert "ensure_index" in str(refused.value)
