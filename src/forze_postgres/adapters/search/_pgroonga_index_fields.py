@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Literal, NamedTuple
 
 from forze.application._logger import logger
 from forze.application.contracts.search import SearchSpec
@@ -17,18 +17,89 @@ from ...kernel.gateways import PostgresQualifiedName
 _ARRAY_PREFIX_RE = re.compile(r"ARRAY\s*\[", re.IGNORECASE)
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _COALESCE_PREFIX_RE = re.compile(r"^coalesce\s*\(", re.IGNORECASE)
-# The only COALESCE default Forze reproduces on the query side: the empty
-# string ``''`` (optionally cast), matching its ``coalesce(col::text, '')`` rebuild.
-_EMPTY_DEFAULT_RE = re.compile(r"^''(\s*::\s*\w+(\s*\[\s*\])?)?$")
-# What may legitimately follow a top-level ``::`` for it to be a whole-expression
-# cast: a (possibly schema-qualified / multi-word / parameterized / array) type
-# name and nothing else. An operator after it (e.g. ``text || code``) means the
-# cast applied to a sub-expression, so the ``::`` must not be peeled.
-_CAST_TYPE_TAIL_RE = re.compile(r"^\s*[A-Za-z_][\w .]*(\s*\([^()]*\))?(\s*\[\s*\])*\s*$")
+
+# A type name as the catalog deparses one: dot-separated parts, each a quoted identifier
+# or unquoted words (``character varying``), then integer modifiers and ``[]`` suffixes.
+# Anything else after a top-level ``::`` -- an operator, a comment, a literal -- means the
+# ``::`` is not a whole-expression cast, so it is not peeled.
+_QUOTED_IDENT = r'"(?:[^"]|"")+"'
+_WORDS = r"[A-Za-z_][A-Za-z0-9_$]*(?: [A-Za-z_][A-Za-z0-9_$]*)*"
+_TYPE_PART_RE = re.compile(rf"{_QUOTED_IDENT}|{_WORDS}")
+_CAST_TYPE_RE = re.compile(
+    rf"^\s*(?P<name>(?:{_QUOTED_IDENT}|{_WORDS})(?:\s*\.\s*(?:{_QUOTED_IDENT}|{_WORDS}))*)"
+    r"\s*(?:\(\s*(?P<mods>\d+(?:\s*,\s*\d+)*)\s*\))?"
+    r"(?P<arrays>(?:\s*\[\s*\])*)\s*$"
+)
+# The only COALESCE default Forze accepts around an indexed column: the empty
+# string ``''``, optionally cast. Any other default changes what the element holds.
+_EMPTY_DEFAULT_RE = re.compile(r"^''\s*(?:::(?P<cast>.*))?$", re.DOTALL)
 
 # Bounds the wrapper-peeling loop; each iteration strictly shrinks the string,
 # so this is only a safety backstop against a pathological expression.
 _MAX_PEEL = 64
+
+# ....................... #
+
+
+class PgroongaCastType(NamedTuple):
+    """A cast's type, parsed into parts that can be rebuilt without copying catalog text."""
+
+    name: tuple[tuple[bool, str], ...]
+    """Dot-separated name parts as ``(quoted, text)``: a quoted part holds the unescaped
+    identifier, an unquoted one validated words such as ``character varying``."""
+
+    modifiers: tuple[int, ...] = ()
+    """Type modifiers, such as the ``10`` of ``character varying(10)``."""
+
+    arrays: int = 0
+    """Number of ``[]`` suffixes."""
+
+
+# ....................... #
+
+
+PgroongaWrapper = (
+    tuple[Literal["paren"], None]
+    | tuple[Literal["cast"], PgroongaCastType]
+    | tuple[Literal["coalesce"], tuple[PgroongaCastType | None, ...]]
+)
+"""One wrapper around an indexed column: parentheses, a cast, or ``COALESCE(col, '', ...)``
+with the cast (if any) of each empty-string default."""
+
+
+# ....................... #
+
+
+class PgroongaIndexElement(NamedTuple):
+    """One indexed element: its heap column and the wrappers the index declares around it."""
+
+    column: str
+    """Heap column the element reads."""
+
+    wrappers: tuple[PgroongaWrapper, ...] = ()
+    """Wrappers from the outermost in. The match rebuilds them around the column so the query
+    names the very expression the index holds."""
+
+
+# ....................... #
+
+
+def _parse_cast_type(text: str) -> PgroongaCastType | None:
+    """Parse a deparsed type name, or return ``None`` for anything that is not one."""
+
+    m = _CAST_TYPE_RE.match(text)
+
+    if m is None:
+        return None
+
+    parts = tuple(
+        (True, part[1:-1].replace('""', '"')) if part.startswith('"') else (False, part)
+        for part in _TYPE_PART_RE.findall(m.group("name"))
+    )
+    mods = tuple(int(x) for x in re.findall(r"\d+", m.group("mods") or ""))
+
+    return PgroongaCastType(parts, mods, m.group("arrays").count("["))
+
 
 # ....................... #
 
@@ -56,15 +127,35 @@ def parse_pgroonga_index_heap_columns(
 ) -> tuple[str, ...]:
     """Return heap column names in index declaration order.
 
+    See :func:`parse_pgroonga_index_elements` for the expressions accepted.
+    """
+
+    return tuple(
+        element.column
+        for element in parse_pgroonga_index_elements(expr, columns, index_qname=index_qname)
+    )
+
+
+# ....................... #
+
+
+def parse_pgroonga_index_elements(
+    expr: str | None,
+    columns: tuple[str, ...],
+    *,
+    index_qname: PostgresQualifiedName,
+) -> tuple[PgroongaIndexElement, ...]:
+    """Return the indexed elements in declaration order.
+
     Supports ``ARRAY[col1, col2]``, a single parenthesized column reference
     (e.g. ``(title)``), or ``columns`` from ``pg_index`` when the index is
-    column-based. Each element may be wrapped in the idioms Forze itself
-    reproduces on the query side -- a trailing ``::type`` cast and/or
-    ``COALESCE(col, <default>)`` (e.g. ``COALESCE(name, ''::text)``) -- since
-    the match clause re-wraps every heap column as ``coalesce(col::text, '')``
-    regardless of how the index was declared. Exotic expressions that Forze
-    cannot faithfully reproduce (transforms such as ``lower(col)``,
-    concatenations, ``to_tsvector(...)``) raise :class:`exc.internal`.
+    column-based. Each element may be wrapped in parentheses, a trailing
+    ``::type`` cast and/or ``COALESCE(col, '')`` (e.g. ``COALESCE(name,
+    ''::text)``); the match rebuilds exactly those wrappers, so Postgres can
+    serve it from the index. Expressions Forze cannot rebuild around a column
+    (transforms such as ``lower(col)``, concatenations, ``to_tsvector(...)``,
+    a ``COALESCE`` with a non-empty or column default) raise
+    :class:`exc.internal`.
     """
 
     qn = index_qname.string()
@@ -75,12 +166,12 @@ def parse_pgroonga_index_heap_columns(
         if inner is not None:
             return _split_pgroonga_array_inner(inner, index_qname=index_qname)
 
-        single = _extract_pgroonga_column(expr_stripped)
+        single = _peel_pgroonga_element(expr_stripped)
         if single is not None:
             return (single,)
 
     if columns:
-        return columns
+        return tuple(PgroongaIndexElement(column) for column in columns)
 
     raise exc.internal(
         f"Cannot resolve PGroonga index columns from {qn}; "
@@ -95,15 +186,15 @@ def _split_pgroonga_array_inner(
     inner: str,
     *,
     index_qname: PostgresQualifiedName,
-) -> tuple[str, ...]:
+) -> tuple[PgroongaIndexElement, ...]:
     qn = index_qname.string()
-    parts: list[str] = []
+    parts: list[PgroongaIndexElement] = []
 
     for piece in _split_top_level_commas(inner):
         element = piece.strip()
         if not element:
             continue
-        name = _extract_pgroonga_column(element)
+        name = _peel_pgroonga_element(element)
         if name is None:
             raise exc.internal(
                 f"Cannot resolve PGroonga index columns from {qn}; "
@@ -192,40 +283,45 @@ def _split_top_level_commas(inner: str) -> list[str]:
 
 
 def _top_level_double_colon(masked: str) -> int | None:
-    """Index of the first depth-zero ``::`` cast operator, else ``None``.
+    """Index of the last depth-zero ``::`` cast operator, else ``None``.
 
-    Operates on a literal-masked string; a ``::`` nested in a call (e.g.
-    ``COALESCE(name::text, '')``) sits at depth > 0 and is ignored.
+    The last one is the outermost cast of a chain (``n::"char"::text`` casts
+    ``n::"char"`` to text). Operates on a literal-masked string; a ``::`` nested
+    in a call (e.g. ``COALESCE(name::text, '')``) sits at depth > 0 and is ignored.
     """
 
     depth = 0
-    for i in range(len(masked) - 1):
+    last: int | None = None
+    i = 0
+    while i < len(masked) - 1:
         ch = masked[i]
         if ch in "([":
             depth += 1
         elif ch in ")]":
             depth = max(0, depth - 1)
         elif ch == ":" and masked[i + 1] == ":" and depth == 0:
-            return i
+            last = i
+            i += 1
+        i += 1
 
-    return None
+    return last
 
 
 # ....................... #
 
 
-def _coalesce_reproducible_first_arg(s: str, masked: str) -> str | None:
-    """First arg of a whole-string ``COALESCE(col, '')`` call, else ``None``.
+def _coalesce_reproducible_first_arg(
+    s: str, masked: str
+) -> tuple[str, tuple[PgroongaCastType | None, ...]] | None:
+    """First arg and default casts of a whole-string ``COALESCE(col, '')`` call, else ``None``.
 
     Only unwraps when ``COALESCE(...)`` spans the entire expression AND every
     default (non-first) argument is the empty-string literal ``''`` (optionally
-    cast) -- the sole default Forze reproduces with its ``coalesce(col::text,
-    '')`` query-side rebuild. A non-empty default or a column fallback (e.g.
-    ``COALESCE(title, 'missing')`` / ``COALESCE(title, other)``) returns
-    ``None`` so the caller fails closed rather than silently searching a
-    different expression than the index declares (which would miss rows indexed
-    through that default). ``s`` is the original text; ``masked`` its
-    literal-masked copy, used for structural scanning.
+    cast). A non-empty default or a column fallback (e.g. ``COALESCE(title,
+    'missing')`` / ``COALESCE(title, other)``) returns ``None`` so the caller
+    fails closed rather than resolving the element to a bare column. ``s`` is
+    the original text; ``masked`` its literal-masked copy, used for structural
+    scanning.
     """
 
     if _COALESCE_PREFIX_RE.match(masked) is None:
@@ -240,27 +336,37 @@ def _coalesce_reproducible_first_arg(s: str, masked: str) -> str | None:
     if not args:
         return None
 
+    casts: list[PgroongaCastType | None] = []
     for default in args[1:]:
-        if _EMPTY_DEFAULT_RE.match(default.strip()) is None:
+        m = _EMPTY_DEFAULT_RE.match(default.strip())
+        if m is None:
             return None
 
-    return args[0].strip()
+        cast = None if m.group("cast") is None else _parse_cast_type(m.group("cast"))
+        if m.group("cast") is not None and cast is None:
+            return None
+
+        casts.append(cast)
+
+    return args[0].strip(), tuple(casts)
 
 
 # ....................... #
 
 
-def _extract_pgroonga_column(element: str) -> str | None:
-    """Reduce one index expression element to a bare heap column name.
+def _peel_pgroonga_element(element: str) -> PgroongaIndexElement | None:
+    """Reduce one index expression element to its heap column and wrappers.
 
-    Peels only the wrappers Forze faithfully reproduces on the query side --
-    enclosing parentheses, a trailing ``::type`` cast, and ``COALESCE(col, '')``
-    with an empty-string default -- and returns the underlying column name, or
-    ``None`` when the element is something Forze cannot reproduce (a transform
-    such as ``lower(col)``, or a ``COALESCE`` with a non-empty/column default).
+    Peels only the wrappers Forze can rebuild around the column on the query
+    side -- enclosing parentheses, a trailing ``::type`` cast, and
+    ``COALESCE(col, '')`` with an empty-string default -- recording each from
+    the outermost in. Returns ``None`` when the element is something Forze
+    cannot rebuild (a transform such as ``lower(col)``, or a ``COALESCE`` with a
+    non-empty/column default).
     """
 
     s = element.strip()
+    wrappers: list[PgroongaWrapper] = []
 
     for _ in range(_MAX_PEEL):
         if not s:
@@ -269,22 +375,26 @@ def _extract_pgroonga_column(element: str) -> str | None:
         masked = mask_sql_literals(s)
 
         if masked.startswith("(") and find_balanced_span(masked, 0) == len(masked) - 1:
+            wrappers.append(("paren", None))
             s = s[1:-1].strip()
             continue
 
         cut = _top_level_double_colon(masked)
-        if cut is not None and _CAST_TYPE_TAIL_RE.match(masked[cut + 2 :]):
+        cast = None if cut is None else _parse_cast_type(s[cut + 2 :])
+        if cut is not None and cast is not None:
+            wrappers.append(("cast", cast))
             s = s[:cut].rstrip()
             continue
 
         coalesced = _coalesce_reproducible_first_arg(s, masked)
         if coalesced is not None:
-            s = coalesced
+            s, defaults = coalesced
+            wrappers.append(("coalesce", defaults))
             continue
 
         break
 
-    return s if _IDENT_RE.match(s) else None
+    return PgroongaIndexElement(s, tuple(wrappers)) if _IDENT_RE.match(s) else None
 
 
 # ....................... #

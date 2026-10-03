@@ -20,7 +20,12 @@ from forze.application.contracts.search import (
 
 from ...kernel.catalog.introspect import PostgresIntrospector
 from ...kernel.gateways import PostgresQualifiedName
-from ._pgroonga_index_fields import resolve_pgroonga_index_alignment
+from ._pgroonga_index_fields import (
+    PgroongaCastType,
+    PgroongaIndexElement,
+    parse_pgroonga_index_elements,
+    resolve_pgroonga_index_alignment,
+)
 
 # ----------------------- #
 
@@ -68,6 +73,70 @@ def pgroonga_disjunctive_match_text(terms: tuple[str, ...]) -> str:
 # ....................... #
 
 
+def _cast_type_sql(cast: PgroongaCastType) -> sql.Composable:
+    """A cast's type from its parsed parts: quoted parts as identifiers, integer modifiers."""
+
+    # Unquoted parts are words the parser matched against ``[A-Za-z_][A-Za-z0-9_$]*``;
+    # they stay unquoted because a builtin such as ``integer`` is no type once quoted.
+    name = sql.SQL(".").join(
+        sql.Identifier(text) if quoted else sql.SQL(text) for quoted, text in cast.name
+    )
+    parts: list[sql.Composable] = [name]
+
+    if cast.modifiers:
+        parts.append(
+            sql.SQL("({})").format(sql.SQL(", ").join(sql.SQL(str(m)) for m in cast.modifiers))
+        )
+
+    parts.extend(sql.SQL("[]") for _ in range(cast.arrays))
+
+    return sql.Composed(parts)
+
+
+# ....................... #
+
+
+def _index_element_expr(element: PgroongaIndexElement, alias: str) -> sql.Composable:
+    """The indexed element, rebuilt around the alias's column exactly as the index declares it.
+
+    Postgres serves an expression from an index only when the query names that very
+    expression, so a bare ``title`` stays bare and ``COALESCE(title, ''::text)`` keeps its
+    wrapper. Every part is rebuilt from what the index parser validated, never copied from
+    catalog text.
+    """
+
+    expr: sql.Composable = sql.Identifier(alias, element.column)
+
+    for wrapper in reversed(element.wrappers):
+        if wrapper[0] == "paren":
+            expr = sql.Composed([sql.SQL("("), expr, sql.SQL(")")])
+
+        elif wrapper[0] == "cast":
+            expr = sql.Composed([expr, sql.SQL("::"), _cast_type_sql(wrapper[1])])
+
+        else:
+            defaults = [
+                sql.SQL("''")
+                if cast is None
+                else sql.Composed([sql.SQL("''::"), _cast_type_sql(cast)])
+                for cast in wrapper[1]
+            ]
+            expr = sql.Composed(
+                [
+                    sql.SQL("COALESCE("),
+                    expr,
+                    sql.SQL(", "),
+                    sql.SQL(", ").join(defaults),
+                    sql.SQL(")"),
+                ]
+            )
+
+    return expr
+
+
+# ....................... #
+
+
 async def pgroonga_match_clause(
     *,
     search: SearchSpec[Any],
@@ -96,11 +165,18 @@ async def pgroonga_match_clause(
     eff_float = calculate_effective_field_weights(search, options)
     eff_weights = {f: int(w * 100) for f, w in eff_float.items()}
 
-    heap_cols, weights, uses_array = resolve_pgroonga_index_alignment(
+    _, weights, uses_array = resolve_pgroonga_index_alignment(
         search,
         index_info,
         index_field_map,
         eff_weights,
+        index_qname=index_qname,
+    )
+    # The match names the index's own expression, column for column, or Postgres cannot
+    # serve it from the index and scans the whole table.
+    elements = parse_pgroonga_index_elements(
+        index_info.expr,
+        index_info.columns,
         index_qname=index_qname,
     )
 
@@ -116,10 +192,7 @@ async def pgroonga_match_clause(
     ratio = search.fuzzy.max_distance_ratio if search.fuzzy is not None else 0.34
 
     if not uses_array:
-        col = heap_cols[0]
-        text_expr = sql.SQL("coalesce({}::text, '')").format(
-            sql.Identifier(ia, col),
-        )
+        text_expr = _index_element_expr(elements[0], ia)
 
         if use_fuzzy:
             params.append(float(ratio))
@@ -137,9 +210,7 @@ async def pgroonga_match_clause(
         return sql.SQL("{} &@~ {}").format(text_expr, cond), params
 
     array_expr = sql.SQL("(ARRAY[{}])").format(
-        sql.SQL(", ").join(
-            sql.SQL("coalesce({}::text, '')").format(sql.Identifier(ia, c)) for c in heap_cols
-        )
+        sql.SQL(", ").join(_index_element_expr(element, ia) for element in elements)
     )
     params.append(weights)
 

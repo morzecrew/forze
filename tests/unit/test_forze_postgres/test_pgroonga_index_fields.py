@@ -8,9 +8,13 @@ from forze.base.exceptions import CoreException
 from forze_postgres.adapters.search._pgroonga_index_fields import (
     align_pgroonga_search_columns,
     heap_columns_to_logical,
+    parse_pgroonga_index_elements,
     parse_pgroonga_index_heap_columns,
     pgroonga_index_uses_array_expr,
     resolve_pgroonga_index_alignment,
+)
+from forze_postgres.adapters.search._pgroonga_sql import (
+    _index_element_expr,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_postgres.kernel.catalog.introspect.types import PostgresIndexInfo
 from forze_postgres.kernel.gateways import PostgresQualifiedName
@@ -195,7 +199,6 @@ def test_parse_non_top_level_array_fails_closed(expr: str) -> None:
         "(name::text || code)",
         "(ARRAY[name::text || code, body])",
         "((a || b)::text)",
-        "(name::text::varchar)",
     ],
 )
 def test_parse_cast_on_subexpression_fails_closed(expr: str) -> None:
@@ -330,9 +333,8 @@ def test_resolve_pgroonga_index_alignment_reversed_spec() -> None:
 
 
 def test_resolve_pgroonga_index_alignment_coalesced_matches_bare() -> None:
-    # A COALESCE-declared index must resolve to the same heap columns/weights
-    # as the equivalent bare-column index, since Forze re-wraps every column
-    # as coalesce(col::text, '') on the query side regardless.
+    # A COALESCE-declared index resolves to the same heap columns/weights as the
+    # equivalent bare-column index; only the match operand keeps each one's wrappers.
     spec = SearchSpec(name="t", model_type=_Doc, fields=["b", "a"])
     field_map = {"a": "col_a", "b": "col_b"}
     eff_weights = {"a": 100, "b": 1}
@@ -354,3 +356,74 @@ def test_resolve_pgroonga_index_alignment_coalesced_matches_bare() -> None:
 
     assert coalesced == bare
     assert coalesced == (["col_a", "col_b"], [100, 1], True)
+
+
+# ....................... #
+
+
+@pytest.mark.parametrize(
+    ("expr", "columns", "operands"),
+    [
+        # Each element is rebuilt around the alias's column exactly as the index holds it,
+        # or Postgres cannot serve the match from the index.
+        ("ARRAY[title, content]", (), ['"t"."title"', '"t"."content"']),
+        (
+            "ARRAY[COALESCE(title, ''::text), COALESCE(content, ''::text)]",
+            (),
+            ['COALESCE("t"."title", \'\'::text)', 'COALESCE("t"."content", \'\'::text)'],
+        ),
+        (
+            "ARRAY[(title)::text, COALESCE((code)::text, ''::text)]",
+            (),
+            ['("t"."title")::text', 'COALESCE(("t"."code")::text, \'\'::text)'],
+        ),
+        ("COALESCE(title, ''::text)", (), ['COALESCE("t"."title", \'\'::text)']),
+        # Type names: quoted ones keep their quotes, schema-qualified ones their schema, and a
+        # chain of casts unwinds outermost first.
+        ("ARRAY[title, ((n)::\"char\")::text]", (), ['"t"."title"', '(("t"."n")::"char")::text']),
+        ("ARRAY[title, n::\"char\"::text]", (), ['"t"."title"', '"t"."n"::"char"::text']),
+        ("(name::text::varchar)", (), ['("t"."name"::text::varchar)']),
+        ("title::public.mytext", (), ['"t"."title"::public.mytext']),
+        ('title::public."MyText"', (), ['"t"."title"::public."MyText"']),
+        ('title::"Weird""Type"', (), ['"t"."title"::"Weird""Type"']),
+        (
+            "(title)::character varying(10)[]",
+            (),
+            ['("t"."title")::character varying(10)[]'],
+        ),
+        (
+            "COALESCE(code, ''::character varying)",
+            (),
+            ['COALESCE("t"."code", \'\'::character varying)'],
+        ),
+        (None, ("title",), ['"t"."title"']),
+        ("title pgroonga_text_full_text_search_ops_v2", ("title",), ['"t"."title"']),
+    ],
+)
+def test_the_match_operand_is_the_indexed_expression(
+    expr: str | None, columns: tuple[str, ...], operands: list[str]
+) -> None:
+    elements = parse_pgroonga_index_elements(expr, columns, index_qname=_IDX)
+
+    assert [_index_element_expr(e, "t").as_string(None) for e in elements] == operands
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        # A cast is rebuilt from a type name and integer modifiers only; anything else is
+        # refused rather than copied into the query.
+        "title::text' || 'x'",
+        "title::varchar('x')",
+        "title::text(1; DELETE FROM users WHERE true)",
+        "title::text(1 -- x)",
+        "title::text(%s)",
+        "title::text({})",
+        "title::text /* c */",
+        "COALESCE(title, ''); DROP TABLE x; --')",
+        "COALESCE(title, ''::text(1; DROP TABLE x))",
+    ],
+)
+def test_a_cast_that_is_not_a_type_name_is_refused(expr: str) -> None:
+    with pytest.raises(CoreException):
+        parse_pgroonga_index_elements(expr, (), index_qname=_IDX)
