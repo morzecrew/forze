@@ -46,6 +46,8 @@ def test_a_spec_default_search_count_fills_an_absent_option() -> None:
     assert asked.get("search_count") == "exact"
     # Without a spec default the option stays absent, so the backend keeps ``exact``.
     assert "search_count" not in search_options_for_simple_adapter(None, spec=_leg("a"))
+    # Without a spec (a third-party adapter's call) nothing is filled in.
+    assert "search_count" not in search_options_for_simple_adapter(None)
 
 
 def test_prepare_hub_strips_field_tuning_and_resolves_members() -> None:

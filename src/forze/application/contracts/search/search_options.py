@@ -28,18 +28,18 @@ def _strip_result_snapshot_leg_options(opts: dict[str, Any]) -> None:
 def search_options_for_simple_adapter(
     options: SearchOptions | None,
     *,
-    spec: SearchSpec[Any],
+    spec: SearchSpec[Any] | None = None,
 ) -> SearchOptions:
-    """Normalize single-index search options for *spec*.
+    """Normalize single-index search options, for *spec* when given.
 
     Drops hub/federated member keys (warning when callers pass them) and fills
-    ``search_count`` from :attr:`~SearchSpec.default_search_count` when the request leaves it
-    out.
+    ``search_count`` from *spec*'s :attr:`~SearchSpec.default_search_count` when the request
+    leaves it out. Without *spec* no default is applied.
     """
 
     opts = dict(options or {})
 
-    if spec.default_search_count is not None:
+    if spec is not None and spec.default_search_count is not None:
         opts.setdefault("search_count", spec.default_search_count)
 
     if "member_weights" in opts or "members" in opts:
