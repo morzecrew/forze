@@ -6724,6 +6724,19 @@ module, and open the pool from the lifecycle plan:</p>
   first, descending nulls last), which a plain index does not hold: index it with the
   placement your pages use, for example <code>(created_at DESC NULLS LAST)</code>. A view's columns
   other than the <code>id</code> all read as nullable.</li>
+<li><strong>PGroonga indexes.</strong> Index the searched columns as one column, <code>USING pgroonga (title)</code>,
+  or as an array, <code>USING pgroonga ((ARRAY[title, content]))</code>; each element is a column,
+  optionally wrapped in casts or <code>COALESCE(col, '')</code>. The search matches against the
+  index's own expression, so the planner can use the index. What matches, and in what
+  order, is then the index's own tokenizer and normalizer: with the default ones, <code>python</code>
+  matches the word <code>python</code> and not <code>pythonic</code>. An index with any other kind of element,
+  such as a transform like <code>lower(title)</code>, is refused when the search first runs.</li>
+<li><strong>PGroonga and VACUUM.</strong> On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
+  PGroonga index built while a <code>VACUUM</code> or <code>ANALYZE</code> (autovacuum included) runs on another
+  PGroonga-indexed table can break: searches through it return no rows, or fail with
+  <code>object isn't found: &lt;Sources…&gt;</code>, until you <code>REINDEX</code> it. Build PGroonga indexes when no
+  vacuum is running, or reindex them afterwards
+  (<a href="https://github.com/pgroonga/pgroonga/issues/1013">pgroonga/pgroonga#1013</a>).</li>
 </ul>
 
 

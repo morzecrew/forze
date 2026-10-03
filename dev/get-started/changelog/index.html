@@ -9148,6 +9148,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A PGroonga search uses its index for any supported index expression</strong> (<strong>behaviour change</strong>). An index on <code>ARRAY[title, content]</code> or <code>(title)</code> never served it, so each search scanned the table. Matches and order now follow the index's tokenizer and normalizer, as for a <code>coalesce</code>-declared index.</p>
+</li>
+<li>
+<p><strong>A PGroonga index mixing columns with an unsupported expression is refused, not half-used</strong> (<strong>behaviour change</strong>). A search over an index such as <code>(title, lower(content))</code> matched <code>title</code> alone and silently ignored the rest; it now fails, naming the element it cannot serve.</p>
+</li>
+<li>
 <p><strong><code>get_many</code> on Firestore finds a document by its name, as <code>get</code> does.</strong> It queried the <code>id</code> field in the document body, so a document written without that field (by the console, a migration or another service) was found by <code>get</code> and reported missing by <code>get_many</code>.</p>
 </li>
 <li>
