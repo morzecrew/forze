@@ -22,6 +22,7 @@ from ..conformity import (
 from ..crypto import FieldEncryption
 from ..querying import QueryFilterLimits, QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
+from .types import SearchCountPolicy
 
 # ----------------------- #
 
@@ -324,6 +325,11 @@ class SearchSpec[M: BaseModel](BaseSpec):
     so does a generated route or tool that passes a caller's filter through. Raise
     ``max_in_size`` for internal reads that match against long id lists; a backend with a lower
     hard cap of its own (Firestore's ``in``) still refuses past it."""
+
+    default_search_count: SearchCountPolicy | None = None
+    """How a page counts its total when the request's ``search_count`` option is absent:
+    ``exact``, ``approximate`` or ``none``. ``None`` keeps ``exact``. The request option still
+    wins. Postgres honours it; the other backends report totals their own way."""
 
     materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
     """``@computed_field`` names on the read model that are persisted as real columns on

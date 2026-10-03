@@ -29,11 +29,23 @@ def _leg(name: str) -> SearchSpec[_M]:
 def test_search_options_for_simple_adapter_strips_hub_keys() -> None:
     opts = search_options_for_simple_adapter(
         {"member_weights": {"a": 1.0}, "weights": {"x": 1.0}, "fuzzy": True},
+        spec=_leg("a"),
     )
     assert "member_weights" not in opts
     assert "members" not in opts
     assert opts.get("weights") == {"x": 1.0}
     assert opts.get("fuzzy") is True
+
+
+def test_a_spec_default_search_count_fills_an_absent_option() -> None:
+    spec = SearchSpec(name="s", model_type=_M, fields=["x"], default_search_count="none")
+
+    assert search_options_for_simple_adapter(None, spec=spec).get("search_count") == "none"
+    # The request's own option wins over the spec default.
+    asked = search_options_for_simple_adapter({"search_count": "exact"}, spec=spec)
+    assert asked.get("search_count") == "exact"
+    # Without a spec default the option stays absent, so the backend keeps ``exact``.
+    assert "search_count" not in search_options_for_simple_adapter(None, spec=_leg("a"))
 
 
 def test_prepare_hub_strips_field_tuning_and_resolves_members() -> None:
@@ -154,7 +166,7 @@ def test_prepare_federated_resolves_weights_for_hub_member() -> None:
 def test_search_options_for_simple_adapter_warns_on_members_only() -> None:
     fake_log = MagicMock()
     with patch("forze.application.contracts.search.search_options.logger", fake_log):
-        opts = search_options_for_simple_adapter({"members": ["a"], "fuzzy": True})
+        opts = search_options_for_simple_adapter({"members": ["a"], "fuzzy": True}, spec=_leg("a"))
     fake_log.warning.assert_called()
     assert "members" not in opts
     assert opts.get("fuzzy") is True

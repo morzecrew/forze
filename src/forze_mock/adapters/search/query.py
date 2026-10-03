@@ -232,7 +232,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         order: QuerySortExpression,  # type: ignore[valid-type]
         options: SearchOptions | None,
     ) -> list[JsonDict]:
-        options = search_options_for_simple_adapter(options)
+        options = search_options_for_simple_adapter(options, spec=self.spec)
         fields, weights = self._resolve_fields(options)
         terms = normalize_search_queries(query)
         combine = effective_phrase_combine(options)

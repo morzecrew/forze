@@ -30,6 +30,7 @@ result-set snapshots.
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts`, on offset and cursor pages alike (required if the model has no `id`) |
 | `filter_limits` | `QueryFilterLimits \| None` | `None` | bounds on the filters a search accepts; `None` keeps the defaults (see [Limits](../query-syntax.md#limits)). `HubSearchSpec` has none: hub filters use the defaults |
+| `default_search_count` | `"exact" \| "approximate" \| "none" \| None` | `None` | how a page counts its total when the request sets no `search_count`; `None` keeps `exact`. Postgres honours it; other backends report totals their own way |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of [`DocumentSpec.materialized`](document.md#spec); relational in-place only, **not** startup-validated) |
 | `facetable_fields` | `frozenset[str]` | `∅` | fields a query may compute term (value) facet distributions over (must be real, non-lenient, non-encrypted columns) |
 | `highlightable_fields` | `frozenset[str] \| None` | `None` | searchable fields a query may highlight; `None` = all searchable `fields`, `∅` = none |
