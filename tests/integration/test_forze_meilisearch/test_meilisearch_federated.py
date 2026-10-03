@@ -332,3 +332,40 @@ async def test_federated_facets_fail_closed(meilisearch_client) -> None:
         await ctx.search.federated(spec).search_page(
             "book", options={"facets": ["label"]}
         )
+
+
+class Ranked(BaseModel):
+    id: str
+    label: str
+    rank: int
+
+
+def _ranked(name: str) -> SearchSpec[Ranked]:
+    return SearchSpec(name=name, model_type=Ranked, fields=["label"], default_sort={"rank": "asc"})
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_native_blank_query_orders_by_the_members_default_sort(
+    meilisearch_client,
+) -> None:
+    # A blank query has no relevance: as on one index, each member sends its default_sort,
+    # then its primary key, and the federation merges the members in that order.
+    ctx = _fed_ctx(
+        meilisearch_client, merge="federation", a_uid="fed_blank_a", b_uid="fed_blank_b"
+    )
+    rows = {"a": [("1", 30), ("2", 10), ("3", 50)], "b": [("4", 20), ("5", 40), ("6", 5)]}
+
+    for member, uid in (("a", "fed_blank_a"), ("b", "fed_blank_b")):
+        config = MeilisearchSearchConfig(index_uid=uid)
+        mgmt = ConfigurableMeilisearchSearchManagement(config=config)(ctx, _ranked(member))
+        await mgmt.ensure_index()
+        await mgmt.delete_all()
+        await ConfigurableMeilisearchSearchCommand(config=config)(ctx, _ranked(member)).upsert(
+            [Ranked(id=i, label="row", rank=r) for i, r in rows[member]]
+        )
+
+    spec = FederatedSearchSpec(name="fed_blank", members=(_ranked("a"), _ranked("b")))
+    page = await ctx.search.federated(spec).search_page("", pagination={"limit": 10})
+
+    assert [row.hit.rank for row in page.hits] == [5, 10, 20, 30, 40, 50]

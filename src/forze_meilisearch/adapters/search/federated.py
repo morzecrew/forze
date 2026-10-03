@@ -59,6 +59,7 @@ from forze.base.serialization import default_model_codec
 from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._offset_run import (
     _MEILI_DEFAULT_SEARCH_LIMIT,  # pyright: ignore[reportPrivateUsage]
+    page_order,
 )
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.adapters.search._search_params import (
@@ -394,7 +395,11 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 leg_opts,
                 adapter.field_map,
             )
-            sort_list = build_sort(render_user_sorts(sorts, adapter.config))
+            # As one index orders a page: with search text only the request's sorts (relevance
+            # stays the engine's); a blank query takes them or the member's default_sort, then
+            # its primary key, which the federation merges across members.
+            order = page_order(adapter, cast(SearchSpec[M], member_spec), sorts, ranked=bool(terms))
+            sort_list = build_sort(render_user_sorts(order, adapter.config))
 
             params_kwargs: dict[str, Any] = {
                 "index_uid": await adapter._resolved_index_uid(),  # pyright: ignore[reportPrivateUsage]

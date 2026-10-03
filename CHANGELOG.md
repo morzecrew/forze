@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A blank Meilisearch native federated search follows the members' `default_sort`** (**behaviour change**: page order). Each member sent only the request's sorts, so an unsorted browse came back in index order; it now sends its `default_sort`, then the id, and the federation merges them.
+
 - **A PGroonga search uses its index for any supported index expression** (**behaviour change**). An index on `ARRAY[title, content]` or `(title)` never served it, so each search scanned the table. Matches and order now follow the index's tokenizer and normalizer, as for a `coalesce`-declared index.
 
 - **A PGroonga index mixing columns with an unsupported expression is refused, not half-used** (**behaviour change**). A search over an index such as `(title, lower(content))` matched `title` alone and silently ignored the rest; it now fails, naming the element it cannot serve.
