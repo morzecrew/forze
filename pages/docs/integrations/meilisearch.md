@@ -90,8 +90,9 @@ lifecycle = LifecyclePlan.from_steps(meilisearch_lifecycle_step(url="http://loca
 - Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the [Query DSL](../reference/query-syntax.md).
 - Federated routes merge ≥2 member indexes (`federation` or in-process RRF).
-  Native `federation` orders each member's page as one index would, and Meilisearch merges
-  them: a blank federated browse follows the members' `default_sort`, then the id, across
-  members when they share that sort; members with different default sorts interleave in an
-  order Meilisearch chooses. RRF re-reads only the page by id unless a member pins
-  `filterable_attributes` without its primary key, which keeps it on the full merge.
+  A blank native `federation` browse follows the members' `default_sort`, then the id, only
+  when every member resolves to the same order: the same sort fields and directions and the
+  same primary key. Meilisearch refuses a federation whose queries sort differently, so
+  otherwise each member sends the request's `sorts` alone and the merged order is the
+  engine's. RRF re-reads only the page by id unless a member cannot filter by its `id`
+  attribute, which keeps that federation on the full merge.

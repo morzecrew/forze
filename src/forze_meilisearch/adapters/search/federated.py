@@ -374,9 +374,8 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         q = build_search_query_string(terms, combine=combine)
         index_to_member = await self._index_to_member()
 
-        queries: list[SearchParams] = []
+        legs: list[tuple[dict[str, Any], float, list[str] | None, list[str] | None]] = []
         leg_caps: list[int] = []
-        spec_sort: set[str] = set()  # attributes the members' specs, not the request, sort by
 
         for i, (name, adapter) in enumerate(self.legs):
             weight = member_weights[i]
@@ -398,17 +397,9 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 leg_opts,
                 adapter.field_map,
             )
-            # As one index orders a page: with search text only the request's sorts (relevance
-            # stays the engine's); a blank query takes them or the member's default_sort, then
-            # its primary key, which the federation merges across members.
+            # As one index orders a page: with search text only the request's sorts, a blank
+            # query also the member's default_sort, then its primary key.
             order = page_order(adapter, cast(SearchSpec[M], member_spec), sorts, ranked=bool(terms))
-            sort_list = build_sort(render_user_sorts(order, adapter.config))
-            requested = {attr for attr, _ in render_user_sorts(sorts, adapter.config)}
-            spec_sort.update(
-                attr
-                for attr in (e.rsplit(":", 1)[0] for e in sort_list or ())
-                if attr not in requested
-            )
 
             params_kwargs: dict[str, Any] = {
                 "index_uid": await adapter._resolved_index_uid(),  # pyright: ignore[reportPrivateUsage]
@@ -420,6 +411,33 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
             if search_attrs is not None:
                 params_kwargs["attributes_to_search_on"] = search_attrs
+
+            legs.append(
+                (
+                    params_kwargs,
+                    weight,
+                    build_sort(render_user_sorts(order, adapter.config)),
+                    build_sort(render_user_sorts(sorts, adapter.config)),
+                )
+            )
+
+        # Meilisearch refuses a federation whose queries sort differently, so the members'
+        # own orders go out only when every member resolves to the same one; otherwise each
+        # sends the request's sorts alone and the merge order is the engine's.
+        shared = len({tuple(ordered or ()) for _p, _w, ordered, _r in legs}) == 1
+        spec_sort: set[str] = set()  # attributes the members' specs, not the request, sort by
+        queries: list[SearchParams] = []
+
+        for params_kwargs, weight, ordered, requested in legs:
+            sort_list = ordered if shared else requested
+
+            if shared:
+                asked = {entry.rsplit(":", 1)[0] for entry in requested or ()}
+                spec_sort.update(
+                    attr
+                    for attr in (e.rsplit(":", 1)[0] for e in ordered or ())
+                    if attr not in asked
+                )
 
             if sort_list is not None:
                 params_kwargs["sort"] = sort_list
