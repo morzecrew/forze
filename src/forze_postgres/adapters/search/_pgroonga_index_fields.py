@@ -18,18 +18,10 @@ _ARRAY_PREFIX_RE = re.compile(r"ARRAY\s*\[", re.IGNORECASE)
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _COALESCE_PREFIX_RE = re.compile(r"^coalesce\s*\(", re.IGNORECASE)
 
-# A type name as the catalog deparses one: dot-separated parts, each a quoted identifier
-# or unquoted words (``character varying``), then integer modifiers and ``[]`` suffixes.
-# Anything else after a top-level ``::`` -- an operator, a comment, a literal -- means the
-# ``::`` is not a whole-expression cast, so it is not peeled.
-_QUOTED_IDENT = r'"(?:[^"]|"")+"'
-_WORDS = r"[A-Za-z_][A-Za-z0-9_$]*(?: [A-Za-z_][A-Za-z0-9_$]*)*"
-_TYPE_PART_RE = re.compile(rf"{_QUOTED_IDENT}|{_WORDS}")
-_CAST_TYPE_RE = re.compile(
-    rf"^\s*(?P<name>(?:{_QUOTED_IDENT}|{_WORDS})(?:\s*\.\s*(?:{_QUOTED_IDENT}|{_WORDS}))*)"
-    r"\s*(?:\(\s*(?P<mods>\d+(?:\s*,\s*\d+)*)\s*\))?"
-    r"(?P<arrays>(?:\s*\[\s*\])*)\s*$"
-)
+# Tokens of a type name as the catalog deparses one; each pattern is matched at a position
+# with no nested repetition, so scanning stays linear in the input.
+_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_SIGNED_INT_RE = re.compile(r"-?\d+")
 # The only COALESCE default Forze accepts around an indexed column: the empty
 # string ``''``, optionally cast. Any other default changes what the element holds.
 _EMPTY_DEFAULT_RE = re.compile(r"^''\s*(?:::(?P<cast>.*))?$", re.DOTALL)
@@ -49,7 +41,12 @@ class PgroongaCastType(NamedTuple):
     identifier, an unquoted one validated words such as ``character varying``."""
 
     modifiers: tuple[int, ...] = ()
-    """Type modifiers, such as the ``10`` of ``character varying(10)``."""
+    """Type modifiers, such as the ``10`` of ``character varying(10)`` or the ``8, -2`` of
+    ``numeric(8,-2)``."""
+
+    suffix: str = ""
+    """Words after the modifiers, such as the ``without time zone`` of ``time(2) without time
+    zone``."""
 
     arrays: int = 0
     """Number of ``[]`` suffixes."""
@@ -84,21 +81,123 @@ class PgroongaIndexElement(NamedTuple):
 # ....................... #
 
 
-def _parse_cast_type(text: str) -> PgroongaCastType | None:
-    """Parse a deparsed type name, or return ``None`` for anything that is not one."""
+def _skip_space(text: str, pos: int) -> int:
+    """The first position at or after *pos* that is not whitespace."""
 
-    m = _CAST_TYPE_RE.match(text)
+    while pos < len(text) and text[pos].isspace():
+        pos += 1
 
-    if m is None:
+    return pos
+
+
+# ....................... #
+
+
+def _quoted_ident_at(text: str, pos: int) -> tuple[str, int] | None:
+    """The unescaped quoted identifier starting at *pos* and the position after it."""
+
+    if not text.startswith('"', pos):
         return None
 
-    parts = tuple(
-        (True, part[1:-1].replace('""', '"')) if part.startswith('"') else (False, part)
-        for part in _TYPE_PART_RE.findall(m.group("name"))
-    )
-    mods = tuple(int(x) for x in re.findall(r"\d+", m.group("mods") or ""))
+    parts: list[str] = []
+    i = pos + 1
 
-    return PgroongaCastType(parts, mods, m.group("arrays").count("["))
+    while (close := text.find('"', i)) >= 0:
+        parts.append(text[i:close])
+
+        if text.startswith('"', close + 1):  # ``""`` escapes a quote inside the name
+            parts.append('"')
+            i = close + 2
+            continue
+
+        name = "".join(parts)
+        return (name, close + 1) if name else None
+
+    return None
+
+
+# ....................... #
+
+
+def _words_at(text: str, pos: int) -> tuple[str, int]:
+    """Space-separated words starting at *pos* (possibly none) and the position after them.
+
+    Stops before a word that is not followed by more of the same, so trailing space stays.
+    """
+
+    words: list[str] = []
+    end = pos
+
+    while m := _WORD_RE.match(text, _skip_space(text, end) if words else end):
+        words.append(m.group())
+        end = m.end()
+
+    return " ".join(words), end
+
+
+# ....................... #
+
+
+def _parse_cast_type(text: str) -> PgroongaCastType | None:
+    """Parse a type name as the catalog deparses one, or ``None`` for anything else.
+
+    The shape is dot-separated name parts (a quoted identifier, or unquoted words such as
+    ``character varying``), optional signed integer modifiers, optional words after them
+    (``without time zone``) and ``[]`` suffixes. Anything else after a top-level ``::`` -- an
+    operator, a comment, a literal -- means the ``::`` is not a whole-expression cast.
+    """
+
+    pos = _skip_space(text, 0)
+    name: list[tuple[bool, str]] = []
+
+    while True:
+        quoted = _quoted_ident_at(text, pos)
+        if quoted is not None:
+            name.append((True, quoted[0]))
+            pos = quoted[1]
+        else:
+            words, pos = _words_at(text, pos)
+            if not words:
+                return None
+            name.append((False, words))
+
+        dot = _skip_space(text, pos)
+        if text.startswith(".", dot):
+            pos = _skip_space(text, dot + 1)
+            continue
+        break
+
+    modifiers: list[int] = []
+    pos = _skip_space(text, pos)
+    if text.startswith("(", pos):
+        while True:
+            m = _SIGNED_INT_RE.match(text, _skip_space(text, pos + 1))
+            if m is None:
+                return None
+            modifiers.append(int(m.group()))
+            pos = _skip_space(text, m.end())
+            if not text.startswith(",", pos):
+                break
+        if not text.startswith(")", pos):
+            return None
+        pos = _skip_space(text, pos + 1)
+
+    suffix = ""
+    if modifiers:
+        suffix, pos = _words_at(text, pos)
+
+    arrays = 0
+    while text.startswith("[", pos := _skip_space(text, pos)):
+        close = _skip_space(text, pos + 1)
+        if not text.startswith("]", close):
+            return None
+        arrays += 1
+        pos = close + 1
+
+    if _skip_space(text, pos) != len(text):
+        return None
+
+    return PgroongaCastType(tuple(name), tuple(modifiers), suffix, arrays)
 
 
 # ....................... #
@@ -394,7 +493,14 @@ def _peel_pgroonga_element(element: str) -> PgroongaIndexElement | None:
 
         break
 
-    return PgroongaIndexElement(s, tuple(wrappers)) if _IDENT_RE.match(s) else None
+    if _IDENT_RE.match(s):
+        return PgroongaIndexElement(s, tuple(wrappers))
+
+    quoted = _quoted_ident_at(s, 0)
+    if quoted is not None and quoted[1] == len(s):
+        return PgroongaIndexElement(quoted[0], tuple(wrappers))
+
+    return None
 
 
 # ....................... #

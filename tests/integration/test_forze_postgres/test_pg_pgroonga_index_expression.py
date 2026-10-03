@@ -240,3 +240,68 @@ async def test_a_match_follows_the_index_tokenizer(
     )
 
     assert {hit.title for hit in page.hits} == {"python guide", "the python"}
+
+
+class _Wide(BaseModel):
+    id: UUID
+    title: str | None = None
+    content: str | None = None
+    Title: str | None = None
+    tm: Any = None
+    val: Any = None
+
+
+_DEPARSED = {
+    # Forms ``pg_get_expr`` returns with quoting, suffixes and signed modifiers.
+    "quoted column": ('(ARRAY["Title", content])', ["Title", "content"]),
+    "single-argument coalesce": ("(COALESCE(title))", ["title"]),
+    "suffix after modifiers": (
+        "(ARRAY[title, (tm::time(2) without time zone)::text])",
+        ["title", "tm"],
+    ),
+    "negative scale": ("(ARRAY[title, (val::numeric(8,-2))::text])", ["title", "val"]),
+}
+
+
+@pytest.mark.parametrize("plan", ["filter_first", "index_first"])
+@pytest.mark.parametrize("form", list(_DEPARSED.values()), ids=list(_DEPARSED))
+async def test_a_deparsed_index_form_is_matched_on_its_index(
+    pg_client: PostgresClient,
+    monkeypatch: pytest.MonkeyPatch,
+    form: tuple[str, list[str]],
+    plan: str,
+) -> None:
+    expression, fields = form
+    heap = f"pgd_{uuid4().hex[:8]}"
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga")
+    await pg_client.execute(
+        f'CREATE TABLE {heap} (id uuid PRIMARY KEY, title text, content text, "Title" text, '
+        "tm time, val numeric)"
+    )
+    await pg_client.execute(
+        f"INSERT INTO {heap} SELECT gen_random_uuid(), 'python ' || g, 'body', 'python ' || g, "
+        "'10:00', g FROM generate_series(1, 50) g"
+    )
+    index = f"{heap}_pgr"
+    await pg_client.execute(f"CREATE INDEX {index} ON {heap} USING pgroonga ({expression})")
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        index=("public", index),
+                        read=("public", heap),
+                        engine=PgroongaEngine(plan=plan),  # type: ignore[arg-type]
+                    )
+                ),
+            }
+        )
+    )
+    port = ctx.search.query(SearchSpec(name="wide", model_type=_Wide, fields=fields))
+
+    ids, explained = await _matching_plan(pg_client, monkeypatch, port)
+
+    assert len(ids) == 50
+    assert _uses_index(explained, index), explained

@@ -88,6 +88,9 @@ def _cast_type_sql(cast: PgroongaCastType) -> sql.Composable:
             sql.SQL("({})").format(sql.SQL(", ").join(sql.SQL(str(m)) for m in cast.modifiers))
         )
 
+    if cast.suffix:
+        parts.append(sql.SQL(" " + cast.suffix))
+
     parts.extend(sql.SQL("[]") for _ in range(cast.arrays))
 
     return sql.Composed(parts)
@@ -115,21 +118,13 @@ def _index_element_expr(element: PgroongaIndexElement, alias: str) -> sql.Compos
             expr = sql.Composed([expr, sql.SQL("::"), _cast_type_sql(wrapper[1])])
 
         else:
-            defaults = [
+            arguments = [expr] + [
                 sql.SQL("''")
                 if cast is None
                 else sql.Composed([sql.SQL("''::"), _cast_type_sql(cast)])
                 for cast in wrapper[1]
             ]
-            expr = sql.Composed(
-                [
-                    sql.SQL("COALESCE("),
-                    expr,
-                    sql.SQL(", "),
-                    sql.SQL(", ").join(defaults),
-                    sql.SQL(")"),
-                ]
-            )
+            expr = sql.SQL("COALESCE({})").format(sql.SQL(", ").join(arguments))
 
     return expr
 
