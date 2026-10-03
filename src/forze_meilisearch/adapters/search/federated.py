@@ -56,6 +56,7 @@ from forze.application.integrations.search import (
 )
 from forze.base.exceptions import exc
 from forze.base.serialization import default_model_codec
+from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._offset_run import (
     _MEILI_DEFAULT_SEARCH_LIMIT,  # pyright: ignore[reportPrivateUsage]
 )
@@ -139,6 +140,23 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         # Cross-index fusion; reciprocal rank fusion is the advertised strategy.
         # Totals are estimated (Meilisearch estimatedTotalHits), never exact.
         return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}), exact_total_count=False)
+
+    # ....................... #
+
+    @property
+    def _thin_merge(self) -> bool:
+        """The spec's thin merge, where every member can re-read a page by id.
+
+        The thin path re-reads the page with an ``id IN (...)`` filter, which Meilisearch only
+        accepts on a filterable attribute: a member pinning ``filterable_attributes`` without
+        its primary key keeps the federation on the full-fetch path.
+        """
+
+        return self.federated_spec.thin_merge and all(
+            adapter.config.filterable_attributes is None
+            or bool({ID_FIELD, adapter.primary_key} & set(adapter.config.filterable_attributes))
+            for _name, adapter in self.legs
+        )
 
     # ....................... #
 
@@ -530,7 +548,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         # Spec-level (RRF mode only): thin specs store/replay tiny ``(member, id)``
         # snapshot keys; the marker keeps a thin snapshot from being read as a full one.
         effective_thin = federated_thin_format(
-            self.federated_spec.members, thin_merge=self.federated_spec.thin_merge
+            self.federated_spec.members, thin_merge=self._thin_merge
         )
 
         fp_extras: dict[str, object] = {
@@ -630,7 +648,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
         if federated_thin_eligible(
             members=self.federated_spec.members,
-            thin_merge=self.federated_spec.thin_merge,
+            thin_merge=self._thin_merge,
             wants_highlights=wants_highlights,
             sorts=sorts,
         ):
