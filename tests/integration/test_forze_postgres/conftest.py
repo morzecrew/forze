@@ -26,10 +26,17 @@ def redis_container() -> RedisContainer:
 
 @pytest.fixture(scope="session")
 def postgres_container():
-    """Starts a Postgres container with PGroonga for testing."""
+    """Starts a Postgres container with PGroonga for testing.
+
+    Autovacuum is off: a VACUUM or ANALYZE on one PGroonga-indexed table can remove the
+    Groonga objects of an index another session is still building, which then matches
+    nothing or fails. Tests create such indexes back to back, so autovacuum's timing made
+    searches come back empty at random. The image's own override variable keeps the rest of
+    its configuration (preloaded libraries, memory settings) as shipped.
+    """
     with PostgresContainer(
         image="ghcr.io/morzecrew/postgres:18", driver="psycopg"
-    ) as postgres:
+    ).with_env("PG_CONF__AUTOVACUUM", "off") as postgres:
         yield postgres
 
 
