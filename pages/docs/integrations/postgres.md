@@ -137,12 +137,12 @@ lifecycle = LifecyclePlan.from_modules(
   placement your pages use, for example `(created_at DESC NULLS LAST)`. A view's columns
   other than the `id` all read as nullable.
 - **PGroonga indexes.** Index the searched columns as one column, `USING pgroonga (title)`,
-  or as an array, `USING pgroonga ((ARRAY[title, content]))`; an element may also carry a
-  cast or `COALESCE(col, '')`. The search matches against the index's own expression, so
-  the planner can use the index. What matches, and in what order, is then the index's own
-  tokenizer and normalizer: with the default ones, `python` matches the word `python` and
-  not `pythonic`. An element Forze cannot rebuild around a column, such as `lower(title)`,
-  is refused when the search first runs.
+  or as an array, `USING pgroonga ((ARRAY[title, content]))`; each element is a column,
+  optionally wrapped in casts or `COALESCE(col, '')`. The search matches against the
+  index's own expression, so the planner can use the index. What matches, and in what
+  order, is then the index's own tokenizer and normalizer: with the default ones, `python`
+  matches the word `python` and not `pythonic`. An index with any other kind of element,
+  such as a transform like `lower(title)`, is refused when the search first runs.
 - **PGroonga and VACUUM.** On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
   PGroonga index built while a `VACUUM` or `ANALYZE` (autovacuum included) runs on another
   PGroonga-indexed table can break: searches through it return no rows, or fail with
