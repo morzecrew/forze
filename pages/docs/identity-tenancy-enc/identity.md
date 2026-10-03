@@ -238,7 +238,10 @@ kernel = AuthzKernelConfig(grants_cache=grants_cache)
 - It remembers the roles and permissions the catalog bindings grant, per principal, tenant and
   scope, up to `max_entries` (10,000 by default), dropping the least recently used first.
 - Read on every decision, never cached: whether the principal is active, what providers derive,
-  delegation (`may_act`) grants and tenant membership. `list_roles` reads the bindings too.
+  and delegation (`may_act`) grants. `list_roles` reads the bindings too, and tenant membership
+  is outside the cache altogether.
+- A revocation reaches the cache when its write commits, so a request elsewhere can still be
+  served the revoked grant between the commit and that moment.
 - Decisions inside a transaction read the bindings and leave the cache alone: what they read may
   still roll back.
 - **The TTL is how long a removed grant keeps working.** `assign_role` and `revoke_role` forget the
