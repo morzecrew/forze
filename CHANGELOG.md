@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A PGroonga search uses its index for any supported index expression** (**behaviour change**). An index on `ARRAY[title, content]` or `(title)` never served it, so each search scanned the table. Matches and order now follow the index's tokenizer and normalizer, as for a `coalesce`-declared index.
 
+- **A PGroonga index mixing columns with an unsupported expression is refused, not half-used** (**behaviour change**). A search over an index such as `(title, lower(content))` matched `title` alone and silently ignored the rest; it now fails, naming the element it cannot serve.
+
 - **`get_many` on Firestore finds a document by its name, as `get` does.** It queried the `id` field in the document body, so a document written without that field (by the console, a migration or another service) was found by `get` and reported missing by `get_many`.
 
 - **Permission providers declaring more than 30 keys work on Firestore.** The check that their keys exist in the permission catalog named them all in one `in`, past Firestore's limit of 30 values, so every decision failed. It now reads 30 at a time.
