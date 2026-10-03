@@ -143,3 +143,9 @@ lifecycle = LifecyclePlan.from_modules(
   tokenizer and normalizer: with the default ones, `python` matches the word `python` and
   not `pythonic`. An element Forze cannot rebuild around a column, such as `lower(title)`,
   is refused when the search first runs.
+- **PGroonga and VACUUM.** On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
+  PGroonga index built while a `VACUUM` or `ANALYZE` (autovacuum included) runs on another
+  PGroonga-indexed table can break: searches through it return no rows, or fail with
+  `object isn't found: <Sources…>`, until you `REINDEX` it. Build PGroonga indexes when no
+  vacuum is running, or reindex them afterwards
+  ([pgroonga/pgroonga#1013](https://github.com/pgroonga/pgroonga/issues/1013)).
