@@ -220,6 +220,39 @@ guarding one row by its owner needs an operation and the hook's `resource_factor
 permission as that type's not-found; a missing `may_act` grant, like any refusal without a type,
 stays a 403.
 
+### Remembering grants between decisions
+
+Every decision reads the principal's role, group and permission bindings. A busy service can
+remember them, per process, for a fixed time:
+
+```python
+from datetime import timedelta
+
+from forze_identity.authz import AuthzKernelConfig, GrantsCache
+
+grants_cache = GrantsCache(ttl=timedelta(seconds=30))
+kernel = AuthzKernelConfig(grants_cache=grants_cache)
+```
+
+- Nothing is cached unless you pass one.
+- It remembers the roles and permissions the catalog bindings grant, per principal, tenant and
+  scope, up to `max_entries` (10,000 by default), dropping the least recently used first.
+- Read on every decision, never cached: whether the principal is active, what providers derive,
+  delegation (`may_act`) grants and tenant membership. `list_roles` reads the bindings too.
+- Decisions inside a transaction read the bindings and leave the cache alone: what they read may
+  still roll back.
+- **The TTL is how long a removed grant keeps working.** `assign_role` and `revoke_role` forget the
+  principal in this process once their write commits; other processes see the change when their
+  entry expires. A change written through plain document commands is not heard, so after it
+  commits call:
+
+    | Change | Call |
+    |--------|------|
+    | One principal's own role, permission or group-membership binding | `grants_cache.forget(principal_id)` |
+    | A role's permissions or parent, a group's roles, permissions or active flag, a deleted role or permission | `grants_cache.clear()` |
+
+- One cache serves one catalog: give each kernel over a different catalog its own.
+
 ## Authn events and login lockout
 
 Authentication flows can narrate themselves. Wire an optional **authn event

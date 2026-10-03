@@ -103,6 +103,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
             CreatePrincipalRoleBindingCmd(principal_id=pid, role_id=role.id),
             return_new=False,
         )
+        await self.resolver.forget(pid)
 
     # ....................... #
 
@@ -137,6 +138,7 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
             return
 
         await self.pr_binding_cmd.kill(binding.id)
+        await self.resolver.forget(pid)
 
     # ....................... #
 
