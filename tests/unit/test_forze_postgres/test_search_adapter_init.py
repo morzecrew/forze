@@ -255,3 +255,14 @@ class TestACapOrdersByTheRecordIdOnce:
         )
 
         assert order.as_string() == '"f"."tenant_id" ASC, "f"."id" ASC'
+
+    def test_a_key_dropped_when_the_sort_orders_its_heap_column_under_another_name(
+        self,
+    ) -> None:
+        # The record id joins on heap column ``doc_id``; sorting by ``id`` orders ``t.doc_id``,
+        # which is the scored key's own column.
+        join = [("id", "doc_id")]
+        order = _pgroonga(join)._heap_cap_order({"id": "asc"}, join)  # pyright: ignore[reportPrivateUsage]
+
+        assert order is not None
+        assert order.as_string() == '"t"."doc_id" ASC'
