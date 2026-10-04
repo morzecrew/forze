@@ -63,6 +63,7 @@ def _grant_resolver(ctx: ExecutionContext, shared: AuthzSharedServices) -> Authz
         ctx=ctx,
         provider_timeout=shared.permission_provider_timeout,
         key_check=shared.provider_key_check,
+        cache=shared.grants_cache,
     )
 
 

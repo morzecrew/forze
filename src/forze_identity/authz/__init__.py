@@ -21,6 +21,7 @@ from .execution import (
     build_authz_shared_services,
     permission_providers_lifecycle_step,
 )
+from .services import GrantsCache
 
 # ----------------------- #
 
@@ -38,6 +39,7 @@ __all__ = [
     "ConfigurableGrantQuery",
     "ConfigurablePrincipalRegistry",
     "ConfigurableRoleAssignment",
+    "GrantsCache",
     "build_authz_shared_services",
     "permission_providers_lifecycle_step",
     "delegation_grant_spec",

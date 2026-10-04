@@ -40,6 +40,7 @@ from ..domain.models.bindings import (
     ReadRolePermissionBinding,
 )
 from ..domain.models.group import ReadGroup
+from .grants_cache import CatalogGrants, GrantsCache, GrantsCacheKey
 
 if TYPE_CHECKING:
     from forze.application.execution.context import ExecutionContext
@@ -134,6 +135,18 @@ class AuthzGrantResolver:
     key_check: "ProviderKeyCheck | None" = None
     """Checks the providers' declared keys against the catalog once per tenant."""
 
+    cache: GrantsCache | None = None
+    """Remembers the catalog part of :meth:`resolve_effective_grants`; ``None`` caches nothing.
+    Needs :attr:`ctx`, which the key's tenant and the transaction state are read from."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        # Without a context the key's tenant would be a fixed one while the reads follow the
+        # request's tenant: one tenant's entry would answer for another.
+        if self.cache is not None and self.ctx is None:
+            raise exc.configuration("AuthzGrantResolver.cache needs a ctx to key entries by tenant")
+
     # ....................... #
 
     def _invocation_tenant(self) -> UUID | None:
@@ -225,9 +238,64 @@ class AuthzGrantResolver:
 
         Each kind of row is read in batches rather than one at a time: the reads grow with the
         depth of the role hierarchy, and with the number of roles or groups only past 30 of them.
+        With :attr:`cache`, the roles and permissions come from it when present, outside a
+        transaction; the derived permissions are asked of the providers every time.
         """
 
         self._require_scope_matches_invocation(scope)
+
+        cache = self.cache
+
+        # Inside a transaction the bindings may include its own uncommitted writes, which a
+        # savepoint can still roll back: read them, and neither serve nor keep an entry.
+        if cache is None or self.ctx is None or self.ctx.tx_ctx.depth() > 0:
+            catalog = await self._catalog_grants(principal_id)
+
+        else:
+            # The tenant is read on every call: one entry never answers for another tenant.
+            key: GrantsCacheKey = (principal_id, self._invocation_tenant(), scope)
+            cached = cache.get(key)
+
+            if cached is None:
+                began = cache.begin()
+                catalog = await self._catalog_grants(principal_id)
+                cache.put(key, catalog, began=began)
+
+            else:
+                catalog = cached
+
+        roles, permissions = catalog
+
+        return EffectiveGrants(
+            roles=roles,
+            permissions=permissions,
+            derived=await self._derive(principal_id),
+        )
+
+    # ....................... #
+
+    async def forget(self, principal_id: UUID) -> None:
+        """Drop *principal_id*'s cached grants when the current transaction commits, or now.
+
+        Until the change commits, the committed bindings are still the truth a decision outside
+        the transaction may read and cache; decisions inside it never use the cache. A decision
+        that read before the forget does not store what it read. No-op without :attr:`cache`.
+        """
+
+        cache = self.cache
+
+        if cache is None or self.ctx is None:
+            return
+
+        async def _forget() -> None:
+            cache.forget(principal_id)
+
+        await self.ctx.tx_ctx.run_or_defer(_forget)
+
+    # ....................... #
+
+    async def _catalog_grants(self, principal_id: UUID) -> CatalogGrants:
+        """Roles and permissions from the catalog bindings, read in batches."""
 
         deps = self.deps
 
@@ -253,16 +321,15 @@ class AuthzGrantResolver:
 
         permissions = await _get_many(deps.permission_qry, permission_ids)
 
-        return EffectiveGrants(
-            roles=frozenset(
+        return (
+            frozenset(
                 RoleRef(role_id=roles[rid].id, role_key=roles[rid].role_key)
                 for rid in direct_role_ids
             ),
-            permissions=frozenset(
+            frozenset(
                 PermissionRef(permission_id=row.id, permission_key=row.permission_key)
                 for row in permissions
             ),
-            derived=await self._derive(principal_id),
         )
 
     # ....................... #

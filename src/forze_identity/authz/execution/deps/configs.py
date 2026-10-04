@@ -11,8 +11,10 @@ from forze.application.integrations.authz import (
     check_permission_providers,
     check_provider_timeout,
 )
+from forze.base.exceptions import exc
 
 from ...services.grants import ProviderKeyCheck
+from ...services.grants_cache import GrantsCache
 from ...services.policy import (
     DEFAULT_OWNER_OVERRIDE_PERMISSIONS,
     AuthzPolicyService,
@@ -54,9 +56,19 @@ class AuthzKernelConfig:
     """How long one provider's ``derive`` may take; one that misses it has failed, and denies
     the keys it declares. ``None`` removes the deadline."""
 
+    grants_cache: GrantsCache | None = None
+    """Remembers each principal's catalog grants for its TTL, which is then how long a removed
+    binding keeps granting. ``None`` (the default) reads the bindings on every decision. See
+    :class:`~forze_identity.authz.services.grants_cache.GrantsCache`."""
+
     def __attrs_post_init__(self) -> None:
         check_permission_providers(self.permission_providers)
         check_provider_timeout(self.permission_provider_timeout)
+
+        if self.grants_cache is not None and not isinstance(self.grants_cache, GrantsCache):
+            raise exc.configuration(
+                f"AuthzKernelConfig.grants_cache must be a GrantsCache, not {self.grants_cache!r}"
+            )
 
 
 @final
@@ -72,6 +84,9 @@ class AuthzSharedServices:
 
     provider_key_check: ProviderKeyCheck | None = None
     """Shared by every resolver built from this graph, so the check runs once per tenant."""
+
+    grants_cache: GrantsCache | None = None
+    """Shared by every resolver built from this graph; ``None`` caches nothing."""
 
 
 # ....................... #
@@ -91,4 +106,5 @@ def build_authz_shared_services(
         permission_providers=kernel.permission_providers,
         permission_provider_timeout=kernel.permission_provider_timeout,
         provider_key_check=ProviderKeyCheck(providers=kernel.permission_providers),
+        grants_cache=kernel.grants_cache,
     )
