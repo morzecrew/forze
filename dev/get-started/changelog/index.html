@@ -9088,6 +9088,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Authorization can remember a principal's catalog grants.</strong> <code>AuthzKernelConfig(grants_cache=GrantsCache(ttl=...))</code> caches roles and permissions by principal, tenant and scope; active status and provider grants stay live. Off by default; role assignment clears it on commit; other changes wait for the TTL.</p>
+</li>
+<li>
 <p><strong>Deployment configuration can grant a permission, and be its only source.</strong> <code>ConfigGrantsProvider(keys=...)</code> grants each key to the principal ids a <code>ConfigGrants</code> settings model lists and denies it to everyone else, so a catalog binding of the key grants nothing, and the startup step refuses one.</p>
 </li>
 <li>

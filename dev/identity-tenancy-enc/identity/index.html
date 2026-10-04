@@ -1963,6 +1963,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#remembering-grants-between-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Remembering grants between decisions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6512,6 +6523,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#remembering-grants-between-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Remembering grants between decisions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6906,6 +6928,56 @@ guarding one row by its owner needs an operation and the hook's <code>resource_f
 <a href="../../reference/errors/#non-disclosing-denials">non-disclosing posture</a> renders a refused
 permission as that type's not-found; a missing <code>may_act</code> grant, like any refusal without a type,
 stays a 403.</p>
+<h3 id="remembering-grants-between-decisions">Remembering grants between decisions<a class="headerlink" href="#remembering-grants-between-decisions" title="Permanent link">&para;</a></h3>
+<p>Every decision reads the principal's role, group and permission bindings. A busy service can
+remember them, per process, for a fixed time:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authz</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthzKernelConfig</span><span class="p">,</span> <span class="n">GrantsCache</span>
+
+<span class="n">grants_cache</span> <span class="o">=</span> <span class="n">GrantsCache</span><span class="p">(</span><span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">))</span>
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">AuthzKernelConfig</span><span class="p">(</span><span class="n">grants_cache</span><span class="o">=</span><span class="n">grants_cache</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>Nothing is cached unless you pass one.</li>
+<li>It remembers the roles and permissions the catalog bindings grant, per principal, tenant and
+  scope, up to <code>max_entries</code> (10,000 by default), dropping the least recently used first.</li>
+<li>Read on every decision, never cached: whether the principal is active, what providers derive,
+  and delegation (<code>may_act</code>) grants. <code>list_roles</code> reads the bindings too, and tenant membership
+  is outside the cache altogether.</li>
+<li>A revocation reaches the cache when its write commits, so a request elsewhere can still be
+  served the revoked grant between the commit and that moment.</li>
+<li>Decisions inside a transaction read the bindings and leave the cache alone: what they read may
+  still roll back.</li>
+<li>
+<p><code>assign_role</code> and <code>revoke_role</code> forget the principal in this process once their write commits,
+  even when another process made the change first. <strong>For everything else the TTL is how long a
+  removed grant can keep working</strong>, counted from when the cached read began: in other processes,
+  and for changes written through plain document commands, which nothing announces. After such a
+  change commits, call:</p>
+<table>
+<thead>
+<tr>
+<th>Change</th>
+<th>Call</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One principal's own role, permission or group-membership binding</td>
+<td><code>grants_cache.forget(principal_id)</code></td>
+</tr>
+<tr>
+<td>A role's permissions or parent, a group's roles, permissions or active flag, a deleted role or permission</td>
+<td><code>grants_cache.clear()</code></td>
+</tr>
+</tbody>
+</table>
+</li>
+<li>
+<p>One cache serves one catalog: give each kernel over a different catalog its own.</p>
+</li>
+</ul>
 <h2 id="authn-events-and-login-lockout">Authn events and login lockout<a class="headerlink" href="#authn-events-and-login-lockout" title="Permanent link">&para;</a></h2>
 <p>Authentication flows can narrate themselves. Wire an optional <strong>authn event
 sink</strong> and every flow emits a structured <code>AuthnEvent</code> — login success/failure,
