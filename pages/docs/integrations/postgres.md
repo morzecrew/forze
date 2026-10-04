@@ -138,11 +138,12 @@ lifecycle = LifecyclePlan.from_modules(
   other than the `id` all read as nullable.
 - **Partial indexes and bound filters.** Filter values are sent as parameters, including the
   `is_deleted = false` and `is_current = true` that the soft-deletion and versioned kits
-  add. A partial index such as `(created_at DESC) WHERE is_deleted = false` still serves
-  those reads: under the default `plan_cache_mode`, Postgres keeps planning with the value
-  even once the statement is prepared on the server. With `plan_cache_mode =
-  force_generic_plan` it cannot prove the index's predicate and scans the table instead, so
-  keep the default where such indexes matter, or index without the predicate.
+  add. A generic plan, made without the values, cannot prove a partial index's predicate
+  such as `WHERE is_deleted = false`. Under the default `plan_cache_mode`, Postgres picks a
+  generic plan for a prepared statement only when it estimates no costlier than planning with
+  the values, and one that loses such an index usually costs more: in a 100,000-row test the
+  index was used on every execution. With `plan_cache_mode = force_generic_plan` the index is
+  never used, so keep the default where such indexes matter, or index without the predicate.
 - **PGroonga indexes.** Index the searched columns as one column, `USING pgroonga (title)`,
   or as an array, `USING pgroonga ((ARRAY[title, content]))`; each element is a column,
   optionally wrapped in casts or `COALESCE(col, '')`. The search matches against the
