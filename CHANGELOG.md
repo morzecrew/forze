@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Authorization and tenant listing read in batches, not row by row.** A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for a role, its parent and 18 permissions. Tenants are read together, not per membership. Firestore scans need an index on field and `id`.
 
+- **A generated route with no output type writes a model result as a typed route does** (**behaviour change**), at a fraction of the CPU: `None` fields drop under `exclude_none`, inf/nan become `null`, and `_sa…` keys are kept. Other results are written as before.
+
 - **Sorting by a `NOT NULL` Postgres column, or by the record `id`, can read from a plain index.** The `ORDER BY` now leaves out the null placement a plain btree does not hold, so a document list or blank-query search sorted by it, through a view too, no longer sorts the whole filtered set first.
 
 - **Meilisearch's `ensure_index` makes the `default_sort` fields sortable** (**behaviour change**), as an unsorted browse sorts by them; on an index without them that browse fails with a configuration error naming the attribute. A port whose pinned `sortable_attributes` lacks them refuses to build.
