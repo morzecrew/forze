@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Federated searches that merge full hits spend 18–32% less CPU merging.** Results and scores are unchanged; exact duplicate records keep the first occurrence's highlight rather than the last.
+- **Federated searches that merge full hits use 18–32% less CPU in total.** Results and scores are unchanged; exact duplicate records keep the first occurrence's highlight rather than the last.
 
 - **Federated search merges thin by default** (**behaviour change**). `FederatedSearchSpec.thin_merge` now defaults to `True`: members return ids and only the page is re-read, bounding memory. Existing result snapshots miss once, and a row deleted between ranking and re-read shortens its page.
 
