@@ -46,9 +46,9 @@ result-set snapshots.
 `HubSearchSpec` carries the same `read_conformity` / `lenient_read_fields` / `materialized`
 over its hub-row model (a hub has no index `fields` of its own). `FederatedSearchSpec`
 inherits these from each member spec.
-A federated search merges thin by default (`thin_merge=True`): each member returns only
-ids, and just the page is re-read from its member. `thin_merge=False` fuses full hits in
-memory instead.
+A federated search merges thin by default (`thin_merge=True`): each member returns its ids
+(and the fields of any requested sort), and just the page is re-read from its member.
+`thin_merge=False` fuses full hits in memory instead.
 
 `materialized` is for **filtering and sorting** search results by a derived value — the
 column must already exist (typically written by the document side over the same table).

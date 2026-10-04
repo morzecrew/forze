@@ -93,8 +93,9 @@ def bind_stored_file_writes(
     :param ns: The namespace *registry* was built with (:func:`build_stored_file_registry`'s
         ``ns``); the kit document's namespace by default.
     :param purge_on_delete: Whether ``delete`` also removes the stored object after commit.
-        With ``False`` it soft-deletes the row and keeps the object; a search entry is still
-        dropped, so the file stops appearing in search.
+        With ``False`` it soft-deletes the row and keeps the object; when the kit has a
+        ``search_spec``, the search entry is still dropped, so the file stops appearing in
+        search.
     :returns: The registry with the write operations bound, not frozen.
     """
 
