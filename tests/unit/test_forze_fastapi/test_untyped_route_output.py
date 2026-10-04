@@ -178,6 +178,12 @@ class TestAResultThatIsNotAModel:
         assert response.status_code == 200
         assert response.json() == _untyped_encoding(value)
 
+    async def test_writes_infinity_and_nan_as_null(self) -> None:
+        # The untyped encoding refused them with a 500.
+        response = await _post(_app({"inf": math.inf, "nan": [math.nan]}))
+
+        assert (response.status_code, response.json()) == (200, {"inf": None, "nan": [None]})
+
     async def test_a_response_passes_through_untouched(self) -> None:
         response = await _post(_app(Response(b"raw", media_type="text/plain", status_code=202)))
 
