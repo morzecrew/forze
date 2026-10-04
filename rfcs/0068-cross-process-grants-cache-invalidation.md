@@ -75,7 +75,10 @@ Verified against main (with #506):
   push is unavailable.
 - **Redis implements it** with `CLIENT TRACKING` in BCAST mode over one pinned RESP3 connection
   (redis-py 8+ and a static namespace; a dynamic per-tenant namespace or a tenant-routed client
-  returns `None`). A client's own writes are broadcast to itself too.
+  returns `None`). A client's own writes are broadcast to itself too. It tracks the **pointer**
+  scope only (`adapters/cache.py:283`): `set_versioned` re-sets a pointer and `delete` unlinks
+  one, so both broadcast, but a plain `set` writes the separate KV scope, which is not tracked and
+  broadcasts nothing.
 - **The document L1 is the only subscriber today.** It drops the touched entry, or flushes on
   `key=None`.
 - **No in-memory implementation exists.** `forze_mock` cache ports do not implement
@@ -119,7 +122,8 @@ class GrantsInvalidation:
     """A cache spec with a static namespace whose port implements SupportsInvalidationPush."""
 
     marker_ttl: timedelta = timedelta(minutes=1)
-    """How long a marker key lives; its expiry broadcasts too, which is harmless."""
+    """How long a marker key lives. Its expiry broadcasts too: a second, idempotent forget for a
+    principal marker, and a second full flush for the catalog marker (§9)."""
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -141,6 +145,19 @@ unavailable, dynamic namespace, tenant-routed client, redis-py older than 8). Th
 calls the returned unsubscribe.
 
 ```python
+ALL_MARKER = "all"
+PRINCIPAL_PREFIX = "principal:"
+
+
+def parse_principal_marker(key: str) -> UUID | None:
+    if not key.startswith(PRINCIPAL_PREFIX):
+        return None
+    try:
+        return UUID(key.removeprefix(PRINCIPAL_PREFIX))
+    except ValueError:
+        return None
+
+
 def on_invalidation(inv: CacheInvalidation) -> None:
     if inv.key is None or inv.key == ALL_MARKER:
         grants_cache.clear()          # a gap in the stream, or a catalog-wide change
@@ -164,7 +181,11 @@ The marker key is the transport: writing it is what the backend broadcasts.
 | the catalog (`invalidate_grants()` with no principal) | `all` |
 
 The resolver's `forget` already runs after commit. With a broadcast configured, at that point it
-does the local `cache.forget` (unchanged) and then writes the marker with `marker_ttl`. The local
+does the local `cache.forget` (unchanged) and then writes the marker through the **versioned**
+path, `set_versioned(marker, version=<a fresh token>, value=<the token>, ttl=marker_ttl)`. That
+re-sets the marker's pointer, which is what Redis tracks; a plain `set` would write the untracked
+KV scope and reach no other process (§3). A fresh version each time makes every write a change.
+The local
 process also receives its own broadcast; the second forget is idempotent and costs one extra miss.
 
 A failed publish cannot undo a committed write. It is logged at error level with the principal id
@@ -213,7 +234,8 @@ stay synchronous and local, for tests and single-process apps.
   with no reset is bounded by the TTL. `no_permission_after_deactivation` runs with the broadcast
   on.
 - **Redis integration:** two clients on one Redis; a revoke through one is seen by the other;
-  killing the tracking connection produces a flush.
+  killing the tracking connection produces a flush; the publisher writes through
+  `set_versioned`, pinned by a test that a plain `set` marker reaches no other client.
 
 ## 7. Docs
 
@@ -237,6 +259,10 @@ that `invalidate_grants` is the call after plain document commands. The TTL word
 - **The backend is a single point.** If Redis is down, broadcasts stop; the tracking hub reports a
   reset on reconnect and every process flushes. While it is down, staleness is bounded by the TTL.
   Accepted and documented.
+- **A catalog change flushes twice.** The `all` marker's expiry broadcasts a second time, so
+  every process clears its cache once on delivery and again `marker_ttl` later. Catalog changes
+  are rare and a flush only costs misses; accepted, and named in the docs. A principal marker's
+  expiry repeats an idempotent forget.
 - **Flush storms.** Every reconnect flushes every process's cache. On a flapping connection the
   cache stops helping but stays correct. Accepted; a metric on flushes makes it visible.
 - **Read as stronger than it is.** "Broadcast" may be read as "instant". The docs state the
@@ -258,7 +284,7 @@ that `invalidate_grants` is the call after plain document commands. The TTL word
 | 1 | `LOCKED` | Grants stay in process memory; only invalidations travel, and the TTL remains the backstop for anything a broadcast does not reach. Changing this means a shared cache and a per-decision round trip. |
 | 2 | `LOCKED` | An invalidation is broadcast only after the change commits, at the same point the local forget runs. Broadcasting before commit would let other processes re-cache state the commit is about to replace. |
 | 3 | `LOCKED` | A process that may have missed broadcasts flushes its whole grants cache, on every `CacheInvalidation(key=None)`. Serving grants across an unacknowledged gap is the failure this RFC exists to prevent. |
-| 4 | `ASSUMED` | The transport is the cache contract's `SupportsInvalidationPush` (Redis `CLIENT TRACKING` today), carried by marker keys under a dedicated static namespace — not the pub/sub ports, which cannot signal a gap. |
+| 4 | `ASSUMED` | The transport is the cache contract's `SupportsInvalidationPush` (Redis `CLIENT TRACKING` today), carried by marker keys under a dedicated static namespace and written through `set_versioned`, the path the push tracks — not the pub/sub ports, which cannot signal a gap. |
 | 5 | `LOCKED` | Configuring a broadcast that cannot run — no grants cache, a port without push, a `None` subscription — fails at startup. A silent fall-back to TTL-only would leave the app believing revocation is prompt. |
 | 6 | `ASSUMED` | A failed publish after commit is logged and counted, never raised to the caller: the write has committed and cannot be undone, and the TTL bounds the effect. |
 | 7 | `OPEN` | How app code reaches `invalidate_grants` (a resolver method via the kernel, or a dedicated port). Decide by what the kernel already exposes for `forget`; log the choice. |
