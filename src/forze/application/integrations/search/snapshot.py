@@ -9,9 +9,10 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping, Sequence
 from datetime import timedelta
 from functools import cmp_to_key
+from itertools import groupby
 from typing import Any, TypeVar, cast
 
 import attrs
@@ -495,6 +496,24 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
+    def federated_merge_key(member: str, hit: BaseModel) -> Hashable:
+        """In-memory identity of a federated hit: ``(member, id)``, or its record key.
+
+        A hit with an ``id`` is keyed by it, which costs no serialization; one without falls
+        back to :meth:`federated_record_key_string`. Records sharing an id within one member
+        are one hit, as they are in the store. Snapshots keep storing the record key.
+        """
+
+        rid = getattr(hit, "id", None)
+
+        if rid is None or not isinstance(rid, Hashable):
+            return SearchResultSnapshot.federated_record_key_string(member, hit)
+
+        return (member, rid)
+
+    # ....................... #
+
+    @staticmethod
     def federated_thin_record_key(member: str, record_id: str) -> str:
         """``member \\0 id`` — the thin federated snapshot key (no full record).
 
@@ -543,7 +562,7 @@ class SearchResultSnapshot:
         raise exc.internal(f"Unknown federated member in snapshot key: {member!r}.")
 
     # ....................... #
-    # Federated RRF (merge ranked leg lists; keys match :meth:`federated_record_key_string`)
+    # Federated RRF (merge ranked leg lists; keys match :meth:`federated_merge_key`)
 
     @staticmethod
     def weighted_rrf_merge_rows(
@@ -557,22 +576,20 @@ class SearchResultSnapshot:
         ``member`` is the leg :class:`~forze.application.contracts.search.SearchSpec`
         ``name``. Legs with non-positive member weights are skipped. RRF
         contribution per hit is ``weight / (k + rank)`` with **1-based** ``rank``.
-        Deduping uses the same string keys as snapshot storage
-        (:meth:`federated_record_key_string`).
+        Deduping uses :meth:`federated_merge_key`. Within one member each hit's score is a
+        single ``weight / (k + rank)`` with its own rank, so ``(score, member)`` never ties
+        between two hits of one leg; the sort is stable either way.
         """
 
-        scores: dict[str, float] = {}
-        models: dict[str, FederatedSearchReadModel[Any]] = {}
+        scores: dict[Hashable, float] = {}
+        models: dict[Hashable, FederatedSearchReadModel[Any]] = {}
 
         for member, hits, weight in leg_rows:
             if weight <= 0.0:
                 continue
 
             for rank, hit in enumerate(hits, start=1):
-                key = SearchResultSnapshot.federated_record_key_string(
-                    member,
-                    hit,
-                )
+                key = SearchResultSnapshot.federated_merge_key(member, hit)
                 contrib = float(weight) / (float(k) + float(rank))
                 scores[key] = scores.get(key, 0.0) + contrib
 
@@ -582,10 +599,24 @@ class SearchResultSnapshot:
                         member=member,
                     )
 
-        ordered = sorted(
-            scores.keys(),
-            key=lambda rk: (-scores[rk], models[rk].member, rk),
-        )
+        def _rank(rk: Hashable) -> tuple[float, str]:
+            return -scores[rk], models[rk].member
+
+        ordered: list[Hashable] = []
+
+        # Hits of one member tie only when a record repeated within its leg sums to another
+        # hit's score; those few break the tie by record, as before, so only they serialize.
+        for _, group in groupby(sorted(scores, key=_rank), key=_rank):
+            tied = list(group)
+
+            if len(tied) > 1:
+                tied.sort(
+                    key=lambda rk: SearchResultSnapshot.federated_record_key_string(
+                        models[rk].member, models[rk].hit
+                    )
+                )
+
+            ordered.extend(tied)
 
         return [(models[rk], scores[rk]) for rk in ordered]
 

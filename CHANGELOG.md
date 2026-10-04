@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A federated search that merges full hits no longer serializes each one to merge it.** The RRF merge keys a hit by its member and `id` rather than its dumped record, cutting the search's CPU by about a third on 3–11 members of 500–5,000 hits. Snapshots still store the record.
+
 - **Federated search merges thin by default** (**behaviour change**). `FederatedSearchSpec.thin_merge` now defaults to `True`: members return ids and only the page is re-read, bounding memory. Existing result snapshots miss once, and a row deleted between ranking and re-read shortens its page.
 
 - **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.
