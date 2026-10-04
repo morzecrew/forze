@@ -150,6 +150,16 @@ lifecycle = LifecyclePlan.from_modules(
   order, is then the index's own tokenizer and normalizer: with the default ones, `python`
   matches the word `python` and not `pythonic`. An index with any other kind of element,
   such as a transform like `lower(title)`, is refused when the search first runs.
+- **PGroonga and text outside ASCII.** The default normalizer folds case for ASCII only: on
+  PGroonga 4.0.6, `плата` does not match `Плата`, while `plata` matches `PLATA`. For
+  Cyrillic or other non-ASCII text, declare a Unicode-aware normalizer on the index, and
+  the search, which follows the index's own options, matches regardless of case:
+
+    ```sql
+    CREATE INDEX items_title_search ON items
+      USING pgroonga (title) WITH (normalizers = 'NormalizerNFKC150');
+    ```
+
 - **PGroonga and VACUUM.** On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
   PGroonga index built while a `VACUUM` or `ANALYZE` (autovacuum included) runs on another
   PGroonga-indexed table can break: searches through it return no rows, or fail with
