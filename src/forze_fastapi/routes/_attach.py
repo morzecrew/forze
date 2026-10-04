@@ -843,8 +843,10 @@ def attach_operation_routes(
         exclude_none (bool): When ``True`` (default) generated JSON responses omit fields
             whose value is ``None`` (``response_model_exclude_none``) — a smaller wire
             payload, and the OpenAPI schema is unchanged (the fields stay optional). Set
-            ``False`` to always emit explicit ``null``\\ s. Only affects routes with a
-            response model; raw-``Response`` routes (download/head bytes) are untouched.
+            ``False`` to always emit explicit ``null``\\ s. Applies to pydantic model
+            results, including on routes with no declared output type; a plain dict or list
+            result keeps its ``None`` values, and raw-``Response`` routes (download/head
+            bytes) are untouched.
 
     Returns:
         APIRouter: The same *router*, with the routes attached.
