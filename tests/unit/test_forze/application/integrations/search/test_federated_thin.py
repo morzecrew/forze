@@ -111,6 +111,15 @@ def test_merge_ids_skips_nonpositive_weight() -> None:
 # --- eligibility ----------------------------------------------------------- #
 
 
+def test_a_federated_spec_merges_thin_by_default() -> None:
+    members = [
+        SearchSpec(name="a", model_type=_Item, fields=["title"]),
+        SearchSpec(name="b", model_type=_Item, fields=["title"]),
+    ]
+
+    assert FederatedSearchSpec(name="fed", members=members).thin_merge is True
+
+
 def test_eligibility_gates() -> None:
     members = [
         SearchSpec(name="a", model_type=_Item, fields=["title"]),

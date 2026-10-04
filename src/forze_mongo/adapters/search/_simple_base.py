@@ -115,7 +115,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         reject_unsupported_highlight(self.spec, options, backend="Mongo")
 
         # The encrypted-sort guard runs in the shared offset executor below.
-        options = search_options_for_simple_adapter(options)
+        options = search_options_for_simple_adapter(options, spec=self.spec)
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(options)
         pre_filter = self.render_filters(filters)
@@ -163,7 +163,7 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         reject_encrypted_sort_fields(
             sorts, encryption=self.spec.encryption, spec_name=self.spec.name
         )
-        options = search_options_for_simple_adapter(options)
+        options = search_options_for_simple_adapter(options, spec=self.spec)
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(options)
         pre_filter = self.render_filters(filters)

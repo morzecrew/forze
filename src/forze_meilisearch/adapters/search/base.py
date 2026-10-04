@@ -454,6 +454,39 @@ class MeilisearchSearchGateway[M: BaseModel](TenancyMixin):
     def physical_paths(self, fields: Sequence[str]) -> list[str]:
         return [self.physical_path(f) for f in fields]
 
+    def filterable_attributes(self) -> list[str]:
+        """The attributes ``ensure_index`` declares filterable: the pinned list, or the primary
+        key and the searchable fields, plus the tenant discriminator and the facetable fields."""
+
+        configured = self.config.filterable_attributes
+
+        attrs_list = (
+            [self.physical_path(f) for f in configured]
+            if configured is not None
+            else list(
+                dict.fromkeys(
+                    [
+                        self.primary_key,
+                        *[self.physical_path(f) for f in self.spec.fields],
+                    ]
+                )
+            )
+        )
+
+        if self.tenant_aware:
+            tenant_attr = self.physical_path(TENANT_ID_FIELD)
+            if tenant_attr not in attrs_list:
+                attrs_list.append(tenant_attr)
+
+        # Faceting requires the attribute to be filterable in Meilisearch, so a declared
+        # facetable field must appear here even when the caller pinned filterable_attributes.
+        for field in self.spec.facetable_fields:
+            facet_attr = self.physical_path(field)
+            if facet_attr not in attrs_list:
+                attrs_list.append(facet_attr)
+
+        return attrs_list
+
     # ....................... #
 
     def build_filter(

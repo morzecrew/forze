@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from meilisearch_python_sdk.errors import MeilisearchApiError
 from pydantic import BaseModel
 
 from forze.application.contracts.search import (
@@ -14,7 +15,7 @@ from forze.application.contracts.search import (
     SearchSpec,
 )
 from forze.application.integrations.search import SearchResultSnapshot
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze_meilisearch.adapters.search.federated import (
     MeilisearchFederatedSearchAdapter,
     _hit_index_uid,
@@ -541,3 +542,38 @@ async def test_federation_deep_window_fails_closed_on_max_total_hits() -> None:
     # A missing limit still reads Meilisearch's default page — it counts toward the window.
     with pytest.raises(CoreException):
         await adapter.search_page("q", pagination={"offset": 990})
+
+
+def _api_error(code: str) -> MeilisearchApiError:
+    import httpx2
+
+    return MeilisearchApiError(
+        "refused",
+        httpx2.Response(400, json={"code": code, "message": "Index `x`: refused."}),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cause",
+    [RuntimeError("down"), None],
+    ids=["not-an-api-error", "another-api-error"],
+)
+async def test_federation_reraises_a_failure_that_is_not_an_unsortable_sort(
+    cause: BaseException | None,
+) -> None:
+    failure = exc.internal("search failed")
+    failure.__cause__ = cause if cause is not None else _api_error("invalid_search_filter")
+    client = MagicMock()
+    client.multi_search = AsyncMock(side_effect=failure)
+    adapter = MeilisearchFederatedSearchAdapter(
+        federated_spec=FederatedSearchSpec(name="fed", members=(_mem("a"), _mem("b"))),
+        legs=(("a", _leg("a", "idx_a")), ("b", _leg("b", "idx_b"))),
+        client=client,
+        merge="federation",
+    )
+
+    with pytest.raises(CoreException) as raised:
+        await adapter.search_page("q")
+
+    assert raised.value is failure

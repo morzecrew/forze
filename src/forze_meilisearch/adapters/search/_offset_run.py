@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any
 
 import attrs
@@ -109,27 +109,7 @@ class _MeilisearchOffsetHooks:
         return int(total) if total is not None else None
 
     def _unsortable(self, error: MeilisearchApiError) -> CoreException | None:
-        """Who is at fault when the index cannot sort by an attribute the page asked for.
-
-        One the spec added, its default or the id, is a configuration error, raised loud rather
-        than retried without the sort: an index provisioned before the spec set a
-        ``default_sort``, or managed outside forze, would otherwise answer in an order the spec
-        does not promise. One the request named is the caller's.
-        """
-
-        if error.code != "invalid_search_sort":
-            return None
-
-        named = _UNSORTABLE.search(error.message)
-
-        if named is None or named.group(1) not in self.spec_sort:
-            return exc.precondition(f"Meilisearch refused the sort: {error.message}")
-
-        return exc.configuration(
-            f"The Meilisearch index cannot sort by {named.group(1)!r}, which the search spec "
-            "orders an unsorted page by: re-run ensure_index, or add it to sortable_attributes. "
-            f"{error.message}",
-        )
+        return unsortable_refusal(error, self.spec_sort)
 
     # ....................... #
 
@@ -241,6 +221,36 @@ class _MeilisearchOffsetHooks:
             facets=facets,
             highlights=highlights,
         )
+
+
+# ....................... #
+
+
+def unsortable_refusal(
+    error: MeilisearchApiError,
+    spec_sort: Collection[str],
+) -> CoreException | None:
+    """Who is at fault when an index cannot sort by an attribute a page asked for.
+
+    One the spec added (*spec_sort*: its default or the id) is a configuration error, raised
+    loud rather than retried without the sort: an index provisioned before the spec set a
+    ``default_sort``, or managed outside forze, would otherwise answer in an order the spec
+    does not promise. One the request named is the caller's. ``None`` for any other error.
+    """
+
+    if error.code != "invalid_search_sort":
+        return None
+
+    named = _UNSORTABLE.search(error.message)
+
+    if named is None or named.group(1) not in spec_sort:
+        return exc.precondition(f"Meilisearch refused the sort: {error.message}")
+
+    return exc.configuration(
+        f"The Meilisearch index cannot sort by {named.group(1)!r}, which the search spec "
+        "orders an unsorted page by: re-run ensure_index, or add it to sortable_attributes. "
+        f"{error.message}",
+    )
 
 
 # ....................... #

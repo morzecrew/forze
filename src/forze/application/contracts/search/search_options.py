@@ -6,6 +6,7 @@ from typing import Any, Literal, cast
 from forze.application.contracts.search.specs import (
     FederatedSearchSpec,
     HubSearchSpec,
+    SearchSpec,
 )
 from forze.application.contracts.search.types import SearchOptions
 from forze.base.exceptions import exc
@@ -26,10 +27,20 @@ def _strip_result_snapshot_leg_options(opts: dict[str, Any]) -> None:
 
 def search_options_for_simple_adapter(
     options: SearchOptions | None,
+    *,
+    spec: SearchSpec[Any] | None = None,
 ) -> SearchOptions:
-    """Drop hub/federated member keys on single-index search; warn when callers pass them."""
+    """Normalize single-index search options, for *spec* when given.
+
+    Drops hub/federated member keys (warning when callers pass them) and fills
+    ``search_count`` from *spec*'s :attr:`~SearchSpec.default_search_count` when the request
+    leaves it out. Without *spec* no default is applied.
+    """
 
     opts = dict(options or {})
+
+    if spec is not None and spec.default_search_count is not None:
+        opts.setdefault("search_count", spec.default_search_count)
 
     if "member_weights" in opts or "members" in opts:
         logger.warning(

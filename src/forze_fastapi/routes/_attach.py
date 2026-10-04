@@ -46,6 +46,8 @@ from uuid import UUID
 
 import attrs
 from fastapi import APIRouter, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.utils import is_body_allowed_for_status_code
 from pydantic import (
     AnyUrl,
     AwareDatetime,
@@ -60,6 +62,7 @@ from pydantic import (
     NameEmail,
     PastDate,
     PastDatetime,
+    PlainSerializer,
     ValidationError,
 )
 from pydantic.fields import FieldInfo
@@ -101,6 +104,21 @@ EndpointBuilder = Callable[
     Callable[..., Awaitable[Any]],
 ]
 """Builds a route endpoint from ``(runner, descriptor input type, op key)``."""
+
+
+def _encode_untyped(value: Any) -> Any:
+    # A model is left to pydantic, which writes it as it writes a typed route's result;
+    # anything else keeps the encoding FastAPI gives a route without a response model.
+    return value if isinstance(value, BaseModel) else jsonable_encoder(value)
+
+
+_UntypedResponse = Annotated[Any, PlainSerializer(_encode_untyped, return_type=Any)]
+"""Response model of an operation whose descriptor names no output type.
+
+Without a response model FastAPI encodes a result through ``jsonable_encoder``, a Python walk
+of the whole value; with this one a model result is written by pydantic directly, as a typed
+route's is.
+"""
 
 # ....................... #
 
@@ -825,8 +843,10 @@ def attach_operation_routes(
         exclude_none (bool): When ``True`` (default) generated JSON responses omit fields
             whose value is ``None`` (``response_model_exclude_none``) — a smaller wire
             payload, and the OpenAPI schema is unchanged (the fields stay optional). Set
-            ``False`` to always emit explicit ``null``\\ s. Only affects routes with a
-            response model; raw-``Response`` routes (download/head bytes) are untouched.
+            ``False`` to always emit explicit ``null``\\ s. Applies to pydantic model
+            results, including on routes with no declared output type; a plain dict or list
+            result keeps its ``None`` values, and raw-``Response`` routes (download/head
+            bytes) are untouched.
 
     Returns:
         APIRouter: The same *router*, with the routes attached.
@@ -930,11 +950,16 @@ def attach_operation_routes(
         # behind it reads and writes tenant data the bypassed middleware would bind.
         setattr(endpoint, GOVERNED_OPERATION_ATTR, True)
 
+        # A status that carries no body (204) takes no response model at all.
+        response_model = output_type
+        if response_model is None and is_body_allowed_for_status_code(binding.status_code):
+            response_model = _UntypedResponse
+
         router.add_api_route(
             path,
             endpoint,
             methods=[binding.method],
-            response_model=output_type,
+            response_model=response_model,
             response_model_exclude_none=exclude_none,
             status_code=binding.status_code,
             operation_id=op,

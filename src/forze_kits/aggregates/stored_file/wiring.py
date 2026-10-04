@@ -85,12 +85,18 @@ def bind_stored_file_writes(
     Write operations (``upload``, ``delete``) run in a transaction. Outbox rows
     flush on tx success; blob upload and purge run in ``after_commit`` hooks.
     The registry stays open, so the app can layer its own guards (authn, authz)
-    on the stored-file operations before it freezes. Pass the *ns* a given *registry* was
-    built with (:func:`build_stored_file_registry`'s ``ns``); the default is the kit
-    document's namespace.
+    on the stored-file operations before it freezes.
 
-    With ``purge_on_delete=False``, ``delete`` soft-deletes the row and leaves its object in
-    storage; a search entry is still dropped, so the file stops appearing in search.
+    :param kit: The stored-file kit spec.
+    :param tx_route: Transaction route the write operations run in.
+    :param registry: The registry to bind into; built from *kit* when omitted.
+    :param ns: The namespace *registry* was built with (:func:`build_stored_file_registry`'s
+        ``ns``); the kit document's namespace by default.
+    :param purge_on_delete: Whether ``delete`` also removes the stored object after commit.
+        With ``False`` it soft-deletes the row and keeps the object; when the kit has a
+        ``search_spec``, the search entry is still dropped, so the file stops appearing in
+        search.
+    :returns: The registry with the write operations bound, not frozen.
     """
 
     ns = ns or kit.document.default_namespace
@@ -132,7 +138,15 @@ def freeze_stored_file_registry(
     purge_on_delete: bool = True,
 ) -> FrozenOperationRegistry:
     """:func:`bind_stored_file_writes`, frozen — for an app that adds nothing to the
-    stored-file operations."""
+    stored-file operations.
+
+    :param kit: The stored-file kit spec.
+    :param tx_route: Transaction route the write operations run in.
+    :param registry: The registry to bind into; built from *kit* when omitted.
+    :param ns: The namespace *registry* was built with.
+    :param purge_on_delete: Whether ``delete`` also removes the stored object after commit.
+    :returns: The frozen registry.
+    """
 
     return bind_stored_file_writes(
         kit,
