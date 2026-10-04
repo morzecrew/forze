@@ -77,10 +77,11 @@ def test_federated_rrf_merge_benchmark(
     """``weighted_rrf_merge_rows`` over 11 legs of 2,000 hits."""
 
     if keying == "record_keys":
+        record = SearchResultSnapshot.federated_record_key_string
         monkeypatch.setattr(
             SearchResultSnapshot,
-            "federated_merge_key",
-            staticmethod(SearchResultSnapshot.federated_record_key_string),
+            "federated_merge_keys",
+            staticmethod(lambda member, hits: [record(member, hit) for hit in hits]),
         )
 
     legs = _legs()

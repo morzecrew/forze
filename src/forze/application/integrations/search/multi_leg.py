@@ -3,7 +3,7 @@
 Each federated leg is run as a full ``SearchQueryPort`` (so it computes its own
 ``page.highlights``); the coordinator merges/dedupes hits with
 :meth:`SearchResultSnapshot.weighted_rrf_merge_rows`, keyed by
-:meth:`SearchResultSnapshot.federated_merge_key`. These helpers re-associate each
+:meth:`SearchResultSnapshot.federated_merge_keys`. These helpers re-associate each
 surviving merged hit with its originating leg's highlight by that same key.
 """
 
@@ -25,10 +25,11 @@ from .snapshot import SearchResultSnapshot
 def build_federated_highlight_index(
     leg_pages: Sequence[tuple[str, Any]],
 ) -> dict[Hashable, HitHighlights]:
-    """Index ``{federated_merge_key: HitHighlights}`` over every leg's per-hit highlights.
+    """Index ``{federated_merge_keys: HitHighlights}`` over every leg's per-hit highlights.
 
     *leg_pages* is ``(member_name, leg_page)``; a leg whose page has no highlights contributes
-    nothing. The key matches the dedup key the RRF merge uses, so lookups line up exactly.
+    nothing. The key matches the dedup key the RRF merge uses, so lookups line up exactly;
+    a record repeated within a leg keeps its first highlight, as the merge keeps its first hit.
     """
 
     index: dict[Hashable, HitHighlights] = {}
@@ -38,9 +39,10 @@ def build_federated_highlight_index(
         if not highlights:
             continue
 
-        for hit, hl in zip(page.hits, highlights, strict=True):
-            key = SearchResultSnapshot.federated_merge_key(member, hit)
-            index[key] = hl
+        keys = SearchResultSnapshot.federated_merge_keys(member, page.hits)
+
+        for key, hl in zip(keys, highlights, strict=True):
+            index.setdefault(key, hl)
 
     return index
 
@@ -58,10 +60,6 @@ def federated_highlights_for_hits(
     if not index:
         return None
 
-    return [
-        index.get(
-            SearchResultSnapshot.federated_merge_key(item.member, item.hit),
-            {},
-        )
-        for item in final_hits
-    ]
+    found = SearchResultSnapshot.federated_merge_key_lookup
+
+    return [found(index, item.member, item.hit) or {} for item in final_hits]

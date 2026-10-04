@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+from collections import Counter
 from collections.abc import Awaitable, Callable, Hashable, Iterable, Mapping, Sequence
 from datetime import timedelta
 from functools import cmp_to_key
@@ -496,20 +497,50 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
-    def federated_merge_key(member: str, hit: BaseModel) -> Hashable:
-        """In-memory identity of a federated hit: ``(member, id)``, or its record key.
-
-        A hit with an ``id`` is keyed by it, which costs no serialization; one without falls
-        back to :meth:`federated_record_key_string`. Records sharing an id within one member
-        are one hit, as they are in the store. Snapshots keep storing the record key.
-        """
-
+    def _hit_id(hit: BaseModel) -> Hashable | None:
         rid = getattr(hit, "id", None)
 
-        if rid is None or not isinstance(rid, Hashable):
-            return SearchResultSnapshot.federated_record_key_string(member, hit)
+        return rid if isinstance(rid, Hashable) else None
 
-        return (member, rid)
+    # ....................... #
+
+    @staticmethod
+    def federated_merge_keys(member: str, hits: Sequence[BaseModel]) -> list[Hashable]:
+        """In-memory identities of one member's federated hits, in order.
+
+        A hit whose id is unique among *hits* is keyed ``(member, id)``, which costs no
+        serialization. Any other hit — no id, an unhashable one, or an id the member repeats
+        (a join returning one row per joined record, or equal ids such as ``1`` and ``True``) —
+        keeps its record key (:meth:`federated_record_key_string`), so records merge exactly as
+        they did by record. Snapshots keep storing the record key.
+        """
+
+        ids = [SearchResultSnapshot._hit_id(hit) for hit in hits]
+        counts = Counter(rid for rid in ids if rid is not None)
+
+        return [
+            (member, rid)
+            if rid is not None and counts[rid] == 1
+            else SearchResultSnapshot.federated_record_key_string(member, hit)
+            for hit, rid in zip(hits, ids, strict=True)
+        ]
+
+    # ....................... #
+
+    @staticmethod
+    def federated_merge_key_lookup[V](
+        index: Mapping[Hashable, V],
+        member: str,
+        hit: BaseModel,
+    ) -> V | None:
+        """Find *hit* in an index keyed by :meth:`federated_merge_keys`, or ``None``."""
+
+        rid = SearchResultSnapshot._hit_id(hit)
+
+        if rid is not None and (found := index.get((member, rid))) is not None:
+            return found
+
+        return index.get(SearchResultSnapshot.federated_record_key_string(member, hit))
 
     # ....................... #
 
@@ -562,7 +593,7 @@ class SearchResultSnapshot:
         raise exc.internal(f"Unknown federated member in snapshot key: {member!r}.")
 
     # ....................... #
-    # Federated RRF (merge ranked leg lists; keys match :meth:`federated_merge_key`)
+    # Federated RRF (merge ranked leg lists; keys match :meth:`federated_merge_keys`)
 
     @staticmethod
     def weighted_rrf_merge_rows(
@@ -576,7 +607,7 @@ class SearchResultSnapshot:
         ``member`` is the leg :class:`~forze.application.contracts.search.SearchSpec`
         ``name``. Legs with non-positive member weights are skipped. RRF
         contribution per hit is ``weight / (k + rank)`` with **1-based** ``rank``.
-        Deduping uses :meth:`federated_merge_key`. Within one member each hit's score is a
+        Deduping uses :meth:`federated_merge_keys`. Within one member each hit's score is a
         single ``weight / (k + rank)`` with its own rank, so ``(score, member)`` never ties
         between two hits of one leg; the sort is stable either way.
         """
@@ -588,8 +619,9 @@ class SearchResultSnapshot:
             if weight <= 0.0:
                 continue
 
-            for rank, hit in enumerate(hits, start=1):
-                key = SearchResultSnapshot.federated_merge_key(member, hit)
+            keys = SearchResultSnapshot.federated_merge_keys(member, hits)
+
+            for rank, (hit, key) in enumerate(zip(hits, keys, strict=True), start=1):
                 contrib = float(weight) / (float(k) + float(rank))
                 scores[key] = scores.get(key, 0.0) + contrib
 

@@ -1,9 +1,9 @@
-"""The federated RRF merge keys hits by ``(member, id)`` and still merges as it did by record.
+"""The federated RRF merge keys hits by id where it can and still merges as it did by record.
 
 Keying a hit by its serialized record cost a ``model_dump`` and a sorted ``json.dumps`` per hit,
-about half of a full-path federated search's CPU. A hit with an ``id`` is now keyed by
-``(member, id)``. The merge must return the same hits, scores and order as the record-keyed merge
-it replaces, which this suite keeps as the oracle.
+about half of a full-path federated search's CPU. A hit whose typed id is unique in its member is
+now keyed by ``(member, type, id)``; any other keeps its record key. The merge and the highlights
+must come out as the record-keyed versions they replace, which this suite keeps as oracles.
 """
 
 from __future__ import annotations
@@ -44,6 +44,11 @@ class _MaybeId(BaseModel):
     label: str
 
 
+class _AnyId(BaseModel):
+    id: Any
+    label: str
+
+
 class _Page:
     def __init__(self, hits: list[BaseModel], highlights: list[Any]) -> None:
         self.hits = hits
@@ -76,6 +81,22 @@ def _oracle(
     return [(models[rk][0], models[rk][1], scores[rk]) for rk in ordered]
 
 
+def _oracle_highlights(
+    leg_rows: list[tuple[str, list[BaseModel], float]],
+    leg_highlights: dict[str, list[dict[str, list[str]]]],
+    merged: list[tuple[str, BaseModel, float]],
+) -> list[Any]:
+    """Highlights keyed by record, the first one per record kept, as the merge keeps hits."""
+
+    index: dict[str, Any] = {}
+
+    for member, hits, _w in leg_rows:
+        for hit, hl in zip(hits, leg_highlights[member], strict=True):
+            index.setdefault(_record_key(member, hit), hl)
+
+    return [index.get(_record_key(member, hit), {}) for member, hit, _s in merged]
+
+
 def _merge(
     leg_rows: list[tuple[str, list[BaseModel], float]], k: int
 ) -> list[tuple[str, BaseModel, float]]:
@@ -88,26 +109,36 @@ def _uuid(rng: random.Random) -> UUID:
     return UUID(int=rng.getrandbits(128))
 
 
+# Distinct as records: none of these share a JSON form with another.
+_ANY_IDS: tuple[Any, ...] = (1, 1.0, True, 2, "1", "x", False, 0)
+
+
 def _random_legs(rng: random.Random) -> list[tuple[str, list[BaseModel], float]]:
-    """Legs with shared labels, repeated hits within a leg, weights including non-positive."""
+    """Legs with repeated ids (same or differing content), mixed id types and weights."""
 
     legs: list[tuple[str, list[BaseModel], float]] = []
     pool = [_uuid(rng) for _ in range(rng.randint(1, 30))]
+    labels = ("a", "b", "c", "same")
 
     for m in range(rng.randint(1, 6)):
-        kind = rng.choice((_Hit, _NoId, _MaybeId))
-        # One record per id within a member, as a store returns it.
-        labels = {rid: rng.choice(("a", "b", "c", "same")) for rid in pool}
+        kind = rng.choice((_Hit, _NoId, _MaybeId, _AnyId))
+        # Usually one record per id, as a table returns it; sometimes a join repeats an id
+        # with differing content.
+        stable = {rid: rng.choice(labels) for rid in (*pool, *_ANY_IDS)}
+        joins = rng.random() < 0.4
         hits: list[BaseModel] = []
 
         for _ in range(rng.randint(0, 40)):
             if kind is _NoId:
-                hits.append(_NoId(label=rng.choice(("a", "b", "c", "same"))))
-            elif kind is _MaybeId and rng.random() < 0.3:
-                hits.append(_MaybeId(id=None, label=rng.choice(("a", "b", "c", "same"))))
-            else:
-                rid = rng.choice(pool)
-                hits.append(kind(id=rid, label=labels[rid]))
+                hits.append(_NoId(label=rng.choice(labels)))
+                continue
+            if kind is _MaybeId and rng.random() < 0.3:
+                hits.append(_MaybeId(id=None, label=rng.choice(labels)))
+                continue
+
+            rid = rng.choice(_ANY_IDS) if kind is _AnyId else rng.choice(pool)
+            label = rng.choice(labels) if joins else stable[rid]
+            hits.append(kind(id=rid, label=label))
 
         # A record repeated within a leg: the same content, so both keyings merge it.
         if hits and rng.random() < 0.5:
@@ -119,22 +150,6 @@ def _random_legs(rng: random.Random) -> list[tuple[str, list[BaseModel], float]]
     return legs
 
 
-def _same_record_per_id(legs: list[tuple[str, list[BaseModel], float]]) -> bool:
-    """Real stores return one record per id; the differential only claims that case."""
-
-    seen: dict[tuple[str, Any], BaseModel] = {}
-
-    for member, hits, _w in legs:
-        for hit in hits:
-            rid = getattr(hit, "id", None)
-            if rid is None:
-                continue
-            if seen.setdefault((member, rid), hit) != hit:
-                return False
-
-    return True
-
-
 # ....................... #
 
 
@@ -143,11 +158,49 @@ class TestTheMergeMatchesTheRecordKeyedMerge:
     def test_on_random_legs(self, seed: int) -> None:
         rng = random.Random(seed)
         legs = _random_legs(rng)
-
-        assert _same_record_per_id(legs)
         k = rng.choice((1, 10, 60))
 
-        assert _merge(legs, k) == _oracle(legs, k)
+        merged = _merge(legs, k)
+
+        assert merged == _oracle(legs, k)
+
+        # Each leg's hit gets a distinct highlight, so a wrong pairing shows.
+        leg_hls = {m: [{"t": [f"{m}-{i}"]} for i in range(len(h))] for m, h, _w in legs}
+        index = build_federated_highlight_index([(m, _Page(h, leg_hls[m])) for m, h, _w in legs])
+        found = federated_highlights_for_hits(
+            [FederatedSearchReadModel(hit=hit, member=m) for m, hit, _s in merged], index
+        )
+
+        assert (found or []) == (_oracle_highlights(legs, leg_hls, merged) if index else [])
+
+    def test_a_joined_id_keeps_its_records_and_their_highlights(self) -> None:
+        class _Row(BaseModel):
+            id: str
+            title: str
+
+        leg: list[BaseModel] = [
+            _Row(id="1", title="first"),
+            _Row(id="1", title="second"),
+            _Row(id="2", title="other"),
+        ]
+        hls = [{"t": ["hl-first"]}, {"t": ["hl-second"]}, {"t": ["hl-other"]}]
+        merged = _merge([("a", leg, 1.0)], 60)
+        found = federated_highlights_for_hits(
+            [FederatedSearchReadModel(hit=hit, member=m) for m, hit, _s in merged],
+            build_federated_highlight_index([("a", _Page(leg, hls))]),
+        )
+
+        assert [hit for _m, hit, _s in merged] == leg
+        assert found == hls
+
+    def test_equal_ids_of_different_types_stay_apart(self) -> None:
+        hits: list[BaseModel] = [
+            _AnyId(id=1, label="x"),
+            _AnyId(id=1.0, label="x"),
+            _AnyId(id=True, label="x"),
+        ]
+
+        assert len(_merge([("m", hits, 1.0)], 60)) == 3
 
     def test_a_tie_inside_one_member_breaks_by_record_as_before(self) -> None:
         # With k=10, a record repeated at ranks 6 and 38 scores exactly what rank 2 scores.
