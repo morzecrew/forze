@@ -195,7 +195,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 )
 
             parts.append(part)
-            ordered.append(field)
+            ordered.append(column)
 
         return sql.SQL(", ").join([*parts, *scored_key_order(join, ordered=ordered)])
 

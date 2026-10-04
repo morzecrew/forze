@@ -47,11 +47,11 @@ def scored_key_order(
 
     The cap keeps the best-ranked rows; rows that tie on rank there would otherwise be kept in
     whatever order the scan met them, and a page sorted out of the pool could differ between
-    requests. A key the sort already names (*ordered*) is left out: ordering by it twice
-    changes nothing.
+    requests. A key whose heap column the sort already orders by (*ordered*, heap column names)
+    is left out: ordering by it twice changes nothing.
     """
 
-    return [sql.Identifier(pc) for pc, _ in join_pairs if pc not in ordered]
+    return [sql.Identifier(pc) for pc, ic in join_pairs if ic not in ordered]
 
 
 # ....................... #
