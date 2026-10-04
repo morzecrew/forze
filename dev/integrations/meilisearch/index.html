@@ -6640,7 +6640,13 @@ the base URL — see <a href="../#connection-settings">connection settings</a>.<
   knows to ask about.</li>
 <li>Cursor pagination and hub search aren't supported here; the filter language is
   a subset of the <a href="../../reference/query-syntax/">Query DSL</a>.</li>
-<li>Federated routes merge ≥2 member indexes (<code>federation</code> or in-process <abbr title="Reciprocal Rank Fusion">RRF</abbr>).</li>
+<li>Federated routes merge ≥2 member indexes (<code>federation</code> or in-process <abbr title="Reciprocal Rank Fusion">RRF</abbr>).
+  A blank native <code>federation</code> browse follows the members' <code>default_sort</code>, then the id, only
+  when every member resolves to the same order: the same sort fields and directions and the
+  same primary key. Meilisearch refuses a federation whose queries sort differently, so
+  otherwise each member sends the request's <code>sorts</code> alone and the merged order is the
+  engine's. <abbr title="Reciprocal Rank Fusion">RRF</abbr> re-reads only the page by id unless a member cannot filter by its <code>id</code>
+  attribute or sort by its primary key, which keeps that federation on the full merge.</li>
 </ul>
 
 

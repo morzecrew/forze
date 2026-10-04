@@ -6648,7 +6648,13 @@ result-set snapshots.</p>
 <td><code>filter_limits</code></td>
 <td><code>QueryFilterLimits \| None</code></td>
 <td><code>None</code></td>
-<td>bounds on the filters a search accepts; <code>None</code> keeps the defaults (see <a href="../../query-syntax/#limits">Limits</a>). <code>HubSearchSpec</code> has none: hub filters use the defaults</td>
+<td>bounds on the filters a search accepts; <code>None</code> keeps the defaults (see <a href="../../query-syntax/#limits">Limits</a>). <code>HubSearchSpec</code> takes its own, applied once to the hub rows; members' limits don't apply to a hub filter</td>
+</tr>
+<tr>
+<td><code>default_search_count</code></td>
+<td><code>"exact" \| "approximate" \| "none" \| None</code></td>
+<td><code>None</code></td>
+<td>how a page counts its total when the request sets no <code>search_count</code>; <code>None</code> keeps <code>exact</code>. Postgres honours it; other backends report totals their own way. <code>HubSearchSpec</code> and <code>FederatedSearchSpec</code> have none</td>
 </tr>
 <tr>
 <td><code>materialized</code></td>
@@ -6720,7 +6726,10 @@ result-set snapshots.</p>
 </table>
 <p><code>HubSearchSpec</code> carries the same <code>read_conformity</code> / <code>lenient_read_fields</code> / <code>materialized</code>
 over its hub-row model (a hub has no index <code>fields</code> of its own). <code>FederatedSearchSpec</code>
-inherits these from each member spec.</p>
+inherits these from each member spec.
+A federated search merges thin by default (<code>thin_merge=True</code>): each member returns its ids
+(and the fields of any requested sort), and just the page is re-read from its member.
+<code>thin_merge=False</code> fuses full hits in memory instead.</p>
 <p><code>materialized</code> is for <strong>filtering and sorting</strong> search results by a derived value — the
 column must already exist (typically written by the document side over the same table).
 Returning a computed field needs no <code>materialized</code>: it recomputes from the row on decode.</p>

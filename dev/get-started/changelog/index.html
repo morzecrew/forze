@@ -9088,6 +9088,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A hub search can raise the limits its filters are parsed under.</strong> <code>HubSearchSpec(filter_limits=...)</code> bounds the hub's filter, parsed once for its hub rows on Postgres and in the in-memory hub alike; a member's own limits do not apply to it.</p>
+</li>
+<li>
+<p><strong>A search spec can choose how an unasked page counts its total.</strong> <code>SearchSpec(default_search_count="approximate")</code> (or <code>"none"</code>) applies when a request sets no <code>search_count</code>, so a large log need not run <code>COUNT(*)</code> on every page. The request option still wins; Postgres honours it.</p>
+</li>
+<li>
 <p><strong>Authorization can remember a principal's catalog grants.</strong> <code>AuthzKernelConfig(grants_cache=GrantsCache(ttl=...))</code> caches roles and permissions by principal, tenant and scope; active status and provider grants stay live. Off by default; role assignment clears it on commit; other changes wait for the TTL.</p>
 </li>
 <li>
@@ -9127,6 +9133,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Federated search merges thin by default</strong> (<strong>behaviour change</strong>). <code>FederatedSearchSpec.thin_merge</code> now defaults to <code>True</code>: members return ids and only the page is re-read, bounding memory. Existing result snapshots miss once, and a row deleted between ranking and re-read shortens its page.</p>
+</li>
+<li>
 <p><strong>Already-normalized text skips normalization when it is read back.</strong> <code>normalize_string</code>, behind the kits' <code>String</code> and <code>LongString</code>, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.</p>
 </li>
 <li>
@@ -9150,6 +9159,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A blank Meilisearch native federated search follows the members' shared <code>default_sort</code></strong> (<strong>behaviour change</strong>: page order). When every member resolves to the same sort and primary key, an unsorted browse orders by that sort, then the id, instead of index order; members that differ keep the engine's order.</p>
+</li>
 <li>
 <p><strong>A PGroonga search uses its index for any supported index expression</strong> (<strong>behaviour change</strong>). An index on <code>ARRAY[title, content]</code> or <code>(title)</code> never served it, so each search scanned the table. Matches and order now follow the index's tokenizer and normalizer, as for a <code>coalesce</code>-declared index.</p>
 </li>
