@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Authorization can remember a principal's catalog grants between decisions.** `AuthzKernelConfig(grants_cache=GrantsCache(ttl=...))` caches roles and permissions per principal, tenant and scope; active status and provider grants stay live. Off by default; the TTL is the revocation delay.
+- **Authorization can remember a principal's catalog grants.** `AuthzKernelConfig(grants_cache=GrantsCache(ttl=...))` caches roles and permissions by principal, tenant and scope; active status and provider grants stay live. Off by default; role assignment clears it on commit; other changes wait for the TTL.
 
 - **Deployment configuration can grant a permission, and be its only source.** `ConfigGrantsProvider(keys=...)` grants each key to the principal ids a `ConfigGrants` settings model lists and denies it to everyone else, so a catalog binding of the key grants nothing, and the startup step refuses one.
 

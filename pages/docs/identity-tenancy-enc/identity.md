@@ -244,10 +244,11 @@ kernel = AuthzKernelConfig(grants_cache=grants_cache)
   served the revoked grant between the commit and that moment.
 - Decisions inside a transaction read the bindings and leave the cache alone: what they read may
   still roll back.
-- **The TTL is how long a removed grant keeps working.** `assign_role` and `revoke_role` forget the
-  principal in this process once their write commits; other processes see the change when their
-  entry expires. A change written through plain document commands is not heard, so after it
-  commits call:
+- `assign_role` and `revoke_role` forget the principal in this process once their write commits,
+  even when another process made the change first. **For everything else the TTL is how long a
+  removed grant can keep working**, counted from when the cached read began: in other processes,
+  and for changes written through plain document commands, which nothing announces. After such a
+  change commits, call:
 
     | Change | Call |
     |--------|------|
