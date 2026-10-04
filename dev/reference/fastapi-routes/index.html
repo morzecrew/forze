@@ -7120,6 +7120,12 @@ declares them. Each
 shipped builder names the placeholders it fills, and a path with any other placeholder is
 refused. An <code>EndpointBuilder</code> of your own takes <code>(runner, input_type, op)</code>; give it a
 <code>path_params</code> frozenset to have its paths checked the same way.</p>
+<p>The operation's output type is the route's response model. An operation without one, such as
+a federated search, still has a model result written as a typed route's is: fields that are
+<code>None</code> are left out unless the attacher passes <code>exclude_none=False</code>, and the OpenAPI schema
+documents an untyped body. Any other result, such as a dict or a list, is written as FastAPI
+writes a route without a response model. Either way an infinite or NaN float is written as
+<code>null</code>.</p>
 <h2 id="infrastructure-routes">Infrastructure routes<a class="headerlink" href="#infrastructure-routes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>attach_jwks_route(router, jwks_provider, *, path="/.well-known/jwks.json",

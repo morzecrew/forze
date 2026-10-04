@@ -9145,6 +9145,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Authorization and tenant listing read in batches, not row by row.</strong> A decision reads once per kind of row and hierarchy level, plus once per 30 roles or groups: 7 reads, not 27, for a role, its parent and 18 permissions. Tenants are read together, not per membership. Firestore scans need an index on field and <code>id</code>.</p>
 </li>
 <li>
+<p><strong>A generated route with no output type writes a model result as a typed route does</strong> (<strong>behaviour change</strong>), at a fraction of the CPU: <code>None</code> fields drop under <code>exclude_none</code> and <code>_sa…</code> keys are kept. Any result writes inf/nan as <code>null</code> instead of failing.</p>
+</li>
+<li>
 <p><strong>Sorting by a <code>NOT NULL</code> Postgres column, or by the record <code>id</code>, can read from a plain index.</strong> The <code>ORDER BY</code> now leaves out the null placement a plain btree does not hold, so a document list or blank-query search sorted by it, through a view too, no longer sorts the whole filtered set first.</p>
 </li>
 <li>
