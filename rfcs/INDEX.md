@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0068**. Before creating an RFC, glance at the table below
+The next free number is **0069**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -87,6 +87,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0065](0065-snapshot-consistent-export-verification.md) | Snapshot-consistent export and its verification | 📝 Draft | Adds the one consistency level the portability plane lacks — every read of an export, counts included, from one Postgres snapshot — plus a server-version import gate and a crash round-trip battery. |
 | [0066](0066-storage-guarantees.md) | Storage guarantees: the declared half of the capability convention | ✅ Complete | A spec declares a property its store must enforce — filtered uniqueness, non-overlap, per-key serialization — and each adapter declares which it can keep, reconciled at wiring, validated at startup. |
 | [0067](0067-period-and-overlap.md) | Period, its bounds, and the overlap oracle | ✅ Complete | One value object for a period and its bounds convention, the overlap predicate decided once, and a DST invariant asserting no two periods sharing a key overlap in a recorded history. |
+| [0068](0068-cross-process-grants-cache-invalidation.md) | Cross-process grants cache invalidation | 📝 Draft | How an opt-in grants-cache invalidation in one process reaches every other process: a broadcast over the cache push-invalidation capability, with the TTL kept as the backstop. |
 
 ## Status legend
 
