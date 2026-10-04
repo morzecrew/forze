@@ -212,7 +212,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        options = search_options_for_simple_adapter(options)
+        options = search_options_for_simple_adapter(options, spec=self.spec)
 
         if normalize_search_queries(query):
             return await super()._offset_search_impl(

@@ -359,3 +359,51 @@ class TestFailedTaskClassification:
         await _adapter(client, wait_for_tasks=False).upsert([_Doc(id="x", title="t")])
 
         client.wait_for_task.assert_not_awaited()
+
+
+class _Faceted(BaseModel):
+    id: str
+    title: str
+    kind: str
+
+
+def _gateway(
+    *, tenant_aware: bool = False, **config: object
+) -> MeilisearchSearchManagementAdapter[_Faceted]:
+    spec = SearchSpec(
+        name="items",
+        model_type=_Faceted,
+        fields=["title"],
+        facetable_fields=frozenset({"kind", "title"}),
+    )
+
+    return MeilisearchSearchManagementAdapter(
+        spec=spec,
+        config=MeilisearchSearchConfig(index_uid="items_idx", **config),  # type: ignore[arg-type]
+        client=MagicMock(),
+        tenant_aware=tenant_aware,
+        tenant_provider=(lambda: TenantIdentity(tenant_id=uuid4())) if tenant_aware else None,
+    )
+
+
+class TestTheFilterableAttributes:
+    """What ``ensure_index`` declares filterable, which the thin merge reads too."""
+
+    def test_by_default_the_key_the_fields_and_the_facets(self) -> None:
+        assert _gateway(primary_key="doc_id").filterable_attributes() == [
+            "doc_id",
+            "title",
+            "kind",
+        ]
+
+    def test_a_pinned_list_still_gains_the_tenant_and_the_facets(self) -> None:
+        attrs = _gateway(tenant_aware=True, filterable_attributes=["title"]).filterable_attributes()
+
+        assert attrs == ["title", "tenant_id", "kind"]
+
+    def test_a_tenant_already_pinned_is_not_repeated(self) -> None:
+        attrs = _gateway(
+            tenant_aware=True, filterable_attributes=["tenant_id", "kind"]
+        ).filterable_attributes()
+
+        assert attrs == ["tenant_id", "kind", "title"]

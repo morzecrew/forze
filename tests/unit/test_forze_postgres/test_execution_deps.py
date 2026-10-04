@@ -24,7 +24,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.contracts.embeddings import EmbeddingsProviderDepKey
 from forze.application.contracts.idempotency import IdempotencySpec, scoped_claim_key
-from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
+from forze.application.contracts.search import HubSearchSpec, SearchQueryDepKey, SearchSpec
 from forze.application.contracts.secrets import SecretRef
 from forze.application.contracts.transaction.deps import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
@@ -40,6 +40,7 @@ from forze_postgres.adapters.idempotency import PostgresIdempotencyStore
 from forze_postgres.adapters.txmanager import PostgresTxManagerAdapter
 from forze_postgres.execution.deps import (
     ConfigurablePostgresDocument,
+    ConfigurablePostgresHubSearch,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresSearch,
     postgres_txmanager,
@@ -876,6 +877,35 @@ class TestSpecFilterLimits:
         )(
             _ctx(),
             SearchSpec(name="s", model_type=M, fields=["title"], filter_limits=self._LIMITS),
+        )
+
+        assert adapter.filter_parser.limits == self._LIMITS
+
+    def test_hub_adapter(self) -> None:
+        class M(BaseModel):
+            id: str
+            title: str
+
+        adapter = ConfigurablePostgresHubSearch(
+            config=PostgresHubSearchConfig(
+                hub=("public", "h"),
+                members={
+                    "m1": PostgresHubSearchMemberConfig(
+                        index=("public", "i1"),
+                        read=("public", "t1"),
+                        engine="pgroonga",
+                        hub_fk="party_id",
+                    ),
+                },
+            )
+        )(
+            _ctx(),
+            HubSearchSpec(
+                name="h",
+                model_type=M,
+                members=[SearchSpec(name="m1", model_type=M, fields=["title"])],
+                filter_limits=self._LIMITS,
+            ),
         )
 
         assert adapter.filter_parser.limits == self._LIMITS

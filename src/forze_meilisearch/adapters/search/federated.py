@@ -14,6 +14,7 @@ from typing import (
 )
 
 import attrs
+from meilisearch_python_sdk.errors import MeilisearchApiError
 from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
@@ -54,10 +55,13 @@ from forze.application.integrations.search import (
     federated_thin_format,
     reject_encrypted_sort_fields,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import default_model_codec
+from forze.domain.constants import ID_FIELD
 from forze_meilisearch.adapters.search._offset_run import (
     _MEILI_DEFAULT_SEARCH_LIMIT,  # pyright: ignore[reportPrivateUsage]
+    page_order,
+    unsortable_refusal,
 )
 from forze_meilisearch.adapters.search._port import MeilisearchSearchPortMixin
 from forze_meilisearch.adapters.search._search_params import (
@@ -65,6 +69,7 @@ from forze_meilisearch.adapters.search._search_params import (
     build_search_query_string,
     build_sort,
     render_user_sorts,
+    sortable_attributes,
 )
 from forze_meilisearch.adapters.search._simple_base import (
     MeilisearchSimpleSearchAdapter,
@@ -139,6 +144,26 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         # Cross-index fusion; reciprocal rank fusion is the advertised strategy.
         # Totals are estimated (Meilisearch estimatedTotalHits), never exact.
         return SearchCapabilities(hybrid_fusion=frozenset({"rrf"}), exact_total_count=False)
+
+    # ....................... #
+
+    @property
+    def _thin_merge(self) -> bool:
+        """The spec's thin merge, where every member can re-read a page by id.
+
+        The thin path re-reads the page with an ``id IN (...)`` filter on each member's ``id``
+        attribute, ordered by its primary key. Meilisearch accepts the filter only when that
+        attribute is filterable — not by default under a custom ``primary_key``, nor when a
+        pinned ``filterable_attributes`` leaves it out — and the order only when the key is
+        sortable, which a pinned ``sortable_attributes`` may leave out. Such a member keeps
+        the federation on the full-fetch path.
+        """
+
+        return self.federated_spec.thin_merge and all(
+            adapter.physical_path(ID_FIELD) in adapter.filterable_attributes()
+            and adapter.primary_key in sortable_attributes(adapter.spec, adapter.config)
+            for _name, adapter in self.legs
+        )
 
     # ....................... #
 
@@ -353,7 +378,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         q = build_search_query_string(terms, combine=combine)
         index_to_member = await self._index_to_member()
 
-        queries: list[SearchParams] = []
+        legs: list[tuple[dict[str, Any], float, list[str] | None, list[str] | None]] = []
         leg_caps: list[int] = []
 
         for i, (name, adapter) in enumerate(self.legs):
@@ -376,7 +401,9 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
                 leg_opts,
                 adapter.field_map,
             )
-            sort_list = build_sort(render_user_sorts(sorts, adapter.config))
+            # As one index orders a page: with search text only the request's sorts, a blank
+            # query also the member's default_sort, then its primary key.
+            order = page_order(adapter, cast(SearchSpec[M], member_spec), sorts, ranked=bool(terms))
 
             params_kwargs: dict[str, Any] = {
                 "index_uid": await adapter._resolved_index_uid(),  # pyright: ignore[reportPrivateUsage]
@@ -388,6 +415,33 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
             if search_attrs is not None:
                 params_kwargs["attributes_to_search_on"] = search_attrs
+
+            legs.append(
+                (
+                    params_kwargs,
+                    weight,
+                    build_sort(render_user_sorts(order, adapter.config)),
+                    build_sort(render_user_sorts(sorts, adapter.config)),
+                )
+            )
+
+        # Meilisearch refuses a federation whose queries sort differently, so the members'
+        # own orders go out only when every member resolves to the same one; otherwise each
+        # sends the request's sorts alone and the merge order is the engine's.
+        shared = len({tuple(ordered or ()) for _p, _w, ordered, _r in legs}) == 1
+        spec_sort: set[str] = set()  # attributes the members' specs, not the request, sort by
+        queries: list[SearchParams] = []
+
+        for params_kwargs, weight, ordered, requested in legs:
+            sort_list = ordered if shared else requested
+
+            if shared:
+                asked = {entry.rsplit(":", 1)[0] for entry in requested or ()}
+                spec_sort.update(
+                    attr
+                    for attr in (e.rsplit(":", 1)[0] for e in ordered or ())
+                    if attr not in asked
+                )
 
             if sort_list is not None:
                 params_kwargs["sort"] = sort_list
@@ -433,7 +487,18 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         if limit is not None:
             federation["limit"] = int(limit)
 
-        result = await self.client.multi_search(queries, federation=federation)
+        try:
+            result = await self.client.multi_search(queries, federation=federation)
+
+        except CoreException as e:
+            cause = e.__cause__
+
+            if isinstance(cause, MeilisearchApiError) and (
+                refusal := unsortable_refusal(cause, spec_sort)
+            ):
+                raise refusal from e
+
+            raise
         hits_raw = list(getattr(result, "hits", []) or [])
         total = int(
             getattr(result, "estimated_total_hits", None)
@@ -530,7 +595,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         # Spec-level (RRF mode only): thin specs store/replay tiny ``(member, id)``
         # snapshot keys; the marker keeps a thin snapshot from being read as a full one.
         effective_thin = federated_thin_format(
-            self.federated_spec.members, thin_merge=self.federated_spec.thin_merge
+            self.federated_spec.members, thin_merge=self._thin_merge
         )
 
         fp_extras: dict[str, object] = {
@@ -630,7 +695,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
 
         if federated_thin_eligible(
             members=self.federated_spec.members,
-            thin_merge=self.federated_spec.thin_merge,
+            thin_merge=self._thin_merge,
             wants_highlights=wants_highlights,
             sorts=sorts,
         ):

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A hub search can raise the limits its filters are parsed under.** `HubSearchSpec(filter_limits=...)` bounds the hub's filter, parsed once for its hub rows on Postgres and in the in-memory hub alike; a member's own limits do not apply to it.
+
+- **A search spec can choose how an unasked page counts its total.** `SearchSpec(default_search_count="approximate")` (or `"none"`) applies when a request sets no `search_count`, so a large log need not run `COUNT(*)` on every page. The request option still wins; Postgres honours it.
+
 - **Authorization can remember a principal's catalog grants.** `AuthzKernelConfig(grants_cache=GrantsCache(ttl=...))` caches roles and permissions by principal, tenant and scope; active status and provider grants stay live. Off by default; role assignment clears it on commit; other changes wait for the TTL.
 
 - **Deployment configuration can grant a permission, and be its only source.** `ConfigGrantsProvider(keys=...)` grants each key to the principal ids a `ConfigGrants` settings model lists and denies it to everyone else, so a catalog binding of the key grants nothing, and the startup step refuses one.
@@ -35,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Federated search merges thin by default** (**behaviour change**). `FederatedSearchSpec.thin_merge` now defaults to `True`: members return ids and only the page is re-read, bounding memory. Existing result snapshots miss once, and a row deleted between ranking and re-read shortens its page.
+
 - **Already-normalized text skips normalization when it is read back.** `normalize_string`, behind the kits' `String` and `LongString`, first checks whether it would change anything: a 500-row read of three such fields went from 16 ms to 1.3 ms. Text that needs work is normalized as before.
 
 - **A debug call below the configured level costs a comparison.** While `configure_logging`'s level is above debug, `Logger.debug` returns before building the structlog logger, about 2 µs to 0.1 µs. Unconfigured, after `structlog.reset_defaults()` or under another wrapper class, debug reaches structlog as before.
@@ -52,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An explicit null placement no Postgres search cursor can keep is refused** (**behaviour change**), as Mongo does; offset pages still honour it. Meilisearch refuses one on any page. Before, the placement was dropped and the cursor walked a different order from the offset page.
 
 ### Fixed
+
+- **A blank Meilisearch native federated search follows the members' shared `default_sort`** (**behaviour change**: page order). When every member resolves to the same sort and primary key, an unsorted browse orders by that sort, then the id, instead of index order; members that differ keep the engine's order.
 
 - **A PGroonga search uses its index for any supported index expression** (**behaviour change**). An index on `ARRAY[title, content]` or `(title)` never served it, so each search scanned the table. Matches and order now follow the index's tokenizer and normalizer, as for a `coalesce`-declared index.
 

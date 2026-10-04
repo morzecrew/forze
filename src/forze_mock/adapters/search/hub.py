@@ -38,7 +38,7 @@ from forze_mock.adapters.search._facets_highlights import (
     compute_highlights,
 )
 from forze_mock.adapters.search._unsupported import MockOffsetOnlySearchMixin
-from forze_mock.adapters.search.query import MockSearchAdapter
+from forze_mock.adapters.search.query import MockSearchAdapter, filter_predicate
 from forze_mock.query.matching import (
     _sort_docs,  # pyright: ignore[reportPrivateUsage]
 )
@@ -104,6 +104,8 @@ class MockHubSearchAdapter[M: BaseModel](
             backend="mock_hub",
         )
         leg_opts, weights = prepare_hub_search_options(self.hub_spec, options)
+        # One parse, under the hub's own limits: the members' limits do not apply to it.
+        matches = filter_predicate(filters, self.hub_spec.filter_limits)
         scores: dict[str, float] = {}
         docs: dict[str, dict[str, Any]] = {}
 
@@ -116,6 +118,7 @@ class MockHubSearchAdapter[M: BaseModel](
                 filters,
                 {ID_FIELD: "asc"},
                 leg_opts,
+                matches=matches,
             )
             for rank, doc in enumerate(ordered, start=1):
                 key = str(doc.get("id", rank))

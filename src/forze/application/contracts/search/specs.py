@@ -22,6 +22,7 @@ from ..conformity import (
 from ..crypto import FieldEncryption
 from ..querying import QueryFilterLimits, QuerySortExpression
 from ..querying.sort_resolution import read_fields_for_model, validate_sort_fields
+from .types import SearchCountPolicy
 
 # ----------------------- #
 
@@ -325,6 +326,11 @@ class SearchSpec[M: BaseModel](BaseSpec):
     ``max_in_size`` for internal reads that match against long id lists; a backend with a lower
     hard cap of its own (Firestore's ``in``) still refuses past it."""
 
+    default_search_count: SearchCountPolicy | None = None
+    """How a page counts its total when the request's ``search_count`` option is absent:
+    ``exact``, ``approximate`` or ``none``. ``None`` keeps ``exact``. The request option still
+    wins. Postgres honours it; the other backends report totals their own way."""
+
     materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
     """``@computed_field`` names on the read model that are persisted as real columns on
     the search relation, so search results can be **filtered and sorted by the derived
@@ -570,6 +576,12 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     default_sort: QuerySortExpression | None = None
     """Default ``sorts`` for hub browse/cursor when callers omit them."""
 
+    filter_limits: QueryFilterLimits | None = None
+    """Bounds on the filters a hub search accepts; ``None`` keeps the parser's defaults.
+
+    A hub's filter applies to its hub rows and is parsed once, under these limits — its
+    members' own :attr:`SearchSpec.filter_limits` do not apply to it."""
+
     materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
     """``@computed_field`` names on the hub-row model persisted as real hub columns, so
     hub results can be filtered/sorted by the derived value. Mirror of
@@ -766,24 +778,23 @@ class FederatedSearchSpec[X: BaseModel](BaseSpec):
     snapshot: SearchResultSnapshotSpec | None = None
     """Optional defaults for result-ID snapshotting (outer federated adapter)."""
 
-    thin_merge: bool = False
-    """Opt into late-materialized RRF merge to bound merge-time memory.
+    thin_merge: bool = True
+    """Late-materialized RRF merge, which bounds merge-time memory.
 
-    By default each leg fetches up to ``rrf_per_leg_limit`` **full** hits, and the
-    whole candidate union (full hits) is held in memory to fuse and sort — peak
-    grows with ``members x rrf_per_leg_limit x hit size``, independent of page size.
-    When ``True``, eligible searches instead fetch only ``id`` per leg, fuse on
-    ``(member, id)``, and re-hydrate **just the page** from each member — so peak is
-    the thin candidate keys plus one page of full hits. The trade-off is one extra
-    (page-sized) round trip per member, so it is opt-in.
+    Eligible searches fetch only ``id`` per leg, fuse on ``(member, id)``, and re-hydrate
+    **just the page** from each member — so peak memory is the thin candidate keys plus one
+    page of full hits, at the cost of one extra (page-sized) round trip per member. With
+    ``False`` each leg fetches up to ``rrf_per_leg_limit`` **full** hits and the whole
+    candidate union is held in memory to fuse and sort — peak grows with
+    ``members x rrf_per_leg_limit x hit size``, independent of page size.
 
     A secondary ``sorts`` stays on the thin path too — the sort fields (including dotted
     paths into nested sub-models) are projected alongside ``id`` and applied as a tie-break
     under the fused score — as long as every sort key's **root** field exists on all members;
-    otherwise it falls back. Falls back to the full-fetch path for a search that requests
-    highlights (needs the full leg hits up front), writes a result snapshot (the snapshot
-    stores full records for leg-free replay), or whose member read models lack an ``id``
-    field. Default ``False`` keeps the previous behaviour."""
+    otherwise it falls back. A search that requests highlights (needs the full leg hits up
+    front), or whose member read models lack an ``id`` field, also falls back to the
+    full-fetch path. A result snapshot stores thin ``(member, id)`` keys and replays by
+    re-fetching the page, so a row deleted since the snapshot shortens that page."""
 
     # ....................... #
 
