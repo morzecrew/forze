@@ -109,8 +109,10 @@ def _uuid(rng: random.Random) -> UUID:
     return UUID(int=rng.getrandbits(128))
 
 
-# Distinct as records: none of these share a JSON form with another.
-_ANY_IDS: tuple[Any, ...] = (1, 1.0, True, 2, "1", "x", False, 0)
+# Ids an untyped ``id`` may hold. A UUID and its string share a JSON form, so a record carrying
+# one equals a record carrying the other; the rest are distinct as records.
+_UUID_ID = UUID(int=7)
+_ANY_IDS: tuple[Any, ...] = (1, 1.0, True, 2, "1", "x", False, 0, _UUID_ID, str(_UUID_ID))
 
 
 def _random_legs(rng: random.Random) -> list[tuple[str, list[BaseModel], float]]:
@@ -240,10 +242,13 @@ class TestTheMergeMatchesTheRecordKeyedMerge:
 
 class _NoDump(_Hit):
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise AssertionError("an id hit was serialized to key it")
+        if kwargs.get("include") != {"id"}:
+            raise AssertionError("a hit with a unique id was serialized whole to key it")
+
+        return super().model_dump(*args, **kwargs)
 
 
-class TestAnIdHitIsKeyedWithoutSerializing:
+class TestAnIdHitIsKeyedWithoutSerializingTheRecord:
     def test_the_merge_never_dumps_a_hit_that_has_an_id(self) -> None:
         hits: list[BaseModel] = [_NoDump(id=UUID(int=i), label="x") for i in range(3)]
 
@@ -269,6 +274,41 @@ class TestAnUnhashableIdFallsBackToTheRecord:
         hits: list[BaseModel] = [_ListId(id=[1], label="x"), _ListId(id=[2], label="y")]
 
         assert [hit for _m, hit, _s in _merge([("m", hits, 1.0)], 60)] == hits
+
+    def test_a_tuple_holding_a_list_merges_like_any_other_id(self) -> None:
+        hits: list[BaseModel] = [_AnyId(id=(1, []), label="x"), _AnyId(id=(2, []), label="y")]
+        legs: list[tuple[str, list[BaseModel], float]] = [("m", hits, 1.0)]
+
+        assert _merge(legs, 60) == _oracle(legs, 60)
+
+
+class TestAnIdEqualAsJsonIsOneId:
+    def test_a_uuid_and_its_string_are_the_record_they_render_as(self) -> None:
+        same: list[BaseModel] = [
+            _AnyId(id=_UUID_ID, label="x"),
+            _AnyId(id=str(_UUID_ID), label="x"),
+        ]
+        apart: list[BaseModel] = [
+            _AnyId(id=_UUID_ID, label="x"),
+            _AnyId(id=str(_UUID_ID), label="y"),
+        ]
+
+        for hits in (same, apart):
+            legs: list[tuple[str, list[BaseModel], float]] = [("m", hits, 1.0)]
+            assert _merge(legs, 60) == _oracle(legs, 60)
+
+        assert len(_merge([("m", same, 1.0)], 60)) == 1
+        assert len(_merge([("m", apart, 1.0)], 60)) == 2
+
+    def test_a_mapping_id_is_one_id_whatever_its_key_order(self) -> None:
+        hits: list[BaseModel] = [
+            _AnyId(id={"a": 1, "b": 2}, label="x"),
+            _AnyId(id={"b": 2, "a": 1}, label="x"),
+        ]
+        legs: list[tuple[str, list[BaseModel], float]] = [("m", hits, 1.0)]
+
+        assert _merge(legs, 60) == _oracle(legs, 60)
+        assert len(_merge(legs, 60)) == 1
 
 
 class TestHighlightsFollowTheirHit:

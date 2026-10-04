@@ -497,10 +497,20 @@ class SearchResultSnapshot:
     # ....................... #
 
     @staticmethod
-    def _hit_id(hit: BaseModel) -> Hashable | None:
-        rid = getattr(hit, "id", None)
+    def _hit_id(hit: BaseModel) -> str | None:
+        """The hit's ``id`` as its record renders it, or ``None`` when the record has none.
 
-        return rid if isinstance(rid, Hashable) else None
+        The same encoding as :meth:`federated_record_key_string`, applied to the id alone, so
+        two ids are equal exactly when the records would agree on them: a UUID and its string
+        are one id; ``1``, ``1.0``, ``True`` and ``"1"`` are four.
+        """
+
+        dumped = hit.model_dump(mode="json", include={"id"})
+
+        if dumped.get("id") is None:
+            return None
+
+        return json.dumps(dumped["id"], sort_keys=True)
 
     # ....................... #
 
@@ -508,11 +518,11 @@ class SearchResultSnapshot:
     def federated_merge_keys(member: str, hits: Sequence[BaseModel]) -> list[Hashable]:
         """In-memory identities of one member's federated hits, in order.
 
-        A hit whose id is unique among *hits* is keyed ``(member, id)``, which costs no
-        serialization. Any other hit — no id, an unhashable one, or an id the member repeats
-        (a join returning one row per joined record, or equal ids such as ``1`` and ``True``) —
-        keeps its record key (:meth:`federated_record_key_string`), so records merge exactly as
-        they did by record. Snapshots keep storing the record key.
+        A hit whose id (see :meth:`_hit_id`) is unique among *hits* is keyed ``(member, id)``,
+        which serializes only the id. Any other hit — no id, or an id the member repeats, as a
+        join returning one row per joined record does — keeps its record key
+        (:meth:`federated_record_key_string`), so records merge exactly as they did by record.
+        Snapshots keep storing the record key.
         """
 
         ids = [SearchResultSnapshot._hit_id(hit) for hit in hits]
