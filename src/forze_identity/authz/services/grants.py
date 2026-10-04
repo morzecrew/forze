@@ -257,9 +257,9 @@ class AuthzGrantResolver:
             cached = cache.get(key)
 
             if cached is None:
-                epoch = cache.epoch
+                began = cache.begin()
                 catalog = await self._catalog_grants(principal_id)
-                cache.put(key, catalog, epoch=epoch)
+                cache.put(key, catalog, began=began)
 
             else:
                 catalog = cached

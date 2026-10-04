@@ -33,9 +33,10 @@ class GrantsCache:
     Decisions inside a transaction read the bindings and leave the cache alone, since what they
     read may still roll back.
 
-    The TTL is the revocation delay for every other change: a binding removed by a plain
-    document command, or by another process, keeps granting here until the entry expires.
-    ``RoleAssignmentPort`` forgets the principal in this process when its write commits. After
+    ``RoleAssignmentPort`` forgets the principal in this process when its write commits. For
+    every other change the TTL, counted from when the cached read began, bounds how long a
+    removed grant keeps working: a binding removed by a plain document command, or by another
+    process, keeps granting here until the entry expires. After
     committing another change, call :meth:`forget` when it touches one principal's own bindings
     (its role, permission or group membership bindings), and :meth:`clear` when it touches what
     many principals reach: a role's permissions or parent, a group's roles, permissions or active
@@ -67,6 +68,9 @@ class GrantsCache:
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
+        if not callable(self.clock):
+            raise exc.configuration(f"GrantsCache.clock must be callable, not {self.clock!r}")
+
         if not isinstance(self.ttl, timedelta) or self.ttl <= timedelta(0):
             raise exc.configuration(
                 f"GrantsCache.ttl must be a positive timedelta, not {self.ttl!r}"
@@ -83,11 +87,15 @@ class GrantsCache:
 
     # ....................... #
 
-    @property
-    def epoch(self) -> int:
-        """Advances on every :meth:`forget` and :meth:`clear`; pass it back to :meth:`put`."""
+    def begin(self) -> tuple[int, float]:
+        """Mark the start of a read: pass what it returns back to :meth:`put`.
 
-        return self._epoch
+        The epoch advances on every :meth:`forget` and :meth:`clear`; the time is when the read
+        began, which the entry's TTL counts from.
+        """
+
+        with self._lock:
+            return self._epoch, self.clock()
 
     # ....................... #
 
@@ -112,20 +120,25 @@ class GrantsCache:
 
     # ....................... #
 
-    def put(self, key: GrantsCacheKey, grants: CatalogGrants, *, epoch: int) -> None:
-        """Remember *grants*, read when :attr:`epoch` was *epoch*.
+    def put(self, key: GrantsCacheKey, grants: CatalogGrants, *, began: tuple[int, float]) -> None:
+        """Remember *grants* from a read that began at *began*, as :meth:`begin` returned it.
 
+        The entry expires a TTL after the read began, so a slow read does not stretch the TTL.
         Dropped when a forget ran since: the grants may have been read before the change it
         announces.
         """
 
+        epoch, read_at = began
+
         # ponytail: one epoch for every principal, so any forget voids every read in flight;
         # per-principal generations if forgets ever become frequent.
         with self._lock:
+            expires_at = read_at + self.ttl.total_seconds()
+
             if epoch != self._epoch:
                 return
 
-            self._entries[key] = (self.clock() + self.ttl.total_seconds(), grants)
+            self._entries[key] = (expires_at, grants)
             self._entries.move_to_end(key)
 
             while len(self._entries) > self.max_entries:

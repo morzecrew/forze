@@ -186,6 +186,7 @@ class TestTheSetting:
             {"ttl": timedelta(minutes=1), "max_entries": 0},
             {"ttl": timedelta(minutes=1), "max_entries": True},
             {"ttl": timedelta(minutes=1), "max_entries": 1.5},
+            {"ttl": timedelta(minutes=1), "clock": 0.0},
         ],
     )
     def test_a_cache_that_would_hold_nothing_is_refused(self, kwargs: dict[str, Any]) -> None:
@@ -230,6 +231,32 @@ class TestWhatItRemembers:
         assert await world.held() == {"writer"}  # remembered: the TTL is the revocation delay
 
         clock.now += timedelta(minutes=5).total_seconds()
+
+        assert await world.held() == set()
+
+    async def test_an_entry_expires_a_ttl_after_its_read_began_not_after_it_ended(self) -> None:
+        # A slow read may have seen grants revoked while it ran; the TTL bounds how long they
+        # are served from the moment the read began.
+        clock = _Clock()
+        cache = _cache(clock=clock)
+        world = await _world(cache)
+        slow = _Slow(world.resolver, clock, seconds=timedelta(minutes=4).total_seconds())
+
+        assert await slow.held(world.principal) == {"writer"}
+
+        await world.drop_binding()
+        clock.now += timedelta(minutes=1).total_seconds()  # 5 minutes after the read began
+
+        assert await world.held() == set()
+
+    async def test_a_read_slower_than_the_ttl_is_never_served(self) -> None:
+        clock = _Clock()
+        world = await _world(_cache(clock=clock))
+        slow = _Slow(world.resolver, clock, seconds=timedelta(minutes=6).total_seconds())
+
+        assert await slow.held(world.principal) == {"writer"}
+
+        await world.drop_binding()
 
         assert await world.held() == set()
 
@@ -307,6 +334,33 @@ class TestForgetting:
         await world.roles.revoke_role(world.principal, "writer")
 
         assert not await world.allowed(WRITE)
+
+    async def test_revoking_a_role_someone_else_removed_still_forgets_the_principal(self) -> None:
+        # Another process removed the binding: this revoke finds nothing to remove, and its own
+        # cached entry must go all the same.
+        world = await _world(_cache())
+
+        assert await world.allowed(WRITE)
+
+        await world.drop_binding()
+        await world.roles.revoke_role(world.principal, "writer")
+
+        assert not await world.allowed(WRITE)
+
+    async def test_assigning_a_role_someone_else_bound_still_forgets_the_principal(self) -> None:
+        world = await _world(_cache(), assign=False)
+        role = await world.ctx.doc.query(role_definition_spec).find(
+            {"$values": {"role_key": "writer"}}
+        )
+
+        assert await world.held() == set()
+
+        await world.ctx.doc.command(principal_role_binding_spec).create(
+            CreatePrincipalRoleBindingCmd(principal_id=world.principal, role_id=role.id)
+        )
+        await world.roles.assign_role(world.principal, "writer")
+
+        assert await world.held() == {"writer"}
 
     async def test_assigning_a_role_forgets_the_principal(self) -> None:
         world = await _world(_cache(), assign=False)
@@ -503,6 +557,34 @@ class _Fixed:
 
     async def find_stream(self, **_kwargs: Any) -> AsyncIterator[list[Any]]:
         yield self._rows
+
+
+class _Slow:
+    """A resolver over the same cache whose read of the role bindings takes *seconds*."""
+
+    def __init__(self, resolver: AuthzGrantResolver, clock: _Clock, *, seconds: float) -> None:
+        class _Late:
+            def __init__(self, inner: Any) -> None:
+                self._inner = inner
+
+            def __getattr__(self, attr: str) -> Any:
+                return getattr(self._inner, attr)
+
+            async def find_stream(self, **kwargs: Any) -> AsyncIterator[Any]:
+                async for batch in self._inner.find_stream(**kwargs):
+                    yield batch
+
+                clock.now += seconds
+
+        self._resolver = attrs.evolve(
+            resolver,
+            deps=attrs.evolve(resolver.deps, pr_binding_qry=_Late(resolver.deps.pr_binding_qry)),
+        )
+
+    async def held(self, principal_id: UUID) -> set[str]:
+        grants = await self._resolver.resolve_effective_grants(principal_id)
+
+        return {ref.role_key for ref in grants.roles}
 
 
 class _Paused:

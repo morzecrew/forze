@@ -96,13 +96,13 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
 
         existing = await self._find_principal_role_binding(pid, role.id)
 
-        if existing is not None:
-            return
+        if existing is None:
+            await self.pr_binding_cmd.create(
+                CreatePrincipalRoleBindingCmd(principal_id=pid, role_id=role.id),
+                return_new=False,
+            )
 
-        await self.pr_binding_cmd.create(
-            CreatePrincipalRoleBindingCmd(principal_id=pid, role_id=role.id),
-            return_new=False,
-        )
+        # Even when another process bound it first: this process may have cached the absence.
         await self.resolver.forget(pid)
 
     # ....................... #
@@ -134,10 +134,10 @@ class RoleAssignmentAdapter(RoleAssignmentPort):
 
         binding = await self._find_principal_role_binding(pid, role.id)
 
-        if binding is None:
-            return
+        if binding is not None:
+            await self.pr_binding_cmd.kill(binding.id)
 
-        await self.pr_binding_cmd.kill(binding.id)
+        # Even when another process removed it first: this process may still cache the role.
         await self.resolver.forget(pid)
 
     # ....................... #
