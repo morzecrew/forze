@@ -29,7 +29,8 @@ result-set snapshots.
 | `default_weights` | `Mapping[str, float] \| None` | `None` | per-field relevance weights |
 | `fuzzy` | `SearchFuzzySpec \| None` | `None` | fuzzy-matching configuration |
 | `default_sort` | `QuerySortExpression \| None` | `None` | sort when a caller omits `sorts`, on offset and cursor pages alike (required if the model has no `id`) |
-| `filter_limits` | `QueryFilterLimits \| None` | `None` | bounds on the filters a search accepts; `None` keeps the defaults (see [Limits](../query-syntax.md#limits)). `HubSearchSpec` has none: hub filters use the defaults |
+| `filter_limits` | `QueryFilterLimits \| None` | `None` | bounds on the filters a search accepts; `None` keeps the defaults (see [Limits](../query-syntax.md#limits)). `HubSearchSpec` takes its own, applied once to the hub rows; members' limits don't apply to a hub filter |
+| `default_search_count` | `"exact" \| "approximate" \| "none" \| None` | `None` | how a page counts its total when the request sets no `search_count`; `None` keeps `exact`. Postgres honours it; other backends report totals their own way. `HubSearchSpec` and `FederatedSearchSpec` have none |
 | `materialized` | `frozenset[str]` | `∅` | `@computed_field` names that are real columns on the search relation, so results can be filtered/sorted by the derived value (mirror of [`DocumentSpec.materialized`](document.md#spec); relational in-place only, **not** startup-validated) |
 | `facetable_fields` | `frozenset[str]` | `∅` | fields a query may compute term (value) facet distributions over (must be real, non-lenient, non-encrypted columns) |
 | `highlightable_fields` | `frozenset[str] \| None` | `None` | searchable fields a query may highlight; `None` = all searchable `fields`, `∅` = none |
@@ -45,6 +46,9 @@ result-set snapshots.
 `HubSearchSpec` carries the same `read_conformity` / `lenient_read_fields` / `materialized`
 over its hub-row model (a hub has no index `fields` of its own). `FederatedSearchSpec`
 inherits these from each member spec.
+A federated search merges thin by default (`thin_merge=True`): each member returns its ids
+(and the fields of any requested sort), and just the page is re-read from its member.
+`thin_merge=False` fuses full hits in memory instead.
 
 `materialized` is for **filtering and sorting** search results by a derived value — the
 column must already exist (typically written by the document side over the same table).

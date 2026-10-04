@@ -57,7 +57,7 @@ class MeilisearchSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        options = search_options_for_simple_adapter(options)
+        options = search_options_for_simple_adapter(options, spec=self.spec)
         combine = (options or {}).get("phrase_combine", "any")
 
         return await execute_meilisearch_offset_search(

@@ -337,7 +337,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        options = search_options_for_simple_adapter(options)
+        options = search_options_for_simple_adapter(options, spec=self.spec)
         parsed_filters = self.compile_filters(filters)
         fw, fp = await self.where_clause(filters, parsed=parsed_filters)
         terms = tuple(normalize_search_queries(query))
@@ -466,7 +466,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             backend="Postgres search cursor",
             sealed=self.sealed_fields,
         )
-        options = search_options_for_simple_adapter(options)
+        options = search_options_for_simple_adapter(options, spec=self.spec)
         lim, _, _ = parse_search_cursor(cursor)
         terms = tuple(normalize_search_queries(query))
         parsed_filters = self.compile_filters(filters)

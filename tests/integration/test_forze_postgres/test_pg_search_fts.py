@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.base import CursorPage
+from forze.application.contracts.base import CountlessPage, CursorPage, Page
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.search import SearchQueryDepKey, SearchSpec
 from forze.application.execution import Deps
@@ -876,3 +876,46 @@ async def test_fts_search_stream_walks_past_candidate_cap(
         ids |= {h.id for h in chunk}
 
     assert len(ids) == total  # the full set, not the capped 60
+
+
+@pytest.mark.asyncio
+async def test_a_spec_default_search_count_governs_an_unasked_page(
+    pg_client: PostgresClient,
+) -> None:
+    suffix = uuid4().hex[:12]
+    table = f"fts_cnt_{suffix}"
+    index_name = f"idx_fts_cnt_{suffix}"
+    await pg_client.execute(
+        f"CREATE TABLE {table} (id uuid PRIMARY KEY, title text NOT NULL, content text NOT NULL)"
+    )
+    await pg_client.execute(
+        f"""
+        CREATE INDEX {index_name} ON {table}
+        USING gin (to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, '')))
+        """
+    )
+    for i in range(3):
+        await pg_client.execute(
+            f"INSERT INTO {table} (id, title, content) VALUES (%(id)s, %(t)s, 'x')",
+            {"id": uuid4(), "t": f"tally doc {i}"},
+        )
+
+    ctx = fts_search_context(pg_client, table=table, index_name=index_name)
+    spec = SearchSpec(
+        name="fts_cnt",
+        model_type=FtsArticle,
+        fields=["title", "content"],
+        default_search_count="none",
+    )
+    adapter = ctx.search.query(spec)
+
+    unasked = await adapter.search_page("tally", pagination={"limit": 2})
+    assert isinstance(unasked, CountlessPage)
+    assert not isinstance(unasked, Page)
+    assert len(unasked.hits) == 2
+
+    asked = await adapter.search_page(
+        "tally", pagination={"limit": 2}, options={"search_count": "exact"}
+    )
+    assert isinstance(asked, Page)
+    assert asked.count == 3

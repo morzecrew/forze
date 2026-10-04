@@ -47,6 +47,7 @@ def _mem(name: str) -> SearchSpec[_Hit]:
 
 def _fed() -> FederatedSearchSpec[_Hit]:
     return FederatedSearchSpec(
+        thin_merge=False,
         name="fed",
         members=(_mem("a"), _mem("b")),
     )
@@ -54,6 +55,7 @@ def _fed() -> FederatedSearchSpec[_Hit]:
 
 def _fed_with_result_snapshot() -> FederatedSearchSpec[_Hit]:
     return FederatedSearchSpec(
+        thin_merge=False,
         name="fed",
         members=(_mem("a"), _mem("b")),
         snapshot=SearchResultSnapshotSpec(
@@ -560,6 +562,7 @@ def test_configurable_federated_search_fts_requires_groups() -> None:
 
 def _fed_hub_and_flat() -> FederatedSearchSpec[_Hit]:
     return FederatedSearchSpec(
+        thin_merge=False,
         name="fed",
         members=(
             HubSearchSpec(
@@ -696,6 +699,7 @@ async def test_a_snapshot_taken_before_a_member_default_sort_runs_live() -> None
     )
     adapter = PostgresFederatedSearchAdapter(
         federated_spec=FederatedSearchSpec(
+            thin_merge=False,
             name="fed",
             members=(sorted_member, _mem("b")),
             snapshot=SearchResultSnapshotSpec(name="snap", enabled=True),

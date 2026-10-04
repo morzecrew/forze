@@ -279,12 +279,14 @@ async def execute_federated_thin_offset(
     # 4. Hydrate only the page: re-fetch full hits per member, restricted to its ids.
     #    Hydration reorders and may drop keys whose hit vanished, so the fused RRF score is
     #    re-aligned to the surviving models by (member, id) rather than by the window order.
+    #    The re-read is a blank browse by id: the ids are already chosen, and re-running the
+    #    query would let a member's candidate cap rank them out of a deep page.
     score_by_key = {(member, rid): score for member, rid, score in window}
     ports = {name: port for name, port, _weight in legs}
     models = await _hydrate_federated_page(
         ports=ports,
         ordered_keys=[(member, rid) for member, rid, _score in window],
-        query=query,
+        query="",
         filters=filters,
         leg_opts=leg_opts,
         run_legs=run_legs,
@@ -340,10 +342,14 @@ def _hydrate(
     leg_opts: SearchOptions | None,
 ) -> Callable[[], Awaitable[Any]]:
     async def _run() -> Any:
+        # The caller reorders the rows, so the re-read asks for no order of its own: a sort
+        # naming ``id`` ends there on every backend, so a member's ``default_sort`` (which an
+        # older index may not be able to sort by) is never applied.
         return await port.search(
             query,
             _and_id_filter(filters, ids),
             {"limit": len(ids)},
+            {ID_FIELD: "asc"},
             options=leg_opts,
         )
 
