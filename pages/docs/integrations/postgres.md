@@ -136,6 +136,13 @@ lifecycle = LifecyclePlan.from_modules(
   first, descending nulls last), which a plain index does not hold: index it with the
   placement your pages use, for example `(created_at DESC NULLS LAST)`. A view's columns
   other than the `id` all read as nullable.
+- **Partial indexes and bound filters.** Filter values are sent as parameters, including the
+  `is_deleted = false` and `is_current = true` that the soft-deletion and versioned kits
+  add. A partial index such as `(created_at DESC) WHERE is_deleted = false` still serves
+  those reads: under the default `plan_cache_mode`, Postgres keeps planning with the value
+  even once the statement is prepared on the server. With `plan_cache_mode =
+  force_generic_plan` it cannot prove the index's predicate and scans the table instead, so
+  keep the default where such indexes matter, or index without the predicate.
 - **PGroonga indexes.** Index the searched columns as one column, `USING pgroonga (title)`,
   or as an array, `USING pgroonga ((ARRAY[title, content]))`; each element is a column,
   optionally wrapped in casts or `COALESCE(col, '')`. The search matches against the
