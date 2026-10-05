@@ -177,6 +177,7 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
         on_heap = dict(join) | dict(self.index_field_map or {})
         parts: list[sql.Composable] = []
+        ordered: list[str] = []
 
         for field, direction, nulls in resolve_sort_keys(sorts, sealed=self.sealed_fields):
             if (column := on_heap.get(field)) is None:
@@ -194,8 +195,9 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 )
 
             parts.append(part)
+            ordered.append(column)
 
-        return sql.SQL(", ").join([*parts, scored_key_order(join)])
+        return sql.SQL(", ").join([*parts, *scored_key_order(join, ordered=ordered)])
 
     # ....................... #
 
