@@ -1049,12 +1049,14 @@ class RabbitMQClient(RabbitMQClientPort):
         declared = await self.__declare_queue(channel, queue)
         self.__warn_poison_drop_once(queue)
 
-        with suppress(TimeoutError):
-            async with asyncio.timeout(window.total_seconds()):
-                # No iterator timeout: the surrounding ``asyncio.timeout``
-                # bounds the whole drain loop (aio_pika treats its iterator
-                # ``timeout`` as a per-``__anext__`` wait, not a total one).
-                async with declared.iterator(no_ack=False) as it:
+        # No iterator timeout: the ``asyncio.timeout`` bounds the whole drain
+        # loop (aio_pika treats its iterator ``timeout`` as a per-``__anext__``
+        # wait, not a total one). It bounds the drain only: the iterator's exit
+        # cancels the consumer, and a deadline landing on that RPC makes aiormq
+        # close the channel, stranding the messages already received on it.
+        async with declared.iterator(no_ack=False) as it:
+            with suppress(TimeoutError):
+                async with asyncio.timeout(window.total_seconds()):
                     async for raw in it:
                         raw_messages.append(raw)
 

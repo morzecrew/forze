@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A RabbitMQ `receive` whose window ends as a message arrives returns messages it can ack.** The deadline could cut off the consumer cancel sent on exit, which closed the channel: the messages just returned could not be acked, and the broker redelivered them later.
+
 - **A blank Meilisearch native federated search follows the members' shared `default_sort`** (**behaviour change**: page order). When every member resolves to the same sort and primary key, an unsorted browse orders by that sort, then the id, instead of index order; members that differ keep the engine's order.
 
 - **A PGroonga search uses its index for any supported index expression** (**behaviour change**). An index on `ARRAY[title, content]` or `(title)` never served it, so each search scanned the table. Matches and order now follow the index's tokenizer and normalizer, as for a `coalesce`-declared index.
