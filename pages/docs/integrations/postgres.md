@@ -136,6 +136,14 @@ lifecycle = LifecyclePlan.from_modules(
   first, descending nulls last), which a plain index does not hold: index it with the
   placement your pages use, for example `(created_at DESC NULLS LAST)`. A view's columns
   other than the `id` all read as nullable.
+- **Partial indexes and bound filters.** Filter values are sent as parameters, including the
+  `is_deleted = false` and `is_current = true` that the soft-deletion and versioned kits
+  add. A generic plan, made without the values, cannot prove a partial index's predicate
+  such as `WHERE is_deleted = false`. Under the default `plan_cache_mode`, Postgres picks a
+  generic plan for a prepared statement only when it estimates no costlier than planning with
+  the values, and one that loses such an index usually costs more: in a 100,000-row test the
+  index was used on every execution. With `plan_cache_mode = force_generic_plan` the index is
+  never used, so keep the default where such indexes matter, or index without the predicate.
 - **PGroonga indexes.** Index the searched columns as one column, `USING pgroonga (title)`,
   or as an array, `USING pgroonga ((ARRAY[title, content]))`; each element is a column,
   optionally wrapped in casts or `COALESCE(col, '')`. The search matches against the
@@ -143,6 +151,16 @@ lifecycle = LifecyclePlan.from_modules(
   order, is then the index's own tokenizer and normalizer: with the default ones, `python`
   matches the word `python` and not `pythonic`. An index with any other kind of element,
   such as a transform like `lower(title)`, is refused when the search first runs.
+- **PGroonga and text outside ASCII.** The default normalizer folds case for ASCII only: on
+  PGroonga 4.0.6, `плата` does not match `Плата`, while `plata` matches `PLATA`. For
+  Cyrillic or other non-ASCII text, declare a Unicode-aware normalizer on the index, and
+  the search, which follows the index's own options, matches regardless of case:
+
+    ```sql
+    CREATE INDEX items_title_search ON items
+      USING pgroonga (title) WITH (normalizers = 'NormalizerNFKC150');
+    ```
+
 - **PGroonga and VACUUM.** On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
   PGroonga index built while a `VACUUM` or `ANALYZE` (autovacuum included) runs on another
   PGroonga-indexed table can break: searches through it return no rows, or fail with

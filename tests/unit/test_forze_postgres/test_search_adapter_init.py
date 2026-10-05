@@ -1,9 +1,11 @@
 """Constructor validation for search adapters."""
 
+import asyncio
 from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
+from psycopg import sql
 from pydantic import BaseModel
 
 from forze.application.contracts.search import SearchSpec
@@ -127,3 +129,140 @@ def test_fts_v2_rejects_duplicate_projection_join_columns() -> None:
             tenant_aware=False,
             join_pairs=[("id", "c1"), ("id", "c2")],
         )
+
+
+# ....................... #
+
+
+def _pgroonga(
+    join_pairs: list[tuple[str, str]] | None = None,
+    index_field_map: dict[str, str] | None = None,
+) -> PostgresPGroongaSearchAdapter[_Entity]:
+    spec = _spec()
+    # ``a`` lives on the heap under the same name, so an index-first cap can order by it.
+
+    return PostgresPGroongaSearchAdapter(
+        spec=spec,
+        codec=spec.resolved_read_codec,
+        relation=("public", "v"),
+        index_relation=("public", "i"),
+        index_heap_relation=("public", "h"),
+        client=MagicMock(),
+        model_type=_Entity,
+        introspector=MagicMock(),
+        tenant_provider=None,
+        tenant_aware=False,
+        join_pairs=join_pairs,
+        index_field_map={"a": "a", **(index_field_map or {})},
+    )
+
+
+class TestACapOrdersByTheRecordIdOnce:
+    """A resolved page order already ends on the id; the cap must not repeat it as a key."""
+
+    def test_on_the_heap_for_an_index_first_cap(self) -> None:
+        adapter = _pgroonga()
+        order = adapter._heap_cap_order({"a": "asc", "id": "asc"}, [("id", "id")])  # pyright: ignore[reportPrivateUsage]
+
+        assert order is not None
+        assert order.as_string() == '"t"."a" ASC NULLS FIRST, "t"."id" ASC'
+
+    def test_on_the_filtered_rows_for_a_filter_first_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The page's own ORDER BY is the gateway's (column types need a catalog); stand it in.
+        async def order_by_clause(
+            _self: object, sorts: object, *, table_alias: str | None = None
+        ) -> sql.Composable:
+            alias = sql.Identifier(table_alias or "")
+            return sql.SQL('{}."a" ASC, {}."id" ASC').format(alias, alias)
+
+        monkeypatch.setattr(PostgresPGroongaSearchAdapter, "order_by_clause", order_by_clause)
+        adapter = _pgroonga()
+        order, _ = asyncio.run(
+            adapter._capped_order(  # pyright: ignore[reportPrivateUsage]
+                {"a": "asc", "id": "asc"}, coalesced=False, join_pairs=[("id", "id")]
+            )
+        )
+
+        assert order.as_string() == '"f"."a" ASC, "f"."id" ASC'
+
+    def test_a_key_the_sort_does_not_name_still_closes_the_order(self) -> None:
+        adapter = _pgroonga([("id", "id"), ("tenant_id", "tid")])
+        order = adapter._heap_cap_order(  # pyright: ignore[reportPrivateUsage]
+            {"id": "asc"}, [("id", "id"), ("tenant_id", "tid")]
+        )
+
+        assert order is not None
+        assert order.as_string() == '"t"."id" ASC, "tenant_id"'
+
+    def test_without_a_sort_the_keys_alone_order_it(self) -> None:
+        adapter = _pgroonga()
+        order, _ = asyncio.run(
+            adapter._capped_order(None, coalesced=False, join_pairs=[("id", "id")])  # pyright: ignore[reportPrivateUsage]
+        )
+
+        assert order.as_string() == '"id"'
+
+    def test_a_key_kept_when_the_sort_reads_another_heap_column(self) -> None:
+        # ``tenant_id`` joins on heap column ``tid`` but is indexed from ``other``: ordering by
+        # ``t.other`` does not order by the scored key ``t.tid``, so the key must stay.
+        join = [("id", "id"), ("tenant_id", "tid")]
+        adapter = _pgroonga(join, {"tenant_id": "other"})
+        order = adapter._heap_cap_order({"tenant_id": "asc", "id": "asc"}, join)  # pyright: ignore[reportPrivateUsage]
+
+        assert order is not None
+        assert order.as_string() == '"t"."other" ASC NULLS FIRST, "t"."id" ASC, "tenant_id"'
+
+    def test_a_coalesced_cap_keeps_a_key_whose_heap_column_differs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Coalesced, the sort orders the heap by the field's own column; the scored key is the
+        # join's heap column, which is a different one here.
+        async def order_by_clause(
+            _self: object, sorts: object, *, table_alias: str | None = None
+        ) -> sql.Composable:
+            alias = sql.Identifier(table_alias or "")
+            return sql.SQL('{}."tenant_id" ASC, {}."id" ASC').format(alias, alias)
+
+        monkeypatch.setattr(PostgresPGroongaSearchAdapter, "order_by_clause", order_by_clause)
+        join = [("id", "id"), ("tenant_id", "tid")]
+        order, _ = asyncio.run(
+            _pgroonga(join)._capped_order(  # pyright: ignore[reportPrivateUsage]
+                {"tenant_id": "asc", "id": "asc"}, coalesced=True, join_pairs=join
+            )
+        )
+
+        assert order.as_string() == '"t"."tenant_id" ASC, "t"."id" ASC, "tenant_id"'
+
+    def test_a_filtered_cap_drops_a_key_the_join_equates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The filtered CTE carries the projection column, which the join equates with the
+        # scored key's heap column, so ordering by it already orders by the key.
+        async def order_by_clause(
+            _self: object, sorts: object, *, table_alias: str | None = None
+        ) -> sql.Composable:
+            alias = sql.Identifier(table_alias or "")
+            return sql.SQL('{}."tenant_id" ASC, {}."id" ASC').format(alias, alias)
+
+        monkeypatch.setattr(PostgresPGroongaSearchAdapter, "order_by_clause", order_by_clause)
+        join = [("id", "id"), ("tenant_id", "tid")]
+        order, _ = asyncio.run(
+            _pgroonga(join)._capped_order(  # pyright: ignore[reportPrivateUsage]
+                {"tenant_id": "asc", "id": "asc"}, coalesced=False, join_pairs=join
+            )
+        )
+
+        assert order.as_string() == '"f"."tenant_id" ASC, "f"."id" ASC'
+
+    def test_a_key_dropped_when_the_sort_orders_its_heap_column_under_another_name(
+        self,
+    ) -> None:
+        # The record id joins on heap column ``doc_id``; sorting by ``id`` orders ``t.doc_id``,
+        # which is the scored key's own column.
+        join = [("id", "doc_id")]
+        order = _pgroonga(join)._heap_cap_order({"id": "asc"}, join)  # pyright: ignore[reportPrivateUsage]
+
+        assert order is not None
+        assert order.as_string() == '"t"."doc_id" ASC'

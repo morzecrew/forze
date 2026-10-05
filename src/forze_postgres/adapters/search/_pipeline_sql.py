@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 import attrs
 from psycopg import sql
@@ -38,15 +38,20 @@ def scored_order_by_rank_alias(rank_column: str) -> sql.Composable:
     return sql.Identifier(rank_column)
 
 
-def scored_key_order(join_pairs: Sequence[tuple[str, str]]) -> sql.Composable:
+def scored_key_order(
+    join_pairs: Sequence[tuple[str, str]],
+    *,
+    ordered: Collection[str] = (),
+) -> list[sql.Composable]:
     """The scored CTE's key columns, by output name: what breaks a rank tie at a cap's edge.
 
     The cap keeps the best-ranked rows; rows that tie on rank there would otherwise be kept in
     whatever order the scan met them, and a page sorted out of the pool could differ between
-    requests.
+    requests. A key whose heap column the sort already orders by (*ordered*, heap column names)
+    is left out: ordering by it twice changes nothing.
     """
 
-    return sql.SQL(", ").join(sql.Identifier(pc) for pc, _ in join_pairs)
+    return [sql.Identifier(pc) for pc, ic in join_pairs if ic not in ordered]
 
 
 # ....................... #
