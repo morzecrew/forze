@@ -1,0 +1,211 @@
+# Forze starter alert rules for Prometheus.
+#
+# These are the alarms that until now lived only in docstrings — "cold_miss should sit at
+# ~0", "a sustained created rate while size == capacity is LRU thrash", "alarm on
+# overflowed". Loadable rules, with the docstring's own reasoning carried into the
+# annotations so whoever gets paged reads *why* rather than a threshold.
+#
+# Metric names assume `add_metric_suffixes = false` on the Alloy Prometheus exporter, which
+# is what the shipped `config.alloy` sets: the OTel name with dots turned into underscores,
+# no `_total` / `_milliseconds` suffixes. Leave suffixes on and every expression below
+# needs adjusting — see the Grafana stack recipe.
+#
+# Thresholds are starting points, not truth. `for:` durations are chosen so a single
+# unlucky scrape cannot page anyone; tune both against your own traffic.
+
+groups:
+  - name: forze-operations
+    interval: 30s
+    rules:
+      - alert: ForzeOperationErrorRateHigh
+        expr: |
+          sum by (job) (rate(forze_operations{forze_outcome="error"}[5m]))
+            / clamp_min(sum by (job) (rate(forze_operations[5m])), 1e-9)
+            > 0.05
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.job }}: over 5% of operations are erroring"
+          description: >-
+            forze_outcome="error" counts genuine faults only — a 4xx-class domain failure
+            (validation, not-found, conflict, precondition) is recorded as "failed" and is
+            deliberately excluded. So this is not callers sending bad input; something
+            downstream of the handler is breaking. Start from the "Failing operations"
+            panel to find which operation, then follow its trace.
+
+      - alert: ForzeDurableRecoverySustained
+        expr: sum by (job) (rate(forze_durable_recovered[15m])) > 0.05
+        for: 30m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: durable runs keep being reclaimed"
+          description: >-
+            Recovery sweeps are reclaiming runs from processes that died holding them. A
+            burst right after a deploy is expected. Sustained, it means workers are dying
+            mid-run — OOM kills, ungraceful shutdown, or a lease that expires faster than
+            a run takes.
+
+  - name: forze-job-progress
+    interval: 30s
+    rules:
+      # The `or` is the load-bearing half of this rule, not a convenience. The stalled
+      # gauge reads a cache the sweep fills, so a dead sweep freezes it at its last value —
+      # almost always zero — and a rule watching only the count goes green at the exact
+      # moment it stops knowing anything.
+      # The third clause is not redundant. `scan_age` reports **-1** when the sweep has
+      # never completed once, and -1 is not > 300 — so a sweep that was never wired up at
+      # all would slip past a rule that only watches for a *large* age, in exactly the
+      # deployment where nothing else is watching either.
+      - alert: ForzeJobsStalled
+        expr: |
+          sum by (job, forze_job_kind) (forze_jobs_stalled) > 0
+            or max by (job) (forze_jobs_staleness_scan_age) > 300
+            or max by (job) (forze_jobs_staleness_scan_age) < 0
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: jobs are stuck, or the staleness sweep stopped"
+          description: >-
+            Either a job started and went silent past its heartbeat window, or the sweep
+            that answers that question has not completed in five minutes (set the second
+            threshold to a few times your sweep interval). Check
+            forze_jobs_staleness_scan_age first: -1 means the sweep has never run at all,
+            which is a wiring problem rather than a stuck job.
+
+  - name: forze-resilience
+    interval: 30s
+    rules:
+      - alert: ForzeCircuitBreakerOpen
+        expr: max by (job, forze_policy, forze_route) (forze_resilience_breaker_state) >= 2
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.job }}: breaker open on {{ $labels.forze_policy }}/{{ $labels.forze_route }}"
+          description: >-
+            The breaker has been open for five minutes, so every call on this route is
+            being shed without reaching the dependency. Half-open probes are failing too,
+            otherwise it would have closed. The dependency is down or hard-throttling.
+
+      - alert: ForzeBulkheadSaturated
+        expr: |
+          min by (job, forze_policy, forze_route) (forze_resilience_bulkhead_queue_depth) > 0
+            and max by (job, forze_policy, forze_route) (
+              rate(forze_resilience_events{forze_event=~"bulkhead_.*"}[5m])
+            ) > 0
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: bulkhead {{ $labels.forze_policy }}/{{ $labels.forze_route }} is queueing continuously"
+          description: >-
+            Calls have never found a free slot across the whole window and the bulkhead is
+            rejecting or backing off. Either the dependency slowed down or the concurrency
+            limit is below what this route now needs. Compare queue depth against
+            forze_resilience_bulkhead_limit — a limit that keeps decreasing is the AIMD
+            controller reacting to real failures, not a misconfiguration.
+
+  - name: forze-data-planes
+    interval: 30s
+    rules:
+      # The docstring alarm, made loadable: cold_miss should sit at ~0.
+      - alert: ForzeCryptoColdMiss
+        expr: sum by (job, forze_keyring) (rate(forze_crypto_cold_miss[10m])) > 0
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: synchronous crypt hitting a cold cache ({{ $labels.forze_keyring }})"
+          description: >-
+            A synchronous encrypt/decrypt found no warm data key and raised
+            cipher_not_warm. This should be zero: a sustained rate means some read or write
+            path is skipping its async pre-pass (warm / ensure_unwrapped). Requests on that
+            path are failing, not just running slower.
+
+      - alert: ForzeTenantPoolThrash
+        expr: |
+          sum by (job, forze_client) (rate(forze_tenancy_pool_created[10m])) > 0.1
+            and sum by (job, forze_client) (forze_tenancy_pool_size)
+              >= sum by (job, forze_client) (forze_tenancy_pool_capacity)
+        for: 20m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: tenant pool thrash on {{ $labels.forze_client }}"
+          description: >-
+            Pools are being created steadily while the cache sits at capacity — hot
+            tenants' pools are being evicted by cold one-off traffic, and every rebuild
+            pays full connection establishment. Raise max_cached_tenants, or route the
+            cold traffic somewhere it cannot evict.
+
+      - alert: ForzeTokenVerificationFailures
+        expr: |
+          sum by (job, forze_signer) (rate(forze_authn_tokens_verify_failed[5m]))
+            / clamp_min(
+                sum by (job, forze_signer) (rate(forze_authn_tokens_verified[5m]))
+                  + sum by (job, forze_signer) (rate(forze_authn_tokens_verify_failed[5m])),
+                1e-9)
+            > 0.1
+        for: 15m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: over 10% of token verifications are being rejected"
+          description: >-
+            Tokens are being rejected as expired or invalid at an unusual rate. In order of
+            likelihood: a key rotation where the old key was retired before its tokens
+            expired, clock skew between issuer and verifier, or someone presenting forged
+            tokens.
+
+  - name: forze-realtime
+    interval: 30s
+    rules:
+      # Same -1 sentinel trap as the job sweep: a backplane whose probe has *never*
+      # succeeded reports -1, which no "> 60" threshold will ever catch. A channel that
+      # never worked would then be the one thing this rule stays silent about.
+      - alert: ForzeRealtimeBackplaneStale
+        expr: |
+          max by (job, forze_realtime_channel) (forze_realtime_backplane_seconds_since_ok) > 60
+            or max by (job, forze_realtime_channel) (forze_realtime_backplane_seconds_since_ok) < 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.job }}: realtime backplane has not accepted a frame"
+          description: >-
+            The heartbeat has not pushed a probe through the Socket.IO manager in over a
+            minute (set this to a few heartbeat intervals). Cross-node emits are silently
+            down — nothing in python-socketio raises when the Redis listener dies, which is
+            why this gauge exists. A value of -1 means no probe has *ever* succeeded, which
+            is a wiring problem instead.
+
+      - alert: ForzeRealtimeDeliveriesDropped
+        expr: |
+          sum by (job) (increase(forze_realtime_gateway_poisoned[15m])) > 0
+            or sum by (job) (increase(forze_realtime_gateway_untenanted_dropped[15m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: realtime deliveries are being dropped"
+          description: >-
+            poisoned means a durable signal hit the delivery ceiling and was dropped —
+            bounded loss, but loss. untenanted_dropped means a signal resolved no tenant on
+            a require_tenant gateway, which is a wiring or propagation bug rather than
+            back-pressure. Neither should be non-zero in a healthy deployment.
+
+      - alert: ForzeRealtimeMailboxOverflow
+        expr: sum by (job) (increase(forze_realtime_mailbox_overflowed[1h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+        annotations:
+          summary: "{{ $labels.job }}: offline mailbox replays are overflowing"
+          description: >-
+            A replay lost its oldest backlog to the retention cap: a device fell more than
+            cap entries behind and will never see those signals. Either the cap is too
+            small for how long devices stay offline, or something is producing far more
+            durable signals per principal than the mailbox was sized for.
