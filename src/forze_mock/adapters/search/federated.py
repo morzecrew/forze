@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from typing import Any, Final, cast, final
 
 import attrs
@@ -78,7 +78,7 @@ class MockFederatedSearchAdapter[M: BaseModel](
         filters: QueryFilterExpression | None,
         sorts: QuerySortExpression | None,
         options: SearchOptions | None,
-    ) -> tuple[list[tuple[FederatedSearchReadModel[M], float]], dict[str, Any]]:
+    ) -> tuple[list[tuple[FederatedSearchReadModel[M], float]], dict[Hashable, Any]]:
         """Run each leg, fuse (RRF or weighted relative-score), and index leg highlights.
 
         Returns the fused ``(hit, score)`` pairs in relevance order and the leg-highlight
