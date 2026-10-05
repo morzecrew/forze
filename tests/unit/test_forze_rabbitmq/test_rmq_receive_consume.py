@@ -42,14 +42,17 @@ class _ScriptedIterator:
     like an elapsed idle wait), ``"block"`` (waits forever; cancellable).
     """
 
-    def __init__(self, script: list[Any]) -> None:
+    def __init__(self, script: list[Any], exit_delay: float = 0.0) -> None:
         self._script = list(script)
+        self._exit_delay = exit_delay
         self.closed = False
 
     async def __aenter__(self) -> "_ScriptedIterator":
         return self
 
     async def __aexit__(self, *exc: object) -> None:
+        # Stands in for the consumer-cancel RPC aio_pika sends on exit.
+        await asyncio.sleep(self._exit_delay)
         self.closed = True
 
     def __aiter__(self) -> "_ScriptedIterator":
@@ -74,13 +77,16 @@ class _ScriptedIterator:
 
 
 class _FakeQueue:
-    def __init__(self, script: list[Any]) -> None:
+    def __init__(self, script: list[Any], exit_delay: float = 0.0) -> None:
         self._script = script
+        self._exit_delay = exit_delay
         self.iterator_kwargs: dict[str, Any] | None = None
+        self.last_iterator: _ScriptedIterator | None = None
 
     def iterator(self, **kwargs: Any) -> _ScriptedIterator:
         self.iterator_kwargs = kwargs
-        return _ScriptedIterator(self._script)
+        self.last_iterator = _ScriptedIterator(self._script, self._exit_delay)
+        return self.last_iterator
 
 
 class _FakeChannel:
@@ -96,9 +102,11 @@ class _FakeChannel:
 # ....................... #
 
 
-def _client_with_queue(script: list[Any]) -> tuple[RabbitMQClient, _FakeQueue]:
+def _client_with_queue(
+    script: list[Any], exit_delay: float = 0.0
+) -> tuple[RabbitMQClient, _FakeQueue]:
     client = RabbitMQClient()
-    queue = _FakeQueue(script)
+    queue = _FakeQueue(script, exit_delay)
     client._RabbitMQClient__pending_channel = _FakeChannel(queue)  # type: ignore[attr-defined]
 
     return client, queue
@@ -179,6 +187,21 @@ class TestReceiveBoundedWindow:
         )
 
         assert messages == []
+
+    @pytest.mark.asyncio
+    async def test_window_does_not_cut_the_consumer_cancel(self) -> None:
+        """The window bounds the drain, not the consumer cancel on exit.
+
+        A deadline landing on that RPC makes aiormq close the channel, and the
+        messages already received on it can then never be acked.
+        """
+        client, queue = _client_with_queue([_FakeIncoming("m1")], exit_delay=0.3)
+
+        messages = await client.receive("q", limit=1, timeout=timedelta(seconds=0.1))
+
+        assert [m.id for m in messages] == ["m1"]
+        assert queue.last_iterator is not None
+        assert queue.last_iterator.closed
 
 
 # ....................... #
