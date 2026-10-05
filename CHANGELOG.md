@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.11.0] - 2026-10-05
+
+### Added
+
 - **A hub search can raise the limits its filters are parsed under.** `HubSearchSpec(filter_limits=...)` bounds the hub's filter, parsed once for its hub rows on Postgres and in the in-memory hub alike; a member's own limits do not apply to it.
 
 - **A search spec can choose how an unasked page counts its total.** `SearchSpec(default_search_count="approximate")` (or `"none"`) applies when a request sets no `search_count`, so a large log need not run `COUNT(*)` on every page. The request option still wins; Postgres honours it.
@@ -2024,7 +2038,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.10.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/morzecrew/forze/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/morzecrew/forze/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/morzecrew/forze/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/morzecrew/forze/compare/v0.7.0...v0.8.0
