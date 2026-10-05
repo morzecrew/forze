@@ -6724,6 +6724,14 @@ module, and open the pool from the lifecycle plan:</p>
   first, descending nulls last), which a plain index does not hold: index it with the
   placement your pages use, for example <code>(created_at DESC NULLS LAST)</code>. A view's columns
   other than the <code>id</code> all read as nullable.</li>
+<li><strong>Partial indexes and bound filters.</strong> Filter values are sent as parameters, including the
+  <code>is_deleted = false</code> and <code>is_current = true</code> that the soft-deletion and versioned kits
+  add. A generic plan, made without the values, cannot prove a partial index's predicate
+  such as <code>WHERE is_deleted = false</code>. Under the default <code>plan_cache_mode</code>, Postgres picks a
+  generic plan for a prepared statement only when it estimates no costlier than planning with
+  the values, and one that loses such an index usually costs more: in a 100,000-row test the
+  index was used on every execution. With <code>plan_cache_mode = force_generic_plan</code> the index is
+  never used, so keep the default where such indexes matter, or index without the predicate.</li>
 <li><strong>PGroonga indexes.</strong> Index the searched columns as one column, <code>USING pgroonga (title)</code>,
   or as an array, <code>USING pgroonga ((ARRAY[title, content]))</code>; each element is a column,
   optionally wrapped in casts or <code>COALESCE(col, '')</code>. The search matches against the
@@ -6731,12 +6739,23 @@ module, and open the pool from the lifecycle plan:</p>
   order, is then the index's own tokenizer and normalizer: with the default ones, <code>python</code>
   matches the word <code>python</code> and not <code>pythonic</code>. An index with any other kind of element,
   such as a transform like <code>lower(title)</code>, is refused when the search first runs.</li>
-<li><strong>PGroonga and VACUUM.</strong> On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
+<li>
+<p><strong>PGroonga and text outside ASCII.</strong> The default normalizer folds case for ASCII only: on
+  PGroonga 4.0.6, <code>плата</code> does not match <code>Плата</code>, while <code>plata</code> matches <code>PLATA</code>. For
+  Cyrillic or other non-ASCII text, declare a Unicode-aware normalizer on the index, and
+  the search, which follows the index's own options, matches regardless of case:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">items_title_search</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">items</span>
+<span class="w">  </span><span class="k">USING</span><span class="w"> </span><span class="n">pgroonga</span><span class="w"> </span><span class="p">(</span><span class="n">title</span><span class="p">)</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">normalizers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'NormalizerNFKC150'</span><span class="p">);</span>
+</code></pre></div>
+</li>
+<li>
+<p><strong>PGroonga and VACUUM.</strong> On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
   PGroonga index built while a <code>VACUUM</code> or <code>ANALYZE</code> (autovacuum included) runs on another
   PGroonga-indexed table can break: searches through it return no rows, or fail with
   <code>object isn't found: &lt;Sources…&gt;</code>, until you <code>REINDEX</code> it. Build PGroonga indexes when no
   vacuum is running, or reindex them afterwards
-  (<a href="https://github.com/pgroonga/pgroonga/issues/1013">pgroonga/pgroonga#1013</a>).</li>
+  (<a href="https://github.com/pgroonga/pgroonga/issues/1013">pgroonga/pgroonga#1013</a>).</p>
+</li>
 </ul>
 
 
