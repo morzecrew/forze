@@ -288,15 +288,17 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         capped CTE joins.
         """
 
-        keys = scored_key_order(join_pairs)
-
         if not sorts:
-            return keys, None
+            return sql.SQL(", ").join(scored_key_order(join_pairs)), None
+
+        fields = set(sorts)
 
         if coalesced:
+            # The heap is ordered by each field's own column.
+            keys = scored_key_order(join_pairs, ordered=fields)
             on_heap = await self.order_by_clause(sorts, table_alias=self.pipeline.index)
 
-            return sql.SQL("{}, {}").format(on_heap, keys), None
+            return sql.SQL(", ").join([on_heap, *keys]), None
 
         joined = {projection for projection, _ in join_pairs}
         roots = dict.fromkeys(field.split(".", 1)[0] for field in sorts)
@@ -308,9 +310,12 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             if root not in joined
         ]
         on_filtered = await self.order_by_clause(sorts, table_alias=self.pipeline.filtered)
+        # The filtered CTE carries a key's projection column, which the join equates with the
+        # key's heap column, so ordering by the one orders by the other.
+        keys = scored_key_order(join_pairs, ordered={ic for pc, ic in join_pairs if pc in fields})
 
         return (
-            sql.SQL("{}, {}").format(on_filtered, keys),
+            sql.SQL(", ").join([on_filtered, *keys]),
             sql.SQL(", ").join(carried) if carried else None,
         )
 
