@@ -671,15 +671,9 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
                 sorts, coalesced=coalesced, join_pairs=join
             )
 
-        heap_fw: sql.Composable | None = None
-        heap_fp: list[Any] = []
-
-        if coalesced and not is_trivial_filter(parsed_filters):
-            heap_fw, heap_fp = await self.where_clause(
-                filters,
-                parsed=parsed_filters,
-                table_alias=self.pipeline.index,
-            )
+        heap_fw, heap_fp = await self._coalesced_heap_where(
+            filters, parsed=parsed_filters, coalesced=coalesced
+        )
 
         parts = build_filter_first_ranked_pipeline(
             aliases=self.pipeline,

@@ -28,7 +28,7 @@ from forze_postgres.kernel.relation import RelationSpec
 
 from ._engine import RankedPipelineSql
 from ._leg_vector import build_vector_leg
-from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
+from ._pgroonga_plan import effective_ranked_candidate_limit
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
@@ -199,15 +199,9 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             cap_kw["scored_tiebreak"], filtered_extra = await self._capped_order(
                 sorts, coalesced=coalesced, join_pairs=join
             )
-        heap_fw: sql.Composable | None = None
-        heap_fp: list[Any] = []
-
-        if coalesced and not is_trivial_filter(parsed_filters):
-            heap_fw, heap_fp = await self.where_clause(
-                filters,
-                parsed=parsed_filters,
-                table_alias=self.pipeline.index,
-            )
+        heap_fw, heap_fp = await self._coalesced_heap_where(
+            filters, parsed=parsed_filters, coalesced=coalesced
+        )
 
         parts = build_filter_first_ranked_pipeline(
             aliases=self.pipeline,

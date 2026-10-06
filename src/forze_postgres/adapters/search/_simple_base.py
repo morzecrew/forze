@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
+    QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
 )
@@ -269,6 +270,26 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
     ) -> bool:
         read, heap = self._read_heap_relation_specs()
         return is_coalesced_read_heap(read, heap, join_pairs)
+
+    # ....................... #
+
+    async def _coalesced_heap_where(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        *,
+        parsed: QueryExpr | None,
+        coalesced: bool,
+    ) -> tuple[sql.Composable | None, list[Any]]:
+        """The heap-side ``WHERE`` of a pipeline whose projection is the heap itself.
+
+        Built whenever the projection is the heap, filters or not: that pipeline has no
+        filtered CTE, so this clause is the only place the tenant predicate can go.
+        """
+
+        if not coalesced:
+            return None, []
+
+        return await self.where_clause(filters, parsed=parsed, table_alias=self.pipeline.index)
 
     # ....................... #
 

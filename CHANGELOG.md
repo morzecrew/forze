@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
+### Security
+
+- **Tenant-aware Postgres search returns only the current tenant's rows in every configuration.** Upgrade if a Postgres search spec is tenant-aware.
+
 ## [0.11.0] - 2026-10-05
 
 ### Added
