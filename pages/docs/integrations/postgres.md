@@ -165,17 +165,17 @@ lifecycle = LifecyclePlan.from_modules(
   `Ёлка`. A `NormalizerTable` after the NFKC normalizer, reading a one-row mapping, does:
 
     ```sql
-    CREATE TABLE yo_map (target text, normalized text);
-    CREATE INDEX yo_map_index ON yo_map
+    CREATE TABLE public.yo_map (target text, normalized text);
+    CREATE INDEX yo_map_index ON public.yo_map
       USING pgroonga (target pgroonga_text_term_search_ops_v2) INCLUDE (normalized);
-    INSERT INTO yo_map VALUES ('ё', 'е');
+    INSERT INTO public.yo_map VALUES ('ё', 'е');
 
     CREATE INDEX items_title_search ON items USING pgroonga (title) WITH (normalizers =
       'NormalizerNFKC150, NormalizerTable("normalized", "${table:public.yo_map_index}.normalized", "target", "target")');
     ```
 
-    Name the mapping index with its schema: unqualified, `CREATE INDEX` fails with
-    `relation "yo_map_index" does not exist`. A row is normalized when it is indexed, so fill
+    Name the mapping index with the schema its table is in: unqualified, `CREATE INDEX` fails
+    with `relation "yo_map_index" does not exist`. A row is normalized when it is indexed, so fill
     the mapping before building the search index and `REINDEX` it after changing the mapping;
     until then, a row indexed earlier with `ё` matches neither spelling.
 
