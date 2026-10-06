@@ -97,4 +97,4 @@ Exactly one `result` event, and it is last. Abandoning the generator ends the ru
 
 ## Reference
 
-- [Sandbox execution](https://morzecrew.github.io/forze/latest/in-depth/data-events/sandbox/)
+- [Sandbox execution](https://morzecrew.github.io/forze/latest/data-events/sandbox/)
