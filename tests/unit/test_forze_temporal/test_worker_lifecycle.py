@@ -142,6 +142,23 @@ class TestWiringRefusals:
                 graceful_shutdown=grace,
             )
 
+    @pytest.mark.parametrize(
+        "option", ["max_heartbeat_throttle_interval", "default_heartbeat_throttle_interval"]
+    )
+    @pytest.mark.parametrize("interval", [timedelta(0), timedelta(seconds=-1)])
+    def test_non_positive_heartbeat_throttle_is_refused(
+        self, option: str, interval: timedelta
+    ) -> None:
+        with pytest.raises(CoreException, match=f"{option} must be positive") as excinfo:
+            temporal_worker_lifecycle_step(
+                client=_connected_client(),
+                task_queue="tq",
+                workflows=[_Wf],
+                **{option: interval},
+            )
+
+        assert excinfo.value.kind is ExceptionKind.CONFIGURATION
+
     def test_default_window_fits_the_runtime_drain_budget(self) -> None:
         """The default must be a window the default runtime can actually honour.
 
@@ -260,6 +277,36 @@ class TestStartup:
             assert worker.kwargs["graceful_shutdown_timeout"] == timedelta(seconds=11)
 
             await step.shutdown(ctx)
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_throttle_reaches_the_worker_only_when_set(self) -> None:
+        """An unset option leaves the SDK's own default rather than passing ``None``."""
+
+        ctx = _ctx()
+        tuned = temporal_worker_lifecycle_step(
+            client=_connected_client(),
+            task_queue="tq",
+            workflows=[_Wf],
+            max_heartbeat_throttle_interval=timedelta(seconds=1),
+            default_heartbeat_throttle_interval=timedelta(seconds=2),
+        )
+        plain = temporal_worker_lifecycle_step(
+            client=_connected_client(), task_queue="tq", workflows=[_Wf], step_id="plain"
+        )
+
+        with patch("forze_temporal.execution.lifecycle.worker.Worker", _StubWorker):
+            await tuned.startup(ctx)
+            await plain.startup(ctx)
+            await asyncio.sleep(0)
+
+            tuned_kwargs, plain_kwargs = (w.kwargs for w in _StubWorker.instances)
+            assert tuned_kwargs["max_heartbeat_throttle_interval"] == timedelta(seconds=1)
+            assert tuned_kwargs["default_heartbeat_throttle_interval"] == timedelta(seconds=2)
+            assert "max_heartbeat_throttle_interval" not in plain_kwargs
+            assert "default_heartbeat_throttle_interval" not in plain_kwargs
+
+            await tuned.shutdown(ctx)
+            await plain.shutdown(ctx)
 
     @pytest.mark.asyncio
     async def test_activity_executor_reaches_the_worker(self) -> None:
