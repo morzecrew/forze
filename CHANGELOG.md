@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A hub search can choose how an unasked page counts its total.** `HubSearchSpec(default_search_count="approximate")` (or `"none"`) applies when a request sets no `search_count`, as it does on a `SearchSpec`. The request option still wins and the members' own defaults don't apply; Postgres honours it.
 
 ### Changed
 

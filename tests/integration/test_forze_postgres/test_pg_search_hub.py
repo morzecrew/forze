@@ -1981,6 +1981,73 @@ async def test_hub_exact_total_exceeds_leg_and_combo_caps(
     assert len(page.hits) == 3
 
 
+@pytest.mark.asyncio
+async def test_a_hub_spec_default_search_count_governs_an_unasked_page(
+    pg_client: PostgresClient,
+) -> None:
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:8]
+    ht = f"hub_dsc_{suffix}"
+    token = "hubdsc"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {ht} (
+            id uuid PRIMARY KEY,
+            name text NOT NULL,
+            display_name text NOT NULL
+        );
+        CREATE INDEX idx_{suffix}_dsc ON {ht}
+        USING pgroonga ((ARRAY[name, display_name]));
+        """
+    )
+    for i in range(3):
+        await pg_client.execute(
+            f"INSERT INTO {ht} (id, name, display_name) VALUES (%(id)s, %(n)s, 'd')",
+            {"id": uuid4(), "n": f"{token}-{i}"},
+        )
+
+    leg_n = f"dsc_{suffix}"
+    hub_spec = HubSearchSpec(
+        name=f"hub_dsc_spec_{suffix}",
+        model_type=_SameHeapHubRow,
+        members=(SearchSpec(name=leg_n, model_type=_HubLegTxt, fields=["name", "display_name"]),),
+        default_search_count="none",
+    )
+    hub_cfg = _hub_config(
+        hub=("public", ht),
+        members={
+            leg_n: _hub_member(
+                index=("public", f"idx_{suffix}_dsc"),
+                read=("public", ht),
+                hub_fk="id",
+                same_heap_as_hub=True,
+                engine="pgroonga",
+            ),
+        },
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+            }
+        )
+    )
+    adapter = ConfigurablePostgresHubSearch(config=hub_cfg)(ctx, hub_spec)
+
+    unasked = await adapter.search_page(token, pagination={"limit": 2})
+    assert isinstance(unasked, CountlessPage)
+    assert not isinstance(unasked, Page)
+    assert len(unasked.hits) == 2
+
+    asked = await adapter.search_page(
+        token, pagination={"limit": 2}, options={"search_count": "exact"}
+    )
+    assert isinstance(asked, Page)
+    assert asked.count == 3
+
+
 def _hub_ctx(
     pg_client: PostgresClient,
     *,

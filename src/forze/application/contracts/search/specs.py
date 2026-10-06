@@ -582,6 +582,12 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
     A hub's filter applies to its hub rows and is parsed once, under these limits — its
     members' own :attr:`SearchSpec.filter_limits` do not apply to it."""
 
+    default_search_count: SearchCountPolicy | None = None
+    """How a hub page counts its total when the request's ``search_count`` option is absent:
+    ``exact``, ``approximate`` or ``none``. ``None`` keeps ``exact``. The request option still
+    wins, and members' own :attr:`SearchSpec.default_search_count` do not apply to the hub's
+    count. Postgres honours it; the in-memory hub reports an exact total."""
+
     materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
     """``@computed_field`` names on the hub-row model persisted as real hub columns, so
     hub results can be filtered/sorted by the derived value. Mirror of
