@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.63">
+      <meta name="generator" content="zensical-0.0.66">
     
     
       
@@ -36,7 +36,7 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.10763589.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.1502b751.min.css">
       
         
           
@@ -6749,6 +6749,22 @@ module, and open the pool from the lifecycle plan:</p>
 </code></pre></div>
 </li>
 <li>
+<p><strong>PGroonga and <code>ё</code>.</strong> No NFKC normalizer treats <code>ё</code> as <code>е</code>, so <code>елка</code> does not match
+  <code>Ёлка</code>. A <code>NormalizerTable</code> after the NFKC normalizer, reading a one-row mapping, does:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">yo_map</span><span class="w"> </span><span class="p">(</span><span class="n">target</span><span class="w"> </span><span class="nb">text</span><span class="p">,</span><span class="w"> </span><span class="n">normalized</span><span class="w"> </span><span class="nb">text</span><span class="p">);</span>
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">yo_map_index</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">yo_map</span>
+<span class="w">  </span><span class="k">USING</span><span class="w"> </span><span class="n">pgroonga</span><span class="w"> </span><span class="p">(</span><span class="n">target</span><span class="w"> </span><span class="n">pgroonga_text_term_search_ops_v2</span><span class="p">)</span><span class="w"> </span><span class="n">INCLUDE</span><span class="w"> </span><span class="p">(</span><span class="n">normalized</span><span class="p">);</span>
+<span class="k">INSERT</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="k">public</span><span class="p">.</span><span class="n">yo_map</span><span class="w"> </span><span class="k">VALUES</span><span class="w"> </span><span class="p">(</span><span class="s1">'ё'</span><span class="p">,</span><span class="w"> </span><span class="s1">'е'</span><span class="p">);</span>
+
+<span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">items_title_search</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">items</span><span class="w"> </span><span class="k">USING</span><span class="w"> </span><span class="n">pgroonga</span><span class="w"> </span><span class="p">(</span><span class="n">title</span><span class="p">)</span><span class="w"> </span><span class="k">WITH</span><span class="w"> </span><span class="p">(</span><span class="n">normalizers</span><span class="w"> </span><span class="o">=</span>
+<span class="w">  </span><span class="s1">'NormalizerNFKC150, NormalizerTable("normalized", "${table:public.yo_map_index}.normalized", "target", "target")'</span><span class="p">);</span>
+</code></pre></div>
+<p>Name the mapping index with the schema its table is in: unqualified, <code>CREATE INDEX</code> fails
+with <code>relation "yo_map_index" does not exist</code>. A row is normalized when it is indexed, so fill
+the mapping before building the search index and <code>REINDEX</code> it after changing the mapping;
+until then, a row indexed earlier with <code>ё</code> matches neither spelling.</p>
+</li>
+<li>
 <p><strong>PGroonga and VACUUM.</strong> On PGroonga 4.0.6 with Groonga 16.0.1 and PostgreSQL 18.1, a
   PGroonga index built while a <code>VACUUM</code> or <code>ANALYZE</code> (autovacuum included) runs on another
   PGroonga-indexed table can break: searches through it return no rows, or fail with
@@ -6870,7 +6886,7 @@ module, and open the pool from the lifecycle plan:</p>
       <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.8dcc8e9c.min.js"></script>
+      <script src="../../assets/javascripts/bundle.b7d3f789.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

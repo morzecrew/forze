@@ -4,106 +4,130 @@
         <loc>https://morzecrew.github.io/forze/dev/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/get-started/introduction/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/get-started/installation/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/get-started/quickstart/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/get-started/project-structure/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/get-started/changelog/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/core-concepts/overview/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/core-concepts/application-layer/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/core-concepts/architecture/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/core-concepts/contracts/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/core-concepts/domain-layer/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/core-concepts/why-four-models/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/core-concepts/application-layer/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/core-concepts/contracts/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/core-concepts/overview/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/core-concepts/runtime/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/wiring/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/capability-execution/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/transactions/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/errors/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/concurrency-conflicts/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/idempotency/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/preview-binding/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/aggregate-decisions/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/writing-operation/system-invariants/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/reading-data/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/query-parameters/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/procedures/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/analytics/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/dynamic-read/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/inference/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/core-concepts/why-four-models/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/data-events/agent-tools/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/sandbox/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/analytics/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/data-events/caching/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/durable-execution/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/dynamic-read/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/data-events/events-sagas/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/inference/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/data-events/messaging-delivery-models/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/procedures/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/query-parameters/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/reading-data/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/data-events/realtime/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/data-events/durable-execution/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/data-events/sandbox/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/_generated/campaign_full/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/_generated/campaign_pilot/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/_generated/fidelity/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/_generated/predictor/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/_generated/transfer/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/campaign-results/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/crashes-and-clusters/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/detection-statistics/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/environment/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/exploration/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/fidelity/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/invariants/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/overview/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/dst/the-loop/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/get-started/changelog/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/get-started/installation/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/get-started/introduction/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/get-started/project-structure/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/get-started/quickstart/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/audit/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/cursor-tokens/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/encryption/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/identity/</loc>
@@ -112,103 +136,10 @@
         <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/multi-tenancy/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/encryption/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/cursor-tokens/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/identity-tenancy-enc/audit/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/production-posture/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/deadlines/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/resilience/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/load-shedding/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/shutdown-and-fleets/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/credential-rotation/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/portability/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/operation-progress/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/observability/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/grafana-stack/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/testing/overview/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/testing/concurrency/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/overview/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/invariants/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/environment/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/crashes-and-clusters/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/exploration/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/the-loop/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/detection-statistics/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/fidelity/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/dst/campaign-results/</loc>
-      </url>
-      <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/postgres/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/mongo/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/firestore/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/neo4j/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/redis/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/s3/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/gcs/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/meilisearch/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/authn/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/bigquery/</loc>
@@ -220,40 +151,13 @@
         <loc>https://morzecrew.github.io/forze/dev/integrations/duckdb/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/kafka/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/rabbitmq/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/sqs/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/temporal/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/inngest/</loc>
-      </url>
-      <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/fastapi/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/socketio/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/firestore/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/mcp/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/authn/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/oidc/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/vault/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/integrations/kms/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/gcs/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/integrations/http/</loc>
@@ -262,52 +166,76 @@
         <loc>https://morzecrew.github.io/forze/dev/integrations/inference/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/crud-fastapi-postgres/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/inngest/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/governed-aggregate-kit/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/kafka/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/read-only-document-api/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/kms/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/cache-reads-with-redis/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/mcp/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/analytics-over-a-data-lake/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/meilisearch/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/expose-an-aggregate-over-mcp/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/mongo/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/query-agent/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/neo4j/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/mock-server/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/oidc/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/postgres/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/rabbitmq/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/redis/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/s3/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/socketio/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/sqs/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/temporal/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/integrations/vault/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/add-idempotency/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/two-phase-handler/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/offload-cpu-work/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/analytics-over-a-data-lake/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/authn-authz-tenancy-fastapi/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/provision-identity-postgres/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/background-workflow/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/password-reset/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/cache-reads-with-redis/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/tenant-selector-and-admin/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/crud-fastapi-postgres/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/local-identity/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/end-to-end-saga-outbox-inbox/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/expose-an-aggregate-over-mcp/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/external-bootstrap-forze-jwt/</loc>
@@ -316,105 +244,192 @@
         <loc>https://morzecrew.github.io/forze/dev/recipes/external-idp-oidc/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/social-sign-in/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/governed-aggregate-kit/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/rotating-oauth-credentials/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/local-identity/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/end-to-end-saga-outbox-inbox/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/mock-server/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/transactional-outbox/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/offload-cpu-work/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/transactional-notifications/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/password-reset/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/provision-identity-postgres/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/query-agent/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/read-only-document-api/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/realtime-offline-delivery/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/tenant-sharded-realtime/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/background-workflow/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/recipes/temporal-worker/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/rotating-oauth-credentials/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/recipes/scheduled-queue-jobs/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/glossary/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/social-sign-in/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/temporal-worker/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/tenant-selector-and-admin/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/tenant-sharded-realtime/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/transactional-notifications/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/transactional-outbox/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/recipes/two-phase-handler/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/contracts/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/document/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/search/</loc>
-      </url>
-      <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/contracts/analytics/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/procedure/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/graph/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/stores/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/messaging/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/streaming/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/durable/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/contracts/coordination/</loc>
       </url>
       <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/document/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/durable/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/graph/</loc>
+      </url>
+      <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/contracts/identity/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/tenancy-matrix/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/messaging/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/procedure/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/search/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/stores/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/contracts/streaming/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/encryption-matrix/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/spec-registry/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/query-syntax/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/mapping/</loc>
-      </url>
-      <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/outbox-schema/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/reference/errors/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/fastapi-routes/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/realtime-protocol/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/reference/glossary/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/errors/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/reference/mapping/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/metrics/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/outbox-schema/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/query-syntax/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/realtime-protocol/</loc>
       </url>
       <url>
         <loc>https://morzecrew.github.io/forze/dev/reference/resilience-tuning/</loc>
       </url>
       <url>
-        <loc>https://morzecrew.github.io/forze/dev/reference/metrics/</loc>
+        <loc>https://morzecrew.github.io/forze/dev/reference/spec-registry/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/reference/tenancy-matrix/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/credential-rotation/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/deadlines/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/grafana-stack/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/load-shedding/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/observability/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/operation-progress/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/portability/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/production-posture/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/resilience/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/running-in-prod/shutdown-and-fleets/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/testing/concurrency/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/testing/overview/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/aggregate-decisions/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/capability-execution/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/concurrency-conflicts/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/errors/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/idempotency/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/preview-binding/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/system-invariants/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/transactions/</loc>
+      </url>
+      <url>
+        <loc>https://morzecrew.github.io/forze/dev/writing-operation/wiring/</loc>
       </url>
 </urlset>
