@@ -757,6 +757,21 @@ class EncryptingModelCodec[T](ModelCodec[T, Any]):
             record_id=record_id,
         )
 
+    def encode_plain_patch(
+        self,
+        obj: T,
+        *,
+        exclude: ModelDumpExcludeOptions | None = None,
+    ) -> JsonDict:
+        """Encode an update DTO without sealing, for a domain update to merge.
+
+        A write gateway merges the patch into the stored (opened) document and seals what it
+        then writes (:meth:`encrypt_mapping`); merging sealed fields would put ciphertext into
+        typed fields. Duck-typed by the gateways, like :meth:`encode_persistence_patch`.
+        """
+
+        return self.inner.encode_persistence_mapping(obj, mode="python", exclude=exclude or {})
+
     def decode_mapping(
         self,
         data: JsonDict,

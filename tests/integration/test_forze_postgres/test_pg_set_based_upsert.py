@@ -70,6 +70,7 @@ async def _table(
     meta: str = "jsonb",
     key: str = "id",
     name: str = "text",
+    qty: str = "integer",
 ) -> str:
     t = f"pg_setbased_{uuid4().hex[:10]}"
     await pg_client.execute(
@@ -80,7 +81,7 @@ async def _table(
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
             name {name} NOT NULL,
-            qty integer NOT NULL,
+            qty {qty} NOT NULL,
             note text,
             meta {meta} NOT NULL,
             tags {tags} NOT NULL,
@@ -384,3 +385,79 @@ async def test_database_bookkeeping_leaves_rev_and_timestamp_to_the_trigger(
     assert await pg_client.fetch_one(
         f"SELECT name, rev, last_update_at FROM {t} WHERE id = %s", [pk]
     ) == {"name": "patched", "rev": 1, "last_update_at": datetime(2026, 1, 1, tzinfo=UTC)}
+
+
+async def test_a_searchable_field_is_sealed_and_compared_as_on_the_domain_path(
+    pg_client: PostgresClient,
+) -> None:
+    """A deterministic (searchable) field is merged open, reset by a null as the domain does,
+    and sealed for the write; one the patch names is written even unchanged, re-sealed, as on
+    the domain path (a key rotation re-indexes by just such an update)."""
+
+    from forze.application.contracts.crypto import FieldEncryption, KeyRef, StaticKeyDirectory
+    from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
+    from forze.application.execution import CryptoDepsModule, Deps
+    from forze_mock import MockKeyManagement
+    from forze_postgres.execution.deps import ConfigurablePostgresDocument
+    from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+    from forze_postgres.execution.deps.keys import (
+        PostgresClientDepKey,
+        PostgresIntrospectorDepKey,
+    )
+    from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+    from tests.support.execution_context import context_from_deps
+
+    spec = DocumentSpec(
+        name="setbased_sealed",
+        read=_Read,
+        write=DocumentWriteTypes(domain=_Doc, create_cmd=_Create, update_cmd=_Update),
+        encryption=FieldEncryption(searchable=frozenset({"label", "qty"})),
+    )
+
+    def command(t: str) -> Any:
+        doc = ConfigurablePostgresDocument(
+            config=PostgresDocumentConfig(
+                read=("public", t), write=("public", t), bookkeeping_strategy="application"
+            )
+        )
+        deps = Deps.merge(
+            CryptoDepsModule(
+                kms=MockKeyManagement(),
+                directory=StaticKeyDirectory(KeyRef(key_id="sealed")),
+                deterministic_root=b"set-based-searchable-root-32byt!",
+            )(),
+            Deps.plain(
+                {
+                    PostgresClientDepKey: pg_client,
+                    PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                    DocumentQueryDepKey: doc,
+                    DocumentCommandDepKey: doc,
+                }
+            ),
+        )
+        return context_from_deps(deps).document.command(spec)
+
+    # An ``int`` sealed is text; merged sealed, it would not validate as an ``int``.
+    domain_t, set_t = await _table(pg_client, qty="text"), await _table(pg_client, qty="text")
+    ids = [uuid4() for _ in range(3)]
+    seed = [_item(pk, f"n{i}", i) for i, pk in enumerate(ids)]
+    batch = [
+        _item(ids[0], "x", 0, {"label": None, "qty": 50}),  # reset to its default, then sealed
+        _item(ids[1], "x", 0, {"label": "custom", "qty": 1}),  # the stored values: re-sealed
+        _item(ids[2], "x", 0, {"label": "moved"}),
+    ]
+
+    for t, set_based in ((domain_t, False), (set_t, True)):
+        cmd = command(t)
+
+        with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 1, tzinfo=UTC))):
+            await cmd.upsert_many(seed, return_new=False)
+
+        with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 2, tzinfo=UTC))):
+            await cmd.upsert_many(batch, return_new=False, set_based=set_based)
+
+    sql = "SELECT id, rev, last_update_at, label, qty FROM {} ORDER BY id"
+    set_rows = await pg_client.fetch_all(sql.format(set_t), [])
+    assert set_rows == await pg_client.fetch_all(sql.format(domain_t), [])
+    assert [row["rev"] for row in sorted(set_rows, key=lambda r: ids.index(r["id"]))] == [2, 2, 2]
+    assert all(row["label"] not in ("dflt", "custom", "moved") for row in set_rows)

@@ -1002,17 +1002,19 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         merge patch, as it always has. One adapt when they are the same.
         """
 
-        same = written is diff
         reported = await self.adapt_payload_for_write(self.__bump_rev(current, diff), create=False)
-
-        if same:
-            return reported, reported
-
-        payload = await self.adapt_payload_for_write(
-            self.__bump_rev(current, written), create=False
+        payload = (
+            reported
+            if written is diff
+            else await self.adapt_payload_for_write(self.__bump_rev(current, written), create=False)
         )
 
-        return payload, reported
+        # A sealed field's column holds its ciphertext, so the column type says nothing of
+        # the value the caller set.
+        sealed = self._sealed_fields()
+        open_values = {key: value for key, value in diff.items() if key in sealed}
+
+        return payload, {**reported, **open_values} if open_values else reported
 
     # ....................... #
 
@@ -1029,7 +1031,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         Nothing is read back or decoded. A missing row is the create payload's domain, as
         :meth:`upsert_many` inserts it; a stored row takes the update as its DTO encodes it,
-        as :meth:`update_matching` writes one, and only where that changes it, so ``rev`` and
+        as :meth:`update_matching` writes one, and only where that changes it or names a
+        searchable field (sealed afresh, as on the domain path), so ``rev`` and
         ``last_update_at`` move only then. Stored rows are locked in id order before they are
         patched, and one this tenant cannot see is ``not_found``, as on the domain path. The
         caller has refused a spec whose updates need the stored row or the domain model
@@ -1170,7 +1173,10 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """Patch the stored rows of a set-based upsert where their update changes them."""
 
         pks = [pk for pk, _, _ in stored]
-        patches = await self._encode_patch_many([u for _, u, _ in stored], record_ids=pks)
+        # Open, so a domain update can merge them; sealed below, with what is written.
+        patches = await self._encode_patch_many(
+            [u for _, u, _ in stored], record_ids=pks, seal=False
+        )
         fields = self.model_type.model_fields
         groups: dict[tuple[str, ...], list[JsonDict]] = defaultdict(list)
 
@@ -1187,9 +1193,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             if nulled:
                 (base,) = domains_from_create_payloads(self.create_codec, [create], [pk])
                 after, _ = base.update(patch, materialized=self.read_codec.materialized)
-                (encoded,) = await self._encode_domain_many([after])
-                patch = {**patch, **{k: encoded[k] for k in nulled}}
+                patch = {**patch, **after.model_dump(mode="python", include=set(nulled))}
 
+            patch = self._seal_written(patch, record_id=pk)
             adapted = dict(await self.adapt_payload_for_write(patch, create=False))
 
             for field in (ID_FIELD, REV_FIELD, LAST_UPDATE_AT_FIELD):
@@ -1216,16 +1222,19 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 sets.append(sql.SQL("{r} = t.{r} + 1").format(r=self._ident_rev()))
                 stamp.append(now)
 
-            # Only a row the update changes is written, as the domain path skips an empty diff.
-            where, where_params = self._add_tenant_where(
-                sql.SQL("t.{pk} = v.{pk} AND ({tcols}) IS DISTINCT FROM ({vcols})").format(
+            # Only a row the update changes is written, as the domain path skips an empty diff;
+            # but a sealed field the patch names is always written, sealed afresh, as there.
+            if set(key) & self._sealed_fields():
+                match = sql.SQL("t.{pk} = v.{pk}").format(pk=self.ident_pk())
+
+            else:
+                match = sql.SQL("t.{pk} = v.{pk} AND ({tcols}) IS DISTINCT FROM ({vcols})").format(
                     pk=self.ident_pk(),
                     tcols=sql.SQL(", ").join(_compared("t", k, column_types.get(k)) for k in key),
                     vcols=sql.SQL(", ").join(_compared("v", k, column_types.get(k)) for k in key),
-                ),
-                [],
-                table_alias="t",
-            )
+                )
+
+            where, where_params = self._add_tenant_where(match, [], table_alias="t")
             await self.client.execute(
                 sql.SQL(
                     "UPDATE {table} AS t SET {sets} FROM ({source}) AS v({cols}) WHERE {where}"
@@ -1271,7 +1280,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     await self._validate_history((current, rev, update))
 
                 after, diff = current.update(update, materialized=self.read_codec.materialized)
-                written = after.stored_changes(diff)
+                diff = self._with_resealed(after, update, diff)
+                written = self._seal_written(after.stored_changes(diff), record_id=current.id)
 
             else:
                 # Always historically consistent because we update only the revision and update timestamp
@@ -1322,7 +1332,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
 
-        update_data = await self._encode_patch_one(dto, record_id=pk)
+        update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
 
         return await self.__patch(pk, update_data, rev=rev)
 
@@ -1501,11 +1511,12 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     u: JsonDict,
                 ) -> tuple[UUID, int, JsonDict] | None:
                     after, diff = c.update(u, materialized=self.read_codec.materialized)
+                    diff = self._with_resealed(after, u, diff)
                     if not diff:
                         return None
 
                     payload, returned[c.id] = await self.__payload_and_diff(
-                        c, after.stored_changes(diff), diff
+                        c, self._seal_written(after.stored_changes(diff), record_id=c.id), diff
                     )
 
                     return c.id, c.rev, payload
@@ -1578,7 +1589,9 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         for start in range(0, len(dtos), batch_size):
             stop = start + batch_size
             updates.extend(
-                await self._encode_patch_many(dtos[start:stop], record_ids=pks[start:stop]),
+                await self._encode_patch_many(
+                    dtos[start:stop], record_ids=pks[start:stop], seal=False
+                ),
             )
 
         res, res_diffs = await self.__patch_many(
@@ -1697,6 +1710,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 return [_pk_from_row(r) for r in id_rows]
 
             ids: list[UUID] = []
+            # Merged into a decrypted row, so open: a sealed value fails its validation.
+            moves = await self._encode_patch_one(dto, seal=False) if self.serialized_by else None
 
             # Every owner the filter selects and every owner the patch would move a row to.
             # The set updated is the one the last pass read, whose owners are all held.
@@ -1705,7 +1720,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 ids = await matching_ids()
                 stored = await self._fetch_domains_by_pks(ids, missing_ok=True)
 
-                return [*stored, *(self._moved(d, update_data) for d in stored)]
+                return [*stored, *(self._moved(d, moves) for d in stored)]
 
             if self.serialized_by:
                 await self._serialize(touched)
