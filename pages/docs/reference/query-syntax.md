@@ -221,8 +221,10 @@ aggregates = {
 A computed metric's `filter` is a **per-metric row pre-filter** (it narrows the
 rows that feed *that* aggregate). For a post-aggregate stage, add `$having` — a
 filter (same grammar) over the **aggregated** rows, referencing only the output
-aliases (group keys and computed metrics). `$count` takes no field; every other
-function requires one.
+aliases (group keys and computed metrics). Every metric but `$min` / `$max` is a
+number, so a text, set or hierarchy operator on one (`$like` on a `$count`) is
+refused before anything runs. `$count` takes no field; every other function
+requires one.
 
 Calendar bucketing uses `$trunc` as a group value — `unit` is one of `hour` /
 `day` / `week` (Monday-start) / `month`; `timezone` is an IANA name or fixed

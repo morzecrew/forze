@@ -1890,3 +1890,45 @@ def test_combinator_operand_entries_must_be_objects() -> None:
     for op in ("$or", "$and"):
         with pytest.raises(CoreException, match="must be filter expression"):
             QueryFilterExpressionParser.parse({op: ["not-a-dict"]})
+
+
+class TestHavingOnNumericMeasures:
+    """An operator no number supports is refused on a numeric measure, on every backend."""
+
+    _BY_REGION = {"$groups": {"region": "region"}}
+
+    @pytest.mark.parametrize(
+        "condition",
+        [
+            {"$values": {"cnt": {"$like": "3%"}}},
+            {"$values": {"cnt": {"$regex": "^3"}}},
+            {"$not": {"$values": {"cnt": {"$ilike": "3%"}}}},
+            {"$values": {"cnt": {"$superset": [1]}}},
+        ],
+    )
+    def test_a_non_numeric_operator_on_a_count_is_refused(self, condition: dict) -> None:
+        with pytest.raises(CoreException) as refused:
+            AggregatesExpressionParser.parse(
+                {
+                    **self._BY_REGION,
+                    "$computed": {"cnt": {"$count": None}},
+                    "$having": condition,
+                }
+            )
+
+        assert refused.value.code == "query_feature_unsupported"
+
+    @pytest.mark.parametrize(
+        ("computed", "condition"),
+        [
+            ({"cnt": {"$count": None}}, {"$values": {"cnt": {"$gte": 2.5}}}),
+            ({"first": {"$min": "region"}}, {"$values": {"first": {"$like": "e%"}}}),
+            ({"cnt": {"$count": None}}, {"$values": {"region": {"$like": "e%"}}}),
+        ],
+    )
+    def test_a_fitting_operator_parses(self, computed: dict, condition: dict) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {**self._BY_REGION, "$computed": computed, "$having": condition}
+        )
+
+        assert parsed.having is not None
