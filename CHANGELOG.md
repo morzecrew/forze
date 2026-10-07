@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty and was refused; it now reports an equivalent cron expression, and a listing skips a schedule with no forze timing instead of failing.
+- **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.
 
 - **A blank PGroonga search decrypts encrypted fields and refuses a sort on them, as a ranked search does.** A projection or `select_search` returned the ciphertext, and a sort on an encrypted field ordered the rows by it.
 

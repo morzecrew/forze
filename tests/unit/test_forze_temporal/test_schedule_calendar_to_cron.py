@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 pytest.importorskip("temporalio")
 
-from temporalio.client import ScheduleCalendarSpec, ScheduleRange, ScheduleSpec
+from temporalio.client import (
+    ScheduleCalendarSpec,
+    ScheduleIntervalSpec,
+    ScheduleRange,
+    ScheduleSpec,
+)
 
+from forze.base.exceptions import CoreException
 from forze_temporal.kernel.client.schedule_mapping import (
     calendar_to_cron,
     schedule_spec_to_timing,
@@ -76,3 +84,40 @@ def test_a_calendar_that_never_fires_has_no_cron() -> None:
 
 def test_a_calendar_comment_follows_its_cron() -> None:
     assert calendar_to_cron(ScheduleCalendarSpec(comment="note")) == "0 0 * * * # note"
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        ScheduleSpec(
+            cron_expressions=["0 9 * * *"],
+            skip=[_calendar(day_of_week=(_r(0),))],
+        ),
+        ScheduleSpec(
+            intervals=[ScheduleIntervalSpec(every=timedelta(hours=1), offset=timedelta(minutes=5))]
+        ),
+        ScheduleSpec(
+            intervals=[
+                ScheduleIntervalSpec(every=timedelta(hours=1)),
+                ScheduleIntervalSpec(every=timedelta(hours=3)),
+            ]
+        ),
+    ],
+    ids=["skip", "interval-offset", "two-intervals"],
+)
+def test_a_timing_the_description_would_misstate_is_unsupported(spec: ScheduleSpec) -> None:
+    """Excluded periods, an interval offset or a second interval have no forze form; reporting
+    the rest would describe a schedule that fires at other times than it does."""
+
+    with pytest.raises(CoreException) as caught:
+        schedule_spec_to_timing(spec)
+
+    assert caught.value.code == "core.temporal.schedule_timing_unsupported"
+
+
+def test_an_interval_without_an_offset_is_supported() -> None:
+    spec = ScheduleSpec(
+        intervals=[ScheduleIntervalSpec(every=timedelta(hours=1), offset=timedelta(0))]
+    )
+
+    assert schedule_spec_to_timing(spec).interval == timedelta(hours=1)

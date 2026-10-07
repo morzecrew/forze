@@ -62,6 +62,9 @@ def calendar_to_cron(calendar: ScheduleCalendarSpec) -> str | None:
     year, seven with a second (and ``*`` for any year); a calendar's comment follows as
     ``# comment``. ``None`` for a calendar with a field that matches nothing, which never
     fires (only a hand-built calendar has one).
+
+    :param calendar: A calendar as the server describes it.
+    :returns: The equivalent cron expression, or ``None`` for a calendar that never fires.
     """
 
     fields: dict[str, str] = {}
@@ -109,6 +112,15 @@ def timing_to_schedule_spec(timing: DurableWorkflowScheduleTiming) -> ScheduleSp
 
 def schedule_spec_to_timing(spec: ScheduleSpec) -> DurableWorkflowScheduleTiming:
     """Convert Temporal ``ScheduleSpec`` to :class:`WorkflowScheduleTiming`."""
+
+    # The timing has one interval with no offset and nothing excluded; anything else would
+    # describe a schedule that fires at other times than it does.
+    if spec.skip or len(spec.intervals) > 1 or any(i.offset for i in spec.intervals):
+        raise exc.precondition(
+            "Schedule timing has no forze form: it skips calendar periods, offsets its "
+            "interval, or runs on more than one interval.",
+            code="core.temporal.schedule_timing_unsupported",
+        )
 
     interval = spec.intervals[0].every if spec.intervals else None
     # A described schedule carries no cron expressions, only the calendars the server
