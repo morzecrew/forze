@@ -634,6 +634,12 @@ class TestQueryValueCaster:
             2023, 11, 14, 22, 13, 20, 500_000, tzinfo=UTC
         )
 
+    def test_parse_datetime_reads_an_exponent_and_refuses_a_bool(self) -> None:
+        assert QueryValueCaster.parse_datetime("1e3") == datetime(1970, 1, 1, 0, 16, 40, tzinfo=UTC)
+
+        with pytest.raises(CoreException, match="Invalid datetime"):
+            QueryValueCaster.parse_datetime(True)
+
     def test_parse_datetime_refuses_a_decimal_past_any_instant(self) -> None:
         with pytest.raises(CoreException, match="Invalid datetime timestamp"):
             QueryValueCaster.parse_datetime(Decimal("1E+100000"))

@@ -235,15 +235,19 @@ class QueryValueCaster:
         :param v: A datetime, an ISO-8601 string, or a Unix timestamp in seconds (fractional
             allowed) or whole milli-, micro- or nanoseconds.
         :returns: The datetime, aware only when *v* named an offset or was a timestamp.
-        :raises CoreException: ``precondition`` for anything else.
+        :raises CoreException: ``precondition`` for anything else, a ``bool`` included.
         """
+        if isinstance(v, bool):
+            raise exc.precondition(f"Invalid datetime: {v!r}")
+
         if isinstance(v, datetime):
             dt = v
 
         elif cls._like_num(v):
             if isinstance(v, str):
                 s = v.strip()
-                num = float(s) if "." in s else int(s)
+                # Digits alone stay an exact int; ``1.5``, ``1e3`` and the like are floats.
+                num = int(s) if s.lstrip("+-").isdigit() else float(s)
 
             else:
                 num = v
