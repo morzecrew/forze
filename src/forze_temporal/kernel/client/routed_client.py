@@ -346,9 +346,11 @@ class RoutedTemporalClient(DsnRoutedTenantClientBase[TemporalClient], TemporalCl
     async def describe_schedule(
         self,
         schedule_id: str,
+        *,
+        workflow_name: str | None = None,
     ) -> DurableWorkflowScheduleDescription:
         inner = await self._get_client()
-        return await inner.describe_schedule(schedule_id)
+        return await inner.describe_schedule(schedule_id, workflow_name=workflow_name)
 
     # ....................... #
 

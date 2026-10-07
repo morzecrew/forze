@@ -1,6 +1,7 @@
 """Integration tests for Temporal workflow schedule adapters (Docker dev server)."""
 
 import asyncio
+import contextlib
 import time
 from datetime import timedelta
 
@@ -16,6 +17,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowSpec,
 )
 from forze.application.contracts.durable.workflow.specs import DurableWorkflowInvokeSpec
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import uuid7
 from forze_temporal.adapters.schedule import (
     TemporalWorkflowScheduleCommandAdapter,
@@ -198,3 +200,139 @@ async def test_paging_a_filtered_listing_returns_every_schedule_once(
     finally:
         for schedule_id in schedule_ids:
             await forze_client.delete_schedule(schedule_id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_cron_schedule_describes_and_lists_with_its_cron(temporal_dev_env) -> None:
+    """The server keeps a cron expression only as the calendar it compiles it into.
+
+    Described and listed, the schedule reports an equivalent cron expression, and a schedule
+    created from that reported timing compiles to the same calendars.
+    """
+
+    forze_client = temporal_dev_env.forze_client
+    sdk_client = temporal_dev_env.client
+    run = uuid7().hex[:8]
+    original, copy = f"it-cron-{run}-a", f"it-cron-{run}-b"
+    expressions = ("0 9 * * 1-5 # weekdays", "*/15 2 1 */2 *", "30 0 12 * * * 2099")
+
+    await forze_client.create_schedule(
+        original,
+        workflow_name="ItSumWorkflow",
+        queue="it-forze-cron",
+        arg=SumIn(a=1, b=2),
+        timing=DurableWorkflowScheduleTiming(cron_expressions=expressions),
+        workflow_id=f"{original}-run",
+    )
+
+    try:
+        described = await forze_client.describe_schedule(original)
+        assert described.timing.cron_expressions == expressions
+
+        async def _listed():
+            page = await forze_client.list_schedules(schedule_id_prefix=original)
+            return page.descriptions
+
+        listed = await await_listed_schedules(_listed, count=1)
+        assert listed[0].timing.cron_expressions == expressions
+
+        await forze_client.create_schedule(
+            copy,
+            workflow_name="ItSumWorkflow",
+            queue="it-forze-cron",
+            arg=SumIn(a=1, b=2),
+            timing=described.timing,
+            workflow_id=f"{copy}-run",
+        )
+        calendars = [
+            (await sdk_client.get_schedule_handle(sid).describe()).schedule.spec.calendars
+            for sid in (original, copy)
+        ]
+        assert calendars[0] == calendars[1]
+
+    finally:
+        for schedule_id in (original, copy):
+            with contextlib.suppress(Exception):
+                await forze_client.delete_schedule(schedule_id)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_schedule_with_no_forze_timing_does_not_break_listing(temporal_dev_env) -> None:
+    """A schedule built with the native client may have a timing forze cannot express (a
+    trigger-only spec, a calendar that never fires). Listing skips it rather than failing."""
+
+    from temporalio.client import (
+        Schedule,
+        ScheduleActionStartWorkflow,
+        ScheduleCalendarSpec,
+        ScheduleSpec,
+    )
+
+    sdk_client = temporal_dev_env.client
+    forze_client = temporal_dev_env.forze_client
+    run = uuid7().hex[:8]
+    prefix = f"it-native-{run}-"
+    native = {
+        f"{prefix}trigger": ScheduleSpec(),
+        f"{prefix}never": ScheduleSpec(calendars=[ScheduleCalendarSpec(second=[])]),
+    }
+    listed_id = f"{prefix}cron"
+
+    for schedule_id, spec in native.items():
+        await sdk_client.create_schedule(
+            schedule_id,
+            Schedule(
+                action=ScheduleActionStartWorkflow(
+                    "ItSumWorkflow", SumIn(a=1, b=2), id=f"{schedule_id}-run", task_queue="q"
+                ),
+                spec=spec,
+            ),
+        )
+
+    await forze_client.create_schedule(
+        listed_id,
+        workflow_name="ItSumWorkflow",
+        queue="q",
+        arg=SumIn(a=1, b=2),
+        timing=DurableWorkflowScheduleTiming(cron_expressions=("0 9 * * *",)),
+        workflow_id=f"{listed_id}-run",
+    )
+
+    try:
+
+        # Wait until the server lists all three, so the native ones are really in the scan.
+        async def _on_server():
+            return [
+                entry.id
+                async for entry in await sdk_client.list_schedules()
+                if entry.id.startswith(prefix)
+            ]
+
+        await await_listed_schedules(_on_server, count=3)
+
+        page = await forze_client.list_schedules(schedule_id_prefix=prefix)
+        assert [d.schedule_id for d in page.descriptions] == [listed_id]
+
+        # An unrelated prefix never maps them at all.
+        unrelated = await forze_client.list_schedules(schedule_id_prefix=f"{prefix}none")
+        assert unrelated.descriptions == ()
+
+        # Described directly, such a schedule says why it has no forze form; asked for as
+        # another workflow's, it is simply not found.
+        for schedule_id in native:
+            with pytest.raises(CoreException) as unsupported:
+                await forze_client.describe_schedule(schedule_id)
+
+            assert unsupported.value.code == "core.temporal.schedule_timing_unsupported"
+
+            with pytest.raises(CoreException) as foreign:
+                await forze_client.describe_schedule(schedule_id, workflow_name="OtherWorkflow")
+
+            assert foreign.value.kind is ExceptionKind.NOT_FOUND
+
+    finally:
+        for schedule_id in (*native, listed_id):
+            with contextlib.suppress(Exception):
+                await sdk_client.get_schedule_handle(schedule_id).delete()

@@ -226,6 +226,7 @@ class TemporalWorkflowScheduleQueryAdapter[In: BaseModel](
     ) -> DurableWorkflowScheduleDescription:
         desc = await self.client.describe_schedule(
             self.resolve_schedule_id(handle.schedule_id),
+            workflow_name=self.spec.name,
         )
 
         if desc.workflow_name != self.spec.name:

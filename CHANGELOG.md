@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty and was refused; it now reports an equivalent cron expression, and a listing skips a schedule with no forze timing instead of failing.
+
 - **A Postgres aggregate sorts its groups as every other read sorts rows** (**behaviour change**). A null group comes first ascending and last descending, or where `nulls` puts it; `"ASC"` now sorts ascending rather than descending, and an unknown direction is a 400 rather than a descending sort.
 
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.

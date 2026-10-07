@@ -154,7 +154,12 @@ class TemporalClientPort(Protocol):
     def describe_schedule(
         self,
         schedule_id: str,
-    ) -> Awaitable[DurableWorkflowScheduleDescription]: ...  # pragma: no cover
+        *,
+        workflow_name: str | None = None,
+    ) -> Awaitable[DurableWorkflowScheduleDescription]:
+        """Describe a schedule; with *workflow_name*, one for another workflow is not found,
+        before its timing is read."""
+        ...  # pragma: no cover
 
     def list_schedules(
         self,

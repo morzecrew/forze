@@ -472,13 +472,22 @@ class _FakeScheduleIterator:
         )
 
 
+class _Entry(str):
+    """A fake listed schedule: its own id, as a real entry's ``id`` is."""
+
+    @property
+    def id(self) -> str:
+        return str(self)
+
+
 def _paged_backend(pages: list[list[object]]) -> MagicMock:
     """Backend whose ``list_schedules`` honours the resume token it is handed."""
 
     backend = MagicMock()
+    entries = [[_Entry(e) if isinstance(e, str) else e for e in page] for page in pages]
 
     async def _list_schedules(*, page_size: int, next_page_token: bytes | None):
-        return _FakeScheduleIterator(pages, start_token=next_page_token)
+        return _FakeScheduleIterator(entries, start_token=next_page_token)
 
     backend.list_schedules = AsyncMock(side_effect=_list_schedules)
     return backend
@@ -516,6 +525,29 @@ class TestTemporalClientListSchedules:
             "forze_temporal.kernel.client.client.description_from_list_entry",
             side_effect=lambda entry: self._desc(str(entry)),
         )
+
+    @pytest.mark.asyncio
+    async def test_another_workflows_entry_is_never_mapped(self) -> None:
+        """Filtered on the listed workflow before mapping, so a schedule of another workflow
+        whose timing forze cannot express neither fails the listing nor logs about it."""
+
+        from types import SimpleNamespace
+
+        def _listed(entry_id: str, workflow: str) -> object:
+            action = SimpleNamespace(workflow=workflow)
+            return SimpleNamespace(id=entry_id, schedule=SimpleNamespace(action=action))
+
+        backend = _paged_backend([[_listed("mine", "Wf"), _listed("theirs", "OtherWf")]])
+        client = self._connected_client(backend)
+
+        with patch(
+            "forze_temporal.kernel.client.client.description_from_list_entry",
+            side_effect=lambda entry: self._desc(entry.id),
+        ) as mapper:
+            page = await client.list_schedules(workflow_name="Wf")
+
+        assert [d.schedule_id for d in page.descriptions] == ["mine"]
+        assert [call.args[0].id for call in mapper.call_args_list] == ["mine"]
 
     @pytest.mark.asyncio
     async def test_schedule_id_prefix_filters_before_limit(self) -> None:
