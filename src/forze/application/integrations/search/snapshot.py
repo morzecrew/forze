@@ -122,8 +122,13 @@ def _shape_snapshot_page(
 # ....................... #
 
 
+_POOL_FORMAT = 2
+"""Bumped when what a pool holds changes, so a run written before cannot replay after: 2 keys
+every hit by its whole record, where 1 could key a projected read by its default-filled one."""
+
+
 def _sha256_fingerprint_payload(payload: dict[str, object]) -> str:
-    return stable_payload_fingerprint(payload)
+    return stable_payload_fingerprint({**payload, "pool": _POOL_FORMAT})
 
 
 # ....................... #
