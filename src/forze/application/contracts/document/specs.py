@@ -1,7 +1,8 @@
 """Specifications for document models and storage layout."""
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar, get_args
+from types import UnionType
+from typing import Annotated, Any, Generic, TypeVar, Union, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 from forze.application._logger import logger
 from forze.base.exceptions import exc
 from forze.base.serialization import stored_field_names_for
-from forze.domain.models import BaseDTO, Document
+from forze.domain.models import AggregateRoot, BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
@@ -74,6 +75,74 @@ def _normalize_derived(
         name: declared if declared is not None else DerivedReadField()
         for name, declared in dict(value).items()
     }
+
+
+# ....................... #
+
+
+def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
+    """The pydantic decorators of *kind* *domain* declares or overrides beyond :class:`Document`'s.
+
+    Compared by function, not name: a domain re-declaring a base validator under its name
+    replaces what it does.
+    """
+
+    def _func(decorator: Any) -> Any:
+        return getattr(decorator.func, "__func__", decorator.func)
+
+    base = getattr(Document.__pydantic_decorators__, kind)
+
+    return [
+        decorator
+        for name, decorator in getattr(domain.__pydantic_decorators__, kind).items()
+        if name not in base or _func(base[name]) is not _func(decorator)
+    ]
+
+
+def _validated_fields(domain: type[Document]) -> frozenset[str]:
+    """The fields *domain* checks or rewrites beyond their type: a field validator of its own
+    (``"*"`` for every field) or a constraint (``Field(gt=0)``, ``AfterValidator``, …)."""
+
+    names: set[str] = set()
+
+    for decorator in _own_decorators(domain, "field_validators"):
+        names.update(decorator.info.fields)
+
+    names.update(name for name, field in domain.model_fields.items() if field.metadata)
+
+    return frozenset(names)
+
+
+def _merged(annotation: Any) -> bool:
+    """Whether a value of *annotation* may be a mapping, which a domain update merges into the
+    stored one rather than replaces: a pydantic model, a mapping (``TypedDict`` included), or
+    ``Any``.
+    Only a union is looked into; a list or tuple of mappings is replaced whole."""
+
+    if annotation is Any:
+        return True
+
+    origin = get_origin(annotation)
+
+    if origin in (Union, UnionType):
+        return any(_merged(arg) for arg in get_args(annotation))
+
+    if origin is Annotated:
+        return _merged(get_args(annotation)[0])
+
+    target = origin or annotation
+
+    # A ``TypedDict`` is a ``dict`` at runtime, so a mapping here.
+    return isinstance(target, type) and issubclass(target, (BaseModel, Mapping))
+
+
+def _without_none(annotation: Any) -> frozenset[Any]:
+    """*annotation*'s members other than ``None``: what a value of it is when it is set."""
+
+    if get_origin(annotation) in (Union, UnionType):
+        return frozenset(arg for arg in get_args(annotation) if arg is not type(None))
+
+    return frozenset({annotation})
 
 
 # ....................... #
@@ -706,6 +775,93 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             f"Document {self.name!r} declares hard_delete=False, so its rows cannot be erased.",
             code="hard_delete_forbidden",
             details={"spec": str(self.name)},
+        )
+
+    # ....................... #
+
+    def require_set_based_upsert(self) -> None:
+        """Refuse a set-based ``upsert_many`` that would not write what the domain path writes.
+
+        A set-based upsert reads no stored row: it inserts each create payload's domain and
+        writes each update as its DTO encodes it, only where that changes the stored row. So
+        it is refused when an update needs the stored row or the domain model: revision
+        history, materialized fields, per-owner write serialization, randomized field
+        encryption (every write looks like a change), a domain with update validators,
+        invariants, domain events, or validators or constraints of its own on any field (an
+        update revalidates the whole model, so one may refuse or rewrite a value), and an
+        update field the domain does not hold plainly (absent, frozen, a model or mapping the
+        update merges into the stored one, or a default derived from the other fields).
+
+        :raises CoreException: ``configuration`` (``set_based_upsert_unsupported``) naming
+            what rules it out.
+        """
+
+        reasons: list[str] = []
+
+        if self.history_enabled:
+            reasons.append("revision history")
+
+        if self.materialized:
+            reasons.append("materialized fields")
+
+        if any(isinstance(g, SerializedBy) for g in self.guarantees):
+            reasons.append("per-owner write serialization")
+
+        if self.encryption is not None and self.encryption.encrypted:
+            reasons.append("randomized field encryption")
+
+        if self.write is not None:
+            domain = self.write["domain"]
+
+            if domain._update_validators_:  # pyright: ignore[reportPrivateUsage]
+                reasons.append("update validators")
+
+            if domain._invariants_:  # pyright: ignore[reportPrivateUsage]
+                reasons.append("invariants")
+
+            if issubclass(domain, AggregateRoot):
+                reasons.append("domain events")
+
+            if _own_decorators(domain, "model_validators"):
+                reasons.append("model validators")
+
+            update_cmd = self.write.get("update_cmd")
+
+            if update_cmd is not None:
+                updated = frozenset(update_cmd.model_fields)
+                # Any one: an update revalidates the whole model, and a validator may rewrite
+                # a field the update leaves alone from one it changes.
+                validated = sorted(_validated_fields(domain))
+                merged = sorted(
+                    name
+                    for name in updated
+                    if (field := domain.model_fields.get(name)) is None
+                    or field.frozen
+                    or _merged(field.annotation)
+                    # A nulled field takes its default, here one read off the stored row.
+                    or field.default_factory_takes_validated_data
+                    # The DTO validates the value; a narrower domain type (a ``Literal`` for a
+                    # ``str``) would refuse what the DTO admits.
+                    or _without_none(field.annotation)
+                    != _without_none(update_cmd.model_fields[name].annotation)
+                )
+
+                if validated:
+                    reasons.append(f"fields the domain validates ({', '.join(validated)})")
+
+                if merged:
+                    reasons.append(
+                        f"update fields the domain derives, merges or refuses ({', '.join(merged)})"
+                    )
+
+        if not reasons:
+            return
+
+        raise exc.configuration(
+            f"Document {self.name!r} cannot upsert set-based: {', '.join(reasons)} need the "
+            "domain path; call upsert_many without set_based.",
+            code="set_based_upsert_unsupported",
+            details={"spec": str(self.name), "reasons": reasons},
         )
 
     # ....................... #

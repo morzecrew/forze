@@ -142,8 +142,8 @@ def domains_from_create_payloads(
     models = list(codec.transform_many(payloads))
 
     if ids is not None:
-        models = [
-            m.model_copy(update={ID_FIELD: i}, deep=True) for m, i in zip(models, ids, strict=True)
-        ]
+        # Shallow: each model was just built from a dump of its payload and is thrown away
+        # here, so nothing else holds its nested values; a deep copy only doubled the cost.
+        models = [m.model_copy(update={ID_FIELD: i}) for m, i in zip(models, ids, strict=True)]
 
     return models

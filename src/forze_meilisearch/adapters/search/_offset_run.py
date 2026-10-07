@@ -177,7 +177,9 @@ class _MeilisearchOffsetHooks:
                 code="core.search.max_total_hits_exceeded",
             )
 
-        if self.return_fields is not None:
+        # A snapshot window feeds the pool, which keys every hit by its whole record, so it
+        # retrieves every attribute; only the page returned is projected.
+        if self.return_fields is not None and not want_snap:
             phys_fields = self.gw.physical_paths(self.return_fields)
             # The exact-decimal shadow rides every projection: without it a projected
             # read silently returns the f64-rounded index number for a Decimal field

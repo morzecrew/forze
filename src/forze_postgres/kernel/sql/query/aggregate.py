@@ -51,7 +51,7 @@ def compose_aggregate_statement(
 
     ``$having`` filters the aggregated rows, so it wraps the group query and filters on its
     output aliases, rendered against their types
-    (:meth:`~PsycopgQueryRenderer.aggregate_output_types`) so an operator the output cannot
+    (:meth:`~PsycopgQueryRenderer.aggregate_outputs`) so an operator the output cannot
     take is refused here rather than by the server.
     """
 
@@ -69,9 +69,11 @@ def compose_aggregate_statement(
         stmt += sql.SQL(" GROUP BY {group}").format(group=group_clause)
 
     if parsed.having is not None:
+        types, columns = renderer.aggregate_outputs(parsed, table_alias="_agg")
         having_renderer = PsycopgQueryRenderer(
-            types=renderer.aggregate_output_types(parsed),
+            types=types,
             table_alias="_agg",
+            column_exprs=columns,
         )
         having_sql, having_params = having_renderer.render(parsed.having)
         stmt = sql.SQL("SELECT * FROM ({inner}) AS _agg WHERE {having}").format(

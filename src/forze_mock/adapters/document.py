@@ -1002,7 +1002,9 @@ class MockDocumentAdapter(  # pyright: ignore[reportIncompatibleVariableOverride
             # because its value does not exist until the read. Both disagree with
             # `aggregatable_fields()`, and the second is silently wrong.
             self._validate_aggregate_fields(aggregates)
-            aggregate_rows = _aggregate_docs(filtered, aggregates, self.filter_parser)
+            aggregate_rows = _aggregate_docs(
+                filtered, aggregates, self.filter_parser, self.read_model
+            )
             total = len(aggregate_rows)
 
             if limit is None:

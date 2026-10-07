@@ -26,6 +26,25 @@ from .time_source import current_time_source
 
 # ----------------------- #
 
+# The sub-millisecond nanoseconds (20 bits) sit on either side of the variant, as shifts of the
+# UUID's integer: the top 12 above it, the bottom 8 below. :func:`uuid7` packs them and
+# :func:`uuid7_to_datetime` unpacks them through this one pair.
+_SUB_MS_HIGH_SHIFT = 64
+_SUB_MS_LOW_SHIFT = 54
+
+
+def _pack_sub_ms_ns(sub_ms_ns: int) -> int:
+    return ((sub_ms_ns >> 8) << _SUB_MS_HIGH_SHIFT) | ((sub_ms_ns & 0xFF) << _SUB_MS_LOW_SHIFT)
+
+
+def _unpack_sub_ms_ns(uuid_int: int) -> int:
+    return (((uuid_int >> _SUB_MS_HIGH_SHIFT) & 0xFFF) << 8) | (
+        (uuid_int >> _SUB_MS_LOW_SHIFT) & 0xFF
+    )
+
+
+# ....................... #
+
 
 def uuid7(
     timestamp_ms: int | float | None = None,
@@ -33,16 +52,19 @@ def uuid7(
 ) -> UUID:
     """Generate a UUIDv7-style UUID with full 64-bit nanosecond timestamp precision.
 
-    UUID Layout (128 bits):
+    UUID Layout (128 bits, most significant first):
     -------------------------------------------------------------------
-    Bits  | Field           | Description
-    ------|-----------------|--------------------------------------------------
-    0-47  | timestamp_ms    | Unix timestamp in milliseconds (sortable)
-    48-51 | version         | UUID version (0b0111 for v7)
-    52-71 | sub_ms_ns       | Sub-millisecond nanoseconds (20 bits = 0-999_999)
-    72-127| random          | 54 bits of randomness (variant bits embedded)
+    Bits   | Field           | Description
+    -------|-----------------|-------------------------------------------------
+    0-47   | timestamp_ms    | Unix timestamp in milliseconds (sortable)
+    48-51  | version         | UUID version (0b0111 for v7)
+    52-63  | sub_ms_ns high  | Top 12 of 20 bits of sub-millisecond nanoseconds
+    64-65  | variant         | 0b10 per RFC 4122
+    66-73  | sub_ms_ns low   | Bottom 8 bits of sub-millisecond nanoseconds
+    74-127 | random          | 54 bits of randomness
     -------------------------------------------------------------------
-    Variant is stored in bits 70–71 (byte 8, bits 6–7), set to 0b10 per RFC 4122.
+    The variant sits between the two halves of the nanoseconds, so ids keep their full
+    nanosecond order: two ids minted 1 ns apart sort as they were minted.
 
     Args:
         timestamp_ms (int | float | None): Unix timestamp in milliseconds.
@@ -90,14 +112,9 @@ def uuid7(
     uuid_int = 0
     uuid_int |= (timestamp_ms & ((1 << 48) - 1)) << 80  # Bits 0–47
     uuid_int |= 0x7 << 76  # Bits 48–51 (version 7)
-    uuid_int |= (sub_ms_ns & 0xFFFFF) << 56  # Bits 52–71 (20 bits)
-
-    random_bits = current_entropy_source().randbits(54)  # 54-bit random
-    uuid_int |= random_bits
-
-    # Set variant (RFC 4122) in bits 62–63 to 0b10
-    uuid_int &= ~(0b11 << 62)
-    uuid_int |= 0b10 << 62
+    uuid_int |= _pack_sub_ms_ns(sub_ms_ns)  # Bits 52–63 and 66–73
+    uuid_int |= 0b10 << 62  # Bits 64–65 (variant)
+    uuid_int |= current_entropy_source().randbits(54)  # Bits 74–127
 
     return UUID(int=uuid_int)
 
@@ -135,11 +152,7 @@ def uuid7_to_datetime(
     ms_since_epoch = int.from_bytes(ts_bytes, "big") >> 16
 
     if high_precision:
-        # Extract the sub-millisecond nanoseconds (bits 52-71)
-        # First get the integer representation
-        uuid_int = int(uuid)
-        # Extract bits 52-71 (20 bits for sub-ms nanoseconds)
-        sub_ms_ns = (uuid_int >> 56) & 0xFFFFF  # Mask with 20 bits
+        sub_ms_ns = _unpack_sub_ms_ns(int(uuid))
         # Convert to microseconds (1 microsecond = 1000 nanoseconds)
         microseconds = sub_ms_ns // 1000
         # Create timestamp with microsecond precision

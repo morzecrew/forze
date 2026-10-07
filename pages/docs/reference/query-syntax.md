@@ -221,9 +221,11 @@ aggregates = {
 A computed metric's `filter` is a **per-metric row pre-filter** (it narrows the
 rows that feed *that* aggregate). For a post-aggregate stage, add `$having` — a
 filter (same grammar) over the **aggregated** rows, referencing only the output
-aliases (group keys and computed metrics). Every metric but `$min` / `$max` is a
-number, so a text, set or hierarchy operator on one (`$like` on a `$count`) is
-refused before anything runs. `$count` takes no field; every other function
+aliases (group keys and computed metrics). A group key or a `$min` / `$max` has
+its field's type, and every other metric is a number, so a text, set or hierarchy
+operator on a numeric output (`$like` on a `$count`, or on the `$max` of a number)
+is refused before anything runs, and a bound written as a string is cast to the
+output's type as a filter casts it. `$count` takes no field; every other function
 requires one.
 
 Calendar bucketing uses `$trunc` as a group value — `unit` is one of `hour` /
@@ -233,6 +235,11 @@ offset (default UTC):
 ```python
 {"$groups": {"day_start": {"$trunc": {"field": "ts", "unit": "day", "timezone": "+3"}}}}
 ```
+
+A bucket is the instant it starts at. In `$having`, an aware bound compares as
+that instant and a naive one as wall time in the bucket's zone, as the bucket was
+cut. A Postgres `timestamp` column, which has no zone, is read as UTC before it
+is bucketed, as a filter on it reads it.
 
 ## Where you pass them
 

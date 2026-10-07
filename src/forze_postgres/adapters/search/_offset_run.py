@@ -190,9 +190,11 @@ class _PostgresSimpleOffsetHooks:
         if self.thin_read_qname is not None and not want_snap:
             return await self._fetch_rows_thin(window)
 
+        # A snapshot window feeds the pool, which keys every hit by its whole record, so it
+        # reads the full read model; only the page returned is projected.
         cols = self.gw.return_clause(
-            self.return_type,
-            self.return_fields,
+            None if want_snap else self.return_type,
+            None if want_snap else self.return_fields,
             table_alias=self.plan.select_table_alias,
         )
 
@@ -732,13 +734,12 @@ async def execute_hub_ranked_offset_search(
                 """
         ).format(
             with_clause=plan.with_clause,
-            cols=gw.return_clause(return_type, return_fields, table_alias=plan.select_table_alias),
+            # The pool keys every hit by its whole record; only the page is projected.
+            cols=gw.return_clause(None, None, table_alias=plan.select_table_alias),
             combo=sql.Identifier(plan.data_relation),
             ca=sql.Identifier(combo_alias),
             order=plan.order_sql,
         )
-
-        drop_id = return_fields is not None and ID_FIELD not in return_fields
 
         async def fetch_window(window_offset: int, window_limit: int) -> SnapshotWindow:
             window_params = [*base_params, int(window_limit), int(window_offset)]
@@ -758,13 +759,9 @@ async def execute_hub_ranked_offset_search(
             hydrated = await hydrate_rows_by_id(
                 gw,
                 page_ids=window_ids,
-                return_type=return_type,
-                return_fields=return_fields,
+                return_type=None,
+                return_fields=None,
             )
-
-            if drop_id:
-                for row in hydrated:
-                    row.pop(ID_FIELD, None)
 
             return SnapshotWindow(rows=hydrated)
 

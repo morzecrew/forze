@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Any, cast
 
 import attrs
+from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     ELEM_SCALAR_FIELD,
@@ -125,12 +126,21 @@ class MongoQueryRenderer:
         limit: int | None = None,
         skip: int | None = None,
         filter_parser: QueryFilterExpressionParser | None = None,
+        model_type: type[BaseModel] | None = None,
     ) -> tuple[ParsedAggregates, list[JsonDict]]:
-        """Render an aggregate expression into a Mongo aggregation pipeline."""
+        """Render an aggregate expression into a Mongo aggregation pipeline.
+
+        :param model_type: The read model, which types ``$having``'s operands
+            (:meth:`AggregatesExpressionParser.parse`).
+        """
 
         validate_aggregate_capabilities(aggregates, MONGO_QUERY_CAPABILITIES, backend="mongo")
 
-        parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=filter_parser)
+        parsed = AggregatesExpressionParser.parse(
+            aggregates,
+            filter_parser=filter_parser,
+            model_type=model_type,
+        )
         pipeline: list[JsonDict] = []
 
         if match:

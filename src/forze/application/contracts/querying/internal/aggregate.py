@@ -2,9 +2,12 @@
 
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime, tzinfo
+from decimal import Decimal
 from typing import Any, Literal, cast, get_args
 
 import attrs
+from pydantic import BaseModel
 
 from forze.base.exceptions import exc
 
@@ -16,10 +19,16 @@ from ..expressions import (
     QuerySortExpression,
     QuerySortValue,
 )
+from ..field_types import (
+    _resolve_annotation,  # pyright: ignore[reportPrivateUsage]
+    classify_field_type,
+    coerce_query_ord_operands,
+)
 from ..sort_resolution.value import (
     _tiebreaker_direction,  # pyright: ignore[reportPrivateUsage]
     parse_sort_value,
 )
+from .cast import QueryValueCaster
 from .nodes import (
     QueryAnd,
     QueryCompare,
@@ -30,7 +39,11 @@ from .nodes import (
     QueryOr,
 )
 from .parse import QueryFilterExpressionParser
-from .time_bucket import ResolvedTimeBucketTimezone, parse_aggregate_timezone
+from .time_bucket import (
+    ResolvedTimeBucketTimezone,
+    parse_aggregate_timezone,
+    tzinfo_from_resolved,
+)
 
 # ----------------------- #
 
@@ -57,6 +70,10 @@ _NON_NUMERIC_OPS: frozenset[str] = frozenset(
 )
 """Operators no number supports: text patterns, set relations, emptiness, hierarchy."""
 _GROUP_OPS: frozenset[str] = frozenset(("$trunc",))
+_INSTANT_OPS: frozenset[str] = frozenset(
+    ("$eq", "$neq", "$gt", "$gte", "$lt", "$lte", "$in", "$nin")
+)
+"""Operators whose operand a time bucket compares as an instant."""
 
 # ....................... #
 
@@ -87,6 +104,63 @@ def _non_numeric_uses(expr: QueryExpr) -> frozenset[str]:
     _walk(expr)
 
     return frozenset(used)
+
+
+# ....................... #
+
+
+def _bucket_instants(
+    expr: QueryExpr,
+    zones: Mapping[str, ResolvedTimeBucketTimezone],
+) -> QueryExpr:
+    """*expr* with each operand on a time bucket made the instant it names.
+
+    A bucket is the instant it starts at: an aware operand is that instant, and a naive one is
+    wall time in the bucket's zone, as the bucket itself was cut. Every store then compares
+    instants, whatever its session zone and however it represents the bucket.
+    """
+
+    def _instant(value: Any, tz: tzinfo) -> Any:
+        if value is None:
+            return None
+
+        dt = QueryValueCaster.parse_datetime(value)
+
+        if dt.utcoffset() is not None:
+            return dt
+
+        # A wall time the zone repeats or skips names two instants; take the later one, as
+        # Postgres reads a bucket back into its zone. Compared in UTC: two datetimes sharing a
+        # tzinfo compare by wall clock and ignore ``fold``.
+        return max(dt.replace(tzinfo=tz, fold=fold).astimezone(UTC) for fold in (0, 1))
+
+    def _walk(node: QueryExpr) -> QueryExpr:
+        match node:
+            case QueryAnd(items):
+                return QueryAnd(tuple(_walk(item) for item in items))
+
+            case QueryOr(items):
+                return QueryOr(tuple(_walk(item) for item in items))
+
+            case QueryNot(item):
+                return QueryNot(_walk(item))
+
+            case QueryField(name, op, value) if name in zones and op in _INSTANT_OPS:
+                tz = tzinfo_from_resolved(zones[name])
+
+                if isinstance(value, (list, tuple)):
+                    instants = [_instant(v, tz) for v in value]  # pyright: ignore[reportUnknownVariableType]
+                    coerced: Any = tuple(instants) if isinstance(value, tuple) else instants
+
+                else:
+                    coerced = _instant(value, tz)
+
+                return attrs.evolve(node, value=coerced)
+
+            case _:
+                return node
+
+    return _walk(expr) if zones else expr
 
 
 # ....................... #
@@ -233,11 +307,17 @@ class AggregatesExpressionParser:
         expr: AggregatesExpression,
         *,
         filter_parser: QueryFilterExpressionParser | None = None,
+        model_type: type[BaseModel] | None = None,
     ) -> ParsedAggregates:
         """Validate and parse an aggregate expression.
 
         :param filter_parser: Parses each metric ``filter`` and ``$having``; the default limits
             when omitted. Pass the spec's, so they get the bounds its other filters get.
+        :param model_type: The read model the outputs are measured over. Given it, ``$having``
+            knows the type of a field group and a ``$min`` / ``$max`` as well: an operator no
+            number or time supports is refused on one of those too, and a string bound in it or
+            in a metric ``filter`` is cast to the field's type as a filter casts it
+            (:func:`coerce_query_ord_operands`).
         """
 
         parser = filter_parser or _DEFAULT_FILTER_PARSER
@@ -258,16 +338,42 @@ class AggregatesExpressionParser:
         if not computed_fields:
             raise exc.precondition("Aggregates expression requires $computed")
 
+        if model_type is not None:
+            # A metric filter is a filter over the documents, so it casts as one does.
+            computed_fields = tuple(
+                attrs.evolve(
+                    computed,
+                    parsed_filter=coerce_query_ord_operands(computed.parsed_filter, model_type),
+                )
+                if computed.parsed_filter is not None
+                else computed
+                for computed in computed_fields
+            )
+
         aliases = [group.alias for group in groups] + [field.alias for field in computed_fields]
         duplicates = sorted({alias for alias in aliases if aliases.count(alias) > 1})
 
         if duplicates:
             raise exc.precondition(f"Duplicate aggregate aliases: {duplicates}")
 
-        numeric = frozenset(
-            field.alias for field in computed_fields if field.function not in _VALUE_PRESERVING
+        kinds = cls._output_kinds(groups, computed_fields, model_type)
+        scalar = frozenset(
+            alias
+            for alias, kind in kinds.items()
+            if classify_field_type(kind) in ("number", "temporal")
         )
-        having = cls._having(expr.get("$having"), frozenset(aliases), parser, numeric=numeric)
+        having = cls._having(expr.get("$having"), frozenset(aliases), parser, scalar=scalar)
+
+        if having is not None:
+            zones = {
+                group.alias: group.expr.timezone
+                for group in groups
+                if isinstance(group.expr, GroupTrunc)
+            }
+            having = _bucket_instants(having, zones)
+
+        if having is not None and model_type is not None:
+            having = coerce_query_ord_operands(having, model_type, field_type_hints=kinds)
 
         return ParsedAggregates(
             groups=groups,
@@ -284,12 +390,13 @@ class AggregatesExpressionParser:
         aliases: frozenset[str],
         parser: QueryFilterExpressionParser,
         *,
-        numeric: frozenset[str] = frozenset(),
+        scalar: frozenset[str] = frozenset(),
     ) -> QueryExpr | None:
         """Parse and validate the ``$having`` filter over the output aliases.
 
-        An operator no number supports is refused on a *numeric* measure here, on every
-        backend, rather than stringified by one and failed by another's server.
+        An operator no number or time supports is refused on a *scalar* output (a number, a
+        time bucket, a ``$min`` / ``$max`` of a date) here, on every backend, rather than
+        stringified by one and failed by another's server.
         """
 
         if not raw:
@@ -305,14 +412,47 @@ class AggregatesExpressionParser:
                 f"({sorted(aliases)}); unknown: {unknown}.",
             )
 
-        if misused := sorted(_non_numeric_uses(expr) & numeric):
+        if misused := sorted(_non_numeric_uses(expr) & scalar):
             raise exc.precondition(
-                f"$having applies an operator no number supports to the numeric "
-                f"measure(s) {misused}.",
+                f"$having applies an operator no number or time supports to the output(s) "
+                f"{misused}.",
                 code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
         return expr
+
+    # ....................... #
+
+    @staticmethod
+    def _output_kinds(
+        groups: tuple[GroupKey, ...],
+        computed_fields: tuple[AggregateComputedField, ...],
+        model_type: type[BaseModel] | None,
+    ) -> dict[str, Any]:
+        """The Python type of each output alias: a bucket is a ``datetime``, a measure other
+        than ``$min`` / ``$max`` a number, and the rest take their field's annotation from
+        *model_type* (``Any`` without one, which nothing is checked or cast against)."""
+
+        def _field(field: str) -> Any:
+            if model_type is None:
+                return Any
+
+            return _resolve_annotation(model_type, field.split("."), {})
+
+        kinds: dict[str, Any] = {}
+
+        for group in groups:
+            expr = group.expr
+            kinds[group.alias] = _field(expr.field) if isinstance(expr, GroupField) else datetime
+
+        for computed in computed_fields:
+            if computed.function in _VALUE_PRESERVING and computed.field is not None:
+                kinds[computed.alias] = _field(computed.field)
+
+            else:
+                kinds[computed.alias] = Decimal
+
+        return kinds
 
     # ....................... #
 

@@ -24,10 +24,16 @@ from forze_postgres.kernel.client.client import PostgresClient
 from tests.integration.test_forze_postgres._document_fixtures import document_context
 from tests.support.aggregate_functions import assert_aggregate_function_parity
 from tests.support.aggregate_having import (
+    BUCKET_SEED,
     AggCreate,
     AggDoc,
     AggRead,
+    BucketCreate,
+    BucketDoc,
+    BucketRead,
     assert_aggregate_having_parity,
+    assert_bucket_having,
+    assert_string_bound_having,
     seed_aggregate_corpus,
 )
 
@@ -79,6 +85,7 @@ async def test_aggregate_having_postgres(pg_client: PostgresClient) -> None:
     await seed_aggregate_corpus(oracle)
 
     await assert_aggregate_having_parity(ctx.document.query(spec), oracle)
+    await assert_string_bound_having(ctx.document.query(spec))
     # Postgres percentile_cont is exact, so all functions are value-checked.
     await assert_aggregate_function_parity(
         ctx.document.query(spec), oracle, exclude_approx=False
@@ -225,6 +232,54 @@ async def test_a_column_precision_does_not_change_an_output_kind(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_a_bucket_in_a_repeated_hour_takes_its_reported_value_back(
+    pg_client: PostgresClient,
+) -> None:
+    """Postgres reports both instants of New York's repeated 01:00 as one wall-time bucket and
+    reads it back as the later; a naive bound of that wall time must name the same instant."""
+
+    t = f"agg_having_fold_{uuid4().hex[:10]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            region text NOT NULL,
+            at timestamptz NOT NULL
+        );
+        """
+    )
+
+    for at in ("2025-11-02 05:30:00+00", "2025-11-02 06:30:00+00"):
+        await pg_client.execute(
+            f"INSERT INTO {t} VALUES (%s, 1, now(), now(), 'r', %s)", [uuid4(), at]
+        )
+
+    spec = DocumentSpec(
+        name="bucket",
+        read=BucketRead,
+        write=DocumentWriteTypes(domain=BucketDoc, create_cmd=BucketCreate),
+    )
+    query = document_context(pg_client, t).document.query(spec)
+    by_hour = {
+        "$groups": {"hour": {"$trunc": {"field": "at", "unit": "hour", "timezone": "America/New_York"}}},
+        "$computed": {"n": {"$count": None}},
+    }
+
+    reported = (await query.aggregate_many(by_hour)).hits
+    assert [(row["hour"], row["n"]) for row in reported] == [(datetime(2025, 11, 2, 1), 2)]
+
+    for bound in (reported[0]["hour"], reported[0]["hour"].isoformat()):
+        kept = await query.aggregate_many(
+            {**by_hour, "$having": {"$values": {"hour": {"$eq": bound}}}}
+        )
+        assert [row["n"] for row in kept.hits] == [2], bound
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 @pytest.mark.parametrize("zone", ["UTC", "Asia/Tokyo"])
 async def test_a_temporal_having_matches_the_filter_in_any_session_zone(
     postgres_container: Any, zone: str
@@ -296,6 +351,38 @@ async def test_a_temporal_having_matches_the_filter_in_any_session_zone(
             }
         )
         assert [r["region"] for r in buckets.hits] == ["late"], zone
+
+        # A bucket in its own zone, whichever zone the session is in, over an instant or over
+        # a ``timestamp`` column holding UTC wall time.
+        bucket_spec = DocumentSpec(
+            name="bucket",
+            read=BucketRead,
+            write=DocumentWriteTypes(domain=BucketDoc, create_cmd=BucketCreate),
+        )
+
+        for column in ("timestamptz", "timestamp"):
+            bt = f"agg_bucket_tz_{uuid4().hex[:10]}"
+            await client.execute(
+                f"""
+                CREATE TABLE {bt} (
+                    id uuid PRIMARY KEY,
+                    rev integer NOT NULL,
+                    created_at timestamptz NOT NULL,
+                    last_update_at timestamptz NOT NULL,
+                    region text NOT NULL,
+                    at {column} NOT NULL
+                );
+                """
+            )
+
+            for create in BUCKET_SEED:
+                at = create.at if column == "timestamptz" else create.at.replace(tzinfo=None)
+                await client.execute(
+                    f"INSERT INTO {bt} VALUES (%s, 1, now(), now(), %s, %s)",
+                    [uuid4(), create.region, at],
+                )
+
+            await assert_bucket_having(document_context(client, bt).document.query(bucket_spec))
 
     finally:
         await client.close()
