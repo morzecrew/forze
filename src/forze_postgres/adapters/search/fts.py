@@ -25,7 +25,7 @@ from ._engine import RankedPipelineSql
 from ._fts_sql import FtsGroupLetter
 from ._highlights import build_fts_highlight
 from ._leg_fts import build_fts_leg
-from ._pgroonga_plan import effective_ranked_candidate_limit, is_trivial_filter
+from ._pgroonga_plan import effective_ranked_candidate_limit
 from ._pipeline_sql import (
     PipelineAliases,
     scored_key_columns,
@@ -177,15 +177,9 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             cap_kw["scored_tiebreak"], filtered_extra = await self._capped_order(
                 sorts, coalesced=coalesced, join_pairs=join
             )
-        heap_fw: sql.Composable | None = None
-        heap_fp: list[Any] = []
-
-        if coalesced and not is_trivial_filter(parsed_filters):
-            heap_fw, heap_fp = await self.where_clause(
-                filters,
-                parsed=parsed_filters,
-                table_alias=self.pipeline.index,
-            )
+        heap_fw, heap_fp = await self._coalesced_heap_where(
+            filters, parsed=parsed_filters, coalesced=coalesced
+        )
 
         parts = build_filter_first_ranked_pipeline(
             aliases=self.pipeline,
