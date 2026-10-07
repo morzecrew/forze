@@ -623,6 +623,19 @@ class TestQueryValueCaster:
         with pytest.raises(CoreException, match="Invalid int"):
             QueryValueCaster.as_int(3.14)
 
+    def test_as_int_from_integral_decimal(self) -> None:
+        assert QueryValueCaster.as_int(Decimal("40")) == 40
+        assert QueryValueCaster.as_int(Decimal("4E+1")) == 40
+        assert QueryValueCaster.as_int(Decimal("0E+1000")) == 0
+
+    @pytest.mark.parametrize(
+        "v",
+        [Decimal("40.5"), Decimal("NaN"), Decimal("Infinity"), Decimal("1E+100000")],
+    )
+    def test_as_int_non_integral_decimal_raises(self, v: Decimal) -> None:
+        with pytest.raises(CoreException, match="Invalid int"):
+            QueryValueCaster.as_int(v)
+
     # as_float
     def test_as_float_from_float(self) -> None:
         assert QueryValueCaster.as_float(3.14) == 3.14
@@ -1890,6 +1903,47 @@ def test_combinator_operand_entries_must_be_objects() -> None:
     for op in ("$or", "$and"):
         with pytest.raises(CoreException, match="must be filter expression"):
             QueryFilterExpressionParser.parse({op: ["not-a-dict"]})
+
+
+class TestHavingOnTimeBuckets:
+    """A bound on a bucket is the instant it names, read in the bucket's zone when naive."""
+
+    @pytest.mark.parametrize(
+        ("zone", "bound", "instant"),
+        [
+            # The repeated 01:00 and the skipped 02:30 each read as the later instant.
+            ("America/New_York", "2025-11-02T01:00:00", datetime(2025, 11, 2, 6, tzinfo=UTC)),
+            ("America/New_York", "2025-03-09T02:30:00", datetime(2025, 3, 9, 7, 30, tzinfo=UTC)),
+            ("Europe/Dublin", "2025-10-26T01:30:00", datetime(2025, 10, 26, 1, 30, tzinfo=UTC)),
+            ("+09:00", "2026-01-01T17:00:00", datetime(2026, 1, 1, 8, tzinfo=UTC)),
+            ("Asia/Tokyo", "2026-01-01T08:00:00Z", datetime(2026, 1, 1, 8, tzinfo=UTC)),
+        ],
+    )
+    def test_a_bound_names_one_instant(self, zone: str, bound: str, instant: datetime) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {"h": {"$trunc": {"field": "at", "unit": "hour", "timezone": zone}}},
+                "$computed": {"n": {"$count": None}},
+                "$having": {"$values": {"h": {"$eq": bound}}},
+            }
+        )
+
+        assert parsed.having is not None
+        (field,) = parsed.having.items  # type: ignore[attr-defined]
+        assert field.value == instant
+        assert field.value.utcoffset() is not None
+
+    def test_a_text_pattern_on_a_bucket_is_refused(self) -> None:
+        with pytest.raises(CoreException) as refused:
+            AggregatesExpressionParser.parse(
+                {
+                    "$groups": {"h": {"$trunc": {"field": "at", "unit": "hour"}}},
+                    "$computed": {"n": {"$count": None}},
+                    "$having": {"$values": {"h": {"$like": "2026%"}}},
+                }
+            )
+
+        assert refused.value.code == "query_feature_unsupported"
 
 
 class TestHavingOnNumericMeasures:

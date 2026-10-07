@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A search with result snapshots can return projected hits.** `project_search` and `select_search` on a snapshot-enabled spec failed in Postgres and Meilisearch, because the snapshot was filled from the projected rows; it now keeps whole records, and only the page returned is projected.
 
+- **A `$having` bound on a time bucket compares with the instant the bucket starts at.** In another zone, Postgres read an aware bound as UTC wall time and the mock matched no datetime at all; a naive bound is wall time in the bucket's zone, and a Postgres `timestamp` column is read as UTC before it is bucketed.
+
+- **A string range bound in `$having` or a metric `filter` compares as its field's type in the mock and Mongo, as in Postgres.** A `$gt` bound like `"40"` was compared with a number as text; `$like` on a numeric or time output is refused everywhere, and Mongo takes a `Decimal` bound.
+
+- **A string bound on an integer column filters in Postgres.** `{"age": {"$gt": "28"}}` failed with `Invalid int`; it compares as the number, as on the other backends.
+
 - **A search page with `limit=0` is empty when it writes or replays a result snapshot.** It returned one hit.
 
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.

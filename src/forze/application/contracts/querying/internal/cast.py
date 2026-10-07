@@ -70,6 +70,17 @@ class QueryValueCaster:
         if isinstance(v, float) and v.is_integer():
             return int(v)
 
+        # A string bound reaches here as the exact Decimal the shared cast made of it. Its
+        # exponent is checked before ``int()`` expands it: ``1E+1000000`` is ten characters
+        # and a million digits, and no integer column holds more than nineteen.
+        if (
+            isinstance(v, Decimal)
+            and v.is_finite()
+            and (v.is_zero() or v.adjusted() < 19)
+            and v == v.to_integral_value()
+        ):
+            return int(v)
+
         if isinstance(v, str):
             s = v.strip()
 
@@ -193,6 +204,24 @@ class QueryValueCaster:
     @classmethod
     def as_datetime(cls, v: Any, *, force_tz: bool) -> datetime:
         """Cast a value to datetime; accepts ISO string or timestamp."""
+        dt = cls.parse_datetime(v)
+
+        if force_tz:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+
+        else:
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(UTC).replace(tzinfo=None)
+
+        return dt
+
+    # ....................... #
+
+    @classmethod
+    def parse_datetime(cls, v: Any) -> datetime:
+        """Cast a value to datetime as written: a datetime or ISO string keeps its offset, or
+        its lack of one; a timestamp is an instant in UTC."""
         if isinstance(v, datetime):
             dt = v
 
@@ -227,14 +256,6 @@ class QueryValueCaster:
 
         else:
             raise exc.precondition(f"Invalid datetime: {v!r}")
-
-        if force_tz:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-
-        else:
-            if dt.tzinfo is not None:
-                dt = dt.astimezone(UTC).replace(tzinfo=None)
 
         return dt
 

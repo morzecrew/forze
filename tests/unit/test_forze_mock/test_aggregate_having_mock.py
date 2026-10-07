@@ -10,9 +10,15 @@ from forze.application.contracts.document import DocumentSpec, DocumentWriteType
 from forze.base.exceptions import CoreException
 from forze_mock.adapters import MockDocumentAdapter, MockState
 from tests.support.aggregate_having import (
+    BUCKET_SEED,
     AggCreate,
     AggDoc,
     AggRead,
+    BucketCreate,
+    BucketDoc,
+    BucketRead,
+    assert_bucket_having,
+    assert_string_bound_having,
     rowset,
     seed_aggregate_corpus,
 )
@@ -113,3 +119,32 @@ def test_having_rejects_unknown_alias() -> None:
                 "$having": {"$values": {"amount": {"$gt": 1}}},  # raw field, not an alias
             }
         )
+
+
+@pytest.mark.asyncio
+async def test_a_bucket_compares_as_the_instant_it_starts_at() -> None:
+    spec = DocumentSpec(
+        name="bucket",
+        read=BucketRead,
+        write=DocumentWriteTypes(domain=BucketDoc, create_cmd=BucketCreate),
+    )
+    doc = MockDocumentAdapter(
+        spec=spec,
+        state=MockState(),
+        namespace="bucket",
+        read_model=BucketRead,
+        domain_model=BucketDoc,
+    )
+
+    for create in BUCKET_SEED:
+        await doc.create(create)
+
+    await assert_bucket_having(doc)
+
+
+@pytest.mark.asyncio
+async def test_a_string_bound_is_cast_to_the_output_type() -> None:
+    doc = _mock()
+    await seed_aggregate_corpus(doc)
+
+    await assert_string_bound_having(doc)

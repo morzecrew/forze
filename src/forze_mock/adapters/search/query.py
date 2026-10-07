@@ -827,7 +827,7 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
         matched = self._full_ordered_search_documents(query, filters, {}, options)
         rows = _sort_docs(
-            _aggregate_docs(matched, aggregates, parser),
+            _aggregate_docs(matched, aggregates, parser, self.spec.model_type),
             with_group_tiebreakers(aggregates, sorts),
         )
         window: dict[str, Any] = dict(pagination or {})
