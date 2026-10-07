@@ -93,3 +93,30 @@ def page_offset(pagination: Mapping[str, Any]) -> int:
         raise exc.precondition(f"Pagination offset must be a non-negative integer, got {raw!r}.")
 
     return offset
+
+
+# ....................... #
+
+
+def page_limit(pagination: Mapping[str, Any]) -> int | None:
+    """The limit *pagination* asks for, as an integer (``None`` when it gives none).
+
+    :raises CoreException: ``precondition`` when the limit is not a non-negative integer: a
+        negative one would slice from the end, and a backend answers either with a server error.
+    """
+
+    raw = pagination.get("limit")
+
+    if raw is None:
+        return None
+
+    try:
+        limit = _exact_int(raw)
+
+    except (TypeError, ValueError, ArithmeticError):
+        limit = -1
+
+    if limit < 0:
+        raise exc.precondition(f"Pagination limit must be a non-negative integer, got {raw!r}.")
+
+    return limit

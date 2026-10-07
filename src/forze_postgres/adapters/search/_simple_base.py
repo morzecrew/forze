@@ -33,7 +33,7 @@ from forze.application.contracts.search import (
     resolve_search_sorts,
     search_options_for_simple_adapter,
 )
-from forze.application.integrations.document._limits import page_offset
+from forze.application.integrations.document._limits import page_limit, page_offset
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     reject_encrypted_sort_fields,
@@ -547,6 +547,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         )
         params = [*source_params, *aggregate.params]
         window: dict[str, Any] = dict(pagination or {})
+        limit, offset = page_limit(window), page_offset(window)
         # Rendered before anything runs, so a sort naming no output alias costs no query.
         # The group keys close the order, so pages of groups neither repeat nor skip one.
         order = PsycopgQueryRenderer.render_aggregate_order_by(
@@ -570,11 +571,11 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         page_params = list(params)
 
         # Without a limit every group comes back, as the document port's aggregate drains them.
-        if (limit := window.get("limit")) is not None:
+        if limit is not None:
             stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
-            page_params.append(int(limit))
+            page_params.append(limit)
 
-        if offset := page_offset(window):
+        if offset:
             stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
             page_params.append(offset)
 

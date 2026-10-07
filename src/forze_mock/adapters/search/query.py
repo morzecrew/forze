@@ -51,7 +51,7 @@ from forze.application.contracts.search import (
     validate_search_aggregates,
     validate_stream_supported,
 )
-from forze.application.integrations.document._limits import page_offset
+from forze.application.integrations.document._limits import page_limit, page_offset
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     stream_search_pages,
@@ -831,9 +831,8 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
             with_group_tiebreakers(aggregates, sorts),
         )
         window: dict[str, Any] = dict(pagination or {})
-        offset = page_offset(window)
-        limit = window.get("limit")
-        hits = rows[offset : offset + int(limit)] if limit is not None else rows[offset:]
+        offset, limit = page_offset(window), page_limit(window)
+        hits = rows[offset : offset + limit] if limit is not None else rows[offset:]
 
         if not return_count:
             return page_from_limit_offset(hits, window)

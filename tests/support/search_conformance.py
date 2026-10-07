@@ -655,6 +655,12 @@ async def check_an_aggregate_reads_what_the_page_counts(h: SearchHarness) -> Non
 
     assert bad_sort.value.kind is ExceptionKind.PRECONDITION, h.backend
 
+    for window in ({"limit": -1}, {"offset": -1}):
+        with pytest.raises(CoreException) as bad_window:
+            await h.query.aggregate_search_page(_BY_CATEGORY, PROBE_TERM, None, window)
+
+        assert bad_window.value.kind is ExceptionKind.PRECONDITION, (h.backend, window)
+
 
 async def check_a_null_group_takes_the_canonical_place(h: SearchHarness) -> None:
     """A null group key sorts as every other read sorts a null: first ascending, last
