@@ -47,6 +47,7 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import exc
 
 from ...catalog.introspect import PostgresColumnTypes, PostgresType
+from ...catalog.introspect.utils import normalize_pg_type, strip_type_modifier
 from ..type_cast import cast_sql_for_column_type
 from .nested import (
     build_nested_json_scalar_expr,
@@ -92,10 +93,14 @@ def _having_kind(t: PostgresType | None) -> PostgresType:
     if t is None:
         return _TEXT_TYPE
 
-    if not t.is_array and t.base in _NUMERIC_BASES:
+    # A declared precision is the column's, not the output's: ``numeric(10,2)`` is a number,
+    # ``timestamp(3) with time zone`` a ``timestamptz``.
+    base = normalize_pg_type(strip_type_modifier(t.base))
+
+    if not t.is_array and base in _NUMERIC_BASES:
         return _NUMERIC_TYPE
 
-    return t
+    return attrs.evolve(t, base=base)
 
 
 _LTREE_BASE: str = "ltree"

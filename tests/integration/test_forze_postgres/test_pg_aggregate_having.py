@@ -183,6 +183,48 @@ async def test_a_having_operator_the_output_cannot_take_is_refused_up_front(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_a_column_precision_does_not_change_an_output_kind(
+    pg_client: PostgresClient,
+) -> None:
+    """A ``numeric(10,2)`` measure is a number like any other, so it compares with a sum."""
+
+    t = f"agg_having_precision_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {t} (
+            id uuid PRIMARY KEY,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            region text NOT NULL,
+            tier text NOT NULL,
+            amount numeric(10, 2) NOT NULL
+        );
+        """
+    )
+    spec = DocumentSpec(
+        name="agg",
+        read=AggRead,
+        write=DocumentWriteTypes(domain=AggDoc, create_cmd=AggCreate),
+    )
+    ctx = document_context(pg_client, t)
+    await seed_aggregate_corpus(ctx.document.command(spec))
+
+    # Only south has one row, whose largest amount is its whole total.
+    rows = await ctx.document.query(spec).aggregate_many(
+        {
+            "$groups": {"region": "region"},
+            "$computed": {"top": {"$max": "amount"}, "total": {"$sum": "amount"}},
+            "$having": {"$fields": {"top": {"$lt": "total"}}},
+        },
+        sorts={"region": "asc"},
+    )
+
+    assert [row["region"] for row in rows.hits] == ["east", "north", "west"]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 @pytest.mark.parametrize("zone", ["UTC", "Asia/Tokyo"])
 async def test_a_temporal_having_matches_the_filter_in_any_session_zone(
     postgres_container: Any, zone: str

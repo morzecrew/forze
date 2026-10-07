@@ -544,7 +544,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         order_sql = await self._projection_order_by_clause(
             order or {sorted(self.read_fields)[0]: "asc"}
         )
-        proj_qname = await self._qname()
+        proj_qname = await self._pipeline_read_qname()
         count_stmt = sql.SQL(
             """
             SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
@@ -749,7 +749,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         if not normalize_search_queries(query):
             fw, fp = await self.where_clause(filters)
             source = sql.SQL("FROM {proj} {pa} WHERE {fw}").format(
-                proj=(await self._qname()).ident(),
+                proj=(await self._pipeline_read_qname()).ident(),
                 pa=sql.Identifier(self.projection_alias),
                 fw=fw,
             )
@@ -905,6 +905,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
                 cursor=cursor,
                 sorts=sorts,
                 spec=self.spec,
+                projection=await self._pipeline_read_qname(),
                 projection_alias=self.projection_alias,
                 parsed_filters=parsed_filters,
                 return_type=return_type,
