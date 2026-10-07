@@ -14,7 +14,7 @@ import math
 import statistics
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import MAX_PREC, Decimal, localcontext
 from functools import cmp_to_key
 from typing import (
     Any,
@@ -275,9 +275,11 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
                         isinstance(value, Decimal | int) and not isinstance(value, bool)
                         for value in values
                     ):
-                        # A store sums ``numeric`` exactly; folding through float would
-                        # drop digits a ledger total keeps.
-                        row[computed.alias] = sum(values, Decimal(0))
+                        # A store sums ``numeric`` exactly; folding through float, or under
+                        # the default 28-digit context, would drop digits a ledger keeps.
+                        with localcontext(prec=MAX_PREC):
+                            row[computed.alias] = sum(values, Decimal(0))
+
                         continue
 
                     nums = [
