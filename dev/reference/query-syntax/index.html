@@ -7029,15 +7029,21 @@ mock but approximate on Mongo.</p>
 <p>A computed metric's <code>filter</code> is a <strong>per-metric row pre-filter</strong> (it narrows the
 rows that feed <em>that</em> aggregate). For a post-aggregate stage, add <code>$having</code> — a
 filter (same grammar) over the <strong>aggregated</strong> rows, referencing only the output
-aliases (group keys and computed metrics). Every metric but <code>$min</code> / <code>$max</code> is a
-number, so a text, set or hierarchy operator on one (<code>$like</code> on a <code>$count</code>) is
-refused before anything runs. <code>$count</code> takes no field; every other function
+aliases (group keys and computed metrics). A group key or a <code>$min</code> / <code>$max</code> has
+its field's type, and every other metric is a number, so a text, set or hierarchy
+operator on a numeric output (<code>$like</code> on a <code>$count</code>, or on the <code>$max</code> of a number)
+is refused before anything runs, and a bound written as a string is cast to the
+output's type as a filter casts it. <code>$count</code> takes no field; every other function
 requires one.</p>
 <p>Calendar bucketing uses <code>$trunc</code> as a group value — <code>unit</code> is one of <code>hour</code> /
 <code>day</code> / <code>week</code> (Monday-start) / <code>month</code>; <code>timezone</code> is an IANA name or fixed
 offset (default UTC):</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$groups"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"day_start"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$trunc"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"field"</span><span class="p">:</span> <span class="s2">"ts"</span><span class="p">,</span> <span class="s2">"unit"</span><span class="p">:</span> <span class="s2">"day"</span><span class="p">,</span> <span class="s2">"timezone"</span><span class="p">:</span> <span class="s2">"+3"</span><span class="p">}}}}</span>
 </code></pre></div>
+<p>A bucket is the instant it starts at. In <code>$having</code>, an aware bound compares as
+that instant and a naive one as wall time in the bucket's zone, as the bucket was
+cut. A Postgres <code>timestamp</code> column, which has no zone, is read as UTC before it
+is bucketed, as a filter on it reads it.</p>
 <h2 id="where-you-pass-them">Where you pass them<a class="headerlink" href="#where-you-pass-them" title="Permanent link">&para;</a></h2>
 <p>Document query ports take <code>filters</code>, <code>sorts</code>, <code>pagination</code>, and (where supported)
 <code>aggregates</code>:</p>

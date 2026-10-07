@@ -9252,6 +9252,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A search can group and measure the rows it matches.</strong> <code>aggregate_search</code> and <code>aggregate_search_page</code> take the <code>AggregatesExpression</code> the document port's <code>aggregate_many</code> does and read every match, uncapped. Postgres FTS, PGroonga and the mock serve it; the others refuse via <code>SearchCapabilities.supports_aggregates</code>.</p>
 </li>
+<li>
+<p><strong>A bulk upsert can write set-based.</strong> <code>upsert_many(items, return_new=False, set_based=True)</code> inserts the missing rows and patches the stored ones, only where the update changes them, reading nothing back; a Postgres reload of unchanged rows ran about 4× faster. A spec whose updates need the domain model refuses it.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9276,6 +9279,24 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A Postgres aggregate sorts its groups as every other read sorts rows</strong> (<strong>behaviour change</strong>). A null group comes first ascending and last descending, or where <code>nulls</code> puts it; <code>"ASC"</code> now sorts ascending rather than descending, and an unknown direction is a 400 rather than a descending sort.</p>
+</li>
+<li>
+<p><strong>A search with result snapshots can return projected hits.</strong> <code>project_search</code> and <code>select_search</code> on a snapshot-enabled spec failed in Postgres and Meilisearch, because the snapshot was filled from the projected rows; it now keeps whole records, and only the page returned is projected.</p>
+</li>
+<li>
+<p><strong>A <code>$having</code> bound on a time bucket compares with the instant the bucket starts at.</strong> In another zone, Postgres read an aware bound as UTC wall time and the mock matched no datetime at all; a naive bound is wall time in the bucket's zone, and a Postgres <code>timestamp</code> column is read as UTC before it is bucketed.</p>
+</li>
+<li>
+<p><strong>A string range bound in <code>$having</code> or a metric <code>filter</code> compares as its field's type in the mock and Mongo, as in Postgres.</strong> A <code>$gt</code> bound like <code>"40"</code> was compared with a number as text; <code>$like</code> on a numeric or time output is refused everywhere, and Mongo takes a <code>Decimal</code> bound.</p>
+</li>
+<li>
+<p><strong>A string bound on an integer column filters in Postgres.</strong> <code>{"age": {"$gt": "28"}}</code> failed with <code>Invalid int</code>; it compares as the number, as on the other backends.</p>
+</li>
+<li>
+<p><strong><code>uuid7</code> ids keep their nanosecond order.</strong> The variant bits overwrote two bits of the sub-millisecond time, so ids minted under 256 ns apart could sort backwards, as <code>FrozenTimeSource</code> and the <abbr title="Deterministic Simulation Testing">DST</abbr> clock mint them 1 ns apart. Existing ids stay valid; <code>high_precision</code> reads them within 256 ns.</p>
+</li>
+<li>
+<p><strong>A search page with <code>limit=0</code> is empty when it writes or replays a result snapshot.</strong> It returned one hit.</p>
 </li>
 <li>
 <p><strong>The in-memory mock sums <code>Decimal</code> values exactly, as Postgres sums <code>numeric</code>.</strong> An aggregate's <code>$sum</code> over <code>Decimal</code> fields came back as a float, dropping digits a ledger total keeps.</p>
