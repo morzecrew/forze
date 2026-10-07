@@ -52,6 +52,14 @@ class TestBoundSource:
         assert a < b  # time-ordered (incrementing counter)
         assert a != b
 
+    def test_frozen_uuids_stay_ordered_across_thousands_of_ids(self) -> None:
+        """Each id is a nanosecond after the last; all of them must sort as minted."""
+
+        with bind_time_source(FrozenTimeSource(instant=_T0.replace(microsecond=123_457))):
+            ids = [uuid7() for _ in range(5_000)]
+
+        assert ids == sorted(ids)
+
     def test_bind_restores_previous_source_on_exit(self) -> None:
         before = utcnow()
         with bind_time_source(FrozenTimeSource(instant=_T0)):

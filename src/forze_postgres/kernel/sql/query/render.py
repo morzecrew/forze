@@ -79,8 +79,8 @@ _TEXT_LIKE_BASES: frozenset[str] = frozenset({"text", "varchar", "char", "citext
 
 _TEXT_TYPE = PostgresType(base="text", is_array=False, not_null=False)
 _NUMERIC_TYPE = PostgresType(base="numeric", is_array=False, not_null=False)
-_TIMESTAMP_TYPE = PostgresType(base="timestamp", is_array=False, not_null=False)
-"""Types an aggregate output renders as in ``$having`` (:meth:`aggregate_output_types`)."""
+_TIMESTAMPTZ_TYPE = PostgresType(base="timestamptz", is_array=False, not_null=False)
+"""Types an aggregate output renders as in ``$having`` (:meth:`aggregate_outputs`)."""
 
 _NUMERIC_BASES: frozenset[str] = frozenset({"int2", "int4", "int8", "float4", "float8", "numeric"})
 
@@ -278,6 +278,9 @@ class PsycopgQueryRenderer:
     table_alias: str | None = attrs.field(default=None)
     """Qualify top-level column names (e.g. projection alias in search CTEs)."""
 
+    column_exprs: Mapping[str, sql.Composable] | None = attrs.field(default=None)
+    """Expressions that stand in for top-level columns of the same name."""
+
     # Non initable fields
     binder: PsycopgPositionalBinder = attrs.field(
         factory=PsycopgPositionalBinder,
@@ -312,7 +315,11 @@ class PsycopgQueryRenderer:
 
         validate_aggregate_capabilities(aggregates, POSTGRES_QUERY_CAPABILITIES, backend="postgres")
 
-        parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=filter_parser)
+        parsed = AggregatesExpressionParser.parse(
+            aggregates,
+            filter_parser=filter_parser,
+            model_type=self.model_type,
+        )
         select_parts: list[sql.Composable] = []
         group_parts: list[sql.Composable] = []
 
@@ -337,33 +344,63 @@ class PsycopgQueryRenderer:
 
     # ....................... #
 
-    def aggregate_output_types(self, parsed: ParsedAggregates) -> PostgresColumnTypes:
-        """The kind of each aggregate output alias, so ``$having`` renders against them.
+    def aggregate_outputs(
+        self,
+        parsed: ParsedAggregates,
+        *,
+        table_alias: str,
+    ) -> tuple[PostgresColumnTypes, dict[str, sql.Composable]]:
+        """Each aggregate output alias of *table_alias* as ``$having`` reads it: its type, and
+        the expression standing in for an alias that is not read as reported.
 
-        A field group or a ``$min`` / ``$max`` takes its source column's type, a time bucket is
-        a ``timestamp`` (``date_trunc`` of a zoned instant is a wall time), and every other
-        measure is ``numeric`` (:func:`_having_kind`). An operator the output cannot take is
-        refused before the statement runs, and a threshold coerces as a filter on the same
-        type would.
+        A field group or a ``$min`` / ``$max`` takes its source column's type, and every other
+        measure is ``numeric`` (:func:`_having_kind`), so an operator the output cannot take is
+        refused before the statement runs and a threshold coerces as a filter on that type
+        would. A time compares as the instant it is, whatever the session's zone: a bucket,
+        reported as wall time in its zone (:meth:`_render_trunc_expr`), is read back from that
+        zone, and a ``timestamp`` output, UTC wall time as a filter reads its column, from UTC.
         """
 
-        out: PostgresColumnTypes = {}
+        types: PostgresColumnTypes = {}
+        columns: dict[str, sql.Composable] = {}
 
         for group in parsed.groups:
             if isinstance(group.expr, GroupField):
-                out[group.alias] = _having_kind(self._resolve_column_expr(group.expr.field)[1])
+                types[group.alias] = _having_kind(self._resolve_column_expr(group.expr.field)[1])
+                continue
+
+            wall = sql.Identifier(table_alias, group.alias)
+            tz = group.expr.timezone
+            types[group.alias] = _TIMESTAMPTZ_TYPE
+
+            if tz.mode == "iana":
+                columns[group.alias] = sql.SQL("({} AT TIME ZONE {})").format(
+                    wall,
+                    sql.Literal(tz.iana),
+                )
 
             else:
-                out[group.alias] = _TIMESTAMP_TYPE
+                offset = tz.offset if tz.offset is not None else timedelta(0)
+                columns[group.alias] = sql.SQL("(({} - {}) AT TIME ZONE 'UTC')").format(
+                    wall,
+                    sql.Literal(offset),
+                )
 
         for computed in parsed.computed_fields:
             if computed.function in ("$min", "$max") and computed.field is not None:
-                out[computed.alias] = _having_kind(self._resolve_column_expr(computed.field)[1])
+                types[computed.alias] = _having_kind(self._resolve_column_expr(computed.field)[1])
 
             else:
-                out[computed.alias] = _NUMERIC_TYPE
+                types[computed.alias] = _NUMERIC_TYPE
 
-        return out
+        for alias, t in types.items():
+            if t.base == "timestamp" and not t.is_array:
+                columns[alias] = sql.SQL("({} AT TIME ZONE 'UTC')").format(
+                    sql.Identifier(table_alias, alias)
+                )
+                types[alias] = _TIMESTAMPTZ_TYPE
+
+        return types, columns
 
     # ....................... #
 
@@ -385,6 +422,13 @@ class PsycopgQueryRenderer:
 
     def _render_trunc_expr(self, trunc: GroupTrunc) -> sql.Composable:
         col = self._render_source_expr(trunc.field)
+        source_t = (self.types or {}).get(trunc.field)
+
+        # A ``timestamp`` column holds UTC wall time, as a filter on it reads it; bucket the
+        # instant that is, not the same wall time in the bucket's zone.
+        if source_t is not None and _having_kind(source_t).base == "timestamp":
+            col = sql.SQL("({} AT TIME ZONE 'UTC')").format(col)
+
         unit = trunc.unit
         tz = trunc.timezone
 
@@ -576,13 +620,20 @@ class PsycopgQueryRenderer:
         else:
             t = None
 
-        col = (
-            sql.Identifier(self.table_alias, segments[0])
-            if self.table_alias is not None
-            else sql.Identifier(segments[0])
-        )
+        return self._top_column(segments[0]), t
 
-        return col, t
+    # ....................... #
+
+    def _top_column(self, name: str) -> sql.Composable:
+        """A top-level column, or the expression standing in for it (:attr:`column_exprs`)."""
+
+        if self.column_exprs is not None and name in self.column_exprs:
+            return self.column_exprs[name]
+
+        if self.table_alias is not None:
+            return sql.Identifier(self.table_alias, name)
+
+        return sql.Identifier(name)
 
     # ....................... #
 
@@ -692,12 +743,7 @@ class PsycopgQueryRenderer:
                 else:
                     t = None
 
-                col = (
-                    sql.Identifier(self.table_alias, name)
-                    if self.table_alias is not None
-                    else sql.Identifier(name)
-                )
-                return self._render_field(col, op, value, t=t)
+                return self._render_field(self._top_column(name), op, value, t=t)
 
             case QueryAnd(items):
                 if not items:
@@ -1183,13 +1229,7 @@ class PsycopgQueryRenderer:
         else:
             t = None
 
-        col = (
-            sql.Identifier(self.table_alias, path)
-            if self.table_alias is not None
-            else sql.Identifier(path)
-        )
-
-        return col, t
+        return self._top_column(path), t
 
     # ....................... #
 

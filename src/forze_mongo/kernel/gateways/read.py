@@ -13,6 +13,7 @@ from typing import (
     Literal,
     Never,
     TypeVar,
+    cast,
     final,
     overload,
 )
@@ -552,7 +553,10 @@ class MongoReadGateway[M: BaseModel](
             limit=eff_limit,
             skip=offset,
             filter_parser=self.filter_parser,
+            model_type=self.model_type,
         )
+        # ``$having`` bounds are query values too: a ``Decimal`` must reach BSON as one.
+        pipeline = cast(list[JsonDict], self._coerce_query_value(pipeline))
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=eff_limit)
 
         if (
@@ -584,7 +588,9 @@ class MongoReadGateway[M: BaseModel](
             aggregates,
             match=match or None,
             filter_parser=self.filter_parser,
+            model_type=self.model_type,
         )
+        pipeline = cast(list[JsonDict], self._coerce_query_value(pipeline))
         pipeline.append({"$count": "count"})
         rows = await self.client.aggregate(await self.coll(), pipeline, limit=1)
 

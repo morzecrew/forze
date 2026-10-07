@@ -20,10 +20,16 @@ from forze_mongo.execution.deps.keys import MongoClientDepKey
 from forze_mongo.kernel.client import MongoClient
 from tests.support.aggregate_functions import assert_aggregate_function_parity
 from tests.support.aggregate_having import (
+    BUCKET_SEED,
     AggCreate,
     AggDoc,
     AggRead,
+    BucketCreate,
+    BucketDoc,
+    BucketRead,
     assert_aggregate_having_parity,
+    assert_bucket_having,
+    assert_string_bound_having,
     seed_aggregate_corpus,
 )
 from tests.support.execution_context import context_from_deps
@@ -77,7 +83,43 @@ async def test_aggregate_having_mongo(mongo_client: MongoClient) -> None:
     await seed_aggregate_corpus(oracle)
 
     await assert_aggregate_having_parity(ctx.document.query(spec), oracle)
+    await assert_string_bound_having(ctx.document.query(spec))
     # Mongo $percentile is approximate, so its values aren't oracle-matched.
     await assert_aggregate_function_parity(
         ctx.document.query(spec), oracle, exclude_approx=True
     )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_bucket_compares_as_the_instant_it_starts_at_mongo(
+    mongo_client: MongoClient,
+) -> None:
+    collection = f"agg_bucket_{uuid4().hex[:8]}"
+    db_name = (await mongo_client.db()).name
+
+    spec = DocumentSpec(
+        name="bucket",
+        read=BucketRead,
+        write=DocumentWriteTypes(domain=BucketDoc, create_cmd=BucketCreate),
+    )
+    configurable = ConfigurableMongoDocument(
+        config=MongoDocumentConfig(
+            read=(db_name, collection),
+            write=(db_name, collection),
+        )
+    )
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MongoClientDepKey: mongo_client,
+                DocumentQueryDepKey: configurable,
+                DocumentCommandDepKey: configurable,
+            }
+        )
+    )
+
+    for create in BUCKET_SEED:
+        await ctx.document.command(spec).create(create)
+
+    await assert_bucket_having(ctx.document.query(spec))

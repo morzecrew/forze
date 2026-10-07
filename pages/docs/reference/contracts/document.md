@@ -332,7 +332,23 @@ model(s), or `None` when you don't need them back.
 | `ensure` | `ensure(id, payload, *, return_new=True)` | insert-when-missing; **never mutates** an existing row (idempotent by PK) |
 | `ensure_many` | `ensure_many(items, *, return_new=True)` | bulk insert-when-missing (`KeyedCreate`) |
 | `upsert` | `upsert(id, create, update, *, return_new=True)` | insert `create`, else apply `update` (domain apply + OCC) |
-| `upsert_many` | `upsert_many(items, *, return_new=True)` | bulk insert-or-update (`UpsertItem`) |
+| `upsert_many` | `upsert_many(items, *, return_new=True, set_based=False)` | bulk insert-or-update (`UpsertItem`); `set_based=True` is the bulk-load path below |
+
+A bulk load that needs no rows back can pass `return_new=False, set_based=True`. Postgres
+then inserts the missing rows and patches the stored ones with set-based statements, reading
+nothing back: a stored row takes the update as its DTO encodes it, and only a row the update
+changes gets a new `rev` and `last_update_at`. The stored rows are locked in id order first,
+so concurrent loads of overlapping batches queue rather than interleave.
+
+Like `update_matching`, it skips the domain model's update, so a spec whose updates need it
+refuses `set_based` with a `configuration` error (`set_based_upsert_unsupported`): one with
+revision history, materialized fields, a `SerializedBy` guarantee or randomized field
+encryption; a domain with update validators, invariants, domain events, or pydantic validators
+or constraints of its own on any field; or an update field the domain lacks, freezes, merges
+(a model or mapping) or derives from the other fields. A table
+keyed by more than the id (and tenant), or a patched column Postgres cannot compare, takes the
+usual path instead. Mongo, Firestore and the mock apply the same refusals and then write
+through their usual path.
 
 ### Update
 

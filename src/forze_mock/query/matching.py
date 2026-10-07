@@ -15,11 +15,13 @@ import statistics
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import MAX_PREC, Decimal, localcontext
-from functools import cmp_to_key
+from functools import cmp_to_key, partial
 from typing import (
     Any,
     cast,
 )
+
+from pydantic import BaseModel
 
 from forze.application.contracts.querying import (
     AggregatesExpression,
@@ -28,7 +30,6 @@ from forze.application.contracts.querying import (
     GroupTrunc,
     QueryFilterExpressionParser,
     QuerySortExpression,
-    compile_filter,
     ordered_compare,
     resolve_sort_keys,
 )
@@ -226,13 +227,20 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
     docs: Sequence[JsonDict],
     aggregates: AggregatesExpression,
     parser: QueryFilterExpressionParser | None = None,
+    model_type: type[BaseModel] | None = None,
 ) -> list[JsonDict]:
-    parsed = AggregatesExpressionParser.parse(aggregates, filter_parser=parser)
+    parsed = AggregatesExpressionParser.parse(
+        aggregates,
+        filter_parser=parser,
+        model_type=model_type,
+    )
 
-    # Compile each computed field's filter once (not per group, per document) into a
-    # reusable predicate; ``None`` means the aggregate sees every group member.
+    # Each computed field's filter, parsed (and cast against the read model) once rather than
+    # per group or document; ``None`` means the aggregate sees every group member.
     computed_matchers = [
-        compile_filter(computed.filter, parser=parser) if computed.filter is not None else None
+        partial(_match_expr, expr=computed.parsed_filter)
+        if computed.parsed_filter is not None
+        else None
         for computed in parsed.computed_fields
     ]
 
@@ -352,7 +360,20 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
         rows.append(row)
 
     if parsed.having is not None:
-        # ``$having``: keep only aggregated rows matching the post-group filter.
-        rows = [row for row in rows if _match_expr(row, parsed.having)]
+        # ``$having``: keep only aggregated rows matching the post-group filter. A bucket is
+        # reported as ISO text and compared as the instant it names, as its operands are.
+        buckets = [group.alias for group in parsed.groups if isinstance(group.expr, GroupTrunc)]
+        having = parsed.having
+        rows = [
+            row
+            for row in rows
+            if _match_expr(
+                {
+                    **row,
+                    **{a: datetime.fromisoformat(row[a]) for a in buckets if row[a] is not None},
+                },
+                having,
+            )
+        ]
 
     return rows

@@ -520,6 +520,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[True] = True,
+        set_based: Literal[False] = False,
     ) -> Awaitable[Sequence[R]]:
         """Bulk upsert: each :class:`UpsertItem` carries ``id`` + create + update payloads."""
         ...  # pragma: no cover
@@ -530,6 +531,7 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[False],
+        set_based: bool = False,
     ) -> Awaitable[None]:
         """Bulk upsert without re-reads when ``return_new`` is false."""
         ...  # pragma: no cover
@@ -539,10 +541,18 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: bool = True,
+        set_based: bool = False,
     ) -> Awaitable[Sequence[R] | None]:
         """Bulk insert-or-update keyed by each :class:`UpsertItem.id`; ids must be unique.
 
         Result order matches ``items``.
+
+        ``set_based=True`` (with ``return_new=False``) writes each chunk with set-based
+        statements and reads nothing back: a stored row takes the update as its DTO encodes
+        it, only where that changes it, without the domain model's update. A spec whose
+        updates need the domain path refuses it
+        (:meth:`~forze.application.contracts.document.DocumentSpec.require_set_based_upsert`);
+        a backend with no set-based statement takes its usual path.
         """
         ...  # pragma: no cover
 

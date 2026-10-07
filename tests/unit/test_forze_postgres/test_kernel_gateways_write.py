@@ -541,3 +541,20 @@ def test_serializing_writes_without_a_scope_is_refused() -> None:
     assert caught.value.kind is ExceptionKind.CONFIGURATION
 
     attrs.evolve(gw, serialized_by=(SerializedBy(key=("name",)),), serialization_scope="docs")
+
+
+# ....................... #
+# Set-based upsert: which columns compare and how rows reach the statement
+
+
+def test_a_column_compares_unless_its_equality_differs_from_the_domains() -> None:
+    from forze_postgres.kernel.catalog.introspect import PostgresType
+    from forze_postgres.kernel.gateways.write import _comparable
+
+    def t(base: str, *, is_array: bool = False) -> PostgresType:
+        return PostgresType(base=base, is_array=is_array, not_null=False)
+
+    assert _comparable(None)
+    assert _comparable(t("text")) and _comparable(t("numeric(10,2)")) and _comparable(t("json"))
+    assert not _comparable(t("citext")) and not _comparable(t("character(3)"))
+    assert not _comparable(t("xml")) and not _comparable(t("json", is_array=True))

@@ -1,11 +1,19 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
 from datetime import datetime
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 import pytest
 import structlog
-from pydantic import BaseModel, Field, computed_field
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationInfo,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from forze.application.contracts.conformity import (
     DerivedReadField,
@@ -17,11 +25,19 @@ from forze.application.contracts.document import (
     DocumentWriteTypes,
     validate_query_parameters,
 )
-from forze.application.contracts.guarantees import NonOverlapping, UniqueTogether
+from forze.application.contracts.guarantees import NonOverlapping, SerializedBy, UniqueTogether
 from forze.application.contracts.querying import QueryFieldPolicy
 from forze.base.exceptions import CoreException
 from forze.base.primitives import utcnow
-from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.domain.models import (
+    AggregateRoot,
+    BaseDTO,
+    CreateDocumentCmd,
+    Document,
+    ReadDocument,
+    invariant,
+)
+from forze.domain.validation import update_validator
 
 
 class _Read(ReadDocument):
@@ -836,3 +852,266 @@ def test_a_non_overlap_guarantee_checks_its_key_and_its_period() -> None:
             write=DocumentWriteTypes(domain=_Domain, create_cmd=_Create),
             guarantees=(NonOverlapping(key=("name",), period=("valid_from", "valid_to")),),
         )
+
+
+# ----------------------- #
+# Set-based upsert
+
+
+class _ValidatedDomain(Document):
+    name: str
+
+    @update_validator
+    def _check(self, after: "_ValidatedDomain", diff: dict) -> None:
+        return None
+
+
+class _InvariantDomain(Document):
+    name: str
+
+    @invariant
+    def _named(self) -> None:
+        return None
+
+
+class _AggregateDomain(Document, AggregateRoot):
+    name: str
+
+
+class _NormalizingDomain(Document):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _lower(cls, value: str) -> str:
+        return value.lower()
+
+
+class _Address(BaseModel):
+    city: str
+
+
+class _AddressedDomain(Document):
+    name: str
+    address: _Address
+
+
+class _AddressedUpdate(BaseDTO):
+    address: _Address | None = None
+
+
+class _StrayUpdate(BaseDTO):
+    nickname: str | None = None
+
+
+class _ConstrainedDomain(Document):
+    name: str = Field(min_length=3)
+
+
+class _CheckedDomain(Document):
+    name: str
+
+    @model_validator(mode="after")
+    def _named(self) -> "_CheckedDomain":
+        return self
+
+
+class _SlugDomain(Document):
+    name: str
+    slug: str = ""
+
+    @field_validator("slug")
+    @classmethod
+    def _from_name(cls, value: str, info: ValidationInfo) -> str:
+        return value or str(info.data.get("name", "")).lower()
+
+
+class _CodedDomain(Document):
+    name: str
+    code: str | None = Field(default_factory=lambda data: str(data["name"]).upper())
+
+
+class _CodedUpdate(BaseDTO):
+    code: str | None = None
+
+
+class _StatusDomain(Document):
+    name: str
+    status: Literal["ready", "done"] = "ready"
+
+
+class _StatusUpdate(BaseDTO):
+    status: str | None = None
+
+
+class _Point(TypedDict):
+    x: int
+    y: int
+
+
+class _LooseDomain(Document):
+    name: str
+    point: _Point = {"x": 0, "y": 0}
+    extra: Any = None
+
+
+class _LooseUpdate(BaseDTO):
+    point: _Point | None = None
+    extra: Any = None
+
+
+class _RowsDomain(Document):
+    name: str
+    rows: list[dict[str, int]] = Field(default_factory=list)
+
+
+class _RowsUpdate(BaseDTO):
+    rows: list[dict[str, int]] | None = None
+
+
+class _TaggedDomain(Document):
+    name: str
+    tags: dict[str, str] = Field(default_factory=dict)
+
+
+class _TaggedUpdate(BaseDTO):
+    tags: dict[str, str] | None = None
+
+
+def _named_write(domain: type[Document]) -> DocumentWriteTypes:
+    return DocumentWriteTypes(domain=domain, create_cmd=_Create, update_cmd=_PydanticUpdate)
+
+
+def test_a_plain_spec_allows_a_set_based_upsert() -> None:
+    DocumentSpec(name="doc", read=_Read, write=_named_write(_Domain)).require_set_based_upsert()
+
+
+def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
+    DocumentSpec(
+        name="doc",
+        read=_Read,
+        write=DocumentWriteTypes(domain=_RowsDomain, create_cmd=_Create, update_cmd=_RowsUpdate),
+    ).require_set_based_upsert()
+
+
+@pytest.mark.parametrize(
+    ("spec", "reason"),
+    [
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_Domain), history_enabled=True),
+            "revision history",
+        ),
+        (
+            DocumentSpec(
+                name="orders", read=_PricedRead, write=_priced_write(), materialized={"total"}
+            ),
+            "materialized fields",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=_named_write(_Domain),
+                guarantees=(SerializedBy(key=("name",)),),
+            ),
+            "per-owner write serialization",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=_named_write(_Domain),
+                encryption=FieldEncryption(encrypted=frozenset({"name"})),
+            ),
+            "randomized field encryption",
+        ),
+        (DocumentSpec(name="doc", read=_Read, write=_named_write(_ValidatedDomain)), "update validators"),
+        (DocumentSpec(name="doc", read=_Read, write=_named_write(_InvariantDomain)), "invariants"),
+        (DocumentSpec(name="doc", read=_Read, write=_named_write(_AggregateDomain)), "domain events"),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_NormalizingDomain)),
+            "fields the domain validates (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ConstrainedDomain)),
+            "fields the domain validates (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_CheckedDomain)),
+            "model validators",
+        ),
+        # The update touches only ``name``; the validator on ``slug`` still reruns.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_SlugDomain)),
+            "fields the domain validates (slug)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_TaggedDomain, create_cmd=_Create, update_cmd=_TaggedUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (tags)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_CodedDomain, create_cmd=_Create, update_cmd=_CodedUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (code)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_StatusDomain, create_cmd=_Create, update_cmd=_StatusUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (status)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_LooseDomain, create_cmd=_Create, update_cmd=_LooseUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (extra, point)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_AddressedDomain, create_cmd=_Create, update_cmd=_AddressedUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (address)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_Domain, create_cmd=_Create, update_cmd=_StrayUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (nickname)",
+        ),
+    ],
+)
+def test_a_spec_whose_updates_need_the_domain_refuses_a_set_based_upsert(
+    spec: DocumentSpec, reason: str
+) -> None:
+    with pytest.raises(CoreException) as refused:
+        spec.require_set_based_upsert()
+
+    assert refused.value.code == "set_based_upsert_unsupported"
+    assert refused.value.details["reasons"] == [reason]

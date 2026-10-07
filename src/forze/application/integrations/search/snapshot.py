@@ -122,8 +122,13 @@ def _shape_snapshot_page(
 # ....................... #
 
 
+_POOL_FORMAT = 2
+"""Bumped when what a pool holds changes, so a run written before cannot replay after: 2 keys
+every hit by its whole record, where 1 could key a projected read by its default-filled one."""
+
+
 def _sha256_fingerprint_payload(payload: dict[str, object]) -> str:
-    return stable_payload_fingerprint(payload)
+    return stable_payload_fingerprint({**payload, "pool": _POOL_FORMAT})
 
 
 # ....................... #
@@ -469,7 +474,7 @@ class SearchResultSnapshot:
         if extras:
             payload |= dict(extras)
 
-        return stable_payload_fingerprint(payload)
+        return _sha256_fingerprint_payload(payload)
 
     # ....................... #
     # Record keys (serialized projection hits / federation partitions)
@@ -831,7 +836,7 @@ class SearchResultSnapshot:
     ) -> tuple[int | None, int, int]:
         p = dict(pagination or {})
         limit = p.get("limit")
-        page_limit = max(1, int(limit)) if limit is not None else 20
+        page_limit = max(0, int(limit)) if limit is not None else 20
 
         if want_snap:
             return max(1, max_ids), 0, page_limit
@@ -1001,18 +1006,21 @@ class SearchResultSnapshot:
         pagination_d = dict(pagination or {})
         offset = int(pagination_d.get("offset") or 0)
         limit = pagination_d.get("limit")
-        page_limit = max(1, int(limit)) if limit is not None else 20
+        page_limit = max(0, int(limit)) if limit is not None else 20
 
         # Bind the stored snapshot to *this* request's server-computed fingerprint,
         # not the client-supplied one: a caller passing a stale snapshot id (or no
         # fingerprint at all) must not replay another request's results. A mismatch
-        # returns ``None`` and the caller recomputes live.
+        # returns ``None`` and the caller recomputes live. A store reads at least one id,
+        # so a zero-sized page checks the run with one and returns none.
         raw_keys = await self.store.get_id_range(
-            run_id, offset, page_limit, expected_fingerprint=fp_computed
+            run_id, offset, max(1, page_limit), expected_fingerprint=fp_computed
         )
 
         if raw_keys is None:
             return None
+
+        raw_keys = raw_keys[:page_limit]
 
         raw_keys = await self._open_ids(raw_keys, run_id=run_id)
 

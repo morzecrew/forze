@@ -135,6 +135,9 @@ CASES: tuple[QueryCase, ...] = (
               expected=frozenset({"alice"})),
     QueryCase(name="ord_gt", filters={"$values": {"age": {"$gt": 28}}},
               expected=frozenset({"alice", "carol", "dave"})),
+    # A bound written as a string is cast to the field's type, an integer one included.
+    QueryCase(name="ord_gt_string_bound", filters={"$values": {"age": {"$gt": "28"}}},
+              expected=frozenset({"alice", "carol", "dave"})),
     QueryCase(name="membership_in", filters={"$values": {"name": {"$in": ["alice", "bob"]}}},
               expected=frozenset({"alice", "bob"})),
     # Past Firestore's 30-value `in`: a backend that cannot send it must refuse it up front.

@@ -10,6 +10,15 @@ from ..types import Scalar
 
 # ----------------------- #
 
+_INT8_MIN = -(1 << 63)
+_INT8_MAX = (1 << 63) - 1
+"""The widest integer column's range: a bound outside it matches no stored integer."""
+
+_TIMESTAMP_BOUND = Decimal("1E+21")
+"""Past any epoch timestamp in nanoseconds a ``datetime`` holds."""
+
+# ....................... #
+
 
 class QueryValueCaster:
     """Static methods for casting raw values to typed scalars.
@@ -68,6 +77,17 @@ class QueryValueCaster:
             return v
 
         if isinstance(v, float) and v.is_integer():
+            return int(v)
+
+        # A string bound reaches here as the exact Decimal the shared cast made of it. It is
+        # held to the widest integer column before ``int()`` expands it: ``1E+1000000`` is
+        # ten characters and a million digits.
+        if (
+            isinstance(v, Decimal)
+            and v.is_finite()
+            and _INT8_MIN <= v <= _INT8_MAX
+            and v == v.to_integral_value()
+        ):
             return int(v)
 
         if isinstance(v, str):
@@ -193,22 +213,57 @@ class QueryValueCaster:
     @classmethod
     def as_datetime(cls, v: Any, *, force_tz: bool) -> datetime:
         """Cast a value to datetime; accepts ISO string or timestamp."""
+        dt = cls.parse_datetime(v)
+
+        if force_tz:
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+
+        else:
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(UTC).replace(tzinfo=None)
+
+        return dt
+
+    # ....................... #
+
+    @classmethod
+    def parse_datetime(cls, v: Any) -> datetime:
+        """Cast a value to datetime as written: a datetime or ISO string keeps its offset, or
+        its lack of one; a timestamp is an instant in UTC.
+
+        :param v: A datetime, an ISO-8601 string, or a Unix timestamp in seconds (fractional
+            allowed) or whole milli-, micro- or nanoseconds.
+        :returns: The datetime, aware only when *v* named an offset or was a timestamp.
+        :raises CoreException: ``precondition`` for anything else, a ``bool`` included.
+        """
+        if isinstance(v, bool):
+            raise exc.precondition(f"Invalid datetime: {v!r}")
+
         if isinstance(v, datetime):
             dt = v
 
         elif cls._like_num(v):
             if isinstance(v, str):
                 s = v.strip()
-                num = float(s) if "." in s else int(s)
+                # Digits alone stay an exact int; ``1.5``, ``1e3`` and the like are floats.
+                num = int(s) if s.lstrip("+-").isdigit() else float(s)
 
             else:
                 num = v
 
-            seconds = (
-                float(num)
-                if isinstance(num, float) and not num.is_integer()
-                else cls._to_seconds(int(num))
-            )
+            # A fraction is seconds; only a whole number may be milli-, micro- or nanoseconds.
+            # A Decimal is bounded before ``int()`` could expand a huge exponent.
+            if isinstance(num, Decimal):
+                if not num.is_finite() or abs(num) >= _TIMESTAMP_BOUND:
+                    raise exc.precondition(f"Invalid datetime timestamp: {v!r}")
+
+                fractional = num != num.to_integral_value()
+
+            else:
+                fractional = isinstance(num, float) and not num.is_integer()
+
+            seconds = float(num) if fractional else cls._to_seconds(int(num))
 
             try:
                 dt = datetime.fromtimestamp(seconds, tz=UTC)
@@ -227,14 +282,6 @@ class QueryValueCaster:
 
         else:
             raise exc.precondition(f"Invalid datetime: {v!r}")
-
-        if force_tz:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-
-        else:
-            if dt.tzinfo is not None:
-                dt = dt.astimezone(UTC).replace(tzinfo=None)
 
         return dt
 

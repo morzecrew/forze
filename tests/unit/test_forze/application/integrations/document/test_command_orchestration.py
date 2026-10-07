@@ -30,7 +30,7 @@ from forze.application.contracts.document import (
 )
 from forze.application.integrations.document._command import DocumentCommandMixin
 from forze.application.integrations.document._query import DocumentQueryMixin
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 
 # ----------------------- #
 
@@ -240,6 +240,11 @@ class CommandHarness(DocumentCommandMixin[_Row, _Domain, _Dto, _Dto]):
         class _Spec:
             name = "thing"
             require_hard_delete = DocumentSpec.require_hard_delete
+            set_based_refusal: CoreException | None = None
+
+            def require_set_based_upsert(self) -> None:
+                if self.set_based_refusal is not None:
+                    raise self.set_based_refusal
 
         spec = _Spec()
         spec.hard_delete = hard_delete  # type: ignore[attr-defined]
@@ -673,6 +678,65 @@ async def test_upsert_many_populates_cache(return_new: bool) -> None:
         assert res is None
     assert cache.invalidated == [_UID_A, _UID_B]
     assert "upsert_many" in write_gw.calls
+
+
+class _SetBasedWriteGateway(FakeWriteGateway):
+    async def upsert_many_set_based(
+        self, ids: Any, creates: Any, updates: Any, *, batch_size: int
+    ) -> None:
+        self.calls.append("upsert_many_set_based")
+
+
+_PAIR = [
+    UpsertItem(id=_UID_A, create=_Dto(), update=_Dto()),
+    UpsertItem(id=_UID_B, create=_Dto(), update=_Dto()),
+]
+
+
+@pytest.mark.asyncio
+async def test_a_set_based_upsert_takes_the_gateway_statement_and_reads_nothing_back() -> None:
+    write_gw = _SetBasedWriteGateway()
+    cache = FakeCache()
+
+    res = await CommandHarness(write_gw, cache).upsert_many(
+        _PAIR, return_new=False, set_based=True
+    )
+
+    assert res is None
+    assert write_gw.calls == ["upsert_many_set_based"]
+    assert cache.invalidated == [_UID_A, _UID_B]
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_without_a_set_based_statement_takes_its_usual_path() -> None:
+    write_gw = FakeWriteGateway(upsert_many_result=[_Domain(id=_UID_A), _Domain(id=_UID_B)])
+
+    await CommandHarness(write_gw).upsert_many(_PAIR, return_new=False, set_based=True)
+
+    assert write_gw.calls == ["upsert_many"]
+
+
+@pytest.mark.asyncio
+async def test_a_set_based_upsert_asking_for_rows_is_refused_before_any_write() -> None:
+    write_gw = _SetBasedWriteGateway()
+
+    with pytest.raises(CoreException) as refused:
+        await CommandHarness(write_gw).upsert_many(_PAIR, return_new=True, set_based=True)  # type: ignore[call-overload]
+
+    assert refused.value.code == "set_based_upsert_unsupported"
+    assert write_gw.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_spec_refusing_set_based_writes_nothing() -> None:
+    write_gw = _SetBasedWriteGateway()
+    harness = CommandHarness(write_gw)
+    harness.spec.set_based_refusal = exc.configuration("history")  # type: ignore[attr-defined]
+
+    with pytest.raises(CoreException, match="history"):
+        await harness.upsert_many(_PAIR, return_new=False, set_based=True)
+
+    assert write_gw.calls == []
 
 
 # ----------------------- #

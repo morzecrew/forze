@@ -62,6 +62,15 @@ class TestUuid7:
         uuids = {uuid7() for _ in range(100)}
         assert len(uuids) == 100
 
+    def test_ids_a_nanosecond_apart_sort_as_minted(self) -> None:
+        """Every nanosecond of the millisecond orders the id, across each 64 and 256 ns."""
+
+        base = 1_780_000_000_123_000_000
+        ids = [uuid7(timestamp_ns=base + i) for i in range(5_000)]
+
+        assert ids == sorted(ids)
+        assert all(u.version == 7 and u.variant == "specified in RFC 4122" for u in ids)
+
 
 # ----------------------- #
 # uuid7_to_datetime
@@ -81,6 +90,16 @@ class TestUuid7ToDatetime:
         dt = uuid7_to_datetime(u, tz=UTC, high_precision=True)
         assert dt is not None
         assert abs(dt.timestamp() - now.timestamp()) < 0.01
+
+    @pytest.mark.parametrize("sub_ms_ns", [0, 1, 255, 256, 999, 1_000, 123_456, 999_999])
+    def test_high_precision_reads_the_microseconds_back(self, sub_ms_ns: int) -> None:
+        ms = 1_780_000_000_123
+        u = uuid7(timestamp_ns=ms * 1_000_000 + sub_ms_ns)
+        dt = uuid7_to_datetime(u, tz=UTC, high_precision=True)
+
+        assert dt is not None
+        expected = datetime.fromtimestamp(ms / 1000 + (sub_ms_ns // 1000) / 1_000_000, tz=UTC)
+        assert dt == expected
 
     def test_accepts_string_uuid(self) -> None:
         u = uuid7(timestamp_ms=1_700_000_000_000)

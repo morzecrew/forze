@@ -140,7 +140,10 @@ class ModelCodec[T, TSource](Protocol):
         *,
         mode: EncodeMode = "python",
         exclude: ModelDumpExcludeOptions | None = None,
-    ) -> list[T]: ...
+    ) -> list[T]:
+        """Build a model from each source, sharing no mutable value with it (a dump then a
+        validation), so a caller may stamp one with a shallow ``model_copy``."""
+        ...
 
     @property
     def materialized(self) -> frozenset[str]:

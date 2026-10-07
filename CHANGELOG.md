@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A search can group and measure the rows it matches.** `aggregate_search` and `aggregate_search_page` take the `AggregatesExpression` the document port's `aggregate_many` does and read every match, uncapped. Postgres FTS, PGroonga and the mock serve it; the others refuse via `SearchCapabilities.supports_aggregates`.
 
+- **A bulk upsert can write set-based.** `upsert_many(items, return_new=False, set_based=True)` inserts the missing rows and patches the stored ones, only where the update changes them, reading nothing back; a Postgres reload of unchanged rows ran about 4× faster. A spec whose updates need the domain model refuses it.
+
 ### Changed
 
 - ...
@@ -34,6 +36,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A Postgres aggregate sorts its groups as every other read sorts rows** (**behaviour change**). A null group comes first ascending and last descending, or where `nulls` puts it; `"ASC"` now sorts ascending rather than descending, and an unknown direction is a 400 rather than a descending sort.
 
 - **An update to a mapping or nested-model field keeps the keys it does not name, in Postgres, Mongo and Firestore** (**behaviour change**). The merge patch was stored, so `{"k": 2}` into `{"k": 1, "j": 5}` stored `{"k": 2}`; the field is now written whole. `update_matching`, which cannot merge, refuses such a field.
+
+- **A search with result snapshots can return projected hits.** `project_search` and `select_search` on a snapshot-enabled spec failed in Postgres and Meilisearch, because the snapshot was filled from the projected rows; it now keeps whole records, and only the page returned is projected.
+
+- **A `$having` bound on a time bucket compares with the instant the bucket starts at.** In another zone, Postgres read an aware bound as UTC wall time and the mock matched no datetime at all; a naive bound is wall time in the bucket's zone, and a Postgres `timestamp` column is read as UTC before it is bucketed.
+
+- **A string range bound in `$having` or a metric `filter` compares as its field's type in the mock and Mongo, as in Postgres.** A `$gt` bound like `"40"` was compared with a number as text; `$like` on a numeric or time output is refused everywhere, and Mongo takes a `Decimal` bound.
+
+- **A string bound on an integer column filters in Postgres.** `{"age": {"$gt": "28"}}` failed with `Invalid int`; it compares as the number, as on the other backends.
+
+- **`uuid7` ids keep their nanosecond order.** The variant bits overwrote two bits of the sub-millisecond time, so ids minted under 256 ns apart could sort backwards, as `FrozenTimeSource` and the DST clock mint them 1 ns apart. Existing ids stay valid; `high_precision` reads them within 256 ns.
+
+- **A search page with `limit=0` is empty when it writes or replays a result snapshot.** It returned one hit.
 
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.
 
