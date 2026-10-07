@@ -1021,6 +1021,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         if not self.spec.supports_update():
             raise exc.internal("Update command type is not supported for this model")
 
+        # Mirror the real backends, which write the patch as it is: the mock merges it.
+        self.spec.require_whole_update_matching(dto)
+
         # Mirror the real backends: a set-based bulk update cannot recompute a
         # derived value per row, so reject it here too (the mock could recompute,
         # but dev/prod parity matters more than the extra capability).

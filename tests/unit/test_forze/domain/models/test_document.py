@@ -1,6 +1,7 @@
 """Tests for forze.domain.models.document."""
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 import pytest
@@ -626,3 +627,29 @@ class TestDocumentHistory:
         assert h.source == "test"
         assert h.data.name == "hist"
         assert isinstance(h.created_at, datetime)
+
+
+class TestStoredChanges:
+    """What a store writes for an update: each changed field's whole new value."""
+
+    def test_a_merged_mapping_is_written_whole(self) -> None:
+        class Doc(Document):
+            meta: dict[str, Any] = {}
+            name: str = "n"
+
+        doc = Doc(meta={"k": 1, "j": 5})
+        after, diff = doc.update({"meta": {"k": 2, "j": None}})
+
+        assert diff["meta"] == {"k": 2, "j": None}
+        written = after.stored_changes(diff)
+        assert written["meta"] == {"k": 2}
+        assert set(written) == set(diff)
+
+    def test_an_empty_diff_writes_nothing(self) -> None:
+        class Doc(Document):
+            name: str = "n"
+
+        doc = Doc()
+        after, diff = doc.update({"name": "n"})
+
+        assert after.stored_changes(diff) == {}

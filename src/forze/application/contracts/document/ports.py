@@ -705,7 +705,9 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         **not** run domain :meth:`~forze.domain.models.Document.update` (no computed-field
         side effects, soft-delete validators, or per-row OCC). Suitable for admin or
         batch flags (for example ``archived=true``). Prefer :meth:`update_matching_strict`
-        when business rules must match :meth:`update` / :meth:`update_many`.
+        when business rules must match :meth:`update` / :meth:`update_many`. A patch that
+        sets a mapping or nested-model field is refused (``update_matching_merge_unsupported``):
+        written as it is, it would replace the stored value where an update merges into it.
 
         Postgres applies a single ``UPDATE … WHERE … RETURNING``; Mongo keyset-pages
         ids and runs batched ``update_many`` with ``$inc`` on ``rev``.

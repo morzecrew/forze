@@ -1,7 +1,7 @@
 """Specifications for document models and storage layout."""
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar, get_args
+from typing import Any, Generic, TypeVar, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -74,6 +74,21 @@ def _normalize_derived(
         name: declared if declared is not None else DerivedReadField()
         for name, declared in dict(value).items()
     }
+
+
+# ....................... #
+
+
+def _merges_into_stored(annotation: Any) -> bool:
+    """Whether a domain update merges a value of *annotation* into the stored one: a mapping
+    or a pydantic model, at any depth of the annotation."""
+
+    origin = get_origin(annotation) or annotation
+
+    if isinstance(origin, type) and issubclass(origin, (BaseModel, Mapping)):
+        return True
+
+    return any(_merges_into_stored(arg) for arg in get_args(annotation))
 
 
 # ....................... #
@@ -706,6 +721,42 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             f"Document {self.name!r} declares hard_delete=False, so its rows cannot be erased.",
             code="hard_delete_forbidden",
             details={"spec": str(self.name)},
+        )
+
+    # ....................... #
+
+    def require_whole_update_matching(self, dto: BaseModel) -> None:
+        """Refuse an ``update_matching`` patch that sets a field the domain merges into.
+
+        ``update_matching`` writes the patch's fields as they are, with no domain update, so a
+        mapping or nested model there would replace the stored value with the fragment it
+        names, where ``update`` and ``update_matching_strict`` merge it. Setting such a field
+        to ``None`` clears it either way and is allowed.
+
+        :raises CoreException: ``precondition`` (``update_matching_merge_unsupported``)
+            naming the fields.
+        """
+
+        if self.write is None:
+            return
+
+        fields = self.write["domain"].model_fields
+        merged = sorted(
+            name
+            for name in dto.model_fields_set
+            if name in fields
+            and getattr(dto, name) is not None
+            and _merges_into_stored(fields[name].annotation)
+        )
+
+        if not merged:
+            return
+
+        raise exc.precondition(
+            f"update_matching cannot merge into {merged} on {self.name!r}: it would store the "
+            "patch in place of the stored value. Use update_matching_strict.",
+            code="update_matching_merge_unsupported",
+            details={"spec": str(self.name), "fields": merged},
         )
 
     # ....................... #

@@ -1,5 +1,6 @@
 """Domain document models and commands."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, ClassVar, Literal, Self, cast
@@ -356,6 +357,33 @@ class Document(CoreModel):
             emit(self, diff)
 
         return after, diff
+
+    # ....................... #
+
+    def stored_changes(self, diff: JsonDict) -> JsonDict:
+        """*diff* with each changed mapping as its whole stored value in this updated document.
+
+        :meth:`update`'s diff is a merge patch: a mapping or nested model in it holds only the
+        keys that changed, and a removed key as ``None``. A store that sets a field from it
+        replaces the stored value with that fragment and loses the siblings; this is what to
+        write instead. A scalar or a list is already whole, and a diff with no mapping is
+        returned as it is.
+
+        :param diff: The diff :meth:`update` returned with this document.
+        :returns: *diff*'s keys, each mapping-valued one with this document's whole value.
+        """
+
+        fields = type(self).model_fields
+        merged = {
+            key for key, value in diff.items() if isinstance(value, Mapping) and key in fields
+        }
+
+        if not merged:
+            return diff
+
+        whole = self.model_dump(mode="python", include=merged, exclude_computed_fields=True)
+
+        return {key: whole[key] if key in merged else value for key, value in diff.items()}
 
     # ....................... #
 

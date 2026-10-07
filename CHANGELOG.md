@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres aggregate sorts its groups as every other read sorts rows** (**behaviour change**). A null group comes first ascending and last descending, or where `nulls` puts it; `"ASC"` now sorts ascending rather than descending, and an unknown direction is a 400 rather than a descending sort.
 
+- **An update to a mapping or nested-model field keeps the keys it does not name, in Postgres, Mongo and Firestore** (**behaviour change**). The merge patch was stored, so `{"k": 2}` into `{"k": 1, "j": 5}` stored `{"k": 2}`; the field is now written whole. `update_matching`, which cannot merge, refuses such a field.
+
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.
 
 ## [0.11.1] - 2026-10-07

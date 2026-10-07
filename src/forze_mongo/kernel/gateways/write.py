@@ -477,6 +477,28 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
+    def _payload_and_diff(
+        self, current: D, written: JsonDict, diff: JsonDict
+    ) -> tuple[JsonDict, JsonDict]:
+        """The adapted payload to write for an update and the diff to report for it.
+
+        *written* is the update's merge patch with each changed mapping whole
+        (:meth:`Document.stored_changes`), which ``$set`` needs; the caller still gets the
+        merge patch, as it always has. One adapt when they are the same.
+        """
+
+        same = written is diff
+        reported = self.adapt_payload_for_write(self._bump_rev(current, diff), create=False)
+
+        if same:
+            return reported, reported
+
+        return self.adapt_payload_for_write(
+            self._bump_rev(current, written), create=False
+        ), reported
+
+    # ....................... #
+
     @mongo_occ_retry
     async def _patch(
         self,
@@ -491,16 +513,17 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             if rev is not None:
                 await self._validate_history((current, rev, update))
 
-            _, diff = current.update(update, materialized=self.read_codec.materialized)
+            after, diff = current.update(update, materialized=self.read_codec.materialized)
+            written = after.stored_changes(diff)
 
         else:
             _, diff = current.touch()
+            written = diff
 
         if not diff:
             return current, diff
 
-        diff = self._bump_rev(current, diff)
-        diff = self.adapt_payload_for_write(diff, create=False)
+        payload, diff = self._payload_and_diff(current, written, diff)
 
         flt = self._add_tenant_filter({"_id": self._storage_pk(current.id), REV_FIELD: current.rev})
         # Atomic update-and-return: one round trip instead of update + re-get,
@@ -509,7 +532,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         raw = await self.client.find_one_and_update(
             await self.coll(),
             flt,
-            {"$set": self._coerce_query_value(diff)},
+            {"$set": self._coerce_query_value(payload)},
         )
 
         if raw is None:
@@ -539,7 +562,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         currents = await self.read_gw.get_many(pks)
 
         # 1. Validation and preparation
-        to_patch: list[tuple[int, D, JsonDict]] = []
+        to_patch: list[tuple[int, D, JsonDict, JsonDict]] = []
 
         if updates is not None:
             if revs is not None:
@@ -548,14 +571,14 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 )
 
             for i, (current, update) in enumerate(zip(currents, updates, strict=True)):
-                _, diff = current.update(update, materialized=self.read_codec.materialized)
+                after, diff = current.update(update, materialized=self.read_codec.materialized)
                 if diff:
-                    to_patch.append((i, current, diff))
+                    to_patch.append((i, current, after.stored_changes(diff), diff))
         else:
             for i, current in enumerate(currents):
                 _, diff = current.touch()
                 if diff:
-                    to_patch.append((i, current, diff))
+                    to_patch.append((i, current, diff, diff))
 
         if not to_patch:
             return currents, [{} for _ in currents]
@@ -563,10 +586,8 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         # 2. Execution (Bulk)
         id_to_written: dict[UUID, JsonDict] = {}
         operations: list[tuple[JsonDict, JsonDict]] = []
-        for _, current, diff in to_patch:
-            bumped = self._bump_rev(current, diff)
-            bumped = self.adapt_payload_for_write(bumped, create=False)
-            id_to_written[current.id] = bumped
+        for _, current, written, diff in to_patch:
+            bumped, id_to_written[current.id] = self._payload_and_diff(current, written, diff)
             flt = self._add_tenant_filter(
                 {"_id": self._storage_pk(current.id), REV_FIELD: current.rev}
             )
