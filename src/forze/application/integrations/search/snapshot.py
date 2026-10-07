@@ -474,7 +474,7 @@ class SearchResultSnapshot:
         if extras:
             payload |= dict(extras)
 
-        return stable_payload_fingerprint(payload)
+        return _sha256_fingerprint_payload(payload)
 
     # ....................... #
     # Record keys (serialized projection hits / federation partitions)
