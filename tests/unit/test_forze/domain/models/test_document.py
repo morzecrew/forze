@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from pydantic import computed_field
 
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import JsonDict
@@ -644,6 +645,22 @@ class TestStoredChanges:
         written = after.stored_changes(diff)
         assert written["meta"] == {"k": 2}
         assert set(written) == set(diff)
+
+    def test_a_materialized_mapping_is_written_whole(self) -> None:
+        class Doc(Document):
+            prices: dict[str, int] = {}
+
+            @computed_field  # type: ignore[prop-decorator]
+            @property
+            def doubled(self) -> dict[str, int]:
+                return {k: v * 2 for k, v in self.prices.items()}
+
+        materialized = frozenset({"doubled"})
+        doc = Doc(prices={"a": 1, "b": 2})
+        after, diff = doc.update({"prices": {"a": 5}}, materialized=materialized)
+
+        assert diff["doubled"] == {"a": 10}
+        assert after.stored_changes(diff)["doubled"] == {"a": 10, "b": 4}
 
     def test_an_empty_diff_writes_nothing(self) -> None:
         class Doc(Document):

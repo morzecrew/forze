@@ -16,7 +16,10 @@ from uuid import UUID
 import attrs
 from psycopg import sql
 
-from forze.application.contracts.document import domains_from_create_payloads
+from forze.application.contracts.document import (
+    domains_from_create_payloads,
+    require_whole_update_matching,
+)
 from forze.application.contracts.guarantees import SerializedBy
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
@@ -1248,6 +1251,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         self._require_update_cmd()
         self._reject_matching_update_with_materialized()
+        require_whole_update_matching(dto, document=self.model_type.__name__)
 
         if batch_size < 1:
             raise exc.internal("batch_size must be >= 1")

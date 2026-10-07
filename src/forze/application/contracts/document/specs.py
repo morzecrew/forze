@@ -1,7 +1,7 @@
 """Specifications for document models and storage layout."""
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar, get_args, get_origin
+from typing import Any, Generic, TypeVar, get_args
 
 import attrs
 from pydantic import BaseModel
@@ -79,16 +79,34 @@ def _normalize_derived(
 # ....................... #
 
 
-def _merges_into_stored(annotation: Any) -> bool:
-    """Whether a domain update merges a value of *annotation* into the stored one: a mapping
-    or a pydantic model, at any depth of the annotation."""
+def require_whole_update_matching(dto: BaseModel, *, document: str) -> None:
+    """Refuse an ``update_matching`` patch that sets a field to a mapping or a model.
 
-    origin = get_origin(annotation) or annotation
+    ``update_matching`` writes its patch as it is, with no domain update, so such a value
+    would replace the stored one with the fragment it names, where ``update`` and
+    ``update_matching_strict`` merge it. A list or a scalar replaces the stored value either
+    way, and setting a field to ``None`` clears it either way; both are allowed.
 
-    if isinstance(origin, type) and issubclass(origin, (BaseModel, Mapping)):
-        return True
+    :param document: The document's name, for the message.
+    :raises CoreException: ``precondition`` (``update_matching_merge_unsupported``)
+        naming the fields.
+    """
 
-    return any(_merges_into_stored(arg) for arg in get_args(annotation))
+    merged = sorted(
+        name
+        for name in dto.model_fields_set
+        if isinstance(getattr(dto, name), (Mapping, BaseModel))
+    )
+
+    if not merged:
+        return
+
+    raise exc.precondition(
+        f"update_matching cannot merge into {merged} on {document!r}: it would store the "
+        "patch in place of the stored value. Use update_matching_strict.",
+        code="update_matching_merge_unsupported",
+        details={"document": document, "fields": merged},
+    )
 
 
 # ....................... #
@@ -724,40 +742,6 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         )
 
     # ....................... #
-
-    def require_whole_update_matching(self, dto: BaseModel) -> None:
-        """Refuse an ``update_matching`` patch that sets a field the domain merges into.
-
-        ``update_matching`` writes the patch's fields as they are, with no domain update, so a
-        mapping or nested model there would replace the stored value with the fragment it
-        names, where ``update`` and ``update_matching_strict`` merge it. Setting such a field
-        to ``None`` clears it either way and is allowed.
-
-        :raises CoreException: ``precondition`` (``update_matching_merge_unsupported``)
-            naming the fields.
-        """
-
-        if self.write is None:
-            return
-
-        fields = self.write["domain"].model_fields
-        merged = sorted(
-            name
-            for name in dto.model_fields_set
-            if name in fields
-            and getattr(dto, name) is not None
-            and _merges_into_stored(fields[name].annotation)
-        )
-
-        if not merged:
-            return
-
-        raise exc.precondition(
-            f"update_matching cannot merge into {merged} on {self.name!r}: it would store the "
-            "patch in place of the stored value. Use update_matching_strict.",
-            code="update_matching_merge_unsupported",
-            details={"spec": str(self.name), "fields": merged},
-        )
 
     # ....................... #
 

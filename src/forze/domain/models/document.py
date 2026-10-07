@@ -373,17 +373,25 @@ class Document(CoreModel):
         :returns: *diff*'s keys, each mapping-valued one with this document's whole value.
         """
 
-        fields = type(self).model_fields
-        merged = {
-            key for key, value in diff.items() if isinstance(value, Mapping) and key in fields
+        cls = type(self)
+        stored = {k for k, v in diff.items() if isinstance(v, Mapping) and k in cls.model_fields}
+        # A materialized computed field is written too, and may be a mapping.
+        computed = {
+            k for k, v in diff.items() if isinstance(v, Mapping) and k in cls.model_computed_fields
         }
 
-        if not merged:
+        if not stored and not computed:
             return diff
 
-        whole = self.model_dump(mode="python", include=merged, exclude_computed_fields=True)
+        whole: JsonDict = {}
 
-        return {key: whole[key] if key in merged else value for key, value in diff.items()}
+        if stored:
+            whole |= self.model_dump(mode="python", include=stored, exclude_computed_fields=True)
+
+        if computed:
+            whole |= self.model_dump(mode="python", include=computed)
+
+        return {key: whole.get(key, value) for key, value in diff.items()}
 
     # ....................... #
 

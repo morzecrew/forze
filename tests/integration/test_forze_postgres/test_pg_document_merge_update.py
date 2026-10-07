@@ -32,7 +32,9 @@ async def test_an_update_merges_into_a_stored_mapping_and_model(pg_client: Postg
             last_update_at timestamptz NOT NULL,
             name text NOT NULL,
             meta jsonb NOT NULL,
-            address jsonb NOT NULL
+            address jsonb NOT NULL,
+            items jsonb NOT NULL,
+            extra jsonb
         );
         """
     )

@@ -15,7 +15,10 @@ import attrs
 from bson import Decimal128
 from pymongo import UpdateOne
 
-from forze.application.contracts.document import domains_from_create_payloads
+from forze.application.contracts.document import (
+    domains_from_create_payloads,
+    require_whole_update_matching,
+)
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
 from forze.application.execution.resilience import default_resilience_executor
@@ -680,6 +683,7 @@ class MongoWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         self._require_update_cmd()
         self._reject_matching_update_with_materialized()
+        require_whole_update_matching(dto, document=self.model_type.__name__)
 
         update_data = await self._encode_patch_one(dto)
 

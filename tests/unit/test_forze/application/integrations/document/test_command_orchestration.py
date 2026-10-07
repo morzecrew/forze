@@ -239,9 +239,7 @@ class CommandHarness(DocumentCommandMixin[_Row, _Domain, _Dto, _Dto]):
 
         class _Spec:
             name = "thing"
-            write = None
             require_hard_delete = DocumentSpec.require_hard_delete
-            require_whole_update_matching = DocumentSpec.require_whole_update_matching
 
         spec = _Spec()
         spec.hard_delete = hard_delete  # type: ignore[attr-defined]

@@ -33,6 +33,8 @@ class _MergeFields(BaseModel):
     name: str
     meta: dict[str, Any] = Field(default_factory=dict)
     address: MergeAddress
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    extra: Any = None
 
 
 class MergeCreate(CreateDocumentCmd, _MergeFields):
@@ -51,12 +53,16 @@ class MergeUpdate(BaseDTO):
     name: str | None = None
     meta: dict[str, Any] | None = None
     address: MergeAddressPatch | None = None
+    items: list[dict[str, Any]] | None = None
+    extra: Any = None
 
 
 SEED = MergeCreate(
     name="stored",
     meta={"k": 1, "j": 5, "deep": {"a": 1, "b": 2}},
     address=MergeAddress(city="A", street="S"),
+    items=[{"a": 0}],
+    extra={"x": 0, "y": 1},
 )
 
 UPDATES: tuple[tuple[MergeUpdate, dict[str, Any], dict[str, str], dict[str, Any]], ...] = (
@@ -120,10 +126,15 @@ async def assert_updates_merge(command: Any, query: Any) -> None:
             assert written.meta == meta and written.address.model_dump() == address, update
             assert {k: _unwrapped(diff[k]) for k in patch} == patch, (update, diff)
 
+    # A field typed ``Any`` that holds a mapping merges the same way.
+    written = await command.update(one.id, revs[one.id], MergeUpdate(extra={"x": 2}))
+    assert written.extra == {"x": 2, "y": 1}
+    assert (await query.get(one.id, skip_cache=True)).extra == {"x": 2, "y": 1}
+
 
 async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> None:
-    """``update_matching`` writes its patch as it is, so it refuses one that would replace a
-    mapping or nested model with a fragment, and still writes a plain field."""
+    """``update_matching`` writes its patch as it is, so it refuses one setting a field to a
+    mapping or model (whatever the field's type), and still writes a scalar or a list."""
 
     created = await command.create(SEED)
     by_id = {"$values": {"id": {"$eq": created.id}}}
@@ -131,6 +142,7 @@ async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> No
     for update in (
         MergeUpdate(meta={"k": 7}),
         MergeUpdate(address=MergeAddressPatch(city="Z")),
+        MergeUpdate(extra={"x": 7}),
     ):
         try:
             await command.update_matching(by_id, update)
@@ -143,6 +155,9 @@ async def assert_update_matching_refuses_a_merge(command: Any, query: Any) -> No
 
     stored = await query.get(created.id, skip_cache=True)
     assert stored.meta == SEED.meta and stored.address == SEED.address
+    assert stored.extra == SEED.extra
 
-    await command.update_matching(by_id, MergeUpdate(name="renamed"))
-    assert (await query.get(created.id, skip_cache=True)).name == "renamed"
+    # A list replaces the stored one on every path, mappings in it included.
+    await command.update_matching(by_id, MergeUpdate(name="renamed", items=[{"b": 1}]))
+    stored = await query.get(created.id, skip_cache=True)
+    assert (stored.name, stored.items) == ("renamed", [{"b": 1}])

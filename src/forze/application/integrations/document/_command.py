@@ -471,7 +471,6 @@ class DocumentCommandMixin(
         return_new: bool = True,
     ) -> Sequence[R] | int:
         w = self._require_write()
-        self.spec.require_whole_update_matching(dto)
 
         logger.debug("update_matching (fast) on '%s'", self.spec.name)
 

@@ -340,7 +340,7 @@ model(s), or `None` when you don't need them back.
 |--------|-----------|-------|
 | `update` | `update(pk, rev, dto, *, return_new=True, return_diff=False)` | optimistic — a stale `rev` raises `conflict`; `return_diff` adds the change `JsonDict` |
 | `update_many` | `update_many(updates, *, return_new=True, return_diff=False)` | per-row update (`KeyedUpdate`: id, rev, dto) with OCC |
-| `update_matching` | `update_matching(filters, dto, *, return_new=True)` | fast bulk patch by filter — **no per-row OCC, no domain side effects**; refuses a mapping or nested-model field, which only an update merges; `return_new=False` → rows-updated count |
+| `update_matching` | `update_matching(filters, dto, *, return_new=True)` | fast bulk patch by filter — **no per-row OCC, no domain side effects**; refuses a field set to a mapping or model, which only an update merges; not on Firestore; `return_new=False` → rows-updated count |
 | `update_matching_strict` | `update_matching_strict(filters, dto, *, return_new=True, chunk_size=None)` | like `update_many` (per-row OCC + domain apply) over a filter |
 | `touch` / `touch_many` | `touch(pk, *, return_new=True)` | bump `last_update_at` only |
 
