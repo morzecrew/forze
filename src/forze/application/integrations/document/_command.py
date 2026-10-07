@@ -2,10 +2,15 @@
 
 import asyncio
 from collections.abc import Sequence
-from typing import Generic, Literal, overload
+from typing import Any, Generic, Literal, overload
 from uuid import UUID
 
-from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
+from forze.application.contracts.document import (
+    DocumentSpec,
+    KeyedCreate,
+    KeyedUpdate,
+    UpsertItem,
+)
 from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.base.exceptions import exc
@@ -27,6 +32,19 @@ def _require_distinct_ids(ids: Sequence[UUID]) -> None:
         raise exc.precondition(
             "ensure_many and upsert_many require distinct id values in the batch"
         )
+
+
+def _require_set_based(spec: DocumentSpec[Any, Any, Any, Any], *, return_new: bool) -> None:
+    """Refuse a set-based ``upsert_many`` that asks for rows back or whose spec needs the
+    domain path."""
+
+    if return_new:
+        raise exc.precondition(
+            "A set-based upsert_many reads nothing back; pass return_new=False.",
+            code="set_based_upsert_unsupported",
+        )
+
+    spec.require_set_based_upsert()
 
 
 # ....................... #
@@ -224,6 +242,7 @@ class DocumentCommandMixin(
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[True] = True,
+        set_based: Literal[False] = False,
     ) -> Sequence[R]: ...
 
     @overload
@@ -232,6 +251,7 @@ class DocumentCommandMixin(
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[False],
+        set_based: bool = False,
     ) -> None: ...
 
     async def upsert_many(
@@ -239,8 +259,12 @@ class DocumentCommandMixin(
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: bool = True,
+        set_based: bool = False,
     ) -> Sequence[R] | None:
         w = self._require_write()
+
+        if set_based:
+            _require_set_based(self.spec, return_new=return_new)
 
         if not items:
             if not return_new:
@@ -251,6 +275,15 @@ class DocumentCommandMixin(
         _require_distinct_ids(ids)
         creates = [it.create for it in items]
         updates = [it.update for it in items]
+
+        # A gateway with a set-based statement writes without reading back; any other takes
+        # its usual path, which writes the same rows for a spec that allows set-based.
+        write_set_based = getattr(w, "upsert_many_set_based", None) if set_based else None
+
+        if write_set_based is not None:
+            await write_set_based(ids, creates, updates, batch_size=self.eff_batch_size)
+            await self.document_cache.invalidate_keys_now(*ids)
+            return None
 
         domains = await w.upsert_many(ids, creates, updates, batch_size=self.eff_batch_size)
         pks = [x.id for x in domains]

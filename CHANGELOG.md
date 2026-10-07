@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A search can group and measure the rows it matches.** `aggregate_search` and `aggregate_search_page` take the `AggregatesExpression` the document port's `aggregate_many` does and read every match, uncapped. Postgres FTS, PGroonga and the mock serve it; the others refuse via `SearchCapabilities.supports_aggregates`.
 
+- **A bulk upsert can write set-based.** `upsert_many(items, return_new=False, set_based=True)` inserts the missing rows and patches the stored ones, only where the update changes them, reading nothing back; a Postgres reload of unchanged rows ran about 4× faster. A spec whose updates need the domain model refuses it.
+
 ### Changed
 
 - ...

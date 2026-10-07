@@ -779,6 +779,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[True] = True,
+        set_based: Literal[False] = False,
     ) -> Sequence[R]: ...
 
     @overload
@@ -787,6 +788,7 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: Literal[False],
+        set_based: bool = False,
     ) -> None: ...
 
     async def upsert_many(
@@ -794,7 +796,19 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         items: Sequence[UpsertItem[C, U]],
         *,
         return_new: bool = True,
+        set_based: bool = False,
     ) -> Sequence[R] | None:
+        if set_based:
+            # Refused as a real store refuses it; an allowed one writes what the usual path
+            # writes, which the mock then takes.
+            if return_new:
+                raise exc.precondition(
+                    "A set-based upsert_many reads nothing back; pass return_new=False.",
+                    code="set_based_upsert_unsupported",
+                )
+
+            self.spec.require_set_based_upsert()
+
         if not items:
             if not return_new:
                 return None

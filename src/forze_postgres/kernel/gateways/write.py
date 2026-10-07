@@ -20,17 +20,19 @@ from forze.application.contracts.document import domains_from_create_payloads
 from forze.application.contracts.guarantees import SerializedBy
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
+from forze.application.contracts.tenancy import TENANT_ID_FIELD
 from forze.application.execution.resilience import default_resilience_executor
 from forze.application.integrations.persistence import (
     DocumentWriteCodecMixin,
     HistoryOccMixin,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, OnceCell, advisory_lock_key
+from forze.base.primitives import JsonDict, OnceCell, advisory_lock_key, utcnow
 from forze.base.serialization import ModelCodec
-from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 from forze.domain.models import BaseDTO, Document
 from forze_postgres.kernel.catalog.introspect import PostgresColumnTypes, PostgresType
+from forze_postgres.kernel.catalog.introspect.utils import normalize_pg_type, strip_type_modifier
 from forze_postgres.kernel.client import gather_db_work
 from forze_postgres.kernel.sql.conflict_target import resolve_write_conflict_target
 
@@ -74,6 +76,124 @@ def _values_placeholder_for_patch_group(
         return ph
 
     return sql.SQL("CAST({} AS {})").format(ph, _pg_cast_type_sql(pg_t))
+
+
+_UNNEST_BASES: frozenset[str] = frozenset(
+    {
+        "uuid",
+        "text",
+        "varchar",
+        "char",
+        "bpchar",
+        "citext",
+        "bool",
+        "int2",
+        "int4",
+        "int8",
+        "float4",
+        "float8",
+        "numeric",
+        "date",
+        "timestamp",
+        "timestamptz",
+        "time",
+        "timetz",
+        "interval",
+        "json",
+        "jsonb",
+        "bytea",
+        "inet",
+        "cidr",
+        "macaddr",
+    }
+)
+"""Built-in scalar types an ``unnest`` array cast can name exactly as introspected."""
+
+_NO_EQUALITY: frozenset[str] = frozenset(
+    {"xml", "point", "line", "lseg", "box", "path", "polygon", "circle"}
+)
+"""Types ``IS DISTINCT FROM`` cannot compare (``json`` compares once cast to ``jsonb``)."""
+
+
+def _scalar_base(pg_t: PostgresType) -> str:
+    return normalize_pg_type(strip_type_modifier(pg_t.base))
+
+
+def _comparable(pg_t: PostgresType | None) -> bool:
+    """Whether a patched column can be compared with its new value in SQL."""
+
+    if pg_t is None:
+        return True
+
+    base = _scalar_base(pg_t)
+
+    return base not in _NO_EQUALITY and not (base == "json" and pg_t.is_array)
+
+
+def _compared(alias: str, column: str, pg_t: PostgresType | None) -> sql.Composable:
+    """*alias*.*column* as ``IS DISTINCT FROM`` compares it: ``json`` as ``jsonb``."""
+
+    ref = sql.SQL("{}.{}").format(sql.Identifier(alias), sql.Identifier(column))
+
+    if pg_t is not None and not pg_t.is_array and _scalar_base(pg_t) == "json":
+        return sql.SQL("{}::jsonb").format(ref)
+
+    return ref
+
+
+def _row_source(
+    columns: Sequence[str],
+    rows: Sequence[Mapping[str, Any]],
+    column_types: PostgresColumnTypes,
+    *,
+    typed_values: bool = False,
+) -> tuple[sql.Composable, list[Any]]:
+    """*rows* as a row source for ``INSERT … SELECT`` or ``FROM ( … )``, with its parameters.
+
+    ``SELECT * FROM unnest(%s::type[], …)`` when every column has a built-in scalar type: one
+    array per column, so the statement stays a few bytes and is parsed once whatever the row
+    count. Otherwise (an array, which ``unnest`` would flatten, a user-defined or untyped
+    column) the rows are spelled out as ``VALUES``, each cell cast to its column type when
+    *typed_values*, as the domain path's batched update casts them.
+    """
+
+    casts: list[sql.Composable] = []
+
+    for column in columns:
+        pg_t = column_types.get(column)
+
+        if pg_t is None or pg_t.is_array or _scalar_base(pg_t) not in _UNNEST_BASES:
+            break
+
+        casts.append(sql.SQL("{}::{}[]").format(sql.Placeholder(), _pg_cast_type_sql(pg_t)))
+
+    else:
+        return (
+            sql.SQL("SELECT * FROM unnest({})").format(sql.SQL(", ").join(casts)),
+            [[row[column] for row in rows] for column in columns],
+        )
+
+    if typed_values:
+        cells = [
+            _values_placeholder_for_patch_group(
+                column=c, expected_rev_alias="", column_types=column_types
+            )
+            for c in columns
+        ]
+
+    else:
+        cells = [sql.Placeholder() for _ in columns]
+
+    row_template = sql.SQL("(") + sql.SQL(", ").join(cells) + sql.SQL(")")
+
+    return (
+        sql.SQL("VALUES {}").format(sql.SQL(", ").join([row_template] * len(rows))),
+        [row[column] for row in rows for column in columns],
+    )
+
+
+def _nullable(annotation: Any) -> bool:
+    return annotation is Any or annotation is type(None) or type(None) in get_args(annotation)
 
 
 # ....................... #
@@ -847,6 +967,230 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 raise exc.internal("upsert_many result length does not match input")
 
             return out
+
+    # ....................... #
+
+    @postgres_occ_retry
+    async def upsert_many_set_based(
+        self,
+        ids: Sequence[UUID],
+        creates: Sequence[C],
+        updates: Sequence[U],
+        *,
+        batch_size: int = 200,
+    ) -> None:
+        """Insert the missing rows and patch the stored ones, a statement each per chunk.
+
+        Nothing is read back or decoded. A missing row is the create payload's domain, as
+        :meth:`upsert_many` inserts it; a stored row takes the update as its DTO encodes it,
+        as :meth:`update_matching` writes one, and only where that changes it, so ``rev`` and
+        ``last_update_at`` move only then. Stored rows are locked in id order before they are
+        patched, and one this tenant cannot see is ``not_found``, as on the domain path. The
+        caller has refused a spec whose updates need the stored row or the domain model
+        (:meth:`~forze.application.contracts.document.DocumentSpec.require_set_based_upsert`);
+        a relation keyed by more than the id (and tenant), or a patched column SQL cannot
+        compare, takes :meth:`upsert_many` instead.
+        """
+
+        self._require_update_cmd()
+
+        if not creates:
+            return
+
+        column_types = await self.column_types()
+
+        if not await self.__fits_set_based(column_types):
+            await self.upsert_many(ids, creates, updates, batch_size=batch_size)
+            return
+
+        async with self._write_tx():
+            now = utcnow()
+
+            for offset in range(0, len(creates), batch_size):
+                id_batch = list(ids[offset : offset + batch_size])
+                creates_by_id = dict(
+                    zip(id_batch, creates[offset : offset + batch_size], strict=True)
+                )
+                updates_by_id = dict(
+                    zip(id_batch, updates[offset : offset + batch_size], strict=True)
+                )
+
+                # A create payload becomes a domain only for an id not stored yet: a reload
+                # builds none.
+                present = await self.__visible_ids(id_batch, lock=False)
+                inserted = await self.__insert_set_based(
+                    [pk for pk in id_batch if pk not in present], creates_by_id, column_types
+                )
+                # Everything not inserted is patched, a row a concurrent writer stored between
+                # the look-up and the insert included. Locked in id order first, as the domain
+                # path locks what it patches; a row gone by then (deleted, or another
+                # tenant's) is not this call's to write.
+                stored = [pk for pk in id_batch if pk not in inserted]
+
+                if not stored:
+                    continue
+
+                visible = await self.__visible_ids(stored, lock=True)
+
+                if len(visible) != len(stored):
+                    raise exc.not_found("Record not found after upsert_many conflict")
+
+                await self.__patch_stored_set_based(
+                    [(pk, updates_by_id[pk], creates_by_id[pk]) for pk in stored],
+                    now=now,
+                    column_types=column_types,
+                )
+
+    # ....................... #
+
+    async def __fits_set_based(self, column_types: PostgresColumnTypes) -> bool:
+        """Whether a set-based upsert can key and compare every row as the domain path does."""
+
+        keys = set(await self._resolved_conflict_target())
+        keyed = keys == {ID_FIELD} or (self.tenant_aware and keys == {ID_FIELD, TENANT_ID_FIELD})
+        update_cmd = cast(type[BaseDTO], self.update_cmd_type)
+
+        return keyed and all(
+            _comparable(column_types.get(name)) for name in update_cmd.model_fields
+        )
+
+    # ....................... #
+
+    async def __visible_ids(self, pks: Sequence[UUID], *, lock: bool) -> set[UUID]:
+        """The ids among *pks* stored for this tenant; locked in id order when *lock*."""
+
+        where, params = self._add_tenant_where(
+            sql.SQL("{pk} = ANY({arr})").format(pk=self.ident_pk(), arr=sql.Placeholder()),
+            [list(pks)],
+        )
+        stmt = sql.SQL("SELECT {pk} FROM {table} WHERE {where}").format(
+            pk=self.ident_pk(), table=(await self._qname()).ident(), where=where
+        )
+
+        if lock:
+            stmt += sql.SQL(" ORDER BY {pk} FOR NO KEY UPDATE").format(pk=self.ident_pk())
+
+        rows = await self.client.fetch_all(stmt, params, row_factory="dict", commit=False)
+
+        return {UUID(str(row[ID_FIELD])) for row in rows}
+
+    # ....................... #
+
+    async def __insert_set_based(
+        self,
+        pks: Sequence[UUID],
+        creates_by_id: Mapping[UUID, C],
+        column_types: PostgresColumnTypes,
+    ) -> set[UUID]:
+        """Insert *pks* from their create payloads, skipping a conflict; the ids inserted."""
+
+        if not pks:
+            return set()
+
+        models = domains_from_create_payloads(
+            self.create_codec, [creates_by_id[pk] for pk in pks], list(pks)
+        )
+        rows = await self.adapt_many_payload_for_write(
+            await self._encode_domain_many(models),
+            create=True,
+        )
+        keys = list(rows[0].keys())
+        source, params = _row_source(keys, rows, column_types)
+        inserted = await self.client.fetch_all(
+            sql.SQL(
+                "INSERT INTO {table} ({cols}) {source} "
+                "ON CONFLICT ({conflict}) DO NOTHING RETURNING {pk}"
+            ).format(
+                table=(await self._qname()).ident(),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in keys),
+                source=source,
+                conflict=await self._ident_conflict_target(),
+                pk=self.ident_pk(),
+            ),
+            params,
+            row_factory="dict",
+            commit=False,
+        )
+
+        return {UUID(str(row[ID_FIELD])) for row in inserted}
+
+    # ....................... #
+
+    async def __patch_stored_set_based(
+        self,
+        stored: Sequence[tuple[UUID, U, C]],
+        *,
+        now: Any,
+        column_types: PostgresColumnTypes,
+    ) -> None:
+        """Patch the stored rows of a set-based upsert where their update changes them."""
+
+        pks = [pk for pk, _, _ in stored]
+        patches = await self._encode_patch_many([u for _, u, _ in stored], record_ids=pks)
+        fields = self.model_type.model_fields
+        groups: dict[tuple[str, ...], list[JsonDict]] = defaultdict(list)
+
+        for (pk, _, create), patch in zip(stored, patches, strict=True):
+            # An explicit null on a field the domain does not let be null means what the
+            # domain's update makes of it (its default, or a refusal); applied to the create
+            # payload's domain, since a flat field's new value does not depend on the old.
+            nulled = [
+                k
+                for k, v in patch.items()
+                if v is None and k in fields and not _nullable(fields[k].annotation)
+            ]
+
+            if nulled:
+                (base,) = domains_from_create_payloads(self.create_codec, [create], [pk])
+                after, _ = base.update(patch, materialized=self.read_codec.materialized)
+                (encoded,) = await self._encode_domain_many([after])
+                patch = {**patch, **{k: encoded[k] for k in nulled}}
+
+            adapted = dict(await self.adapt_payload_for_write(patch, create=False))
+
+            for field in (ID_FIELD, REV_FIELD, LAST_UPDATE_AT_FIELD):
+                adapted.pop(field, None)
+
+            if adapted:
+                groups[tuple(sorted(adapted))].append({ID_FIELD: pk, **adapted})
+
+        table = (await self._qname()).ident()
+
+        for key, batch in groups.items():
+            columns = (ID_FIELD, *key)
+            source, params = _row_source(columns, batch, column_types, typed_values=True)
+            sets = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
+            sets.append(
+                sql.SQL("{c} = {v}").format(
+                    c=sql.Identifier(LAST_UPDATE_AT_FIELD), v=sql.Placeholder()
+                )
+            )
+
+            if self.strategy == "application":
+                sets.append(sql.SQL("{r} = t.{r} + 1").format(r=self._ident_rev()))
+
+            # Only a row the update changes is written, as the domain path skips an empty diff.
+            where, where_params = self._add_tenant_where(
+                sql.SQL("t.{pk} = v.{pk} AND ({tcols}) IS DISTINCT FROM ({vcols})").format(
+                    pk=self.ident_pk(),
+                    tcols=sql.SQL(", ").join(_compared("t", k, column_types.get(k)) for k in key),
+                    vcols=sql.SQL(", ").join(_compared("v", k, column_types.get(k)) for k in key),
+                ),
+                [],
+                table_alias="t",
+            )
+            await self.client.execute(
+                sql.SQL(
+                    "UPDATE {table} AS t SET {sets} FROM ({source}) AS v({cols}) WHERE {where}"
+                ).format(
+                    table=table,
+                    sets=sql.SQL(", ").join(sets),
+                    source=source,
+                    cols=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
+                    where=where,
+                ),
+                [now, *params, *where_params],
+            )
 
     # ....................... #
 

@@ -399,3 +399,74 @@ async def test_schema_resolver_isolates_tenants(pg_client: PostgresClient) -> No
         doc_b = await adapter.create(TenantCreateDoc(name="beta"))
         assert (await adapter.count({})) == 1
         assert doc_b.name == "beta"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("set_based", [False, True])
+@pytest.mark.parametrize("key", ["id", "tenant_id, id"])
+async def test_an_upsert_onto_another_tenants_id(
+    pg_client: PostgresClient, set_based: bool, key: str
+) -> None:
+    """Both upsert paths leave another tenant's row alone: keyed by id alone the id is taken
+    and the upsert is ``not_found``; keyed by tenant and id, this tenant gets its own row."""
+
+    from forze.application.contracts.document import UpsertItem
+
+    table = f"tenant_docs_up_{uuid4().hex[:12]}"
+    await pg_client.execute(
+        f"""
+        CREATE TABLE {table} (
+            id uuid NOT NULL,
+            tenant_id uuid NOT NULL,
+            rev integer NOT NULL,
+            created_at timestamptz NOT NULL,
+            last_update_at timestamptz NOT NULL,
+            name text NOT NULL,
+            PRIMARY KEY ({key})
+        );
+        """
+    )
+    execution_context = _tenant_table_context(pg_client, table)
+    spec = _spec()
+
+    with execution_context.inv_ctx.bind(
+        metadata=_metadata(),
+        authn=AuthnIdentity(principal_id=uuid4()),
+        tenant=TenantIdentity(tenant_id=uuid4()),
+    ):
+        doc_a = await execution_context.document.command(spec).create(TenantCreateDoc(name="alpha"))
+
+    async def upsert_as_b() -> None:
+        with execution_context.inv_ctx.bind(
+            metadata=_metadata(),
+            authn=AuthnIdentity(principal_id=uuid4()),
+            tenant=TenantIdentity(tenant_id=uuid4()),
+        ):
+            await execution_context.document.command(spec).upsert_many(
+                [
+                    UpsertItem(
+                        id=doc_a.id,
+                        create=TenantCreateDoc(name="b"),
+                        update=TenantUpdateDoc(name="stolen"),
+                    )
+                ],
+                return_new=False,
+                set_based=set_based,
+            )
+
+    if key == "id":
+        with pytest.raises(CoreException) as refused:
+            await upsert_as_b()
+
+        assert refused.value.kind == "not_found"
+
+    else:
+        await upsert_as_b()
+
+    rows = await pg_client.fetch_all(
+        f"SELECT name, rev FROM {table} WHERE id = %s ORDER BY name", [doc_a.id]
+    )
+    assert rows == ([{"name": "alpha", "rev": 1}] if key == "id" else [
+        {"name": "alpha", "rev": 1},
+        {"name": "b", "rev": 1},
+    ])

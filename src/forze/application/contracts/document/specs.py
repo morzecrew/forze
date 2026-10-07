@@ -4,12 +4,12 @@ from collections.abc import Mapping
 from typing import Any, Generic, TypeVar, get_args
 
 import attrs
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, BeforeValidator, PlainValidator, WrapValidator
 
 from forze.application._logger import logger
 from forze.base.exceptions import exc
 from forze.base.serialization import stored_field_names_for
-from forze.domain.models import BaseDTO, Document
+from forze.domain.models import AggregateRoot, BaseDTO, Document
 
 from ..base import BaseSpec
 from ..cache import CacheSpec
@@ -74,6 +74,37 @@ def _normalize_derived(
         name: declared if declared is not None else DerivedReadField()
         for name, declared in dict(value).items()
     }
+
+
+# ....................... #
+
+_VALIDATOR_MARKS = (AfterValidator, BeforeValidator, PlainValidator, WrapValidator)
+
+
+def _declares_validators(domain: type[Document]) -> bool:
+    """Whether *domain* adds pydantic validators to :class:`Document`'s, on a field or the model."""
+
+    own = domain.__pydantic_decorators__
+    base = Document.__pydantic_decorators__
+
+    return (
+        bool(set(own.field_validators) - set(base.field_validators))
+        or bool(set(own.model_validators) - set(base.model_validators))
+        or any(
+            isinstance(mark, _VALIDATOR_MARKS)
+            for field in domain.model_fields.values()
+            for mark in field.metadata
+        )
+    )
+
+
+def _holds_model(annotation: Any) -> bool:
+    """Whether *annotation* is or contains a pydantic model."""
+
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return True
+
+    return any(_holds_model(arg) for arg in get_args(annotation))
 
 
 # ....................... #
@@ -706,6 +737,79 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             f"Document {self.name!r} declares hard_delete=False, so its rows cannot be erased.",
             code="hard_delete_forbidden",
             details={"spec": str(self.name)},
+        )
+
+    # ....................... #
+
+    def require_set_based_upsert(self) -> None:
+        """Refuse a set-based ``upsert_many`` that would not write what the domain path writes.
+
+        A set-based upsert reads no stored row: it inserts each create payload's domain and
+        writes each update as its DTO encodes it, only where that changes the stored row. So
+        it is refused when an update needs the stored row or the domain model: revision
+        history, materialized fields, per-owner write serialization, randomized field
+        encryption (every write looks like a change), a domain with update validators,
+        invariants, domain events or validators of its own (which may rewrite a value), and an
+        update field the domain does not hold plainly (absent, frozen, or a nested model the
+        update merges into the stored one).
+
+        :raises CoreException: ``configuration`` (``set_based_upsert_unsupported``) naming
+            what rules it out.
+        """
+
+        reasons: list[str] = []
+
+        if self.history_enabled:
+            reasons.append("revision history")
+
+        if self.materialized:
+            reasons.append("materialized fields")
+
+        if any(isinstance(g, SerializedBy) for g in self.guarantees):
+            reasons.append("per-owner write serialization")
+
+        if self.encryption is not None and self.encryption.encrypted:
+            reasons.append("randomized field encryption")
+
+        if self.write is not None:
+            domain = self.write["domain"]
+
+            if domain._update_validators_:  # pyright: ignore[reportPrivateUsage]
+                reasons.append("update validators")
+
+            if domain._invariants_:  # pyright: ignore[reportPrivateUsage]
+                reasons.append("invariants")
+
+            if issubclass(domain, AggregateRoot):
+                reasons.append("domain events")
+
+            if _declares_validators(domain):
+                reasons.append("field or model validators")
+
+            update_cmd = self.write.get("update_cmd")
+
+            if update_cmd is not None:
+                merged = sorted(
+                    name
+                    for name in update_cmd.model_fields
+                    if (field := domain.model_fields.get(name)) is None
+                    or field.frozen
+                    or _holds_model(field.annotation)
+                )
+
+                if merged:
+                    reasons.append(
+                        f"update fields the domain merges or refuses ({', '.join(merged)})"
+                    )
+
+        if not reasons:
+            return
+
+        raise exc.configuration(
+            f"Document {self.name!r} cannot upsert set-based: {', '.join(reasons)} need the "
+            "domain path; call upsert_many without set_based.",
+            code="set_based_upsert_unsupported",
+            details={"spec": str(self.name), "reasons": reasons},
         )
 
     # ....................... #
