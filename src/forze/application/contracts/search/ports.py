@@ -240,11 +240,11 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         ``aggregate_many`` does over the rows a filter matches (no total count).
 
         The rows are those an exact page total counts: every match, with no candidate cap, or
-        for a blank query the rows the page counts by its filters alone. *sorts* name output aliases only, and
-        the group keys order the groups after them, so pages neither repeat nor skip a
-        group. Without a ``limit`` every group is returned, as ``aggregate_many`` returns them.
-        The ``facets``, ``highlight``
-        and ``max_candidates`` options are refused, as are fields that are not
+        for a blank query the rows the page counts by its filters alone. *sorts* name output
+        aliases only, and the group keys order the groups after them, so pages neither repeat
+        nor skip a group. Without a ``limit`` every group past the ``offset`` is returned, as
+        ``aggregate_many`` returns them. The ``facets``, ``highlight`` and ``max_candidates``
+        options are refused, as are fields that are not
         :attr:`~.SearchSpec.aggregatable_fields`. Requires
         :attr:`~.SearchCapabilities.supports_aggregates`; other backends refuse with
         ``query_feature_unsupported``.

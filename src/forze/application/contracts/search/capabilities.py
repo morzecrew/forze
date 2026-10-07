@@ -219,6 +219,7 @@ __all__ = [
     "FusionStrategy",
     "SearchCapabilities",
     "resolve_fusion",
+    "validate_aggregates_supported",
     "validate_fusion_supported",
     "validate_stream_supported",
     "validate_vector_supported",

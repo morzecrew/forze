@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A hub search can choose how an unasked page counts its total.** `HubSearchSpec(default_search_count="approximate")` (or `"none"`) applies when a request sets no `search_count`, as it does on a `SearchSpec`. The request option still wins and the members' own defaults don't apply; Postgres honours it.
 
-- **A Temporal worker can deliver a cancel to a running activity within a second.** `temporal_worker_lifecycle_step(max_heartbeat_throttle_interval=...)` caps how long the SDK holds back heartbeats, and a cancel arrives only in a heartbeat's reply; uncapped it waited up to 0.8 × the `heartbeat_timeout`.
+- **A Temporal worker can deliver a cancel to a heartbeating activity within a second.** `temporal_worker_lifecycle_step(max_heartbeat_throttle_interval=...)` caps how long the SDK holds back heartbeats, and a cancel arrives only in a heartbeat's reply; uncapped it waited up to 0.8 × the `heartbeat_timeout`.
 
 - **A search can group and measure the rows it matches.** `aggregate_search` and `aggregate_search_page` take the `AggregatesExpression` the document port's `aggregate_many` does and read every match, uncapped. Postgres FTS, PGroonga and the mock serve it; the others refuse via `SearchCapabilities.supports_aggregates`.
 
