@@ -64,9 +64,16 @@ def prepare_hub_search_options(
     hub_spec: HubSearchSpec[Any],
     options: SearchOptions | None,
 ) -> tuple[SearchOptions, list[float]]:
-    """Strip simple field-tuning and hub member keys; return leg options + per-member weights."""
+    """Strip simple field-tuning and hub member keys; return leg options + per-member weights.
+
+    Fills ``search_count`` from *hub_spec*'s :attr:`~HubSearchSpec.default_search_count` when
+    the request leaves it out.
+    """
 
     opts = dict(options or {})
+
+    if hub_spec.default_search_count is not None:
+        opts.setdefault("search_count", hub_spec.default_search_count)
 
     if "weights" in opts or "fields" in opts:
         logger.warning(

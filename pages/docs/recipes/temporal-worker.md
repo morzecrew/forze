@@ -98,6 +98,30 @@ runtime = attrs.evolve(runtime, shutdown_step_timeout=timedelta(seconds=45))
 Then keep the pair under your orchestrator's termination grace period, so the pod is not
 killed mid-drain.
 
+## Cancelling a running activity
+
+A cancel reaches a running activity only in the reply to one of its heartbeats, and the
+SDK sends those at most every 0.8 × the activity's `heartbeat_timeout`, capped at a
+minute. With a 30-second heartbeat timeout, a cancel can take 24 seconds to arrive. Cap
+the throttle on the worker to bring that down to about the cap:
+
+```python
+temporal_worker_lifecycle_step(
+    client=temporal,
+    task_queue="orders-tq",
+    workflows=[FulfilOrder],
+    activities=[reserve_stock, charge_card],
+    max_heartbeat_throttle_interval=timedelta(seconds=1),
+)
+```
+
+The cancel still waits for the activity's next heartbeat, so it arrives within the cap only
+for an activity that heartbeats at least that often; the opt-in
+[auto-heartbeat](../integrations/temporal.md#activity-heartbeats) beats every third of the
+`heartbeat_timeout`. Each running activity then calls the server up to once per cap.
+`default_heartbeat_throttle_interval` sets the throttle for an activity with no
+`heartbeat_timeout` (30 seconds by default).
+
 ## When a worker dies
 
 A crashed worker is rebuilt after a jittered backoff, on the same connection. Set

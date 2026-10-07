@@ -1,3 +1,4 @@
+from .aggregates import validate_search_aggregates
 from .capabilities import (
     DEFAULT_SEARCH_CAPABILITIES,
     FULL_SEARCH_CAPABILITIES,
@@ -5,6 +6,7 @@ from .capabilities import (
     FusionStrategy,
     SearchCapabilities,
     resolve_fusion,
+    validate_aggregates_supported,
     validate_fusion_supported,
     validate_stream_supported,
     validate_vector_supported,
@@ -105,7 +107,9 @@ __all__ = [
     "FusionStrategy",
     "SearchCapabilities",
     "resolve_fusion",
+    "validate_aggregates_supported",
     "validate_fusion_supported",
+    "validate_search_aggregates",
     "validate_stream_supported",
     "validate_vector_supported",
     "Rrf",

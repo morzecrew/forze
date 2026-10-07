@@ -2,7 +2,7 @@
 
 Each engine is set up the common way, the index on the read relation itself, and holds one
 matching row per tenant. Every read path must return only the bound tenant's row: an offset
-page, its count, and a cursor page, for a query and for a blank one.
+page, its count, a cursor page and an aggregate, for a query and for a blank one.
 """
 
 from __future__ import annotations
@@ -74,6 +74,12 @@ async def _assert_scoped(
 
             cursor = await port.search_cursor(query, filters=filters)
             assert [h.id for h in cursor.hits] == [mine_id], (query, filters)
+
+            if port.search_capabilities.supports_aggregates:
+                measured = await port.aggregate_search(
+                    {"$computed": {"n": {"$count": None}}}, query, filters
+                )
+                assert [row["n"] for row in measured.hits] == [1], (query, filters)
 
 
 async def _two_tenants(pg_client: PostgresClient, table: str, extra_cols: str = "") -> tuple[UUID, UUID]:

@@ -16,7 +16,10 @@ from uuid import UUID
 import attrs
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
 from forze.application.contracts.querying import (
+    AggregatesExpression,
+    AggregatesExpressionParser,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -24,6 +27,7 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     QuerySortExpression,
     compile_filter,
+    with_group_tiebreakers,
 )
 from forze.application.contracts.search import (
     PhraseCombine,
@@ -43,12 +47,16 @@ from forze.application.contracts.search import (
     resolve_search_sorts,
     search_options_for_simple_adapter,
     search_page_from_limit_offset,
+    validate_aggregates_supported,
+    validate_search_aggregates,
     validate_stream_supported,
 )
+from forze.application.integrations.document._limits import page_limit, page_offset
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     stream_search_pages,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 from forze.base.serialization import (
     default_model_codec,
@@ -66,6 +74,7 @@ from forze_mock.query.cursors import (
     _mock_cursor_tokens,  # pyright: ignore[reportPrivateUsage]
 )
 from forze_mock.query.matching import (
+    _aggregate_docs,  # pyright: ignore[reportPrivateUsage]
     _path_text,  # pyright: ignore[reportPrivateUsage]
     _project,  # pyright: ignore[reportPrivateUsage]
     _sort_docs,  # pyright: ignore[reportPrivateUsage]
@@ -787,8 +796,81 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
 
     @property
     def search_capabilities(self) -> SearchCapabilities:
-        # Single-index keyword reference: supports keyset iteration → bounded-memory export.
-        return SearchCapabilities(supports_stream=True)
+        # Single-index keyword reference: supports keyset iteration → bounded-memory export,
+        # and aggregates over the whole matched set.
+        return SearchCapabilities(supports_stream=True, supports_aggregates=True)
+
+    # ....................... #
+
+    async def _aggregate_impl(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        *,
+        options: SearchOptions | None,
+        return_count: bool,
+    ) -> CountlessPage[JsonDict] | Page[JsonDict]:
+        """Group every matching document, as the relational backends group their matched set."""
+
+        validate_aggregates_supported(self.search_capabilities, backend="mock")
+        parser = QueryFilterExpressionParser(limits=self.spec.filter_limits or QueryFilterLimits())
+        validate_search_aggregates(self.spec, aggregates, options, parser=parser)
+
+        # A relational backend refuses an order on anything but an output alias.
+        aliases = AggregatesExpressionParser.parse(aggregates, filter_parser=parser).aliases
+
+        if bad := [field for field in sorts or {} if field not in aliases]:
+            raise exc.precondition(f"Invalid aggregate sort fields: {bad}")
+
+        matched = self._full_ordered_search_documents(query, filters, {}, options)
+        rows = _sort_docs(
+            _aggregate_docs(matched, aggregates, parser),
+            with_group_tiebreakers(aggregates, sorts),
+        )
+        window: dict[str, Any] = dict(pagination or {})
+        offset, limit = page_offset(window), page_limit(window)
+        hits = rows[offset : offset + limit] if limit is not None else rows[offset:]
+
+        if not return_count:
+            return page_from_limit_offset(hits, window)
+
+        return page_from_limit_offset(hits, window, total=len(rows))
+
+    async def aggregate_search(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        return await self._aggregate_impl(
+            aggregates, query, filters, pagination, sorts, options=options, return_count=False
+        )
+
+    async def aggregate_search_page(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> Page[JsonDict]:
+        page = await self._aggregate_impl(
+            aggregates, query, filters, pagination, sorts, options=options, return_count=True
+        )
+
+        if not isinstance(page, Page):
+            raise exc.internal("Mock search returned no total for a counted aggregate.")
+
+        return page
 
     async def _stream_impl(
         self,

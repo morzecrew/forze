@@ -50,6 +50,26 @@ def test_a_spec_default_search_count_fills_an_absent_option() -> None:
     assert "search_count" not in search_options_for_simple_adapter(None)
 
 
+def test_a_hub_spec_default_search_count_fills_an_absent_option() -> None:
+    hub = HubSearchSpec(
+        name="h",
+        model_type=_M,
+        members=(
+            SearchSpec(name="a", model_type=_M, fields=["x"], default_search_count="exact"),
+        ),
+        default_search_count="none",
+    )
+
+    # The hub's default fills the option, not the member's.
+    assert prepare_hub_search_options(hub, None)[0].get("search_count") == "none"
+    # The request's own option wins over the hub default.
+    asked, _ = prepare_hub_search_options(hub, {"search_count": "approximate"})
+    assert asked.get("search_count") == "approximate"
+    # Without a hub default the option stays absent, so the backend keeps ``exact``.
+    plain = HubSearchSpec(name="p", model_type=_M, members=(_leg("a"),))
+    assert "search_count" not in prepare_hub_search_options(plain, None)[0]
+
+
 def test_prepare_hub_strips_field_tuning_and_resolves_members() -> None:
     hub = HubSearchSpec(
         name="h",

@@ -17,7 +17,9 @@ from forze.application.contracts.search import (
     SearchResultSnapshotSpec,
     SearchSpec,
 )
+from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.execution import Deps
+from forze.base.exceptions import CoreException
 from forze_postgres.execution.deps import (
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresSearch,
@@ -553,3 +555,44 @@ async def test_federated_thin_pages_match_full_pages_in_order(
                 (h.member, h.hit.id) for h in want.hits
             ], (sorts, offset)
             assert got.count == want.count == 400
+
+
+@pytest.mark.asyncio
+async def test_federated_search_refuses_to_aggregate(pg_client: PostgresClient) -> None:
+    """Members' rows differ in shape, so a federation has no one matched set to measure.
+
+    The refusal comes before any statement, so the members need no tables.
+    """
+
+    suffix = uuid4().hex[:10]
+    legs = (f"a_{suffix}", f"b_{suffix}")
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            leg: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", f"idx_{leg}"),
+                                    read=("public", leg),
+                                    engine="pgroonga",
+                                ),
+                            )
+                            for leg in legs
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+    port = ctx.search.federated(
+        FederatedSearchSpec(name=f"fed_agg_{suffix}", members=tuple(_mem(leg) for leg in legs))
+    )
+
+    with pytest.raises(CoreException) as refused:
+        await port.aggregate_search({"$computed": {"n": {"$count": None}}}, "token")
+
+    assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE

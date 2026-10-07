@@ -512,6 +512,15 @@ class SearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     @property
+    def aggregatable_fields(self) -> frozenset[str]:
+        """Stored read fields that are not field-encrypted, which a search aggregate may
+        group by or measure: a sealed value is ciphertext at rest."""
+
+        return self.stored_read_fields - _sealed_fields(self.encryption)
+
+    # ....................... #
+
+    @property
     def resolved_lenient_read_fields(self) -> frozenset[str]:
         """Effective lenient read fields: explicit plus, under ``read_conformity``
         ``"lenient"``, the auto-derived eligible fields (indexed :attr:`fields` and
@@ -581,6 +590,12 @@ class HubSearchSpec[M: BaseModel](BaseSpec):
 
     A hub's filter applies to its hub rows and is parsed once, under these limits — its
     members' own :attr:`SearchSpec.filter_limits` do not apply to it."""
+
+    default_search_count: SearchCountPolicy | None = None
+    """How a hub page counts its total when the request's ``search_count`` option is absent:
+    ``exact``, ``approximate`` or ``none``. ``None`` keeps ``exact``. The request option still
+    wins, and members' own :attr:`SearchSpec.default_search_count` do not apply to the hub's
+    count. Postgres honours it; the in-memory hub reports an exact total."""
 
     materialized: frozenset[str] = attrs.field(factory=frozenset, converter=frozenset)
     """``@computed_field`` names on the hub-row model persisted as real hub columns, so

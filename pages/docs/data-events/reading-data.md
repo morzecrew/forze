@@ -136,8 +136,9 @@ and `select_` variants) mirror the document methods. A query can also ask for
 **facet** counts and **highlighted** fragments alongside its hits — per query,
 through `SearchOptions`, over fields the spec declares facetable or
 highlightable (the full option surface is the
-[search contract](../reference/contracts/search.md)). Engines cover full-text, vector
-similarity, and **hub / federated** search that spans several relations. Vector
+[search contract](../reference/contracts/search.md)). `aggregate_search` groups and
+measures every match, as `aggregate_many` does the rows a filter matches.
+Engines cover full-text, vector similarity, and **hub / federated** search that spans several relations. Vector
 search ranks by **embeddings** — vectors produced by an embeddings provider
 (`ctx.embeddings.provider(spec)`) — so semantically similar text scores together. Keeping
 the index current — upsert and delete — is the separate **search command port**;

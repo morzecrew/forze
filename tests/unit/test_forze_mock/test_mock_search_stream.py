@@ -10,6 +10,7 @@ from forze.application.contracts.search import (
     HubSearchSpec,
     SearchSpec,
 )
+from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_mock.adapters.search.command import MockSearchCommandAdapter
 from forze_mock.adapters.search.federated import MockFederatedSearchAdapter
@@ -152,3 +153,36 @@ class TestFailClosed:
         with pytest.raises(CoreException):
             async for _ in adapter.search_stream("alpha", chunk_size=5):
                 pass
+
+
+class TestAggregatesFailClosed:
+    """A mock hub or federation has no one complete matched set, so it refuses to aggregate."""
+
+    @pytest.mark.asyncio
+    async def test_hub_and_federated_refuse_aggregates(self) -> None:
+        state = MockState()
+        leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+        leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
+        await _seed(state, leg_a, 3)
+        await _seed(state, leg_b, 3)
+        hub = MockHubSearchAdapter(
+            hub_spec=HubSearchSpec(name="hub", model_type=_Item, members=[leg_a]),
+            legs=[("a", MockSearchAdapter(state=state, spec=leg_a))],
+        )
+        fed = MockFederatedSearchAdapter(
+            federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
+            legs=[
+                ("a", MockSearchAdapter(state=state, spec=leg_a)),
+                ("b", MockSearchAdapter(state=state, spec=leg_b)),
+            ],
+        )
+        count = {"$computed": {"n": {"$count": None}}}
+
+        for adapter in (hub, fed):
+            assert adapter.search_capabilities.supports_aggregates is False
+
+            for call in (adapter.aggregate_search, adapter.aggregate_search_page):
+                with pytest.raises(CoreException) as refused:
+                    await call(count, "alpha")
+
+                assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE

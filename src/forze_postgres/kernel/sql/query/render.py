@@ -40,6 +40,7 @@ from forze.application.contracts.querying import (
     QueryValue,
     QueryValueCaster,
     elem_inner_is_scalar,
+    parse_sort_value,
     validate_aggregate_capabilities,
     validate_query_capabilities,
 )
@@ -351,7 +352,12 @@ class PsycopgQueryRenderer:
         parsed: ParsedAggregates,
         sorts: Mapping[str, Any] | None,
     ) -> sql.Composable | None:
-        """Render ORDER BY for aggregate result aliases."""
+        """Render ORDER BY for aggregate result aliases.
+
+        Each key carries an explicit null placement, the sort's own or the canonical one (first
+        ascending, last descending), as every other read orders a null: Postgres's default
+        would put a null group last ascending.
+        """
 
         if not sorts:
             return None
@@ -365,9 +371,14 @@ class PsycopgQueryRenderer:
         parts: list[sql.Composable] = []
 
         for field, value in sorts.items():
-            order = value.get("dir") if isinstance(value, Mapping) else value  # type: ignore[arg-type]
-            direction = sql.SQL("ASC") if order == "asc" else sql.SQL("DESC")
-            parts.append(sql.SQL("{} {}").format(sql.Identifier(field), direction))
+            order, nulls = parse_sort_value(value, field=field)
+            parts.append(
+                sql.SQL("{} {} {}").format(
+                    sql.Identifier(field),
+                    sql.SQL("ASC") if order == "asc" else sql.SQL("DESC"),
+                    sql.SQL("NULLS FIRST") if nulls == "first" else sql.SQL("NULLS LAST"),
+                )
+            )
 
         return sql.SQL(", ").join(parts)
 

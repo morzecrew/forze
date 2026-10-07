@@ -7,18 +7,22 @@ from typing import Generic, NoReturn, TypeVar
 
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import (
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
 )
 from forze.application.contracts.search import (
+    DEFAULT_SEARCH_CAPABILITIES,
     SearchCountlessPage,
     SearchCursorPage,
     SearchOptions,
     SearchPage,
     SearchResultSnapshotOptions,
+    validate_aggregates_supported,
 )
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -174,3 +178,33 @@ class MockOffsetOnlySearchMixin(Generic[M]):
         _ = return_type, query, filters, sorts, options, chunk_size
         _unsupported_cursor()
         yield []  # pragma: no cover — unreachable; marks this an async generator
+
+    async def aggregate_search(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        _ = aggregates, query, filters, pagination, sorts, options
+        # A hub merges capped legs and a federation merges unlike rows: neither has the one
+        # complete matched set an aggregate reads, so both refuse as the real ones do.
+        validate_aggregates_supported(DEFAULT_SEARCH_CAPABILITIES, backend=type(self).__name__)
+        raise exc.internal("unreachable")  # pragma: no cover
+
+    async def aggregate_search_page(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> Page[JsonDict]:
+        _ = aggregates, query, filters, pagination, sorts, options
+        validate_aggregates_supported(DEFAULT_SEARCH_CAPABILITIES, backend=type(self).__name__)
+        raise exc.internal("unreachable")  # pragma: no cover

@@ -334,3 +334,28 @@ class ItHeartbeatWorkflow:
             # being retried into an eventual success.
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
+
+
+@activity.defn(name="it_cancel_probe")
+async def it_cancel_probe() -> None:
+    """Heartbeats until cancelled: the cancellation reaches it only in a heartbeat's reply."""
+
+    while True:
+        activity.heartbeat()
+        await asyncio.sleep(0.05)
+
+
+@workflow.defn(name="ItCancelWorkflow")
+class ItCancelWorkflow:
+    """One heartbeating activity whose cancellation the workflow waits for."""
+
+    @workflow.run
+    async def run(self) -> None:
+        await workflow.execute_activity(
+            it_cancel_probe,
+            start_to_close_timeout=timedelta(seconds=120),
+            # The SDK throttles heartbeats to 0.8 x this, 24 s, unless the worker caps it.
+            heartbeat_timeout=timedelta(seconds=30),
+            cancellation_type=workflow.ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )

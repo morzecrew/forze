@@ -4,7 +4,8 @@ Backends mix in :class:`SimpleSearchPortMixin` and implement only the two
 backend-specific hooks ``_offset_search_impl`` / ``_cursor_search_impl``. The
 public ``SearchQueryPort`` surface (offset, projection, select, and cursor
 variants) is delegated to those hooks here, so each integration package no
-longer re-declares the identical delegation boilerplate.
+longer re-declares the identical delegation boilerplate. A backend that declares
+``supports_aggregates`` also implements ``_aggregate_search_impl``.
 """
 
 from __future__ import annotations
@@ -14,7 +15,9 @@ from typing import Any, Literal, TypeVar, overload
 
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CountlessPage, Page
 from forze.application.contracts.querying import (
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -28,8 +31,11 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchPage,
     SearchResultSnapshotOptions,
+    validate_aggregates_supported,
+    validate_search_aggregates,
     validate_stream_supported,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
 
 from .stream import stream_search_pages
@@ -417,3 +423,85 @@ class SimpleSearchPortMixin[M: BaseModel]:
             chunk_size=chunk_size,
         ):
             yield chunk
+
+    # ....................... #
+
+    async def _aggregate_search_impl(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        *,
+        options: SearchOptions | None,
+        return_count: bool,
+    ) -> CountlessPage[JsonDict] | Page[JsonDict]:
+        """Backend hook behind the aggregate methods, reached only when the adapter declares
+        :attr:`~forze.application.contracts.search.SearchCapabilities.supports_aggregates`."""
+
+        _ = aggregates, query, filters, pagination, sorts, options, return_count
+        raise exc.internal(
+            f"{type(self).__name__} declares supports_aggregates but does not aggregate."
+        )
+
+    def _check_aggregate_search(
+        self,
+        aggregates: AggregatesExpression,
+        options: SearchOptions | None,
+    ) -> None:
+        validate_aggregates_supported(self.search_capabilities, backend=type(self).__name__)
+        validate_search_aggregates(
+            self.spec,
+            aggregates,
+            options,
+            parser=getattr(self, "filter_parser", None),
+        )
+
+    async def aggregate_search(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> CountlessPage[JsonDict]:
+        self._check_aggregate_search(aggregates, options)
+        page = await self._aggregate_search_impl(
+            aggregates,
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            return_count=False,
+        )
+        return page
+
+    async def aggregate_search_page(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: SearchOptions | None = None,
+    ) -> Page[JsonDict]:
+        self._check_aggregate_search(aggregates, options)
+        page = await self._aggregate_search_impl(
+            aggregates,
+            query,
+            filters,
+            pagination,
+            sorts,
+            options=options,
+            return_count=True,
+        )
+
+        if not isinstance(page, Page):
+            raise exc.internal(f"{type(self).__name__} returned no total for a counted aggregate.")
+
+        return page

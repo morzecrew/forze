@@ -12,7 +12,9 @@ from pydantic import BaseModel
 
 from forze.base.primitives import JsonDict
 
+from ..base import CountlessPage, Page
 from ..querying import (
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryFilterExpression,
@@ -222,6 +224,44 @@ class SearchQueryPort[R: BaseModel, O: SearchOptions = SearchOptions](Protocol):
         chunk_size: int = 500,
     ) -> AsyncGenerator[Sequence[T]]:
         """Yield keyset export chunks validated as ``return_type`` (no total count)."""
+        ...  # pragma: no cover
+
+    def aggregate_search(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: O | None = None,
+    ) -> Awaitable[CountlessPage[JsonDict]]:
+        """Group and measure the rows the search matches, as the document port's
+        ``aggregate_many`` does over the rows a filter matches (no total count).
+
+        The rows are those an exact page total counts: every match, with no candidate cap, or
+        for a blank query the rows the page counts by its filters alone. *sorts* name output
+        aliases only, and the group keys order the groups after them, so pages neither repeat
+        nor skip a group. Without a ``limit`` every group past the ``offset`` is returned, as
+        ``aggregate_many`` returns them. The ``facets``, ``highlight`` and ``max_candidates``
+        options are refused, as are fields that are not
+        :attr:`~.SearchSpec.aggregatable_fields`. Requires
+        :attr:`~.SearchCapabilities.supports_aggregates`; other backends refuse with
+        ``query_feature_unsupported``.
+        """
+        ...  # pragma: no cover
+
+    def aggregate_search_page(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None = None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None = None,
+        sorts: QuerySortExpression | None = None,
+        *,
+        options: O | None = None,
+    ) -> Awaitable[Page[JsonDict]]:
+        """:meth:`aggregate_search` with the total number of groups."""
         ...  # pragma: no cover
 
 

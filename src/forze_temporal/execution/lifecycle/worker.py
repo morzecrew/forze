@@ -24,7 +24,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import Executor
 from contextlib import suppress
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, final
+from typing import TYPE_CHECKING, Any, TypedDict, final
 
 import attrs
 from temporalio.worker import Worker
@@ -64,6 +64,16 @@ overrun is charged to the other loops too. Raise both together, never this one a
 """
 
 
+class _HeartbeatThrottle(TypedDict, total=False):
+    """The worker's heartbeat throttles that were set; an absent key keeps the SDK default."""
+
+    max_heartbeat_throttle_interval: timedelta
+    default_heartbeat_throttle_interval: timedelta
+
+
+# ....................... #
+
+
 def _log_shutdown_failure(task: asyncio.Task[None]) -> None:
     """Retrieve a shutdown task's outcome so a failure is logged, never stray."""
 
@@ -95,6 +105,7 @@ class _TemporalWorkerStartup(LifecycleHook):
     max_concurrent_activities: int | None
     max_consecutive_crashes: int | None
     activity_executor: Executor | None
+    heartbeat_throttle: _HeartbeatThrottle
 
     # ....................... #
 
@@ -227,6 +238,7 @@ class _TemporalWorkerStartup(LifecycleHook):
                 max_concurrent_activities=self.max_concurrent_activities,
                 graceful_shutdown_timeout=self.graceful_shutdown,
                 activity_executor=self.activity_executor,
+                **self.heartbeat_throttle,
             )
 
         except Exception as error:
@@ -296,6 +308,8 @@ def temporal_worker_lifecycle_step(
     graceful_shutdown: timedelta = DEFAULT_WORKER_GRACEFUL_SHUTDOWN,
     restart_backoff: timedelta = timedelta(seconds=5),
     max_consecutive_crashes: int | None = None,
+    max_heartbeat_throttle_interval: timedelta | None = None,
+    default_heartbeat_throttle_interval: timedelta | None = None,
     step_id: StrKey | None = None,
 ) -> LifecycleStep:
     """Run a Temporal worker under the runtime's supervision and drain.
@@ -322,6 +336,14 @@ def temporal_worker_lifecycle_step(
     :param restart_backoff: Base delay before a crashed worker is rebuilt, jittered.
     :param max_consecutive_crashes: Give up after this many short-lived runs in a row.
         ``None`` restarts forever, logging every crash loudly.
+    :param max_heartbeat_throttle_interval: The longest the SDK holds back an activity's
+        heartbeats; ``None`` keeps its default, a minute. The server hands an activity its
+        cancellation in the reply to a heartbeat, and the SDK sends one at most every
+        0.8 × the activity's ``heartbeat_timeout``, capped by this. A second or so makes
+        cancelling an activity that heartbeats at least that often near-instant, at up to one
+        server call per interval per running activity.
+    :param default_heartbeat_throttle_interval: The same throttle for an activity that sets
+        no ``heartbeat_timeout``; ``None`` keeps the SDK's default, thirty seconds.
     """
 
     if graceful_shutdown.total_seconds() <= 0:
@@ -330,6 +352,26 @@ def temporal_worker_lifecycle_step(
         raise exc.configuration(
             f"Temporal worker {name!r} graceful_shutdown must be positive",
             code="core.temporal.worker_wiring",
+        )
+
+    for key, interval in (
+        ("max_heartbeat_throttle_interval", max_heartbeat_throttle_interval),
+        ("default_heartbeat_throttle_interval", default_heartbeat_throttle_interval),
+    ):
+        if interval is not None and interval.total_seconds() <= 0:
+            raise exc.configuration(
+                f"Temporal worker {name!r} {key} must be positive",
+                code="core.temporal.worker_wiring",
+            )
+
+    heartbeat_throttle = _HeartbeatThrottle()
+
+    if max_heartbeat_throttle_interval is not None:
+        heartbeat_throttle["max_heartbeat_throttle_interval"] = max_heartbeat_throttle_interval
+
+    if default_heartbeat_throttle_interval is not None:
+        heartbeat_throttle["default_heartbeat_throttle_interval"] = (
+            default_heartbeat_throttle_interval
         )
 
     if isinstance(client, RoutedTemporalClient):
@@ -366,6 +408,7 @@ def temporal_worker_lifecycle_step(
         max_concurrent_activities=max_concurrent_activities,
         max_consecutive_crashes=max_consecutive_crashes,
         activity_executor=activity_executor,
+        heartbeat_throttle=heartbeat_throttle,
     )
 
     return LifecycleStep(
