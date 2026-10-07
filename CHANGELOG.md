@@ -25,9 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.
 
+## [0.11.1] - 2026-10-07
+
 ### Security
 
-- **Tenant-aware Postgres search returns only the current tenant's rows in every configuration.** Upgrade if a Postgres search spec is tenant-aware.
+- **Tenant-aware Postgres search returns only the current tenant's rows in every configuration.** Upgrade if a Postgres search route is configured with `tenant_aware=True`.
 
 ## [0.11.0] - 2026-10-05
 
@@ -2048,7 +2050,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.11.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/morzecrew/forze/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/morzecrew/forze/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/morzecrew/forze/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/morzecrew/forze/compare/v0.8.0...v0.9.0
