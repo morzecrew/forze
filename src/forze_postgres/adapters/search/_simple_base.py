@@ -582,22 +582,25 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
                     params=params_base,
                 )
 
-        cols = self.return_clause(
-            return_type,
-            return_fields,
-            table_alias=self.projection_alias,
+        def _select(cols: sql.Composable) -> sql.Composed:
+            return sql.SQL(
+                """
+                SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
+                """
+            ).format(
+                cols=cols,
+                proj=proj_qname.ident(),
+                pa=sql.Identifier(self.projection_alias),
+                fw=fw,
+                order=order_sql,
+            )
+
+        data_stmt = _select(
+            self.return_clause(return_type, return_fields, table_alias=self.projection_alias)
         )
-        data_stmt = sql.SQL(
-            """
-            SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
-            """
-        ).format(
-            cols=cols,
-            proj=proj_qname.ident(),
-            pa=sql.Identifier(self.projection_alias),
-            fw=fw,
-            order=order_sql,
-        )
+        # A snapshot window feeds the pool, which keys every hit by its whole record, so it
+        # reads the full read model; only the page returned is projected.
+        pool_stmt = _select(self.return_clause(None, None, table_alias=self.projection_alias))
 
         params = params_base
         pagination = pagination or {}
@@ -619,7 +622,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             base_params = list(params_base)
 
             async def fetch_window(window_offset: int, window_limit: int) -> SnapshotWindow:
-                stmt = data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
+                stmt = pool_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
                     sql.Placeholder(), sql.Placeholder()
                 )
                 window_rows = await self.client.fetch_all(
