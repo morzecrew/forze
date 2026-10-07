@@ -244,6 +244,29 @@ class PostgresPGroongaSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def _aggregate_source(
+        self,
+        *,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        options: SearchOptions | None,
+    ) -> tuple[sql.Composable | None, sql.Composable, list[Any]]:
+        # A blank query pages the projection with filters only (``_offset_empty_query_browse``),
+        # so its aggregate measures that set rather than the pipeline's join to the heap.
+        if normalize_search_queries(query):
+            return await super()._aggregate_source(query=query, filters=filters, options=options)
+
+        fw, fp = await self.where_clause(filters)
+        source = sql.SQL("FROM {proj} {pa} WHERE {fw}").format(
+            proj=(await self._qname()).ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+        )
+
+        return None, source, list(fp)
+
+    # ....................... #
+
     async def _offset_empty_query_browse(
         self,
         *,

@@ -31,6 +31,9 @@ What each check pins:
 13. An explicit null placement is honoured or refused, never dropped.
 14. A sort on a field the read model lacks is the caller's error, wherever it sits.
 15. A page cut from a capped candidate pool holds the rows the uncapped order puts there.
+16. A backend aggregates the matched rows if and only if it declares ``supports_aggregates``,
+    and an aggregate reads exactly the rows a page's total counts.
+17. A null group key sorts where every other read sorts a null, or where the sort puts it.
 
 Not asserted, on purpose: blank-query semantics. ``search("")`` means "everything, filters
 only" on some engines and "nothing" on others, and which one is right is a genuine product
@@ -558,6 +561,124 @@ async def check_the_stream_gate_matches_the_declaration(h: SearchHarness) -> Non
     )
 
 
+_BY_CATEGORY: dict[str, Any] = {
+    "$groups": {"category": "category"},
+    "$computed": {"n": {"$count": None}, "total": {"$sum": "price"}},
+}
+"""Rows and exact price total per category: three groups of two."""
+
+_GLOBAL_COUNT: dict[str, Any] = {"$computed": {"n": {"$count": None}}}
+"""One row counting every matched row."""
+
+
+def _by_category(rows: Sequence[Any]) -> dict[str, tuple[int, Decimal]]:
+    return {row["category"]: (int(row["n"]), Decimal(str(row["total"]))) for row in rows}
+
+
+async def check_the_aggregate_gate_matches_the_declaration(h: SearchHarness) -> None:
+    """A backend aggregates search matches if and only if it declares ``supports_aggregates``.
+
+    Both directions, as for the stream: a backend measuring a set it declared it cannot read
+    whole (a capped merge, a top-k) returns plausible numbers that are simply too small, and
+    one that refuses everything satisfies the refusal half just as well as a correct one.
+    The declared half checks the numbers against the corpus, the price total to the last of
+    its 21 digits.
+    """
+
+    if not h.query.search_capabilities.supports_aggregates:
+        with pytest.raises(CoreException) as refused:
+            await h.query.aggregate_search(_BY_CATEGORY, PROBE_TERM)
+
+        assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, (
+            f"{h.backend}: refused the undeclared aggregate, but not as a capability gate"
+        )
+
+        return
+
+    expected: dict[str, tuple[int, Decimal]] = {}
+
+    for _title, _content, category, price, _rank in CORPUS:
+        n, total = expected.get(category, (0, Decimal(0)))
+        expected[category] = (n + 1, total + price)
+
+    page = await h.query.aggregate_search_page(_BY_CATEGORY, PROBE_TERM, None, None, {"n": "desc"})
+
+    assert _by_category(page.hits) == expected, h.backend
+    assert page.count == len(expected), h.backend
+    # Every group ties on ``n``; the group key closes the order, in the sort's direction.
+    assert [row["category"] for row in page.hits] == sorted(expected, reverse=True), h.backend
+
+
+async def check_an_aggregate_reads_what_the_page_counts(h: SearchHarness) -> None:
+    """An aggregate's rows are exactly those a page's total counts, query or filter or none.
+
+    Also: a match-less global aggregate is one row of zero, not an empty page; windows of
+    groups tile them in the group-key order; and the options and sorts that describe hits
+    rather than groups are refused, not ignored.
+    """
+
+    if not h.query.search_capabilities.supports_aggregates:
+        return
+
+    notes = {"$values": {"category": {"$eq": "notes"}}}
+
+    for query, filters in ((PROBE_TERM, None), (PROBE_TERM, notes), ("", None), ("", notes)):
+        counted = await h.query.search_page(query, filters, {"limit": 1})
+        measured = await h.query.aggregate_search(_GLOBAL_COUNT, query, filters)
+
+        assert [int(row["n"]) for row in measured.hits] == [counted.count], (
+            f"{h.backend}: {query!r} {filters}"
+        )
+
+    nothing = await h.query.aggregate_search(_GLOBAL_COUNT, "zzzznotacorpustermzzzz")
+    assert [int(row["n"]) for row in nothing.hits] == [0], h.backend
+
+    first = await h.query.aggregate_search_page(_BY_CATEGORY, PROBE_TERM, None, {"limit": 2})
+    rest = await h.query.aggregate_search_page(
+        _BY_CATEGORY, PROBE_TERM, None, {"limit": 2, "offset": 2}
+    )
+    assert [row["category"] for row in [*first.hits, *rest.hits]] == ["books", "manuals", "notes"]
+    assert first.count == rest.count == 3, h.backend
+
+    for options in (
+        {"facets": ["category"]},
+        {"highlight": {"fields": ["title"]}},
+        {"max_candidates": 2},
+    ):
+        with pytest.raises(CoreException) as refused:
+            await h.query.aggregate_search(_BY_CATEGORY, PROBE_TERM, options=options)
+
+        assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, (h.backend, options)
+
+    with pytest.raises(CoreException) as bad_sort:
+        await h.query.aggregate_search(_BY_CATEGORY, PROBE_TERM, None, None, {"title": "asc"})
+
+    assert bad_sort.value.kind is ExceptionKind.PRECONDITION, h.backend
+
+
+async def check_a_null_group_takes_the_canonical_place(h: SearchHarness) -> None:
+    """A null group key sorts as every other read sorts a null: first ascending, last
+    descending, unless the sort places it explicitly. Half the corpus has no ``rank``, so
+    grouping by it yields one null group of three among three single rows."""
+
+    if not h.query.search_capabilities.supports_aggregates:
+        return
+
+    by_rank = {"$groups": {"rank": "rank"}, "$computed": {"n": {"$count": None}}}
+    cases: list[tuple[Any, list[int | None]]] = [
+        (None, [None, 1, 2, 3]),
+        ({"n": "desc"}, [None, 3, 2, 1]),
+        ({"rank": "desc"}, [3, 2, 1, None]),
+        ({"rank": {"dir": "asc", "nulls": "last"}}, [1, 2, 3, None]),
+    ]
+
+    for sorts, expected in cases:
+        page = await h.query.aggregate_search(by_rank, PROBE_TERM, None, None, sorts)
+        got = [None if row["rank"] is None else int(row["rank"]) for row in page.hits]
+
+        assert got == expected, f"{h.backend}: {sorts} -> {got}"
+
+
 async def check_a_projected_decimal_survives_search_and_count(h: SearchHarness) -> None:
     """A projection returns the same fields and the same exact Decimal with or without a count.
 
@@ -606,6 +727,9 @@ async def check_a_projected_decimal_survives_search_and_count(h: SearchHarness) 
 SEARCH_BATTERY: tuple[Check, ...] = (
     check_a_projected_decimal_survives_search_and_count,
     check_the_stream_gate_matches_the_declaration,
+    check_the_aggregate_gate_matches_the_declaration,
+    check_an_aggregate_reads_what_the_page_counts,
+    check_a_null_group_takes_the_canonical_place,
     check_a_zero_match_query_is_an_empty_page,
     check_page_count_matches_the_hits_it_returns,
     check_limit_offset_windows_partition_the_result_set,

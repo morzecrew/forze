@@ -512,6 +512,15 @@ class SearchSpec[M: BaseModel](BaseSpec):
     # ....................... #
 
     @property
+    def aggregatable_fields(self) -> frozenset[str]:
+        """Stored read fields that are not field-encrypted, which a search aggregate may
+        group by or measure: a sealed value is ciphertext at rest."""
+
+        return self.stored_read_fields - _sealed_fields(self.encryption)
+
+    # ....................... #
+
+    @property
     def resolved_lenient_read_fields(self) -> frozenset[str]:
         """Effective lenient read fields: explicit plus, under ``read_conformity``
         ``"lenient"``, the auto-derived eligible fields (indexed :attr:`fields` and

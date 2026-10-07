@@ -68,6 +68,7 @@ argument; everything else mirrors the document side:
 | `project_search` / `project_search_page` / `project_search_cursor` `(fields, query, …)` | pages of `JsonDict` |
 | `select_search` / `select_search_page` / `select_search_cursor` `(return_type, query, …)` | pages of `T` |
 | `search_stream` / `project_search_stream` / `select_search_stream` `(query, …, chunk_size=500)` | `AsyncGenerator` of chunks |
+| `aggregate_search` / `aggregate_search_page` `(aggregates, query, filters=None, pagination=None, sorts=None, *, options=None)` | `CountlessPage` / `Page` of `JsonDict` groups |
 
 `query` is a string (or a sequence of strings); `filters` and `sorts` use the
 [query DSL](../query-syntax.md). A page from a single index is ordered by relevance, then
@@ -113,6 +114,32 @@ guaranteed) **refuse** rather than truncate. Pick the right export tool for the 
   it's a plain keyset read with no ranking overhead (server-side cursor on Postgres).
 - **Stable / point-in-time / Meilisearch / very deep** → a **result snapshot** (build the
   ordered-id pool once, page it by id); works where a live cursor cannot.
+
+### Aggregating matches
+
+`aggregate_search` groups and measures the rows a search matches, with the same
+`AggregatesExpression` (`$groups`, `$computed`, `$having`) the
+[document port](document.md)'s `aggregate_many` takes over the rows a filter matches:
+
+```python
+page = await ctx.search.query(spec).aggregate_search_page(
+    {"$groups": {"status": "status"}, "$computed": {"n": {"$count": None}, "total": {"$sum": "amount"}}},
+    "overdue invoice",
+)
+```
+
+It reads the rows an exact page total counts: every match, never a candidate cap, or for a
+blank query the rows the page counts by its filters alone. `sorts` name output aliases, and the group keys order
+the groups after them, so pages of groups neither repeat nor skip one; without a `limit`
+every group comes back, as `aggregate_many` returns them. `aggregate_search_page` adds the number of groups, after `$having`.
+Groups, measures and per-metric filters may name only the spec's `aggregatable_fields` —
+stored, not field-encrypted — and the `facets` and `highlight` options are refused, as they
+describe hits, as is `max_candidates`, which would cut the set.
+
+Aggregation is capability-gated (`SearchCapabilities.supports_aggregates`): Postgres FTS /
+PGroonga and the in-memory adapter aggregate; vector search (every row is some embedding's
+neighbour), hub search (legs are capped before the merge), federated search, Mongo and
+Meilisearch **refuse** with `query_feature_unsupported` rather than measure a partial set.
 
 ### Facets and highlights
 

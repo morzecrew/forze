@@ -271,6 +271,15 @@ def _aggregate_docs(  # pyright: ignore[reportPrivateUsage]
 
             match computed.function:
                 case "$sum":
+                    if any(isinstance(value, Decimal) for value in values) and all(
+                        isinstance(value, Decimal | int) and not isinstance(value, bool)
+                        for value in values
+                    ):
+                        # A store sums ``numeric`` exactly; folding through float would
+                        # drop digits a ledger total keeps.
+                        row[computed.alias] = sum(values, Decimal(0))
+                        continue
+
                     nums = [
                         _require_numeric(
                             value,

@@ -95,6 +95,12 @@ class SearchCapabilities:
     backends leave it off and refuse the stream methods rather than emulate them via deep
     offset (which would silently truncate)."""
 
+    supports_aggregates: bool = False
+    """Whether this adapter can group and measure the rows a search matches
+    (``aggregate_search``). ``True`` only where the aggregate reads the same complete matched
+    set an exact page total counts; a top-k, capped-merge or estimated backend leaves it off and
+    refuses the aggregate methods rather than measure a partial set."""
+
     exact_total_count: bool = True
     """Whether a ``return_count`` / ``*_page`` total is exact rather than an estimate. ``True``
     for a backend that computes a real ``COUNT(*)`` (Postgres, Mongo). Engines that only report
@@ -119,6 +125,7 @@ FULL_SEARCH_CAPABILITIES: Final[SearchCapabilities] = SearchCapabilities(
     filtered_ann="integrated",
     auto_embed=False,
     supports_stream=True,
+    supports_aggregates=True,
 )
 """The canonical full retrieval surface every backend is a subset of.
 
@@ -177,6 +184,13 @@ def validate_stream_supported(caps: SearchCapabilities, *, backend: str) -> None
 
     if not caps.supports_stream:
         _search_cap_fail(backend, "result streaming")
+
+
+def validate_aggregates_supported(caps: SearchCapabilities, *, backend: str) -> None:
+    """Raise cleanly if a search aggregate is asked of a *backend* that cannot serve it."""
+
+    if not caps.supports_aggregates:
+        _search_cap_fail(backend, "aggregation")
 
 
 def resolve_fusion(

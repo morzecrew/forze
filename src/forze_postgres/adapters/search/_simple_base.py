@@ -13,12 +13,15 @@ import attrs
 from psycopg import sql
 from pydantic import BaseModel
 
+from forze.application.contracts.base import CountlessPage, Page, page_from_limit_offset
 from forze.application.contracts.querying import (
+    AggregatesExpression,
     CursorPaginationExpression,
     PaginationExpression,
     QueryExpr,
     QueryFilterExpression,
     QuerySortExpression,
+    with_group_tiebreakers,
 )
 from forze.application.contracts.search import (
     SearchCapabilities,
@@ -30,12 +33,13 @@ from forze.application.contracts.search import (
     resolve_search_sorts,
     search_options_for_simple_adapter,
 )
+from forze.application.integrations.document._limits import page_offset
 from forze.application.integrations.search import (
     SearchResultSnapshot,
     reject_encrypted_sort_fields,
 )
 from forze.base.exceptions import exc
-from forze.base.primitives import OnceCell
+from forze.base.primitives import JsonDict, OnceCell
 from forze.domain.constants import ID_FIELD
 from forze_postgres.kernel.relation import (
     RelationSpec,
@@ -44,6 +48,7 @@ from forze_postgres.kernel.relation import (
 )
 
 from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
+from ...kernel.sql.query import PsycopgQueryRenderer, compose_aggregate_statement
 from ._cursor_run import (
     execute_projection_keyset_cursor,
     execute_ranked_pipeline_cursor,
@@ -114,9 +119,10 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     @property
     def search_capabilities(self) -> SearchCapabilities:
-        # FTS / PGroonga rank over a full keyset cursor → bounded-memory export. The vector
-        # subclass overrides this (top-k, no whole-corpus stream).
-        return SearchCapabilities(supports_stream=True)
+        # FTS / PGroonga rank over a full keyset cursor → bounded-memory export, and read the
+        # whole matched set uncapped → aggregates. The vector subclass overrides this (top-k:
+        # no whole-corpus stream, and every row "matches" an embedding).
+        return SearchCapabilities(supports_stream=True, supports_aggregates=True)
 
     # ....................... #
 
@@ -459,6 +465,126 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             trust_source=search_trust_source(self.read_validation),
             thin_read_qname=thin_read_qname,
         )
+
+    # ....................... #
+
+    async def _aggregate_source(
+        self,
+        *,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        options: SearchOptions | None,
+    ) -> tuple[sql.Composable | None, sql.Composable, list[Any]]:
+        """The rows an exact page total counts: a ``WITH`` clause (or ``None``), a ``FROM``
+        fragment over :attr:`projection_alias`, and their parameters.
+
+        The page's own ranked pipeline with no candidate cap. An engine whose page reads
+        another source for some queries overrides this to read the same one.
+        """
+
+        parsed_filters = self.compile_filters(filters)
+        fw, fp = await self.where_clause(filters, parsed=parsed_filters)
+        pipeline_sql = await self._build_ranked_pipeline_sql(
+            query=query,
+            filters=filters,
+            options=options,
+            fw=fw,
+            fp=fp,
+            terms=tuple(normalize_search_queries(query)),
+            parsed_filters=parsed_filters,
+            for_cursor=True,
+        )
+
+        return pipeline_sql.with_clause, pipeline_sql.from_outer, list(pipeline_sql.params_body)
+
+    # ....................... #
+
+    async def _aggregate_search_impl(
+        self,
+        aggregates: AggregatesExpression,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,  # type: ignore[valid-type]
+        *,
+        options: SearchOptions | None,
+        return_count: bool,
+    ) -> CountlessPage[JsonDict] | Page[JsonDict]:
+        """Group the rows the search matches (:meth:`_aggregate_source`), read as a
+        ``_matched`` CTE and aggregated as the document gateway aggregates its relation."""
+
+        options = search_options_for_simple_adapter(options, spec=self.spec)
+        with_clause, from_outer, source_params = await self._aggregate_source(
+            query=query,
+            filters=filters,
+            options=options,
+        )
+        alias = sql.Identifier(self.projection_alias)
+        matched = sql.SQL("_matched AS (SELECT {alias}.* {from_outer})").format(
+            alias=alias,
+            from_outer=from_outer,
+        )
+        head = (
+            sql.SQL("WITH {matched}").format(matched=matched)
+            if with_clause is None
+            else sql.SQL("{with_clause}, {matched}").format(
+                with_clause=with_clause,
+                matched=matched,
+            )
+        )
+        renderer = PsycopgQueryRenderer(
+            types=await self.column_types(),
+            model_type=self.model_type,
+            nested_field_hints=self.nested_field_hints,
+            table_alias=self.projection_alias,
+        )
+        aggregate = compose_aggregate_statement(
+            renderer,
+            aggregates,
+            filter_parser=self.filter_parser,
+            source=sql.SQL("FROM _matched AS {alias}").format(alias=alias),
+            source_params=[],
+        )
+        params = [*source_params, *aggregate.params]
+        window: dict[str, Any] = dict(pagination or {})
+        # Rendered before anything runs, so a sort naming no output alias costs no query.
+        # The group keys close the order, so pages of groups neither repeat nor skip one.
+        order = PsycopgQueryRenderer.render_aggregate_order_by(
+            aggregate.parsed,
+            with_group_tiebreakers(aggregates, sorts),
+        )
+        total: int | None = None
+
+        if return_count:
+            count_stmt = sql.SQL("{head} SELECT COUNT(*) FROM ({inner}) AS _groups").format(
+                head=head,
+                inner=aggregate.stmt,
+            )
+            total = int(await self.client.fetch_value(count_stmt, params, default=0))
+
+        stmt = sql.SQL("{head} {inner}").format(head=head, inner=aggregate.stmt)
+
+        if order is not None:
+            stmt += sql.SQL(" ORDER BY {order}").format(order=order)
+
+        page_params = list(params)
+
+        # Without a limit every group comes back, as the document port's aggregate drains them.
+        if (limit := window.get("limit")) is not None:
+            stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+            page_params.append(int(limit))
+
+        if offset := page_offset(window):
+            stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+            page_params.append(offset)
+
+        rows = await self.client.fetch_all(stmt, page_params, row_factory="dict")
+        hits = [dict(row) for row in rows]
+
+        if total is None:
+            return page_from_limit_offset(hits, window)
+
+        return page_from_limit_offset(hits, window, total=total)
 
     # ....................... #
 

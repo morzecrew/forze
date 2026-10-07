@@ -48,7 +48,11 @@ from forze_postgres.kernel.sql import (
     build_order_by_sql,
     build_seek_condition,
 )
-from forze_postgres.kernel.sql.query import PsycopgQueryRenderer
+from forze_postgres.kernel.sql.query import (
+    AggregateStatement,
+    PsycopgQueryRenderer,
+    compose_aggregate_statement,
+)
 from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 
 from .base import PostgresGateway
@@ -720,40 +724,10 @@ class PostgresReadGateway[M: BaseModel](
         if return_fields is not None:
             raise exc.internal("Aggregates cannot be combined with return_fields")
 
-        where, params = await self.where_clause(filters, parsed=parsed)
-        types = await self.column_types()
-        renderer = PsycopgQueryRenderer(
-            types=types,
-            model_type=self.model_type,
-            nested_field_hints=self.nested_field_hints,
-        )
-        parsed_, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
-            aggregates,
-            filter_parser=self.filter_parser,
-        )
-        params = list(aggregate_params) + list(params)
-        sort_clause = renderer.render_aggregate_order_by(parsed_, sorts)
-
-        stmt = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=select_clause,
-            table=(await self._qname()).ident(),
-            where=where,
-        )
-
-        if group_clause is not None:
-            stmt += sql.SQL(" GROUP BY {group}").format(group=group_clause)
-
-        if parsed_.having is not None:
-            # ``$having`` filters the aggregated rows: wrap the group query and filter on
-            # its output aliases (a fresh renderer with no column types — values pass
-            # through; Postgres compares against the computed/group columns).
-            having_renderer = PsycopgQueryRenderer(table_alias="_agg")
-            having_sql, having_params = having_renderer.render(parsed_.having)
-            stmt = sql.SQL("SELECT * FROM ({inner}) AS _agg WHERE {having}").format(
-                inner=stmt,
-                having=having_sql,
-            )
-            params = list(params) + list(having_params)
+        aggregate = await self._aggregate_statement(filters, aggregates=aggregates, parsed=parsed)
+        stmt = aggregate.stmt
+        params = list(aggregate.params)
+        sort_clause = PsycopgQueryRenderer.render_aggregate_order_by(aggregate.parsed, sorts)
 
         if sort_clause is not None:
             stmt += sql.SQL(" ORDER BY {sort}").format(sort=sort_clause)
@@ -786,45 +760,42 @@ class PostgresReadGateway[M: BaseModel](
         aggregates: AggregatesExpression,
         parsed: QueryExpr | None = None,
     ) -> int:
-        """Count aggregate result groups."""
+        """Count aggregate result groups, after ``$having``."""
+
+        aggregate = await self._aggregate_statement(filters, aggregates=aggregates, parsed=parsed)
+        stmt = sql.SQL("SELECT COUNT(*) FROM ({inner}) AS agg").format(inner=aggregate.stmt)
+        res = await self._read_value(stmt, list(aggregate.params), default=0)
+
+        return int(res)
+
+    # ....................... #
+
+    async def _aggregate_statement(
+        self,
+        filters: QueryFilterExpression | None,  # type: ignore[valid-type]
+        *,
+        aggregates: AggregatesExpression,
+        parsed: QueryExpr | None,
+    ) -> AggregateStatement:
+        """The grouped ``SELECT`` over this relation's rows *filters* match."""
 
         where, params = await self.where_clause(filters, parsed=parsed)
-        types = await self.column_types()
         renderer = PsycopgQueryRenderer(
-            types=types,
+            types=await self.column_types(),
             model_type=self.model_type,
             nested_field_hints=self.nested_field_hints,
         )
-        parsed_, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
+
+        return compose_aggregate_statement(
+            renderer,
             aggregates,
             filter_parser=self.filter_parser,
+            source=sql.SQL("FROM {table} WHERE {where}").format(
+                table=(await self._qname()).ident(),
+                where=where,
+            ),
+            source_params=list(params),
         )
-        params = list(aggregate_params) + list(params)
-
-        inner = sql.SQL("SELECT {cols} FROM {table} WHERE {where}").format(
-            cols=select_clause,
-            table=(await self._qname()).ident(),
-            where=where,
-        )
-
-        if group_clause is not None:
-            inner += sql.SQL(" GROUP BY {group}").format(group=group_clause)
-
-        if parsed_.having is not None:
-            # ``$having`` filters grouped rows, so apply it before counting (mirrors
-            # ``find_many_aggregates``); otherwise the count includes filtered-out groups.
-            having_renderer = PsycopgQueryRenderer(table_alias="_agg")
-            having_sql, having_params = having_renderer.render(parsed_.having)
-            inner = sql.SQL("SELECT * FROM ({inner}) AS _agg WHERE {having}").format(
-                inner=inner,
-                having=having_sql,
-            )
-            params = list(params) + list(having_params)
-
-        stmt = sql.SQL("SELECT COUNT(*) FROM ({inner}) AS agg").format(inner=inner)
-        res = await self._read_value(stmt, params, default=0)
-
-        return int(res)
 
     # ....................... #
 
