@@ -86,7 +86,8 @@ def require_whole_update_matching(dto: BaseModel, *, document: str) -> None:
     ``update_matching`` writes its patch as it is, with no domain update, so such a value
     would replace the stored one with the fragment it names, where ``update`` and
     ``update_matching_strict`` merge it. A list or a scalar replaces the stored value either
-    way, and setting a field to ``None`` clears it either way; both are allowed.
+    way and is allowed. ``None`` is allowed too and stores ``NULL``, though an update resets a
+    field with a non-null default to that default; use ``update_matching_strict`` for that.
 
     :param document: The document's name, for the message.
     :raises CoreException: ``precondition`` (``update_matching_merge_unsupported``)

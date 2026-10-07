@@ -718,7 +718,8 @@ class DocumentCommandPort(BaseDocumentPort[R, D, C, U], Protocol[R, D, C, U]):
         when business rules must match :meth:`update` / :meth:`update_many`. A patch that
         sets a field to a mapping or a model is refused (``update_matching_merge_unsupported``):
         written as it is, it would replace the stored value where an update merges into it.
-        Setting a field to ``None``, a list or a scalar is allowed.
+        Setting a field to a list or a scalar is allowed, and to ``None`` stores ``NULL`` (an
+        update would reset a field with a non-null default to that default instead).
 
         Postgres applies a single ``UPDATE … WHERE … RETURNING``; Mongo keyset-pages
         ids and runs batched ``update_many`` with ``$inc`` on ``rev``.
