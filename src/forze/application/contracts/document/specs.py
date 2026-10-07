@@ -1,7 +1,8 @@
 """Specifications for document models and storage layout."""
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar, get_args, get_origin
+from types import UnionType
+from typing import Annotated, Any, Generic, TypeVar, Union, get_args, get_origin
 
 import attrs
 from pydantic import BaseModel
@@ -113,15 +114,35 @@ def _validated_fields(domain: type[Document]) -> frozenset[str]:
 
 
 def _merged(annotation: Any) -> bool:
-    """Whether *annotation* is or contains a pydantic model or a mapping, which a domain
-    update merges into the stored value rather than replaces."""
+    """Whether a value of *annotation* may be a mapping, which a domain update merges into the
+    stored one rather than replaces: a pydantic model, a mapping (``TypedDict`` included), or
+    ``Any``.
+    Only a union is looked into; a list or tuple of mappings is replaced whole."""
 
-    origin = get_origin(annotation) or annotation
-
-    if isinstance(origin, type) and issubclass(origin, (BaseModel, Mapping)):
+    if annotation is Any:
         return True
 
-    return any(_merged(arg) for arg in get_args(annotation))
+    origin = get_origin(annotation)
+
+    if origin in (Union, UnionType):
+        return any(_merged(arg) for arg in get_args(annotation))
+
+    if origin is Annotated:
+        return _merged(get_args(annotation)[0])
+
+    target = origin or annotation
+
+    # A ``TypedDict`` is a ``dict`` at runtime, so a mapping here.
+    return isinstance(target, type) and issubclass(target, (BaseModel, Mapping))
+
+
+def _without_none(annotation: Any) -> frozenset[Any]:
+    """*annotation*'s members other than ``None``: what a value of it is when it is set."""
+
+    if get_origin(annotation) in (Union, UnionType):
+        return frozenset(arg for arg in get_args(annotation) if arg is not type(None))
+
+    return frozenset({annotation})
 
 
 # ....................... #
@@ -819,6 +840,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
                     or _merged(field.annotation)
                     # A nulled field takes its default, here one read off the stored row.
                     or field.default_factory_takes_validated_data
+                    # The DTO validates the value; a narrower domain type (a ``Literal`` for a
+                    # ``str``) would refuse what the DTO admits.
+                    or _without_none(field.annotation)
+                    != _without_none(update_cmd.model_fields[name].annotation)
                 )
 
                 if validated:

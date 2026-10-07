@@ -1,6 +1,7 @@
 """Tests for :class:`~forze.application.contracts.document.DocumentSpec`."""
 
 from datetime import datetime
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 import pytest
@@ -934,6 +935,40 @@ class _CodedUpdate(BaseDTO):
     code: str | None = None
 
 
+class _StatusDomain(Document):
+    name: str
+    status: Literal["ready", "done"] = "ready"
+
+
+class _StatusUpdate(BaseDTO):
+    status: str | None = None
+
+
+class _Point(TypedDict):
+    x: int
+    y: int
+
+
+class _LooseDomain(Document):
+    name: str
+    point: _Point = {"x": 0, "y": 0}
+    extra: Any = None
+
+
+class _LooseUpdate(BaseDTO):
+    point: _Point | None = None
+    extra: Any = None
+
+
+class _RowsDomain(Document):
+    name: str
+    rows: list[dict[str, int]] = Field(default_factory=list)
+
+
+class _RowsUpdate(BaseDTO):
+    rows: list[dict[str, int]] | None = None
+
+
 class _TaggedDomain(Document):
     name: str
     tags: dict[str, str] = Field(default_factory=dict)
@@ -949,6 +984,14 @@ def _named_write(domain: type[Document]) -> DocumentWriteTypes:
 
 def test_a_plain_spec_allows_a_set_based_upsert() -> None:
     DocumentSpec(name="doc", read=_Read, write=_named_write(_Domain)).require_set_based_upsert()
+
+
+def test_a_list_of_mappings_is_replaced_whole_so_set_based_is_allowed() -> None:
+    DocumentSpec(
+        name="doc",
+        read=_Read,
+        write=DocumentWriteTypes(domain=_RowsDomain, create_cmd=_Create, update_cmd=_RowsUpdate),
+    ).require_set_based_upsert()
 
 
 @pytest.mark.parametrize(
@@ -1021,6 +1064,26 @@ def test_a_plain_spec_allows_a_set_based_upsert() -> None:
                 ),
             ),
             "update fields the domain derives, merges or refuses (code)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_StatusDomain, create_cmd=_Create, update_cmd=_StatusUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (status)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_LooseDomain, create_cmd=_Create, update_cmd=_LooseUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (extra, point)",
         ),
         (
             DocumentSpec(
