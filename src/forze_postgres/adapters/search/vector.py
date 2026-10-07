@@ -169,19 +169,15 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
-        # A blank query has no embedding to rank by, so there is no top-k to bound: capping
-        # it would keep whichever rows the scan met first and sort only those.
-        candidate_cap = (
-            effective_ranked_candidate_limit(
-                config_limit=self.ranked_candidate_limit,
-                options=options,
-                pagination=dict(pagination or {}),
-                snapshot=snapshot,
-                result_snapshot=self.result_snapshot,
-                rs_spec=rs_spec,
-            )
-            if terms
-            else None
+        # (A blank query never reaches here: with no embedding to rank by, it browses the
+        # projection.)
+        candidate_cap = effective_ranked_candidate_limit(
+            config_limit=self.ranked_candidate_limit,
+            options=options,
+            pagination=dict(pagination or {}),
+            snapshot=snapshot,
+            result_snapshot=self.result_snapshot,
+            rs_spec=rs_spec,
         )
 
         cap_kw: dict[str, Any] = {}
@@ -219,7 +215,6 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             heap_fw=heap_fw,
             heap_fp=heap_fp,
             cap_kw=cap_kw,
-            emit_exact_count_sql=bool(terms),
             filtered_extra=filtered_extra,
         )
 
@@ -228,5 +223,4 @@ class PostgresVectorSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdap
             pipeline=self.pipeline,
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
-            browse_count_params=[*fp] if not terms else None,
         )

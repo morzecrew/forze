@@ -253,11 +253,11 @@ async def test_vector_search_refuses_to_aggregate(pgvector_client: PostgresClien
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("engine", ["fts", "pgroonga"])
-async def test_a_blank_query_measures_the_rows_its_page_counts(
+async def test_a_blank_query_reads_the_projection(
     pg_client: PostgresClient, engine: str
 ) -> None:
-    """With a projection holding a row the index heap lacks, each engine's blank page counts
-    its own set; the aggregate measures that same set."""
+    """A blank query reads the read projection: the page, its count, the cursor walk and the
+    aggregate all hold the row the index heap lacks (vector search shares this path)."""
 
     table, index = await _table(pg_client, engine)
     view = f"{table}_v"
@@ -274,8 +274,48 @@ async def test_a_blank_query_measures_the_rows_its_page_counts(
     )
     count = {"$computed": {"n": {"$count": None}}}
 
-    for filters in (None, {"$values": {"category": {"$neq": "c"}}}):
+    # Six heap rows plus the extra; the filter drops the one in category "c".
+    for filters, expected in ((None, 7), ({"$values": {"category": {"$neq": "c"}}}, 6)):
         page = await port.search_page("", filters, {"limit": 1})
         measured = await port.aggregate_search(count, "", filters)
+        walked = [hit async for chunk in port.search_stream("", filters) for hit in chunk]
 
-        assert [row["n"] for row in measured.hits] == [page.count], (engine, filters)
+        assert page.count == expected, (engine, filters)
+        assert len(walked) == expected, (engine, filters)
+        assert [row["n"] for row in measured.hits] == [expected], (engine, filters)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", ["fts", "pgroonga"])
+async def test_a_blank_page_without_a_limit_stops_at_max_results(
+    pg_client: PostgresClient, engine: str
+) -> None:
+    """``SearchSpec.max_results`` caps a page that asks for no limit, blank query included."""
+
+    table, index = await _table(pg_client, engine)
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                SearchQueryDepKey: ConfigurablePostgresSearch(
+                    config=PostgresSearchConfig(
+                        engine=_engine(engine),  # type: ignore[arg-type]
+                        index=("public", index),
+                        read=("public", table),
+                    )
+                ),
+            }
+        )
+    )
+    port = ctx.search.query(
+        SearchSpec(
+            name=f"sagg_cap_{uuid4().hex[:8]}",
+            model_type=_Row,
+            fields=["title", "content"],
+            max_results=2,
+        )
+    )
+
+    for query in ("ledger", ""):
+        assert len((await port.search(query)).hits) == 2, (engine, query)

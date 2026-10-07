@@ -28,14 +28,20 @@ from forze.application.contracts.search import (
     SearchOptions,
     SearchQueryPort,
     SearchResultSnapshotOptions,
+    facet_size_of,
     normalize_search_queries,
     refuse_cursor_null_placement,
+    resolve_facet_fields,
     resolve_search_sorts,
     search_options_for_simple_adapter,
+    search_page_from_limit_offset,
 )
 from forze.application.integrations.document._limits import page_limit, page_offset
 from forze.application.integrations.search import (
     SearchResultSnapshot,
+    SnapshotWindow,
+    build_snapshot_pool_streaming,
+    decrypt_search_rows,
     reject_encrypted_sort_fields,
 )
 from forze.base.exceptions import exc
@@ -55,7 +61,8 @@ from ._cursor_run import (
     parse_search_cursor,
 )
 from ._engine import RankedPipelineSql
-from ._materialize_hits import search_trust_source
+from ._facets import fetch_pg_facets
+from ._materialize_hits import materialize_search_page, search_trust_source
 from ._offset_run import RankedOffsetPlan, execute_simple_ranked_offset_search
 from ._pgroonga_plan import is_coalesced_read_heap
 from ._pipeline_sql import (
@@ -370,6 +377,20 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_fields: Sequence[str] | None = None,
     ) -> Any:
         options = search_options_for_simple_adapter(options, spec=self.spec)
+
+        if not normalize_search_queries(query):
+            return await self._offset_empty_query_browse(
+                filters=filters,
+                pagination=pagination,
+                sorts=sorts,
+                options=options,
+                snapshot=snapshot,
+                query=query,
+                return_count=return_count,
+                return_type=return_type,
+                return_fields=return_fields,
+            )
+
         parsed_filters = self.compile_filters(filters)
         fw, fp = await self.where_clause(filters, parsed=parsed_filters)
         terms = tuple(normalize_search_queries(query))
@@ -398,19 +419,6 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             extra_order=extra_ob,
         )
 
-        approximate_total: int | None = None
-        count_policy = effective_search_count(options)
-
-        if return_count and count_policy == "approximate" and not terms:
-            proj_qname = await self._qname()
-            approximate_total = await resolve_ranked_approximate_total(
-                introspector=self.introspector,
-                schema=proj_qname.schema,
-                relation=proj_qname.name,
-                where_sql=fw,
-                params=fp,
-            )
-
         plan = RankedOffsetPlan(
             with_clause=pipeline_sql.with_clause,
             from_outer=pipeline_sql.from_outer,
@@ -419,9 +427,9 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
             count_params=pipeline_sql.count_params,
             count_with_clause=pipeline_sql.count_with_clause,
             count_from_outer=pipeline_sql.count_from_outer,
-            approximate_total=approximate_total,
+            approximate_total=None,
             select_table_alias=self.projection_alias,
-            rank_select=build_rank_select(self.pipeline) if terms else None,
+            rank_select=build_rank_select(self.pipeline),
             highlight=pipeline_sql.highlight,
             from_outer_param_count=pipeline_sql.from_outer_param_count,
         )
@@ -468,6 +476,262 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
 
     # ....................... #
 
+    async def _offset_empty_query_browse(
+        self,
+        *,
+        query: str | Sequence[str],
+        filters: QueryFilterExpression | None,
+        pagination: PaginationExpression | None,
+        sorts: QuerySortExpression | None,
+        options: SearchOptions | None,
+        snapshot: SearchResultSnapshotOptions | None,
+        return_count: bool,
+        return_type: type[BaseModel] | None,
+        return_fields: Sequence[str] | None,
+    ) -> Any:
+        """A blank query: the read projection with filters only, as its cursor walks it.
+
+        No term means no rank, so there is nothing for the ranked pipeline (and its join to
+        the index heap) to add; reading the projection keeps the page, its count and the
+        cursor on the same rows.
+        """
+
+        fw, fp = await self.where_clause(filters)
+        rs_spec = self.spec.snapshot
+        # Facets are computed live per page; an id-only snapshot replay would drop them, so a
+        # facet request runs live (no snapshot read or write).
+        facet_fields = resolve_facet_fields(self.spec, options)
+        count_policy = effective_search_count(options)
+        order = resolve_search_sorts(
+            sorts,
+            default_sort=self.spec.default_sort,
+            read_fields=self.read_fields,
+            model=self.model_type,
+            spec_name=self.spec.name,
+        )
+        fp_fingerprint = SearchResultSnapshot.simple_search_fingerprint(
+            query,
+            filters,
+            order,
+            spec_name=self.spec.name,
+            variant=self.search_variant,
+            extras=self._fingerprint_extras(options),
+        )
+
+        if self.result_snapshot is not None and rs_spec is not None and not facet_fields:
+            maybe_snap: Any = await self.result_snapshot.read_simple_result_snapshot(
+                rs_spec=rs_spec,
+                snap_opt=snapshot,
+                fp_computed=fp_fingerprint,
+                spec=self.spec,
+                pagination=dict(pagination or {}),
+                return_type=return_type,
+                return_fields=return_fields,
+                return_count=return_count and count_policy != "none",
+            )
+
+            if maybe_snap is not None:
+                return maybe_snap
+
+        # As the ranked page does, after a snapshot replay (which never re-sorts) had its
+        # chance: ciphertext has no order at rest.
+        reject_encrypted_sort_fields(
+            sorts, encryption=self.spec.encryption, spec_name=self.spec.name
+        )
+
+        # A read model without an ``id`` and a request without a sort leave nothing to order
+        # by but some column; the first field by name is at least the same one every time.
+        order_sql = await self._projection_order_by_clause(
+            order or {sorted(self.read_fields)[0]: "asc"}
+        )
+        proj_qname = await self._qname()
+        count_stmt = sql.SQL(
+            """
+            SELECT COUNT(*) FROM {proj} {pa} WHERE {fw}
+            """
+        ).format(
+            proj=proj_qname.ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+        )
+
+        params_base = list(fp)
+        total = 0
+
+        if return_count and count_policy != "none":
+            if count_policy == "exact":
+                total = int(
+                    await self.client.fetch_value(count_stmt, params_base, default=0),
+                )
+
+                if total == 0:
+                    # No matches: the facet distribution is empty buckets per requested field,
+                    # not ``None`` — keep the sidecar shape the live path returns.
+                    return search_page_from_limit_offset(  # pyright: ignore[reportUnknownVariableType]
+                        [],
+                        pagination or {},
+                        total=0,
+                        facets=dict.fromkeys(facet_fields, ()) if facet_fields else None,
+                    )
+            else:
+                total = await resolve_ranked_approximate_total(
+                    introspector=self.introspector,
+                    schema=proj_qname.schema,
+                    relation=proj_qname.name,
+                    where_sql=fw,
+                    params=params_base,
+                )
+
+        cols = self.return_clause(
+            return_type,
+            return_fields,
+            table_alias=self.projection_alias,
+        )
+        data_stmt = sql.SQL(
+            """
+            SELECT {cols} FROM {proj} {pa} WHERE {fw} ORDER BY {order}
+            """
+        ).format(
+            cols=cols,
+            proj=proj_qname.ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+            order=order_sql,
+        )
+
+        params = params_base
+        pagination = pagination or {}
+        trust_source = search_trust_source(self.read_validation)
+        read_codec = self.spec.resolved_read_codec
+        u_ = int(pagination.get("offset") or 0)
+
+        want_sn = (
+            self.result_snapshot is not None
+            and rs_spec is not None
+            and not facet_fields
+            and self.result_snapshot.should_write_result_snapshot(snapshot, rs_spec)
+        )
+
+        if want_sn and self.result_snapshot is not None and rs_spec is not None:
+            # Stream the ordered pool window-by-window into the snapshot store so peak memory
+            # is one chunk, never the whole (up to ``max_ids``) decoded pool at once.
+            page_limit = SearchResultSnapshot.snapshot_pagination(True, 0, dict(pagination))[2]
+            base_params = list(params_base)
+
+            async def fetch_window(window_offset: int, window_limit: int) -> SnapshotWindow:
+                stmt = data_stmt + sql.SQL(" LIMIT {} OFFSET {}").format(
+                    sql.Placeholder(), sql.Placeholder()
+                )
+                window_rows = await self.client.fetch_all(
+                    stmt,
+                    [*base_params, int(window_limit), int(window_offset)],
+                    row_factory="dict",
+                )
+
+                return SnapshotWindow(rows=[dict(row) for row in window_rows])
+
+            async def decrypt_window_rows(
+                raw_rows: list[JsonDict],
+            ) -> tuple[list[JsonDict], Any]:
+                return await decrypt_search_rows(read_codec, raw_rows)
+
+            stream = await build_snapshot_pool_streaming(
+                result_snapshot=self.result_snapshot,
+                rs_spec=rs_spec,
+                snap_opt=snapshot,
+                fp_computed=fp_fingerprint,
+                codec=read_codec,
+                prepare_rows=decrypt_window_rows,
+                fetch_window=fetch_window,
+                page_offset=u_,
+                page_limit=page_limit,
+                trust_source=trust_source,
+            )
+            handle_no = stream.handle
+            page_rows = stream.page_rows
+            page_codec = stream.page_codec
+
+        else:
+            handle_no = None
+            sql_limit, _, page_limit = SearchResultSnapshot.snapshot_pagination(
+                False, 0, dict(pagination)
+            )
+            stmt = data_stmt
+
+            # An unlimited browse fetches the whole filtered projection; the spec's
+            # ``max_results`` caps it as it caps a ranked page (an explicit limit wins).
+            if sql_limit is None and self.spec.max_results is not None:
+                sql_limit = self.spec.max_results
+
+            if sql_limit is not None:
+                stmt += sql.SQL(" LIMIT {}").format(sql.Placeholder())
+                params.append(int(sql_limit))
+
+            if pagination.get("offset") is not None:
+                stmt += sql.SQL(" OFFSET {}").format(sql.Placeholder())
+                params.append(int(pagination.get("offset") or 0))
+
+            fetched = await self.client.fetch_all(stmt, params, row_factory="dict")
+            # Every search read decrypts sealed fields once, before any decode or projection.
+            page_rows, page_codec = await decrypt_search_rows(
+                read_codec, [dict(row) for row in fetched]
+            )
+
+        page = materialize_search_page(
+            page_rows=page_rows,
+            pool=None,
+            u=u_,
+            page_limit=page_limit,
+            return_type=return_type,
+            return_fields=return_fields,
+            model_type=self.model_type,
+            codec=page_codec,
+            trust_source=trust_source,
+        )
+
+        facets = await self._browse_facets(proj_qname, fw, fp, options)
+
+        return search_page_from_limit_offset(
+            page,
+            pagination,
+            total=(total if (return_count and count_policy != "none") else None),
+            snapshot=handle_no,
+            facets=facets,
+        )
+
+    # ....................... #
+
+    async def _browse_facets(
+        self,
+        proj_qname: Any,
+        fw: sql.Composable,
+        fp: Sequence[Any],
+        options: SearchOptions | None,
+    ) -> Any:
+        """Facets for the empty-query browse: ``GROUP BY`` over the filtered projection."""
+
+        facet_fields = resolve_facet_fields(self.spec, options)
+        if not facet_fields:
+            return None
+
+        body = sql.SQL("FROM {proj} {pa} WHERE {fw}").format(
+            proj=proj_qname.ident(),
+            pa=sql.Identifier(self.projection_alias),
+            fw=fw,
+        )
+
+        return await fetch_pg_facets(
+            self.client,
+            with_clause=None,
+            body=body,
+            params=list(fp),
+            table_alias=self.projection_alias,
+            fields=facet_fields,
+            size=facet_size_of(options),
+        )
+
+    # ....................... #
+
     async def _aggregate_source(
         self,
         *,
@@ -478,9 +742,19 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         """The rows an exact page total counts: a ``WITH`` clause (or ``None``), a ``FROM``
         fragment over :attr:`projection_alias`, and their parameters.
 
-        The page's own ranked pipeline with no candidate cap. An engine whose page reads
-        another source for some queries overrides this to read the same one.
+        The page's own source: the ranked pipeline with no candidate cap, or for a blank
+        query the projection the browse reads (:meth:`_offset_empty_query_browse`).
         """
+
+        if not normalize_search_queries(query):
+            fw, fp = await self.where_clause(filters)
+            source = sql.SQL("FROM {proj} {pa} WHERE {fw}").format(
+                proj=(await self._qname()).ident(),
+                pa=sql.Identifier(self.projection_alias),
+                fw=fw,
+            )
+
+            return None, source, list(fp)
 
         parsed_filters = self.compile_filters(filters)
         fw, fp = await self.where_clause(filters, parsed=parsed_filters)

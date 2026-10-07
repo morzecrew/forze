@@ -27,7 +27,7 @@ class RankedPipelineSql:
     from_outer: "sql.Composable"
     params_body: list[Any]
     count_params: list[Any] | None
-    """When set, used for ``COUNT(*)`` only (e.g. FTS empty-query uses filter params)."""
+    """When set, the parameters an exact ``COUNT(*)`` binds instead of :attr:`params_body`."""
 
     count_with_clause: "sql.Composable | None" = None
     """When set with :attr:`count_from_outer`, exact ``COUNT(*)`` uses uncapped ranked SQL."""

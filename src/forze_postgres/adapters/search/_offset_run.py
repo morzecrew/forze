@@ -88,7 +88,7 @@ class RankedOffsetPlan:
     """Parameters for the ``SELECT`` statement."""
 
     count_params: list[Any] | None = None
-    """When set, used for ``COUNT(*)`` only (e.g. FTS empty-query uses filter params only)."""
+    """When set, the parameters an exact ``COUNT(*)`` binds instead of :attr:`params`."""
 
     count_with_clause: sql.Composable | None = None
     """Uncapped ranked ``WITH`` for exact totals when data pipeline uses a candidate cap."""

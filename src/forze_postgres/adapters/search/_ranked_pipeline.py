@@ -199,7 +199,6 @@ def ranked_parts_to_sql(
     pipeline: PipelineAliases,
     rank_column: str,
     projection_alias: str,
-    browse_count_params: list[Any] | None = None,
     resolved_plan: str | None = None,
     highlight: HighlightSelect | None = None,
 ) -> RankedPipelineSql:
@@ -207,13 +206,11 @@ def ranked_parts_to_sql(
 
     from ._engine import RankedPipelineSql
 
-    count_params = parts.count_params if parts.count_params is not None else browse_count_params
-
     return RankedPipelineSql(
         with_clause=parts.with_clause,
         from_outer=parts.from_outer,
         params_body=parts.params_body,
-        count_params=count_params,
+        count_params=parts.count_params,
         count_with_clause=parts.count_with_clause,
         count_from_outer=parts.count_from_outer,
         pipeline=pipeline,
