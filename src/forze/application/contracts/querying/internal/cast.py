@@ -10,6 +10,15 @@ from ..types import Scalar
 
 # ----------------------- #
 
+_INT8_MIN = -(1 << 63)
+_INT8_MAX = (1 << 63) - 1
+"""The widest integer column's range: a bound outside it matches no stored integer."""
+
+_TIMESTAMP_BOUND = Decimal("1E+21")
+"""Past any epoch timestamp in nanoseconds a ``datetime`` holds."""
+
+# ....................... #
+
 
 class QueryValueCaster:
     """Static methods for casting raw values to typed scalars.
@@ -70,13 +79,13 @@ class QueryValueCaster:
         if isinstance(v, float) and v.is_integer():
             return int(v)
 
-        # A string bound reaches here as the exact Decimal the shared cast made of it. Its
-        # exponent is checked before ``int()`` expands it: ``1E+1000000`` is ten characters
-        # and a million digits, and no integer column holds more than nineteen.
+        # A string bound reaches here as the exact Decimal the shared cast made of it. It is
+        # held to the widest integer column before ``int()`` expands it: ``1E+1000000`` is
+        # ten characters and a million digits.
         if (
             isinstance(v, Decimal)
             and v.is_finite()
-            and (v.is_zero() or v.adjusted() < 19)
+            and _INT8_MIN <= v <= _INT8_MAX
             and v == v.to_integral_value()
         ):
             return int(v)
@@ -233,11 +242,18 @@ class QueryValueCaster:
             else:
                 num = v
 
-            seconds = (
-                float(num)
-                if isinstance(num, float) and not num.is_integer()
-                else cls._to_seconds(int(num))
-            )
+            # A fraction is seconds; only a whole number may be milli-, micro- or nanoseconds.
+            # A Decimal is bounded before ``int()`` could expand a huge exponent.
+            if isinstance(num, Decimal):
+                if not num.is_finite() or abs(num) >= _TIMESTAMP_BOUND:
+                    raise exc.precondition(f"Invalid datetime timestamp: {v!r}")
+
+                fractional = num != num.to_integral_value()
+
+            else:
+                fractional = isinstance(num, float) and not num.is_integer()
+
+            seconds = float(num) if fractional else cls._to_seconds(int(num))
 
             try:
                 dt = datetime.fromtimestamp(seconds, tz=UTC)

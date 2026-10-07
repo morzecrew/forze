@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A string bound on an integer column filters in Postgres.** `{"age": {"$gt": "28"}}` failed with `Invalid int`; it compares as the number, as on the other backends.
 
-- **`uuid7` ids keep their nanosecond order.** The variant bits overwrote two bits of the sub-millisecond time, so ids minted under 256 ns apart could sort backwards, as `FrozenTimeSource` and the DST clock mint them 1 ns apart. Existing ids stay valid; `high_precision` reads the new layout.
+- **`uuid7` ids keep their nanosecond order.** The variant bits overwrote two bits of the sub-millisecond time, so ids minted under 256 ns apart could sort backwards, as `FrozenTimeSource` and the DST clock mint them 1 ns apart. Existing ids stay valid; `high_precision` reads them within 256 ns.
 
 - **A search page with `limit=0` is empty when it writes or replays a result snapshot.** It returned one hit.
 

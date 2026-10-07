@@ -26,6 +26,25 @@ from .time_source import current_time_source
 
 # ----------------------- #
 
+# The sub-millisecond nanoseconds (20 bits) sit on either side of the variant, as shifts of the
+# UUID's integer: the top 12 above it, the bottom 8 below. :func:`uuid7` packs them and
+# :func:`uuid7_to_datetime` unpacks them through this one pair.
+_SUB_MS_HIGH_SHIFT = 64
+_SUB_MS_LOW_SHIFT = 54
+
+
+def _pack_sub_ms_ns(sub_ms_ns: int) -> int:
+    return ((sub_ms_ns >> 8) << _SUB_MS_HIGH_SHIFT) | ((sub_ms_ns & 0xFF) << _SUB_MS_LOW_SHIFT)
+
+
+def _unpack_sub_ms_ns(uuid_int: int) -> int:
+    return (((uuid_int >> _SUB_MS_HIGH_SHIFT) & 0xFFF) << 8) | (
+        (uuid_int >> _SUB_MS_LOW_SHIFT) & 0xFF
+    )
+
+
+# ....................... #
+
 
 def uuid7(
     timestamp_ms: int | float | None = None,
@@ -93,9 +112,8 @@ def uuid7(
     uuid_int = 0
     uuid_int |= (timestamp_ms & ((1 << 48) - 1)) << 80  # Bits 0–47
     uuid_int |= 0x7 << 76  # Bits 48–51 (version 7)
-    uuid_int |= (sub_ms_ns >> 8) << 64  # Bits 52–63 (top 12 bits)
+    uuid_int |= _pack_sub_ms_ns(sub_ms_ns)  # Bits 52–63 and 66–73
     uuid_int |= 0b10 << 62  # Bits 64–65 (variant)
-    uuid_int |= (sub_ms_ns & 0xFF) << 54  # Bits 66–73 (bottom 8 bits)
     uuid_int |= current_entropy_source().randbits(54)  # Bits 74–127
 
     return UUID(int=uuid_int)
@@ -134,9 +152,7 @@ def uuid7_to_datetime(
     ms_since_epoch = int.from_bytes(ts_bytes, "big") >> 16
 
     if high_precision:
-        # The sub-millisecond nanoseconds, split around the variant (see :func:`uuid7`).
-        uuid_int = int(uuid)
-        sub_ms_ns = (((uuid_int >> 64) & 0xFFF) << 8) | ((uuid_int >> 54) & 0xFF)
+        sub_ms_ns = _unpack_sub_ms_ns(int(uuid))
         # Convert to microseconds (1 microsecond = 1000 nanoseconds)
         microseconds = sub_ms_ns // 1000
         # Create timestamp with microsecond precision

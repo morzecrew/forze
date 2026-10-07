@@ -627,10 +627,26 @@ class TestQueryValueCaster:
         assert QueryValueCaster.as_int(Decimal("40")) == 40
         assert QueryValueCaster.as_int(Decimal("4E+1")) == 40
         assert QueryValueCaster.as_int(Decimal("0E+1000")) == 0
+        assert QueryValueCaster.as_int(Decimal("9223372036854775807")) == (1 << 63) - 1
+
+    def test_parse_datetime_keeps_a_decimal_fraction(self) -> None:
+        assert QueryValueCaster.parse_datetime(Decimal("1700000000.5")) == datetime(
+            2023, 11, 14, 22, 13, 20, 500_000, tzinfo=UTC
+        )
+
+    def test_parse_datetime_refuses_a_decimal_past_any_instant(self) -> None:
+        with pytest.raises(CoreException, match="Invalid datetime timestamp"):
+            QueryValueCaster.parse_datetime(Decimal("1E+100000"))
 
     @pytest.mark.parametrize(
         "v",
-        [Decimal("40.5"), Decimal("NaN"), Decimal("Infinity"), Decimal("1E+100000")],
+        [
+            Decimal("40.5"),
+            Decimal("NaN"),
+            Decimal("Infinity"),
+            Decimal("1E+100000"),
+            Decimal("9223372036854775808"),
+        ],
     )
     def test_as_int_non_integral_decimal_raises(self, v: Decimal) -> None:
         with pytest.raises(CoreException, match="Invalid int"):
@@ -1932,6 +1948,26 @@ class TestHavingOnTimeBuckets:
         (field,) = parsed.having.items  # type: ignore[attr-defined]
         assert field.value == instant
         assert field.value.utcoffset() is not None
+
+    def test_every_branch_and_list_member_is_made_an_instant(self) -> None:
+        parsed = AggregatesExpressionParser.parse(
+            {
+                "$groups": {"h": {"$trunc": {"field": "at", "unit": "hour", "timezone": "+09:00"}}},
+                "$computed": {"n": {"$count": None}},
+                "$having": {
+                    "$or": [
+                        {"$values": {"h": {"$in": [None, "2026-01-01T17:00:00"]}}},
+                        {"$not": {"$values": {"h": {"$lt": "2026-01-01T17:00:00"}}}},
+                    ]
+                },
+            }
+        )
+
+        instant = datetime(2026, 1, 1, 8, tzinfo=UTC)
+        assert parsed.having is not None
+        listed, negated = parsed.having.items  # type: ignore[attr-defined]
+        assert listed.items[0].value == [None, instant]
+        assert negated.item.items[0].value == instant
 
     def test_a_text_pattern_on_a_bucket_is_refused(self) -> None:
         with pytest.raises(CoreException) as refused:
