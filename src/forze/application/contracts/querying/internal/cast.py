@@ -230,7 +230,13 @@ class QueryValueCaster:
     @classmethod
     def parse_datetime(cls, v: Any) -> datetime:
         """Cast a value to datetime as written: a datetime or ISO string keeps its offset, or
-        its lack of one; a timestamp is an instant in UTC."""
+        its lack of one; a timestamp is an instant in UTC.
+
+        :param v: A datetime, an ISO-8601 string, or a Unix timestamp in seconds (fractional
+            allowed) or whole milli-, micro- or nanoseconds.
+        :returns: The datetime, aware only when *v* named an offset or was a timestamp.
+        :raises CoreException: ``precondition`` for anything else.
+        """
         if isinstance(v, datetime):
             dt = v
 
