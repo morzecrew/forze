@@ -106,6 +106,18 @@ def _decode_schedule_cursor(cursor: str | None) -> tuple[bytes | None, int]:
     return token, offset
 
 
+def _listed_workflow(entry: object) -> str | None:
+    """The workflow a listed schedule starts, or ``None`` when the entry does not say."""
+
+    action = getattr(getattr(entry, "schedule", None), "action", None)
+    workflow = getattr(action, "workflow", None)
+
+    return workflow if isinstance(workflow, str) else None
+
+
+# ....................... #
+
+
 def _accepts_schedule(
     description: DurableWorkflowScheduleDescription,
     *,
@@ -496,15 +508,28 @@ class TemporalClient(TemporalClientPort):
 
     # ....................... #
 
-    async def describe_schedule(self, schedule_id: str) -> DurableWorkflowScheduleDescription:
+    async def describe_schedule(
+        self,
+        schedule_id: str,
+        *,
+        workflow_name: str | None = None,
+    ) -> DurableWorkflowScheduleDescription:
         c = self.__require_client()
 
         handle = c.get_schedule_handle(schedule_id)
         desc = await handle.describe()
 
         action = desc.schedule.action
-        workflow_name = action.workflow if isinstance(action, ScheduleActionStartWorkflow) else ""
-        return description_from_temporal(desc, workflow_name=workflow_name)
+        action_workflow = action.workflow if isinstance(action, ScheduleActionStartWorkflow) else ""
+
+        # Checked before the timing is mapped: another workflow's schedule is not found, even
+        # one whose timing forze cannot express.
+        if workflow_name is not None and action_workflow != workflow_name:
+            raise exc.not_found(
+                f"Schedule {schedule_id!r} is not for workflow {workflow_name!r}",
+            )
+
+        return description_from_temporal(desc, workflow_name=action_workflow)
 
     # ....................... #
 
@@ -550,8 +575,21 @@ class TemporalClient(TemporalClientPort):
             offset = 0  # only the page this call resumes into starts mid-way
 
             while index < len(page):
-                mapped = description_from_list_entry(page[index])
+                entry = page[index]
                 index += 1
+
+                # Filtered before mapping: an entry the caller did not ask for is never mapped,
+                # so it can neither fail the listing nor log about a timing it cannot express.
+                if schedule_id_prefix is not None and not entry.id.startswith(schedule_id_prefix):
+                    continue
+
+                if workflow_name is not None and _listed_workflow(entry) not in (
+                    None,
+                    workflow_name,
+                ):
+                    continue
+
+                mapped = description_from_list_entry(entry)
 
                 if mapped is None or not _accepts_schedule(
                     mapped,

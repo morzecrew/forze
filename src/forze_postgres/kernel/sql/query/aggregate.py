@@ -50,8 +50,9 @@ def compose_aggregate_statement(
     """Group and measure the rows *source* (a ``FROM … [WHERE …]`` fragment) yields.
 
     ``$having`` filters the aggregated rows, so it wraps the group query and filters on its
-    output aliases, through a renderer with no column types: the values pass through and
-    Postgres compares them against the computed and group columns.
+    output aliases, rendered against their types
+    (:meth:`~PsycopgQueryRenderer.aggregate_output_types`) so an operator the output cannot
+    take is refused here rather than by the server.
     """
 
     parsed, select_clause, group_clause, aggregate_params = renderer.render_aggregates(
@@ -68,7 +69,11 @@ def compose_aggregate_statement(
         stmt += sql.SQL(" GROUP BY {group}").format(group=group_clause)
 
     if parsed.having is not None:
-        having_sql, having_params = PsycopgQueryRenderer(table_alias="_agg").render(parsed.having)
+        having_renderer = PsycopgQueryRenderer(
+            types=renderer.aggregate_output_types(parsed),
+            table_alias="_agg",
+        )
+        having_sql, having_params = having_renderer.render(parsed.having)
         stmt = sql.SQL("SELECT * FROM ({inner}) AS _agg WHERE {having}").format(
             inner=stmt,
             having=having_sql,

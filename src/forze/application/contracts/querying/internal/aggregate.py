@@ -8,6 +8,7 @@ import attrs
 
 from forze.base.exceptions import exc
 
+from ..capabilities import UNSUPPORTED_QUERY_FEATURE_CODE
 from ..expressions import (
     AggregateFunction,
     AggregatesExpression,
@@ -38,7 +39,55 @@ _DEFAULT_FILTER_PARSER = QueryFilterExpressionParser()
 _ALIAS_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _FUNCTIONS: frozenset[str] = frozenset(get_args(AggregateFunction))
 _UNITS: frozenset[str] = frozenset(("hour", "day", "week", "month"))
+_VALUE_PRESERVING: frozenset[str] = frozenset(("$min", "$max"))
+"""Measures whose output takes its field's type; every other measure is a number."""
+_NON_NUMERIC_OPS: frozenset[str] = frozenset(
+    (
+        "$like",
+        "$ilike",
+        "$regex",
+        "$superset",
+        "$subset",
+        "$disjoint",
+        "$overlaps",
+        "$empty",
+        "$descendant_of",
+        "$ancestor_of",
+    )
+)
+"""Operators no number supports: text patterns, set relations, emptiness, hierarchy."""
 _GROUP_OPS: frozenset[str] = frozenset(("$trunc",))
+
+# ....................... #
+
+
+def _non_numeric_uses(expr: QueryExpr) -> frozenset[str]:
+    """Aliases a ``$having`` AST applies a non-numeric operator or an element quantifier to."""
+
+    used: set[str] = set()
+
+    def _walk(node: QueryExpr) -> None:
+        match node:
+            case QueryAnd(items) | QueryOr(items):
+                for item in items:
+                    _walk(item)
+
+            case QueryNot(item):
+                _walk(item)
+
+            case QueryField(name, op, _) if op in _NON_NUMERIC_OPS:
+                used.add(name.split(".", 1)[0])
+
+            case QueryElem(path, _, _):
+                used.add(path.split(".", 1)[0])
+
+            case _:
+                pass
+
+    _walk(expr)
+
+    return frozenset(used)
+
 
 # ....................... #
 
@@ -215,7 +264,10 @@ class AggregatesExpressionParser:
         if duplicates:
             raise exc.precondition(f"Duplicate aggregate aliases: {duplicates}")
 
-        having = cls._having(expr.get("$having"), frozenset(aliases), parser)
+        numeric = frozenset(
+            field.alias for field in computed_fields if field.function not in _VALUE_PRESERVING
+        )
+        having = cls._having(expr.get("$having"), frozenset(aliases), parser, numeric=numeric)
 
         return ParsedAggregates(
             groups=groups,
@@ -231,8 +283,14 @@ class AggregatesExpressionParser:
         raw: QueryFilterExpression | None,
         aliases: frozenset[str],
         parser: QueryFilterExpressionParser,
+        *,
+        numeric: frozenset[str] = frozenset(),
     ) -> QueryExpr | None:
-        """Parse and validate the ``$having`` filter over the output aliases."""
+        """Parse and validate the ``$having`` filter over the output aliases.
+
+        An operator no number supports is refused on a *numeric* measure here, on every
+        backend, rather than stringified by one and failed by another's server.
+        """
 
         if not raw:
             return None
@@ -245,6 +303,13 @@ class AggregatesExpressionParser:
             raise exc.precondition(
                 f"$having may only reference aggregate output aliases "
                 f"({sorted(aliases)}); unknown: {unknown}.",
+            )
+
+        if misused := sorted(_non_numeric_uses(expr) & numeric):
+            raise exc.precondition(
+                f"$having applies an operator no number supports to the numeric "
+                f"measure(s) {misused}.",
+                code=UNSUPPORTED_QUERY_FEATURE_CODE,
             )
 
         return expr

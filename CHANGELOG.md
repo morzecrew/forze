@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.
+
+- **A blank PGroonga search decrypts encrypted fields and refuses a sort on them, as a ranked search does.** A projection or `select_search` returned the ciphertext, and a sort on an encrypted field ordered the rows by it.
+
+- **A blank Postgres FTS or vector search reads its read relation, as its cursor does** (**behaviour change**). Its page and count read only rows with an index-heap match, so a view with more rows paged fewer than it walked; a blank page without a limit also stops at `max_results` now.
+
+- **A Postgres `$having` on a date or time output compares as a filter on that column does.** A threshold was sent untyped, so under a session time zone other than UTC it kept the wrong groups; it now coerces by the output's type, and any numeric output takes a fractional bound.
+
+- **`$having` refuses an operator its output cannot take before the query runs.** `$like` on a `$count` failed in Postgres and matched a stringified number in the mock; a text, set or hierarchy operator on a numeric measure is now a 400 on every backend.
+
 - **A Postgres aggregate sorts its groups as every other read sorts rows** (**behaviour change**). A null group comes first ascending and last descending, or where `nulls` puts it; `"ASC"` now sorts ascending rather than descending, and an unknown direction is a 400 rather than a descending sort.
 
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.

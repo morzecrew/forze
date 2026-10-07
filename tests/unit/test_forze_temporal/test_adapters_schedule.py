@@ -318,7 +318,7 @@ class TestTemporalScheduleTenantScoping:
         )
 
         assert out.schedule_id == sid
-        client.describe_schedule.assert_awaited_once_with(sid)
+        client.describe_schedule.assert_awaited_once_with(sid, workflow_name="ItSumWorkflow")
 
     @pytest.mark.asyncio
     async def test_list_filters_to_tenant_prefix(self) -> None:

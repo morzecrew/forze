@@ -145,21 +145,17 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
         )
         scored_keys = scored_key_columns(join, index_alias=self.pipeline.index)
 
-        # The cap keeps the best-ranked rows. A blank query ranks every row the same, so a cap
-        # would keep whichever rows the scan met first and sort only those.
-        candidate_cap = (
-            effective_ranked_candidate_limit(
-                # Cursor walks the whole ranked set; capping candidates would truncate a deep
-                # walk / stream export at the cap (see ``_build_ranked_pipeline_sql``).
-                config_limit=None if for_cursor else self.ranked_candidate_limit,
-                options=options,
-                pagination=dict(pagination or {}),
-                snapshot=snapshot,
-                result_snapshot=self.result_snapshot,
-                rs_spec=rs_spec,
-            )
-            if terms
-            else None
+        # The cap keeps the best-ranked rows. (A blank query never reaches here: it browses the
+        # projection, as its rank would tie every row.)
+        candidate_cap = effective_ranked_candidate_limit(
+            # Cursor walks the whole ranked set; capping candidates would truncate a deep
+            # walk / stream export at the cap (see ``_build_ranked_pipeline_sql``).
+            config_limit=None if for_cursor else self.ranked_candidate_limit,
+            options=options,
+            pagination=dict(pagination or {}),
+            snapshot=snapshot,
+            result_snapshot=self.result_snapshot,
+            rs_spec=rs_spec,
         )
 
         cap_kw: dict[str, Any] = {}
@@ -197,7 +193,6 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             heap_fw=heap_fw,
             heap_fp=heap_fp,
             cap_kw=cap_kw,
-            emit_exact_count_sql=bool(terms),
             filtered_extra=filtered_extra,
         )
 
@@ -206,7 +201,6 @@ class PostgresFTSSearchAdapter[M: BaseModel](PostgresRankedPipelineSearchAdapter
             pipeline=self.pipeline,
             rank_column=self.search_rank_column,
             projection_alias=self.projection_alias,
-            browse_count_params=[*fp] if not terms else None,
             highlight=build_fts_highlight(
                 spec=self.spec,
                 options=options,

@@ -47,6 +47,7 @@ from forze.application.contracts.querying import (
 from forze.base.exceptions import exc
 
 from ...catalog.introspect import PostgresColumnTypes, PostgresType
+from ...catalog.introspect.utils import normalize_pg_type, strip_type_modifier
 from ..type_cast import cast_sql_for_column_type
 from .nested import (
     build_nested_json_scalar_expr,
@@ -75,6 +76,33 @@ _NESTED_JSON_UNSUPPORTED: frozenset[str] = frozenset(
 )
 
 _TEXT_LIKE_BASES: frozenset[str] = frozenset({"text", "varchar", "char", "citext"})
+
+_TEXT_TYPE = PostgresType(base="text", is_array=False, not_null=False)
+_NUMERIC_TYPE = PostgresType(base="numeric", is_array=False, not_null=False)
+_TIMESTAMP_TYPE = PostgresType(base="timestamp", is_array=False, not_null=False)
+"""Types an aggregate output renders as in ``$having`` (:meth:`aggregate_output_types`)."""
+
+_NUMERIC_BASES: frozenset[str] = frozenset({"int2", "int4", "int8", "float4", "float8", "numeric"})
+
+
+def _having_kind(t: PostgresType | None) -> PostgresType:
+    """An output's type for ``$having``: every number is ``numeric``, so a fractional bound or
+    another numeric output always compares; anything else keeps its source type, so a value
+    coerces exactly as a filter on that column coerces it (a timestamp keeps its zone)."""
+
+    if t is None:
+        return _TEXT_TYPE
+
+    # A declared precision is the column's, not the output's: ``numeric(10,2)`` is a number,
+    # ``timestamp(3) with time zone`` a ``timestamptz``.
+    base = normalize_pg_type(strip_type_modifier(t.base))
+
+    if not t.is_array and base in _NUMERIC_BASES:
+        return _NUMERIC_TYPE
+
+    return attrs.evolve(t, base=base)
+
+
 _LTREE_BASE: str = "ltree"
 
 _COMPARE_EQ_SQL: dict[str, str] = {"$eq": "=", "$neq": "<>"}
@@ -306,6 +334,36 @@ class PsycopgQueryRenderer:
             group_clause,
             self.binder.values(),
         )
+
+    # ....................... #
+
+    def aggregate_output_types(self, parsed: ParsedAggregates) -> PostgresColumnTypes:
+        """The kind of each aggregate output alias, so ``$having`` renders against them.
+
+        A field group or a ``$min`` / ``$max`` takes its source column's type, a time bucket is
+        a ``timestamp`` (``date_trunc`` of a zoned instant is a wall time), and every other
+        measure is ``numeric`` (:func:`_having_kind`). An operator the output cannot take is
+        refused before the statement runs, and a threshold coerces as a filter on the same
+        type would.
+        """
+
+        out: PostgresColumnTypes = {}
+
+        for group in parsed.groups:
+            if isinstance(group.expr, GroupField):
+                out[group.alias] = _having_kind(self._resolve_column_expr(group.expr.field)[1])
+
+            else:
+                out[group.alias] = _TIMESTAMP_TYPE
+
+        for computed in parsed.computed_fields:
+            if computed.function in ("$min", "$max") and computed.field is not None:
+                out[computed.alias] = _having_kind(self._resolve_column_expr(computed.field)[1])
+
+            else:
+                out[computed.alias] = _NUMERIC_TYPE
+
+        return out
 
     # ....................... #
 

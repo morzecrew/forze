@@ -44,7 +44,7 @@ from forze_postgres.kernel.sql import (
 )
 from forze_postgres.kernel.sql.query.nested import sort_key_expr, sort_key_not_null
 
-from ...kernel.gateways import PostgresGateway
+from ...kernel.gateways import PostgresGateway, PostgresQualifiedName
 from ._engine import RankedPipelineSql
 from ._highlights import extract_and_strip_highlights
 from ._materialize_hits import decode_search_hits
@@ -112,17 +112,18 @@ async def execute_projection_keyset_cursor[M: BaseModel](
     cursor: CursorPaginationExpression | None,
     sorts: QuerySortExpression | None,  # type: ignore[valid-type]
     spec: SearchSpec[Any],
+    projection: PostgresQualifiedName,
     projection_alias: str,
     parsed_filters: Any,
     return_type: type[BaseModel] | None,
     return_fields: Sequence[str] | None,
     trust_source: bool = False,
 ) -> SearchCursorPage[Any]:
-    """Keyset cursor on the projection relation only (empty search query)."""
+    """Keyset cursor on the *projection* relation only (empty search query)."""
 
     lim, use_after, use_before = parse_search_cursor(cursor)
     c = dict(cursor or {})
-    proj_qn = await gw._qname()  # pyright: ignore[reportPrivateUsage]
+    proj_qn = projection
 
     # Ended at the id as the offset page is, so both take the same keys.
     effective = resolve_search_sorts(
