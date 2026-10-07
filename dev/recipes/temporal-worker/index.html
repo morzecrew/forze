@@ -5258,6 +5258,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cancelling-a-running-activity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cancelling a running activity
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-a-worker-dies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6395,6 +6406,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cancelling-a-running-activity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cancelling a running activity
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#when-a-worker-dies" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6601,6 +6623,25 @@ evolve it:</p>
 </code></pre></div>
 <p>Then keep the pair under your orchestrator's termination grace period, so the pod is not
 killed mid-drain.</p>
+<h2 id="cancelling-a-running-activity">Cancelling a running activity<a class="headerlink" href="#cancelling-a-running-activity" title="Permanent link">&para;</a></h2>
+<p>A cancel reaches a running activity only in the reply to one of its heartbeats, and the
+SDK sends those at most every 0.8 × the activity's <code>heartbeat_timeout</code>, capped at a
+minute. With a 30-second heartbeat timeout, a cancel can take 24 seconds to arrive. Cap
+the throttle on the worker to bring that down to about the cap:</p>
+<div class="highlight"><pre><span></span><code><span class="n">temporal_worker_lifecycle_step</span><span class="p">(</span>
+    <span class="n">client</span><span class="o">=</span><span class="n">temporal</span><span class="p">,</span>
+    <span class="n">task_queue</span><span class="o">=</span><span class="s2">"orders-tq"</span><span class="p">,</span>
+    <span class="n">workflows</span><span class="o">=</span><span class="p">[</span><span class="n">FulfilOrder</span><span class="p">],</span>
+    <span class="n">activities</span><span class="o">=</span><span class="p">[</span><span class="n">reserve_stock</span><span class="p">,</span> <span class="n">charge_card</span><span class="p">],</span>
+    <span class="n">max_heartbeat_throttle_interval</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The cancel still waits for the activity's next heartbeat, so it arrives within the cap only
+for an activity that heartbeats at least that often; the opt-in
+<a href="../../integrations/temporal/#activity-heartbeats">auto-heartbeat</a> beats every third of the
+<code>heartbeat_timeout</code>. Each running activity then calls the server up to once per cap.
+<code>default_heartbeat_throttle_interval</code> sets the throttle for an activity with no
+<code>heartbeat_timeout</code> (30 seconds by default).</p>
 <h2 id="when-a-worker-dies">When a worker dies<a class="headerlink" href="#when-a-worker-dies" title="Permanent link">&para;</a></h2>
 <p>A crashed worker is rebuilt after a jittered backoff, on the same connection. Set
 <code>max_consecutive_crashes</code> to give up instead of restarting forever:</p>

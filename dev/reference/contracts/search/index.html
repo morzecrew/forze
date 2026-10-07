@@ -5512,6 +5512,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#aggregating-matches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Aggregating matches
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#facets-and-highlights" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6433,6 +6444,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#aggregating-matches" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Aggregating matches
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#facets-and-highlights" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6654,7 +6676,7 @@ result-set snapshots.</p>
 <td><code>default_search_count</code></td>
 <td><code>"exact" \| "approximate" \| "none" \| None</code></td>
 <td><code>None</code></td>
-<td>how a page counts its total when the request sets no <code>search_count</code>; <code>None</code> keeps <code>exact</code>. Postgres honours it; other backends report totals their own way. <code>HubSearchSpec</code> and <code>FederatedSearchSpec</code> have none</td>
+<td>how a page counts its total when the request sets no <code>search_count</code>; <code>None</code> keeps <code>exact</code>. Postgres honours it; other backends report totals their own way. <code>HubSearchSpec</code> takes its own for the hub's page (members' don't apply to it); <code>FederatedSearchSpec</code> has none</td>
 </tr>
 <tr>
 <td><code>materialized</code></td>
@@ -6769,6 +6791,10 @@ argument; everything else mirrors the document side:</p>
 <td><code>search_stream</code> / <code>project_search_stream</code> / <code>select_search_stream</code> <code>(query, …, chunk_size=500)</code></td>
 <td><code>AsyncGenerator</code> of chunks</td>
 </tr>
+<tr>
+<td><code>aggregate_search</code> / <code>aggregate_search_page</code> <code>(aggregates, query, filters=None, pagination=None, sorts=None, *, options=None)</code></td>
+<td><code>CountlessPage</code> / <code>Page</code> of <code>JsonDict</code> groups</td>
+</tr>
 </tbody>
 </table>
 <p><code>query</code> is a string (or a sequence of strings); <code>filters</code> and <code>sorts</code> use the
@@ -6810,6 +6836,26 @@ guaranteed) <strong>refuse</strong> rather than truncate. Pick the right export 
 <li><strong>Stable / point-in-time / Meilisearch / very deep</strong> → a <strong>result snapshot</strong> (build the
   ordered-id pool once, page it by id); works where a live cursor cannot.</li>
 </ul>
+<h3 id="aggregating-matches">Aggregating matches<a class="headerlink" href="#aggregating-matches" title="Permanent link">&para;</a></h3>
+<p><code>aggregate_search</code> groups and measures the rows a search matches, with the same
+<code>AggregatesExpression</code> (<code>$groups</code>, <code>$computed</code>, <code>$having</code>) the
+<a href="../document/">document port</a>'s <code>aggregate_many</code> takes over the rows a filter matches:</p>
+<div class="highlight"><pre><span></span><code><span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">search</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span><span class="o">.</span><span class="n">aggregate_search_page</span><span class="p">(</span>
+    <span class="p">{</span><span class="s2">"$groups"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"status"</span><span class="p">:</span> <span class="s2">"status"</span><span class="p">},</span> <span class="s2">"$computed"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"n"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$count"</span><span class="p">:</span> <span class="kc">None</span><span class="p">},</span> <span class="s2">"total"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$sum"</span><span class="p">:</span> <span class="s2">"amount"</span><span class="p">}}},</span>
+    <span class="s2">"overdue invoice"</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>It reads the rows an exact page total counts: every match, never a candidate cap, or for a
+blank query the rows the page counts by its filters alone. <code>sorts</code> name output aliases, and the group keys order
+the groups after them, so pages of groups neither repeat nor skip one; without a <code>limit</code>
+every group comes back, as <code>aggregate_many</code> returns them. <code>aggregate_search_page</code> adds the number of groups, after <code>$having</code>.
+Groups, measures and per-metric filters may name only the spec's <code>aggregatable_fields</code> —
+stored, not field-encrypted — and the <code>facets</code> and <code>highlight</code> options are refused, as they
+describe hits, as is <code>max_candidates</code>, which would cut the set.</p>
+<p>Aggregation is capability-gated (<code>SearchCapabilities.supports_aggregates</code>): Postgres FTS /
+PGroonga and the in-memory adapter aggregate; vector search (every row is some embedding's
+neighbour), hub search (legs are capped before the merge), federated search, Mongo and
+Meilisearch <strong>refuse</strong> with <code>query_feature_unsupported</code> rather than measure a partial set.</p>
 <h3 id="facets-and-highlights">Facets and highlights<a class="headerlink" href="#facets-and-highlights" title="Permanent link">&para;</a></h3>
 <p>A query requests term facet distributions with <code>options={"facets": [...]}</code> and per-hit
 match snippets with <code>options={"highlight": True}</code> (or a <code>HighlightOptions</code> mapping to narrow
