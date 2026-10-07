@@ -766,10 +766,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         it is refused when an update needs the stored row or the domain model: revision
         history, materialized fields, per-owner write serialization, randomized field
         encryption (every write looks like a change), a domain with update validators,
-        invariants, domain events or model validators of its own, and an update field the
-        domain validates (a validator or constraint of its own may refuse or rewrite the value)
-        or does not hold plainly (absent, frozen, or a model or mapping the update merges into
-        the stored one).
+        invariants, domain events, or validators or constraints of its own on any field (an
+        update revalidates the whole model, so one may refuse or rewrite a value), and an
+        update field the domain does not hold plainly (absent, frozen, a model or mapping the
+        update merges into the stored one, or a default derived from the other fields).
 
         :raises CoreException: ``configuration`` (``set_based_upsert_unsupported``) naming
             what rules it out.
@@ -808,22 +808,25 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
 
             if update_cmd is not None:
                 updated = frozenset(update_cmd.model_fields)
-                checked = _validated_fields(domain)
-                validated = sorted(updated if "*" in checked else updated & checked)
+                # Any one: an update revalidates the whole model, and a validator may rewrite
+                # a field the update leaves alone from one it changes.
+                validated = sorted(_validated_fields(domain))
                 merged = sorted(
                     name
                     for name in updated
                     if (field := domain.model_fields.get(name)) is None
                     or field.frozen
                     or _merged(field.annotation)
+                    # A nulled field takes its default, here one read off the stored row.
+                    or field.default_factory_takes_validated_data
                 )
 
                 if validated:
-                    reasons.append(f"update fields the domain validates ({', '.join(validated)})")
+                    reasons.append(f"fields the domain validates ({', '.join(validated)})")
 
                 if merged:
                     reasons.append(
-                        f"update fields the domain merges or refuses ({', '.join(merged)})"
+                        f"update fields the domain derives, merges or refuses ({', '.join(merged)})"
                     )
 
         if not reasons:

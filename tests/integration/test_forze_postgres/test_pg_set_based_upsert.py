@@ -128,7 +128,7 @@ async def test_a_set_based_upsert_writes_what_the_domain_path_writes(
         _item(ids[0], "x", 0, {"qty": 10}),  # changed
         _item(ids[1], "x", 0, {"name": "n1", "qty": 1}),  # the stored values: unchanged
         # Cleared, and reset to their defaults: a nullable one whose default is not null too.
-        _item(ids[2], "x", 0, {"note": None, "label": None, "hint": None}),
+        _item(ids[2], "x", 0, {"note": None, "label": None, "hint": None, "tags": None}),
         _item(ids[3], "x", 0, {"name": "renamed", "tags": ["a", "b"]}),
         _item(ids[4], "new4", 4),  # inserted
         _item(ids[5], "new5", 5, {"qty": 99}),  # inserted: the update does not apply

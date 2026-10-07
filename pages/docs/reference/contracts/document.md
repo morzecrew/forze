@@ -343,8 +343,9 @@ so concurrent loads of overlapping batches queue rather than interleave.
 Like `update_matching`, it skips the domain model's update, so a spec whose updates need it
 refuses `set_based` with a `configuration` error (`set_based_upsert_unsupported`): one with
 revision history, materialized fields, a `SerializedBy` guarantee or randomized field
-encryption; a domain with update validators, invariants, domain events or pydantic validators
-of its own; or an update field the domain lacks, freezes or holds as a nested model. A table
+encryption; a domain with update validators, invariants, domain events, or pydantic validators
+or constraints of its own on any field; or an update field the domain lacks, freezes, merges
+(a model or mapping) or derives from the other fields. A table
 keyed by more than the id (and tenant), or a patched column Postgres cannot compare, takes the
 usual path instead. Mongo, Firestore and the mock apply the same refusals and then write
 through their usual path.

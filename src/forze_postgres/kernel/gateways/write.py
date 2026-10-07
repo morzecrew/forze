@@ -211,7 +211,8 @@ def _null_is_null(field: FieldInfo) -> bool:
     """Whether an explicit ``None`` stores ``NULL``. A domain update drops a nulled key and
     revalidates, so the field takes its default, or is refused when it has none."""
 
-    return not field.is_required() and field.get_default(call_default_factory=True) is None
+    # A factory, which may read the other fields, is the domain's to call.
+    return not field.is_required() and field.default_factory is None and field.default is None
 
 
 # ....................... #

@@ -5,7 +5,14 @@ from uuid import UUID
 
 import pytest
 import structlog
-from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationInfo,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from forze.application.contracts.conformity import (
     DerivedReadField,
@@ -908,6 +915,25 @@ class _CheckedDomain(Document):
         return self
 
 
+class _SlugDomain(Document):
+    name: str
+    slug: str = ""
+
+    @field_validator("slug")
+    @classmethod
+    def _from_name(cls, value: str, info: ValidationInfo) -> str:
+        return value or str(info.data.get("name", "")).lower()
+
+
+class _CodedDomain(Document):
+    name: str
+    code: str | None = Field(default_factory=lambda data: str(data["name"]).upper())
+
+
+class _CodedUpdate(BaseDTO):
+    code: str | None = None
+
+
 class _TaggedDomain(Document):
     name: str
     tags: dict[str, str] = Field(default_factory=dict)
@@ -961,15 +987,20 @@ def test_a_plain_spec_allows_a_set_based_upsert() -> None:
         (DocumentSpec(name="doc", read=_Read, write=_named_write(_AggregateDomain)), "domain events"),
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_NormalizingDomain)),
-            "update fields the domain validates (name)",
+            "fields the domain validates (name)",
         ),
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_ConstrainedDomain)),
-            "update fields the domain validates (name)",
+            "fields the domain validates (name)",
         ),
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_CheckedDomain)),
             "model validators",
+        ),
+        # The update touches only ``name``; the validator on ``slug`` still reruns.
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_SlugDomain)),
+            "fields the domain validates (slug)",
         ),
         (
             DocumentSpec(
@@ -979,7 +1010,17 @@ def test_a_plain_spec_allows_a_set_based_upsert() -> None:
                     domain=_TaggedDomain, create_cmd=_Create, update_cmd=_TaggedUpdate
                 ),
             ),
-            "update fields the domain merges or refuses (tags)",
+            "update fields the domain derives, merges or refuses (tags)",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_CodedDomain, create_cmd=_Create, update_cmd=_CodedUpdate
+                ),
+            ),
+            "update fields the domain derives, merges or refuses (code)",
         ),
         (
             DocumentSpec(
@@ -989,7 +1030,7 @@ def test_a_plain_spec_allows_a_set_based_upsert() -> None:
                     domain=_AddressedDomain, create_cmd=_Create, update_cmd=_AddressedUpdate
                 ),
             ),
-            "update fields the domain merges or refuses (address)",
+            "update fields the domain derives, merges or refuses (address)",
         ),
         (
             DocumentSpec(
@@ -999,7 +1040,7 @@ def test_a_plain_spec_allows_a_set_based_upsert() -> None:
                     domain=_Domain, create_cmd=_Create, update_cmd=_StrayUpdate
                 ),
             ),
-            "update fields the domain merges or refuses (nickname)",
+            "update fields the domain derives, merges or refuses (nickname)",
         ),
     ],
 )
