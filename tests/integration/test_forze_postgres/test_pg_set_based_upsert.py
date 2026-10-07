@@ -31,6 +31,8 @@ class _Fields(BaseDTO):
     meta: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     label: str = "dflt"
+    hint: str | None = "d"
+    ref: int | None
 
 
 class _Create(CreateDocumentCmd, _Fields):
@@ -49,9 +51,10 @@ class _Update(BaseDTO):
     name: str | None = None
     qty: int | None = None
     note: str | None = None
-    meta: dict[str, Any] | None = None
     tags: list[str] | None = None
     label: str | None = None
+    hint: str | None = None
+    ref: int | None = None
 
 
 _SPEC = DocumentSpec(
@@ -62,7 +65,11 @@ _SPEC = DocumentSpec(
 
 
 async def _table(
-    pg_client: PostgresClient, tags: str = "jsonb", meta: str = "jsonb", key: str = "id"
+    pg_client: PostgresClient,
+    tags: str = "jsonb",
+    meta: str = "jsonb",
+    key: str = "id",
+    name: str = "text",
 ) -> str:
     t = f"pg_setbased_{uuid4().hex[:10]}"
     await pg_client.execute(
@@ -72,12 +79,14 @@ async def _table(
             rev integer NOT NULL,
             created_at timestamptz NOT NULL,
             last_update_at timestamptz NOT NULL,
-            name text NOT NULL,
+            name {name} NOT NULL,
             qty integer NOT NULL,
             note text,
             meta {meta} NOT NULL,
             tags {tags} NOT NULL,
             label text NOT NULL,
+            hint text,
+            ref integer,
             PRIMARY KEY ({key})
         );
         """
@@ -90,19 +99,21 @@ def _item(
 ) -> UpsertItem[_Create, _Update]:
     return UpsertItem(
         id=pk,
-        create=_Create(name=name, qty=qty, note="first", meta={"k": 1}, label="custom"),
+        create=_Create(
+            name=name, qty=qty, note="first", meta={"k": 1}, label="custom", hint="h", ref=1
+        ),
         update=_Update(**(update or {})),
     )
 
 
 # ``jsonb`` tags take the ``unnest`` row source; ``text[]`` ones, which ``unnest`` would
 # flatten, take ``VALUES``. A ``json`` column, which has no equality, compares as ``jsonb``.
-@pytest.mark.parametrize(("tags", "meta"), [("jsonb", "jsonb"), ("text[]", "jsonb"), ("jsonb", "json")])
+@pytest.mark.parametrize("tags", ["jsonb", "text[]", "json"])
 async def test_a_set_based_upsert_writes_what_the_domain_path_writes(
-    pg_client: PostgresClient, tags: str, meta: str
+    pg_client: PostgresClient, tags: str
 ) -> None:
-    domain_t = await _table(pg_client, tags, meta)
-    set_t = await _table(pg_client, tags, meta)
+    domain_t = await _table(pg_client, tags)
+    set_t = await _table(pg_client, tags)
     domain_cmd = document_context(pg_client, domain_t).document.command(_SPEC)
     set_cmd = document_context(pg_client, set_t).document.command(_SPEC)
     ids = [uuid4() for _ in range(6)]
@@ -116,8 +127,9 @@ async def test_a_set_based_upsert_writes_what_the_domain_path_writes(
     batch = [
         _item(ids[0], "x", 0, {"qty": 10}),  # changed
         _item(ids[1], "x", 0, {"name": "n1", "qty": 1}),  # the stored values: unchanged
-        _item(ids[2], "x", 0, {"note": None, "label": None}),  # cleared; reset to its default
-        _item(ids[3], "x", 0, {"meta": {"k": 2}, "name": "renamed", "tags": ["a", "b"]}),
+        # Cleared, and reset to their defaults: a nullable one whose default is not null too.
+        _item(ids[2], "x", 0, {"note": None, "label": None, "hint": None}),
+        _item(ids[3], "x", 0, {"name": "renamed", "tags": ["a", "b"]}),
         _item(ids[4], "new4", 4),  # inserted
         _item(ids[5], "new5", 5, {"qty": 99}),  # inserted: the update does not apply
     ]
@@ -171,7 +183,12 @@ async def test_a_row_stored_after_the_look_up_is_patched_not_lost(
     assert row == {"name": "patched", "rev": 2}
 
 
-async def test_a_null_the_domain_refuses_is_refused_set_based_too(pg_client: PostgresClient) -> None:
+@pytest.mark.parametrize("field", ["name", "ref"])
+async def test_a_null_the_domain_refuses_is_refused_set_based_too(
+    pg_client: PostgresClient, field: str
+) -> None:
+    """``name`` is not nullable; ``ref`` is, but required, so a nulled key leaves it missing."""
+
     domain_t, set_t = await _table(pg_client), await _table(pg_client)
     pk = uuid4()
     outcomes = []
@@ -182,7 +199,7 @@ async def test_a_null_the_domain_refuses_is_refused_set_based_too(pg_client: Pos
 
         with pytest.raises(Exception) as refused:
             await cmd.upsert_many(
-                [_item(pk, "x", 0, {"name": None})], return_new=False, set_based=set_based
+                [_item(pk, "x", 0, {field: None})], return_new=False, set_based=set_based
             )
 
         outcomes.append(type(refused.value))
@@ -299,3 +316,71 @@ async def test_a_patched_row_is_locked_against_a_concurrent_delete(
     assert await pg_client.fetch_one(f"SELECT name FROM {t} WHERE id = %s", [pk]) == {
         "name": "patched"
     }
+
+
+async def test_a_column_whose_equality_ignores_a_change_takes_the_domain_path(
+    pg_client: PostgresClient,
+) -> None:
+    """``citext`` calls ``Alpha`` and ``alpha`` equal, so a set-based compare would skip a
+    change the domain writes."""
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS citext")
+    domain_t = await _table(pg_client, name="citext")
+    set_t = await _table(pg_client, name="citext")
+    pk = uuid4()
+
+    for t, set_based in ((domain_t, False), (set_t, True)):
+        cmd = document_context(pg_client, t).document.command(_SPEC)
+        await cmd.upsert_many([_item(pk, "Alpha", 1)], return_new=False)
+        await cmd.upsert_many(
+            [_item(pk, "x", 0, {"name": "alpha"})], return_new=False, set_based=set_based
+        )
+
+    sql = "SELECT name::text AS name, rev FROM {}"
+    assert await pg_client.fetch_all(sql.format(set_t), []) == [{"name": "alpha", "rev": 2}]
+    assert await pg_client.fetch_all(sql.format(domain_t), []) == [{"name": "alpha", "rev": 2}]
+
+
+async def test_database_bookkeeping_leaves_rev_and_timestamp_to_the_trigger(
+    pg_client: PostgresClient,
+) -> None:
+    from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
+    from forze.application.execution import Deps
+    from forze_postgres.execution.deps import ConfigurablePostgresDocument
+    from forze_postgres.execution.deps.configs import PostgresDocumentConfig
+    from forze_postgres.execution.deps.keys import (
+        PostgresClientDepKey,
+        PostgresIntrospectorDepKey,
+    )
+    from forze_postgres.kernel.catalog.introspect import PostgresIntrospector
+    from tests.support.execution_context import context_from_deps
+
+    t = await _table(pg_client)
+    doc = ConfigurablePostgresDocument(
+        config=PostgresDocumentConfig(
+            read=("public", t), write=("public", t), bookkeeping_strategy="database"
+        )
+    )
+    cmd = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                DocumentQueryDepKey: doc,
+                DocumentCommandDepKey: doc,
+            }
+        )
+    ).document.command(_SPEC)
+    pk = uuid4()
+
+    with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 1, tzinfo=UTC))):
+        await cmd.upsert_many([_item(pk, "stored", 1)], return_new=False)
+
+    with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 2, tzinfo=UTC))):
+        await cmd.upsert_many(
+            [_item(pk, "x", 0, {"name": "patched"})], return_new=False, set_based=True
+        )
+
+    assert await pg_client.fetch_one(
+        f"SELECT name, rev, last_update_at FROM {t} WHERE id = %s", [pk]
+    ) == {"name": "patched", "rev": 1, "last_update_at": datetime(2026, 1, 1, tzinfo=UTC)}

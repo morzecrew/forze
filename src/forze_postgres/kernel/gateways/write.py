@@ -15,6 +15,7 @@ from uuid import UUID
 
 import attrs
 from psycopg import sql
+from pydantic.fields import FieldInfo
 
 from forze.application.contracts.document import domains_from_create_payloads
 from forze.application.contracts.guarantees import SerializedBy
@@ -110,9 +111,23 @@ _UNNEST_BASES: frozenset[str] = frozenset(
 """Built-in scalar types an ``unnest`` array cast can name exactly as introspected."""
 
 _NO_EQUALITY: frozenset[str] = frozenset(
-    {"xml", "point", "line", "lseg", "box", "path", "polygon", "circle"}
+    {
+        "xml",
+        "point",
+        "line",
+        "lseg",
+        "box",
+        "path",
+        "polygon",
+        "circle",
+        "citext",
+        "char",
+        "bpchar",
+    }
 )
-"""Types ``IS DISTINCT FROM`` cannot compare (``json`` compares once cast to ``jsonb``)."""
+"""Types ``IS DISTINCT FROM`` cannot compare as the domain does: no equality at all, or one
+that calls two different values equal (``citext`` ignores case, ``char`` trailing blanks).
+``json`` compares once cast to ``jsonb``."""
 
 
 def _scalar_base(pg_t: PostgresType) -> str:
@@ -192,8 +207,11 @@ def _row_source(
     )
 
 
-def _nullable(annotation: Any) -> bool:
-    return annotation is Any or annotation is type(None) or type(None) in get_args(annotation)
+def _null_is_null(field: FieldInfo) -> bool:
+    """Whether an explicit ``None`` stores ``NULL``. A domain update drops a nulled key and
+    revalidates, so the field takes its default, or is refused when it has none."""
+
+    return not field.is_required() and field.get_default(call_default_factory=True) is None
 
 
 # ....................... #
@@ -993,27 +1011,25 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         """
 
         self._require_update_cmd()
-
-        if not creates:
-            return
-
         column_types = await self.column_types()
 
         if not await self.__fits_set_based(column_types):
             await self.upsert_many(ids, creates, updates, batch_size=batch_size)
             return
 
+        # One order for every chunk: two calls over overlapping ids lock them in the same
+        # order across chunks, so neither waits on a row the other has while holding one it
+        # wants.
+        items = sorted(zip(ids, creates, updates, strict=True), key=lambda item: item[0])
+
         async with self._write_tx():
             now = utcnow()
 
-            for offset in range(0, len(creates), batch_size):
-                id_batch = list(ids[offset : offset + batch_size])
-                creates_by_id = dict(
-                    zip(id_batch, creates[offset : offset + batch_size], strict=True)
-                )
-                updates_by_id = dict(
-                    zip(id_batch, updates[offset : offset + batch_size], strict=True)
-                )
+            for offset in range(0, len(items), batch_size):
+                chunk = items[offset : offset + batch_size]
+                id_batch = [pk for pk, _, _ in chunk]
+                creates_by_id = {pk: create for pk, create, _ in chunk}
+                updates_by_id = {pk: update for pk, _, update in chunk}
 
                 # A create payload becomes a domain only for an id not stored yet: a reload
                 # builds none.
@@ -1137,7 +1153,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             nulled = [
                 k
                 for k, v in patch.items()
-                if v is None and k in fields and not _nullable(fields[k].annotation)
+                if v is None and k in fields and not _null_is_null(fields[k])
             ]
 
             if nulled:
@@ -1160,14 +1176,17 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             columns = (ID_FIELD, *key)
             source, params = _row_source(columns, batch, column_types, typed_values=True)
             sets = [sql.SQL("{c} = v.{c}").format(c=sql.Identifier(k)) for k in key]
-            sets.append(
-                sql.SQL("{c} = {v}").format(
-                    c=sql.Identifier(LAST_UPDATE_AT_FIELD), v=sql.Placeholder()
-                )
-            )
+            stamp: list[Any] = []
 
+            # Under ``"database"`` bookkeeping a trigger moves both.
             if self.strategy == "application":
+                sets.append(
+                    sql.SQL("{c} = {v}").format(
+                        c=sql.Identifier(LAST_UPDATE_AT_FIELD), v=sql.Placeholder()
+                    )
+                )
                 sets.append(sql.SQL("{r} = t.{r} + 1").format(r=self._ident_rev()))
+                stamp.append(now)
 
             # Only a row the update changes is written, as the domain path skips an empty diff.
             where, where_params = self._add_tenant_where(
@@ -1189,7 +1208,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     cols=sql.SQL(", ").join(sql.Identifier(c) for c in columns),
                     where=where,
                 ),
-                [now, *params, *where_params],
+                [*stamp, *params, *where_params],
             )
 
     # ....................... #

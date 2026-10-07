@@ -1,10 +1,10 @@
 """Specifications for document models and storage layout."""
 
 from collections.abc import Mapping
-from typing import Any, Generic, TypeVar, get_args
+from typing import Any, Generic, TypeVar, get_args, get_origin
 
 import attrs
-from pydantic import AfterValidator, BaseModel, BeforeValidator, PlainValidator, WrapValidator
+from pydantic import BaseModel
 
 from forze.application._logger import logger
 from forze.base.exceptions import exc
@@ -78,33 +78,50 @@ def _normalize_derived(
 
 # ....................... #
 
-_VALIDATOR_MARKS = (AfterValidator, BeforeValidator, PlainValidator, WrapValidator)
+
+def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
+    """The pydantic decorators of *kind* *domain* declares or overrides beyond :class:`Document`'s.
+
+    Compared by function, not name: a domain re-declaring a base validator under its name
+    replaces what it does.
+    """
+
+    def _func(decorator: Any) -> Any:
+        return getattr(decorator.func, "__func__", decorator.func)
+
+    base = getattr(Document.__pydantic_decorators__, kind)
+
+    return [
+        decorator
+        for name, decorator in getattr(domain.__pydantic_decorators__, kind).items()
+        if name not in base or _func(base[name]) is not _func(decorator)
+    ]
 
 
-def _declares_validators(domain: type[Document]) -> bool:
-    """Whether *domain* adds pydantic validators to :class:`Document`'s, on a field or the model."""
+def _validated_fields(domain: type[Document]) -> frozenset[str]:
+    """The fields *domain* checks or rewrites beyond their type: a field validator of its own
+    (``"*"`` for every field) or a constraint (``Field(gt=0)``, ``AfterValidator``, …)."""
 
-    own = domain.__pydantic_decorators__
-    base = Document.__pydantic_decorators__
+    names: set[str] = set()
 
-    return (
-        bool(set(own.field_validators) - set(base.field_validators))
-        or bool(set(own.model_validators) - set(base.model_validators))
-        or any(
-            isinstance(mark, _VALIDATOR_MARKS)
-            for field in domain.model_fields.values()
-            for mark in field.metadata
-        )
-    )
+    for decorator in _own_decorators(domain, "field_validators"):
+        names.update(decorator.info.fields)
+
+    names.update(name for name, field in domain.model_fields.items() if field.metadata)
+
+    return frozenset(names)
 
 
-def _holds_model(annotation: Any) -> bool:
-    """Whether *annotation* is or contains a pydantic model."""
+def _merged(annotation: Any) -> bool:
+    """Whether *annotation* is or contains a pydantic model or a mapping, which a domain
+    update merges into the stored value rather than replaces."""
 
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+    origin = get_origin(annotation) or annotation
+
+    if isinstance(origin, type) and issubclass(origin, (BaseModel, Mapping)):
         return True
 
-    return any(_holds_model(arg) for arg in get_args(annotation))
+    return any(_merged(arg) for arg in get_args(annotation))
 
 
 # ....................... #
@@ -749,9 +766,10 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         it is refused when an update needs the stored row or the domain model: revision
         history, materialized fields, per-owner write serialization, randomized field
         encryption (every write looks like a change), a domain with update validators,
-        invariants, domain events or validators of its own (which may rewrite a value), and an
-        update field the domain does not hold plainly (absent, frozen, or a nested model the
-        update merges into the stored one).
+        invariants, domain events or model validators of its own, and an update field the
+        domain validates (a validator or constraint of its own may refuse or rewrite the value)
+        or does not hold plainly (absent, frozen, or a model or mapping the update merges into
+        the stored one).
 
         :raises CoreException: ``configuration`` (``set_based_upsert_unsupported``) naming
             what rules it out.
@@ -783,19 +801,25 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
             if issubclass(domain, AggregateRoot):
                 reasons.append("domain events")
 
-            if _declares_validators(domain):
-                reasons.append("field or model validators")
+            if _own_decorators(domain, "model_validators"):
+                reasons.append("model validators")
 
             update_cmd = self.write.get("update_cmd")
 
             if update_cmd is not None:
+                updated = frozenset(update_cmd.model_fields)
+                checked = _validated_fields(domain)
+                validated = sorted(updated if "*" in checked else updated & checked)
                 merged = sorted(
                     name
-                    for name in update_cmd.model_fields
+                    for name in updated
                     if (field := domain.model_fields.get(name)) is None
                     or field.frozen
-                    or _holds_model(field.annotation)
+                    or _merged(field.annotation)
                 )
+
+                if validated:
+                    reasons.append(f"update fields the domain validates ({', '.join(validated)})")
 
                 if merged:
                     reasons.append(

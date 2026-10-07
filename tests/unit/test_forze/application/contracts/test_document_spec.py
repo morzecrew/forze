@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 import structlog
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 from forze.application.contracts.conformity import (
     DerivedReadField,
@@ -896,6 +896,27 @@ class _StrayUpdate(BaseDTO):
     nickname: str | None = None
 
 
+class _ConstrainedDomain(Document):
+    name: str = Field(min_length=3)
+
+
+class _CheckedDomain(Document):
+    name: str
+
+    @model_validator(mode="after")
+    def _named(self) -> "_CheckedDomain":
+        return self
+
+
+class _TaggedDomain(Document):
+    name: str
+    tags: dict[str, str] = Field(default_factory=dict)
+
+
+class _TaggedUpdate(BaseDTO):
+    tags: dict[str, str] | None = None
+
+
 def _named_write(domain: type[Document]) -> DocumentWriteTypes:
     return DocumentWriteTypes(domain=domain, create_cmd=_Create, update_cmd=_PydanticUpdate)
 
@@ -940,7 +961,25 @@ def test_a_plain_spec_allows_a_set_based_upsert() -> None:
         (DocumentSpec(name="doc", read=_Read, write=_named_write(_AggregateDomain)), "domain events"),
         (
             DocumentSpec(name="doc", read=_Read, write=_named_write(_NormalizingDomain)),
-            "field or model validators",
+            "update fields the domain validates (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_ConstrainedDomain)),
+            "update fields the domain validates (name)",
+        ),
+        (
+            DocumentSpec(name="doc", read=_Read, write=_named_write(_CheckedDomain)),
+            "model validators",
+        ),
+        (
+            DocumentSpec(
+                name="doc",
+                read=_Read,
+                write=DocumentWriteTypes(
+                    domain=_TaggedDomain, create_cmd=_Create, update_cmd=_TaggedUpdate
+                ),
+            ),
+            "update fields the domain merges or refuses (tags)",
         ),
         (
             DocumentSpec(
