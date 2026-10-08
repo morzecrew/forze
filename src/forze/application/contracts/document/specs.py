@@ -80,6 +80,37 @@ def _normalize_derived(
 # ....................... #
 
 
+def require_whole_update_matching(dto: BaseModel, *, document: str) -> None:
+    """Refuse an ``update_matching`` patch that sets a field to a mapping or a model.
+
+    ``update_matching`` writes its patch as it is, with no domain update, so such a value
+    would replace the stored one with the fragment it names, where ``update`` and
+    ``update_matching_strict`` merge it. A list or a scalar replaces the stored value either
+    way and is allowed. ``None`` is allowed too and stores ``NULL``, though an update resets a
+    field with a non-null default to that default; use ``update_matching_strict`` for that.
+
+    :param document: The document's name, for the message.
+    :raises CoreException: ``precondition`` (``update_matching_merge_unsupported``)
+        naming the fields.
+    """
+
+    merged = sorted(
+        name
+        for name in dto.model_fields_set
+        if isinstance(getattr(dto, name), (Mapping, BaseModel))
+    )
+
+    if not merged:
+        return
+
+    raise exc.precondition(
+        f"update_matching cannot merge into {merged} on {document!r}: it would store the "
+        "patch in place of the stored value. Use update_matching_strict.",
+        code="update_matching_merge_unsupported",
+        details={"document": document, "fields": merged},
+    )
+
+
 def _own_decorators(domain: type[Document], kind: str) -> list[Any]:
     """The pydantic decorators of *kind* *domain* declares or overrides beyond :class:`Document`'s.
 

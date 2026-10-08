@@ -255,17 +255,23 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 if rev is not None:
                     await self._validate_history((current, rev, update))
 
-                _, diff = current.update(update, materialized=self.read_codec.materialized)
+                after, diff = current.update(update, materialized=self.read_codec.materialized)
+                # The merge patch reports the update; the whole value of a changed mapping is
+                # what replaces the stored field (:meth:`Document.stored_changes`).
+                written = after.stored_changes(diff)
 
             else:
                 _, diff = current.touch()
+                written = diff
 
             if not diff:
                 return current, diff
 
+            same = written is diff
             diff = self._bump_rev(current, diff)
+            written = diff if same else self._bump_rev(current, written)
             merged = await self._encode_domain_one(current)
-            merged.update(self.adapt_payload_for_write(diff))
+            merged.update(self.adapt_payload_for_write(written))
 
             coll = await self.coll()
             # The merged image is rebuilt from the domain model, which cannot

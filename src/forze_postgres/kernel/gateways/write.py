@@ -17,7 +17,10 @@ import attrs
 from psycopg import sql
 from pydantic.fields import FieldInfo
 
-from forze.application.contracts.document import domains_from_create_payloads
+from forze.application.contracts.document import (
+    domains_from_create_payloads,
+    require_whole_update_matching,
+)
 from forze.application.contracts.guarantees import SerializedBy
 from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.resilience import ResilienceExecutorPort
@@ -989,6 +992,30 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
     # ....................... #
 
+    async def __payload_and_diff(
+        self, current: D, written: JsonDict, diff: JsonDict
+    ) -> tuple[JsonDict, JsonDict]:
+        """The adapted payload to write for an update and the diff to report for it.
+
+        *written* is the update's merge patch with each changed mapping whole
+        (:meth:`Document.stored_changes`), which the store needs; the caller still gets the
+        merge patch, as it always has. One adapt when they are the same.
+        """
+
+        same = written is diff
+        reported = await self.adapt_payload_for_write(self.__bump_rev(current, diff), create=False)
+
+        if same:
+            return reported, reported
+
+        payload = await self.adapt_payload_for_write(
+            self.__bump_rev(current, written), create=False
+        )
+
+        return payload, reported
+
+    # ....................... #
+
     @postgres_occ_retry
     async def upsert_many_set_based(
         self,
@@ -1243,22 +1270,22 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 if rev is not None:
                     await self._validate_history((current, rev, update))
 
-                _, diff = current.update(update, materialized=self.read_codec.materialized)
+                after, diff = current.update(update, materialized=self.read_codec.materialized)
+                written = after.stored_changes(diff)
 
             else:
                 # Always historically consistent because we update only the revision and update timestamp
                 _, diff = current.touch()
+                written = diff
 
             if not diff:
                 return current, diff
 
-            diff = self.__bump_rev(current, diff)
-
-            diff = await self.adapt_payload_for_write(diff, create=False)
+            payload, diff = await self.__payload_and_diff(current, written, diff)
             set_parts: list[sql.Composable] = []
             params: list[Any] = []
 
-            for k, v in diff.items():
+            for k, v in payload.items():
                 set_parts.append(sql.SQL("{} = {}").format(sql.Identifier(k), sql.Placeholder()))
                 params.append(v)
 
@@ -1434,6 +1461,8 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
             currents = await self.read_gw.get_many(pks)
 
             groups: dict[tuple[str, ...], list[tuple[UUID, int, JsonDict]]] = defaultdict(list)
+            # The diff each row reports, where it differs from the payload written for it.
+            returned: dict[UUID, JsonDict] = {}
 
             if updates is None:
 
@@ -1471,17 +1500,15 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     c: D,
                     u: JsonDict,
                 ) -> tuple[UUID, int, JsonDict] | None:
-                    _, diff = c.update(u, materialized=self.read_codec.materialized)
+                    after, diff = c.update(u, materialized=self.read_codec.materialized)
                     if not diff:
                         return None
 
-                    diff = self.__bump_rev(c, diff)
-
-                    return (
-                        c.id,
-                        c.rev,
-                        await self.adapt_payload_for_write(diff, create=False),
+                    payload, returned[c.id] = await self.__payload_and_diff(
+                        c, after.stored_changes(diff), diff
                     )
+
+                    return c.id, c.rev, payload
 
                 results = await gather_db_work(
                     self.client,
@@ -1525,7 +1552,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 # RETURNING rows carry no order guarantee, so key each diff by
                 # its own record id instead of pairing positionally
                 for cid, _, diff in batch:
-                    update_diffs[cid] = diff
+                    update_diffs[cid] = returned.get(cid, diff)
 
             res = [updated_models.get(c.id, c) for c in currents]
             res_diffs = [update_diffs.get(c.id, {}) for c in res]
@@ -1588,6 +1615,7 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
 
         self._require_update_cmd()
         self._reject_matching_update_with_materialized()
+        require_whole_update_matching(dto, document=self.model_type.__name__)
 
         if batch_size < 1:
             raise exc.internal("batch_size must be >= 1")

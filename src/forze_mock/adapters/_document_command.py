@@ -13,7 +13,12 @@ from typing import (
 )
 from uuid import UUID
 
-from forze.application.contracts.document import KeyedCreate, KeyedUpdate, UpsertItem
+from forze.application.contracts.document import (
+    KeyedCreate,
+    KeyedUpdate,
+    UpsertItem,
+    require_whole_update_matching,
+)
 from forze.application.contracts.domain import drain_domain_events
 from forze.application.contracts.guarantees import (
     NonOverlapping,
@@ -1034,6 +1039,9 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
 
         if not self.spec.supports_update():
             raise exc.internal("Update command type is not supported for this model")
+
+        # Mirror the real backends, which write the patch as it is: the mock merges it.
+        require_whole_update_matching(dto, document=str(self.spec.name))
 
         # Mirror the real backends: a set-based bulk update cannot recompute a
         # derived value per row, so reject it here too (the mock could recompute,

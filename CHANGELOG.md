@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Postgres aggregate sorts its groups as every other read sorts rows** (**behaviour change**). A null group comes first ascending and last descending, or where `nulls` puts it; `"ASC"` now sorts ascending rather than descending, and an unknown direction is a 400 rather than a descending sort.
 
+- **An update to a mapping or nested-model field keeps the keys it does not name, in Postgres, Mongo and Firestore** (**behaviour change**). The merge patch was stored, so `{"k": 2}` into `{"k": 1, "j": 5}` stored `{"k": 2}`; the field is now written whole. `update_matching`, which cannot merge, refuses such a field.
+
 - **A search with result snapshots can return projected hits.** `project_search` and `select_search` on a snapshot-enabled spec failed in Postgres and Meilisearch, because the snapshot was filled from the projected rows; it now keeps whole records, and only the page returned is projected.
 
 - **A `$having` bound on a time bucket compares with the instant the bucket starts at.** In another zone, Postgres read an aware bound as UTC wall time and the mock matched no datetime at all; a naive bound is wall time in the bucket's zone, and a Postgres `timestamp` column is read as UTC before it is bucketed.
