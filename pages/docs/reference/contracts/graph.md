@@ -149,7 +149,10 @@ They **fail closed** rather than serve a scan that looks complete and is not
     Note that the key is that *text*: a forze model writes it in fixed point
     (`Decimal("1E+3")` is keyed `"1000"`), a plain pydantic model as `str` writes it
     (`"1E+3"`), and `Decimal("1.50")` and `Decimal("1.5")` are two different keys even though
-    Python calls them equal. A property filter on a `Decimal` matches either text.
+    Python calls them equal. A property filter on a `Decimal` matches either text, but a key
+    lookup takes the exact text: a vertex keyed before forze wrote fixed point keeps its
+    scientific-form key (`"1E+3"`), so look it up by that text or re-create it, with its
+    edges, under the new one.
 
 !!! note "A bounded `neighbors` call returns an *arbitrary* subset"
 

@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A query operation may hold a write port it never uses** (**behaviour change**). A handler built with a command port failed to build under `as_query()`; it now gets a stand-in that refuses when used, so a read service carrying write ports can be a query. A write in a query is still refused.
 
-- **A forze model's `Decimal` graph key and stored text are fixed point** (**behaviour change**). A vertex keyed earlier by a `Decimal` that wrote in scientific form (`"1E+3"`) keeps that key: look it up by the old text, or move it and its edges to the new one. Portability archive digests differ for such values.
+- **A forze model's `Decimal` graph key and stored text are fixed point** (**behaviour change**). A vertex keyed earlier by a `Decimal` that wrote in scientific form (`"1E+3"`) keeps that key; portability archive digests differ for such values.
 
 ### Fixed
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, ClassVar
 
 import attrs
@@ -358,6 +359,26 @@ class TestOperationKind:
         await ctx.deps.resolve_configurable(ctx, key, spec).provision()
 
         assert await ctx.document.query(SPEC).count() == 1
+
+    async def test_a_write_method_kept_from_outside_a_query_is_refused_in_one(self) -> None:
+        # Taken when no query runs, the method is the real port's; called inside one, it is
+        # still refused.
+        ctx = context_from_modules(MockDepsModule())
+
+        with ctx.inv_ctx.bind_read_only():
+            port = ctx.document.command(SPEC)
+
+        create = port.create
+
+        assert inspect.iscoroutinefunction(create)
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            await create(ThingCreate(name="x"))
+
+        await create(ThingCreate(name="x"))
+
+        assert await ctx.document.query(SPEC).count() == 1
+        assert not hasattr(port, "__enter__")
 
     async def test_a_tenant_list_answers_on_a_cold_process(self) -> None:
         # The tenant manager reads its command port's spec when built; a query that is the

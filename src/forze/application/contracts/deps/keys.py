@@ -1,3 +1,5 @@
+import functools
+import inspect
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final
 
 import attrs
@@ -67,14 +69,31 @@ class GuardedWritePort:
         if name.startswith("__"):
             raise AttributeError(name)
 
+        self.__refuse_if_read_only()
+        port = self.ctx.deps.resolve_configurable(self.ctx, self.key, self.spec, route=self.route)
+        attribute = getattr(port, name)
+
+        if not callable(attribute):
+            return attribute
+
+        # A method taken outside a read-only operation and kept is checked again when called.
+        @functools.wraps(attribute)
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            self.__refuse_if_read_only()
+            return attribute(*args, **kwargs)
+
+        if inspect.iscoroutinefunction(attribute):
+            inspect.markcoroutinefunction(guarded)
+
+        return guarded
+
+    # ....................... #
+
+    def __refuse_if_read_only(self) -> None:
         if self.ctx.inv_ctx.is_read_only():
             raise exc.precondition(
                 f"Cannot use command (write) port {self.key} in a read-only (QUERY) operation."
             )
-
-        port = self.ctx.deps.resolve_configurable(self.ctx, self.key, self.spec, route=self.route)
-
-        return getattr(port, name)
 
 
 # ....................... #
