@@ -183,7 +183,8 @@ binding then, or `freeze()` refuses the duplicate step) and adds
 `DELETE /auth/admin/api-keys/{id}`, which revokes any principal's API key. Both
 are **global**: API-key accounts are not tenant-scoped, so with tenant-scoped
 administrators expose neither, or guard them with a policy only platform
-administrators pass. `AuthnRequired` alone admits every signed-in principal.
+administrators pass. `AuthnRequired` alone admits every signed-in principal, so
+`admin_guards` that only authenticate are refused when the registry is built.
 
 ## Self-service password reset
 

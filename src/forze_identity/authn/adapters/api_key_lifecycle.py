@@ -96,8 +96,10 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     who revoked it (``owner`` or ``admin``) in its details."""
 
     caller: Callable[[], AuthnIdentity | None] | None = None
-    """Resolves the identity bound to the call; an administrator's revocation records it as
-    ``revoked_by_principal_id``, since the event's ``principal_id`` is the key's owner."""
+    """Resolves the identity bound to the call. An administrator's revocation records it as
+    ``revoked_by_principal_id``, since the event's ``principal_id`` is the key's owner, when
+    this is set and an identity is bound. ``AuthnDepsModule`` sets it; ``None`` (the default
+    for direct construction) leaves the field out."""
 
     # ....................... #
 

@@ -27,8 +27,10 @@ from forze.application.contracts.authn.value_objects import (
     CredentialLifetime,
     RefreshTokenCredentials,
 )
+from forze.application.contracts.execution import BeforeStep
 from forze.application.execution import ExecutionContext
 from forze.application.hooks.authn import AuthnRequired
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.authn import AuthnKernelOp, build_authn_registry
 from forze_kits.aggregates.authn.factories import build_authn_registry as build_registry
@@ -46,6 +48,20 @@ from forze_kits.aggregates.authn.handlers import (
 from .registry_helpers import handler_at, registry_has_handler
 
 # ----------------------- #
+
+
+class _AppAuthorization:
+    """An app's own authorization step: the kind of guard Forze cannot recognise."""
+
+    def __call__(self, ctx: object) -> object:
+        async def _allow(args: object) -> None:
+            _ = args
+
+        return _allow
+
+
+def _admin_guards() -> tuple[BeforeStep, ...]:
+    return AuthnRequired().to_step(), BeforeStep(id="app.admin", factory=_AppAuthorization())
 
 
 def _authn_spec() -> AuthnSpec:
@@ -131,7 +147,7 @@ class TestBuildAuthnRegistry:
 
     def test_catalog_has_descriptor_for_every_op(self) -> None:
         spec = _authn_spec()
-        frozen = build_authn_registry(spec, admin_guards=(AuthnRequired().to_step(),)).freeze()
+        frozen = build_authn_registry(spec, admin_guards=_admin_guards()).freeze()
         catalog = frozen.catalog()
         ns = spec.default_namespace
         assert set(catalog) == {ns.key(op) for op in AuthnKernelOp}
@@ -151,20 +167,37 @@ class TestBuildAuthnRegistry:
         emptied = (step for step in (AuthnRequired().to_step(),) if False)
         assert not registry_has_handler(build_authn_registry(spec, admin_guards=emptied), admin_revoke)
 
-        catalog = (
-            build_authn_registry(spec, admin_guards=(AuthnRequired().to_step(),))
-            .freeze()
-            .catalog()
-        )
+        catalog = build_authn_registry(spec, admin_guards=_admin_guards()).freeze().catalog()
 
         # Every admin operation takes the guards, the deactivation too.
         assert catalog[admin_revoke].requires_authn
         assert catalog[ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL)].requires_authn
 
+    @pytest.mark.parametrize("step_id", [None, "app.signed_in"])
+    def test_authentication_alone_does_not_guard_an_admin_operation(
+        self, step_id: str | None
+    ) -> None:
+        # ``AuthnRequired`` admits every signed-in principal, under whatever step id it runs.
+        authn = AuthnRequired()
+        steps = (authn.to_step(),) if step_id is None else (authn.to_step(step_id=step_id),)
+
+        with pytest.raises(CoreException) as caught:
+            build_authn_registry(_authn_spec(), admin_guards=steps)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert "every signed-in principal" in str(caught.value)
+
+    def test_an_authorization_step_alone_guards_it(self) -> None:
+        spec = _authn_spec()
+        guards = (BeforeStep(id="app.admin", factory=_AppAuthorization()),)
+        catalog = build_authn_registry(spec, admin_guards=guards).freeze().catalog()
+
+        assert spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY) in catalog
+
     @pytest.mark.asyncio
     async def test_admin_revoke_factory_returns_handler(self) -> None:
         spec = _authn_spec()
-        reg = build_authn_registry(spec, admin_guards=(AuthnRequired().to_step(),))
+        reg = build_authn_registry(spec, admin_guards=_admin_guards())
         factory = handler_at(
             reg, spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)
         )

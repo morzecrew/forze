@@ -303,7 +303,9 @@ An administrator revokes anyone's key with `DELETE /admin/api-keys/{id}`
 is a 404). It exists only when the registry is built with `admin_guards`, the steps that
 decide who may act on another principal; it runs behind them, and so does
 `deactivate_principal`, since one guard set gates both. `AuthnRequired` alone lets every
-signed-in principal through, so add an authz guard such as `AuthzBeforeAuthorize`. Drop
+signed-in principal through, so guards that only authenticate are refused when the registry
+is built (`admin_guards_unauthorized`): include an authorization step, such as
+`AuthzBeforeAuthorize` or your own. Drop
 any guard you already bind on `deactivate_principal` yourself: the same step bound twice
 fails at `freeze()` with `Step ID … is not unique`.
 

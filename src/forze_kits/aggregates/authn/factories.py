@@ -12,12 +12,13 @@ from forze.application.contracts.authn import (
     PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
-from forze.application.contracts.execution import BeforeStep
+from forze.application.contracts.execution import BeforeStep, DeclaresAuthn, DeclaresAuthz
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
 
 from .dto import (
@@ -52,6 +53,21 @@ from .operations import AuthnKernelOp
 # ----------------------- #
 
 
+def _authenticates_only(step: BeforeStep) -> bool:
+    """Whether *step* requires a signed-in principal and authorizes nothing, whatever its id."""
+
+    factory = step.factory
+
+    return (
+        isinstance(factory, DeclaresAuthn)
+        and factory.requires_authn()
+        and not isinstance(factory, DeclaresAuthz)
+    )
+
+
+# ....................... #
+
+
 def build_authn_registry(
     spec: AuthnSpec,
     *,
@@ -71,10 +87,12 @@ def build_authn_registry(
         requesting a reset mints a token nobody receives.
     :param admin_guards: Before-steps that decide who may act on *another* principal,
         typically ``AuthnRequired`` plus an ``AuthzBeforeAuthorize``; who that is is the
-        app's authorization model, so Forze ships none, and ``AuthnRequired`` alone admits
-        every signed-in principal. Given, they are bound on ``deactivate_principal`` and
-        register ``revoke_principal_api_key`` (revoke any principal's API key), which is
-        never registered unguarded; drop any guard already bound on
+        app's authorization model, so Forze ships none. ``AuthnRequired`` alone admits
+        every signed-in principal, so guards that only authenticate are refused
+        (``configuration``); include an authorization step (``AuthzBeforeAuthorize`` or the
+        app's own). Given, they are bound on ``deactivate_principal`` and register
+        ``revoke_principal_api_key`` (revoke any principal's API key), which is never
+        registered unguarded; drop any guard already bound on
         ``deactivate_principal``, since a step bound twice fails at freeze. Both act
         globally (credential accounts are not tenant-scoped), so do not grant them to
         tenant-scoped administrators. Without guards ``deactivate_principal`` ships
@@ -84,6 +102,14 @@ def build_authn_registry(
     ns = ns or spec.default_namespace
     # A generator is truthy even when it yields nothing: count the steps, not the object.
     admin_guards = tuple(admin_guards)
+
+    if admin_guards and all(_authenticates_only(step) for step in admin_guards):
+        raise exc.configuration(
+            "admin_guards authenticate but authorize nothing: AuthnRequired alone admits "
+            "every signed-in principal to revoke any API key and deactivate any principal. "
+            "Add an authorization step, such as AuthzBeforeAuthorize or the app's own.",
+            code="admin_guards_unauthorized",
+        )
 
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(

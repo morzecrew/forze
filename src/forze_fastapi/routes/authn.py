@@ -43,9 +43,9 @@ Authentication posture (read this before exposing the router):
 - ``DELETE /admin/api-keys/{id}`` (``revoke_principal_api_key``) revokes any
   principal's key. It exists only when the registry was built with
   ``admin_guards``, which it runs behind; ``AuthnRequired`` alone admits every
-  signed-in principal, so include an authz guard. It refuses a delegated caller
-  (``delegate_denied``) and is global: API-key accounts are not tenant-scoped, so
-  do not expose it to tenant-scoped administrators.
+  signed-in principal, so guards that only authenticate are refused at build. It
+  refuses a delegated caller (``delegate_denied``) and is global: API-key accounts
+  are not tenant-scoped, so do not expose it to tenant-scoped administrators.
 
 Responses of ``/login`` and ``/refresh`` carry token material in the body by
 design (the OAuth2-shaped :class:`~forze_kits.aggregates.authn.AuthnTokenResponseDTO`);

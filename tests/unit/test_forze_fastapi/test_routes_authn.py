@@ -14,6 +14,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from forze.application.contracts.authn import AuthnSpec
+from forze.application.contracts.execution import BeforeStep
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import (
@@ -170,6 +171,10 @@ def _partial_registry(ns: StrKeyNamespace) -> FrozenOperationRegistry:
     ).freeze()
 
 
+async def _allow(args: Any) -> None:
+    _ = args
+
+
 def _operation_ids(app: FastAPI) -> set[str]:
     return {
         operation["operationId"]
@@ -219,7 +224,11 @@ class TestAuthnRouteSurface:
 
     def test_admin_revoke_is_routed_only_behind_the_apps_guards(self) -> None:
         guarded = build_authn_registry(
-            AUTHN_SPEC, admin_guards=(AuthnRequired().to_step(),)
+            AUTHN_SPEC,
+            admin_guards=(
+                AuthnRequired().to_step(),
+                BeforeStep(id="app.admin", factory=lambda ctx: _allow),
+            ),
         ).freeze()
         app = _build_app(registry=guarded)
 
