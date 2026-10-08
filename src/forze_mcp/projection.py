@@ -24,7 +24,8 @@ def exposed_operations(
 
     :param catalog: The registry's operation catalog.
     :param include_writes: Expose command operations as well as ``QUERY`` ones.
-    :param operations: Expose only these operations, by key. A name the catalog does not
+    :param operations: Expose only these operations, by key; a single key is one operation,
+        not a sequence of characters. A name the catalog does not
         have, or a command operation without *include_writes*, is refused rather than
         dropped: an allowlist is reviewed like a grant, and a typo that silently exposed
         less (or a command that silently stayed hidden) would mislead whoever reviewed it.
@@ -39,7 +40,7 @@ def exposed_operations(
             if include_writes or entry.is_read_only
         }
 
-    selected = tuple(operations)
+    selected = (operations,) if isinstance(operations, str) else tuple(operations)
 
     if not selected:
         raise exc.configuration("An MCP tool allowlist must name at least one operation")

@@ -4,6 +4,7 @@ out, and the filter grammar published once instead of in every filter-accepting 
 from __future__ import annotations
 
 import json
+from enum import StrEnum
 from typing import Any
 
 import pytest
@@ -13,6 +14,7 @@ pytest.importorskip("fastmcp")
 import attrs
 from fastmcp import Client, FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.resources import Resource
 from pydantic import BaseModel, Field, TypeAdapter
 
 from forze.application.contracts.execution import Handler
@@ -124,6 +126,13 @@ class TestAllowlist:
         assert register_tools(server, _calc(), _ctx_factory, operations=["calc.double"]) == [
             "calc.double"
         ]
+        assert set(await _tools(server)) == {"calc.double"}
+
+    @pytest.mark.parametrize("single", ["calc.double", StrEnum("Op", {"DOUBLE": "calc.double"}).DOUBLE])
+    async def test_a_single_key_is_one_operation_not_its_characters(self, single: Any) -> None:
+        server = FastMCP("calc")
+
+        assert register_tools(server, _calc(), _ctx_factory, operations=single) == ["calc.double"]
         assert set(await _tools(server)) == {"calc.double"}
 
     async def test_an_unknown_name_is_refused_before_any_tool_is_added(self) -> None:
@@ -310,6 +319,30 @@ class TestSharedFilterGrammar:
         assert instructions.startswith("Replaced.")
         assert instructions.count(FILTER_GRAMMAR_URI) == 1
         assert set(await _tools(server)) == {"notes.list", "notes.list_cursor"}
+
+    async def test_a_resource_of_the_callers_own_at_the_uri_is_never_removed(self) -> None:
+        server = FastMCP("notes", on_duplicate="ignore")
+        server.add_resource(
+            Resource.from_function(lambda: "mine", uri=FILTER_GRAMMAR_URI, name="mine")
+        )
+        register_tools(server, _notes(), _ctx_factory, shared_filter_grammar=True)
+
+        async with Client(server) as client:
+            (resource,) = await client.read_resource(FILTER_GRAMMAR_URI)
+
+        assert resource.text == "mine"
+
+    async def test_a_refused_collision_with_the_callers_resource_adds_no_tool(self) -> None:
+        server = FastMCP("notes", on_duplicate="error")
+        server.add_resource(
+            Resource.from_function(lambda: "mine", uri=FILTER_GRAMMAR_URI, name="mine")
+        )
+
+        with pytest.raises(ValueError):
+            register_tools(server, _notes(), _ctx_factory, shared_filter_grammar=True)
+
+        assert await _tools(server) == {}
+        assert server.instructions is None
 
     async def test_a_failure_to_share_adds_no_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:
         server = FastMCP("notes")

@@ -7,11 +7,11 @@ fields at top level (a flat signature is synthesized so MCP clients see a natura
 contract); the result is whatever the operation returns, serialized by FastMCP.
 """
 
-import contextlib
 import functools
 import inspect
 import json
 import warnings
+import weakref
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Final
 
@@ -40,6 +40,9 @@ _UNSET: Final[Any] = object()
 
 FILTER_GRAMMAR_URI: Final = "forze://filter-grammar"
 """Where :func:`register_tools` publishes the filter grammar when it shares it."""
+
+_GRAMMAR_PUBLISHED: Final[weakref.WeakSet[FastMCP]] = weakref.WeakSet()
+"""The servers :func:`register_tools` has published the filter grammar resource on."""
 
 from ._errors import client_safe_error
 from .dispatch import invoke_operation
@@ -278,21 +281,22 @@ def _share_filter_grammar(server: FastMCP) -> None:
 
     grammar = _filter_grammar()
 
-    # Replaced rather than looked up, as FastMCP has no synchronous look-up: the resource is
-    # the same each time, and a second ``add`` would warn, or raise under
-    # ``on_duplicate="error"``.
-    with contextlib.suppress(KeyError):
-        server.local_provider.remove_resource(FILTER_GRAMMAR_URI)
-
-    server.add_resource(
-        Resource.from_function(
-            lambda: grammar,
-            uri=FILTER_GRAMMAR_URI,
-            name="Filter grammar",
-            description="The JSON schema of a filter expression, as list and search tools take it.",
-            mime_type="application/json",
+    # Published once per server, tracked here, as FastMCP has no synchronous look-up. A
+    # resource the caller put at the same URI meets the server's own ``on_duplicate``, so it
+    # is never removed behind their back; a refusal comes before the instructions change.
+    if server not in _GRAMMAR_PUBLISHED:
+        server.add_resource(
+            Resource.from_function(
+                lambda: grammar,
+                uri=FILTER_GRAMMAR_URI,
+                name="Filter grammar",
+                description=(
+                    "The JSON schema of a filter expression, as list and search tools take it."
+                ),
+                mime_type="application/json",
+            )
         )
-    )
+        _GRAMMAR_PUBLISHED.add(server)
 
     if server.instructions and grammar in server.instructions:
         return
