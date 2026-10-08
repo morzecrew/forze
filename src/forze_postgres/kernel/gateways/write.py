@@ -1223,16 +1223,22 @@ class PostgresWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                 stamp.append(now)
 
             # Only a row the update changes is written, as the domain path skips an empty diff;
-            # but a sealed field the patch names is always written, sealed afresh, as there.
-            if set(key) & self._sealed_fields():
-                match = sql.SQL("t.{pk} = v.{pk}").format(pk=self.ident_pk())
-
-            else:
-                match = sql.SQL("t.{pk} = v.{pk} AND ({tcols}) IS DISTINCT FROM ({vcols})").format(
-                    pk=self.ident_pk(),
+            # but a sealed value the patch names is always written, sealed afresh, as there. A
+            # null is not sealed, so it is compared like any other.
+            changed: list[sql.Composable] = [
+                sql.SQL("v.{} IS NOT NULL").format(sql.Identifier(k))
+                for k in key
+                if k in self._sealed_fields()
+            ]
+            changed.append(
+                sql.SQL("({tcols}) IS DISTINCT FROM ({vcols})").format(
                     tcols=sql.SQL(", ").join(_compared("t", k, column_types.get(k)) for k in key),
                     vcols=sql.SQL(", ").join(_compared("v", k, column_types.get(k)) for k in key),
                 )
+            )
+            match = sql.SQL("t.{pk} = v.{pk} AND ({changed})").format(
+                pk=self.ident_pk(), changed=sql.SQL(" OR ").join(changed)
+            )
 
             where, where_params = self._add_tenant_where(match, [], table_alias="t")
             await self.client.execute(

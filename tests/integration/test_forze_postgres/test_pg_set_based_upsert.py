@@ -392,7 +392,8 @@ async def test_a_searchable_field_is_sealed_and_compared_as_on_the_domain_path(
 ) -> None:
     """A deterministic (searchable) field is merged open, reset by a null as the domain does,
     and sealed for the write; one the patch names is written even unchanged, re-sealed, as on
-    the domain path (a key rotation re-indexes by just such an update)."""
+    the domain path (a key rotation re-indexes by just such an update), but a null, which is
+    not sealed, is compared."""
 
     from forze.application.contracts.crypto import FieldEncryption, KeyRef, StaticKeyDirectory
     from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
@@ -411,7 +412,7 @@ async def test_a_searchable_field_is_sealed_and_compared_as_on_the_domain_path(
         name="setbased_sealed",
         read=_Read,
         write=DocumentWriteTypes(domain=_Doc, create_cmd=_Create, update_cmd=_Update),
-        encryption=FieldEncryption(searchable=frozenset({"label", "qty"})),
+        encryption=FieldEncryption(searchable=frozenset({"label", "qty", "note"})),
     )
 
     def command(t: str) -> Any:
@@ -444,8 +445,9 @@ async def test_a_searchable_field_is_sealed_and_compared_as_on_the_domain_path(
     batch = [
         _item(ids[0], "x", 0, {"label": None, "qty": 50}),  # reset to its default, then sealed
         _item(ids[1], "x", 0, {"label": "custom", "qty": 1}),  # the stored values: re-sealed
-        _item(ids[2], "x", 0, {"label": "moved"}),
+        _item(ids[2], "x", 0, {"label": "moved", "note": None}),
     ]
+    again = [_item(ids[2], "x", 0, {"note": None})]  # already null: nothing to write
 
     for t, set_based in ((domain_t, False), (set_t, True)):
         cmd = command(t)
@@ -456,7 +458,10 @@ async def test_a_searchable_field_is_sealed_and_compared_as_on_the_domain_path(
         with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 2, tzinfo=UTC))):
             await cmd.upsert_many(batch, return_new=False, set_based=set_based)
 
-    sql = "SELECT id, rev, last_update_at, label, qty FROM {} ORDER BY id"
+        with bind_time_source(FrozenTimeSource(instant=datetime(2026, 1, 3, tzinfo=UTC))):
+            await cmd.upsert_many(again, return_new=False, set_based=set_based)
+
+    sql = "SELECT id, rev, last_update_at, label, qty, note FROM {} ORDER BY id"
     set_rows = await pg_client.fetch_all(sql.format(set_t), [])
     assert set_rows == await pg_client.fetch_all(sql.format(domain_t), [])
     assert [row["rev"] for row in sorted(set_rows, key=lambda r: ids.index(r["id"]))] == [2, 2, 2]
