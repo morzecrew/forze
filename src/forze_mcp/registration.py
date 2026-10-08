@@ -7,18 +7,23 @@ fields at top level (a flat signature is synthesized so MCP clients see a natura
 contract); the result is whatever the operation returns, serialized by FastMCP.
 """
 
+import functools
 import inspect
+import json
 import warnings
-from collections.abc import Awaitable, Callable
+import weakref
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Final
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from fastmcp.resources import Resource
 from fastmcp.tools import FunctionTool
 from mcp.types import ToolAnnotations
+from pydantic import TypeAdapter
 from pydantic.json_schema import PydanticJsonSchemaWarning
 
-from forze.application.contracts.querying import describe_query_discovery
+from forze.application.contracts.querying import QueryFilterExpression, describe_query_discovery
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import (
     FrozenOperationRegistry,
@@ -32,6 +37,12 @@ from forze.base.primitives import StrKey
 
 _UNSET: Final[Any] = object()
 """Sentinel signalling a tool argument the client omitted (see :func:`_flat_tool_handler`)."""
+
+FILTER_GRAMMAR_URI: Final = "forze://filter-grammar"
+"""Where :func:`register_tools` publishes the filter grammar when it shares it."""
+
+_GRAMMAR_PUBLISHED: Final[weakref.WeakSet[FastMCP]] = weakref.WeakSet()
+"""The servers :func:`register_tools` has published the filter grammar resource on."""
 
 from ._errors import client_safe_error
 from .dispatch import invoke_operation
@@ -184,6 +195,122 @@ def _tool_description(entry: OperationCatalogEntry) -> str | None:
 # ....................... #
 
 
+@functools.cache
+def _filter_grammar() -> str:
+    """The filter expression's JSON schema, as compact JSON: the grammar every
+    filter-accepting tool takes."""
+
+    return json.dumps(TypeAdapter(QueryFilterExpression).json_schema(), separators=(",", ":"))
+
+
+def _refs(node: Any) -> set[str]:
+    """The ``$defs`` entries *node* references by ``$ref``, by name."""
+
+    if isinstance(node, list):
+        return set().union(*(_refs(item) for item in node))  # pyright: ignore[reportUnknownVariableType]
+
+    if not isinstance(node, dict):
+        return set()
+
+    found: set[str] = set().union(*(_refs(value) for value in node.values()))  # pyright: ignore[reportUnknownVariableType]
+    ref = node.get("$ref")  # pyright: ignore[reportUnknownVariableType]
+
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        found.add(ref.removeprefix("#/$defs/"))
+
+    return found
+
+
+def _without_filter_grammar(schema: dict[str, Any]) -> dict[str, Any]:
+    """*schema* with each filter expression a plain object pointing at the shared grammar,
+    and the definitions nothing references any more dropped.
+
+    A filter expression is the ``anyOf`` of the grammar's root definitions, wherever it sits:
+    a tool's ``filters``, or ``$having`` inside an aggregate. A schema that names the
+    grammar's definitions differently (pydantic qualifies a name another model also uses) is
+    left as it is, whole.
+    """
+
+    roots = {option["$ref"] for option in json.loads(_filter_grammar())["anyOf"]}
+    pointer = f"Its grammar is in the server instructions and at {FILTER_GRAMMAR_URI}."
+
+    def strip(node: Any) -> Any:
+        if isinstance(node, list):
+            return [strip(item) for item in node]  # pyright: ignore[reportUnknownVariableType]
+
+        if not isinstance(node, dict):
+            return node
+
+        out: dict[str, Any] = {key: strip(value) for key, value in node.items()}  # pyright: ignore[reportUnknownVariableType]
+        options = out.get("anyOf")
+
+        if isinstance(options, list):
+            refs = {option.get("$ref") for option in options if isinstance(option, dict)}  # pyright: ignore[reportUnknownVariableType]
+
+            if roots <= refs:
+                rest = [option for option in options if option.get("$ref") not in roots]  # pyright: ignore[reportUnknownVariableType]
+                del out["anyOf"]
+                plain = {"type": "object", "description": f"A filter expression. {pointer}"}
+
+                if rest:
+                    return {**out, "anyOf": [plain, *rest]}
+
+                own = out.get("description")
+
+                return {**out, **plain, **({"description": f"{own} {pointer}"} if own else {})}
+
+        return out
+
+    stripped = strip(schema)
+    defs: dict[str, Any] = stripped.pop("$defs", {})
+    kept: dict[str, Any] = {}
+    pending = _refs(stripped)
+
+    while pending:
+        name = pending.pop()
+
+        if name in defs and name not in kept:
+            kept[name] = defs[name]
+            pending |= _refs(defs[name])
+
+    return {**stripped, "$defs": kept} if kept else stripped
+
+
+def _share_filter_grammar(server: FastMCP) -> None:
+    """State the filter grammar once on *server*: after its instructions, and as a resource."""
+
+    grammar = _filter_grammar()
+
+    # Published once per server, tracked here, as FastMCP has no synchronous look-up. A
+    # resource the caller put at the same URI meets the server's own ``on_duplicate``, so it
+    # is never removed behind their back; a refusal comes before the instructions change.
+    if server not in _GRAMMAR_PUBLISHED:
+        server.add_resource(
+            Resource.from_function(
+                lambda: grammar,
+                uri=FILTER_GRAMMAR_URI,
+                name="Filter grammar",
+                description=(
+                    "The JSON schema of a filter expression, as list and search tools take it."
+                ),
+                mime_type="application/json",
+            )
+        )
+        _GRAMMAR_PUBLISHED.add(server)
+
+    if server.instructions and grammar in server.instructions:
+        return
+
+    note = (
+        "Filter expressions (the `filters` argument of list and search tools, and `$having` "
+        f"in aggregates) follow this JSON schema, also at {FILTER_GRAMMAR_URI}:\n{grammar}"
+    )
+    server.instructions = f"{server.instructions}\n\n{note}" if server.instructions else note
+
+
+# ....................... #
+
+
 def register_tools(
     server: FastMCP,
     registry: FrozenOperationRegistry,
@@ -191,6 +318,9 @@ def register_tools(
     *,
     identity: MCPIdentityResolver | None = None,
     include_writes: bool = False,
+    operations: Iterable[StrKey] | None = None,
+    output_schemas: bool = True,
+    shared_filter_grammar: bool = False,
 ) -> list[str]:
     """Add the registry's exposed operations to *server* as MCP tools.
 
@@ -204,13 +334,26 @@ def register_tools(
         no-identity :class:`StaticIdentityResolver`).
     :param include_writes: When ``False`` (default, read-only) only ``QUERY`` operations are
         exposed; when ``True`` command operations are exposed too.
+    :param operations: Expose only these operations, by key (default: every exposed one).
+        An unknown key, or a command operation without *include_writes*, is refused.
+    :param output_schemas: Give each tool its output schema (the default). ``False`` leaves
+        them out, for a smaller tool list. A call still returns its result as text, but a
+        list or scalar result then carries no structured content, and an object comes back
+        as a plain mapping rather than a typed model.
+    :param shared_filter_grammar: State the filter grammar once instead of in every
+        filter-accepting tool: each ``filters`` (and aggregate ``$having``) becomes a plain
+        object in the tool's schema, and the grammar is appended to the server's
+        instructions and published at :data:`FILTER_GRAMMAR_URI`. Set the instructions
+        before registering: assigning them afterwards replaces the grammar (the tools still
+        point at the resource). A call is validated against the full grammar either way.
     :returns: The list of registered tool names.
     :raises CoreException: When an exposed operation projects a sensitive read model
-        (its spec is marked ``sensitive=True``).
+        (its spec is marked ``sensitive=True``), or *operations* names an operation it
+        cannot expose.
     """
 
     catalog = registry.catalog()
-    exposed = exposed_operations(catalog, include_writes=include_writes)
+    exposed = exposed_operations(catalog, include_writes=include_writes, operations=operations)
     resolver = identity or StaticIdentityResolver()
 
     # Refuse sensitive operations up front (before any tool is added) so a
@@ -225,6 +368,9 @@ def register_tools(
                 "credential/secret material must not be exposed on generated "
                 "external surfaces)"
             )
+
+    tools: list[FunctionTool] = []
+    shared = False
 
     for tool_name, op in exposed.items():
         entry = catalog[op]
@@ -249,8 +395,23 @@ def register_tools(
                     read_only_hint=entry.is_read_only,
                     destructive_hint=not entry.is_read_only,
                 ),
+                **({} if output_schemas else {"output_schema": None}),
             )
 
+        if shared_filter_grammar:
+            parameters = _without_filter_grammar(tool.parameters)
+
+            if parameters != tool.parameters:
+                tool = tool.model_copy(update={"parameters": parameters})
+                shared = True
+
+        tools.append(tool)
+
+    # Before any tool, so a tool never reaches the server pointing at a grammar that isn't.
+    if shared:
+        _share_filter_grammar(server)
+
+    for tool in tools:
         server.add_tool(tool)
 
     return list(exposed)
