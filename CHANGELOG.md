@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A bulk upsert can write set-based.** `upsert_many(items, return_new=False, set_based=True)` inserts the missing rows and patches the stored ones, only where the update changes them, reading nothing back; a Postgres reload of unchanged rows ran about 4× faster. A spec whose updates need the domain model refuses it.
 
+- **An MCP server can expose a chosen set of tools, and smaller ones.** `register_tools` and `build_mcp_server` take `operations=[...]`, an allowlist refusing an unknown name; `output_schemas=False`; and `shared_filter_grammar=True`, stating the filter grammar once in the instructions, which `build_mcp_server` now takes.
+
 ### Changed
 
 - ...
