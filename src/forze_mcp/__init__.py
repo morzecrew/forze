@@ -44,7 +44,7 @@ from .lifespan import runtime_lifespan
 from .middlewares import LoggingMiddleware
 from .projection import exposed_operations
 from .prompts import register_dsl_query_prompts
-from .registration import register_tools
+from .registration import FILTER_GRAMMAR_URI, register_tools
 from .resource_templates import (
     ResourceTemplateSpec,
     register_resource_templates,
@@ -55,6 +55,7 @@ from .server import build_mcp_server
 # ----------------------- #
 
 __all__ = [
+    "FILTER_GRAMMAR_URI",
     "AccessTokenIdentityResolver",
     "DelegatedIdentityResolver",
     "ForzeApiKeyVerifier",

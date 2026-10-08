@@ -5,7 +5,7 @@ tools) construct your own :class:`FastMCP` and call
 :func:`~forze_mcp.registration.register_tools` instead.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 
 from fastmcp import FastMCP
@@ -13,6 +13,7 @@ from fastmcp.server.auth import AuthProvider
 
 from forze.application.execution.context import ExecutionContextFactory
 from forze.application.execution.operations import FrozenOperationRegistry
+from forze.base.primitives import StrKey
 
 from .identity import MCPIdentityResolver
 from .registration import register_tools
@@ -25,10 +26,14 @@ def build_mcp_server(
     ctx_factory: ExecutionContextFactory,
     *,
     name: str,
+    instructions: str | None = None,
     identity: MCPIdentityResolver | None = None,
     include_writes: bool = False,
     auth: AuthProvider | None = None,
     lifespan: Callable[[FastMCP], AbstractAsyncContextManager[None]] | None = None,
+    operations: Iterable[StrKey] | None = None,
+    output_schemas: bool = True,
+    shared_filter_grammar: bool = False,
 ) -> FastMCP:
     """Build a FastMCP server with the registry's exposed operations registered as tools.
 
@@ -61,6 +66,11 @@ def build_mcp_server(
     binds the verified principal per call. For full control over auth/transport,
     construct your own :class:`FastMCP` and call
     :func:`~forze_mcp.registration.register_tools` instead.
+
+    *operations*, *output_schemas* and *shared_filter_grammar* shape the tool list as in
+    :func:`~forze_mcp.registration.register_tools`. Pass the server's *instructions* here
+    rather than assigning them to the built server: the shared filter grammar is appended
+    to them, and an assignment afterwards replaces it.
     """
 
     # ``mask_error_details=True``: an *unexpected* exception (anything that isn't a translated
@@ -68,7 +78,9 @@ def build_mcp_server(
     # matching the HTTP edge's server-error masking. Boundary ``CoreException``s are translated to
     # a client-safe ``ToolError`` in ``register_tools`` (egress-masked envelope), so a caller-caused
     # error still carries an actionable message.
-    server: FastMCP = FastMCP(name, auth=auth, lifespan=lifespan, mask_error_details=True)
+    server: FastMCP = FastMCP(
+        name, instructions, auth=auth, lifespan=lifespan, mask_error_details=True
+    )
 
     register_tools(
         server,
@@ -76,6 +88,9 @@ def build_mcp_server(
         ctx_factory,
         identity=identity,
         include_writes=include_writes,
+        operations=operations,
+        output_schemas=output_schemas,
+        shared_filter_grammar=shared_filter_grammar,
     )
 
     return server
