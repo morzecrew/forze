@@ -90,3 +90,13 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
         identity: AuthnIdentity,
         key_ids: Sequence[str],
     ) -> Awaitable[None]: ...
+
+    def revoke_principal_api_key(self, key_id: str) -> Awaitable[None]:
+        """Revoke any principal's API key, as an administrator.
+
+        No identity is checked here: who may revoke another principal's key is the
+        calling operation's authorization to settle. The key is found by id alone, in every
+        tenant, since API-key accounts are not tenant-scoped. An unknown key is
+        ``not_found``; a revoked one is left as it is and answers as a revocation does.
+        """
+        ...

@@ -202,7 +202,8 @@ class AuthnApiKeyListDTO(BaseDTO):
 
 
 class AuthnRevokeApiKeyRequestDTO(BaseDTO):
-    """DTO for revoking one of the current identity's API keys."""
+    """DTO naming an API key to revoke: one of the current identity's, or any principal's for
+    an administrator."""
 
     id: UUID
     """Identifier of the key to revoke (``key_id`` from issuance/listing)."""

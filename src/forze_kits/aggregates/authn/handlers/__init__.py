@@ -10,6 +10,7 @@ from .handlers import (
     AuthnPasswordLogin,
     AuthnRefreshTokens,
     AuthnRevokeApiKey,
+    AuthnRevokePrincipalApiKey,
 )
 from .password_reset import (
     AuthnRequestPasswordReset,
@@ -23,6 +24,7 @@ __all__ = [
     "AuthnIssueApiKey",
     "AuthnListApiKeys",
     "AuthnRevokeApiKey",
+    "AuthnRevokePrincipalApiKey",
     "AuthnLogout",
     "AuthnPasswordLogin",
     "AuthnRefreshTokens",

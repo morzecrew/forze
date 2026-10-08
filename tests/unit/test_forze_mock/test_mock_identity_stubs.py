@@ -241,6 +241,20 @@ async def test_tenant_resolver_requested_tenant_requires_membership() -> None:
     assert excinfo.value.code == "tenant_mismatch"
 
 
+async def test_admin_api_key_revoke_is_not_found_like_the_real_adapter() -> None:
+    # The mock holds no API keys, so every id is unknown, which the real adapter answers
+    # with ``not_found`` rather than a revocation that never happened.
+    lifecycle = context_from_modules(MockDepsModule()).deps.provide(
+        ApiKeyLifecycleDepKey, route="main"
+    )
+
+    with pytest.raises(CoreException) as excinfo:
+        await lifecycle(None, None).revoke_principal_api_key(str(uuid4()))
+
+    assert excinfo.value.kind is ExceptionKind.NOT_FOUND
+    assert excinfo.value.code == "api_key_not_found"
+
+
 async def test_deprovision_missing_tenant_raises_like_real_adapter() -> None:
     # Parity: the real adapter loads the tenant (a document ``get`` that raises) before
     # tearing down infra, so the mock must fail closed on a missing tenant too.

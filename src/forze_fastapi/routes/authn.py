@@ -38,7 +38,14 @@ Authentication posture (read this before exposing the router):
   operation: bind :class:`~forze.application.hooks.authn.AuthnRequired` and an
   authz before-hook (e.g.
   :class:`~forze.application.hooks.authz.AuthzBeforeAuthorize`) on its operation
-  before exposing it, or keep it off the router via ``include=``.
+  before exposing it — ``build_authn_registry(admin_guards=...)`` does — or keep it
+  off the router via ``include=``.
+- ``DELETE /admin/api-keys/{id}`` (``revoke_principal_api_key``) revokes any
+  principal's key. It exists only when the registry was built with
+  ``admin_guards``, which it runs behind; ``AuthnRequired`` alone admits every
+  signed-in principal, so include an authz guard. It refuses a delegated caller
+  (``delegate_denied``) and is global: API-key accounts are not tenant-scoped, so
+  do not expose it to tenant-scoped administrators.
 
 Responses of ``/login`` and ``/refresh`` carry token material in the body by
 design (the OAuth2-shaped :class:`~forze_kits.aggregates.authn.AuthnTokenResponseDTO`);
@@ -288,6 +295,10 @@ _AUTHN_BINDINGS: Mapping[str, RouteBinding] = {
     AuthnKernelOp.REVOKE_API_KEY: RouteBinding(
         method="DELETE", path="/api-keys/{id}", build=id_endpoint, status_code=204
     ),
+    # Registered only when the registry was built with ``admin_guards``.
+    AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: RouteBinding(
+        method="DELETE", path="/admin/api-keys/{id}", build=id_endpoint, status_code=204
+    ),
 }
 """Fixed action-path bindings per authn kernel operation.
 
@@ -329,6 +340,8 @@ def attach_authn_routes(
     - ``POST /api-keys`` → ``issue_api_key`` (201, the secret returned once)
     - ``GET /api-keys`` → ``list_api_keys`` (non-secret descriptors)
     - ``DELETE /api-keys/{id}`` → ``revoke_api_key`` (204)
+    - ``DELETE /admin/api-keys/{id}`` → ``revoke_principal_api_key`` (204), only when the
+      registry was built with ``admin_guards``
 
     Self-service API-key management is a real resource collection, so it uses
     resource-style verbs (the auth-flow actions stay ``POST``). All three require a

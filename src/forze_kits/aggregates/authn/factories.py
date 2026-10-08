@@ -1,5 +1,6 @@
 """Factories for authn usecase registries."""
 
+from collections.abc import Iterable
 from typing import Any
 
 from forze.application.contracts.authn import (
@@ -11,6 +12,7 @@ from forze.application.contracts.authn import (
     PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
+from forze.application.contracts.execution import BeforeStep
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
@@ -41,6 +43,7 @@ from .handlers import (
     AuthnRequestPasswordReset,
     AuthnResetPassword,
     AuthnRevokeApiKey,
+    AuthnRevokePrincipalApiKey,
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
@@ -54,6 +57,7 @@ def build_authn_registry(
     *,
     ns: StrKeyNamespace | None = None,
     reset_events: OutboxSpec[Any] | None = None,
+    admin_guards: Iterable[BeforeStep] = (),
 ) -> OperationRegistry:
     """Build authn operation registry.
 
@@ -65,9 +69,21 @@ def build_authn_registry(
         outbox row — see :mod:`forze_kits.aggregates.authn.events` for the
         exposure trade-off. When ``None`` and no custom delivery exists,
         requesting a reset mints a token nobody receives.
+    :param admin_guards: Before-steps that decide who may act on *another* principal,
+        typically ``AuthnRequired`` plus an ``AuthzBeforeAuthorize``; who that is is the
+        app's authorization model, so Forze ships none, and ``AuthnRequired`` alone admits
+        every signed-in principal. Given, they are bound on ``deactivate_principal`` and
+        register ``revoke_principal_api_key`` (revoke any principal's API key), which is
+        never registered unguarded; drop any guard already bound on
+        ``deactivate_principal``, since a step bound twice fails at freeze. Both act
+        globally (credential accounts are not tenant-scoped), so do not grant them to
+        tenant-scoped administrators. Without guards ``deactivate_principal`` ships
+        unguarded as before.
     """
 
     ns = ns or spec.default_namespace
+    # A generator is truthy even when it yields nothing: count the steps, not the object.
+    admin_guards = tuple(admin_guards)
 
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(
@@ -169,6 +185,12 @@ def build_authn_registry(
             api_key_lifecycle=_api_key_lifecycle(ctx),
         )
 
+    def _revoke_principal_api_key(ctx: ExecutionContext) -> AuthnRevokePrincipalApiKey:
+        return AuthnRevokePrincipalApiKey(
+            resolver=ctx.inv_ctx.get_authn,
+            api_key_lifecycle=_api_key_lifecycle(ctx),
+        )
+
     reg = OperationRegistry(
         handlers={
             ns.key(AuthnKernelOp.PASSWORD_LOGIN): _password_login,
@@ -249,6 +271,33 @@ def build_authn_registry(
         namespace=ns,
     )
 
+    if admin_guards:
+        reg = OperationRegistry.merge(
+            reg,
+            OperationRegistry(
+                handlers={
+                    ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY): _revoke_principal_api_key,
+                },
+            ).set_descriptors(
+                {
+                    AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: OperationDescriptor(
+                        input_type=AuthnRevokeApiKeyRequestDTO,
+                        description="Revoke any principal's API key (admin).",
+                    ),
+                },
+                namespace=ns,
+            ),
+        )
+        reg = (
+            reg.bind(
+                ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL),
+                ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY),
+            )
+            .bind_outer()
+            .before(*admin_guards)
+            .finish(deep=True)
+        )
+
     # ``list_api_keys`` is a read (no mutation) — classify it QUERY, and require a
     # bound principal (self-service: you list your own keys).
     reg = (
@@ -265,8 +314,8 @@ def build_authn_registry(
     # introspectable: the catalog flags ``requires_authn``, which the FastAPI/MCP
     # surfaces project into their auth descriptions. The 401 (``auth_required``) is
     # unchanged. Login/refresh and the reset pair authenticate via their bodies (no
-    # bound principal); ``deactivate_principal`` ships unguarded by design (apps
-    # bind authn+authz).
+    # bound principal); ``deactivate_principal`` ships unguarded by design unless
+    # ``admin_guards`` are given (apps bind authn+authz).
     return (
         reg.bind(
             ns.key(AuthnKernelOp.LOGOUT),

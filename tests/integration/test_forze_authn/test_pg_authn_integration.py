@@ -25,6 +25,7 @@ from forze.application.contracts.document import (
     DocumentQueryDepKey,
 )
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from forze.base.exceptions import CoreException
 from forze_identity.authn import (
     Argon2PasswordVerifier,
     AuthnOrchestrator,
@@ -431,6 +432,22 @@ async def test_pg_api_key_revoke_blocks_authentication(pg_client: PostgresClient
     with pytest.raises(Exception, match="API key account not found"):
         with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
             await authn.authenticate_with_api_key(creds)
+
+    # An administrator revokes another key of the same principal, with no identity of theirs.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        other = await lifecycle.issue_api_key(AuthnIdentity(principal_id=pid))
+        await lifecycle.revoke_principal_api_key(other.key_id)
+        await lifecycle.revoke_principal_api_key(other.key_id)  # already revoked: left alone
+
+    with pytest.raises(Exception, match="API key account not found"):
+        with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await authn.authenticate_with_api_key(
+                ApiKeyCredentials(key=other.key.key, prefix=other.key.prefix)
+            )
+
+    with pytest.raises(CoreException, match="API key not found"):
+        with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            await lifecycle.revoke_principal_api_key(str(uuid4()))
 
 
 @pytest.mark.integration

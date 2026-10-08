@@ -241,7 +241,8 @@ token (the operations authenticate via their bodies, or deliberately not at all
 for the reset request); logout and change-password declare `AuthnRequired` (so
 they 401 without a bound identity and show up protected under
 `apply_openapi_security`), while `deactivate_principal` ships unguarded — bind
-`AuthnRequired` + authz hooks on it or exclude it via `include=`. The full
+`AuthnRequired` + authz hooks on it (`build_authn_registry(admin_guards=...)` does)
+or exclude it via `include=`. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 [Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).
 
@@ -297,9 +298,25 @@ never the secret), and `DELETE /api-keys/{id}` revokes one. This is the minting
 surface for the [MCP API-key flow](../integrations/mcp.md#protect-it-with-api-key-auth):
 the user issues a key here and pastes it into the agent host.
 
+An administrator revokes anyone's key with `DELETE /admin/api-keys/{id}`
+(`revoke_principal_api_key`, 204, and 204 again for a key already revoked; an unknown key
+is a 404). It exists only when the registry is built with `admin_guards`, the steps that
+decide who may act on another principal; it runs behind them, and so does
+`deactivate_principal`, since one guard set gates both. `AuthnRequired` alone lets every
+signed-in principal through, so add an authz guard such as `AuthzBeforeAuthorize`. Drop
+any guard you already bind on `deactivate_principal` yourself: the same step bound twice
+fails at `freeze()` with `Step ID … is not unique`.
+
+The admin revoke is **global**, like `deactivate_principal`: API-key accounts are not
+tenant-scoped, so it finds a key by id in every tenant, and its 404 tells a caller whether
+an id exists anywhere. An app whose administrators are scoped to a tenant must not expose
+it, or must guard it with a policy only platform administrators pass.
+
 A delegated caller (an agent acting for the user) may list the keys but not issue or revoke
-them, and may not log out or change the password: only the user manages their own account. Those
-routes answer `403` (`delegate_denied`), and so do switching and leaving a tenant below.
+them, and may not log out or change the password: only the user manages their own account.
+Nor may it revoke anyone's key as an administrator: an agent acting for an administrator is
+not one. Those routes answer `403` (`delegate_denied`), and so do switching and leaving a
+tenant below.
 
 Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers from the [integration setup](../integrations/fastapi.md) —

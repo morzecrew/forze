@@ -8,8 +8,15 @@ from uuid import uuid4
 
 import pytest
 
-from forze.application.contracts.authn import ApiKeyCredentials, AuthnIdentity
-from forze.base.exceptions import CoreException, exc
+from forze.application.contracts.authn import (
+    ApiKeyCredentials,
+    AuthnEvent,
+    AuthnEventEmitter,
+    AuthnEventKind,
+    AuthnEventSink,
+    AuthnIdentity,
+)
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authn.adapters.api_key_lifecycle import ApiKeyLifecycleAdapter
 from forze_identity.authn.domain.models.account import ReadApiKeyAccount
 from forze_identity.authn.services import ApiKeyConfig, ApiKeyService
@@ -106,6 +113,100 @@ class TestApiKeyLifecycleAdapterRevoke:
             await adapter.revoke_many_api_keys(AuthnIdentity(principal_id=pid), ids)
 
         assert revoke.await_count == 2
+
+
+class _Sink(AuthnEventSink):
+    def __init__(self) -> None:
+        self.events: list[AuthnEvent] = []
+
+    async def record(self, event: AuthnEvent) -> None:
+        self.events.append(event)
+
+
+def _stored_key(*, is_active: bool = True) -> ReadApiKeyAccount:
+    now = datetime.now(tz=UTC)
+    return ReadApiKeyAccount(
+        id=uuid4(),
+        rev=3,
+        created_at=now,
+        last_update_at=now,
+        principal_id=uuid4(),
+        key_hash="h",
+        is_active=is_active,
+    )
+
+
+_ADMIN = AuthnIdentity(principal_id=uuid4())
+
+
+def _revoking(account: ReadApiKeyAccount | None) -> tuple[ApiKeyLifecycleAdapter, _Sink]:
+    ak_qry = _port()
+    ak_qry.find = AsyncMock(return_value=account)
+    ak_cmd = _port()
+    ak_cmd.update = AsyncMock()
+    sink = _Sink()
+    adapter = _adapter(
+        ak_qry=ak_qry,
+        ak_cmd=ak_cmd,
+        events=AuthnEventEmitter(sink=sink, route="main"),
+        caller=lambda: _ADMIN,
+    )
+    adapter.eligibility.require_authentication_allowed = AsyncMock()
+    return adapter, sink
+
+
+class TestAnAdminRevokesAnyPrincipalsKey:
+    @pytest.mark.asyncio
+    async def test_another_principals_key_is_revoked(self) -> None:
+        account = _stored_key()
+        adapter, sink = _revoking(account)
+
+        await adapter.revoke_principal_api_key(str(account.id))
+
+        adapter.ak_cmd.update.assert_awaited_once()
+        assert adapter.ak_cmd.update.await_args.args[:2] == (account.id, account.rev)
+        # The owner's eligibility is not the question: a deactivated owner's key is revoked too.
+        adapter.eligibility.require_authentication_allowed.assert_not_awaited()
+        (event,) = sink.events
+        assert event.kind is AuthnEventKind.API_KEY_REVOKED
+        assert event.principal_id == account.principal_id
+        assert dict(event.details) == {
+            "key_id": str(account.id),
+            "revoked_by": "admin",
+            "revoked_by_principal_id": str(_ADMIN.principal_id),
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key_id", ["not-a-uuid", str(uuid4())], ids=["invalid", "unknown"])
+    async def test_an_unknown_key_is_not_found(self, key_id: str) -> None:
+        # An admin must learn that nothing was revoked, rather than a 204 for a typo.
+        adapter, sink = _revoking(None)
+
+        with pytest.raises(CoreException) as caught:
+            await adapter.revoke_principal_api_key(key_id)
+
+        assert caught.value.kind is ExceptionKind.NOT_FOUND
+        adapter.ak_cmd.update.assert_not_awaited()
+        assert sink.events == []
+
+    @pytest.mark.asyncio
+    async def test_a_revoked_key_is_left_alone(self) -> None:
+        adapter, sink = _revoking(_stored_key(is_active=False))
+
+        await adapter.revoke_principal_api_key(str(uuid4()))
+
+        adapter.ak_cmd.update.assert_not_awaited()
+        assert sink.events == []
+
+    @pytest.mark.asyncio
+    async def test_an_owner_revoking_their_key_is_recorded_as_the_owner(self) -> None:
+        account = _stored_key()
+        adapter, sink = _revoking(account)
+
+        await adapter.revoke_api_key(AuthnIdentity(principal_id=account.principal_id), str(account.id))
+
+        (event,) = sink.events
+        assert dict(event.details) == {"key_id": str(account.id), "revoked_by": "owner"}
 
 
 def _created_key() -> MagicMock:

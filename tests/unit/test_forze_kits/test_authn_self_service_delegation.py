@@ -27,6 +27,7 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnListApiKeys,
     AuthnLogout,
     AuthnRevokeApiKey,
+    AuthnRevokePrincipalApiKey,
 )
 from forze_kits.aggregates.tenancy import (
     LeaveTenant,
@@ -69,6 +70,11 @@ def _handlers(port: _Recorder) -> dict[str, tuple[Any, Any]]:
             AuthnRevokeApiKey(resolver=resolve, api_key_lifecycle=port),  # type: ignore[arg-type]
             AuthnRevokeApiKeyRequestDTO(id=uuid4()),
         ),
+        # An administrator's act is never taken by an agent acting for the administrator.
+        "admin-revoke": (
+            AuthnRevokePrincipalApiKey(resolver=resolve, api_key_lifecycle=port),  # type: ignore[arg-type]
+            AuthnRevokeApiKeyRequestDTO(id=uuid4()),
+        ),
         "logout": (
             AuthnLogout(resolver=resolve, token_lifecycle=port),  # type: ignore[arg-type]
             None,
@@ -92,7 +98,15 @@ def _handlers(port: _Recorder) -> dict[str, tuple[Any, Any]]:
 
 @pytest.mark.parametrize(
     "name",
-    ["issue", "revoke", "logout", "change-password", "switch-tenant", "leave-tenant"],
+    [
+        "issue",
+        "revoke",
+        "admin-revoke",
+        "logout",
+        "change-password",
+        "switch-tenant",
+        "leave-tenant",
+    ],
 )
 async def test_a_delegated_caller_is_refused_before_the_port(name: str) -> None:
     port = _Recorder()

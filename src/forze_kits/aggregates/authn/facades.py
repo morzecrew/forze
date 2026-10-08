@@ -13,6 +13,7 @@ from .handlers import (
     AuthnRefreshTokens,
     AuthnRequestPasswordReset,
     AuthnResetPassword,
+    AuthnRevokePrincipalApiKey,
     DeactivatePrincipalHandler,
 )
 from .operations import AuthnKernelOp
@@ -66,3 +67,10 @@ class AuthnFacade(OperationFacade):
         uc=DeactivatePrincipalHandler,
     )
     """Deactivate-principal (cascaded offboarding) usecase."""
+
+    revoke_principal_api_key = facade_op(
+        AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY,
+        uc=AuthnRevokePrincipalApiKey,
+    )
+    """Revoke-any-principal's-API-key (admin) usecase; present when the registry was built
+    with ``admin_guards``."""

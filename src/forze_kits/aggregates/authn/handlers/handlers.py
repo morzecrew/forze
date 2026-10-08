@@ -26,6 +26,7 @@ from ..dto import (
     AuthnTokenResponseDTO,
 )
 from ._utils import (
+    require_admin_identity,
     require_identity,
     require_own_identity,
     token_response_from_issued_tokens,
@@ -235,3 +236,31 @@ class AuthnRevokeApiKey(Handler[AuthnRevokeApiKeyRequestDTO, None]):
         identity = require_own_identity(self.resolver)
 
         await self.api_key_lifecycle.revoke_api_key(identity, str(args.id))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthnRevokePrincipalApiKey(Handler[AuthnRevokeApiKeyRequestDTO, None]):
+    """Admin: revoke any principal's API key.
+
+    Refuses a caller with no identity (401) or a delegated one (``delegate_denied``). Whether
+    the caller may administer at all is the guards' to decide, which
+    :func:`~forze_kits.aggregates.authn.build_authn_registry` requires before it registers
+    this operation. The key is looked up by id alone, across tenants: API-key accounts are
+    not tenant-scoped.
+    """
+
+    resolver: Callable[[], AuthnIdentity | None]
+    """Callable that resolves the current authenticated identity."""
+
+    api_key_lifecycle: ApiKeyLifecyclePort
+    """API key lifecycle port."""
+
+    # ....................... #
+
+    async def __call__(self, args: AuthnRevokeApiKeyRequestDTO) -> None:
+        require_admin_identity(self.resolver)
+
+        await self.api_key_lifecycle.revoke_principal_api_key(str(args.id))

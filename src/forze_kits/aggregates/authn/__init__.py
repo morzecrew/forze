@@ -30,6 +30,7 @@ from .handlers import (
     AuthnRequestPasswordReset,
     AuthnResetPassword,
     AuthnRevokeApiKey,
+    AuthnRevokePrincipalApiKey,
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "AuthnRequestPasswordReset",
     "AuthnResetPassword",
     "AuthnRevokeApiKey",
+    "AuthnRevokePrincipalApiKey",
     "DeactivatePrincipalHandler",
     "DeactivatePrincipalRequestDTO",
 ]

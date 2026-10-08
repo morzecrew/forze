@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 
 from forze.application.contracts.authn import (
+    ApiKeyLifecycleDepKey,
     AuthnDepKey,
     AuthnResult,
     AuthnSpec,
@@ -27,6 +28,7 @@ from forze.application.contracts.authn.value_objects import (
     RefreshTokenCredentials,
 )
 from forze.application.execution import ExecutionContext
+from forze.application.hooks.authn import AuthnRequired
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.authn import AuthnKernelOp, build_authn_registry
 from forze_kits.aggregates.authn.factories import build_authn_registry as build_registry
@@ -37,6 +39,7 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnRefreshTokens,
     AuthnRequestPasswordReset,
     AuthnResetPassword,
+    AuthnRevokePrincipalApiKey,
     DeactivatePrincipalHandler,
 )
 
@@ -102,6 +105,8 @@ def _mock_ctx(
             return password_reset
         if key is PrincipalDeactivationDepKey:
             return principal_deactivation
+        if key is ApiKeyLifecycleDepKey:
+            return AsyncMock()
         raise AssertionError(f"unexpected key {key!r}")
 
     deps.resolve_configurable = resolve_configurable
@@ -126,12 +131,45 @@ class TestBuildAuthnRegistry:
 
     def test_catalog_has_descriptor_for_every_op(self) -> None:
         spec = _authn_spec()
-        frozen = build_authn_registry(spec).freeze()
+        frozen = build_authn_registry(spec, admin_guards=(AuthnRequired().to_step(),)).freeze()
         catalog = frozen.catalog()
         ns = spec.default_namespace
         assert set(catalog) == {ns.key(op) for op in AuthnKernelOp}
         for entry in catalog.values():
             assert entry.descriptor is not None
+
+    def test_admin_revoke_exists_only_behind_the_apps_guards(self) -> None:
+        # Revoking another principal's key is never registered unguarded, so no generated
+        # surface can reach it before the app has said who may.
+        spec = _authn_spec()
+        ns = spec.default_namespace
+        admin_revoke = ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)
+
+        assert not registry_has_handler(build_authn_registry(spec), admin_revoke)
+
+        # An iterable a filter emptied is truthy as a generator, and still no guard.
+        emptied = (step for step in (AuthnRequired().to_step(),) if False)
+        assert not registry_has_handler(build_authn_registry(spec, admin_guards=emptied), admin_revoke)
+
+        catalog = (
+            build_authn_registry(spec, admin_guards=(AuthnRequired().to_step(),))
+            .freeze()
+            .catalog()
+        )
+
+        # Every admin operation takes the guards, the deactivation too.
+        assert catalog[admin_revoke].requires_authn
+        assert catalog[ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL)].requires_authn
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_factory_returns_handler(self) -> None:
+        spec = _authn_spec()
+        reg = build_authn_registry(spec, admin_guards=(AuthnRequired().to_step(),))
+        factory = handler_at(
+            reg, spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)
+        )
+        handler = factory(_mock_ctx())
+        assert isinstance(handler, AuthnRevokePrincipalApiKey)
 
     def test_self_service_ops_require_authn(self) -> None:
         # Ops that act on the current identity declare AuthnRequired, so the catalog
@@ -144,7 +182,7 @@ class TestBuildAuthnRegistry:
         flagged = {
             op.value
             for op in AuthnKernelOp
-            if catalog[ns.key(op)].requires_authn
+            if ns.key(op) in catalog and catalog[ns.key(op)].requires_authn
         }
 
         assert flagged == {

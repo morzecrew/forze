@@ -177,7 +177,13 @@ the operations authenticate via their request bodies. `/logout` and
 identity. `/deactivate` (`deactivate_principal`) is the exception: it ships
 **unguarded** — bind `AuthnRequired` plus an `AuthzBeforeAuthorize` on that
 operation (the same chain as [above](#enforce-on-operations)) before exposing
-it, or keep it off the router with `include=`.
+it, or keep it off the router with `include=`. Passing that chain as
+`build_authn_registry(AUTH, admin_guards=(...))` binds it for you (drop your own
+binding then, or `freeze()` refuses the duplicate step) and adds
+`DELETE /auth/admin/api-keys/{id}`, which revokes any principal's API key. Both
+are **global**: API-key accounts are not tenant-scoped, so with tenant-scoped
+administrators expose neither, or guard them with a policy only platform
+administrators pass. `AuthnRequired` alone admits every signed-in principal.
 
 ## Self-service password reset
 

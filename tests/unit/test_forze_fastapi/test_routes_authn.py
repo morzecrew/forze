@@ -20,6 +20,7 @@ from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.application.hooks.authn import AuthnRequired
 from forze.base.exceptions import CoreException
 from forze.base.logging import configure_logging
 from forze.base.primitives import StrKeyNamespace
@@ -210,7 +211,23 @@ class TestAuthnRouteSurface:
             assert set(methods) == expected, path
 
     def test_operation_ids_are_registry_keys_verbatim(self) -> None:
-        assert _operation_ids(_build_app()) == {f"main.{op.value}" for op in AuthnKernelOp}
+        assert _operation_ids(_build_app()) == {
+            f"main.{op.value}"
+            for op in AuthnKernelOp
+            if op is not AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY
+        }
+
+    def test_admin_revoke_is_routed_only_behind_the_apps_guards(self) -> None:
+        guarded = build_authn_registry(
+            AUTHN_SPEC, admin_guards=(AuthnRequired().to_step(),)
+        ).freeze()
+        app = _build_app(registry=guarded)
+
+        assert set(app.openapi()["paths"]["/auth/admin/api-keys/{id}"]) == {"delete"}
+        assert "/auth/admin/api-keys/{id}" not in _build_app().openapi()["paths"]
+
+        response = TestClient(app).delete(f"/auth/admin/api-keys/{uuid4()}")
+        assert response.status_code == 401
 
     def test_request_and_response_schemas_come_from_descriptors(self) -> None:
         spec = _build_app().openapi()

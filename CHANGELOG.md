@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An administrator can revoke any principal's API key.** `build_authn_registry(admin_guards=...)` adds `revoke_principal_api_key` (`DELETE /admin/api-keys/{id}`) and binds the guards on `deactivate_principal` too; unguarded it isn't registered. It acts in every tenant. **Breaking** for API-key lifecycle implementers.
+
+- **A revoked API key emits an `api_key_revoked` authn event**, from self-service and admin revocation alike, with the key id and who revoked it. Deactivating a principal still emits only `principal_deactivated`.
+
 - **A hub search can choose how an unasked page counts its total.** `HubSearchSpec(default_search_count="approximate")` (or `"none"`) applies when a request sets no `search_count`, as it does on a `SearchSpec`. The request option still wins and the members' own defaults don't apply; Postgres honours it.
 
 - **A Temporal worker can deliver a cancel to a heartbeating activity within a second.** `temporal_worker_lifecycle_step(max_heartbeat_throttle_interval=...)` caps how long the SDK holds back heartbeats, and a cancel arrives only in a heartbeat's reply; uncapped it waited up to 0.8 × the `heartbeat_timeout`.
@@ -19,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **`AuthnKernelOp` has a member a default registry does not register** (**upgrade note**). An `attach_authn_routes(include=...)` built from the whole enum now fails at startup; name the operations. Passing `admin_guards`, drop your own guard on `deactivate_principal`: a step bound twice fails at `freeze()`.
 
 ### Fixed
 
