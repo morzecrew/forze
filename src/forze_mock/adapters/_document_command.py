@@ -29,7 +29,7 @@ from forze.application.contracts.querying import QueryFilterExpression
 from forze.application.contracts.querying.internal.matching import instant_key
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, Period, advisory_lock_key, utcnow
-from forze.domain.constants import ID_FIELD, REV_FIELD
+from forze.domain.constants import ID_FIELD, LAST_UPDATE_AT_FIELD, REV_FIELD
 from forze_mock.adapters._mvcc import (
     MvccTx,
     StatementLocks,
@@ -920,6 +920,26 @@ class MockDocumentCommandMixin(Generic[R, D, C, U]):
         self._check_rev(current.rev, rev)
 
         updated, diff = current.update(patch, materialized=self.spec.materialized)
+
+        # As the real stores: a sealed field the patch names is written, sealed afresh, though
+        # its value is unchanged, since a key rotation re-encrypts by just such an update.
+        encryption = self.spec.encryption
+        sealed = encryption.encrypted | encryption.searchable if encryption is not None else ()
+        named = {
+            key
+            for key in patch
+            if key in sealed and key not in diff and getattr(updated, key) is not None
+        }
+
+        if named:
+            diff = {**diff, **updated.model_dump(mode="python", include=named)}
+
+            if LAST_UPDATE_AT_FIELD not in diff:
+                diff[LAST_UPDATE_AT_FIELD] = utcnow()
+                updated = updated.model_copy(
+                    update={LAST_UPDATE_AT_FIELD: diff[LAST_UPDATE_AT_FIELD]}
+                )
+
         if diff:
             updated = updated.model_copy(update={"rev": current.rev + 1}, deep=True)
 

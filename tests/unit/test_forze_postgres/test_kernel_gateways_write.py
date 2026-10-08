@@ -459,6 +459,8 @@ async def test_create_and_update_use_dedicated_codecs() -> None:
     # encrypting-codec only); the bare mock would otherwise fabricate it and divert the
     # write off ``encode_persistence_mapping``.
     update_codec.encode_persistence_patch = None
+    update_codec.encode_plain_patch = None
+    update_codec.encrypt_mapping = None
     update_codec.encode_persistence_mapping.return_value = {"name": "after"}
 
     read_codec = MagicMock()

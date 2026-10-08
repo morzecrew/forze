@@ -23,8 +23,9 @@ from forze.application.contracts.querying import (
 )
 from forze.application.contracts.tenancy.mixins import TenancyMixin
 from forze.base.exceptions import exc
-from forze.base.primitives import JsonDict, run_cpu_map
+from forze.base.primitives import JsonDict, run_cpu_map, utcnow
 from forze.base.serialization import ModelCodec, default_model_codec
+from forze.domain.constants import LAST_UPDATE_AT_FIELD
 from forze.domain.models import Document
 
 # ----------------------- #
@@ -466,9 +467,18 @@ class DocumentWriteCodecMixin(Generic[D]):
 
     # ....................... #
 
-    async def _encode_patch_one(self, dto: Any, *, record_id: UUID | None = None) -> JsonDict:
+    async def _encode_patch_one(
+        self, dto: Any, *, record_id: UUID | None = None, seal: bool = True
+    ) -> JsonDict:
+        """Encode an update DTO. With *seal* off an encrypting codec leaves its fields open,
+        for a domain update to merge before :meth:`_seal_written` seals what is written."""
+
         await self._prepare_encode()
         codec = self._patch_codec()
+        encode_plain = getattr(codec, "encode_plain_patch", None)
+
+        if not seal and encode_plain is not None:
+            return encode_plain(dto, exclude={"unset": True})
 
         # Encrypting codecs expose ``encode_persistence_patch`` to thread the target pk
         # into encrypted-field AAD (a partial DTO carries no id). Duck-typed so plain
@@ -483,10 +493,16 @@ class DocumentWriteCodecMixin(Generic[D]):
     # ....................... #
 
     async def _encode_patch_many(
-        self, dtos: Any, *, record_ids: Sequence[UUID] | None = None
+        self, dtos: Any, *, record_ids: Sequence[UUID] | None = None, seal: bool = True
     ) -> list[JsonDict]:
+        """Encode update DTOs; *seal* as in :meth:`_encode_patch_one`."""
+
         await self._prepare_encode()
         codec = self._patch_codec()
+        encode_plain = getattr(codec, "encode_plain_patch", None)
+
+        if not seal and encode_plain is not None:
+            return [encode_plain(dto, exclude={"unset": True}) for dto in dtos]
 
         encode_patch = getattr(codec, "encode_persistence_patch", None)
 
@@ -500,6 +516,54 @@ class DocumentWriteCodecMixin(Generic[D]):
             ]
 
         return codec.encode_persistence_mapping_many(dtos, exclude={"unset": True})
+
+    # ....................... #
+
+    def _sealed_fields(self) -> frozenset[str]:
+        """The fields the patch codec seals, randomized and searchable alike."""
+
+        codec = self._patch_codec()
+
+        return frozenset(getattr(codec, "fields", ()) or ()) | frozenset(
+            getattr(codec, "searchable_fields", ()) or ()
+        )
+
+    # ....................... #
+
+    def _with_resealed(self, after: Any, patch: JsonDict, diff: JsonDict) -> JsonDict:
+        """*diff* with each encrypted field *patch* names, changed or not, unless it is
+        ``None``, which is not sealed.
+
+        Writing an encrypted field seals it again under the current key, and a key rotation
+        re-encrypts by updating a field with the value it holds
+        (:func:`~forze.application.integrations.crypto.maintenance.reencrypt_documents`); an
+        unchanged plaintext must therefore still be written, as a sealed patch always was.
+        """
+
+        sealed = self._sealed_fields()
+        named = {
+            key
+            for key in patch
+            if key in sealed and key not in diff and getattr(after, key) is not None
+        }
+
+        if not named:
+            return diff
+
+        resealed = {**diff, **after.model_dump(mode="python", include=named)}
+        resealed.setdefault(LAST_UPDATE_AT_FIELD, utcnow())
+
+        return resealed
+
+    # ....................... #
+
+    def _seal_written(self, written: JsonDict, *, record_id: UUID) -> JsonDict:
+        """Seal the encrypted fields of what an update writes; *written* itself when the
+        codec encrypts nothing."""
+
+        seal = getattr(self._patch_codec(), "encrypt_mapping", None)
+
+        return seal(written, record_id=record_id) if seal is not None else written
 
 
 # ....................... #

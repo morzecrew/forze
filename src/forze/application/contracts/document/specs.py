@@ -814,14 +814,15 @@ class DocumentSpec(BaseSpec, Generic[R, D, C, U]):
         """Refuse a set-based ``upsert_many`` that would not write what the domain path writes.
 
         A set-based upsert reads no stored row: it inserts each create payload's domain and
-        writes each update as its DTO encodes it, only where that changes the stored row. So
-        it is refused when an update needs the stored row or the domain model: revision
-        history, materialized fields, per-owner write serialization, randomized field
-        encryption (every write looks like a change), a domain with update validators,
-        invariants, domain events, or validators or constraints of its own on any field (an
-        update revalidates the whole model, so one may refuse or rewrite a value), and an
-        update field the domain does not hold plainly (absent, frozen, a model or mapping the
-        update merges into the stored one, or a default derived from the other fields).
+        writes each update as its DTO encodes it, only where that changes the stored row or
+        names a searchable field. So it is refused when an update needs the stored row or the
+        domain model: revision history, materialized fields, per-owner write serialization,
+        randomized field encryption (every write looks like a change), a domain with update
+        validators, invariants, domain events, or validators or constraints of its own on any
+        field (an update revalidates the whole model, so one may refuse or rewrite a value),
+        and an update field the domain does not hold plainly (absent, frozen, a model or
+        mapping the update merges into the stored one, or a default derived from the other
+        fields).
 
         :raises CoreException: ``configuration`` (``set_based_upsert_unsupported``) naming
             what rules it out.

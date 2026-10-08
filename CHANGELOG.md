@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A search page with `limit=0` is empty when it writes or replays a result snapshot.** It returned one hit.
 
+- **An encrypted field of any type can be updated in Postgres, Mongo and Firestore** (**behaviour change**). The patch was sealed before the domain merged it, so an encrypted `int`, mapping or date failed validation; it is now merged open, then sealed. Diffs report encrypted fields open; the mock rewrites a named one.
+
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.
 
 ## [0.11.1] - 2026-10-07

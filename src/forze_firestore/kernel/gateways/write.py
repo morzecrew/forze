@@ -256,9 +256,10 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
                     await self._validate_history((current, rev, update))
 
                 after, diff = current.update(update, materialized=self.read_codec.materialized)
+                diff = self._with_resealed(after, update, diff)
                 # The merge patch reports the update; the whole value of a changed mapping is
                 # what replaces the stored field (:meth:`Document.stored_changes`).
-                written = after.stored_changes(diff)
+                written = self._seal_written(after.stored_changes(diff), record_id=current.id)
 
             else:
                 _, diff = current.touch()
@@ -295,7 +296,7 @@ class FirestoreWriteGateway[D: Document, C: BaseDTO, U: BaseDTO](
         rev: int | None = None,
     ) -> tuple[D, JsonDict]:
         self._require_update_cmd()
-        update_data = await self._encode_patch_one(dto, record_id=pk)
+        update_data = await self._encode_patch_one(dto, record_id=pk, seal=False)
 
         return await self._patch(pk, update_data, rev=rev)
 
