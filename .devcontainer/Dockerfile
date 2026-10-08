@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/devcontainers/python@sha256:3b3c45535947751e9dfcd513ef5bee858d221844f55e278e92d1cd8f5b1f2972
+FROM mcr.microsoft.com/devcontainers/python@sha256:824bd18367c4c8c79f21f195f26f59733d303ceecc77c1a10f301ef315f96b1f
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
