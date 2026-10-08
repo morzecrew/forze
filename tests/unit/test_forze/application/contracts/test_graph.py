@@ -37,6 +37,7 @@ from forze.application.contracts.graph import (
     ShortestPathResult,
     VertexRef,
     normalize_property_filter,
+    property_filter_forms,
     resolve_query_directions,
     validate_graph_module_spec,
     validate_property_filter_keys,
@@ -977,3 +978,18 @@ class TestPropertyFilterHelpers:
         normalized = normalize_property_filter({"ref": ref, "count": 3, "name": "x"})
 
         assert normalized == {"ref": str(ref), "count": 3, "name": "x"}
+
+    def test_a_decimal_filter_matches_either_text_it_may_be_stored_as(self) -> None:
+        """A forze model writes ``0.00000000`` where a plain model (and data written before
+        forze did) holds ``0E-8``; a filter on the value matches both."""
+
+        forms = property_filter_forms(
+            {"zero": Decimal("0E-8"), "big": Decimal("1E+3"), "plain": Decimal("1.5")}
+        )
+
+        assert forms == {
+            "zero": ["0.00000000", "0E-8"],
+            "big": ["1000", "1E+3"],
+            "plain": ["1.5"],
+        }
+        assert property_filter_forms(None) is None

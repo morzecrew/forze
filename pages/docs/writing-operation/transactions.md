@@ -95,8 +95,9 @@ work, [offload it off the event loop](../recipes/offload-cpu-work.md).
 
 !!! note "What `prepare` can and can't do"
 
-    `prepare` runs under the read-only flag, so it cannot acquire a write port
-    (use `self.reader` for reads, `self.writer` only in `apply`). Its reads run
+    `prepare` runs under the read-only flag, so it cannot write: a write port it
+    acquires refuses when used (use `self.reader` for reads, `self.writer` only in
+    `apply`). Its reads run
     *outside* `apply`'s transaction, so there's no read/write atomicity between the
     phases — validate on write in `apply` (an optimistic-concurrency `rev` check).
     `prepare` runs **exactly once** per invocation: if a retry or hedge wrap

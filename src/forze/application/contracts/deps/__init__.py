@@ -20,6 +20,7 @@ from .keys import (
     ConfigurableDepPort,
     ConvenientDeps,
     DepKey,
+    GuardedWritePort,
     SimpleDepPort,
 )
 from .module import DepsModule
@@ -34,6 +35,7 @@ __all__ = [
     "Deps",
     "DepsModule",
     "FallbackReport",
+    "GuardedWritePort",
     "PlainDepsMap",
     "ProviderStore",
     "ResolutionFrame",

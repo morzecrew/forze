@@ -49,9 +49,9 @@ def _root_commit_fn(x: Any) -> Never:
 class OperationKind(StrEnum):
     """Whether an operation reads (``QUERY``) or writes (``COMMAND``).
 
-    The default is ``COMMAND`` (read-write). A ``QUERY`` operation is forbidden from
-    acquiring a command (write) port — enforced when the read-only flag is bound for its
-    duration (see ``InvocationContext.bind_read_only``).
+    The default is ``COMMAND`` (read-write). A ``QUERY`` operation cannot use a command
+    (write) port it acquires — enforced while the read-only flag is bound for its duration
+    (see ``InvocationContext.bind_read_only``).
     """
 
     COMMAND = "command"

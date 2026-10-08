@@ -316,9 +316,9 @@ def test_shortest_path_coerces_max_hops_blocking_injection() -> None:
         )
 
 
-def test_property_predicate_renders_equality_params() -> None:
+def test_property_predicate_renders_one_of_params() -> None:
     assert builders.property_predicate("n", ["name", "age"]) == (
-        "n.`name` = $pf_name AND n.`age` = $pf_age"
+        "n.`name` IN $pf_name AND n.`age` IN $pf_age"
     )
     assert builders.property_predicate("n", []) == ""
 

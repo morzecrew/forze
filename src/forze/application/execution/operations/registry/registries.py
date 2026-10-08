@@ -718,8 +718,8 @@ class FrozenOperationRegistry:
 
         # Build the handler under the read-only flag for a QUERY operation, so a factory
         # that *eagerly* acquires a command (write) port — the common kit pattern,
-        # ``lambda ctx: Handler(port=ctx.document.command(spec))`` — hits the same
-        # write-port guard that a call-time acquisition would. QUERY-ness is a static
+        # ``lambda ctx: Handler(port=ctx.document.command(spec))`` — gets the same
+        # refusing stand-in that a call-time acquisition would. QUERY-ness is a static
         # property of the operation, so this is consistent with the resolve-once cache
         # (a QUERY op's handler is always built read-only). Without it the guard was
         # inert for eager acquisition, since the read-only flag is otherwise only set
