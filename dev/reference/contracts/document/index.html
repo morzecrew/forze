@@ -7333,7 +7333,7 @@ through their usual path.</p>
 <tr>
 <td><code>update_matching</code></td>
 <td><code>update_matching(filters, dto, *, return_new=True)</code></td>
-<td>fast bulk patch by filter — <strong>no per-row <abbr title="Optimistic Concurrency Control">OCC</abbr>, no domain side effects</strong>; <code>return_new=False</code> → rows-updated count</td>
+<td>fast bulk patch by filter — <strong>no per-row <abbr title="Optimistic Concurrency Control">OCC</abbr>, no domain side effects</strong>; refuses a field set to a mapping or model, which only an update merges; not on Firestore; <code>return_new=False</code> → rows-updated count</td>
 </tr>
 <tr>
 <td><code>update_matching_strict</code></td>

@@ -9281,6 +9281,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A Postgres aggregate sorts its groups as every other read sorts rows</strong> (<strong>behaviour change</strong>). A null group comes first ascending and last descending, or where <code>nulls</code> puts it; <code>"ASC"</code> now sorts ascending rather than descending, and an unknown direction is a 400 rather than a descending sort.</p>
 </li>
 <li>
+<p><strong>An update to a mapping or nested-model field keeps the keys it does not name, in Postgres, Mongo and Firestore</strong> (<strong>behaviour change</strong>). The merge patch was stored, so <code>{"k": 2}</code> into <code>{"k": 1, "j": 5}</code> stored <code>{"k": 2}</code>; the field is now written whole. <code>update_matching</code>, which cannot merge, refuses such a field.</p>
+</li>
+<li>
 <p><strong>A search with result snapshots can return projected hits.</strong> <code>project_search</code> and <code>select_search</code> on a snapshot-enabled spec failed in Postgres and Meilisearch, because the snapshot was filled from the projected rows; it now keeps whole records, and only the page returned is projected.</p>
 </li>
 <li>
