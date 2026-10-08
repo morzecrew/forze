@@ -3809,6 +3809,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keep-the-tool-list-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keep the tool list small
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#protect-it-with-api-key-auth" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6391,6 +6402,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#keep-the-tool-list-small" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Keep the tool list small
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#protect-it-with-api-key-auth" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6547,6 +6569,41 @@ see a natural flat contract. A plan-declared
 description, so an agent can set its client timeout instead of retrying a call
 that died of budget exhaustion. For a custom FastMCP server, use
 <code>register_tools(...)</code> instead of <code>build_mcp_server</code>.</p>
+<h2 id="keep-the-tool-list-small">Keep the tool list small<a class="headerlink" href="#keep-the-tool-list-small" title="Permanent link">&para;</a></h2>
+<p>An agent reads every tool's schema on each turn, and a registry exposes more than one
+agent needs. Three options, on both <code>build_mcp_server</code> and <code>register_tools</code>, trim it:</p>
+<div class="highlight"><pre><span></span><code><span class="n">server</span> <span class="o">=</span> <span class="n">build_mcp_server</span><span class="p">(</span>
+    <span class="n">registry</span><span class="p">,</span>
+    <span class="n">ctx_factory</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">get_context</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">,</span>
+    <span class="n">instructions</span><span class="o">=</span><span class="s2">"Order lookups for the support team."</span><span class="p">,</span>
+    <span class="n">operations</span><span class="o">=</span><span class="p">[</span><span class="s2">"orders.list"</span><span class="p">,</span> <span class="s2">"orders.get"</span><span class="p">],</span>  <span class="c1"># only these become tools</span>
+    <span class="n">shared_filter_grammar</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>                <span class="c1"># state the filter grammar once</span>
+    <span class="n">output_schemas</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>                      <span class="c1"># leave result schemas out</span>
+<span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><code>operations</code> is an allowlist. A key the registry does not have, or a command operation
+  without <code>include_writes=True</code>, is refused when the server is built, so a typo never
+  quietly exposes less than you reviewed.</li>
+<li><code>shared_filter_grammar=True</code> takes the <a href="../../reference/query-syntax/">filter grammar</a>,
+  most of a list tool's schema, out of every tool: each <code>filters</code> (and an aggregate's
+  <code>$having</code>) becomes a plain object, and the grammar is added once to the server's
+  instructions and published at <code>forze://filter-grammar</code> (<code>FILTER_GRAMMAR_URI</code>). Calls
+  are validated against the full grammar either way.</li>
+<li><code>output_schemas=False</code> drops each tool's output schema. A call still returns its result
+  as text, but a list or scalar result then carries no structured content, and an object
+  comes back as a plain mapping rather than a typed model.</li>
+</ul>
+<p>Set the server's instructions before the tools are registered: pass <code>instructions=</code> to
+<code>build_mcp_server</code>, or to your own <code>FastMCP</code> before <code>register_tools</code>. Assigning
+<code>server.instructions</code> afterwards replaces the grammar; the tools still point at the
+resource, but a client that reads only the instructions loses it.</p>
+<p>Two cases keep the grammar where it was. If one of your models shares a name with a
+grammar definition (<code>QueryConjunction</code>, say), pydantic qualifies both names and the
+tools keep the full grammar. And a server mounted under a namespace
+(<code>parent.mount(child, namespace=...)</code>) republishes the resource under a namespaced URI,
+while the tool descriptions still name <code>forze://filter-grammar</code>.</p>
 <h2 id="protect-it-with-api-key-auth">Protect it with API-key auth<a class="headerlink" href="#protect-it-with-api-key-auth" title="Permanent link">&para;</a></h2>
 <p>The <abbr title="Model Context Protocol">MCP</abbr> server is a <strong>Resource Server</strong>: it validates an inbound bearer and binds
 the principal — no OAuth flow. The bearer is a forze_identity <strong>API key</strong> the caller

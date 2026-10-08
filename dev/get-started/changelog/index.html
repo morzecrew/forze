@@ -9255,6 +9255,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A bulk upsert can write set-based.</strong> <code>upsert_many(items, return_new=False, set_based=True)</code> inserts the missing rows and patches the stored ones, only where the update changes them, reading nothing back; a Postgres reload of unchanged rows ran about 4× faster. A spec whose updates need the domain model refuses it.</p>
 </li>
+<li>
+<p><strong>An <abbr title="Model Context Protocol">MCP</abbr> server can expose a chosen set of tools, and smaller ones.</strong> <code>register_tools</code> and <code>build_mcp_server</code> take <code>operations=[...]</code>, an allowlist refusing an unknown name; <code>output_schemas=False</code>; and <code>shared_filter_grammar=True</code>, stating the filter grammar once in the instructions, which <code>build_mcp_server</code> now takes.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9300,6 +9303,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>A search page with <code>limit=0</code> is empty when it writes or replays a result snapshot.</strong> It returned one hit.</p>
+</li>
+<li>
+<p><strong>An encrypted field of any type can be updated in Postgres, Mongo and Firestore</strong> (<strong>behaviour change</strong>). The patch was sealed before the domain merged it, so an encrypted <code>int</code>, mapping or date failed validation; it is now merged open, then sealed. Diffs report encrypted fields open; the mock rewrites a named one.</p>
 </li>
 <li>
 <p><strong>The in-memory mock sums <code>Decimal</code> values exactly, as Postgres sums <code>numeric</code>.</strong> An aggregate's <code>$sum</code> over <code>Decimal</code> fields came back as a float, dropping digits a ledger total keeps.</p>
