@@ -69,6 +69,15 @@ def parse_sort_value(
 
     if isinstance(value, Mapping):
         value = cast(Mapping[str, Any], value)
+
+        if extra := value.keys() - {"dir", "nulls"}:
+            _raise_invalid_sort(
+                f"Unknown sort spec key {', '.join(sorted(map(str, extra)))}{where}: a sort spec takes "
+                "dir and nulls.",
+                client_facing=client_facing,
+                code="invalid_sort_value",
+            )
+
         direction = str(value.get("dir", "")).lower()
         raw_nulls = value.get("nulls")
         nulls = str(raw_nulls).lower() if raw_nulls is not None else None

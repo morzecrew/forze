@@ -298,6 +298,9 @@ class ParsedAggregates:
 # ....................... #
 
 
+_AGGREGATES_KEYS = frozenset({"$groups", "$computed", "$having"})
+
+
 class AggregatesExpressionParser:
     """Parser for :class:`~forze.application.contracts.querying.AggregatesExpression`."""
 
@@ -321,6 +324,13 @@ class AggregatesExpressionParser:
         """
 
         parser = filter_parser or _DEFAULT_FILTER_PARSER
+
+        # Dropped, a mistyped ``$having`` would return every group.
+        if unknown := set(expr) - _AGGREGATES_KEYS:
+            raise exc.precondition(
+                f"Unknown aggregates key {', '.join(sorted(map(str, unknown)))}: an "
+                "aggregates expression takes $groups, $computed and $having",
+            )
 
         raw_computed_obj: object = expr.get("$computed", {})
 

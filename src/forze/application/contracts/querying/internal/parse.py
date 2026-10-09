@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any, cast, get_args
 
 import attrs
@@ -94,6 +94,20 @@ def _operand_list(value: Any) -> list[Any]:
 _COMBINATOR_KEYS = frozenset({"$and", "$or", "$not"})
 _CONSTRAINT_KEYS = frozenset({"$values", "$fields"})
 
+
+def _named(keys: Iterable[object]) -> str:
+    return ", ".join(sorted(map(str, keys)))
+
+
+def _field_map(value: Any, key: str) -> Mapping[Any, Any]:
+    """*value* as the field map *key* holds, refused when it is not one."""
+
+    if not isinstance(value, Mapping):
+        raise exc.precondition(f"{key} must be an object mapping field paths to constraints")
+
+    return value  # pyright: ignore[reportUnknownVariableType]
+
+
 # ....................... #
 
 
@@ -154,11 +168,28 @@ class QueryFilterExpressionParser:
 
     def _parse(self, expr: QueryFilterExpression, ctx: _ParseCtx) -> QueryExpr:  # type: ignore[valid-type]
         # sourcery skip: extract-duplicate-method, inline-immediately-returned-variable
+        if not isinstance(expr, Mapping):
+            raise exc.precondition("A filter expression must be an object")
+
         keys = expr.keys()  # type: ignore[attr-defined]
+
+        # A key the parser does not read would otherwise be dropped, and the filter it was
+        # meant to narrow would match more than asked.
+        if unknown := keys - _COMBINATOR_KEYS - _CONSTRAINT_KEYS:
+            raise exc.precondition(
+                f"Unknown filter key {_named(unknown)}: a filter expression takes $values "
+                "and/or $fields, or one of $and, $or, $not",
+            )
 
         if _COMBINATOR_KEYS & keys and _CONSTRAINT_KEYS & keys:
             raise exc.precondition(
                 "Filter expression cannot mix $and/$or/$not with $values/$fields",
+            )
+
+        if len(combinators := _COMBINATOR_KEYS & keys) > 1:
+            raise exc.precondition(
+                f"Filter expression has {_named(combinators)}: one of $and, $or, $not per "
+                "object, nested for more",
             )
 
         if is_query_constraint(expr):
@@ -190,7 +221,7 @@ class QueryFilterExpressionParser:
 
             return QueryNot(self._parse(child, ctx))  # type: ignore[arg-type]
 
-        raise exc.precondition(f"Invalid filter expression: {expr!r}")
+        raise exc.precondition("A filter expression cannot be empty")
 
     # ....................... #
 
@@ -251,7 +282,7 @@ class QueryFilterExpressionParser:
         nodes: list[QueryExpr] = []
 
         if "$values" in expr:
-            values_map = expr["$values"]
+            values_map = _field_map(expr["$values"], "$values")
 
             if not values_map:
                 raise exc.precondition("Empty $values map is not allowed")
@@ -260,7 +291,7 @@ class QueryFilterExpressionParser:
             nodes.extend(self._parse_values_map(values_map, ctx))
 
         if "$fields" in expr:
-            fields_map = expr["$fields"]
+            fields_map = _field_map(expr["$fields"], "$fields")
 
             if not fields_map:
                 raise exc.precondition("Empty $fields map is not allowed")
@@ -359,6 +390,8 @@ class QueryFilterExpressionParser:
         raw: QueryValueMapValue,
         ctx: _ParseCtx,
     ) -> list[QueryExpr]:
+        self._refuse_mixed_quantifier(field, raw)
+
         if is_query_element_quantifier(raw):
             qraw = cast(dict[str, Any], raw)
             return [self._parse_element_quantifier(field, qraw, ctx)]
@@ -392,6 +425,16 @@ class QueryFilterExpressionParser:
             return field_nodes
 
         raise exc.precondition(f"Invalid $values map entry: {raw!r}")
+
+    # ....................... #
+
+    @staticmethod
+    def _refuse_mixed_quantifier(field: str, raw: object) -> None:
+        if isinstance(raw, dict) and len(raw) > 1 and _QUANTIFIER_OPS & raw.keys():  # pyright: ignore[reportUnknownArgumentType]
+            raise exc.precondition(
+                f"Field {field}: an element quantifier cannot be combined with other "
+                f"operators ({_named(raw)})",  # pyright: ignore[reportUnknownArgumentType]
+            )
 
     # ....................... #
 
@@ -429,7 +472,12 @@ class QueryFilterExpressionParser:
             raise exc.precondition(f"Invalid element constraint: {raw!r}")
 
         if "$values" in raw:
-            values_map = raw["$values"]  # type: ignore[typeddict-item]
+            if extra := raw.keys() - {"$values"}:
+                raise exc.precondition(
+                    f"Unknown key {_named(extra)} beside $values in an element constraint",
+                )
+
+            values_map = _field_map(raw["$values"], "$values")  # type: ignore[typeddict-item]
 
             if not values_map:
                 raise exc.precondition("Empty $values map in element constraint")
@@ -489,6 +537,8 @@ class QueryFilterExpressionParser:
         raw: QueryValueMapValue,
         ctx: _ParseCtx,
     ) -> list[QueryExpr]:
+        self._refuse_mixed_quantifier(rel_field, raw)
+
         if is_query_element_quantifier(raw):
             # A nested quantifier over a sub-array of the object element
             # (e.g. ``orders.$any.items.$any``). Capability-gated per backend.

@@ -29,7 +29,7 @@ class TestEmptyMappingToNone:
 
     def test_aggregated_bare_empty_filter_becomes_none(self):
         dto = AggregatedListRequestDTO.model_validate(
-            {"aggregates": {"$count": True}, "filters": {}, "sorts": {}},
+            {"aggregates": {"$computed": {"n": {"$count": None}}}, "filters": {}, "sorts": {}},
         )
 
         assert dto.filters is None

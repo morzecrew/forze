@@ -2,13 +2,11 @@
 
 from uuid import UUID
 
-from forze.application.contracts.querying import (
-    QueryFilterExpression,
-    QuerySortExpression,
-)
+from forze.application.contracts.querying import QuerySortExpression
 from forze.domain.models import BaseDTO
 from forze_kits.domain.stored_file import StoredFileRead
 from forze_kits.dto.paginated import Pagination
+from forze_kits.dto.querying import OptionalFilterExpression
 
 # ----------------------- #
 
@@ -67,7 +65,7 @@ class ListStoredFilesRequestDTO(Pagination):
     include_pending: bool = True
     """When ``False``, exclude ``pending`` and ``failed`` rows."""
 
-    filters: QueryFilterExpression | None = None  # type: ignore[valid-type]
+    filters: OptionalFilterExpression = None
     """Additional filter expression merged with kit defaults."""
 
     sorts: QuerySortExpression | None = None

@@ -12,8 +12,10 @@ authorization scope filters.
 ## Filter expressions
 
 A filter expression is exactly one of these shapes. **Combinators
-(`$and`/`$or`/`$not`) cannot share a dict with constraints (`$values`/`$fields`)** —
-that raises at parse time.
+(`$and`/`$or`/`$not`) cannot share a dict with constraints (`$values`/`$fields`)**, nor
+with each other — that raises at parse time. So does a key none of these shapes defines:
+`{"$values": {…}, "$valeus": {…}}` is refused, naming `$valeus`, rather than run without
+the constraint it meant to add.
 
 | Form | Shape |
 |------|-------|
@@ -286,9 +288,19 @@ always use the defaults.
 | `max_pattern_length` | 256 | each `$like` / `$ilike` / `$regex` pattern |
 | `max_pattern_or_branches` | 32 | patterns when a text operand is a sequence |
 
-A violation — or an empty operator map, an unknown operator, a type mismatch, or a
+A violation — or an empty operator map, an unknown operator or key, a type mismatch, or a
 regex with unsafe nesting/repetition — raises a `precondition` `CoreException`
-(HTTP 400; the caller supplied a bad query) before the query runs.
+(HTTP 400; the caller supplied a bad query) before the query runs. A request DTO built on
+these types (the kit's list, search, aggregate and stored-file requests) refuses it at its
+boundary; over HTTP that is a 422 whose message names the key, while an MCP tool reports
+only the field it rejected. A filter the types cannot express but the parser accepts (a
+nested element quantifier) is refused there with pydantic's own errors.
+
+The rule holds for every expression: an unknown key in a sort spec (`{"dir", "nulls"}`), in
+an aggregates expression (`$groups`, `$computed`, `$having`, or a metric's `field`,
+`filter`, `p`) or in a request's search options (`snapshot` options and highlight options
+included) is refused, never dropped. A single-index search request that names a hub or
+federated key (`members`, `member_weights`) is refused at the request too.
 
 A backend can cap a filter lower than any spec's limits. On Firestore an `$in` takes
 at most 30 values, and a filter at most 30 disjunctions once expanded: an `$in`

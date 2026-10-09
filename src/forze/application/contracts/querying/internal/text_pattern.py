@@ -37,8 +37,10 @@ def validate_text_pattern(
 
     if isinstance(value, str):
         patterns: tuple[str, ...] = (value,)
+    elif isinstance(value, list | tuple | set | frozenset):  # pyright: ignore[reportUnnecessaryIsInstance]
+        patterns = tuple(value)  # pyright: ignore[reportUnknownArgumentType]
     else:
-        patterns = tuple(value)
+        raise exc.precondition(f"{op} operand must be a pattern string or a list of them")
 
     if not patterns:
         raise exc.precondition(f"{op} operand requires at least one pattern")

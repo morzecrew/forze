@@ -1070,11 +1070,11 @@ class TestQueryFilterExpressionParser:
 
     # Validation errors
     def test_parse_invalid_expression_raises(self) -> None:
-        with pytest.raises(CoreException, match="Invalid filter expression"):
+        with pytest.raises(CoreException, match="cannot be empty"):
             QueryFilterExpressionParser.parse({})
 
     def test_parse_unknown_key_raises(self) -> None:
-        with pytest.raises(CoreException, match="Invalid filter expression"):
+        with pytest.raises(CoreException, match="Unknown filter key \\$unknown"):
             QueryFilterExpressionParser.parse({"$unknown": []})
 
     def test_parse_empty_field_map_raises(self) -> None:
