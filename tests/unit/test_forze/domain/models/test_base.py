@@ -66,3 +66,50 @@ def test_a_decimal_with_a_huge_exponent_stays_scientific() -> None:
     # An exponent of 100 either way is still written out.
     assert Amount(value=Decimal("1E+100")).model_dump(mode="json") == {"value": "1" + "0" * 100}
     assert Amount(value=Decimal("1E-100")).model_dump(mode="json") == {"value": "0." + "0" * 99 + "1"}
+
+
+_SETS_SCRIPT = """
+from forze.domain.models import BaseDTO
+from forze.base.serialization.pydantic import pydantic_model_hash
+
+class Tags(BaseDTO):
+    s: set[str]
+    f: frozenset[str]
+    m: set[object]
+
+words = {"alpha", "beta", "gamma", "delta", "echo", "foxtrot"}
+tags = Tags(s=words, f=frozenset(words), m={1, "a", 2.5, "b"})
+print(tags.model_dump_json(), pydantic_model_hash(tags))
+"""
+
+
+def test_a_set_is_written_in_one_order_in_every_process() -> None:
+    """A set, a frozenset and a set of mixed types dump to the same JSON and hash in any
+    interpreter: string hashing is seeded per process, so iteration order is not an order."""
+
+    import os
+    import subprocess
+    import sys
+
+    outputs = {
+        seed: subprocess.run(
+            [sys.executable, "-c", _SETS_SCRIPT],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for seed in ("0", "1", "7", "12345")
+    }
+
+    assert len(set(outputs.values())) == 1, outputs
+
+
+def test_a_set_of_one_type_is_written_sorted() -> None:
+    class Numbers(BaseDTO):
+        s: set[int]
+        f: frozenset[str]
+
+    dumped = Numbers(s={10, 2, 1}, f=frozenset({"b", "a"})).model_dump(mode="json")
+
+    assert dumped == {"s": [1, 2, 10], "f": ["a", "b"]}

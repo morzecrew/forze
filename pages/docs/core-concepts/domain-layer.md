@@ -49,6 +49,17 @@ fields so you don't redefine identity and versioning every time:
 | `created_at` | `datetime` | Creation time (frozen) |
 | `last_update_at` | `datetime` | Last write time |
 
+!!! note "How a model writes itself in JSON"
+
+    Every forze model (`Document`, `BaseDTO`, `ReadDocument`) writes a `Decimal` field in
+    fixed point (`0.00000000`, not `0E-8`); past an exponent of 100 either way it keeps
+    scientific form, so a huge exponent cannot expand. A `set` or `frozenset` field is
+    written as a list in one order in every process: sorted when its items compare, and by
+    each item's canonical JSON text when they do not (a set of mixed types). Lists and
+    tuples keep their order. These apply to fields typed as such; a value inside an `Any`
+    or `dict[str, Any]` field, or inside a plain pydantic model, is written as pydantic
+    writes it.
+
 !!! note "Aggregates that emit events"
 
     Compose `AggregateRoot` alongside `Document` —

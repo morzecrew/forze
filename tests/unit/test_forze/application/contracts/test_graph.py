@@ -996,7 +996,8 @@ class TestPropertyFilterHelpers:
 
     def test_a_filter_form_is_what_a_forze_model_stores(self) -> None:
         """Whatever the value's shape, one of its forms is the text a forze model's JSON
-        dump writes for it — a set sorted, its Decimals as the set encoder leaves them."""
+        dump writes for it — a set in its one order (mixed types included), its Decimals as
+        the set encoder leaves them."""
 
         from forze.domain.models import BaseDTO
 
@@ -1012,11 +1013,8 @@ class TestPropertyFilterHelpers:
             tags={Decimal("1E+3"), Decimal("0E-8")},
             mixed={1, "a"},
         )
-        stored = props.model_dump(mode="json", exclude={"mixed"})
+        stored = props.model_dump(mode="json")
         forms = property_filter_forms(props.model_dump(mode="python")) or {}
 
         for key, value in stored.items():
             assert value in forms[key], (key, value, forms[key])
-
-        # A set that cannot be sorted keeps the form pydantic gives it, rather than failing.
-        assert sorted(map(str, forms["mixed"][0])) == ["1", "a"]
