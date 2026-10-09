@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An administrator can list any principal's API keys**, to find one to revoke. `list_principal_api_keys` (`GET /admin/principals/{id}/api-keys`) returns the non-secret descriptors, revoked keys included, behind `admin_guards` only, and in every tenant. **Breaking** for API-key lifecycle implementers.
 
-- **`admin_guards` must include a step that can authorize.** Guards made only of `AuthnRequired` and `TenantRequired` are refused when `build_authn_registry` runs; add `AuthzBeforeAuthorize` or a step of your own.
+- **`admin_guards` must include a step that declares its permission keys.** Unless one implements `permission_keys()`, as `AuthzBeforeAuthorize` does, `build_authn_registry` refuses them; `trust_admin_guards=True` skips the check.
 
 - **A revoked API key emits an `api_key_revoked` authn event**, from self-service and admin revocation alike, with the key id and who revoked it. The principal-deactivation cascade, which also revokes keys, does not emit it.
 
@@ -29,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`/deactivate` answers 404 after upgrading: pass `admin_guards`** (**Breaking**). `deactivate_principal` is registered only behind them; guards an app bound on it itself leave it absent, so pass them as `admin_guards` instead (bound twice, a step fails at `freeze()`).
+- **`/deactivate` answers 404 after upgrading: pass `admin_guards`** (**Breaking**). `deactivate_principal` is registered only behind them, so guards an app bound on the operation itself leave it absent; pass them as `admin_guards` instead (bound twice, a step fails at `freeze()`).
 
-- **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). An `include=` built from the whole enum fails at startup without `admin_guards`; with them, MCP's default read-only tools gain `list_principal_api_keys` (keep it off with `operations=`).
+- **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). An `include=` built from the whole enum fails at startup without `admin_guards`; with them, MCP's default read-only tools gain `list_principal_api_keys`.
 
 - **A query operation may hold a write port it never uses** (**behaviour change**). A handler built with a command port failed to build under `as_query()`; it now gets a stand-in that refuses when used, so a read service carrying write ports can be a query. A write in a query is still refused.
 

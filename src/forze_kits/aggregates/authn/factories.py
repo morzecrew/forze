@@ -58,21 +58,11 @@ from .operations import AuthnKernelOp
 # ----------------------- #
 
 
-def _from_forze(module: str | None) -> bool:
-    package = (module or "").partition(".")[0]
+def _declares_authorization(step: BeforeStep) -> bool:
+    """Whether *step* declares the permission keys it enforces (``DeclaresAuthz``).
 
-    return package == "forze" or package.startswith("forze_")
-
-
-def _can_authorize(step: BeforeStep) -> bool:
-    """Whether *step* may decide who is allowed, whatever its id.
-
-    A check against the common mistakes, not a security boundary. A step declaring
-    authorization (``DeclaresAuthz``) can; so can an app's own, which Forze cannot see into.
-    Any other step Forze ships (``AuthnRequired``, ``TenantRequired``) only requires an
-    identity, so it admits everyone who has one, and so does a ``functools.partial``, a
-    ``__wrapped__`` wrapper or an app subclass of one. A function is judged by the module
-    it is defined in, since its body cannot be seen. A step Forze adds later fails closed.
+    Judged on the factory a ``functools.partial`` or ``__wrapped__`` wrapper stands for, so
+    wrapping an ``AuthzBeforeAuthorize`` keeps what it declares.
     """
 
     factory: Any = inspect.unwrap(step.factory)
@@ -83,18 +73,7 @@ def _can_authorize(step: BeforeStep) -> bool:
     if isinstance(factory, types.MethodType):
         factory = factory.__self__
 
-    if isinstance(factory, DeclaresAuthz):
-        return True
-
-    if isinstance(factory, types.FunctionType | types.BuiltinFunctionType):
-        return not _from_forze(factory.__module__)
-
-    # Protocols (``BeforeFactory``) are what an app's step implements, not what it is.
-    return not any(
-        _from_forze(cls.__module__)
-        for cls in type(factory).__mro__
-        if not getattr(cls, "_is_protocol", False)
-    )
+    return isinstance(factory, DeclaresAuthz)
 
 
 # ....................... #
@@ -106,6 +85,7 @@ def build_authn_registry(
     ns: StrKeyNamespace | None = None,
     reset_events: OutboxSpec[Any] | None = None,
     admin_guards: Iterable[BeforeStep] = (),
+    trust_admin_guards: bool = False,
 ) -> OperationRegistry:
     """Build authn operation registry.
 
@@ -119,30 +99,37 @@ def build_authn_registry(
         requesting a reset mints a token nobody receives.
     :param admin_guards: Before-steps that decide who may act on *another* principal,
         typically ``AuthnRequired`` plus an ``AuthzBeforeAuthorize``; who that is is the
-        app's authorization model, so Forze ships none. Guards none of which can authorize
-        are refused (``configuration``): ``AuthnRequired`` and ``TenantRequired`` admit
-        every signed-in principal or tenant member. Include an authorization step,
-        ``AuthzBeforeAuthorize`` or the app's own. This catches the common mistakes and is
-        not a security boundary: a step whose class comes from a ``forze`` or ``forze_*``
-        package, wrapped or subclassed, counts only if it declares authorization, and a
-        plain function counts as the app's. Given, they register the operations that act
+        app's authorization model, so Forze ships none. At least one must declare the
+        permission keys it enforces (``permission_keys()``, the ``DeclaresAuthz`` marker),
+        as ``AuthzBeforeAuthorize`` does, or the build is refused (``configuration``):
+        ``AuthnRequired``, ``TenantRequired`` or a logging step admit every signed-in
+        principal. An app's own step that declares its keys counts, and they show in the
+        catalog and MCP tool descriptions; a ``functools.partial`` or ``__wrapped__``
+        wrapper keeps what it wraps declares. Given, they register the operations that act
         on another principal, ``deactivate_principal``, ``list_principal_api_keys`` and
         ``revoke_principal_api_key``, behind them; without them none is registered, so no
         generated route or tool can reach one unguarded. The list is a query, so the
         guards run read-only there: one that writes fails it. All act globally
         (credential accounts are not tenant-scoped), so do not grant them to tenant-scoped
         administrators.
+    :param trust_admin_guards: Skip that check, for a guard that authorizes without declaring
+        its keys; the app then answers for ``admin_guards`` admitting only administrators.
     """
 
     ns = ns or spec.default_namespace
     # A generator is truthy even when it yields nothing: count the steps, not the object.
     admin_guards = tuple(admin_guards)
 
-    if admin_guards and not any(_can_authorize(step) for step in admin_guards):
+    if (
+        admin_guards
+        and not trust_admin_guards
+        and not any(_declares_authorization(step) for step in admin_guards)
+    ):
         raise exc.configuration(
-            "admin_guards authorize nothing: AuthnRequired and TenantRequired admit every "
-            "signed-in principal or tenant member to act on any principal. Add an "
-            "authorization step, such as AuthzBeforeAuthorize or the app's own.",
+            "admin_guards declare no authorization: without one, every signed-in principal "
+            "can act on any principal. Add a step that declares its permission keys "
+            "(permission_keys()), such as AuthzBeforeAuthorize or the app's own, or pass "
+            "trust_admin_guards=True if one of the guards authorizes without declaring it.",
             code="admin_guards_unauthorized",
         )
 

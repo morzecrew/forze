@@ -180,9 +180,10 @@ plus an `AuthzBeforeAuthorize`, the same chain as [above](#enforce-on-operations
 which lists any principal's API keys, and `DELETE /auth/admin/api-keys/{id}`, which
 revokes one. Without `admin_guards` none is registered. All are **global**: credential accounts are not tenant-scoped, so with tenant-scoped
 administrators expose none, or guard them with a policy only platform
-administrators pass. `AuthnRequired` and `TenantRequired` admit every signed-in
-principal or tenant member, so `admin_guards` with no step that can authorize — an
-`AuthzBeforeAuthorize` or one of your own — are refused when the registry is built.
+administrators pass. At least one guard must declare its permission keys
+(`permission_keys()`), as `AuthzBeforeAuthorize` does, or the registry is refused when
+built; `trust_admin_guards=True` skips the check for a guard that authorizes without
+declaring it.
 
 ## Self-service password reset
 

@@ -56,7 +56,7 @@ from .registry_helpers import handler_at, registry_has_handler
 
 
 class _AppAuthorization:
-    """An app's own authorization step: the kind of guard Forze cannot recognise."""
+    """An app's own authorization step, declaring the permission it enforces."""
 
     def __call__(self, ctx: object) -> object:
         async def _allow(args: object) -> None:
@@ -64,11 +64,12 @@ class _AppAuthorization:
 
         return _allow
 
+    def permission_keys(self) -> tuple[str, ...]:
+        return ("principals:admin",)
 
-class _ForzeShippedStep:
-    """Stands for a before-step factory Forze itself ships."""
 
-    __module__ = "forze_kits.aggregates.example"
+class _AppStep(BeforeFactory):
+    """An app's own step that declares no permission: logging, rate limiting and the like."""
 
     def __call__(self, ctx: object) -> object:
         return _AppAuthorization()(ctx)
@@ -76,23 +77,6 @@ class _ForzeShippedStep:
 
 class _AppAuthn(AuthnRequired):  # type: ignore[misc]
     """An app's subclass of a Forze step that still only authenticates."""
-
-
-class _AppTenant(TenantRequired):  # type: ignore[misc]
-    """An app's subclass of a Forze step that still only requires a tenant."""
-
-
-class _AppGuard(BeforeFactory):
-    """An app's own step written against Forze's ``BeforeFactory`` protocol."""
-
-    def __call__(self, ctx: object) -> object:
-        return _AppAuthorization()(ctx)
-
-
-class _LookalikeAppStep(_AppAuthorization):
-    """An app's own step in a package whose name merely starts with ``forze``."""
-
-    __module__ = "forzeful_app.guards"
 
 
 class _GuardedFn:
@@ -243,6 +227,7 @@ class TestBuildAuthnRegistry:
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
         assert "every signed-in principal" in str(caught.value)
+        assert "trust_admin_guards" in str(caught.value)
 
     @pytest.mark.parametrize(
         "guards",
@@ -252,11 +237,17 @@ class TestBuildAuthnRegistry:
                 id="authn+tenant",
             ),
             pytest.param(lambda: (TenantRequired().to_step(step_id="t"),), id="tenant"),
-            # A step Forze ships that authorizes nothing, wherever under ``forze*`` it lives.
+            # An app's own step authorizes only if it says what it enforces.
             pytest.param(
-                lambda: (BeforeStep(id="kit", factory=_ForzeShippedStep()),), id="forze-kit"
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="log", factory=_AppStep())),
+                id="authn+app-logging",
             ),
-            # Wrapped or subclassed, a Forze step still only authenticates or scopes.
+            pytest.param(lambda: (BeforeStep(id="app", factory=_AppStep()),), id="app-undeclared"),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="f", factory=lambda ctx: None)),
+                id="authn+app-fn",
+            ),
+            # Wrapped or subclassed, a step that declares nothing still declares nothing.
             pytest.param(
                 lambda: (
                     AuthnRequired().to_step(),
@@ -265,54 +256,23 @@ class TestBuildAuthnRegistry:
                 id="partial-tenant",
             ),
             pytest.param(
-                lambda: (
-                    BeforeStep(
-                        id="p",
-                        factory=functools.partial(functools.partial(AuthnRequired())),
-                    ),
-                ),
-                id="partial-of-partial",
-            ),
-            pytest.param(
                 lambda: (BeforeStep(id="w", factory=_GuardedFn(TenantRequired())),),
                 id="wrapped-tenant",
             ),
             pytest.param(lambda: (_AppAuthn().to_step(),), id="app-subclass-authn"),
-            pytest.param(
-                lambda: (AuthnRequired().to_step(), _AppTenant().to_step(step_id="t")),
-                id="app-subclass-tenant",
-            ),
         ],
     )
-    def test_guards_that_authorize_nothing_are_refused(self, guards: Any) -> None:
+    def test_guards_that_declare_no_authorization_are_refused(self, guards: Any) -> None:
         with pytest.raises(CoreException) as caught:
             build_authn_registry(_authn_spec(), admin_guards=guards())
 
         assert caught.value.kind is ExceptionKind.CONFIGURATION
-        assert "authorize nothing" in str(caught.value)
+        assert caught.value.code == "admin_guards_unauthorized"
+        assert "permission_keys()" in str(caught.value)
 
     @pytest.mark.parametrize(
         "guards",
         [
-            pytest.param(
-                lambda: (BeforeStep(id="app.admin", factory=_AppAuthorization()),), id="app"
-            ),
-            pytest.param(
-                lambda: (BeforeStep(id="app.admin", factory=lambda ctx: None),), id="app-fn"
-            ),
-            # ``forze`` and ``forze_*`` are Forze's packages; ``forzeful_app`` is not.
-            pytest.param(
-                lambda: (BeforeStep(id="app.admin", factory=_LookalikeAppStep()),),
-                id="forze-lookalike-package",
-            ),
-            # Implementing Forze's protocol does not make a step Forze's.
-            pytest.param(
-                lambda: (BeforeStep(id="app.admin", factory=_AppGuard()),), id="app-protocol"
-            ),
-            pytest.param(
-                lambda: (BeforeStep(id="app.admin", factory=functools.partial(_AppAuthorization())),),
-                id="partial-app",
-            ),
             pytest.param(lambda: (AuthnRequired().to_step(), _authorize().to_step()), id="authn+authz"),
             pytest.param(
                 lambda: (
@@ -322,13 +282,58 @@ class TestBuildAuthnRegistry:
                 ),
                 id="authn+tenant+authz",
             ),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="a", factory=_AppAuthorization())),
+                id="authn+app-declared",
+            ),
+            # Wrapping keeps what the wrapped step declares.
+            pytest.param(
+                lambda: (
+                    AuthnRequired().to_step(),
+                    BeforeStep(id="p", factory=functools.partial(functools.partial(_authorize()))),
+                ),
+                id="partial-of-partial-authz",
+            ),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="w", factory=_GuardedFn(_authorize()))),
+                id="wrapped-authz",
+            ),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="m", factory=_authorize().__call__)),
+                id="bound-method-authz",
+            ),
         ],
     )
-    def test_a_step_that_can_authorize_guards_it(self, guards: Any) -> None:
+    def test_a_step_that_declares_authorization_guards_it(self, guards: Any) -> None:
         spec = _authn_spec()
         catalog = build_authn_registry(spec, admin_guards=guards()).freeze().catalog()
 
         assert spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY) in catalog
+
+    def test_an_app_step_shows_the_keys_it_declares(self) -> None:
+        spec = _authn_spec()
+        catalog = build_authn_registry(spec, admin_guards=_admin_guards()).freeze().catalog()
+
+        entry = catalog[spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)]
+        assert entry.required_permissions == ("principals:admin",)
+
+    @pytest.mark.parametrize(
+        "guards",
+        [
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="f", factory=lambda ctx: None)),
+                id="authn+opaque",
+            ),
+            pytest.param(lambda: (TenantRequired().to_step(step_id="t"),), id="tenant"),
+        ],
+    )
+    def test_an_app_that_trusts_its_guards_skips_the_check(self, guards: Any) -> None:
+        spec = _authn_spec()
+        registry = build_authn_registry(spec, admin_guards=guards(), trust_admin_guards=True)
+
+        assert registry_has_handler(
+            registry, spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)
+        )
 
     @pytest.mark.asyncio
     async def test_admin_revoke_factory_returns_handler(self) -> None:

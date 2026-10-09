@@ -183,11 +183,22 @@ async def _allow(args: Any) -> None:
     _ = args
 
 
+class _AdminCheck:
+    """An app's own authorization step, declaring the permission it enforces (and here
+    allowing everyone)."""
+
+    def __call__(self, ctx: object) -> Any:
+        return _allow
+
+    def permission_keys(self) -> tuple[str, ...]:
+        return ("principals:admin",)
+
+
 def _guarded(*, allow_anonymous: bool = False) -> FrozenOperationRegistry:
     """The authn registry with its admin operations, behind an app's own step (and
     ``AuthnRequired`` unless *allow_anonymous*)."""
 
-    app_step = BeforeStep(id="app.admin", factory=lambda ctx: _allow)
+    app_step = BeforeStep(id="app.admin", factory=_AdminCheck())
     guards = (app_step,) if allow_anonymous else (AuthnRequired().to_step(), app_step)
 
     return build_authn_registry(AUTHN_SPEC, admin_guards=guards).freeze()

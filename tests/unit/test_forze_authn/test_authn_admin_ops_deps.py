@@ -73,7 +73,9 @@ async def test_an_admin_lists_another_principals_keys_as_a_query() -> None:
     )().merge(Deps.routed({DocumentQueryDepKey: dict(routes), DocumentCommandDepKey: dict(routes)}))
     ctx = context_from_deps(deps)
     registry = build_authn_registry(
-        SPEC, admin_guards=(BeforeStep(id="app.admin", factory=lambda ctx: _allow),)
+        SPEC,
+        admin_guards=(BeforeStep(id="app.admin", factory=lambda ctx: _allow),),
+        trust_admin_guards=True,
     ).freeze()
     op = SPEC.default_namespace.key(AuthnKernelOp.LIST_PRINCIPAL_API_KEYS)
 

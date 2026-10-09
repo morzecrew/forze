@@ -306,13 +306,13 @@ an empty list for a principal with none) and revokes one with `DELETE /admin/api
 is a 404). They exist only when the registry is built with `admin_guards`, the steps that
 decide who may act on another principal; they run behind them, and so does
 `deactivate_principal`, which without them is not registered either. One guard set gates
-all three. `AuthnRequired` and `TenantRequired` let every signed-in principal or tenant
-member through, so guards with no step that can authorize are refused when the registry is
-built (`admin_guards_unauthorized`): include `AuthzBeforeAuthorize` or a step of your own.
-This catches the common mistakes; it is not a security boundary. A step whose class
-comes from a `forze` or `forze_*` package (a subclass, `functools.partial` or `__wrapped__`
-wrapper of one included) counts only if it declares authorization, and any other counts as
-yours; a plain function or lambda counts as yours, since its body cannot be seen. If you
+all three. At least one guard must declare the permission keys it enforces
+(`permission_keys()`), as `AuthzBeforeAuthorize` does, or the registry is refused when
+built (`admin_guards_unauthorized`): `AuthnRequired`, `TenantRequired` or a logging step
+let every signed-in principal through. A step of your own counts once it implements
+`permission_keys()`, and its keys then show in the catalog and in MCP tool descriptions; a
+`functools.partial` or `__wrapped__` wrapper counts as what it wraps. If one of your guards
+authorizes without declaring it, pass `trust_admin_guards=True` and answer for it. If you
 bound your own guards on `deactivate_principal`, pass them as `admin_guards` instead: the
 same step bound twice fails at `freeze()` with `Step ID … is not unique`.
 
