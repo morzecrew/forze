@@ -9318,6 +9318,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A <code>Decimal</code> field is written in fixed point in JSON</strong> (<strong>behaviour change</strong>). A forze model wrote <code>Decimal("0.00000000")</code> as <code>"0E-8"</code> and <code>1000</code> as <code>"1E+3"</code>; both now come out as written, up to an exponent of 100 either way. A graph property filter matches a <code>Decimal</code>, at any depth, in either text.</p>
 </li>
+<li>
+<p><strong>A <code>set</code> or <code>frozenset</code> field is written in one order in every process.</strong> A forze model failed on a mixed-type set and wrote a <code>frozenset</code> (or a set of sets) in hash-seeded order. Sets now sort naturally when their items allow, else by canonical JSON text; <code>pydantic_model_hash</code> digests of set-bearing models change.</p>
+</li>
 </ul>
 <h2 id="0111-2026-10-07"><a href="https://github.com/morzecrew/forze/compare/v0.11.0...v0.11.1">0.11.1</a> - 2026-10-07<a class="headerlink" href="#0111-2026-10-07" title="Permanent link">&para;</a></h2>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>

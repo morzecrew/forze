@@ -6616,6 +6616,18 @@ fields so you don't redefine identity and versioning every time:</p>
 </tbody>
 </table>
 <div class="admonition note">
+<p class="admonition-title">How a model writes itself in JSON</p>
+<p>Every forze model (<code>Document</code>, <code>BaseDTO</code>, <code>ReadDocument</code>) writes a <code>Decimal</code> field in
+fixed point (<code>0.00000000</code>, not <code>0E-8</code>); past an exponent of 100 either way it keeps
+scientific form, so a huge exponent cannot expand. A <code>set</code> or <code>frozenset</code> field is
+written as a list in one order in every process: sorted when its items are strings,
+numbers, dates, UUIDs or tuples of those, and by each item's canonical JSON text
+otherwise (a set of mixed types, or of sets). Lists and
+tuples keep their order. These apply to fields typed as such; a value inside an <code>Any</code>
+or <code>dict[str, Any]</code> field, or inside a plain pydantic model, is written as pydantic
+writes it.</p>
+</div>
+<div class="admonition note">
 <p class="admonition-title">Aggregates that emit events</p>
 <p>Compose <code>AggregateRoot</code> alongside <code>Document</code> —
 <code>class Order(Document, AggregateRoot)</code> — to add an in-process event buffer.
