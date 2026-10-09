@@ -306,9 +306,8 @@ def build_authn_registry(
     )
 
     # Acting on another principal is registered only behind the app's guards, so no
-    # generated route, MCP tool or agent tool can reach it unguarded. The admin listing
-    # stays a command, though it writes nothing: its lifecycle port holds the API-key
-    # command port, which a QUERY operation may not acquire.
+    # generated route, MCP tool or agent tool can reach it unguarded. The admin listing is
+    # a read, classified QUERY as the self-service one is.
     if admin_guards:
         admin_handlers = {
             ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
@@ -342,6 +341,7 @@ def build_authn_registry(
             reg,
             admin.bind(*admin_handlers).bind_outer().before(*admin_guards).finish(deep=True),
         )
+        reg = reg.bind(ns.key(AuthnKernelOp.LIST_PRINCIPAL_API_KEYS)).as_query().finish()
 
     # ``list_api_keys`` is a read (no mutation) — classify it QUERY, and require a
     # bound principal (self-service: you list your own keys).
