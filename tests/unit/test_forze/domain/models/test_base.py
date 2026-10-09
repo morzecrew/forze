@@ -76,16 +76,23 @@ class Tags(BaseDTO):
     s: set[str]
     f: frozenset[str]
     m: set[object]
+    n: set[frozenset[str]]
 
 words = {"alpha", "beta", "gamma", "delta", "echo", "foxtrot"}
-tags = Tags(s=words, f=frozenset(words), m={1, "a", 2.5, "b"})
+tags = Tags(
+    s=words,
+    f=frozenset(words),
+    m={1, "a", 2.5, "b"},
+    n={frozenset({w}) for w in words},  # disjoint: never less than one another
+)
 print(tags.model_dump_json(), pydantic_model_hash(tags))
 """
 
 
 def test_a_set_is_written_in_one_order_in_every_process() -> None:
-    """A set, a frozenset and a set of mixed types dump to the same JSON and hash in any
-    interpreter: string hashing is seeded per process, so iteration order is not an order."""
+    """A set, a frozenset, a set of mixed types and a set of sets dump to the same JSON and
+    hash in any interpreter: string hashing is seeded per process, so iteration order is not
+    an order, and neither is ``<`` between sets, which means "subset"."""
 
     import os
     import subprocess
@@ -109,7 +116,21 @@ def test_a_set_of_one_type_is_written_sorted() -> None:
     class Numbers(BaseDTO):
         s: set[int]
         f: frozenset[str]
+        pairs: set[tuple[int, int]]
 
-    dumped = Numbers(s={10, 2, 1}, f=frozenset({"b", "a"})).model_dump(mode="json")
+    dumped = Numbers(
+        s={10, 2, 1}, f=frozenset({"b", "a"}), pairs={(10, 1), (2, 1)}
+    ).model_dump(mode="json")
 
-    assert dumped == {"s": [1, 2, 10], "f": ["a", "b"]}
+    # Natural order, where canonical JSON text would put "[10,1]" first.
+    assert dumped == {"s": [1, 2, 10], "f": ["a", "b"], "pairs": [[2, 1], [10, 1]]}
+
+
+def test_a_model_hash_reads_a_set_in_its_one_order() -> None:
+    from forze.base.serialization.pydantic import pydantic_model_hash
+
+    class Tags(BaseDTO):
+        s: set[str]
+
+    assert pydantic_model_hash(Tags(s={"b", "a"})) == pydantic_model_hash(Tags(s={"a", "b"}))
+    assert pydantic_model_hash(Tags(s={"a"})) != pydantic_model_hash(Tags(s={"b"}))
