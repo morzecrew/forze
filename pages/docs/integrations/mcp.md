@@ -43,6 +43,46 @@ description, so an agent can set its client timeout instead of retrying a call
 that died of budget exhaustion. For a custom FastMCP server, use
 `register_tools(...)` instead of `build_mcp_server`.
 
+## Keep the tool list small
+
+An agent reads every tool's schema on each turn, and a registry exposes more than one
+agent needs. Three options, on both `build_mcp_server` and `register_tools`, trim it:
+
+```python
+server = build_mcp_server(
+    registry,
+    ctx_factory=lambda: runtime.get_context(),
+    name="orders",
+    instructions="Order lookups for the support team.",
+    operations=["orders.list", "orders.get"],  # only these become tools
+    shared_filter_grammar=True,                # state the filter grammar once
+    output_schemas=False,                      # leave result schemas out
+)
+```
+
+- `operations` is an allowlist. A key the registry does not have, or a command operation
+  without `include_writes=True`, is refused when the server is built, so a typo never
+  quietly exposes less than you reviewed.
+- `shared_filter_grammar=True` takes the [filter grammar](../reference/query-syntax.md),
+  most of a list tool's schema, out of every tool: each `filters` (and an aggregate's
+  `$having`) becomes a plain object, and the grammar is added once to the server's
+  instructions and published at `forze://filter-grammar` (`FILTER_GRAMMAR_URI`). Calls
+  are validated against the full grammar either way.
+- `output_schemas=False` drops each tool's output schema. A call still returns its result
+  as text, but a list or scalar result then carries no structured content, and an object
+  comes back as a plain mapping rather than a typed model.
+
+Set the server's instructions before the tools are registered: pass `instructions=` to
+`build_mcp_server`, or to your own `FastMCP` before `register_tools`. Assigning
+`server.instructions` afterwards replaces the grammar; the tools still point at the
+resource, but a client that reads only the instructions loses it.
+
+Two cases keep the grammar where it was. If one of your models shares a name with a
+grammar definition (`QueryConjunction`, say), pydantic qualifies both names and the
+tools keep the full grammar. And a server mounted under a namespace
+(`parent.mount(child, namespace=...)`) republishes the resource under a namespaced URI,
+while the tool descriptions still name `forze://filter-grammar`.
+
 ## Protect it with API-key auth
 
 The MCP server is a **Resource Server**: it validates an inbound bearer and binds
