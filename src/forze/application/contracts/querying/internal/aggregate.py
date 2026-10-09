@@ -335,7 +335,10 @@ class AggregatesExpressionParser:
         raw_computed_obj: object = expr.get("$computed", {})
 
         if not isinstance(raw_computed_obj, Mapping):
-            raise exc.precondition(f"Invalid aggregate $computed: {raw_computed_obj!r}")
+            raise exc.precondition(
+                "Invalid aggregate $computed: expected an object mapping aliases to metrics, "
+                f"got {type(raw_computed_obj).__name__}",
+            )
 
         raw_computed = cast(Mapping[Any, Any], raw_computed_obj)  # type: ignore[redundant-cast]
 
@@ -490,7 +493,10 @@ class AggregatesExpressionParser:
                 for name in seq
             )
 
-        raise exc.precondition(f"Invalid aggregate $groups: {raw!r}")
+        raise exc.precondition(
+            "Invalid aggregate $groups: expected an object mapping aliases to dimensions or a "
+            f"list of field paths, got {type(raw).__name__}",
+        )
 
     # ....................... #
 
@@ -500,7 +506,10 @@ class AggregatesExpressionParser:
             return GroupField(field=cls._field(raw))
 
         if not isinstance(raw, Mapping):
-            raise exc.precondition(f"Invalid $groups map value: {raw!r}")
+            raise exc.precondition(
+                "Invalid $groups map value: expected a field path or an operator map, got "
+                f"{type(raw).__name__}",
+            )
 
         spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
 
@@ -527,7 +536,9 @@ class AggregatesExpressionParser:
     @classmethod
     def _parse_trunc(cls, raw: object) -> GroupTrunc:
         if not isinstance(raw, Mapping):
-            raise exc.precondition(f"Invalid $trunc spec: {raw!r}")
+            raise exc.precondition(
+                f"Invalid $trunc spec: expected an object, got {type(raw).__name__}"
+            )
 
         spec = cast(Mapping[Any, Any], raw)  # type: ignore[redundant-cast]
         allowed = {"field", "unit", "timezone"}
@@ -549,7 +560,7 @@ class AggregatesExpressionParser:
 
         tz_raw = spec.get("timezone")
         if tz_raw is not None and not isinstance(tz_raw, str):
-            raise exc.precondition(f"$trunc.timezone must be a string, got {tz_raw!r}")
+            raise exc.precondition(f"$trunc.timezone must be a string, got {type(tz_raw).__name__}")
 
         resolved = parse_aggregate_timezone(tz_raw)
 
@@ -564,7 +575,11 @@ class AggregatesExpressionParser:
     @staticmethod
     def _alias(alias: object) -> str:
         if not isinstance(alias, str) or not _ALIAS_RE.fullmatch(alias):
-            raise exc.precondition(f"Invalid aggregate alias: {alias!r}")
+            raise exc.precondition(
+                f"Invalid aggregate alias {alias!r}"
+                if isinstance(alias, str)
+                else "Invalid aggregate alias"
+            )
 
         return alias
 
@@ -573,7 +588,9 @@ class AggregatesExpressionParser:
     @staticmethod
     def _field(field: object) -> str:
         if not isinstance(field, str) or not field.strip():
-            raise exc.precondition(f"Invalid aggregate field path: {field!r}")
+            raise exc.precondition(
+                f"Invalid aggregate field path: expected a non-empty string, got {type(field).__name__}",
+            )
 
         return field
 
@@ -586,7 +603,10 @@ class AggregatesExpressionParser:
         alias = cls._alias(alias)
 
         if not isinstance(spec, Mapping):
-            raise exc.precondition(f"Invalid aggregate computed field spec: {spec!r}")
+            raise exc.precondition(
+                f"Invalid aggregate computed field spec for {alias}: expected an object, got "
+                f"{type(spec).__name__}",
+            )
 
         raw_spec: Mapping[Any, Any] = spec  # type: ignore[assignment]
 
@@ -678,7 +698,7 @@ class AggregatesExpressionParser:
             raise exc.precondition("$percentile requires a 'p' quantile")
 
         if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
-            raise exc.precondition(f"$percentile 'p' must be a number in [0, 1], got {p!r}")
+            raise exc.precondition("$percentile 'p' must be a number in [0, 1]")
 
         return float(p)
 

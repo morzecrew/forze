@@ -3,7 +3,7 @@ from typing import Any, cast, get_args
 
 import attrs
 
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 from ..expressions import (
     QueryConstraintPredicate,
@@ -97,6 +97,24 @@ _CONSTRAINT_KEYS = frozenset({"$values", "$fields"})
 
 def _named(keys: Iterable[object]) -> str:
     return ", ".join(sorted(map(str, keys)))
+
+
+_EXPECTED = {
+    **dict.fromkeys(_EQ_OPS, "a scalar"),
+    **dict.fromkeys(_ORD_OPS, "a number, string, date or time"),
+    **dict.fromkeys(_MEMB_OPS | _SET_REL_OPS, "a list"),
+    **dict.fromkeys(_UNARY_OPS, "a boolean"),
+}
+
+
+def _invalid_operand(op: str, value: object) -> CoreException:
+    """A refusal of *value* as *op*'s operand that names its type, never the value: a request
+    forwards the message to its caller, and an operand can be anything."""
+
+    return exc.precondition(
+        f"Invalid value for {op} operator: expected {_EXPECTED.get(op, 'another type')}, "
+        f"got {type(value).__name__}",
+    )
 
 
 def _field_map(value: Any, key: str) -> Mapping[Any, Any]:
@@ -353,7 +371,10 @@ class QueryFilterExpressionParser:
 
             return [self._validate_fields_op(left, op, right) for op, right in raw.items()]
 
-        raise exc.precondition(f"Invalid $fields map value: {raw!r}. {FIELDS_MIGRATION}")
+        raise exc.precondition(
+            f"Invalid $fields map value for {left}: expected a field path or an operator map, "
+            f"got {type(raw).__name__}. {FIELDS_MIGRATION}",
+        )
 
     # ....................... #
 
@@ -377,7 +398,7 @@ class QueryFilterExpressionParser:
 
             raise exc.precondition(
                 f"Field compare operator {op!r} requires a non-empty field path "
-                f"string, got {right!r}{hint}",
+                f"string, got {type(right).__name__}{hint}",
             )
 
         return QueryCompare(left, op, right)  # type: ignore[arg-type]
@@ -405,7 +426,10 @@ class QueryFilterExpressionParser:
 
             if not isinstance(raw, OPERAND_COLLECTIONS):
                 # Any other iterable would reach the backend without its size checked.
-                raise exc.precondition(f"Invalid value for field {field}: {raw!r}")
+                raise exc.precondition(
+                    f"Invalid value for field {field}: expected a scalar, a list, null or "
+                    f"an operator map, got {type(raw).__name__}",
+                )
 
             self._check_in_size(field, "$in", raw)
             return [QueryField(field, "$in", _operand_list(raw))]
@@ -424,7 +448,9 @@ class QueryFilterExpressionParser:
 
             return field_nodes
 
-        raise exc.precondition(f"Invalid $values map entry: {raw!r}")
+        raise exc.precondition(
+            f"Invalid $values entry for {field}: got {type(raw).__name__}",
+        )
 
     # ....................... #
 
@@ -469,7 +495,10 @@ class QueryFilterExpressionParser:
             return QueryField(ELEM_SCALAR_FIELD, "$eq", raw)
 
         if not isinstance(raw, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise exc.precondition(f"Invalid element constraint: {raw!r}")
+            raise exc.precondition(
+                "Invalid element constraint: expected a scalar, an operator map or "
+                f'{{"$values": {{...}}}}, got {type(raw).__name__}',
+            )
 
         if "$values" in raw:
             if extra := raw.keys() - {"$values"}:
@@ -525,8 +554,9 @@ class QueryFilterExpressionParser:
             return nodes[0] if len(nodes) == 1 else QueryAnd(tuple(nodes))
 
         raise exc.precondition(
-            "Element constraint must be a scalar shortcut, an operator map "
-            '($eq/$neq/$gt/.../$like/...), or {"$values": {...}} for object arrays',
+            f"Unknown element operator {_named(raw.keys() - _ELEMENT_OPS)}: an element "
+            "constraint is a scalar shortcut, an operator map ($eq/$neq/$gt/.../$like/...), "
+            'or {"$values": {...}} for object arrays',
         )
 
     # ....................... #
@@ -577,7 +607,9 @@ class QueryFilterExpressionParser:
                 self._validate_element_op(rel_field, op, value, ctx) for op, value in raw.items()
             ]
 
-        raise exc.precondition(f"Invalid element $values entry: {raw!r}")
+        raise exc.precondition(
+            f"Invalid element $values entry for {rel_field}: got {type(raw).__name__}",
+        )
 
     # ....................... #
 
@@ -601,15 +633,15 @@ class QueryFilterExpressionParser:
 
         if op in _EQ_OPS:
             if not isinstance(value, Scalar):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
         elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
         elif op in _MEMB_OPS:
             if not isinstance(value, OPERAND_COLLECTIONS):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
             self._check_in_size(field, op, value)
             value = _operand_list(value)
@@ -712,26 +744,26 @@ class QueryFilterExpressionParser:
 
         if op in _EQ_OPS:
             if not isinstance(value, Scalar):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
         elif op in _ORD_OPS:
             if not isinstance(value, Numeric):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
         elif op in _MEMB_OPS:
             if not isinstance(value, OPERAND_COLLECTIONS):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
             self._check_in_size(field, op, value)
             value = _operand_list(value)
 
         elif op in _UNARY_OPS:
             if not isinstance(value, bool):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
         elif op in _SET_REL_OPS:
             if not isinstance(value, OPERAND_COLLECTIONS):
-                raise exc.precondition(f"Invalid value for {op} operator: {value!r}")
+                raise _invalid_operand(op, value)
 
             self._check_in_size(field, op, value)
             value = _operand_list(value)
@@ -771,16 +803,15 @@ class QueryFilterExpressionParser:
                 raise exc.precondition(f"{op} operand list cannot be empty")
 
             if not all(isinstance(v, str) for v in items):
-                raise exc.precondition(
-                    f"{op} requires a path string or a list of path strings, got {value!r}",
-                )
+                raise exc.precondition(f"{op} requires a path string or a list of path strings")
 
             self._check_in_size(field, op, items)
             paths = items
 
         else:
             raise exc.precondition(
-                f"{op} requires a path string or a list of path strings, got {value!r}",
+                f"{op} requires a path string or a list of path strings, got "
+                f"{type(value).__name__}",
             )
 
         for path in paths:

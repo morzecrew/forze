@@ -87,14 +87,14 @@ def parse_sort_value(
 
     if direction not in _DIRECTIONS:
         _raise_invalid_sort(
-            f"Invalid sort direction {value!r}{where}.",
+            f"Invalid sort direction{where}: expected asc or desc.",
             client_facing=client_facing,
             code="invalid_sort_value",
         )
 
     if nulls is not None and nulls not in _NULLS:
         _raise_invalid_sort(
-            f"Invalid null placement {nulls!r}{where}.",
+            f"Invalid null placement{where}: expected first or last.",
             client_facing=client_facing,
             code="invalid_sort_value",
         )

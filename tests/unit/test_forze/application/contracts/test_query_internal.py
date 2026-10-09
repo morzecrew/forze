@@ -1426,7 +1426,7 @@ class TestQueryCompareExpressionParser:
 
     def test_parse_element_invalid_operator_raises(self) -> None:
         # $superset is a set-relation op, not an element op (unlike $in/$gt/...).
-        with pytest.raises(CoreException, match="Element constraint must be"):
+        with pytest.raises(CoreException, match="Unknown element operator \\$superset"):
             QueryFilterExpressionParser.parse(
                 {"$values": {"tags": {"$any": {"$superset": ["a"]}}}},
             )
