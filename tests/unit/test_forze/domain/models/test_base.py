@@ -134,3 +134,20 @@ def test_a_model_hash_reads_a_set_in_its_one_order() -> None:
 
     assert pydantic_model_hash(Tags(s={"b", "a"})) == pydantic_model_hash(Tags(s={"a", "b"}))
     assert pydantic_model_hash(Tags(s={"a"})) != pydantic_model_hash(Tags(s={"b"}))
+
+
+def test_a_set_with_nan_is_written_in_one_order() -> None:
+    """NaN is not ordered, so a set holding one goes by canonical JSON text: a Decimal NaN
+    would raise on comparison, and a float NaN has no place a sort can rely on."""
+
+    from decimal import Decimal
+
+    from forze.base.serialization import sorted_set_items
+
+    decimals = {Decimal("NaN"), Decimal("1"), Decimal("0.5")}  # a signalling NaN cannot be hashed
+    floats = {float("nan"), 1.0, 0.5}
+
+    assert sorted_set_items(decimals) == sorted_set_items(set(reversed(list(decimals))))
+    assert [str(x) for x in sorted_set_items(floats)] == [
+        str(x) for x in sorted_set_items(set(reversed(list(floats))))
+    ]

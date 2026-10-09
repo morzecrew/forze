@@ -1,5 +1,6 @@
 """The order a set is written in."""
 
+import math
 from collections.abc import Set
 from datetime import date, time, timedelta
 from decimal import Decimal
@@ -11,13 +12,19 @@ from forze.base.primitives import stable_json_bytes
 # ----------------------- #
 
 _TOTALLY_ORDERED = (str, bytes, int, float, Decimal, date, time, timedelta, UUID)
-"""Types whose ``<`` is a total order. A set's ``<`` means "subset", so disjoint sets compare
-false both ways and ``sorted`` would keep their iteration order."""
+"""Types whose ``<`` is a total order, NaN aside. A set's ``<`` means "subset", so disjoint
+sets compare false both ways and ``sorted`` would keep their iteration order."""
 
 
 def _totally_ordered(item: object) -> bool:
     if isinstance(item, tuple):
         return all(_totally_ordered(part) for part in item)
+
+    # NaN is not ordered: a Decimal one raises on comparison, a float one compares false.
+    if (isinstance(item, Decimal) and item.is_nan()) or (
+        isinstance(item, float) and math.isnan(item)
+    ):
+        return False
 
     return isinstance(item, _TOTALLY_ORDERED)
 
