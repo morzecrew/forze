@@ -8,6 +8,7 @@ from forze.application.execution.operations.facade import (
 
 from .handlers import (
     AuthnChangePassword,
+    AuthnListPrincipalApiKeys,
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
@@ -68,6 +69,13 @@ class AuthnFacade(OperationFacade):
     )
     """Deactivate-principal (cascaded offboarding) usecase; present when the registry was
     built with ``admin_guards``."""
+
+    list_principal_api_keys = facade_op(
+        AuthnKernelOp.LIST_PRINCIPAL_API_KEYS,
+        uc=AuthnListPrincipalApiKeys,
+    )
+    """List-any-principal's-API-keys (admin) usecase; present when the registry was built
+    with ``admin_guards``."""
 
     revoke_principal_api_key = facade_op(
         AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY,

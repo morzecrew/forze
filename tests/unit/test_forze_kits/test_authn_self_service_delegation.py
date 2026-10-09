@@ -19,12 +19,14 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kits.aggregates.authn import (
     AuthnChangePasswordRequestDTO,
     AuthnIssueApiKeyRequestDTO,
+    AuthnPrincipalRefDTO,
     AuthnRevokeApiKeyRequestDTO,
 )
 from forze_kits.aggregates.authn.handlers import (
     AuthnChangePassword,
     AuthnIssueApiKey,
     AuthnListApiKeys,
+    AuthnListPrincipalApiKeys,
     AuthnLogout,
     AuthnRevokeApiKey,
     AuthnRevokePrincipalApiKey,
@@ -75,6 +77,10 @@ def _handlers(port: _Recorder) -> dict[str, tuple[Any, Any]]:
             AuthnRevokePrincipalApiKey(resolver=resolve, api_key_lifecycle=port),  # type: ignore[arg-type]
             AuthnRevokeApiKeyRequestDTO(id=uuid4()),
         ),
+        "admin-list": (
+            AuthnListPrincipalApiKeys(resolver=resolve, api_key_lifecycle=port),  # type: ignore[arg-type]
+            AuthnPrincipalRefDTO(id=uuid4()),
+        ),
         "logout": (
             AuthnLogout(resolver=resolve, token_lifecycle=port),  # type: ignore[arg-type]
             None,
@@ -102,6 +108,7 @@ def _handlers(port: _Recorder) -> dict[str, tuple[Any, Any]]:
         "issue",
         "revoke",
         "admin-revoke",
+        "admin-list",
         "logout",
         "change-password",
         "switch-tenant",

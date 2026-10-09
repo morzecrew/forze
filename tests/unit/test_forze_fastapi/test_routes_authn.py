@@ -64,7 +64,11 @@ _EXPECTED_PATHS = {
 
 # Acts on another principal: registered only behind the app's ``admin_guards``.
 _ADMIN_OPS = frozenset(
-    {AuthnKernelOp.DEACTIVATE_PRINCIPAL, AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY}
+    {
+        AuthnKernelOp.DEACTIVATE_PRINCIPAL,
+        AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY,
+        AuthnKernelOp.LIST_PRINCIPAL_API_KEYS,
+    }
 )
 
 # Auth-flow action routes are all POST; the self-service API-key collection uses
@@ -242,8 +246,9 @@ class TestAuthnRouteSurface:
         [
             ("POST", "/auth/deactivate", {"principal_id": str(uuid4())}),
             ("DELETE", f"/auth/admin/api-keys/{uuid4()}", None),
+            ("GET", f"/auth/admin/principals/{uuid4()}/api-keys", None),
         ],
-        ids=["deactivate", "admin-revoke"],
+        ids=["deactivate", "admin-revoke", "admin-list"],
     )
     def test_admin_routes_exist_only_behind_the_apps_guards(
         self, method: str, path: str, body: Any

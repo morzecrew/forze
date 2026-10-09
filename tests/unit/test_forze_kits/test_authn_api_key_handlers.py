@@ -23,11 +23,13 @@ from forze_kits.aggregates.authn import (
     AuthnApiKeyListDTO,
     AuthnIssueApiKeyRequestDTO,
     AuthnIssuedApiKeyDTO,
+    AuthnPrincipalRefDTO,
     AuthnRevokeApiKeyRequestDTO,
 )
 from forze_kits.aggregates.authn.handlers import (
     AuthnIssueApiKey,
     AuthnListApiKeys,
+    AuthnListPrincipalApiKeys,
     AuthnRevokeApiKey,
     AuthnRevokePrincipalApiKey,
 )
@@ -67,6 +69,10 @@ class _FakeApiKeyLifecycle:
 
     async def revoke_principal_api_key(self, key_id):
         self.revoked_by_admin.append(key_id)
+
+    async def list_principal_api_keys(self, principal_id):
+        self.listed_for = principal_id
+        return self._keys
 
 
 def _resolver(identity):
@@ -167,6 +173,32 @@ class TestRevoke:
 
         with pytest.raises(exc, match="Authentication required"):
             await handler(AuthnRevokeApiKeyRequestDTO(id=uuid4()))
+
+
+class TestAdminList:
+    @pytest.mark.asyncio
+    async def test_lists_another_principals_keys(self) -> None:
+        other = uuid4()
+        info = ApiKeyInfo(
+            key_id=uuid4(), hint="ab…yz", is_active=True, created_at=_NOW, expires_at=None
+        )
+        port = _FakeApiKeyLifecycle(keys=[info])
+        handler = AuthnListPrincipalApiKeys(resolver=_resolver(_USER), api_key_lifecycle=port)
+
+        out = await handler(AuthnPrincipalRefDTO(id=other))
+
+        assert port.listed_for == other
+        assert [item.key_id for item in out.keys] == [info.key_id]
+
+    @pytest.mark.asyncio
+    async def test_no_identity_is_401_before_the_port(self) -> None:
+        port = _FakeApiKeyLifecycle()
+        handler = AuthnListPrincipalApiKeys(resolver=_resolver(None), api_key_lifecycle=port)
+
+        with pytest.raises(exc, match="Authentication required"):
+            await handler(AuthnPrincipalRefDTO(id=uuid4()))
+
+        assert not hasattr(port, "listed_for")
 
 
 class TestAdminRevoke:

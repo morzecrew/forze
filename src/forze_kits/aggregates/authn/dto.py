@@ -201,6 +201,16 @@ class AuthnApiKeyListDTO(BaseDTO):
 # ....................... #
 
 
+class AuthnPrincipalRefDTO(BaseDTO):
+    """DTO naming a principal an administrator acts on."""
+
+    id: UUID
+    """Identifier of the principal."""
+
+
+# ....................... #
+
+
 class AuthnRevokeApiKeyRequestDTO(BaseDTO):
     """DTO naming an API key to revoke: one of the current identity's, or any principal's for
     an administrator."""

@@ -154,7 +154,12 @@ class TestBuildAuthnRegistry:
             assert entry.descriptor is not None
 
     @pytest.mark.parametrize(
-        "op", [AuthnKernelOp.DEACTIVATE_PRINCIPAL, AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY]
+        "op",
+        [
+            AuthnKernelOp.DEACTIVATE_PRINCIPAL,
+            AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY,
+            AuthnKernelOp.LIST_PRINCIPAL_API_KEYS,
+        ],
     )
     def test_an_admin_operation_exists_only_behind_the_apps_guards(
         self, op: AuthnKernelOp

@@ -299,26 +299,28 @@ never the secret), and `DELETE /api-keys/{id}` revokes one. This is the minting
 surface for the [MCP API-key flow](../integrations/mcp.md#protect-it-with-api-key-auth):
 the user issues a key here and pastes it into the agent host.
 
-An administrator revokes anyone's key with `DELETE /admin/api-keys/{id}`
+An administrator finds a principal's keys with `GET /admin/principals/{id}/api-keys`
+(`list_principal_api_keys`: the same non-secret descriptors, revoked keys included, and
+an empty list for a principal with none) and revokes one with `DELETE /admin/api-keys/{id}`
 (`revoke_principal_api_key`, 204, and 204 again for a key already revoked; an unknown key
-is a 404). It exists only when the registry is built with `admin_guards`, the steps that
-decide who may act on another principal; it runs behind them, and so does
+is a 404). They exist only when the registry is built with `admin_guards`, the steps that
+decide who may act on another principal; they run behind them, and so does
 `deactivate_principal`, which without them is not registered either. One guard set gates
-both. `AuthnRequired` alone lets every signed-in principal through, so guards that only
+all three. `AuthnRequired` alone lets every signed-in principal through, so guards that only
 authenticate are refused when the registry is built (`admin_guards_unauthorized`): include
 an authorization step, such as `AuthzBeforeAuthorize` or your own. If you bound your own
 guards on `deactivate_principal`, pass them as `admin_guards` instead: the same step bound
 twice fails at `freeze()` with `Step ID … is not unique`.
 
-The admin revoke is **global**, like `deactivate_principal`: API-key accounts are not
-tenant-scoped, so it finds a key by id in every tenant, and its 404 tells a caller whether
-an id exists anywhere. An app whose administrators are scoped to a tenant must not expose
+The admin API-key routes are **global**, like `deactivate_principal`: API-key accounts are
+not tenant-scoped, so they find a principal's keys or a key by id in every tenant, and the
+revoke's 404 tells a caller whether an id exists anywhere. An app whose administrators are scoped to a tenant must not expose
 it, or must guard it with a policy only platform administrators pass.
 
 A delegated caller (an agent acting for the user) may list the keys but not issue or revoke
 them, and may not log out or change the password: only the user manages their own account.
-Nor may it revoke anyone's key as an administrator: an agent acting for an administrator is
-not one. Those routes answer `403` (`delegate_denied`), and so do switching and leaving a
+Nor may it list or revoke anyone's keys as an administrator: an agent acting for an
+administrator is not one. Those routes answer `403` (`delegate_denied`), and so do switching and leaving a
 tenant below.
 
 Identity, invocation metadata, and error mapping stay with the middlewares and

@@ -176,10 +176,10 @@ the operations authenticate via their request bodies. `/logout` and
 identity. The operations that act on *another* principal exist only behind
 guards you pass as `build_authn_registry(AUTH, admin_guards=(...))` — `AuthnRequired`
 plus an `AuthzBeforeAuthorize`, the same chain as [above](#enforce-on-operations):
-`/auth/deactivate` (`deactivate_principal`) and `DELETE /auth/admin/api-keys/{id}`,
-which revokes any principal's API key. Without `admin_guards` neither is registered.
-Both are **global**: credential accounts are not tenant-scoped, so with tenant-scoped
-administrators expose neither, or guard them with a policy only platform
+`/auth/deactivate` (`deactivate_principal`), `GET /auth/admin/principals/{id}/api-keys`,
+which lists any principal's API keys, and `DELETE /auth/admin/api-keys/{id}`, which
+revokes one. Without `admin_guards` none is registered. All are **global**: credential accounts are not tenant-scoped, so with tenant-scoped
+administrators expose none, or guard them with a policy only platform
 administrators pass. `AuthnRequired` alone admits every signed-in principal, so
 `admin_guards` that only authenticate are refused when the registry is built.
 

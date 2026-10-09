@@ -34,14 +34,15 @@ Authentication posture (read this before exposing the router):
   401 (``auth_required``) when none is present. The identity comes from the
   boundary middleware verifying the caller's access token.
 - The admin routes act on another principal: ``/deactivate``
-  (``deactivate_principal``) and ``DELETE /admin/api-keys/{id}``
+  (``deactivate_principal``), ``GET /admin/principals/{id}/api-keys``
+  (``list_principal_api_keys``) and ``DELETE /admin/api-keys/{id}``
   (``revoke_principal_api_key``). They exist only when the registry was built with
   ``admin_guards`` (e.g. :class:`~forze.application.hooks.authn.AuthnRequired` plus
   :class:`~forze.application.hooks.authz.AuthzBeforeAuthorize`), which they run
   behind; ``AuthnRequired`` alone admits every signed-in principal, so guards that
   only authenticate are refused at build. They are global (credential accounts are
   not tenant-scoped), so do not expose them to tenant-scoped administrators; the
-  revoke also refuses a delegated caller (``delegate_denied``).
+  API-key ones also refuse a delegated caller (``delegate_denied``).
 
 Responses of ``/login`` and ``/refresh`` carry token material in the body by
 design (the OAuth2-shaped :class:`~forze_kits.aggregates.authn.AuthnTokenResponseDTO`);
@@ -292,6 +293,9 @@ _AUTHN_BINDINGS: Mapping[str, RouteBinding] = {
         method="DELETE", path="/api-keys/{id}", build=id_endpoint, status_code=204
     ),
     # Registered only when the registry was built with ``admin_guards``.
+    AuthnKernelOp.LIST_PRINCIPAL_API_KEYS: RouteBinding(
+        method="GET", path="/admin/principals/{id}/api-keys", build=id_endpoint
+    ),
     AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: RouteBinding(
         method="DELETE", path="/admin/api-keys/{id}", build=id_endpoint, status_code=204
     ),
@@ -337,7 +341,8 @@ def attach_authn_routes(
     - ``POST /api-keys`` → ``issue_api_key`` (201, the secret returned once)
     - ``GET /api-keys`` → ``list_api_keys`` (non-secret descriptors)
     - ``DELETE /api-keys/{id}`` → ``revoke_api_key`` (204)
-    - ``DELETE /admin/api-keys/{id}`` → ``revoke_principal_api_key`` (204), only when the
+    - ``GET /admin/principals/{id}/api-keys`` → ``list_principal_api_keys`` and
+      ``DELETE /admin/api-keys/{id}`` → ``revoke_principal_api_key`` (204), only when the
       registry was built with ``admin_guards``
 
     Self-service API-key management is a real resource collection, so it uses

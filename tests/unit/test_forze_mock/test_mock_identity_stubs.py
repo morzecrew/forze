@@ -255,6 +255,15 @@ async def test_admin_api_key_revoke_is_not_found_like_the_real_adapter() -> None
     assert excinfo.value.code == "api_key_not_found"
 
 
+async def test_admin_api_key_list_is_empty_like_a_keyless_principal() -> None:
+    # The mock holds no keys; the real adapter lists a principal with none as empty too.
+    lifecycle = context_from_modules(MockDepsModule()).deps.provide(
+        ApiKeyLifecycleDepKey, route="main"
+    )
+
+    assert list(await lifecycle(None, None).list_principal_api_keys(uuid4())) == []
+
+
 async def test_deprovision_missing_tenant_raises_like_real_adapter() -> None:
     # Parity: the real adapter loads the tenant (a document ``get`` that raises) before
     # tearing down infra, so the mock must fail closed on a missing tenant too.

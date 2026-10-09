@@ -28,6 +28,7 @@ from .dto import (
     AuthnIssuedApiKeyDTO,
     AuthnLoginRequestDTO,
     AuthnPasswordResetAckDTO,
+    AuthnPrincipalRefDTO,
     AuthnRefreshRequestDTO,
     AuthnRequestPasswordResetDTO,
     AuthnResetPasswordDTO,
@@ -38,6 +39,7 @@ from .handlers import (
     AuthnChangePassword,
     AuthnIssueApiKey,
     AuthnListApiKeys,
+    AuthnListPrincipalApiKeys,
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
@@ -91,10 +93,11 @@ def build_authn_registry(
         every signed-in principal, so guards that only authenticate are refused
         (``configuration``); include an authorization step (``AuthzBeforeAuthorize`` or the
         app's own). Given, they register the operations that act on another principal,
-        ``deactivate_principal`` and ``revoke_principal_api_key``, behind them; without
-        them neither is registered, so no generated route or tool can reach one
-        unguarded. Both act globally (credential accounts are not tenant-scoped), so do
-        not grant them to tenant-scoped administrators.
+        ``deactivate_principal``, ``list_principal_api_keys`` and
+        ``revoke_principal_api_key``, behind them; without them none is registered, so no
+        generated route or tool can reach one unguarded. All act globally (credential
+        accounts are not tenant-scoped), so do not grant them to tenant-scoped
+        administrators.
     """
 
     ns = ns or spec.default_namespace
@@ -209,6 +212,12 @@ def build_authn_registry(
             api_key_lifecycle=_api_key_lifecycle(ctx),
         )
 
+    def _list_principal_api_keys(ctx: ExecutionContext) -> AuthnListPrincipalApiKeys:
+        return AuthnListPrincipalApiKeys(
+            resolver=ctx.inv_ctx.get_authn,
+            api_key_lifecycle=_api_key_lifecycle(ctx),
+        )
+
     def _revoke_principal_api_key(ctx: ExecutionContext) -> AuthnRevokePrincipalApiKey:
         return AuthnRevokePrincipalApiKey(
             resolver=ctx.inv_ctx.get_authn,
@@ -289,10 +298,13 @@ def build_authn_registry(
     )
 
     # Acting on another principal is registered only behind the app's guards, so no
-    # generated route, MCP tool or agent tool can reach it unguarded.
+    # generated route, MCP tool or agent tool can reach it unguarded. The admin listing
+    # stays a command, though it writes nothing: its lifecycle port holds the API-key
+    # command port, which a QUERY operation may not acquire.
     if admin_guards:
         admin_handlers = {
             ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
+            ns.key(AuthnKernelOp.LIST_PRINCIPAL_API_KEYS): _list_principal_api_keys,
             ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY): _revoke_principal_api_key,
         }
         admin = OperationRegistry(handlers=admin_handlers).set_descriptors(
@@ -301,6 +313,14 @@ def build_authn_registry(
                     input_type=DeactivatePrincipalRequestDTO,
                     description=(
                         "Deactivate a principal for the application (policy, sessions, credentials)."
+                    ),
+                ),
+                AuthnKernelOp.LIST_PRINCIPAL_API_KEYS: OperationDescriptor(
+                    input_type=AuthnPrincipalRefDTO,
+                    output_type=AuthnApiKeyListDTO,
+                    description=(
+                        "List any principal's API keys (admin; non-secret descriptors, "
+                        "revoked ones included)."
                     ),
                 ),
                 AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: OperationDescriptor(

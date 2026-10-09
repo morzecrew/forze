@@ -449,6 +449,17 @@ async def test_pg_api_key_revoke_blocks_authentication(pg_client: PostgresClient
         with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
             await lifecycle.revoke_principal_api_key(str(uuid4()))
 
+    # An administrator lists the principal's keys, revoked ones included, to find an id.
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        listed = await lifecycle.list_principal_api_keys(pid)
+        nobody = await lifecycle.list_principal_api_keys(uuid4())
+
+    assert {str(info.key_id): info.is_active for info in listed} == {
+        issued.key_id: False,
+        other.key_id: False,
+    }
+    assert list(nobody) == []
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio

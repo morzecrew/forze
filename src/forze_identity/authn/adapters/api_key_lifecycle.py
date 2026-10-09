@@ -180,7 +180,12 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     async def list_api_keys(self, identity: AuthnIdentity) -> Sequence[ApiKeyInfo]:
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
-        accounts = await find_api_key_accounts_by_principal(self.ak_qry, identity.principal_id)
+        return await self.list_principal_api_keys(identity.principal_id)
+
+    # ....................... #
+
+    async def list_principal_api_keys(self, principal_id: UUID) -> Sequence[ApiKeyInfo]:
+        accounts = await find_api_key_accounts_by_principal(self.ak_qry, principal_id)
 
         return [
             ApiKeyInfo(

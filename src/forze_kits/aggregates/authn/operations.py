@@ -41,5 +41,8 @@ class AuthnKernelOp(StrEnum):
     REVOKE_API_KEY = "revoke_api_key"  # nosec B105 # skipcq: SCT-A000
     """Revoke one of the currently authenticated identity's API keys."""
 
+    LIST_PRINCIPAL_API_KEYS = "list_principal_api_keys"  # nosec B105 # skipcq: SCT-A000
+    """List any principal's API keys (admin; registered only behind the app's guards)."""
+
     REVOKE_PRINCIPAL_API_KEY = "revoke_principal_api_key"  # nosec B105 # skipcq: SCT-A000
     """Revoke any principal's API key (admin; registered only behind the app's guards)."""

@@ -155,6 +155,23 @@ def _revoking(account: ReadApiKeyAccount | None) -> tuple[ApiKeyLifecycleAdapter
     return adapter, sink
 
 
+class TestAnAdminListsAnyPrincipalsKeys:
+    @pytest.mark.asyncio
+    async def test_another_principals_keys_are_listed_without_their_secrets(self) -> None:
+        account = _stored_key()
+        ak_qry = _port()
+        ak_qry.find_many = AsyncMock(return_value=MagicMock(hits=[account]))
+        adapter = _adapter(ak_qry=ak_qry)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        (info,) = await adapter.list_principal_api_keys(account.principal_id)
+
+        assert info.key_id == account.id and info.is_active
+        assert not hasattr(info, "key_hash")
+        # The owner's eligibility is not the question: a deactivated owner's keys are listed.
+        adapter.eligibility.require_authentication_allowed.assert_not_awaited()
+
+
 class TestAnAdminRevokesAnyPrincipalsKey:
     @pytest.mark.asyncio
     async def test_another_principals_key_is_revoked(self) -> None:
