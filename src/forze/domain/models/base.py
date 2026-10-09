@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
-from forze.base.serialization import decimal_text
+from forze.base.serialization import decimal_text, sorted_set_items
 
 # ----------------------- #
 
@@ -16,8 +16,8 @@ from forze.base.serialization import decimal_text
 class CoreModel(BaseModel):
     """Base model for domain entities.
 
-    Configures field docstrings for schema generation, stable JSON encoders (sorted sets,
-    decimals in fixed point), and stripped string fields. All domain models inherit from this.
+    Configures field docstrings for schema generation, stable JSON encoders (sets in one
+    order in every process, decimals in fixed point), and stripped string fields. All domain models inherit from this.
     """
 
     model_config = ConfigDict(
@@ -25,7 +25,11 @@ class CoreModel(BaseModel):
         model_title_generator=lambda _: "",
         field_title_generator=lambda _, __: "",
         str_strip_whitespace=True,
-        json_encoders={set: sorted, Decimal: decimal_text},
+        json_encoders={
+            set: sorted_set_items,
+            frozenset: sorted_set_items,
+            Decimal: decimal_text,
+        },
     )
 
 
