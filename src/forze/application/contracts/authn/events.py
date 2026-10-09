@@ -1,7 +1,7 @@
 """Authn flow events: a best-effort observability seam over the authn contracts.
 
 Authentication flows (login, refresh, logout, password change/reset, principal
-deactivation) emit :class:`AuthnEvent` records through an optional
+deactivation, API-key revocation) emit :class:`AuthnEvent` records through an optional
 :class:`AuthnEventSink`. Emission is **best-effort by contract**: a sink failure
 must never fail the auth flow — always emit through :func:`emit_safe` (or the
 route-bound :class:`AuthnEventEmitter`), which swallows and logs sink errors and
@@ -60,6 +60,15 @@ class AuthnEventKind(StrEnum):
 
     PRINCIPAL_DEACTIVATED = "principal_deactivated"
     """A principal was deactivated (policy, sessions, and credentials cascaded)."""
+
+    API_KEY_REVOKED = "api_key_revoked"
+    """An API key was deactivated by ``revoke_api_key`` (its owner) or
+    ``revoke_principal_api_key`` (an administrator). ``principal_id`` is the key's owner;
+    ``details`` carry ``key_id`` and ``revoked_by`` (``owner`` or ``admin``). An administrator's
+    revocation also carries ``revoked_by_principal_id`` when the adapter knows its caller and an
+    identity is bound to the call: ``AuthnDepsModule`` wires the caller, and the kit's
+    operation refuses an unbound one; an adapter constructed without ``caller`` omits the field.
+    Not emitted for a key already revoked, nor by the principal-deactivation cascade."""
 
 
 # ....................... #

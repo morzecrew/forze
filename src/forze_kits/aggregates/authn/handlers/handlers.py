@@ -1,8 +1,9 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import attrs
 
 from forze.application.contracts.authn import (
+    ApiKeyInfo,
     ApiKeyLifecyclePort,
     AuthnIdentity,
     AuthnPort,
@@ -21,11 +22,13 @@ from ..dto import (
     AuthnIssueApiKeyRequestDTO,
     AuthnIssuedApiKeyDTO,
     AuthnLoginRequestDTO,
+    AuthnPrincipalRefDTO,
     AuthnRefreshRequestDTO,
     AuthnRevokeApiKeyRequestDTO,
     AuthnTokenResponseDTO,
 )
 from ._utils import (
+    require_admin_identity,
     require_identity,
     require_own_identity,
     token_response_from_issued_tokens,
@@ -175,6 +178,53 @@ class AuthnIssueApiKey(Handler[AuthnIssueApiKeyRequestDTO, AuthnIssuedApiKeyDTO]
 # ....................... #
 
 
+def _key_list(keys: Sequence[ApiKeyInfo]) -> AuthnApiKeyListDTO:
+    return AuthnApiKeyListDTO(
+        keys=[
+            AuthnApiKeyListItemDTO(
+                key_id=info.key_id,
+                hint=info.hint,
+                label=info.label,
+                actor_principal_id=info.actor_principal_id,
+                prefix=info.prefix,
+                is_active=info.is_active,
+                created_at=info.created_at,
+                expires_at=info.expires_at,
+            )
+            for info in keys
+        ]
+    )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthnListPrincipalApiKeys(Handler[AuthnPrincipalRefDTO, AuthnApiKeyListDTO]):
+    """Admin: list any principal's API keys (non-secret descriptors), to find one to revoke.
+
+    Refuses a caller with no identity (401) or a delegated one (``delegate_denied``), as
+    :class:`AuthnRevokePrincipalApiKey` does; who may administer is the guards' to decide.
+    The listing is global: API-key accounts are not tenant-scoped.
+    """
+
+    resolver: Callable[[], AuthnIdentity | None]
+    """Callable that resolves the current authenticated identity."""
+
+    api_key_lifecycle: ApiKeyLifecyclePort
+    """API key lifecycle port."""
+
+    # ....................... #
+
+    async def __call__(self, args: AuthnPrincipalRefDTO) -> AuthnApiKeyListDTO:
+        require_admin_identity(self.resolver)
+
+        return _key_list(await self.api_key_lifecycle.list_principal_api_keys(args.id))
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class AuthnListApiKeys(Handler[None, AuthnApiKeyListDTO]):
     """Self-service: list the current identity's API keys (non-secret descriptors)."""
@@ -192,23 +242,7 @@ class AuthnListApiKeys(Handler[None, AuthnApiKeyListDTO]):
 
         identity = require_identity(self.resolver)
 
-        keys = await self.api_key_lifecycle.list_api_keys(identity)
-
-        return AuthnApiKeyListDTO(
-            keys=[
-                AuthnApiKeyListItemDTO(
-                    key_id=info.key_id,
-                    hint=info.hint,
-                    label=info.label,
-                    actor_principal_id=info.actor_principal_id,
-                    prefix=info.prefix,
-                    is_active=info.is_active,
-                    created_at=info.created_at,
-                    expires_at=info.expires_at,
-                )
-                for info in keys
-            ]
-        )
+        return _key_list(await self.api_key_lifecycle.list_api_keys(identity))
 
 
 # ....................... #
@@ -235,3 +269,31 @@ class AuthnRevokeApiKey(Handler[AuthnRevokeApiKeyRequestDTO, None]):
         identity = require_own_identity(self.resolver)
 
         await self.api_key_lifecycle.revoke_api_key(identity, str(args.id))
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class AuthnRevokePrincipalApiKey(Handler[AuthnRevokeApiKeyRequestDTO, None]):
+    """Admin: revoke any principal's API key.
+
+    Refuses a caller with no identity (401) or a delegated one (``delegate_denied``). Whether
+    the caller may administer at all is the guards' to decide, which
+    :func:`~forze_kits.aggregates.authn.build_authn_registry` requires before it registers
+    this operation. The key is looked up by id alone, across tenants: API-key accounts are
+    not tenant-scoped.
+    """
+
+    resolver: Callable[[], AuthnIdentity | None]
+    """Callable that resolves the current authenticated identity."""
+
+    api_key_lifecycle: ApiKeyLifecyclePort
+    """API key lifecycle port."""
+
+    # ....................... #
+
+    async def __call__(self, args: AuthnRevokeApiKeyRequestDTO) -> None:
+        require_admin_identity(self.resolver)
+
+        await self.api_key_lifecycle.revoke_principal_api_key(str(args.id))

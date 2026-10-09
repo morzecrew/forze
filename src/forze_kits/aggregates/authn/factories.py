@@ -1,5 +1,9 @@
 """Factories for authn usecase registries."""
 
+import functools
+import inspect
+import types
+from collections.abc import Iterable
 from typing import Any
 
 from forze.application.contracts.authn import (
@@ -11,11 +15,13 @@ from forze.application.contracts.authn import (
     PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
+from forze.application.contracts.execution import BeforeStep, DeclaresAuthz
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKeyNamespace
 
 from .dto import (
@@ -25,6 +31,7 @@ from .dto import (
     AuthnIssuedApiKeyDTO,
     AuthnLoginRequestDTO,
     AuthnPasswordResetAckDTO,
+    AuthnPrincipalRefDTO,
     AuthnRefreshRequestDTO,
     AuthnRequestPasswordResetDTO,
     AuthnResetPasswordDTO,
@@ -35,12 +42,14 @@ from .handlers import (
     AuthnChangePassword,
     AuthnIssueApiKey,
     AuthnListApiKeys,
+    AuthnListPrincipalApiKeys,
     AuthnLogout,
     AuthnPasswordLogin,
     AuthnRefreshTokens,
     AuthnRequestPasswordReset,
     AuthnResetPassword,
     AuthnRevokeApiKey,
+    AuthnRevokePrincipalApiKey,
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
@@ -49,11 +58,34 @@ from .operations import AuthnKernelOp
 # ----------------------- #
 
 
+def _declares_authorization(step: BeforeStep) -> bool:
+    """Whether *step* declares the permission keys it enforces (``DeclaresAuthz``).
+
+    Judged on the factory a ``functools.partial`` or ``__wrapped__`` wrapper stands for, so
+    wrapping an ``AuthzBeforeAuthorize`` keeps what it declares.
+    """
+
+    factory: Any = inspect.unwrap(step.factory)
+
+    while isinstance(factory, functools.partial):
+        factory = inspect.unwrap(factory.func)
+
+    if isinstance(factory, types.MethodType):
+        factory = factory.__self__
+
+    return isinstance(factory, DeclaresAuthz)
+
+
+# ....................... #
+
+
 def build_authn_registry(
     spec: AuthnSpec,
     *,
     ns: StrKeyNamespace | None = None,
     reset_events: OutboxSpec[Any] | None = None,
+    admin_guards: Iterable[BeforeStep] = (),
+    trust_admin_guards: bool = False,
 ) -> OperationRegistry:
     """Build authn operation registry.
 
@@ -65,9 +97,41 @@ def build_authn_registry(
         outbox row — see :mod:`forze_kits.aggregates.authn.events` for the
         exposure trade-off. When ``None`` and no custom delivery exists,
         requesting a reset mints a token nobody receives.
+    :param admin_guards: Before-steps that decide who may act on *another* principal,
+        typically ``AuthnRequired`` plus an ``AuthzBeforeAuthorize``; who that is is the
+        app's authorization model, so Forze ships none. At least one must declare the
+        permission keys it enforces (``permission_keys()``, the ``DeclaresAuthz`` marker),
+        as ``AuthzBeforeAuthorize`` does, or the build is refused (``configuration``):
+        ``AuthnRequired``, ``TenantRequired`` or a logging step admit every signed-in
+        principal. An app's own step that declares its keys counts, and they show in the
+        catalog and MCP tool descriptions; a ``functools.partial`` or ``__wrapped__``
+        wrapper keeps what it wraps declares. Given, they register the operations that act
+        on another principal, ``deactivate_principal``, ``list_principal_api_keys`` and
+        ``revoke_principal_api_key``, behind them; without them none is registered, so no
+        generated route or tool can reach one unguarded. The list is a query, so the
+        guards run read-only there: one that writes fails it. All act globally
+        (credential accounts are not tenant-scoped), so do not grant them to tenant-scoped
+        administrators.
+    :param trust_admin_guards: Skip that check, for a guard that authorizes without declaring
+        its keys; the app then answers for ``admin_guards`` admitting only administrators.
     """
 
     ns = ns or spec.default_namespace
+    # A generator is truthy even when it yields nothing: count the steps, not the object.
+    admin_guards = tuple(admin_guards)
+
+    if (
+        admin_guards
+        and not trust_admin_guards
+        and not any(_declares_authorization(step) for step in admin_guards)
+    ):
+        raise exc.configuration(
+            "admin_guards declare no authorization: without one, every signed-in principal "
+            "can act on any principal. Add a step that declares its permission keys "
+            "(permission_keys()), such as AuthzBeforeAuthorize or the app's own, or pass "
+            "trust_admin_guards=True if one of the guards authorizes without declaring it.",
+            code="admin_guards_unauthorized",
+        )
 
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(
@@ -135,6 +199,7 @@ def build_authn_registry(
 
     def _deactivate_principal(ctx: ExecutionContext) -> DeactivatePrincipalHandler:
         return DeactivatePrincipalHandler(
+            resolver=ctx.inv_ctx.get_authn,
             deactivation=ctx.deps.resolve_configurable(
                 ctx,
                 PrincipalDeactivationDepKey,
@@ -169,6 +234,18 @@ def build_authn_registry(
             api_key_lifecycle=_api_key_lifecycle(ctx),
         )
 
+    def _list_principal_api_keys(ctx: ExecutionContext) -> AuthnListPrincipalApiKeys:
+        return AuthnListPrincipalApiKeys(
+            resolver=ctx.inv_ctx.get_authn,
+            api_key_lifecycle=_api_key_lifecycle(ctx),
+        )
+
+    def _revoke_principal_api_key(ctx: ExecutionContext) -> AuthnRevokePrincipalApiKey:
+        return AuthnRevokePrincipalApiKey(
+            resolver=ctx.inv_ctx.get_authn,
+            api_key_lifecycle=_api_key_lifecycle(ctx),
+        )
+
     reg = OperationRegistry(
         handlers={
             ns.key(AuthnKernelOp.PASSWORD_LOGIN): _password_login,
@@ -177,7 +254,6 @@ def build_authn_registry(
             ns.key(AuthnKernelOp.CHANGE_PASSWORD): _change_password,
             ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET): _request_password_reset,
             ns.key(AuthnKernelOp.RESET_PASSWORD): _reset_password,
-            ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
             ns.key(AuthnKernelOp.ISSUE_API_KEY): _issue_api_key,
             ns.key(AuthnKernelOp.LIST_API_KEYS): _list_api_keys,
             ns.key(AuthnKernelOp.REVOKE_API_KEY): _revoke_api_key,
@@ -220,12 +296,6 @@ def build_authn_registry(
                     "all of the principal's sessions are revoked."
                 ),
             ),
-            AuthnKernelOp.DEACTIVATE_PRINCIPAL: OperationDescriptor(
-                input_type=DeactivatePrincipalRequestDTO,
-                description=(
-                    "Deactivate a principal for the application (policy, sessions, credentials)."
-                ),
-            ),
             AuthnKernelOp.ISSUE_API_KEY: OperationDescriptor(
                 input_type=AuthnIssueApiKeyRequestDTO,
                 output_type=AuthnIssuedApiKeyDTO,
@@ -249,6 +319,44 @@ def build_authn_registry(
         namespace=ns,
     )
 
+    # Acting on another principal is registered only behind the app's guards, so no
+    # generated route, MCP tool or agent tool can reach it unguarded. The admin listing is
+    # a read, classified QUERY as the self-service one is.
+    if admin_guards:
+        admin_handlers = {
+            ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
+            ns.key(AuthnKernelOp.LIST_PRINCIPAL_API_KEYS): _list_principal_api_keys,
+            ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY): _revoke_principal_api_key,
+        }
+        admin = OperationRegistry(handlers=admin_handlers).set_descriptors(
+            {
+                AuthnKernelOp.DEACTIVATE_PRINCIPAL: OperationDescriptor(
+                    input_type=DeactivatePrincipalRequestDTO,
+                    description=(
+                        "Deactivate a principal for the application (policy, sessions, credentials)."
+                    ),
+                ),
+                AuthnKernelOp.LIST_PRINCIPAL_API_KEYS: OperationDescriptor(
+                    input_type=AuthnPrincipalRefDTO,
+                    output_type=AuthnApiKeyListDTO,
+                    description=(
+                        "List any principal's API keys (admin; non-secret descriptors, "
+                        "revoked ones included)."
+                    ),
+                ),
+                AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: OperationDescriptor(
+                    input_type=AuthnRevokeApiKeyRequestDTO,
+                    description="Revoke any principal's API key (admin).",
+                ),
+            },
+            namespace=ns,
+        )
+        reg = OperationRegistry.merge(
+            reg,
+            admin.bind(*admin_handlers).bind_outer().before(*admin_guards).finish(deep=True),
+        )
+        reg = reg.bind(ns.key(AuthnKernelOp.LIST_PRINCIPAL_API_KEYS)).as_query().finish()
+
     # ``list_api_keys`` is a read (no mutation) — classify it QUERY, and require a
     # bound principal (self-service: you list your own keys).
     reg = (
@@ -265,8 +373,7 @@ def build_authn_registry(
     # introspectable: the catalog flags ``requires_authn``, which the FastAPI/MCP
     # surfaces project into their auth descriptions. The 401 (``auth_required``) is
     # unchanged. Login/refresh and the reset pair authenticate via their bodies (no
-    # bound principal); ``deactivate_principal`` ships unguarded by design (apps
-    # bind authn+authz).
+    # bound principal); the admin operations exist only behind ``admin_guards``.
     return (
         reg.bind(
             ns.key(AuthnKernelOp.LOGOUT),

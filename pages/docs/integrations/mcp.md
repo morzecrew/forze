@@ -159,7 +159,9 @@ forze stays the Resource Server and never runs an authorization server.
   auth), or `DelegatedIdentityResolver` (run on behalf of a resolved subject, agent
   as actor).
 - Reads are read-only by default; `include_writes=True` opts in and tags command
-  tools as destructive.
+  tools as destructive. Every query in the registry becomes a tool, so an authn registry
+  built with `admin_guards` exposes `list_principal_api_keys`, which lists any
+  principal's API keys behind those guards; pass `operations=` to keep it off.
 - API-key auth is built in (`auth=` above); for custom transports or server
   policies, bring your own `FastMCP` — `build_mcp_server` is a convenience. See the
   [expose-an-aggregate-over-MCP recipe](../recipes/expose-an-aggregate-over-mcp.md)

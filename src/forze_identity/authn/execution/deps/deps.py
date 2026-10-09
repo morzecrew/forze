@@ -583,8 +583,6 @@ class ConfigurableApiKeyLifecycle:
     # ....................... #
 
     def __call__(self, ctx: ExecutionContext, spec: AuthnSpec) -> ApiKeyLifecyclePort:
-        _ = spec
-
         if self.shared.api_key_svc is None:
             raise exc.internal("API key lifecycle requires kernel.api_key_pepper")
 
@@ -598,6 +596,8 @@ class ConfigurableApiKeyLifecycle:
                 if self.authz_route is not None
                 else None
             ),
+            events=_resolve_events(ctx, spec),
+            caller=ctx.inv_ctx.get_authn,
         )
 
 

@@ -66,6 +66,7 @@ class TestAuthnEventKind:
             "password_reset_requested",
             "password_reset_completed",
             "principal_deactivated",
+            "api_key_revoked",
         }
 
     def test_str_enum_values(self) -> None:

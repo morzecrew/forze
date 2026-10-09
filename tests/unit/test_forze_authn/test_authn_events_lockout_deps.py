@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
-from unittest.mock import MagicMock
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -15,8 +16,11 @@ pytest.importorskip("argon2")
 pytestmark = pytest.mark.unit
 
 from forze.application.contracts.authn import (
+    ApiKeyLifecycleDepKey,
     AuthnDepKey,
     AuthnEvent,
+    AuthnEventKind,
+    AuthnIdentity,
     AuthnEventSink,
     AuthnEventSinkDepKey,
     AuthnSpec,
@@ -36,6 +40,7 @@ from forze.application.integrations.authn import (
 )
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.application.constants import AuthnResourceName
+from forze_identity.authn.domain.models.account import ReadApiKeyAccount
 from forze_identity.authn.execution import ConfigurableLoggingAuthnEventSink
 from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz.application.constants import AuthzResourceName
@@ -164,6 +169,44 @@ class TestEventSinkRegistration:
         assert orchestrator.events.route == "main"
         assert lifecycle.events is not None
         assert lifecycle.events.sink is sink
+
+    async def test_a_revoked_api_key_reaches_the_wired_sink(self) -> None:
+        sink = _RecordingSink()
+        merged = (
+            AuthnDepsModule(
+                kernel=_kernel_full(),
+                authn={"main": frozenset({"api_key"})},
+                api_key_lifecycle={"main"},
+                events=lambda ctx, spec: sink,
+            )()
+            .merge(_document_deps())
+        )
+        ctx = context_from_deps(merged)
+        spec = AuthnSpec(name="main", enabled_methods=frozenset({"api_key"}))
+        lifecycle = ctx.deps.provide(ApiKeyLifecycleDepKey, route="main")(ctx, spec)
+
+        now = datetime.now(tz=UTC)
+        account = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=1,
+            created_at=now,
+            last_update_at=now,
+            principal_id=uuid4(),
+            key_hash="h",
+            is_active=True,
+        )
+        lifecycle.ak_qry.find = AsyncMock(return_value=account)
+        lifecycle.ak_cmd.update = AsyncMock()
+
+        admin = AuthnIdentity(principal_id=uuid4())
+
+        with ctx.inv_ctx.bind_identity(authn=admin):
+            await lifecycle.revoke_principal_api_key(str(account.id))
+
+        (event,) = sink.events
+        assert event.kind is AuthnEventKind.API_KEY_REVOKED
+        assert event.principal_id == account.principal_id
+        assert event.details["revoked_by_principal_id"] == str(admin.principal_id)
 
     def test_without_sink_resolved_ports_have_no_emitter(self) -> None:
         merged = (

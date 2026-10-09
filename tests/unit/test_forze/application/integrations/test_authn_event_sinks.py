@@ -77,6 +77,7 @@ class TestLoggingAuthnEventSink:
             AuthnEventKind.PASSWORD_RESET_REQUESTED,
             AuthnEventKind.PASSWORD_RESET_COMPLETED,
             AuthnEventKind.PRINCIPAL_DEACTIVATED,
+            AuthnEventKind.API_KEY_REVOKED,
         ],
     )
     async def test_success_ish_kinds_log_at_info(

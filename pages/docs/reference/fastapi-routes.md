@@ -235,13 +235,15 @@ same way. Authn flows are RPC-shaped with one natural surface each, so there is
 no style choice — fixed action paths: `POST /login` and `POST /refresh` (200,
 token response), `POST /logout` (204, no body), `POST /change-password` (204),
 `POST /password-reset/request` (202, uniform ack — never the token) and
-`POST /password-reset/confirm` (204), and `POST /deactivate` (204). Login,
+`POST /password-reset/confirm` (204), and, behind `admin_guards` only,
+`POST /deactivate` (204). Login,
 refresh, and the password-reset pair are meant to be reachable without a bearer
 token (the operations authenticate via their bodies, or deliberately not at all
 for the reset request); logout and change-password declare `AuthnRequired` (so
 they 401 without a bound identity and show up protected under
-`apply_openapi_security`), while `deactivate_principal` ships unguarded — bind
-`AuthnRequired` + authz hooks on it or exclude it via `include=`. The full
+`apply_openapi_security`). The operations that act on another principal,
+`deactivate_principal` and the admin API-key routes below, are registered only when
+`build_authn_registry` gets `admin_guards`, and run behind them. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 [Authn, authz & tenancy recipe](../recipes/authn-authz-tenancy-fastapi.md#http-login-endpoints).
 
@@ -297,9 +299,38 @@ never the secret), and `DELETE /api-keys/{id}` revokes one. This is the minting
 surface for the [MCP API-key flow](../integrations/mcp.md#protect-it-with-api-key-auth):
 the user issues a key here and pastes it into the agent host.
 
+An administrator finds a principal's keys with `GET /admin/principals/{id}/api-keys`
+(`list_principal_api_keys`: the same non-secret descriptors, revoked keys included, and
+an empty list for a principal with none) and revokes one with `DELETE /admin/api-keys/{id}`
+(`revoke_principal_api_key`, 204, and 204 again for a key already revoked; an unknown key
+is a 404). They exist only when the registry is built with `admin_guards`, the steps that
+decide who may act on another principal; they run behind them, and so does
+`deactivate_principal`, which without them is not registered either. One guard set gates
+all three. At least one guard must declare the permission keys it enforces
+(`permission_keys()`), as `AuthzBeforeAuthorize` does, or the registry is refused when
+built (`admin_guards_unauthorized`): `AuthnRequired`, `TenantRequired` or a logging step
+let every signed-in principal through. A step of your own counts once it implements
+`permission_keys()`, and its keys then show in the catalog and in MCP tool descriptions; a
+`functools.partial` or `__wrapped__` wrapper counts as what it wraps. If one of your guards
+authorizes without declaring it, pass `trust_admin_guards=True` and answer for it. If you
+bound your own guards on `deactivate_principal`, pass them as `admin_guards` instead: the
+same step bound twice fails at `freeze()` with `Step ID … is not unique`.
+
+The guards also run on the list, which is a read: there they run read-only, so a guard
+that writes (an audit row, say) fails the list with `Cannot use command (write) port`.
+Write such a record from an after-hook or through the outbox instead.
+
+The admin API-key routes are **global**, like `deactivate_principal`: API-key accounts are
+not tenant-scoped, so they find a principal's keys or a key by id in every tenant, and the
+revoke's 404 tells a caller whether an id exists anywhere. An app whose administrators
+are scoped to a tenant must not expose these routes, or must guard them with a policy
+only platform administrators pass.
+
 A delegated caller (an agent acting for the user) may list the keys but not issue or revoke
-them, and may not log out or change the password: only the user manages their own account. Those
-routes answer `403` (`delegate_denied`), and so do switching and leaving a tenant below.
+them, and may not log out or change the password: only the user manages their own account.
+Nor may it act as an administrator, to list or revoke anyone's keys or deactivate a
+principal: an agent acting for an administrator is not one. Those routes answer `403` (`delegate_denied`), and so do switching and leaving a
+tenant below.
 
 Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers from the [integration setup](../integrations/fastapi.md) —
@@ -315,7 +346,7 @@ leave). `attach_tenancy_admin_routes` projects the admin plane: `POST /tenants`
 (201, create), `GET /tenants/{id}/members`, `POST /tenants/{id}/deactivate` (204),
 `POST /memberships` (204, invite) and `DELETE /memberships` (204, remove). Admin
 operations ship without hooks bound — guard them with `AuthnRequired` + authz hooks
-in the registry, like `deactivate`.
+in the registry.
 
 ## Aggregate routes
 

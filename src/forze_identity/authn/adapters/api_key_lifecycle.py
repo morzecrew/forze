@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import final
 from uuid import UUID
 
@@ -8,6 +8,8 @@ from forze.application.contracts.authn import (
     ApiKeyCredentials,
     ApiKeyInfo,
     ApiKeyLifecyclePort,
+    AuthnEventEmitter,
+    AuthnEventKind,
     AuthnIdentity,
     CredentialLifetime,
     IssuedApiKey,
@@ -86,6 +88,18 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     principal_registry: PrincipalRegistryPort | None = None
     """The authz plane's principal registry, when wired: a delegation key's agent must then be
     a registered ``service`` principal. Without it only the eligibility gate applies."""
+
+    events: AuthnEventEmitter | None = None
+    """Optional authn event emitter (best-effort; ``None`` disables emission).
+
+    Emits ``API_KEY_REVOKED`` when a revocation deactivates a key, with the key id and
+    who revoked it (``owner`` or ``admin``) in its details."""
+
+    caller: Callable[[], AuthnIdentity | None] | None = None
+    """Resolves the identity bound to the call. An administrator's revocation records it as
+    ``revoked_by_principal_id``, since the event's ``principal_id`` is the key's owner, when
+    this is set and an identity is bound. ``AuthnDepsModule`` sets it; ``None`` (the default
+    for direct construction) leaves the field out."""
 
     # ....................... #
 
@@ -166,7 +180,12 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     async def list_api_keys(self, identity: AuthnIdentity) -> Sequence[ApiKeyInfo]:
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
-        accounts = await find_api_key_accounts_by_principal(self.ak_qry, identity.principal_id)
+        return await self.list_principal_api_keys(identity.principal_id)
+
+    # ....................... #
+
+    async def list_principal_api_keys(self, principal_id: UUID) -> Sequence[ApiKeyInfo]:
+        accounts = await find_api_key_accounts_by_principal(self.ak_qry, principal_id)
 
         return [
             ApiKeyInfo(
@@ -303,6 +322,31 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         if account is None or account.principal_id != identity.principal_id:
             raise exc.authentication("API key not found")
 
+        await self._revoke(account, revoked_by="owner")
+
+    # ....................... #
+
+    async def revoke_principal_api_key(self, key_id: str) -> None:
+        # The caller is an administrator its operation has authorized, so an unknown key
+        # says so: a silent success would leave a mistyped id looking revoked.
+        try:
+            account = await find_api_key_account_by_id(self.ak_qry, UUID(key_id))
+
+        except ValueError:
+            account = None
+
+        if account is None:
+            raise exc.not_found("API key not found", code="api_key_not_found")
+
+        admin = self.caller() if self.caller is not None else None
+        details = {"revoked_by_principal_id": str(admin.principal_id)} if admin is not None else {}
+
+        await self._revoke(account, revoked_by="admin", **details)
+
+    # ....................... #
+
+    async def _revoke(self, account: ReadApiKeyAccount, *, revoked_by: str, **details: str) -> None:
+        # Already revoked answers as a revocation does, writing and emitting nothing.
         if not account.is_active:
             return
 
@@ -312,6 +356,13 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
             UpdateApiKeyAccountCmd(is_active=False),
             return_new=False,
         )
+
+        if self.events is not None:
+            await self.events.emit(
+                AuthnEventKind.API_KEY_REVOKED,
+                principal_id=account.principal_id,
+                details={"key_id": str(account.id), "revoked_by": revoked_by, **details},
+            )
 
     # ....................... #
 
