@@ -101,7 +101,7 @@ def _named(keys: Iterable[object]) -> str:
 
 _EXPECTED = {
     **dict.fromkeys(_EQ_OPS, "a scalar"),
-    **dict.fromkeys(_ORD_OPS, "a number, string, date or time"),
+    **dict.fromkeys(_ORD_OPS, "a number, string, date, datetime or UUID"),
     **dict.fromkeys(_MEMB_OPS | _SET_REL_OPS, "a list"),
     **dict.fromkeys(_UNARY_OPS, "a boolean"),
 }

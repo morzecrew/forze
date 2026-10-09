@@ -208,3 +208,23 @@ def test_stored_file_and_search_requests_refuse_by_name() -> None:
     SearchRequestDTO[MultiSourceSearchOptions].model_validate(
         {"query": "q", "options": {"members": ["a"]}}
     )
+
+
+def test_an_ordering_bound_message_names_what_it_accepts() -> None:
+    """A UUID bound orders; a bare ``time`` does not, and the refusal says so rather than
+    claiming to accept a time."""
+
+    from datetime import time
+    from uuid import uuid4
+
+    from forze.application.contracts.querying.internal.parse import (
+        QueryFilterExpressionParser,
+    )
+    from forze.base.exceptions import CoreException
+
+    QueryFilterExpressionParser.parse({"$values": {"x": {"$gt": uuid4()}}})
+
+    with pytest.raises(CoreException) as caught:
+        QueryFilterExpressionParser.parse({"$values": {"x": {"$gt": time(1, 2)}}})
+
+    assert "a number, string, date, datetime or UUID, got time" in str(caught.value)
