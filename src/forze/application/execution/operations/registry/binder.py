@@ -58,8 +58,9 @@ class OperationRegistryBinder:
     def as_query(self) -> Self:
         """Mark these operations as read-only (``QUERY``).
 
-        A read-only operation may not acquire a command (write) port — enforced for the
-        operation's duration. Place early in the chain, e.g.
+        A read-only operation cannot write: a command (write) port it acquires, in its
+        handler factory or during a call, refuses when used, so a service built with a write
+        port it never calls can still serve a query. Place early in the chain, e.g.
         ``registry.bind(op).as_query().bind_tx().set_route("pg").finish()``.
         """
 

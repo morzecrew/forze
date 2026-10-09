@@ -509,8 +509,8 @@ async def test_property_filter_accepts_identifier_keys() -> None:
     assert await adapter.count_vertices("User", property_filter={"name": "Ana"}) == 2
 
     query, params = client.calls[-1]
-    assert "n.`name` = $pf_name" in query
-    assert params["pf_name"] == "Ana"
+    assert "n.`name` IN $pf_name" in query
+    assert params["pf_name"] == ["Ana"]
 
 
 @pytest.mark.asyncio

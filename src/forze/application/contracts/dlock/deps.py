@@ -1,6 +1,6 @@
 from forze.base.exceptions import exc
 
-from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey, GuardedWritePort
 from .ports import DistributedLockCommandPort, DistributedLockQueryPort, FencingAware
 from .specs import DistributedLockSpec
 
@@ -58,9 +58,18 @@ class DistributedLockDeps(ConvenientDeps):
             route=spec.name,
         )
 
-        if spec.requires_fencing_token and not (
-            isinstance(port, FencingAware) and port.capabilities().fencing_tokens
-        ):
+        if not spec.requires_fencing_token:
+            return port
+
+        # A read-only operation's stand-in is judged by the backend it resolves to, since it
+        # is the real port wherever it is used to lock.
+        backend = (
+            self._resolve_configurable(DistributedLockCommandDepKey, spec, route=spec.name)
+            if isinstance(port, GuardedWritePort)
+            else port
+        )
+
+        if not (isinstance(backend, FencingAware) and backend.capabilities().fencing_tokens):
             raise exc.configuration(
                 f"Distributed lock {spec.name!r} requires fencing tokens, but the wired "
                 "backend does not issue them (not FencingAware / fencing_tokens=False).",

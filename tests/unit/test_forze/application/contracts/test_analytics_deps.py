@@ -32,8 +32,10 @@ class TestAnalyticsDeps:
         deps = AnalyticsDeps()
         deps.lock(ctx)
 
+        port = deps.ingest(MagicMock())  # held, not used: allowed
+
         with pytest.raises(CoreException, match="read-only"):
-            deps.ingest(MagicMock())
+            _ = port.append
 
     def test_command_guarded_in_read_only_operation(self) -> None:
         ctx = MagicMock()
@@ -41,5 +43,7 @@ class TestAnalyticsDeps:
         deps = AnalyticsDeps()
         deps.lock(ctx)
 
+        port = deps.command(MagicMock())
+
         with pytest.raises(CoreException, match="read-only"):
-            deps.command(MagicMock())
+            _ = port.append

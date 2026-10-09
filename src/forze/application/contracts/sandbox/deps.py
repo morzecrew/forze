@@ -23,7 +23,7 @@ class SandboxDeps(ConvenientDeps):
     Command-plane: a subprocess is an effect on the world — it writes files, burns CPU, and
     may reach the network — so the port resolves through
     :meth:`~forze.application.contracts.deps.ConvenientDeps._resolve_command` and a
-    read-only (``QUERY``) operation cannot acquire one. What the child *does* is not the
+    read-only (``QUERY``) operation cannot run one. What the child *does* is not the
     point; that a query handler can spawn one at all is.
     """
 
