@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from forze.application.contracts.authn import AuthnSpec
+from forze.application.contracts.execution import BeforeStep
 from forze.application.execution.operations.facade import facade_op
 from forze.base.exceptions import exc
 from forze_kits.aggregates.authn import AuthnFacade, AuthnKernelOp, build_authn_registry
@@ -49,7 +50,8 @@ class TestAuthnFacade:
 
     def test_resolve_deactivate_principal_operation(self) -> None:
         spec = _authn_spec()
-        reg = build_authn_registry(spec).freeze()
+        app_step = BeforeStep(id="app.admin", factory=lambda ctx: None)
+        reg = build_authn_registry(spec, admin_guards=(app_step,)).freeze()
         ctx = MagicMock()
         ctx.deps.resolve_configurable = MagicMock(
             return_value=AsyncMock(),

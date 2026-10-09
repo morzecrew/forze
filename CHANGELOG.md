@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **An administrator can revoke any principal's API key.** `build_authn_registry(admin_guards=...)` adds `revoke_principal_api_key` (`DELETE /admin/api-keys/{id}`) and binds the guards on `deactivate_principal` too; unguarded it isn't registered. It acts in every tenant. **Breaking** for API-key lifecycle implementers.
+- **An administrator can revoke any principal's API key.** `build_authn_registry(admin_guards=...)` adds `revoke_principal_api_key` (`DELETE /admin/api-keys/{id}`) behind those guards, like `deactivate_principal`; unguarded, neither is registered. Both act in every tenant. **Breaking** for API-key lifecycle implementers.
 
 - **A revoked API key emits an `api_key_revoked` authn event**, from self-service and admin revocation alike, with the key id and who revoked it. The principal-deactivation cascade, which also revokes keys, does not emit it.
 
@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`AuthnKernelOp` has a member a default registry does not register** (**upgrade note**). An `attach_authn_routes(include=...)` built from the whole enum now fails at startup; name the operations. Passing `admin_guards`, drop your own guard on `deactivate_principal`: a step bound twice fails at `freeze()`.
+- **`deactivate_principal` is registered only behind `admin_guards`** (**Breaking**). Without them `build_authn_registry` leaves it out, so `/deactivate` and its generated tools are gone; pass the guards you bound on it as `admin_guards` instead, since a step bound twice fails at `freeze()`.
+
+- **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). The admin operations need `admin_guards`, so an `attach_authn_routes(include=...)` built from the whole enum fails at startup without them; name the operations.
 
 ### Fixed
 

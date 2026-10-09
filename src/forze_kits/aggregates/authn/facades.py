@@ -66,7 +66,8 @@ class AuthnFacade(OperationFacade):
         AuthnKernelOp.DEACTIVATE_PRINCIPAL,
         uc=DeactivatePrincipalHandler,
     )
-    """Deactivate-principal (cascaded offboarding) usecase."""
+    """Deactivate-principal (cascaded offboarding) usecase; present when the registry was
+    built with ``admin_guards``."""
 
     revoke_principal_api_key = facade_op(
         AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY,

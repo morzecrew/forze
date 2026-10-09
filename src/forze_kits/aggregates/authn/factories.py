@@ -90,13 +90,11 @@ def build_authn_registry(
         app's authorization model, so Forze ships none. ``AuthnRequired`` alone admits
         every signed-in principal, so guards that only authenticate are refused
         (``configuration``); include an authorization step (``AuthzBeforeAuthorize`` or the
-        app's own). Given, they are bound on ``deactivate_principal`` and register
-        ``revoke_principal_api_key`` (revoke any principal's API key), which is never
-        registered unguarded; drop any guard already bound on
-        ``deactivate_principal``, since a step bound twice fails at freeze. Both act
-        globally (credential accounts are not tenant-scoped), so do not grant them to
-        tenant-scoped administrators. Without guards ``deactivate_principal`` ships
-        unguarded as before.
+        app's own). Given, they register the operations that act on another principal,
+        ``deactivate_principal`` and ``revoke_principal_api_key``, behind them; without
+        them neither is registered, so no generated route or tool can reach one
+        unguarded. Both act globally (credential accounts are not tenant-scoped), so do
+        not grant them to tenant-scoped administrators.
     """
 
     ns = ns or spec.default_namespace
@@ -225,7 +223,6 @@ def build_authn_registry(
             ns.key(AuthnKernelOp.CHANGE_PASSWORD): _change_password,
             ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET): _request_password_reset,
             ns.key(AuthnKernelOp.RESET_PASSWORD): _reset_password,
-            ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
             ns.key(AuthnKernelOp.ISSUE_API_KEY): _issue_api_key,
             ns.key(AuthnKernelOp.LIST_API_KEYS): _list_api_keys,
             ns.key(AuthnKernelOp.REVOKE_API_KEY): _revoke_api_key,
@@ -268,12 +265,6 @@ def build_authn_registry(
                     "all of the principal's sessions are revoked."
                 ),
             ),
-            AuthnKernelOp.DEACTIVATE_PRINCIPAL: OperationDescriptor(
-                input_type=DeactivatePrincipalRequestDTO,
-                description=(
-                    "Deactivate a principal for the application (policy, sessions, credentials)."
-                ),
-            ),
             AuthnKernelOp.ISSUE_API_KEY: OperationDescriptor(
                 input_type=AuthnIssueApiKeyRequestDTO,
                 output_type=AuthnIssuedApiKeyDTO,
@@ -297,31 +288,31 @@ def build_authn_registry(
         namespace=ns,
     )
 
+    # Acting on another principal is registered only behind the app's guards, so no
+    # generated route, MCP tool or agent tool can reach it unguarded.
     if admin_guards:
+        admin_handlers = {
+            ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL): _deactivate_principal,
+            ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY): _revoke_principal_api_key,
+        }
+        admin = OperationRegistry(handlers=admin_handlers).set_descriptors(
+            {
+                AuthnKernelOp.DEACTIVATE_PRINCIPAL: OperationDescriptor(
+                    input_type=DeactivatePrincipalRequestDTO,
+                    description=(
+                        "Deactivate a principal for the application (policy, sessions, credentials)."
+                    ),
+                ),
+                AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: OperationDescriptor(
+                    input_type=AuthnRevokeApiKeyRequestDTO,
+                    description="Revoke any principal's API key (admin).",
+                ),
+            },
+            namespace=ns,
+        )
         reg = OperationRegistry.merge(
             reg,
-            OperationRegistry(
-                handlers={
-                    ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY): _revoke_principal_api_key,
-                },
-            ).set_descriptors(
-                {
-                    AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: OperationDescriptor(
-                        input_type=AuthnRevokeApiKeyRequestDTO,
-                        description="Revoke any principal's API key (admin).",
-                    ),
-                },
-                namespace=ns,
-            ),
-        )
-        reg = (
-            reg.bind(
-                ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL),
-                ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY),
-            )
-            .bind_outer()
-            .before(*admin_guards)
-            .finish(deep=True)
+            admin.bind(*admin_handlers).bind_outer().before(*admin_guards).finish(deep=True),
         )
 
     # ``list_api_keys`` is a read (no mutation) — classify it QUERY, and require a
@@ -340,8 +331,7 @@ def build_authn_registry(
     # introspectable: the catalog flags ``requires_authn``, which the FastAPI/MCP
     # surfaces project into their auth descriptions. The 401 (``auth_required``) is
     # unchanged. Login/refresh and the reset pair authenticate via their bodies (no
-    # bound principal); ``deactivate_principal`` ships unguarded by design unless
-    # ``admin_guards`` are given (apps bind authn+authz).
+    # bound principal); the admin operations exist only behind ``admin_guards``.
     return (
         reg.bind(
             ns.key(AuthnKernelOp.LOGOUT),

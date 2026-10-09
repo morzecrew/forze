@@ -29,7 +29,8 @@ class AuthnKernelOp(StrEnum):
     """Consume a single-use reset token and set a new password."""
 
     DEACTIVATE_PRINCIPAL = "deactivate_principal"
-    """Deactivate a principal for the application (policy, sessions, credentials)."""
+    """Deactivate a principal for the application (policy, sessions, credentials) (admin;
+    registered only behind the app's guards)."""
 
     ISSUE_API_KEY = "issue_api_key"  # nosec B105 # skipcq: SCT-A000
     """Issue an API key for the currently authenticated identity (secret once)."""

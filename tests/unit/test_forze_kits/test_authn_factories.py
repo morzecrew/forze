@@ -143,7 +143,6 @@ class TestBuildAuthnRegistry:
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.CHANGE_PASSWORD))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.RESET_PASSWORD))
-        assert registry_has_handler(reg, ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
 
     def test_catalog_has_descriptor_for_every_op(self) -> None:
         spec = _authn_spec()
@@ -154,24 +153,28 @@ class TestBuildAuthnRegistry:
         for entry in catalog.values():
             assert entry.descriptor is not None
 
-    def test_admin_revoke_exists_only_behind_the_apps_guards(self) -> None:
-        # Revoking another principal's key is never registered unguarded, so no generated
+    @pytest.mark.parametrize(
+        "op", [AuthnKernelOp.DEACTIVATE_PRINCIPAL, AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY]
+    )
+    def test_an_admin_operation_exists_only_behind_the_apps_guards(
+        self, op: AuthnKernelOp
+    ) -> None:
+        # An act on another principal is never registered unguarded, so no generated
         # surface can reach it before the app has said who may.
         spec = _authn_spec()
-        ns = spec.default_namespace
-        admin_revoke = ns.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)
+        key = spec.default_namespace.key(op)
 
-        assert not registry_has_handler(build_authn_registry(spec), admin_revoke)
+        assert not registry_has_handler(build_authn_registry(spec), key)
 
         # An iterable a filter emptied is truthy as a generator, and still no guard.
         emptied = (step for step in (AuthnRequired().to_step(),) if False)
-        assert not registry_has_handler(build_authn_registry(spec, admin_guards=emptied), admin_revoke)
+        assert not registry_has_handler(build_authn_registry(spec, admin_guards=emptied), key)
 
-        catalog = build_authn_registry(spec, admin_guards=_admin_guards()).freeze().catalog()
+        guarded = build_authn_registry(spec, admin_guards=_admin_guards())
+        befores = {str(step.id) for step in guarded.get_plans()[key].iter_before_steps()}
 
-        # Every admin operation takes the guards, the deactivation too.
-        assert catalog[admin_revoke].requires_authn
-        assert catalog[ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL)].requires_authn
+        assert guarded.freeze().catalog()[key].requires_authn
+        assert {"authn.principal", "app.admin"} <= befores
 
     @pytest.mark.parametrize("step_id", [None, "app.signed_in"])
     def test_authentication_alone_does_not_guard_an_admin_operation(
@@ -268,7 +271,7 @@ class TestBuildAuthnRegistry:
     @pytest.mark.asyncio
     async def test_deactivate_principal_factory_returns_handler(self) -> None:
         spec = _authn_spec()
-        reg = build_authn_registry(spec)
+        reg = build_authn_registry(spec, admin_guards=_admin_guards())
         factory = handler_at(reg, spec.default_namespace.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
         handler = factory(_mock_ctx())
         assert isinstance(handler, DeactivatePrincipalHandler)

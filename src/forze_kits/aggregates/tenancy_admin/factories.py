@@ -31,7 +31,8 @@ def build_tenancy_admin_registry(ns: StrKeyNamespace) -> OperationRegistry:
     self-service selector — so the framework cannot guard them generically: *who* may create a
     tenant, invite a member, or deactivate a tenant is the app's authorization model, which Forze
     does not define. They therefore ship **unguarded** (no ``AuthnRequired``, no authz). Bind
-    your guards on every operation before exposing them — the same chain as ``deactivate_principal``::
+    your guards on every operation before exposing them — the chain ``build_authn_registry`` takes
+    as ``admin_guards`` for ``deactivate_principal``::
 
         reg = build_tenancy_admin_registry(ns)
         AUTHZ = AuthzSpec(name="api")
