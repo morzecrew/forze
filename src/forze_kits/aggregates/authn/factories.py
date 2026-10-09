@@ -1,5 +1,8 @@
 """Factories for authn usecase registries."""
 
+import functools
+import inspect
+import types
 from collections.abc import Iterable
 from typing import Any
 
@@ -55,23 +58,43 @@ from .operations import AuthnKernelOp
 # ----------------------- #
 
 
+def _from_forze(module: str | None) -> bool:
+    package = (module or "").partition(".")[0]
+
+    return package == "forze" or package.startswith("forze_")
+
+
 def _can_authorize(step: BeforeStep) -> bool:
     """Whether *step* may decide who is allowed, whatever its id.
 
-    A step declaring authorization (``DeclaresAuthz``) can; so can an app's own, which Forze
-    cannot see into. Any other step Forze ships (``AuthnRequired``, ``TenantRequired``) only
-    requires an identity, so it admits everyone who has one. Forze's own are told by the
-    package their factory is defined in, so a step Forze adds later fails closed.
+    A check against the common mistakes, not a security boundary. A step declaring
+    authorization (``DeclaresAuthz``) can; so can an app's own, which Forze cannot see into.
+    Any other step Forze ships (``AuthnRequired``, ``TenantRequired``) only requires an
+    identity, so it admits everyone who has one, and so does a ``functools.partial``, a
+    ``__wrapped__`` wrapper or an app subclass of one. A function is judged by the module
+    it is defined in, since its body cannot be seen. A step Forze adds later fails closed.
     """
 
-    factory = step.factory
+    factory: Any = inspect.unwrap(step.factory)
+
+    while isinstance(factory, functools.partial):
+        factory = inspect.unwrap(factory.func)
+
+    if isinstance(factory, types.MethodType):
+        factory = factory.__self__
 
     if isinstance(factory, DeclaresAuthz):
         return True
 
-    package = str(getattr(factory, "__module__", None) or "").partition(".")[0]
+    if isinstance(factory, types.FunctionType | types.BuiltinFunctionType):
+        return not _from_forze(factory.__module__)
 
-    return package != "forze" and not package.startswith("forze_")
+    # Protocols (``BeforeFactory``) are what an app's step implements, not what it is.
+    return not any(
+        _from_forze(cls.__module__)
+        for cls in type(factory).__mro__
+        if not getattr(cls, "_is_protocol", False)
+    )
 
 
 # ....................... #
@@ -99,12 +122,15 @@ def build_authn_registry(
         app's authorization model, so Forze ships none. Guards none of which can authorize
         are refused (``configuration``): ``AuthnRequired`` and ``TenantRequired`` admit
         every signed-in principal or tenant member. Include an authorization step,
-        ``AuthzBeforeAuthorize`` or the app's own; any step not defined under a ``forze*``
-        package counts as the app's. Given, they register the operations that act on another principal,
-        ``deactivate_principal``, ``list_principal_api_keys`` and
+        ``AuthzBeforeAuthorize`` or the app's own. This catches the common mistakes and is
+        not a security boundary: a step whose class comes from a ``forze`` or ``forze_*``
+        package, wrapped or subclassed, counts only if it declares authorization, and a
+        plain function counts as the app's. Given, they register the operations that act
+        on another principal, ``deactivate_principal``, ``list_principal_api_keys`` and
         ``revoke_principal_api_key``, behind them; without them none is registered, so no
-        generated route or tool can reach one unguarded. All act globally (credential
-        accounts are not tenant-scoped), so do not grant them to tenant-scoped
+        generated route or tool can reach one unguarded. The list is a query, so the
+        guards run read-only there: one that writes fails it. All act globally
+        (credential accounts are not tenant-scoped), so do not grant them to tenant-scoped
         administrators.
     """
 
@@ -186,6 +212,7 @@ def build_authn_registry(
 
     def _deactivate_principal(ctx: ExecutionContext) -> DeactivatePrincipalHandler:
         return DeactivatePrincipalHandler(
+            resolver=ctx.inv_ctx.get_authn,
             deactivation=ctx.deps.resolve_configurable(
                 ctx,
                 PrincipalDeactivationDepKey,

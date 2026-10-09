@@ -155,6 +155,26 @@ def _revoking(account: ReadApiKeyAccount | None) -> tuple[ApiKeyLifecycleAdapter
     return adapter, sink
 
 
+class TestTheOwnerListsTheirKeys:
+    @pytest.mark.asyncio
+    async def test_an_ineligible_caller_lists_nothing(self) -> None:
+        ak_qry = _port()
+        ak_qry.find_many = AsyncMock(return_value=MagicMock(hits=[_stored_key()]))
+        adapter = _adapter(ak_qry=ak_qry)
+        adapter.eligibility.require_authentication_allowed = AsyncMock(
+            side_effect=exc.authentication("Principal is not allowed to authenticate")
+        )
+        caller = AuthnIdentity(principal_id=uuid4())
+
+        with pytest.raises(CoreException):
+            await adapter.list_api_keys(caller)
+
+        adapter.eligibility.require_authentication_allowed.assert_awaited_once_with(
+            caller.principal_id
+        )
+        ak_qry.find_many.assert_not_awaited()
+
+
 class TestAnAdminListsAnyPrincipalsKeys:
     @pytest.mark.asyncio
     async def test_another_principals_keys_are_listed_without_their_secrets(self) -> None:

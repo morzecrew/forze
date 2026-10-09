@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -29,7 +30,7 @@ from forze.application.contracts.authn.value_objects import (
     RefreshTokenCredentials,
 )
 from forze.application.contracts.authz import AuthzSpec
-from forze.application.contracts.execution import BeforeStep
+from forze.application.contracts.execution import BeforeFactory, BeforeStep
 from forze.application.execution import ExecutionContext
 from forze.application.hooks.authn import AuthnRequired
 from forze.application.hooks.authz import AuthzBeforeAuthorize
@@ -71,6 +72,37 @@ class _ForzeShippedStep:
 
     def __call__(self, ctx: object) -> object:
         return _AppAuthorization()(ctx)
+
+
+class _AppAuthn(AuthnRequired):  # type: ignore[misc]
+    """An app's subclass of a Forze step that still only authenticates."""
+
+
+class _AppTenant(TenantRequired):  # type: ignore[misc]
+    """An app's subclass of a Forze step that still only requires a tenant."""
+
+
+class _AppGuard(BeforeFactory):
+    """An app's own step written against Forze's ``BeforeFactory`` protocol."""
+
+    def __call__(self, ctx: object) -> object:
+        return _AppAuthorization()(ctx)
+
+
+class _LookalikeAppStep(_AppAuthorization):
+    """An app's own step in a package whose name merely starts with ``forze``."""
+
+    __module__ = "forzeful_app.guards"
+
+
+class _GuardedFn:
+    """A decorator-style wrapper exposing the step it wraps as ``__wrapped__``."""
+
+    def __init__(self, wrapped: object) -> None:
+        self.__wrapped__ = wrapped
+
+    def __call__(self, ctx: object) -> object:
+        return self.__wrapped__(ctx)  # type: ignore[operator]
 
 
 def _authorize() -> AuthzBeforeAuthorize:
@@ -224,6 +256,32 @@ class TestBuildAuthnRegistry:
             pytest.param(
                 lambda: (BeforeStep(id="kit", factory=_ForzeShippedStep()),), id="forze-kit"
             ),
+            # Wrapped or subclassed, a Forze step still only authenticates or scopes.
+            pytest.param(
+                lambda: (
+                    AuthnRequired().to_step(),
+                    BeforeStep(id="t", factory=functools.partial(TenantRequired())),
+                ),
+                id="partial-tenant",
+            ),
+            pytest.param(
+                lambda: (
+                    BeforeStep(
+                        id="p",
+                        factory=functools.partial(functools.partial(AuthnRequired())),
+                    ),
+                ),
+                id="partial-of-partial",
+            ),
+            pytest.param(
+                lambda: (BeforeStep(id="w", factory=_GuardedFn(TenantRequired())),),
+                id="wrapped-tenant",
+            ),
+            pytest.param(lambda: (_AppAuthn().to_step(),), id="app-subclass-authn"),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), _AppTenant().to_step(step_id="t")),
+                id="app-subclass-tenant",
+            ),
         ],
     )
     def test_guards_that_authorize_nothing_are_refused(self, guards: Any) -> None:
@@ -241,6 +299,19 @@ class TestBuildAuthnRegistry:
             ),
             pytest.param(
                 lambda: (BeforeStep(id="app.admin", factory=lambda ctx: None),), id="app-fn"
+            ),
+            # ``forze`` and ``forze_*`` are Forze's packages; ``forzeful_app`` is not.
+            pytest.param(
+                lambda: (BeforeStep(id="app.admin", factory=_LookalikeAppStep()),),
+                id="forze-lookalike-package",
+            ),
+            # Implementing Forze's protocol does not make a step Forze's.
+            pytest.param(
+                lambda: (BeforeStep(id="app.admin", factory=_AppGuard()),), id="app-protocol"
+            ),
+            pytest.param(
+                lambda: (BeforeStep(id="app.admin", factory=functools.partial(_AppAuthorization())),),
+                id="partial-app",
             ),
             pytest.param(lambda: (AuthnRequired().to_step(), _authorize().to_step()), id="authn+authz"),
             pytest.param(

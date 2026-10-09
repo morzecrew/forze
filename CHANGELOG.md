@@ -29,9 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`deactivate_principal` is registered only behind `admin_guards`** (**Breaking**). Without them `build_authn_registry` leaves it out, so `/deactivate` and its generated tools are gone; pass the guards you bound on it as `admin_guards` instead, since a step bound twice fails at `freeze()`.
+- **`/deactivate` answers 404 after upgrading: pass `admin_guards`** (**Breaking**). `deactivate_principal` is registered only behind them; guards an app bound on it itself leave it absent, so pass them as `admin_guards` instead (bound twice, a step fails at `freeze()`).
 
-- **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). The admin operations need `admin_guards`, so an `attach_authn_routes(include=...)` built from the whole enum fails at startup without them; name the operations.
+- **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). An `include=` built from the whole enum fails at startup without `admin_guards`; with them, MCP's default read-only tools gain `list_principal_api_keys` (keep it off with `operations=`).
 
 - **A query operation may hold a write port it never uses** (**behaviour change**). A handler built with a command port failed to build under `as_query()`; it now gets a stand-in that refuses when used, so a read service carrying write ports can be a query. A write in a query is still refused.
 

@@ -415,12 +415,12 @@ class TestAuthnFlows:
         assert response.status_code == 401
         assert response.headers.get(ERROR_CODE_HEADER) == "auth_required"
 
-    def test_deactivate_runs_behind_the_apps_guards(self) -> None:
+    def test_deactivate_refuses_anyone_anonymous_behind_any_guard(self) -> None:
         client = TestClient(_build_app(registry=_guarded(allow_anonymous=True)))
 
         response = client.post("/auth/deactivate", json={"principal_id": str(uuid4())})
 
-        assert response.status_code == 204
+        assert response.status_code == 401
 
 
 # ....................... #

@@ -309,20 +309,27 @@ decide who may act on another principal; they run behind them, and so does
 all three. `AuthnRequired` and `TenantRequired` let every signed-in principal or tenant
 member through, so guards with no step that can authorize are refused when the registry is
 built (`admin_guards_unauthorized`): include `AuthzBeforeAuthorize` or a step of your own.
-Forze counts any step not defined under a `forze*` package as yours, and of its own steps
-only those that declare authorization. If you bound your own
-guards on `deactivate_principal`, pass them as `admin_guards` instead: the same step bound
-twice fails at `freeze()` with `Step ID … is not unique`.
+This catches the common mistakes; it is not a security boundary. A step whose class
+comes from a `forze` or `forze_*` package (a subclass, `functools.partial` or `__wrapped__`
+wrapper of one included) counts only if it declares authorization, and any other counts as
+yours; a plain function or lambda counts as yours, since its body cannot be seen. If you
+bound your own guards on `deactivate_principal`, pass them as `admin_guards` instead: the
+same step bound twice fails at `freeze()` with `Step ID … is not unique`.
+
+The guards also run on the list, which is a read: there they run read-only, so a guard
+that writes (an audit row, say) fails the list with `Cannot use command (write) port`.
+Write such a record from an after-hook or through the outbox instead.
 
 The admin API-key routes are **global**, like `deactivate_principal`: API-key accounts are
 not tenant-scoped, so they find a principal's keys or a key by id in every tenant, and the
-revoke's 404 tells a caller whether an id exists anywhere. An app whose administrators are scoped to a tenant must not expose
-it, or must guard it with a policy only platform administrators pass.
+revoke's 404 tells a caller whether an id exists anywhere. An app whose administrators
+are scoped to a tenant must not expose these routes, or must guard them with a policy
+only platform administrators pass.
 
 A delegated caller (an agent acting for the user) may list the keys but not issue or revoke
 them, and may not log out or change the password: only the user manages their own account.
-Nor may it list or revoke anyone's keys as an administrator: an agent acting for an
-administrator is not one. Those routes answer `403` (`delegate_denied`), and so do switching and leaving a
+Nor may it act as an administrator, to list or revoke anyone's keys or deactivate a
+principal: an agent acting for an administrator is not one. Those routes answer `403` (`delegate_denied`), and so do switching and leaving a
 tenant below.
 
 Identity, invocation metadata, and error mapping stay with the middlewares and

@@ -43,7 +43,7 @@ Authentication posture (read this before exposing the router):
   app's own; ``AuthnRequired`` and ``TenantRequired`` admit everyone with an identity)
   are refused at build. They are global (credential accounts are
   not tenant-scoped), so do not expose them to tenant-scoped administrators; the
-  API-key ones also refuse a delegated caller (``delegate_denied``).
+  handlers also refuse a delegated caller (``delegate_denied``).
 
 Responses of ``/login`` and ``/refresh`` carry token material in the body by
 design (the OAuth2-shaped :class:`~forze_kits.aggregates.authn.AuthnTokenResponseDTO`);

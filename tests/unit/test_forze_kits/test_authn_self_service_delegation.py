@@ -30,6 +30,8 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnLogout,
     AuthnRevokeApiKey,
     AuthnRevokePrincipalApiKey,
+    DeactivatePrincipalHandler,
+    DeactivatePrincipalRequestDTO,
 )
 from forze_kits.aggregates.tenancy import (
     LeaveTenant,
@@ -77,6 +79,10 @@ def _handlers(port: _Recorder) -> dict[str, tuple[Any, Any]]:
             AuthnRevokePrincipalApiKey(resolver=resolve, api_key_lifecycle=port),  # type: ignore[arg-type]
             AuthnRevokeApiKeyRequestDTO(id=uuid4()),
         ),
+        "admin-deactivate": (
+            DeactivatePrincipalHandler(resolver=resolve, deactivation=port),  # type: ignore[arg-type]
+            DeactivatePrincipalRequestDTO(principal_id=uuid4()),
+        ),
         "admin-list": (
             AuthnListPrincipalApiKeys(resolver=resolve, api_key_lifecycle=port),  # type: ignore[arg-type]
             AuthnPrincipalRefDTO(id=uuid4()),
@@ -109,6 +115,7 @@ def _handlers(port: _Recorder) -> dict[str, tuple[Any, Any]]:
         "revoke",
         "admin-revoke",
         "admin-list",
+        "admin-deactivate",
         "logout",
         "change-password",
         "switch-tenant",
