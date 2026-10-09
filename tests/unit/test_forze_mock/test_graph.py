@@ -195,3 +195,12 @@ async def test_mock_graph_fails_closed_without_tenant() -> None:
 
     with pytest.raises(CoreException, match="tenant_required"):
         await adapter.create_vertex("User", UserCreate(id="x"))
+
+
+@pytest.mark.asyncio
+async def test_a_decimal_filter_matches_either_stored_text() -> None:
+    from tests.support.graph_decimal_filters import DECIMAL_SPEC, assert_decimal_filters
+
+    ctx = context_from_deps(MockDepsModule(state=MockState())())
+
+    await assert_decimal_filters(ctx.graph.command(DECIMAL_SPEC), ctx.graph.query(DECIMAL_SPEC))

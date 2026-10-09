@@ -42,7 +42,7 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
-    normalize_property_filter,
+    property_filter_forms,
     validate_property_filter_keys,
 )
 from forze.application.integrations.graph import (
@@ -249,8 +249,9 @@ class MockGraphAdapter(MockTenancyMixin):
 
         # Stored properties went through ``model_dump(mode="json")``, so the filter values
         # are normalized the same way — otherwise a filter carrying a UUID would compare a
-        # UUID against its own string form and quietly match nothing.
-        normalized = normalize_property_filter(property_filter) or {}
+        # UUID against its own string form and quietly match nothing. A Decimal may have been
+        # stored as either of its texts.
+        forms = property_filter_forms(property_filter) or {}
 
         # A ``None`` filter value matches nothing, mirroring Cypher's three-valued logic
         # (``n.k = null`` is never true). Comparing with ``props.get(k)`` instead made an
@@ -258,7 +259,8 @@ class MockGraphAdapter(MockTenancyMixin):
         # carries returned the *entire* set, the widest possible wrong answer, while Neo4j
         # returned none of it.
         return all(
-            value is not None and props.get(key) == value for key, value in normalized.items()
+            any(value is not None and props.get(key) == value for value in values)
+            for key, values in forms.items()
         )
 
     async def neighbors(

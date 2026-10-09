@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). The admin operations need `admin_guards`, so an `attach_authn_routes(include=...)` built from the whole enum fails at startup without them; name the operations.
 
+- **A query operation may hold a write port it never uses** (**behaviour change**). A handler built with a command port failed to build under `as_query()`; it now gets a stand-in that refuses when used, so a read service carrying write ports can be a query. A write in a query is still refused.
+
+- **A forze model's `Decimal` graph key and stored text are fixed point** (**behaviour change**). A vertex keyed earlier by a `Decimal` that wrote in scientific form (`"1E+3"`) keeps that key; portability archive digests differ for such values.
+
 ### Fixed
 
 - **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.
@@ -64,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An encrypted field of any type can be updated in Postgres, Mongo and Firestore** (**behaviour change**). The patch was sealed before the domain merged it, so an encrypted `int`, mapping or date failed validation; it is now merged open, then sealed. Diffs report encrypted fields open; the mock rewrites a named one.
 
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.
+
+- **A `Decimal` field is written in fixed point in JSON** (**behaviour change**). A forze model wrote `Decimal("0.00000000")` as `"0E-8"` and `1000` as `"1E+3"`; both now come out as written, up to an exponent of 100 either way. A graph property filter matches a `Decimal`, at any depth, in either text.
 
 ## [0.11.1] - 2026-10-07
 

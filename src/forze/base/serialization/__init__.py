@@ -7,6 +7,7 @@ from .codec_rows import (
     materialize_mapping_rows,
     resolve_model_codec,
 )
+from .decimal import decimal_text
 from .defaults import default_model_codec, model_codec_for, stored_field_names_for
 from .diff import (
     apply_dict_patch,
@@ -22,6 +23,7 @@ from .pydantic_codec import PydanticModelCodec
 
 __all__ = [
     "apply_dict_patch",
+    "decimal_text",
     "calculate_dict_difference",
     "ModelCodec",
     "ModelDumpExcludeOptions",

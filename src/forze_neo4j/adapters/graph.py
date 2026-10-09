@@ -58,7 +58,7 @@ from forze.application.contracts.graph import (
     ShortestPathParams,
     ShortestPathResult,
     VertexRef,
-    normalize_property_filter,
+    property_filter_forms,
     validate_property_filter_keys,
 )
 from forze.application.contracts.resolution import (
@@ -323,12 +323,12 @@ class Neo4jGraphAdapter(TenancyMixin):
                 code="graph_filter_on_encrypted_field",
             )
 
-        # Normalized to the form properties are stored in: the driver rejects a raw UUID or
-        # Decimal parameter outright, and a caller filtering by the value they wrote should
-        # not have to know that.
-        normalized = normalize_property_filter(property_filter) or {}
+        # The forms properties are stored in: the driver rejects a raw UUID or Decimal
+        # parameter outright, and a caller filtering by the value they wrote should not have
+        # to know that, nor which text a Decimal was written as.
+        forms = property_filter_forms(property_filter) or {}
 
-        return {f"pf_{k}": v for k, v in normalized.items()}
+        return {f"pf_{k}": v for k, v in forms.items()}
 
     # ....................... #
     # tenancy helpers

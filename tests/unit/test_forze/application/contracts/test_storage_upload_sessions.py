@@ -149,5 +149,7 @@ def test_uploads_guarded_in_read_only_operation() -> None:
     deps = StorageDeps()
     deps.lock(ctx)
 
+    port = deps.uploads(MagicMock())  # held, not used: allowed
+
     with pytest.raises(CoreException, match="read-only"):
-        deps.uploads(MagicMock())
+        _ = port.begin_upload

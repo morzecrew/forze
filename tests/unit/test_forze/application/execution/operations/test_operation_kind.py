@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+from typing import Any, ClassVar
+
 import attrs
 import pytest
 from pydantic import BaseModel
@@ -11,13 +14,19 @@ from forze.application.contracts.analytics import (
     AnalyticsSpec,
 )
 from forze.application.contracts.authn import AuthnSpec
+from forze.application.contracts.base.specs import BaseSpec
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.counter import CounterSpec
-from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
+from forze.application.contracts.deps import DepKey
+from forze.application.contracts.document import (
+    DocumentCommandPort,
+    DocumentSpec,
+    DocumentWriteTypes,
+)
 from forze.application.contracts.execution import Handler
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.storage import StorageSpec
-from forze.application.execution import ExecutionContext, OperationKind
+from forze.application.execution import Deps, ExecutionContext, OperationKind
 from forze.application.execution.operations import run_operation
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -82,7 +91,7 @@ class _AcquireDocumentCommand(Handler[None, str]):
     ctx: ExecutionContext
 
     async def __call__(self, _args: None) -> str:
-        self.ctx.document.command(SPEC)
+        _ = self.ctx.document.command(SPEC).create  # a write method, reached for
         return "wrote"
 
 
@@ -100,7 +109,7 @@ class _AcquireOutboxCommand(Handler[None, str]):
     ctx: ExecutionContext
 
     async def __call__(self, _args: None) -> str:
-        self.ctx.outbox.command(OUTBOX_SPEC)
+        _ = self.ctx.outbox.command(OUTBOX_SPEC).stage
         return "staged"
 
 
@@ -132,7 +141,7 @@ class _AcquireAnalyticsIngest(Handler[None, str]):
     ctx: ExecutionContext
 
     async def __call__(self, _args: None) -> str:
-        self.ctx.analytics.ingest(ANALYTICS_SPEC)
+        _ = self.ctx.analytics.ingest(ANALYTICS_SPEC).append
         return "ingested"
 
 
@@ -141,7 +150,7 @@ class _AcquireTokenLifecycle(Handler[None, str]):
     ctx: ExecutionContext
 
     async def __call__(self, _args: None) -> str:
-        self.ctx.authn.token_lifecycle(AuthnSpec(name="auth"))
+        _ = self.ctx.authn.token_lifecycle(AuthnSpec(name="auth")).issue_tokens
         return "issued"
 
 
@@ -168,7 +177,7 @@ class _AcquireStorageCommand(Handler[None, str]):
     ctx: ExecutionContext
 
     async def __call__(self, _args: None) -> str:
-        self.ctx.storage.command(StorageSpec(name="files"))
+        _ = self.ctx.storage.command(StorageSpec(name="files")).upload
         return "granted"
 
 
@@ -192,6 +201,51 @@ class _HoldsEagerPort(Handler[None, str]):
 
     async def __call__(self, _args: None) -> str:
         return "built"
+
+
+@attrs.define(slots=True)
+class _UsesEagerPort(Handler[None, str]):
+    port: DocumentCommandPort[Any, Any, Any, Any]
+
+    async def __call__(self, _args: None) -> str:
+        await self.port.create(ThingCreate(name="x"))
+        return "wrote"
+
+
+@attrs.define(slots=True)
+class _RunsNested(Handler[None, str]):
+    registry: ClassVar[Any] = None
+    ctx: ExecutionContext
+    op: str
+
+    async def __call__(self, _args: None) -> str:
+        try:
+            await run_operation(self.registry, self.op, None, self.ctx)
+        except CoreException as e:
+            return f"refused: {e}"
+        return "wrote"
+
+
+@attrs.define(slots=True)
+class _Provisioner:
+    cmd: DocumentCommandPort[Any, Any, Any, Any]
+
+    async def provision(self) -> None:
+        await self.cmd.create(ThingCreate(name="new"))
+
+
+@attrs.frozen
+class _ProvisionerSpec(BaseSpec):
+    pass
+
+
+@attrs.define(slots=True)
+class _ListsTenants(Handler[None, int]):
+    manager: Any
+
+    async def __call__(self, _args: None) -> int:
+        _, total = await self.manager.list_tenants()
+        return total
 
 
 def _frozen(op: str, factory, *, query: bool):
@@ -226,22 +280,32 @@ class TestOperationKind:
 
         assert await run_operation(reg, "c", None, ctx) == "wrote"
 
-    async def test_query_op_cannot_eagerly_acquire_a_command_port_in_its_factory(
-        self,
-    ) -> None:
-        # Eager (factory-time) acquisition is the common kit pattern and previously
-        # bypassed the guard: the handler is built before __call__ sets the read-only
-        # flag. The build now runs under the flag for a QUERY op, so it is caught at
-        # resolve time instead of slipping through.
+    async def test_query_op_may_hold_a_command_port_it_never_uses(self) -> None:
+        # A read service built with a write port it never calls (a shared service class)
+        # can still be a query: holding the port is not a write.
         ctx = context_from_modules(MockDepsModule())
         reg = _frozen(
             "q", lambda c: _HoldsEagerPort(port=c.document.command(SPEC)), query=True
+        )
+
+        assert await run_operation(reg, "q", None, ctx) == "built"
+
+    async def test_query_op_cannot_use_a_command_port_acquired_in_its_factory(
+        self,
+    ) -> None:
+        # Eager (factory-time) acquisition is the common kit pattern: the handler is
+        # built under the read-only flag for a QUERY op, and what it gets refuses the
+        # write when the handler makes it.
+        ctx = context_from_modules(MockDepsModule())
+        reg = _frozen(
+            "q", lambda c: _UsesEagerPort(port=c.document.command(SPEC)), query=True
         )
 
         with pytest.raises(CoreException) as ei:
             await run_operation(reg, "q", None, ctx)
 
         assert ei.value.kind is ExceptionKind.PRECONDITION
+        assert await ctx.document.query(SPEC).count() == 0
 
     async def test_query_op_can_eagerly_acquire_a_query_port_in_its_factory(
         self,
@@ -254,6 +318,80 @@ class TestOperationKind:
         )
 
         assert await run_operation(reg, "q", None, ctx) == "built"
+
+    async def test_a_command_op_first_built_inside_a_query_still_writes_later(
+        self,
+    ) -> None:
+        # A command op dispatched from a query is refused there when that builds its handler,
+        # which is cached then; a later command call of it must write, not inherit the refusal.
+        reg = OperationRegistry(
+            handlers={
+                "c": lambda c: _UsesEagerPort(port=c.document.command(SPEC)),
+                "q": lambda c: _RunsNested(ctx=c, op="c"),
+            }
+        )
+        frozen = reg.bind("q").as_query().finish().freeze()
+        _RunsNested.registry = frozen
+        ctx = context_from_modules(MockDepsModule())
+
+        assert (await run_operation(frozen, "q", None, ctx)).startswith("refused")
+        assert await run_operation(frozen, "c", None, ctx) == "wrote"
+        assert await ctx.document.query(SPEC).count() == 1
+
+    async def test_a_port_built_on_a_write_port_inside_a_query_still_writes_later(
+        self,
+    ) -> None:
+        # A port whose factory takes a command port is cached per scope; built first in a
+        # query, it must still write when a command uses it.
+        key: DepKey[_Provisioner] = DepKey("provisioner")
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.plain({key: lambda c, _s: _Provisioner(cmd=c.document.command(SPEC))}),
+        )
+        spec = _ProvisionerSpec(name="p")
+
+        with ctx.inv_ctx.bind_read_only():
+            held = ctx.deps.resolve_configurable(ctx, key, spec)
+
+            with pytest.raises(CoreException, match="read-only"):
+                await held.provision()
+
+        await ctx.deps.resolve_configurable(ctx, key, spec).provision()
+
+        assert await ctx.document.query(SPEC).count() == 1
+
+    async def test_a_write_method_kept_from_outside_a_query_is_refused_in_one(self) -> None:
+        # Taken when no query runs, the method is the real port's; called inside one, it is
+        # still refused.
+        ctx = context_from_modules(MockDepsModule())
+
+        with ctx.inv_ctx.bind_read_only():
+            port = ctx.document.command(SPEC)
+
+        create = port.create
+
+        assert inspect.iscoroutinefunction(create)
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            await create(ThingCreate(name="x"))
+
+        await create(ThingCreate(name="x"))
+
+        assert await ctx.document.query(SPEC).count() == 1
+        assert not hasattr(port, "__enter__")
+
+    async def test_a_tenant_list_answers_on_a_cold_process(self) -> None:
+        # The tenant manager reads its command port's spec when built; a query that is the
+        # first to build it must still list.
+        from forze_identity.tenancy.execution import TenancyDepsModule
+
+        reg = OperationRegistry(
+            handlers={"list": lambda c: _ListsTenants(manager=c.tenancy.require_manager("t"))}
+        )
+        frozen = reg.bind("list").as_query().finish().freeze()
+        ctx = context_from_modules(MockDepsModule(), TenancyDepsModule(tenant_management={"t"}))
+
+        assert await run_operation(frozen, "list", None, ctx) == 0
 
     async def test_command_op_can_eagerly_acquire_a_command_port_in_its_factory(
         self,
