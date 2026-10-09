@@ -12,7 +12,7 @@ from forze.application.contracts.authn import (
     PrincipalDeactivationDepKey,
     TokenLifecycleDepKey,
 )
-from forze.application.contracts.execution import BeforeStep, DeclaresAuthn, DeclaresAuthz
+from forze.application.contracts.execution import BeforeStep, DeclaresAuthz
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
@@ -55,16 +55,23 @@ from .operations import AuthnKernelOp
 # ----------------------- #
 
 
-def _authenticates_only(step: BeforeStep) -> bool:
-    """Whether *step* requires a signed-in principal and authorizes nothing, whatever its id."""
+def _can_authorize(step: BeforeStep) -> bool:
+    """Whether *step* may decide who is allowed, whatever its id.
+
+    A step declaring authorization (``DeclaresAuthz``) can; so can an app's own, which Forze
+    cannot see into. Any other step Forze ships (``AuthnRequired``, ``TenantRequired``) only
+    requires an identity, so it admits everyone who has one. Forze's own are told by the
+    package their factory is defined in, so a step Forze adds later fails closed.
+    """
 
     factory = step.factory
 
-    return (
-        isinstance(factory, DeclaresAuthn)
-        and factory.requires_authn()
-        and not isinstance(factory, DeclaresAuthz)
-    )
+    if isinstance(factory, DeclaresAuthz):
+        return True
+
+    package = str(getattr(factory, "__module__", None) or "").partition(".")[0]
+
+    return package != "forze" and not package.startswith("forze_")
 
 
 # ....................... #
@@ -89,10 +96,11 @@ def build_authn_registry(
         requesting a reset mints a token nobody receives.
     :param admin_guards: Before-steps that decide who may act on *another* principal,
         typically ``AuthnRequired`` plus an ``AuthzBeforeAuthorize``; who that is is the
-        app's authorization model, so Forze ships none. ``AuthnRequired`` alone admits
-        every signed-in principal, so guards that only authenticate are refused
-        (``configuration``); include an authorization step (``AuthzBeforeAuthorize`` or the
-        app's own). Given, they register the operations that act on another principal,
+        app's authorization model, so Forze ships none. Guards none of which can authorize
+        are refused (``configuration``): ``AuthnRequired`` and ``TenantRequired`` admit
+        every signed-in principal or tenant member. Include an authorization step,
+        ``AuthzBeforeAuthorize`` or the app's own; any step not defined under a ``forze*``
+        package counts as the app's. Given, they register the operations that act on another principal,
         ``deactivate_principal``, ``list_principal_api_keys`` and
         ``revoke_principal_api_key``, behind them; without them none is registered, so no
         generated route or tool can reach one unguarded. All act globally (credential
@@ -104,11 +112,11 @@ def build_authn_registry(
     # A generator is truthy even when it yields nothing: count the steps, not the object.
     admin_guards = tuple(admin_guards)
 
-    if admin_guards and all(_authenticates_only(step) for step in admin_guards):
+    if admin_guards and not any(_can_authorize(step) for step in admin_guards):
         raise exc.configuration(
-            "admin_guards authenticate but authorize nothing: AuthnRequired alone admits "
-            "every signed-in principal to revoke any API key and deactivate any principal. "
-            "Add an authorization step, such as AuthzBeforeAuthorize or the app's own.",
+            "admin_guards authorize nothing: AuthnRequired and TenantRequired admit every "
+            "signed-in principal or tenant member to act on any principal. Add an "
+            "authorization step, such as AuthzBeforeAuthorize or the app's own.",
             code="admin_guards_unauthorized",
         )
 

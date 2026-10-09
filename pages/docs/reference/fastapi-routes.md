@@ -306,9 +306,11 @@ an empty list for a principal with none) and revokes one with `DELETE /admin/api
 is a 404). They exist only when the registry is built with `admin_guards`, the steps that
 decide who may act on another principal; they run behind them, and so does
 `deactivate_principal`, which without them is not registered either. One guard set gates
-all three. `AuthnRequired` alone lets every signed-in principal through, so guards that only
-authenticate are refused when the registry is built (`admin_guards_unauthorized`): include
-an authorization step, such as `AuthzBeforeAuthorize` or your own. If you bound your own
+all three. `AuthnRequired` and `TenantRequired` let every signed-in principal or tenant
+member through, so guards with no step that can authorize are refused when the registry is
+built (`admin_guards_unauthorized`): include `AuthzBeforeAuthorize` or a step of your own.
+Forze counts any step not defined under a `forze*` package as yours, and of its own steps
+only those that declare authorization. If you bound your own
 guards on `deactivate_principal`, pass them as `admin_guards` instead: the same step bound
 twice fails at `freeze()` with `Step ID … is not unique`.
 

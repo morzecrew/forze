@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -27,9 +28,12 @@ from forze.application.contracts.authn.value_objects import (
     CredentialLifetime,
     RefreshTokenCredentials,
 )
+from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.execution import BeforeStep
 from forze.application.execution import ExecutionContext
 from forze.application.hooks.authn import AuthnRequired
+from forze.application.hooks.authz import AuthzBeforeAuthorize
+from forze.application.hooks.tenancy import TenantRequired
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.authn import AuthnKernelOp, build_authn_registry
@@ -58,6 +62,19 @@ class _AppAuthorization:
             _ = args
 
         return _allow
+
+
+class _ForzeShippedStep:
+    """Stands for a before-step factory Forze itself ships."""
+
+    __module__ = "forze_kits.aggregates.example"
+
+    def __call__(self, ctx: object) -> object:
+        return _AppAuthorization()(ctx)
+
+
+def _authorize() -> AuthzBeforeAuthorize:
+    return AuthzBeforeAuthorize(spec=AuthzSpec(name="api"), action="principals:admin")
 
 
 def _admin_guards() -> tuple[BeforeStep, ...]:
@@ -195,10 +212,50 @@ class TestBuildAuthnRegistry:
         assert caught.value.kind is ExceptionKind.CONFIGURATION
         assert "every signed-in principal" in str(caught.value)
 
-    def test_an_authorization_step_alone_guards_it(self) -> None:
+    @pytest.mark.parametrize(
+        "guards",
+        [
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), TenantRequired().to_step(step_id="t")),
+                id="authn+tenant",
+            ),
+            pytest.param(lambda: (TenantRequired().to_step(step_id="t"),), id="tenant"),
+            # A step Forze ships that authorizes nothing, wherever under ``forze*`` it lives.
+            pytest.param(
+                lambda: (BeforeStep(id="kit", factory=_ForzeShippedStep()),), id="forze-kit"
+            ),
+        ],
+    )
+    def test_guards_that_authorize_nothing_are_refused(self, guards: Any) -> None:
+        with pytest.raises(CoreException) as caught:
+            build_authn_registry(_authn_spec(), admin_guards=guards())
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert "authorize nothing" in str(caught.value)
+
+    @pytest.mark.parametrize(
+        "guards",
+        [
+            pytest.param(
+                lambda: (BeforeStep(id="app.admin", factory=_AppAuthorization()),), id="app"
+            ),
+            pytest.param(
+                lambda: (BeforeStep(id="app.admin", factory=lambda ctx: None),), id="app-fn"
+            ),
+            pytest.param(lambda: (AuthnRequired().to_step(), _authorize().to_step()), id="authn+authz"),
+            pytest.param(
+                lambda: (
+                    AuthnRequired().to_step(),
+                    TenantRequired().to_step(step_id="t"),
+                    _authorize().to_step(),
+                ),
+                id="authn+tenant+authz",
+            ),
+        ],
+    )
+    def test_a_step_that_can_authorize_guards_it(self, guards: Any) -> None:
         spec = _authn_spec()
-        guards = (BeforeStep(id="app.admin", factory=_AppAuthorization()),)
-        catalog = build_authn_registry(spec, admin_guards=guards).freeze().catalog()
+        catalog = build_authn_registry(spec, admin_guards=guards()).freeze().catalog()
 
         assert spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY) in catalog
 

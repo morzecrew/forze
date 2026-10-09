@@ -39,8 +39,9 @@ Authentication posture (read this before exposing the router):
   (``revoke_principal_api_key``). They exist only when the registry was built with
   ``admin_guards`` (e.g. :class:`~forze.application.hooks.authn.AuthnRequired` plus
   :class:`~forze.application.hooks.authz.AuthzBeforeAuthorize`), which they run
-  behind; ``AuthnRequired`` alone admits every signed-in principal, so guards that
-  only authenticate are refused at build. They are global (credential accounts are
+  behind. Guards with no step that can authorize (an ``AuthzBeforeAuthorize`` or the
+  app's own; ``AuthnRequired`` and ``TenantRequired`` admit everyone with an identity)
+  are refused at build. They are global (credential accounts are
   not tenant-scoped), so do not expose them to tenant-scoped administrators; the
   API-key ones also refuse a delegated caller (``delegate_denied``).
 
