@@ -6665,8 +6665,9 @@ the <a href="../../recipes/two-phase-handler/">two-phase handler</a> recipe; for
 work, <a href="../../recipes/offload-cpu-work/">offload it off the event loop</a>.</p>
 <div class="admonition note">
 <p class="admonition-title">What <code>prepare</code> can and can't do</p>
-<p><code>prepare</code> runs under the read-only flag, so it cannot acquire a write port
-(use <code>self.reader</code> for reads, <code>self.writer</code> only in <code>apply</code>). Its reads run
+<p><code>prepare</code> runs under the read-only flag, so it cannot write: a write port it
+acquires refuses when used (use <code>self.reader</code> for reads, <code>self.writer</code> only in
+<code>apply</code>). Its reads run
 <em>outside</em> <code>apply</code>'s transaction, so there's no read/write atomicity between the
 phases — validate on write in <code>apply</code> (an optimistic-concurrency <code>rev</code> check).
 <code>prepare</code> runs <strong>exactly once</strong> per invocation: if a retry or hedge wrap
