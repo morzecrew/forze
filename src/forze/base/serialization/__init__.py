@@ -18,6 +18,7 @@ from .diff import (
 from .model_codec import ModelCodec, ModelDumpExcludeOptions
 from .pydantic import CACHE_DUMP_EXCLUDE_OPTS, PERSISTENCE_DUMP_EXCLUDE_OPTS
 from .pydantic_codec import PydanticModelCodec
+from .sets import sorted_set_items
 
 # ----------------------- #
 
@@ -38,6 +39,7 @@ __all__ = [
     "decode_rows",
     "materialize_mapping_rows",
     "PydanticModelCodec",
+    "sorted_set_items",
     "split_touches_from_merge_patch",
     "has_hybrid_patch_conflict",
 ]

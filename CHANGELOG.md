@@ -63,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `Decimal` field is written in fixed point in JSON** (**behaviour change**). A forze model wrote `Decimal("0.00000000")` as `"0E-8"` and `1000` as `"1E+3"`; both now come out as written, up to an exponent of 100 either way. A graph property filter matches a `Decimal`, at any depth, in either text.
 
+- **A `set` or `frozenset` field is written in one order in every process.** A forze model failed on a mixed-type set and wrote a `frozenset` (or a set of sets) in hash-seeded order. Sets now sort naturally when their items allow, else by canonical JSON text; `pydantic_model_hash` digests of set-bearing models change.
+
 ## [0.11.1] - 2026-10-07
 
 ### Security
