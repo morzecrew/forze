@@ -111,8 +111,8 @@ class ProjectedCursorSearchRequestDTO[O: SearchOptions = SearchOptions](CursorSe
 class SearchSnapshotHandleDTO(BaseDTO):
     """Thin response DTO for :class:`~forze.application.contracts.base.SearchSnapshotHandle`.
 
-    Echo ``id`` and ``fingerprint`` in the next request under
-    ``SearchOptions`` ``result_snapshot`` to continue from the KV snapshot.
+    Echo ``id`` and ``fingerprint`` in the next request's ``snapshot`` to continue from the KV
+    snapshot.
     """
 
     id: str

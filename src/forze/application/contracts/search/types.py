@@ -1,6 +1,9 @@
 from collections.abc import Sequence
 from typing import Literal, TypeAlias, TypedDict
 
+from pydantic import with_config
+
+from ..querying.expressions import CLOSED_EXPRESSION
 from .capabilities import FusionStrategy
 
 # ----------------------- #
@@ -167,3 +170,15 @@ class MultiSourceSearchOptions(SearchOptions, total=False):
     ``weighted`` — normalized relative-score fusion (preserves per-leg score magnitude); only
     available on a backend whose :attr:`~.SearchCapabilities.hybrid_fusion` advertises it, else
     the request fails closed with ``query_feature_unsupported``."""
+
+
+# ....................... #
+
+# A TypedDict does not inherit its base's pydantic config, so each closes on its own.
+for _options in (
+    HighlightOptions,
+    SearchResultSnapshotOptions,
+    SearchOptions,
+    MultiSourceSearchOptions,
+):
+    with_config(CLOSED_EXPRESSION)(_options)

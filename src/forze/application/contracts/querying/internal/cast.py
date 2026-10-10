@@ -46,7 +46,7 @@ class QueryValueCaster:
             if s in {"false", "f", "0", "no", "n", "off"}:
                 return False
 
-        raise exc.precondition(f"Invalid boolean value: {v!r}")
+        raise exc.precondition(f"Invalid boolean value (got {type(v).__name__})")
 
     # ....................... #
 
@@ -61,9 +61,9 @@ class QueryValueCaster:
                 return UUID(v)
 
             except Exception as e:
-                raise exc.precondition(f"Invalid UUID value: {v!r}") from e
+                raise exc.precondition(f"Invalid UUID value (got {type(v).__name__})") from e
 
-        raise exc.precondition(f"Invalid UUID value: {v!r}")
+        raise exc.precondition(f"Invalid UUID value (got {type(v).__name__})")
 
     # ....................... #
 
@@ -97,9 +97,9 @@ class QueryValueCaster:
                 return int(s, 10)
 
             except Exception as e:
-                raise exc.precondition(f"Invalid int: {v!r}") from e
+                raise exc.precondition(f"Invalid int (got {type(v).__name__})") from e
 
-        raise exc.precondition(f"Invalid int: {v!r}")
+        raise exc.precondition(f"Invalid int (got {type(v).__name__})")
 
     # ....................... #
 
@@ -122,15 +122,15 @@ class QueryValueCaster:
                 result = float(s)
 
             except Exception as e:
-                raise exc.precondition(f"Invalid float: {v!r}") from e
+                raise exc.precondition(f"Invalid float (got {type(v).__name__})") from e
 
         else:
-            raise exc.precondition(f"Invalid float: {v!r}")
+            raise exc.precondition(f"Invalid float (got {type(v).__name__})")
 
         # Finite only (see as_decimal): NaN/Infinity parse, but as a filter operand
         # they compare differently on every backend — fail-open, not just wrong.
         if not math.isfinite(result):
-            raise exc.precondition(f"Non-finite float not allowed: {v!r}")
+            raise exc.precondition(f"Non-finite float not allowed (got {type(v).__name__})")
 
         return result
 
@@ -161,10 +161,10 @@ class QueryValueCaster:
                 result = Decimal(s)
 
             except Exception as e:
-                raise exc.precondition(f"Invalid numeric: {v!r}") from e
+                raise exc.precondition(f"Invalid numeric (got {type(v).__name__})") from e
 
         else:
-            raise exc.precondition(f"Invalid numeric: {v!r}")
+            raise exc.precondition(f"Invalid numeric (got {type(v).__name__})")
 
         # ``Decimal`` parses "NaN"/"Infinity", but a non-finite value is not a range
         # bound: Postgres sorts ``'NaN'::numeric`` above every number (``$lt "NaN"``
@@ -172,7 +172,7 @@ class QueryValueCaster:
         # in-process raises ``InvalidOperation``. Refuse it once here so every
         # backend sees the same precondition instead of diverging.
         if not result.is_finite():
-            raise exc.precondition(f"Non-finite numeric not allowed: {v!r}")
+            raise exc.precondition(f"Non-finite numeric not allowed (got {type(v).__name__})")
 
         return result
 
@@ -238,7 +238,7 @@ class QueryValueCaster:
         :raises CoreException: ``precondition`` for anything else, a ``bool`` included.
         """
         if isinstance(v, bool):
-            raise exc.precondition(f"Invalid datetime: {v!r}")
+            raise exc.precondition(f"Invalid datetime (got {type(v).__name__})")
 
         if isinstance(v, datetime):
             dt = v
@@ -256,7 +256,7 @@ class QueryValueCaster:
             # A Decimal is bounded before ``int()`` could expand a huge exponent.
             if isinstance(num, Decimal):
                 if not num.is_finite() or abs(num) >= _TIMESTAMP_BOUND:
-                    raise exc.precondition(f"Invalid datetime timestamp: {v!r}")
+                    raise exc.precondition(f"Invalid datetime timestamp (got {type(v).__name__})")
 
                 fractional = num != num.to_integral_value()
 
@@ -269,7 +269,9 @@ class QueryValueCaster:
                 dt = datetime.fromtimestamp(seconds, tz=UTC)
 
             except Exception as e:
-                raise exc.precondition(f"Invalid datetime timestamp: {v!r}") from e
+                raise exc.precondition(
+                    f"Invalid datetime timestamp (got {type(v).__name__})"
+                ) from e
 
         elif isinstance(v, str):
             s = v.strip()
@@ -278,10 +280,10 @@ class QueryValueCaster:
                 dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
 
             except Exception as e:
-                raise exc.precondition(f"Invalid datetime: {v!r}") from e
+                raise exc.precondition(f"Invalid datetime (got {type(v).__name__})") from e
 
         else:
-            raise exc.precondition(f"Invalid datetime: {v!r}")
+            raise exc.precondition(f"Invalid datetime (got {type(v).__name__})")
 
         return dt
 
@@ -306,9 +308,9 @@ class QueryValueCaster:
                 return date.fromisoformat(s)
 
             except Exception as e:
-                raise exc.precondition(f"Invalid date: {v!r}") from e
+                raise exc.precondition(f"Invalid date (got {type(v).__name__})") from e
 
-        raise exc.precondition(f"Invalid date: {v!r}")
+        raise exc.precondition(f"Invalid date (got {type(v).__name__})")
 
     # ....................... #
 

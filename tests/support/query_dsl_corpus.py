@@ -29,7 +29,7 @@ from forze.application.contracts.querying import (
     QueryFilterLimits,
     validate_query_capabilities,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 
 # ----------------------- #
@@ -337,6 +337,28 @@ CASES: tuple[QueryCase, ...] = (
 # ....................... #
 
 
+REFUSALS: tuple[tuple[str, dict[str, Any], str], ...] = (
+    ("unknown_sibling", {"$values": {"name": "alice"}, "$bogus": 1}, "$bogus"),
+    ("unknown_alone", {"$bogus": {"name": "alice"}}, "$bogus"),
+    ("unknown_nested", {"$or": [{"$values": {"name": "bob"}, "$bogus": 1}]}, "$bogus"),
+    (
+        "two_combinators",
+        {"$and": [{"$values": {"name": "alice"}}], "$or": [{"$values": {"name": "bob"}}]},
+        "$or",
+    ),
+    ("combinator_shape", {"$and": 5}, "$and"),
+    ("unknown_operator", {"$values": {"name": {"$eqq": "alice"}}}, "$eqq"),
+    ("quantifier_with_sibling", {"$values": {"tags": {"$any": "x", "$bogus": 1}}}, "$bogus"),
+    (
+        "unknown_in_element_values",
+        {"$values": {"items": {"$any": {"$values": {"sku": "a"}, "$bogus": 1}}}},
+        "$bogus",
+    ),
+)
+"""Filters every backend must refuse, as a ``precondition`` naming the key it cannot honour
+(the last item), rather than ignore the key and return a wider page."""
+
+
 def case_supported_by(filters: dict[str, Any], caps: QueryCapabilities) -> bool:
     """Whether *caps* advertises every feature *filters* uses (via the real validator).
 
@@ -418,6 +440,22 @@ async def run_parity_cases(
                 await doc.find_many(filters=case.filters, pagination={"limit": 1000})
 
             assert ei.value.code == UNSUPPORTED_QUERY_FEATURE_CODE, f"{label}: wrong error"
+
+    for name, filters, key in REFUSALS:
+        with pytest.raises(CoreException) as ei:
+            await doc.find_many(filters=filters, pagination={"limit": 1000})
+
+        assert ei.value.kind is ExceptionKind.PRECONDITION, f"{backend}/{name}: {ei.value!r}"
+        assert key in str(ei.value), f"{backend}/{name}: {ei.value}"
+
+    if caps.supports_aggregates:
+        with pytest.raises(CoreException) as ei:
+            await doc.aggregate_page(
+                {"$computed": {"n": {"$count": None}}, "$havng": {"$values": {"n": 1}}},
+                pagination={"limit": 10},
+            )
+
+        assert "$havng" in str(ei.value), f"{backend}/aggregate_unknown_key: {ei.value}"
 
     if caps.supports_aggregates:
         # A metric filter and `$having` are filters too, parsed under the spec's limits.

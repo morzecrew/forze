@@ -69,6 +69,15 @@ def parse_sort_value(
 
     if isinstance(value, Mapping):
         value = cast(Mapping[str, Any], value)
+
+        if extra := value.keys() - {"dir", "nulls"}:
+            _raise_invalid_sort(
+                f"Unknown sort spec key {', '.join(sorted(map(str, extra)))}{where}: a sort spec takes "
+                "dir and nulls.",
+                client_facing=client_facing,
+                code="invalid_sort_value",
+            )
+
         direction = str(value.get("dir", "")).lower()
         raw_nulls = value.get("nulls")
         nulls = str(raw_nulls).lower() if raw_nulls is not None else None
@@ -78,14 +87,14 @@ def parse_sort_value(
 
     if direction not in _DIRECTIONS:
         _raise_invalid_sort(
-            f"Invalid sort direction {value!r}{where}.",
+            f"Invalid sort direction{where}: expected asc or desc.",
             client_facing=client_facing,
             code="invalid_sort_value",
         )
 
     if nulls is not None and nulls not in _NULLS:
         _raise_invalid_sort(
-            f"Invalid null placement {nulls!r}{where}.",
+            f"Invalid null placement{where}: expected first or last.",
             client_facing=client_facing,
             code="invalid_sort_value",
         )

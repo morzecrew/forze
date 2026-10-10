@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Literal, NotRequired, TypeAlias, TypedDict
 
+from pydantic import ConfigDict, with_config
+
 from .types import Array, HierarchyValue, Numeric, Scalar, TextPatternValue
 
 # ----------------------- #
@@ -344,3 +346,32 @@ class CursorPaginationExpression(TypedDict, total=False):
 
     before: str | None
     """Opaque token from a prior response's ``prev_cursor`` (backward)."""
+
+
+# ....................... #
+
+CLOSED_EXPRESSION = ConfigDict(extra="forbid")
+"""Validated as a pydantic type (a request DTO, a tool's input schema), an expression refuses a
+key it does not define. Dropped instead, an unknown key widened a filter, lost a ``$having``
+or a null placement, or emptied the expression, all without a word."""
+
+for _expression in (
+    QueryValueOpConjunction,
+    QueryElementOpConjunction,
+    QueryElementValuesPredicate,
+    QueryElementQuantifierExpression,
+    QueryValuesPredicate,
+    QueryFieldsOpConjunction,
+    QueryConstraintPredicate,
+    QueryFieldsPredicate,
+    QueryConjunction,
+    QueryDisjunction,
+    QueryNegation,
+    QuerySortKeySpec,
+    AggregateTruncSpec,
+    AggregateTruncExpression,
+    AggregateComputedFunctionApplication,
+    AggregateComputedFunctionExpression,
+    AggregatesExpression,
+):
+    with_config(CLOSED_EXPRESSION)(_expression)

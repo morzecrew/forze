@@ -356,3 +356,16 @@ class TestSharedValidatorsNestedPaths:
             fields=["name"],
             default_sort={"addr.city": "asc"},
         )
+
+
+def test_a_sort_spec_refuses_a_key_it_does_not_define() -> None:
+    # Dropped, ``nul`` would leave the null placement at its default without a word.
+    with pytest.raises(CoreException, match="nul") as ei:
+        parse_sort_value({"dir": "asc", "nul": "last"}, field="age")
+
+    assert ei.value.kind is ExceptionKind.PRECONDITION
+    assert parse_sort_value({"dir": "asc", "nulls": "last"}) == ("asc", "last")
+
+    # A key that is not a string is named too, rather than failing to sort the names.
+    with pytest.raises(CoreException, match="Unknown sort spec key 1, x"):
+        parse_sort_value({"dir": "asc", 1: "a", "x": "b"})  # type: ignore[dict-item]
