@@ -22,7 +22,7 @@ from decimal import Decimal
 from pydantic_core import to_jsonable_python
 
 from forze.base.exceptions import exc
-from forze.base.serialization import decimal_text
+from forze.base.serialization import decimal_text, sorted_set_items
 
 # ----------------------- #
 
@@ -99,11 +99,7 @@ def _model_text(value: object) -> object:
         return {key: _model_text(item) for key, item in value.items()}
 
     if isinstance(value, (set, frozenset)):
-        try:
-            return to_jsonable_python(sorted(value))
-
-        except TypeError:
-            pass
+        return to_jsonable_python(sorted_set_items(value))
 
     return to_jsonable_python(value)
 
