@@ -6997,13 +6997,15 @@ same way. Authn flows are RPC-shaped with one natural surface each, so there is
 no style choice — fixed action paths: <code>POST /login</code> and <code>POST /refresh</code> (200,
 token response), <code>POST /logout</code> (204, no body), <code>POST /change-password</code> (204),
 <code>POST /password-reset/request</code> (202, uniform ack — never the token) and
-<code>POST /password-reset/confirm</code> (204), and <code>POST /deactivate</code> (204). Login,
+<code>POST /password-reset/confirm</code> (204), and, behind <code>admin_guards</code> only,
+<code>POST /deactivate</code> (204). Login,
 refresh, and the password-reset pair are meant to be reachable without a bearer
 token (the operations authenticate via their bodies, or deliberately not at all
 for the reset request); logout and change-password declare <code>AuthnRequired</code> (so
 they 401 without a bound identity and show up protected under
-<code>apply_openapi_security</code>), while <code>deactivate_principal</code> ships unguarded — bind
-<code>AuthnRequired</code> + authz hooks on it or exclude it via <code>include=</code>. The full
+<code>apply_openapi_security</code>). The operations that act on another principal,
+<code>deactivate_principal</code> and the admin API-key routes below, are registered only when
+<code>build_authn_registry</code> gets <code>admin_guards</code>, and run behind them. The full
 wiring (including how the reset token reaches the user via the outbox) is in the
 <a href="../../recipes/authn-authz-tenancy-fastapi/#http-login-endpoints">Authn, authz &amp; tenancy recipe</a>.</p>
 <h3 id="cookie-mode">Cookie mode<a class="headerlink" href="#cookie-mode" title="Permanent link">&para;</a></h3>
@@ -7051,9 +7053,35 @@ lists the caller's keys as non-secret descriptors (a <code>hint</code> like <cod
 never the secret), and <code>DELETE /api-keys/{id}</code> revokes one. This is the minting
 surface for the <a href="../../integrations/mcp/#protect-it-with-api-key-auth"><abbr title="Model Context Protocol">MCP</abbr> API-key flow</a>:
 the user issues a key here and pastes it into the agent host.</p>
+<p>An administrator finds a principal's keys with <code>GET /admin/principals/{id}/api-keys</code>
+(<code>list_principal_api_keys</code>: the same non-secret descriptors, revoked keys included, and
+an empty list for a principal with none) and revokes one with <code>DELETE /admin/api-keys/{id}</code>
+(<code>revoke_principal_api_key</code>, 204, and 204 again for a key already revoked; an unknown key
+is a 404). They exist only when the registry is built with <code>admin_guards</code>, the steps that
+decide who may act on another principal; they run behind them, and so does
+<code>deactivate_principal</code>, which without them is not registered either. One guard set gates
+all three. At least one guard must declare the permission keys it enforces
+(<code>permission_keys()</code>), as <code>AuthzBeforeAuthorize</code> does, or the registry is refused when
+built (<code>admin_guards_unauthorized</code>): <code>AuthnRequired</code>, <code>TenantRequired</code> or a logging step
+let every signed-in principal through. A step of your own counts once it implements
+<code>permission_keys()</code>, and its keys then show in the catalog and in <abbr title="Model Context Protocol">MCP</abbr> tool descriptions; a
+<code>functools.partial</code> or <code>__wrapped__</code> wrapper counts as what it wraps. If one of your guards
+authorizes without declaring it, pass <code>trust_admin_guards=True</code> and answer for it. If you
+bound your own guards on <code>deactivate_principal</code>, pass them as <code>admin_guards</code> instead: the
+same step bound twice fails at <code>freeze()</code> with <code>Step ID … is not unique</code>.</p>
+<p>The guards also run on the list, which is a read: there they run read-only, so a guard
+that writes (an audit row, say) fails the list with <code>Cannot use command (write) port</code>.
+Write such a record from an after-hook or through the outbox instead.</p>
+<p>The admin API-key routes are <strong>global</strong>, like <code>deactivate_principal</code>: API-key accounts are
+not tenant-scoped, so they find a principal's keys or a key by id in every tenant, and the
+revoke's 404 tells a caller whether an id exists anywhere. An app whose administrators
+are scoped to a tenant must not expose these routes, or must guard them with a policy
+only platform administrators pass.</p>
 <p>A delegated caller (an agent acting for the user) may list the keys but not issue or revoke
-them, and may not log out or change the password: only the user manages their own account. Those
-routes answer <code>403</code> (<code>delegate_denied</code>), and so do switching and leaving a tenant below.</p>
+them, and may not log out or change the password: only the user manages their own account.
+Nor may it act as an administrator, to list or revoke anyone's keys or deactivate a
+principal: an agent acting for an administrator is not one. Those routes answer <code>403</code> (<code>delegate_denied</code>), and so do switching and leaving a
+tenant below.</p>
 <p>Identity, invocation metadata, and error mapping stay with the middlewares and
 exception handlers from the <a href="../../integrations/fastapi/">integration setup</a> —
 generated routes only validate the input DTO and run the operation through the
@@ -7066,7 +7094,7 @@ leave). <code>attach_tenancy_admin_routes</code> projects the admin plane: <code
 (201, create), <code>GET /tenants/{id}/members</code>, <code>POST /tenants/{id}/deactivate</code> (204),
 <code>POST /memberships</code> (204, invite) and <code>DELETE /memberships</code> (204, remove). Admin
 operations ship without hooks bound — guard them with <code>AuthnRequired</code> + authz hooks
-in the registry, like <code>deactivate</code>.</p>
+in the registry.</p>
 <h2 id="aggregate-routes">Aggregate routes<a class="headerlink" href="#aggregate-routes" title="Permanent link">&para;</a></h2>
 <p><code>attach_aggregate_routes(router, kit, *, ctx_dep, style="rest", tx_route="default",
 storage_prefix="/blobs")</code> is the composite: given an <code>AggregateKit</code> it attaches the

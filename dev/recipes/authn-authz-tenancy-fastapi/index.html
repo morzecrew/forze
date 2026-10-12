@@ -6687,11 +6687,10 @@ note that <code>not_permitted</code> discloses that hidden rows exist, so surfac
 end users is your API's disclosure decision.</p>
 <h2 id="http-login-endpoints">HTTP login endpoints<a class="headerlink" href="#http-login-endpoints" title="Permanent link">&para;</a></h2>
 <p>The login flows themselves come for free: <code>build_authn_registry</code> registers the
-password-login, refresh, logout, change-password, password-reset, and
-deactivate operations, and <code>attach_authn_routes</code> projects them onto a router —
+password-login, refresh, logout, change-password and password-reset operations,
+and <code>attach_authn_routes</code> projects them onto a router —
 <code>POST /auth/login</code>, <code>/auth/refresh</code>, <code>/auth/logout</code>, <code>/auth/change-password</code>,
-<code>/auth/password-reset/request</code>, <code>/auth/password-reset/confirm</code>,
-<code>/auth/deactivate</code>:</p>
+<code>/auth/password-reset/request</code>, <code>/auth/password-reset/confirm</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">APIRouter</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.routes</span><span class="w"> </span><span class="kn">import</span> <span class="n">attach_authn_routes</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.aggregates.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_authn_registry</span>
@@ -6714,10 +6713,17 @@ curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </spa
 <p><code>/login</code> and <code>/refresh</code> are deliberately reachable <strong>without</strong> a bearer token —
 the operations authenticate via their request bodies. <code>/logout</code> and
 <code>/change-password</code> answer <code>401</code> on their own when the middleware bound no
-identity. <code>/deactivate</code> (<code>deactivate_principal</code>) is the exception: it ships
-<strong>unguarded</strong> — bind <code>AuthnRequired</code> plus an <code>AuthzBeforeAuthorize</code> on that
-operation (the same chain as <a href="#enforce-on-operations">above</a>) before exposing
-it, or keep it off the router with <code>include=</code>.</p>
+identity. The operations that act on <em>another</em> principal exist only behind
+guards you pass as <code>build_authn_registry(AUTH, admin_guards=(...))</code> — <code>AuthnRequired</code>
+plus an <code>AuthzBeforeAuthorize</code>, the same chain as <a href="#enforce-on-operations">above</a>:
+<code>/auth/deactivate</code> (<code>deactivate_principal</code>), <code>GET /auth/admin/principals/{id}/api-keys</code>,
+which lists any principal's API keys, and <code>DELETE /auth/admin/api-keys/{id}</code>, which
+revokes one. Without <code>admin_guards</code> none is registered. All are <strong>global</strong>: credential accounts are not tenant-scoped, so with tenant-scoped
+administrators expose none, or guard them with a policy only platform
+administrators pass. At least one guard must declare its permission keys
+(<code>permission_keys()</code>), as <code>AuthzBeforeAuthorize</code> does, or the registry is refused when
+built; <code>trust_admin_guards=True</code> skips the check for a guard that authorizes without
+declaring it.</p>
 <h2 id="self-service-password-reset">Self-service password reset<a class="headerlink" href="#self-service-password-reset" title="Permanent link">&para;</a></h2>
 <p>Request → deliver → confirm is a separate route set on the same registry: add the reset
 pepper and <code>password_reset={"api"}</code>, then deliver the token out of band (it is never

@@ -6540,8 +6540,7 @@ tenant) is the privileged inverse, in a separate aggregate:
 <code>build_tenancy_admin_registry(ns)</code> → <code>attach_tenancy_admin_routes</code> (<code>POST /tenants</code>,
 <code>GET /tenants/{id}/members</code>, <code>POST /tenants/{id}/deactivate</code>, <code>POST</code>/<code>DELETE /memberships</code>).</p>
 <p>Because <em>who</em> may administer a tenant is your authorization model — not something the framework
-can define — these ops ship <strong>unguarded</strong>, exactly like <code>deactivate_principal</code> in the
-<a href="../authn-authz-tenancy-fastapi/#enforce-on-operations">authn recipe</a>. Bind <code>AuthnRequired</code> plus
+can define — these ops ship <strong>unguarded</strong>. Bind <code>AuthnRequired</code> plus
 an <code>AuthzBeforeAuthorize</code> on each operation before exposing the router (or keep ops off it with
 <code>include=</code>):</p>
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.hooks.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnRequired</span>

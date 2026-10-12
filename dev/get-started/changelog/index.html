@@ -9244,6 +9244,18 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>An administrator can revoke any principal's API key.</strong> <code>build_authn_registry(admin_guards=...)</code> adds <code>revoke_principal_api_key</code> (<code>DELETE /admin/api-keys/{id}</code>) behind those guards, like <code>deactivate_principal</code>; unguarded, neither is registered. Both act in every tenant. <strong>Breaking</strong> for API-key lifecycle implementers.</p>
+</li>
+<li>
+<p><strong>An administrator can list any principal's API keys</strong>, to find one to revoke. <code>list_principal_api_keys</code> (<code>GET /admin/principals/{id}/api-keys</code>) returns the non-secret descriptors, revoked keys included, behind <code>admin_guards</code> only, and in every tenant. <strong>Breaking</strong> for API-key lifecycle implementers.</p>
+</li>
+<li>
+<p><strong><code>admin_guards</code> must include a step that declares its permission keys.</strong> Unless one implements <code>permission_keys()</code>, as <code>AuthzBeforeAuthorize</code> does, <code>build_authn_registry</code> refuses them; <code>trust_admin_guards=True</code> skips the check.</p>
+</li>
+<li>
+<p><strong>A revoked API key emits an <code>api_key_revoked</code> authn event</strong>, from self-service and admin revocation alike, with the key id and who revoked it. The principal-deactivation cascade, which also revokes keys, does not emit it.</p>
+</li>
+<li>
 <p><strong>A hub search can choose how an unasked page counts its total.</strong> <code>HubSearchSpec(default_search_count="approximate")</code> (or <code>"none"</code>) applies when a request sets no <code>search_count</code>, as it does on a <code>SearchSpec</code>. The request option still wins and the members' own defaults don't apply; Postgres honours it.</p>
 </li>
 <li>
@@ -9261,6 +9273,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong><code>/deactivate</code> answers 404 after upgrading: pass <code>admin_guards</code></strong> (<strong>Breaking</strong>). <code>deactivate_principal</code> is registered only behind them, so guards an app bound on the operation itself leave it absent; pass them as <code>admin_guards</code> instead (bound twice, a step fails at <code>freeze()</code>).</p>
+</li>
+<li>
+<p><strong><code>AuthnKernelOp</code> has members a default registry does not register</strong> (<strong>upgrade note</strong>). An <code>include=</code> built from the whole enum fails at startup without <code>admin_guards</code>; with them, <abbr title="Model Context Protocol">MCP</abbr>'s default read-only tools gain <code>list_principal_api_keys</code>.</p>
+</li>
 <li>
 <p><strong>A query operation may hold a write port it never uses</strong> (<strong>behaviour change</strong>). A handler built with a command port failed to build under <code>as_query()</code>; it now gets a stand-in that refuses when used, so a read service carrying write ports can be a query. A write in a query is still refused.</p>
 </li>
