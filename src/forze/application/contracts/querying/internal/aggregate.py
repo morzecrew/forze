@@ -325,6 +325,12 @@ class AggregatesExpressionParser:
 
         parser = filter_parser or _DEFAULT_FILTER_PARSER
 
+        if not isinstance(expr, Mapping):
+            raise exc.precondition(
+                "An aggregates expression must be an object with $groups, $computed and "
+                f"$having, got {type(expr).__name__}",
+            )
+
         # Dropped, a mistyped ``$having`` would return every group.
         if unknown := set(expr) - _AGGREGATES_KEYS:
             raise exc.precondition(

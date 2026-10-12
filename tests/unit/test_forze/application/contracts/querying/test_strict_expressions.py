@@ -228,3 +228,14 @@ def test_an_ordering_bound_message_names_what_it_accepts() -> None:
         QueryFilterExpressionParser.parse({"$values": {"x": {"$gt": time(1, 2)}}})
 
     assert "a number, string, date, datetime or UUID, got time" in str(caught.value)
+
+
+@pytest.mark.parametrize("expr", [[{"a": 1}], ["x"], 5, "abc", None])
+def test_an_aggregates_expression_that_is_not_an_object_is_refused(expr: Any) -> None:
+    from forze.application.contracts.querying.internal.aggregate import (
+        AggregatesExpressionParser,
+    )
+    from forze.base.exceptions import CoreException
+
+    with pytest.raises(CoreException, match="An aggregates expression must be an object"):
+        AggregatesExpressionParser.parse(expr)
