@@ -34,7 +34,7 @@ class ProcedureDeps(ConvenientDeps):
 
     Command-only: there is no query accessor. A procedure mutates or computes, so it is resolved
     through :meth:`~forze.application.contracts.deps.ConvenientDeps._resolve_command` — the single
-    write-guard point — and cannot be acquired in a read-only (``QUERY``) operation.
+    write-guard point — and cannot be run in a read-only (``QUERY``) operation.
     """
 
     def command(self, spec: ProcedureSpec[In, Out]) -> ProcedurePort[In, Out]:

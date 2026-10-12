@@ -15,6 +15,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.execution import ExecutionContext
+from forze.testing import unguarded
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_deps
 
@@ -63,7 +64,7 @@ def ctx() -> ExecutionContext:
 def test_ctx_graph_resolves_ports(ctx: ExecutionContext) -> None:
     spec = _spec()
     assert isinstance(ctx.graph.query(spec), GraphQueryPort)
-    assert isinstance(ctx.graph.command(spec), GraphCommandPort)
+    assert isinstance(unguarded(ctx.graph.command(spec)), GraphCommandPort)
 
 
 @pytest.mark.asyncio

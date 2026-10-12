@@ -38,6 +38,7 @@ from forze.application.contracts.search import (
 from forze.application.contracts.secrets import SecretsDepKey
 from forze.base.serialization import PydanticModelCodec
 from forze.domain.models import BaseDTO, CreateDocumentCmd, Document, ReadDocument
+from forze.testing import unguarded
 from forze_mock.execution import MockDepsModule, MockStateDepKey
 from tests.support.execution_context import context_from_deps
 
@@ -78,7 +79,7 @@ def test_mock_deps_module_resolves_shared_state_and_core_ports() -> None:
     )
     q_adapter = ctx.document.query(dspec)
     c_adapter = ctx.document.command(dspec)
-    assert q_adapter.__class__ is c_adapter.__class__
+    assert q_adapter.__class__ is unguarded(c_adapter).__class__
 
     search = SearchSpec(name="s", model_type=_S, fields=["t"])
     assert ctx.search.query(search) is not None

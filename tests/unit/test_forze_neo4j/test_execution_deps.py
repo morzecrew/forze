@@ -15,6 +15,7 @@ from forze.application.contracts.graph import (
 )
 from forze.application.execution import Deps
 from forze.base.exceptions import CoreException
+from forze.testing import unguarded
 from forze_neo4j.adapters import Neo4jGraphAdapter
 from forze_neo4j.execution.deps import (
     ConfigurableNeo4jGraph,
@@ -89,7 +90,7 @@ def test_resolved_via_context() -> None:
     ctx = context_from_deps(module())
     spec = _spec()
     assert isinstance(ctx.graph.query(spec), Neo4jGraphAdapter)
-    assert isinstance(ctx.graph.command(spec), Neo4jGraphAdapter)
+    assert isinstance(unguarded(ctx.graph.command(spec)), Neo4jGraphAdapter)
     assert isinstance(ctx.graph.raw(spec), Neo4jGraphAdapter)
 
 

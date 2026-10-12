@@ -379,6 +379,60 @@ class TestOperationKind:
 
         assert await ctx.document.query(SPEC).count() == 1
         assert not hasattr(port, "__enter__")
+        # Unwrapping the guarded method does not hand out the real port's.
+        assert inspect.unwrap(create) is create
+
+    async def test_a_built_method_is_still_refused_when_probed_in_a_query(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+        _ = port.create  # built outside a query
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            hasattr(port, "create")
+
+    async def test_a_method_patched_onto_the_port_is_the_one_called(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from forze.application.contracts.document import DocumentCommandDepKey
+        from forze.testing import unguarded
+
+        class _Port:
+            async def create(self, dto: Any) -> str:
+                return "real"
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        port = ctx.document.command(SPEC)
+        create = port.create  # built before the patch
+        unguarded(port).create = AsyncMock(return_value="patched")
+
+        assert await create(ThingCreate(name="x")) == "patched"
+
+    async def test_a_guard_is_freed_without_a_cycle(self) -> None:
+        import weakref
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+        _ = port.create
+        ref = weakref.ref(port)
+        del port, _
+
+        assert ref() is None
+
+    async def test_unguarded_reaches_the_port_outside_a_query_only(self) -> None:
+        from forze.testing import unguarded
+        from forze_mock.adapters.document import MockDocumentAdapter
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+
+        assert isinstance(unguarded(port), MockDocumentAdapter)
+        assert unguarded(ctx.document.query(SPEC)) is ctx.document.query(SPEC)
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            unguarded(port)
 
     async def test_a_tenant_list_answers_on_a_cold_process(self) -> None:
         # The tenant manager reads its command port's spec when built; a query that is the
@@ -487,7 +541,12 @@ class TestUniformWriteGuard:
         assert ei.value.kind is ExceptionKind.PRECONDITION
 
     async def test_query_op_cannot_run_identity_lifecycle(self) -> None:
-        ctx = context_from_modules(MockDepsModule())
+        from forze.application.contracts.authn import TokenLifecycleDepKey
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({TokenLifecycleDepKey: {"auth": lambda _c, _s: object()}}),
+        )
         reg = _frozen("q", lambda c: _AcquireTokenLifecycle(ctx=c), query=True)
 
         with pytest.raises(CoreException) as ei:

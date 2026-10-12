@@ -1,4 +1,3 @@
-import functools
 import inspect
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final
 
@@ -35,22 +34,35 @@ class DepKey[T]:
 # ....................... #
 
 
+def _refuse_if_read_only(ctx: "ExecutionContext", key: DepKey[Any]) -> None:
+    if ctx.inv_ctx.is_read_only():
+        raise exc.precondition(
+            f"Cannot use command (write) port {key} in a read-only (QUERY) operation."
+        )
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, frozen=True)
 class GuardedWritePort:
-    """What a command (write) accessor returns while the operation is read-only (``QUERY``).
+    """What a command (write) accessor returns: the port resolved at acquisition, which
+    refuses any use while the operation using it is read-only (``QUERY``).
 
     Holding it is allowed, so a service built with a write port it never calls can serve a
-    query. Anything reached for on it is refused while the operation reaching is read-only;
-    outside one it is the real port, resolved then. A handler or port built during a query
-    and cached is therefore not left broken for the commands that reuse it.
+    query. Whichever operation builds a handler or port that holds it, and whatever later
+    reuses that from a cache, a write is judged by the operation making it; outside a
+    read-only operation it is the port it stands in for.
 
     A probe counts as a use: ``hasattr`` and ``getattr`` with a default raise inside a
-    read-only operation rather than answer, and a protocol ``isinstance`` check is false.
+    read-only operation rather than answer, and a protocol ``isinstance`` check is false. A
+    guard against a write a query makes by mistake, not a boundary against code set on one:
+    :func:`forze.testing.unguarded` reaches the port, and so does resolving it directly.
     """
 
     ctx: "ExecutionContext" = attrs.field(repr=False, eq=False)
-    """The context the port is resolved in."""
+    """The context the port is used in."""
 
     key: DepKey[Any]
     """The command port this stands in for."""
@@ -61,6 +73,12 @@ class GuardedWritePort:
     route: StrKey | None = None
     """The route the port resolves on."""
 
+    _target: Any = attrs.field(default=None, repr=False, eq=False, alias="target")
+    """The port resolved at acquisition."""
+
+    _methods: dict[str, Any] = attrs.field(factory=dict, init=False, repr=False, eq=False)
+    """Each method name's guarded callable, built on first use."""
+
     # ....................... #
 
     def __getattr__(self, name: str) -> Any:
@@ -69,31 +87,45 @@ class GuardedWritePort:
         if name.startswith("__"):
             raise AttributeError(name)
 
-        self.__refuse_if_read_only()
-        port = self.ctx.deps.resolve_configurable(self.ctx, self.key, self.spec, route=self.route)
-        attribute = getattr(port, name)
+        _refuse_if_read_only(self.ctx, self.key)
+
+        if (method := self._methods.get(name)) is not None:
+            return method
+
+        attribute = getattr(self._target, name)
 
         if not callable(attribute):
             return attribute
 
-        # A method taken outside a read-only operation and kept is checked again when called.
-        @functools.wraps(attribute)
-        def guarded(*args: Any, **kwargs: Any) -> Any:
-            self.__refuse_if_read_only()
-            return attribute(*args, **kwargs)
+        method = _guarded(self.ctx, self.key, self._target, name, attribute)
+        self._methods[name] = method
 
-        if inspect.iscoroutinefunction(attribute):
-            inspect.markcoroutinefunction(guarded)
+        return method
 
-        return guarded
 
-    # ....................... #
+# ....................... #
 
-    def __refuse_if_read_only(self) -> None:
-        if self.ctx.inv_ctx.is_read_only():
-            raise exc.precondition(
-                f"Cannot use command (write) port {self.key} in a read-only (QUERY) operation."
-            )
+
+def _guarded(ctx: "ExecutionContext", key: DepKey[Any], target: Any, name: str, sample: Any) -> Any:
+    """*target*'s method *name*, checking the read-only flag when called: one taken outside a
+    read-only operation and kept is checked again. It looks the method up on each call, so
+    one patched onto the port later is the one called. Closes over the port, not its guard,
+    so a guard holding it is freed by reference counting."""
+
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        _refuse_if_read_only(ctx, key)
+        return getattr(target, name)(*args, **kwargs)
+
+    # Named like the port's method, but without ``__wrapped__``: unwrapping it must not hand
+    # out the real port's method.
+    guarded.__name__ = name
+    guarded.__qualname__ = getattr(sample, "__qualname__", name)
+    guarded.__doc__ = getattr(sample, "__doc__", None)
+
+    if inspect.iscoroutinefunction(sample):
+        inspect.markcoroutinefunction(guarded)
+
+    return guarded
 
 
 # ....................... #
@@ -175,17 +207,17 @@ class ConvenientDeps:
     ) -> Any:
         """Resolve a command (write) port — unusable in a read-only (``QUERY``) operation.
 
-        The single guard point for write ports: a ``QUERY`` operation gets a
-        :class:`GuardedWritePort`, which it may hold but not use, so a write is refused
-        where it is made. Query/read accessors keep using :meth:`_resolve_configurable`.
+        The single guard point for write ports. The port is resolved here, so a wiring error
+        surfaces at acquisition, and handed out inside a :class:`GuardedWritePort`: a handler
+        or adapter built by a command and cached would otherwise hold the bare port, and a
+        query reusing it could write. Query/read accessors keep using
+        :meth:`_resolve_configurable`.
         """
 
         ctx = self._require_ctx()
+        target = ctx.deps.resolve_configurable(ctx, key, spec, route=route)
 
-        if ctx.inv_ctx.is_read_only():
-            return GuardedWritePort(ctx=ctx, key=key, spec=spec, route=route)
-
-        return ctx.deps.resolve_configurable(ctx, key, spec, route=route)
+        return GuardedWritePort(ctx=ctx, key=key, spec=spec, route=route, target=target)
 
     # ....................... #
 

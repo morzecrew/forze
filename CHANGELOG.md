@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A read-only operation cannot write through a port a command built and cached** (**behaviour change**). A query reusing a handler or adapter that a command built first held its real write port. A command accessor now always returns `GuardedWritePort`; in a test, `forze.testing.unguarded` reaches the port.
+
 - **A filter, sort or aggregates expression refuses a key it does not define, naming it** (**behaviour change**). A request DTO dropped it, so `{"$values": {…}, "$bogus": 1}` returned a wider page and `{"$bogus": …}` failed as `{}`; the port ignored one beside `$values`, a second combinator, or a mistyped `$having`.
 
 - **A search request refuses an option it does not define** (**behaviour change**). Search options are closed like filters: an unknown key in `options` or its highlight or snapshot options, `result_snapshot` (use `snapshot`), or a single-index search's `members` / `member_weights` (dropped with a warning) is a 422.

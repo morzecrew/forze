@@ -22,6 +22,7 @@ from forze.testing.context import (
     context_from_modules,
     frozen_deps_from_deps,
     frozen_deps_from_modules,
+    unguarded,
 )
 from forze.testing.gates import (
     assert_operation_namespaces,
@@ -41,4 +42,5 @@ __all__ = [
     "context_from_modules",
     "frozen_deps_from_deps",
     "frozen_deps_from_modules",
+    "unguarded",
 ]
