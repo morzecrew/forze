@@ -11,6 +11,7 @@ from forze.application.contracts.storage import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, InvocationMetadata
+from forze.testing import unguarded
 from forze_s3.adapters.storage import S3StorageAdapter
 from forze_s3.execution.deps import (
     ConfigurableS3StorageCommand,
@@ -86,7 +87,7 @@ def test_s3_deps_module_registers_expected_keys() -> None:
     assert deps.exists(StorageCommandDepKey, route="module-bucket")
 
     context = context_from_deps(deps)
-    storage = context.storage.command(StorageSpec(name="module-bucket"))
+    storage = unguarded(context.storage.command(StorageSpec(name="module-bucket")))
 
     assert isinstance(storage, S3StorageAdapter)
     assert storage.client is s3_mock

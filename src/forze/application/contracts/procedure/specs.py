@@ -31,7 +31,7 @@ class ProcedureSpec[In: BaseModel, Out](BaseSpec):
     adapter dispatches on :attr:`result` cardinality (``None`` -> affected count, a scalar type ->
     single value, a Pydantic model -> single row).
 
-    The port is **command-only**: it cannot be acquired in a read-only (``QUERY``) operation. See
+    The port is **command-only**: it cannot be run in a read-only (``QUERY``) operation. See
     :class:`~forze.application.contracts.procedure.ports.ProcedurePort`.
     """
 

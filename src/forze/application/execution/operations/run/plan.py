@@ -278,10 +278,10 @@ async def _run_prepare[Args, Payload](
 ) -> Payload:
     """Run ``prepare`` under the read-only flag.
 
-    The flag bars ``prepare`` from writing: a command (write) port it acquires refuses
-    when used (best-effort — ports injected into the handler before ``prepare`` are
-    not covered). Runs in the prepare future's own context, so the flag is scoped to
-    ``prepare`` and never leaks into ``apply``.
+    The flag bars ``prepare`` from writing: a command (write) port refuses when used,
+    whether ``prepare`` acquired it or the handler was built holding it. Runs in the
+    prepare future's own context, so the flag is scoped to ``prepare`` and never leaks
+    into ``apply``.
     """
 
     ro_token = inv_ctx.set_read_only()
