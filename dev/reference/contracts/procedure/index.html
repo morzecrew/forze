@@ -6491,7 +6491,7 @@
 <code>CALL</code>, a <code>REFRESH MATERIALIZED VIEW</code>, a compute function run for effect. It is analytics'
 write/compute twin: where <a href="../analytics/">analytics</a> reads registered queries, a procedure
 runs one author-supplied statement with validated params. The port is <strong>command-only</strong> —
-it cannot be acquired in a read-only operation. The concept and the Postgres mapping are in
+it cannot be run in a read-only operation. The concept and the Postgres mapping are in
 <a href="../../../data-events/procedures/">Procedures</a>.</p>
 <div class="highlight"><pre><span></span><code><span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">ctx</span><span class="o">.</span><span class="n">procedure</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">params</span><span class="p">)</span>
 </code></pre></div>
