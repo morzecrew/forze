@@ -379,6 +379,216 @@ class TestOperationKind:
 
         assert await ctx.document.query(SPEC).count() == 1
         assert not hasattr(port, "__enter__")
+        # Unwrapping the guarded method does not hand out the real port's.
+        assert inspect.unwrap(create) is create
+
+    async def test_a_built_method_is_still_refused_when_probed_in_a_query(self) -> None:
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+        _ = port.create  # built outside a query
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            hasattr(port, "create")
+
+    async def test_a_method_patched_onto_the_port_is_the_one_called(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from forze.application.contracts.document import DocumentCommandDepKey
+        from forze.testing import unguarded
+
+        class _Port:
+            async def create(self, dto: Any) -> str:
+                return "real"
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        port = ctx.document.command(SPEC)
+        create = port.create  # built before the patch
+        unguarded(port).create = AsyncMock(return_value="patched")
+
+        assert await create(ThingCreate(name="x")) == "patched"
+
+    async def test_a_guard_is_freed_without_a_cycle(self) -> None:
+        import weakref
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+        _ = port.create
+        ref = weakref.ref(port)
+        del port, _
+
+        assert ref() is None
+
+    async def test_a_write_created_outside_a_query_is_refused_when_run_in_one(self) -> None:
+        import gc
+        import warnings
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+        pending = port.create(ThingCreate(name="x"))  # created, not started
+
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+
+            with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+                await pending
+
+            del pending
+            gc.collect()
+
+        # A refused coroutine is closed, not left unawaited.
+        assert not [w for w in seen if "never awaited" in str(w.message)]
+        assert await ctx.document.query(SPEC).count() == 0
+
+    async def test_a_stream_created_outside_a_query_is_refused_when_run_in_one(self) -> None:
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        ran: list[int] = []
+
+        class _Port:
+            async def stream(self) -> Any:
+                ran.append(1)
+                yield 1
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        pending = ctx.document.command(SPEC).stream()
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            await pending.__anext__()
+
+        assert ran == []
+        assert [item async for item in ctx.document.command(SPEC).stream()] == [1]
+
+    async def test_a_guarded_method_is_built_once_and_a_sync_one_returns_its_value(
+        self,
+    ) -> None:
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        class _Port:
+            def ping(self) -> str:
+                return "pong"
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        port = ctx.document.command(SPEC)
+
+        assert port.ping is port.ping
+        assert port.ping() == "pong"
+
+    async def test_a_stream_resumed_in_a_query_is_refused_and_still_closes(self) -> None:
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        steps: list[str] = []
+
+        class _Port:
+            async def stream(self) -> Any:
+                try:
+                    steps.append("first")
+                    received = yield 1
+                    steps.append(f"second:{received}")
+                    yield 2
+                finally:
+                    steps.append("closed")
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        stream = ctx.document.command(SPEC).stream()
+
+        assert await stream.__anext__() == 1  # started outside a query
+
+        # Each step may write, so a stream resumed inside a query is refused there too.
+        with ctx.inv_ctx.bind_read_only():
+            with pytest.raises(CoreException, match="read-only"):
+                await stream.__anext__()
+            with pytest.raises(CoreException, match="read-only"):
+                await stream.asend("x")
+
+        assert await stream.asend("y") == 2
+        assert steps == ["first", "second:y"]
+
+        # Closing is cleanup, allowed anywhere; throwing in resumes the body, a step like any.
+        with ctx.inv_ctx.bind_read_only():
+            await stream.aclose()
+
+        assert steps[-1] == "closed"
+
+        other = ctx.document.command(SPEC).stream()
+        assert await other.__anext__() == 1
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            await other.athrow(ValueError("boom"))
+
+        with pytest.raises(ValueError, match="boom"):
+            await other.athrow(ValueError("boom"))
+
+    async def test_a_lazy_awaitable_is_checked_when_awaited_and_a_future_is_left_as_is(
+        self,
+    ) -> None:
+        import asyncio
+
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        ran: list[int] = []
+
+        class _Lazy:
+            def __await__(self) -> Any:
+                ran.append(1)
+                return asyncio.sleep(0, result="done").__await__()
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+
+        class _Port:
+            def lazy(self) -> _Lazy:
+                return _Lazy()
+
+            def scheduled(self) -> asyncio.Future[str]:
+                return future
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        port = ctx.document.command(SPEC)
+        pending = port.lazy()
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            await pending
+
+        assert ran == []
+        assert await port.lazy() == "done"
+        # Already running: a check when awaited could not stop it, so it is returned as is.
+        assert port.scheduled() is future
+
+    async def test_a_guarded_method_keeps_the_port_methods_signature(self) -> None:
+        from forze.testing import unguarded
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+
+        assert inspect.signature(port.create) == inspect.signature(unguarded(port).create)
+
+    async def test_unguarded_reaches_the_port_outside_a_query_only(self) -> None:
+        from forze.testing import unguarded
+        from forze_mock.adapters.document import MockDocumentAdapter
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+
+        assert isinstance(unguarded(port), MockDocumentAdapter)
+        assert unguarded(ctx.document.query(SPEC)) is ctx.document.query(SPEC)
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            unguarded(port)
 
     async def test_a_tenant_list_answers_on_a_cold_process(self) -> None:
         # The tenant manager reads its command port's spec when built; a query that is the
@@ -487,7 +697,12 @@ class TestUniformWriteGuard:
         assert ei.value.kind is ExceptionKind.PRECONDITION
 
     async def test_query_op_cannot_run_identity_lifecycle(self) -> None:
-        ctx = context_from_modules(MockDepsModule())
+        from forze.application.contracts.authn import TokenLifecycleDepKey
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({TokenLifecycleDepKey: {"auth": lambda _c, _s: object()}}),
+        )
         reg = _frozen("q", lambda c: _AcquireTokenLifecycle(ctx=c), query=True)
 
         with pytest.raises(CoreException) as ei:

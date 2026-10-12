@@ -13,6 +13,9 @@ open a scope on it: ``async with ctx.tx_ctx.scope("mock"): ...``.
 
 from __future__ import annotations
 
+from typing import Any
+
+from forze.application.contracts.deps import GuardedWritePort
 from forze.application.execution import (
     Deps,
     DepsModule,
@@ -20,6 +23,7 @@ from forze.application.execution import (
     ExecutionContext,
     FrozenDeps,
 )
+from forze.base.exceptions import exc
 
 # ----------------------- #
 
@@ -55,3 +59,27 @@ def context_from_modules(*modules: DepsModule) -> ExecutionContext:
     """Build an execution context from deps modules (the usual entry — pass a ``MockDepsModule``)."""
 
     return ExecutionContext(deps=frozen_deps_from_modules(*modules))
+
+
+# ....................... #
+
+
+def unguarded(port: object) -> Any:
+    """The real port behind a command accessor's :class:`GuardedWritePort`, for a test that
+    checks its type or patches one of its methods; any other port is returned as it is.
+
+    A command accessor never hands out the real port, so that a write is always judged by the
+    operation making it. Outside a read-only operation this returns the one the guard
+    delegates to, so a method patched onto it is the one the guard calls; inside one it
+    refuses, as using the guard would.
+    """
+
+    if not isinstance(port, GuardedWritePort):
+        return port
+
+    if port.ctx.inv_ctx.is_read_only():
+        raise exc.precondition(
+            f"Cannot use command (write) port {port.key} in a read-only (QUERY) operation."
+        )
+
+    return port._target

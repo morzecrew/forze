@@ -100,3 +100,58 @@ async def test_an_admin_lists_another_principals_keys_as_a_query() -> None:
             await run_operation(registry, op, AuthnPrincipalRefDTO(id=owner), ctx)
 
     assert caught.value.kind is ExceptionKind.PRECONDITION
+
+
+@pytest.mark.parametrize("first", ["list", "issue"])
+async def test_a_listing_is_read_only_whichever_operation_builds_the_adapter(first: str) -> None:
+    # The lifecycle adapter is built once per scope by whichever key operation runs first and
+    # then reused. Built by an issue, it held the real command port, so a listing (a query)
+    # could write through it; built by a listing, it held a refusing one. The guard must not
+    # depend on which ran first: a fresh process listing first succeeds, and a write through
+    # the adapter's command port inside the listing is refused either way.
+    writes: list[str] = []
+
+    def port(ctx: object, spec: object) -> MagicMock:
+        doc = MagicMock()
+        doc.spec = spec
+        doc.find_many = AsyncMock(return_value=MagicMock(hits=[]))
+
+        async def create(*args: Any, **kwargs: Any) -> Any:
+            writes.append("create")
+            now = datetime.now(tz=UTC)
+            return MagicMock(id=uuid4(), rev=1, created_at=now, last_update_at=now)
+
+        async def update(*args: Any, **kwargs: Any) -> Any:
+            writes.append("update")
+
+        doc.create = create
+        doc.update = update
+        return doc
+
+    routes = {AuthnResourceName.API_KEY_ACCOUNTS: port}
+    deps = AuthnDepsModule(
+        kernel=AuthnKernelConfig(access_token_secret=b"k" * 32, api_key_pepper=b"a" * 32),
+        authn={"main": frozenset({"api_key"})},
+        api_key_lifecycle={"main"},
+        eligibility="allow_all",
+    )().merge(Deps.routed({DocumentQueryDepKey: dict(routes), DocumentCommandDepKey: dict(routes)}))
+    ctx = context_from_deps(deps)
+    registry = build_authn_registry(SPEC).freeze()
+    ns = SPEC.default_namespace
+    list_op, issue_op = ns.key(AuthnKernelOp.LIST_API_KEYS), ns.key(AuthnKernelOp.ISSUE_API_KEY)
+
+    with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=uuid4())):
+        if first == "issue":
+            issue_args = registry.catalog()[issue_op].descriptor.input_type()  # type: ignore[union-attr]
+            await run_operation(registry, issue_op, issue_args, ctx)
+
+        await run_operation(registry, list_op, None, ctx)
+
+        held = registry.resolve(list_op, ctx).handler.api_key_lifecycle.ak_cmd  # type: ignore[union-attr]
+        writes.clear()
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException) as caught:
+            await held.update(uuid4(), 1, None)
+
+    assert caught.value.kind is ExceptionKind.PRECONDITION
+    assert writes == []
