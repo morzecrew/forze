@@ -23,6 +23,7 @@ from forze.application.contracts.idempotency import (
 )
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import Deps, ExecutionContext, InvocationMetadata
+from forze.testing import unguarded
 from forze_redis.adapters import (
     RedisCacheAdapter,
     RedisCounterAdapter,
@@ -179,4 +180,4 @@ class TestRedisDepsModule:
         q = ctx2.dlock.query(spec)
         c = ctx2.dlock.command(spec)
         assert isinstance(q, RedisDistributedLockAdapter)
-        assert isinstance(c, RedisDistributedLockAdapter)
+        assert isinstance(unguarded(c), RedisDistributedLockAdapter)

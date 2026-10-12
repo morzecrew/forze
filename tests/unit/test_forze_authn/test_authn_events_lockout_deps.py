@@ -20,9 +20,9 @@ from forze.application.contracts.authn import (
     AuthnDepKey,
     AuthnEvent,
     AuthnEventKind,
-    AuthnIdentity,
     AuthnEventSink,
     AuthnEventSinkDepKey,
+    AuthnIdentity,
     AuthnSpec,
     PrincipalEligibilityDepKey,
     TokenLifecycleDepKey,
@@ -38,6 +38,7 @@ from forze.application.integrations.authn import (
     LockoutConfig,
     LoggingAuthnEventSink,
 )
+from forze.testing import unguarded
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.application.constants import AuthnResourceName
 from forze_identity.authn.domain.models.account import ReadApiKeyAccount
@@ -196,7 +197,7 @@ class TestEventSinkRegistration:
             is_active=True,
         )
         lifecycle.ak_qry.find = AsyncMock(return_value=account)
-        lifecycle.ak_cmd.update = AsyncMock()
+        unguarded(lifecycle.ak_cmd).update = AsyncMock()
 
         admin = AuthnIdentity(principal_id=uuid4())
 
