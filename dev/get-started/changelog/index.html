@@ -9271,6 +9271,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A filter, sort or aggregates expression refuses a key it does not define, naming it</strong> (<strong>behaviour change</strong>). A request DTO dropped it, so <code>{"$values": {…}, "$bogus": 1}</code> returned a wider page and <code>{"$bogus": …}</code> failed as <code>{}</code>; the port ignored one beside <code>$values</code>, a second combinator, or a mistyped <code>$having</code>.</p>
+</li>
+<li>
+<p><strong>A search request refuses an option it does not define</strong> (<strong>behaviour change</strong>). Search options are closed like filters: an unknown key in <code>options</code> or its highlight or snapshot options, <code>result_snapshot</code> (use <code>snapshot</code>), or a single-index search's <code>members</code> / <code>member_weights</code> (dropped with a warning) is a 422.</p>
+</li>
+<li>
 <p><strong>A Temporal schedule created from cron expressions can be described and listed.</strong> The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.</p>
 </li>
 <li>
