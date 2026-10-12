@@ -515,7 +515,7 @@ class TestOperationKind:
         assert await stream.asend("y") == 2
         assert steps == ["first", "second:y"]
 
-        # Closing and throwing in are cleanup, not writes: allowed anywhere.
+        # Closing is cleanup, allowed anywhere; throwing in resumes the body, a step like any.
         with ctx.inv_ctx.bind_read_only():
             await stream.aclose()
 
@@ -524,8 +524,50 @@ class TestOperationKind:
         other = ctx.document.command(SPEC).stream()
         assert await other.__anext__() == 1
 
-        with ctx.inv_ctx.bind_read_only(), pytest.raises(ValueError, match="boom"):
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
             await other.athrow(ValueError("boom"))
+
+        with pytest.raises(ValueError, match="boom"):
+            await other.athrow(ValueError("boom"))
+
+    async def test_a_lazy_awaitable_is_checked_when_awaited_and_a_future_is_left_as_is(
+        self,
+    ) -> None:
+        import asyncio
+
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        ran: list[int] = []
+
+        class _Lazy:
+            def __await__(self) -> Any:
+                ran.append(1)
+                return asyncio.sleep(0, result="done").__await__()
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+
+        class _Port:
+            def lazy(self) -> _Lazy:
+                return _Lazy()
+
+            def scheduled(self) -> asyncio.Future[str]:
+                return future
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        port = ctx.document.command(SPEC)
+        pending = port.lazy()
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            await pending
+
+        assert ran == []
+        assert await port.lazy() == "done"
+        # Already running: a check when awaited could not stop it, so it is returned as is.
+        assert port.scheduled() is future
 
     async def test_a_guarded_method_keeps_the_port_methods_signature(self) -> None:
         from forze.testing import unguarded

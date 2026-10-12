@@ -1,6 +1,7 @@
+import asyncio
 import contextlib
 import inspect
-from collections.abc import AsyncGenerator, Coroutine
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final
 
 import attrs
@@ -118,10 +119,10 @@ def _guarded(ctx: "ExecutionContext", key: DepKey[Any], target: Any, name: str, 
         _refuse_if_read_only(ctx, key)
         result = getattr(target, name)(*args, **kwargs)
 
-        # A coroutine or async generator runs later, when awaited or iterated: a coroutine
-        # created outside a read-only operation is checked again when it starts, a generator
-        # on every step.
-        if inspect.iscoroutine(result):
+        # A coroutine, a lazy awaitable or an async generator runs later, when awaited or
+        # iterated: one created outside a read-only operation is checked again when it starts,
+        # a generator on every step. A future is already running, so it is returned as is.
+        if inspect.isawaitable(result) and not isinstance(result, asyncio.Future):
             return _checked_on_start(ctx, key, result)
 
         if inspect.isasyncgen(result):
@@ -147,17 +148,17 @@ def _guarded(ctx: "ExecutionContext", key: DepKey[Any], target: Any, name: str, 
 # ....................... #
 
 
-async def _checked_on_start(
-    ctx: "ExecutionContext", key: DepKey[Any], coroutine: Coroutine[Any, Any, Any]
-) -> Any:
+async def _checked_on_start(ctx: "ExecutionContext", key: DepKey[Any], awaitable: Any) -> Any:
     try:
         _refuse_if_read_only(ctx, key)
 
     except BaseException:
-        coroutine.close()  # refused before it ran: closed, not left unawaited
+        if inspect.iscoroutine(awaitable):
+            awaitable.close()  # refused before it ran: closed, not left unawaited
+
         raise
 
-    return await coroutine
+    return await awaitable
 
 
 # ....................... #
@@ -165,9 +166,9 @@ async def _checked_on_start(
 
 @final
 class _CheckedSteps:
-    """An async generator checked against the read-only flag on every step it takes: each may
-    write, so one started outside a read-only operation is refused when resumed inside one.
-    Closing it and throwing into it are cleanup, allowed anywhere."""
+    """An async generator checked against the read-only flag on every step it takes, a thrown-in
+    exception included: each may write, so one started outside a read-only operation is
+    refused when resumed inside one. Closing it is cleanup, allowed anywhere."""
 
     __slots__ = ("_ctx", "_generator", "_key")
 
@@ -190,6 +191,7 @@ class _CheckedSteps:
         return await self._generator.asend(value)
 
     async def athrow(self, *args: Any) -> Any:
+        _refuse_if_read_only(self._ctx, self._key)
         return await self._generator.athrow(*args)
 
     async def aclose(self) -> None:
