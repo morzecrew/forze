@@ -421,6 +421,57 @@ class TestOperationKind:
 
         assert ref() is None
 
+    async def test_a_write_created_outside_a_query_is_refused_when_run_in_one(self) -> None:
+        import gc
+        import warnings
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+        pending = port.create(ThingCreate(name="x"))  # created, not started
+
+        with warnings.catch_warnings(record=True) as seen:
+            warnings.simplefilter("always")
+
+            with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+                await pending
+
+            del pending
+            gc.collect()
+
+        # A refused coroutine is closed, not left unawaited.
+        assert not [w for w in seen if "never awaited" in str(w.message)]
+        assert await ctx.document.query(SPEC).count() == 0
+
+    async def test_a_stream_created_outside_a_query_is_refused_when_run_in_one(self) -> None:
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        ran: list[int] = []
+
+        class _Port:
+            async def stream(self) -> Any:
+                ran.append(1)
+                yield 1
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        pending = ctx.document.command(SPEC).stream()
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="read-only"):
+            await pending.__anext__()
+
+        assert ran == []
+        assert [item async for item in ctx.document.command(SPEC).stream()] == [1]
+
+    async def test_a_guarded_method_keeps_the_port_methods_signature(self) -> None:
+        from forze.testing import unguarded
+
+        ctx = context_from_modules(MockDepsModule())
+        port = ctx.document.command(SPEC)
+
+        assert inspect.signature(port.create) == inspect.signature(unguarded(port).create)
+
     async def test_unguarded_reaches_the_port_outside_a_query_only(self) -> None:
         from forze.testing import unguarded
         from forze_mock.adapters.document import MockDocumentAdapter

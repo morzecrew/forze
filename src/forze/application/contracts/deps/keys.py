@@ -1,4 +1,6 @@
+import contextlib
 import inspect
+from collections.abc import AsyncGenerator, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, final
 
 import attrs
@@ -114,18 +116,88 @@ def _guarded(ctx: "ExecutionContext", key: DepKey[Any], target: Any, name: str, 
 
     def guarded(*args: Any, **kwargs: Any) -> Any:
         _refuse_if_read_only(ctx, key)
-        return getattr(target, name)(*args, **kwargs)
+        result = getattr(target, name)(*args, **kwargs)
 
-    # Named like the port's method, but without ``__wrapped__``: unwrapping it must not hand
-    # out the real port's method.
+        # A coroutine or async generator runs later, when awaited or iterated: one created
+        # outside a read-only operation is checked again when it starts.
+        if inspect.iscoroutine(result):
+            return _checked_on_start(ctx, key, result)
+
+        if inspect.isasyncgen(result):
+            return _CheckedOnStart(ctx, key, result)
+
+        return result
+
+    # Named and typed like the port's method, but without ``__wrapped__``: unwrapping it must
+    # not hand out the real port's method.
     guarded.__name__ = name
     guarded.__qualname__ = getattr(sample, "__qualname__", name)
     guarded.__doc__ = getattr(sample, "__doc__", None)
+
+    with contextlib.suppress(TypeError, ValueError):
+        guarded.__signature__ = inspect.signature(sample)  # type: ignore[attr-defined]
 
     if inspect.iscoroutinefunction(sample):
         inspect.markcoroutinefunction(guarded)
 
     return guarded
+
+
+# ....................... #
+
+
+async def _checked_on_start(
+    ctx: "ExecutionContext", key: DepKey[Any], coroutine: Coroutine[Any, Any, Any]
+) -> Any:
+    try:
+        _refuse_if_read_only(ctx, key)
+
+    except BaseException:
+        coroutine.close()  # refused before it ran: closed, not left unawaited
+        raise
+
+    return await coroutine
+
+
+# ....................... #
+
+
+@final
+class _CheckedOnStart:
+    """An async generator checked against the read-only flag when it first steps; one already
+    running goes on, as its effect began outside the operation."""
+
+    __slots__ = ("_ctx", "_generator", "_key", "_started")
+
+    def __init__(
+        self, ctx: "ExecutionContext", key: DepKey[Any], generator: AsyncGenerator[Any, Any]
+    ) -> None:
+        self._ctx = ctx
+        self._key = key
+        self._generator = generator
+        self._started = False
+
+    def __aiter__(self) -> "_CheckedOnStart":
+        return self
+
+    def __start(self) -> None:
+        if not self._started:
+            _refuse_if_read_only(self._ctx, self._key)
+            self._started = True
+
+    async def __anext__(self) -> Any:
+        self.__start()
+        return await self._generator.__anext__()
+
+    async def asend(self, value: Any) -> Any:
+        self.__start()
+        return await self._generator.asend(value)
+
+    async def athrow(self, *args: Any) -> Any:
+        return await self._generator.athrow(*args)
+
+    async def aclose(self) -> None:
+        await self._generator.aclose()
 
 
 # ....................... #
