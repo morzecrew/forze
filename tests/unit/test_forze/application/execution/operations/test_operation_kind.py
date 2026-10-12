@@ -464,6 +464,69 @@ class TestOperationKind:
         assert ran == []
         assert [item async for item in ctx.document.command(SPEC).stream()] == [1]
 
+    async def test_a_guarded_method_is_built_once_and_a_sync_one_returns_its_value(
+        self,
+    ) -> None:
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        class _Port:
+            def ping(self) -> str:
+                return "pong"
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        port = ctx.document.command(SPEC)
+
+        assert port.ping is port.ping
+        assert port.ping() == "pong"
+
+    async def test_a_stream_resumed_in_a_query_is_refused_and_still_closes(self) -> None:
+        from forze.application.contracts.document import DocumentCommandDepKey
+
+        steps: list[str] = []
+
+        class _Port:
+            async def stream(self) -> Any:
+                try:
+                    steps.append("first")
+                    received = yield 1
+                    steps.append(f"second:{received}")
+                    yield 2
+                finally:
+                    steps.append("closed")
+
+        ctx = context_from_modules(
+            MockDepsModule(),
+            lambda: Deps.routed({DocumentCommandDepKey: {SPEC.name: lambda _c, _s: _Port()}}),
+        )
+        stream = ctx.document.command(SPEC).stream()
+
+        assert await stream.__anext__() == 1  # started outside a query
+
+        # Each step may write, so a stream resumed inside a query is refused there too.
+        with ctx.inv_ctx.bind_read_only():
+            with pytest.raises(CoreException, match="read-only"):
+                await stream.__anext__()
+            with pytest.raises(CoreException, match="read-only"):
+                await stream.asend("x")
+
+        assert await stream.asend("y") == 2
+        assert steps == ["first", "second:y"]
+
+        # Closing and throwing in are cleanup, not writes: allowed anywhere.
+        with ctx.inv_ctx.bind_read_only():
+            await stream.aclose()
+
+        assert steps[-1] == "closed"
+
+        other = ctx.document.command(SPEC).stream()
+        assert await other.__anext__() == 1
+
+        with ctx.inv_ctx.bind_read_only(), pytest.raises(ValueError, match="boom"):
+            await other.athrow(ValueError("boom"))
+
     async def test_a_guarded_method_keeps_the_port_methods_signature(self) -> None:
         from forze.testing import unguarded
 

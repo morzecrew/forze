@@ -118,13 +118,14 @@ def _guarded(ctx: "ExecutionContext", key: DepKey[Any], target: Any, name: str, 
         _refuse_if_read_only(ctx, key)
         result = getattr(target, name)(*args, **kwargs)
 
-        # A coroutine or async generator runs later, when awaited or iterated: one created
-        # outside a read-only operation is checked again when it starts.
+        # A coroutine or async generator runs later, when awaited or iterated: a coroutine
+        # created outside a read-only operation is checked again when it starts, a generator
+        # on every step.
         if inspect.iscoroutine(result):
             return _checked_on_start(ctx, key, result)
 
         if inspect.isasyncgen(result):
-            return _CheckedOnStart(ctx, key, result)
+            return _CheckedSteps(ctx, key, result)
 
         return result
 
@@ -163,11 +164,12 @@ async def _checked_on_start(
 
 
 @final
-class _CheckedOnStart:
-    """An async generator checked against the read-only flag when it first steps; one already
-    running goes on, as its effect began outside the operation."""
+class _CheckedSteps:
+    """An async generator checked against the read-only flag on every step it takes: each may
+    write, so one started outside a read-only operation is refused when resumed inside one.
+    Closing it and throwing into it are cleanup, allowed anywhere."""
 
-    __slots__ = ("_ctx", "_generator", "_key", "_started")
+    __slots__ = ("_ctx", "_generator", "_key")
 
     def __init__(
         self, ctx: "ExecutionContext", key: DepKey[Any], generator: AsyncGenerator[Any, Any]
@@ -175,22 +177,16 @@ class _CheckedOnStart:
         self._ctx = ctx
         self._key = key
         self._generator = generator
-        self._started = False
 
-    def __aiter__(self) -> "_CheckedOnStart":
+    def __aiter__(self) -> "_CheckedSteps":
         return self
 
-    def __start(self) -> None:
-        if not self._started:
-            _refuse_if_read_only(self._ctx, self._key)
-            self._started = True
-
     async def __anext__(self) -> Any:
-        self.__start()
+        _refuse_if_read_only(self._ctx, self._key)
         return await self._generator.__anext__()
 
     async def asend(self, value: Any) -> Any:
-        self.__start()
+        _refuse_if_read_only(self._ctx, self._key)
         return await self._generator.asend(value)
 
     async def athrow(self, *args: Any) -> Any:
