@@ -23,12 +23,15 @@ from forze_kits.aggregates.authn import (
     AuthnApiKeyListDTO,
     AuthnIssueApiKeyRequestDTO,
     AuthnIssuedApiKeyDTO,
+    AuthnPrincipalRefDTO,
     AuthnRevokeApiKeyRequestDTO,
 )
 from forze_kits.aggregates.authn.handlers import (
     AuthnIssueApiKey,
     AuthnListApiKeys,
+    AuthnListPrincipalApiKeys,
     AuthnRevokeApiKey,
+    AuthnRevokePrincipalApiKey,
 )
 
 pytestmark = pytest.mark.unit
@@ -41,6 +44,7 @@ class _FakeApiKeyLifecycle:
     def __init__(self, *, keys: list[ApiKeyInfo] | None = None) -> None:
         self.issue_args: tuple | None = None
         self.revoked: list[str] = []
+        self.revoked_by_admin: list[str] = []
         self._keys = keys or []
 
     async def issue_api_key(self, identity, *, actor_principal_id=None, label=None):
@@ -62,6 +66,13 @@ class _FakeApiKeyLifecycle:
     async def refresh_api_key(self, credentials): ...  # pragma: no cover
 
     async def revoke_many_api_keys(self, identity, key_ids): ...  # pragma: no cover
+
+    async def revoke_principal_api_key(self, key_id):
+        self.revoked_by_admin.append(key_id)
+
+    async def list_principal_api_keys(self, principal_id):
+        self.listed_for = principal_id
+        return self._keys
 
 
 def _resolver(identity):
@@ -162,3 +173,52 @@ class TestRevoke:
 
         with pytest.raises(exc, match="Authentication required"):
             await handler(AuthnRevokeApiKeyRequestDTO(id=uuid4()))
+
+
+class TestAdminList:
+    @pytest.mark.asyncio
+    async def test_lists_another_principals_keys(self) -> None:
+        other = uuid4()
+        info = ApiKeyInfo(
+            key_id=uuid4(), hint="ab…yz", is_active=True, created_at=_NOW, expires_at=None
+        )
+        port = _FakeApiKeyLifecycle(keys=[info])
+        handler = AuthnListPrincipalApiKeys(resolver=_resolver(_USER), api_key_lifecycle=port)
+
+        out = await handler(AuthnPrincipalRefDTO(id=other))
+
+        assert port.listed_for == other
+        assert [item.key_id for item in out.keys] == [info.key_id]
+
+    @pytest.mark.asyncio
+    async def test_no_identity_is_401_before_the_port(self) -> None:
+        port = _FakeApiKeyLifecycle()
+        handler = AuthnListPrincipalApiKeys(resolver=_resolver(None), api_key_lifecycle=port)
+
+        with pytest.raises(exc, match="Authentication required"):
+            await handler(AuthnPrincipalRefDTO(id=uuid4()))
+
+        assert not hasattr(port, "listed_for")
+
+
+class TestAdminRevoke:
+    @pytest.mark.asyncio
+    async def test_revokes_by_id_without_an_owner(self) -> None:
+        key_id = uuid4()
+        port = _FakeApiKeyLifecycle()
+        handler = AuthnRevokePrincipalApiKey(resolver=_resolver(_USER), api_key_lifecycle=port)
+
+        await handler(AuthnRevokeApiKeyRequestDTO(id=key_id))
+
+        assert port.revoked_by_admin == [str(key_id)] and port.revoked == []
+
+    @pytest.mark.asyncio
+    async def test_no_identity_is_401_before_the_port(self) -> None:
+        # Registered in an app's own registry without guards, it still refuses anyone anonymous.
+        port = _FakeApiKeyLifecycle()
+        handler = AuthnRevokePrincipalApiKey(resolver=_resolver(None), api_key_lifecycle=port)
+
+        with pytest.raises(exc, match="Authentication required"):
+            await handler(AuthnRevokeApiKeyRequestDTO(id=uuid4()))
+
+        assert port.revoked_by_admin == []

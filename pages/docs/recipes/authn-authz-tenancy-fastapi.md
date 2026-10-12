@@ -142,11 +142,10 @@ end users is your API's disclosure decision.
 ## HTTP login endpoints
 
 The login flows themselves come for free: `build_authn_registry` registers the
-password-login, refresh, logout, change-password, password-reset, and
-deactivate operations, and `attach_authn_routes` projects them onto a router —
+password-login, refresh, logout, change-password and password-reset operations,
+and `attach_authn_routes` projects them onto a router —
 `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/change-password`,
-`/auth/password-reset/request`, `/auth/password-reset/confirm`,
-`/auth/deactivate`:
+`/auth/password-reset/request`, `/auth/password-reset/confirm`:
 
 ```python
 from fastapi import APIRouter
@@ -174,10 +173,17 @@ curl -X POST /auth/logout -H "Authorization: Bearer <access_token>"   # → 204
 `/login` and `/refresh` are deliberately reachable **without** a bearer token —
 the operations authenticate via their request bodies. `/logout` and
 `/change-password` answer `401` on their own when the middleware bound no
-identity. `/deactivate` (`deactivate_principal`) is the exception: it ships
-**unguarded** — bind `AuthnRequired` plus an `AuthzBeforeAuthorize` on that
-operation (the same chain as [above](#enforce-on-operations)) before exposing
-it, or keep it off the router with `include=`.
+identity. The operations that act on *another* principal exist only behind
+guards you pass as `build_authn_registry(AUTH, admin_guards=(...))` — `AuthnRequired`
+plus an `AuthzBeforeAuthorize`, the same chain as [above](#enforce-on-operations):
+`/auth/deactivate` (`deactivate_principal`), `GET /auth/admin/principals/{id}/api-keys`,
+which lists any principal's API keys, and `DELETE /auth/admin/api-keys/{id}`, which
+revokes one. Without `admin_guards` none is registered. All are **global**: credential accounts are not tenant-scoped, so with tenant-scoped
+administrators expose none, or guard them with a policy only platform
+administrators pass. At least one guard must declare its permission keys
+(`permission_keys()`), as `AuthzBeforeAuthorize` does, or the registry is refused when
+built; `trust_admin_guards=True` skips the check for a guard that authorizes without
+declaring it.
 
 ## Self-service password reset
 

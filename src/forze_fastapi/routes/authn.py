@@ -33,12 +33,17 @@ Authentication posture (read this before exposing the router):
   bound :class:`~forze.application.contracts.authn.AuthnIdentity` and raise a
   401 (``auth_required``) when none is present. The identity comes from the
   boundary middleware verifying the caller's access token.
-- ``/deactivate`` (``deactivate_principal``) has **no built-in guard at all** —
-  the handler calls the deactivation port directly. It is an admin-grade
-  operation: bind :class:`~forze.application.hooks.authn.AuthnRequired` and an
-  authz before-hook (e.g.
-  :class:`~forze.application.hooks.authz.AuthzBeforeAuthorize`) on its operation
-  before exposing it, or keep it off the router via ``include=``.
+- The admin routes act on another principal: ``/deactivate``
+  (``deactivate_principal``), ``GET /admin/principals/{id}/api-keys``
+  (``list_principal_api_keys``) and ``DELETE /admin/api-keys/{id}``
+  (``revoke_principal_api_key``). They exist only when the registry was built with
+  ``admin_guards`` (e.g. :class:`~forze.application.hooks.authn.AuthnRequired` plus
+  :class:`~forze.application.hooks.authz.AuthzBeforeAuthorize`), which they run
+  behind. Guards none of which declares its permission keys (``permission_keys()``,
+  as ``AuthzBeforeAuthorize`` does) are refused at build unless
+  ``trust_admin_guards=True``. They are global (credential accounts are
+  not tenant-scoped), so do not expose them to tenant-scoped administrators; the
+  handlers also refuse a delegated caller (``delegate_denied``).
 
 Responses of ``/login`` and ``/refresh`` carry token material in the body by
 design (the OAuth2-shaped :class:`~forze_kits.aggregates.authn.AuthnTokenResponseDTO`);
@@ -288,6 +293,13 @@ _AUTHN_BINDINGS: Mapping[str, RouteBinding] = {
     AuthnKernelOp.REVOKE_API_KEY: RouteBinding(
         method="DELETE", path="/api-keys/{id}", build=id_endpoint, status_code=204
     ),
+    # Registered only when the registry was built with ``admin_guards``.
+    AuthnKernelOp.LIST_PRINCIPAL_API_KEYS: RouteBinding(
+        method="GET", path="/admin/principals/{id}/api-keys", build=id_endpoint
+    ),
+    AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY: RouteBinding(
+        method="DELETE", path="/admin/api-keys/{id}", build=id_endpoint, status_code=204
+    ),
 }
 """Fixed action-path bindings per authn kernel operation.
 
@@ -325,10 +337,14 @@ def attach_authn_routes(
     - ``POST /change-password`` → ``change_password`` (204)
     - ``POST /password-reset/request`` → ``request_password_reset`` (202, uniform ack DTO)
     - ``POST /password-reset/confirm`` → ``reset_password`` (204)
-    - ``POST /deactivate`` → ``deactivate_principal`` (204)
+    - ``POST /deactivate`` → ``deactivate_principal`` (204), only when the registry was
+      built with ``admin_guards``
     - ``POST /api-keys`` → ``issue_api_key`` (201, the secret returned once)
     - ``GET /api-keys`` → ``list_api_keys`` (non-secret descriptors)
     - ``DELETE /api-keys/{id}`` → ``revoke_api_key`` (204)
+    - ``GET /admin/principals/{id}/api-keys`` → ``list_principal_api_keys`` and
+      ``DELETE /admin/api-keys/{id}`` → ``revoke_principal_api_key`` (204), only when the
+      registry was built with ``admin_guards``
 
     Self-service API-key management is a real resource collection, so it uses
     resource-style verbs (the auth-flow actions stay ``POST``). All three require a
@@ -345,11 +361,8 @@ def attach_authn_routes(
     for known and unknown logins, see the module docstring), not the security
     context. Guarding the other flows is the operation plan's (or handler's)
     job, not the route's — ``logout`` and ``change_password`` already raise a
-    401 from their handlers when no identity is bound, while
-    ``deactivate_principal`` ships unguarded: bind
-    :class:`~forze.application.hooks.authn.AuthnRequired` plus an authz
-    before-hook on it (see the module docstring), or exclude it via
-    ``include=``.
+    401 from their handlers when no identity is bound, and the admin operations
+    exist only behind the registry's ``admin_guards`` (see the module docstring).
 
     Args:
         router (APIRouter): A plain FastAPI router the caller owns.
