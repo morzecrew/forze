@@ -311,9 +311,9 @@ class StorageCommandPort(Protocol):
         shape across backends.
 
         Granting upload access **is a write grant**, so this lives on the
-        command port: a read-only (``QUERY``) operation cannot acquire a
-        :class:`StorageCommandPort` at all (the deps-level CQRS guard), and
-        therefore cannot mint upload URLs.
+        command port: in a read-only (``QUERY``) operation a
+        :class:`StorageCommandPort` refuses every use (the deps-level CQRS guard),
+        so it cannot mint upload URLs.
 
         **Trust model.** The URL grants *unauthenticated* write access to this
         key until expiry — treat it as a secret: prefer short ``expires_in``
@@ -447,8 +447,8 @@ class StorageUploadSessionPort(Protocol):
        returns its :class:`ObjectHead`; :meth:`abort_upload` discards an
        unfinished session.
 
-    **This is all writes** — a read-only (``QUERY``) operation cannot acquire
-    this port at all (resolved via ``ctx.storage.uploads(spec)``, behind the
+    **This is all writes** — in a read-only (``QUERY``) operation this port
+    refuses every use (resolved via ``ctx.storage.uploads(spec)``, behind the
     same deps-level CQRS write-guard as ``ctx.storage.command``), so a query op
     cannot begin uploads.
 

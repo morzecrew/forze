@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **An administrator can revoke any principal's API key.** `build_authn_registry(admin_guards=...)` adds `revoke_principal_api_key` (`DELETE /admin/api-keys/{id}`) behind those guards, like `deactivate_principal`; unguarded, neither is registered. Both act in every tenant. **Breaking** for API-key lifecycle implementers.
+
+- **An administrator can list any principal's API keys**, to find one to revoke. `list_principal_api_keys` (`GET /admin/principals/{id}/api-keys`) returns the non-secret descriptors, revoked keys included, behind `admin_guards` only, and in every tenant. **Breaking** for API-key lifecycle implementers.
+
+- **`admin_guards` must include a step that declares its permission keys.** Unless one implements `permission_keys()`, as `AuthzBeforeAuthorize` does, `build_authn_registry` refuses them; `trust_admin_guards=True` skips the check.
+
+- **A revoked API key emits an `api_key_revoked` authn event**, from self-service and admin revocation alike, with the key id and who revoked it. The principal-deactivation cascade, which also revokes keys, does not emit it.
+
 - **A hub search can choose how an unasked page counts its total.** `HubSearchSpec(default_search_count="approximate")` (or `"none"`) applies when a request sets no `search_count`, as it does on a `SearchSpec`. The request option still wins and the members' own defaults don't apply; Postgres honours it.
 
 - **A Temporal worker can deliver a cancel to a heartbeating activity within a second.** `temporal_worker_lifecycle_step(max_heartbeat_throttle_interval=...)` caps how long the SDK holds back heartbeats, and a cancel arrives only in a heartbeat's reply; uncapped it waited up to 0.8 × the `heartbeat_timeout`.
@@ -21,9 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **`/deactivate` answers 404 after upgrading: pass `admin_guards`** (**Breaking**). `deactivate_principal` is registered only behind them, so guards an app bound on the operation itself leave it absent; pass them as `admin_guards` instead (bound twice, a step fails at `freeze()`).
+
+- **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). An `include=` built from the whole enum fails at startup without `admin_guards`; with them, MCP's default read-only tools gain `list_principal_api_keys`.
+
+- **A query operation may hold a write port it never uses** (**behaviour change**). A handler built with a command port failed to build under `as_query()`; it now gets a stand-in that refuses when used, so a read service carrying write ports can be a query. A write in a query is still refused.
+
+- **A forze model's `Decimal` graph key and stored text are fixed point** (**behaviour change**). A vertex keyed earlier by a `Decimal` that wrote in scientific form (`"1E+3"`) keeps that key; portability archive digests differ for such values.
 
 ### Fixed
+
+- **A read-only operation cannot write through a port a command built and cached** (**behaviour change**). A query reusing a handler or adapter that a command built first held its real write port. A command accessor now always returns `GuardedWritePort`; in a test, `forze.testing.unguarded` reaches the port.
+
+- **A filter, sort or aggregates expression refuses a key it does not define, naming it** (**behaviour change**). A request DTO dropped it, so `{"$values": {…}, "$bogus": 1}` returned a wider page and `{"$bogus": …}` failed as `{}`; the port ignored one beside `$values`, a second combinator, or a mistyped `$having`.
+
+- **A search request refuses an option it does not define** (**behaviour change**). Search options are closed like filters: an unknown key in `options` or its highlight or snapshot options, `result_snapshot` (use `snapshot`), or a single-index search's `members` / `member_weights` (dropped with a warning) is a 422.
 
 - **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.
 
@@ -54,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An encrypted field of any type can be updated in Postgres, Mongo and Firestore** (**behaviour change**). The patch was sealed before the domain merged it, so an encrypted `int`, mapping or date failed validation; it is now merged open, then sealed. Diffs report encrypted fields open; the mock rewrites a named one.
 
 - **The in-memory mock sums `Decimal` values exactly, as Postgres sums `numeric`.** An aggregate's `$sum` over `Decimal` fields came back as a float, dropping digits a ledger total keeps.
+
+- **A `Decimal` field is written in fixed point in JSON** (**behaviour change**). A forze model wrote `Decimal("0.00000000")` as `"0E-8"` and `1000` as `"1E+3"`; both now come out as written, up to an exponent of 100 either way. A graph property filter matches a `Decimal`, at any depth, in either text.
+
+- **A `set` or `frozenset` field is written in one order in every process.** A forze model failed on a mixed-type set and wrote a `frozenset` (or a set of sets) in hash-seeded order. Sets now sort naturally when their items allow, else by canonical JSON text; `pydantic_model_hash` digests of set-bearing models change.
 
 ## [0.11.1] - 2026-10-07
 

@@ -3,13 +3,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from forze.application.contracts.querying import (
-    AggregatesExpression,
-)
 from forze.base.primitives import JsonDict
 from forze.domain.models import BaseDTO
 from forze_kits.dto.paginated import CursorPagination, Pagination
 from forze_kits.dto.querying import (
+    NamedAggregatesExpression,
     OptionalFilterExpression,
     OptionalSortExpression,
 )
@@ -119,7 +117,7 @@ class ProjectedListRequestDTO(ListRequestDTO):
 class AggregatedListRequestDTO(Pagination):
     """List request with aggregates expression."""
 
-    aggregates: AggregatesExpression  # type: ignore[valid-type]
+    aggregates: NamedAggregatesExpression
     """Aggregates expression."""
 
     filters: OptionalFilterExpression = None

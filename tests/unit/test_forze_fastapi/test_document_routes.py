@@ -174,6 +174,30 @@ class TestRestStyle:
 
         assert client.get(f"/notes/{note['id']}").status_code == 404
 
+    def test_an_unknown_filter_key_is_refused_by_name(self) -> None:
+        client = TestClient(_build_app("rest"))
+        client.post("/notes", json={"title": "x"})
+
+        for body in (
+            {"filters": {"$values": {"title": "x"}, "$bogus": 1}},
+            {"filters": {"$bogus": {"title": "x"}}},
+        ):
+            refused = client.post("/notes/list", json=body)
+
+            assert refused.status_code == 422, refused.text
+            # One error, the parser's, rather than one per shape the filter did not fit.
+            (error,) = refused.json()["context"]["errors"]
+            assert "Unknown filter key $bogus" in error["msg"]
+
+        refused = client.post(
+            "/notes/agg_list",
+            json={"aggregates": {"$computed": {"n": {"$count": None}}, "$havng": {}}},
+        )
+
+        assert refused.status_code == 422, refused.text
+        (error,) = refused.json()["context"]["errors"]
+        assert "Unknown aggregates key $havng" in error["msg"]
+
     def test_paths_and_methods(self) -> None:
         paths = _build_app("rest").openapi()["paths"]
 

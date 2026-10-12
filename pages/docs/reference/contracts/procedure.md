@@ -8,7 +8,7 @@ A procedure is a **governed, parametrized command or compute** — a set-based r
 `CALL`, a `REFRESH MATERIALIZED VIEW`, a compute function run for effect. It is analytics'
 write/compute twin: where [analytics](analytics.md) reads registered queries, a procedure
 runs one author-supplied statement with validated params. The port is **command-only** —
-it cannot be acquired in a read-only operation. The concept and the Postgres mapping are in
+it cannot be run in a read-only operation. The concept and the Postgres mapping are in
 [Procedures](../../data-events/procedures.md).
 
 ```python

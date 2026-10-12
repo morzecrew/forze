@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from forze.application.contracts.deps import GuardedWritePort
 from forze.application.contracts.storage import (
     ObjectHead,
     PresignedUrl,
@@ -130,16 +131,19 @@ async def test_stub_lifecycle() -> None:
 
 
 def test_uploads_resolves_via_command_guard() -> None:
-    port = object()
+    port = MagicMock(marker="real")
     ctx = MagicMock()
     ctx.inv_ctx.is_read_only.return_value = False
     ctx.deps.resolve_configurable.return_value = port
 
     deps = StorageDeps()
     deps.lock(ctx)
+    uploads = deps.uploads(MagicMock())
 
-    assert deps.uploads(MagicMock()) is port
+    # Resolved once at acquisition; what is handed out delegates to it.
     assert ctx.deps.resolve_configurable.call_count == 1
+    assert isinstance(uploads, GuardedWritePort)
+    assert uploads.marker == "real"
 
 
 def test_uploads_guarded_in_read_only_operation() -> None:
@@ -149,5 +153,7 @@ def test_uploads_guarded_in_read_only_operation() -> None:
     deps = StorageDeps()
     deps.lock(ctx)
 
+    port = deps.uploads(MagicMock())  # held, not used: allowed
+
     with pytest.raises(CoreException, match="read-only"):
-        deps.uploads(MagicMock())
+        _ = port.begin_upload

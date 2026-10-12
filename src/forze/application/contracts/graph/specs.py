@@ -78,14 +78,17 @@ would refuse legitimate wiring the moment someone wrote a new one. These three a
 types measured to break, and the check cannot false-positive on anything else.
 
 ``Decimal`` is deliberately *not* here, though it reads like it belongs: properties are
-written through ``model_dump(mode="json")``, which renders a ``Decimal`` as a **string**,
-so the store holds text and the keyed read matches. Measured on Neo4j — the property comes
-back ``STRING``, and ``get_vertex`` / ``vertex_exists`` / ``vertex_degree`` / ``neighbors``
-all resolve, including exponent and 29-significant-digit forms, which survive byte-exact.
+written through ``model_dump(mode="json")``, which renders a ``Decimal`` as a **string**
+(fixed point for a forze model, see :func:`~forze.base.serialization.decimal_text`;
+``str``'s text for a plain pydantic model), so the store holds text and the keyed read
+matches. Measured on Neo4j — the property comes back ``STRING``, and ``get_vertex`` /
+``vertex_exists`` / ``vertex_degree`` / ``neighbors`` all resolve, including exponent and
+29-significant-digit forms, which a plain model keeps byte-exact.
 (The same reasoning is why :func:`~forze.application.contracts.graph.filters
-.normalize_property_filter` json-encodes a ``Decimal`` filter value rather than passing it
-through.) One caveat the type cannot express: the key is that *text*, so ``Decimal("1.50")``
-and ``Decimal("1.5")`` are two different keys even though Python calls them equal."""
+.property_filter_forms` matches a ``Decimal`` filter value against its texts rather than
+passing it through.) One caveat the type cannot express: the key is that *text*, so
+``Decimal("1.50")`` and ``Decimal("1.5")`` are two different keys even though Python calls
+them equal, and a forze model's ``Decimal("1E+3")`` is keyed ``"1000"``."""
 
 
 _JSON_CONTAINERS: Final[tuple[type, ...]] = (list, tuple, set, frozenset, dict)

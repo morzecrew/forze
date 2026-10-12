@@ -111,10 +111,9 @@ class TestCheckWiring:
 
         assert {f.op for f in report.failures} == {"bad-1", "bad-2"}
 
-    def test_query_op_acquiring_a_write_port_is_caught(self) -> None:
-        # A QUERY handler that eagerly acquires a command (write) port trips the
-        # read-only guard at resolve time — check_wiring surfaces it because it
-        # routes through resolve(), which builds QUERY handlers read-only.
+    def test_query_op_holding_a_write_port_wires(self) -> None:
+        # A QUERY handler built with a command (write) port it never calls wires: what it
+        # holds refuses only when used (check_wiring builds QUERY handlers read-only).
         reg = (
             OperationRegistry(
                 handlers={"q": lambda c: _HoldsDep(dep=c.document.command(SPEC))}
@@ -127,10 +126,25 @@ class TestCheckWiring:
 
         report = check_wiring(reg, _mock_ctx)
 
+        assert report.ok is True
+
+    def test_query_op_holding_an_unwired_write_port_is_caught(self) -> None:
+        # The command accessor resolves the port when it hands out the guard, so a write
+        # port with no provider fails wiring even for a query that only holds it.
+        reg = (
+            OperationRegistry(
+                handlers={"q": lambda c: _HoldsDep(dep=c.document.command(SPEC))}
+            )
+            .bind("q")
+            .as_query()
+            .finish()
+            .freeze()
+        )
+
+        report = check_wiring(reg, lambda: context_from_modules())
+
         assert report.ok is False
-        assert len(report.failures) == 1
-        assert report.failures[0].op == "q"
-        assert report.failures[0].kind is ExceptionKind.PRECONDITION
+        assert report.failures[0].kind is ExceptionKind.CONFIGURATION
 
     def test_raise_if_failed_aggregates_into_one_error(self) -> None:
         reg = OperationRegistry(

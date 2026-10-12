@@ -96,7 +96,7 @@ class TwoPhaseHandler[Args, Payload, R](Protocol):  # pragma: no cover
     engine threads into ``apply``, which runs **inside** the transaction and does
     the writes. The transaction therefore wraps only ``apply``, not the pre-work.
 
-    ``prepare`` runs under the read-only flag and must not acquire a command
+    ``prepare`` runs under the read-only flag and cannot write through a command
     (write) port; its database reads run outside ``apply``'s transaction (no
     read/write atomicity — validate on write in ``apply``). It runs **exactly
     once** per invocation: a retry or hedge re-runs only ``apply`` (with the shared

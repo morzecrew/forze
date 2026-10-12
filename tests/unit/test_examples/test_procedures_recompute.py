@@ -54,8 +54,9 @@ def test_spec_is_command_only_side_effect() -> None:
 
 
 async def test_command_refused_in_read_only_operation() -> None:
-    # The procedures port is command-only: acquiring it in a read-only (QUERY) op fails closed.
+    # The procedures port is command-only: running it in a read-only (QUERY) op fails closed.
     ctx = build_context()
     ctx.inv_ctx.set_read_only()
+    port = ctx.procedure.command(RECOMPUTE_SPEC)
     with pytest.raises(CoreException, match="read-only"):
-        ctx.procedure.command(RECOMPUTE_SPEC)
+        _ = port.run

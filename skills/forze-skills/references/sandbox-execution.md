@@ -9,7 +9,7 @@ from forze.application.contracts.sandbox import ProgramPayload, SandboxRequest, 
 
 recipes = SandboxSpec(name="recipes", provenance="untrusted")
 
-# In a handler: the port is command-plane, so a QUERY operation cannot acquire one.
+# In a handler: the port is command-plane, so a QUERY operation cannot run it.
 result = await ctx.sandbox.run(recipes).run(
     SandboxRequest(
         program=ProgramPayload(interpreter=("python",), source=generated_source),

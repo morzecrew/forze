@@ -20,7 +20,8 @@ from urllib.parse import urlparse
 import httpx
 import pytest
 import pytest_asyncio
-import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_gcs.kernel.client.client import GCSClient
@@ -37,7 +38,12 @@ FAKE_GCS_PUBLIC_HOST = "0.0.0.0"  # the conftest's ``-public-host``
 def service_account_file(tmp_path_factory: pytest.TempPathFactory) -> str:
     """A throwaway service-account JSON key enabling local V4 signing."""
 
-    _pub, priv = rsa.newkeys(2048)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
 
     path = tmp_path_factory.mktemp("gcs-presign") / "service-account.json"
     path.write_text(
@@ -46,7 +52,7 @@ def service_account_file(tmp_path_factory: pytest.TempPathFactory) -> str:
                 "type": "service_account",
                 "project_id": TEST_PROJECT_ID,
                 "client_email": "signer@forze-gcs-test.iam.gserviceaccount.com",
-                "private_key": priv.save_pkcs1().decode(),
+                "private_key": pem,
                 "token_uri": "https://oauth2.googleapis.com/token",
             }
         )

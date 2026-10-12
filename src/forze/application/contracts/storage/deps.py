@@ -50,8 +50,8 @@ class StorageDeps(ConvenientDeps):
         """Resolve a storage upload-session (multipart) port for the given spec.
 
         Multipart sessions are all writes, so this goes through the same
-        CQRS write-guard as :meth:`command`: a read-only (``QUERY``) operation
-        cannot acquire it and therefore cannot begin uploads.
+        CQRS write-guard as :meth:`command`: in a read-only (``QUERY``) operation
+        it refuses every use, so a query cannot begin uploads.
         """
 
         return self._resolve_command(StorageUploadSessionDepKey, spec, route=spec.name)

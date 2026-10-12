@@ -130,8 +130,9 @@ class ResolvedOperation[Args, R](Handler[Args, R]):
     async def __call__(self, args: Args) -> R:
         """Call the operation.
 
-        A QUERY operation runs under a read-only flag, so a command (write) port cannot be
-        acquired for its duration (enforced in ``ConvenientDeps._resolve_command``).
+        A QUERY operation runs under a read-only flag, so a command (write) port refuses
+        any use for its duration (``GuardedWritePort``, from
+        ``ConvenientDeps._resolve_command``).
         Execution is marked via the module-level active-operation flag so that
         constructing an :class:`ExecutionContext` mid-operation (per-request
         creation, an unsupported mode) can be detected and warned about.

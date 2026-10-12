@@ -262,12 +262,12 @@ class TestStreamedReplay:
 
 class TestThePlaneIsCommandOnly:
     @pytest.mark.asyncio
-    async def test_a_read_only_operation_cannot_acquire_a_sandbox(self) -> None:
+    async def test_a_read_only_operation_cannot_run_a_sandbox(self) -> None:
         # Spawning a process is an effect on the world whatever the child then does, so a
-        # QUERY handler cannot get one at all.
+        # QUERY handler cannot run one.
         ctx = _ctx(MockSandboxRegistry().on("jobs", _ok))
 
         with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException) as caught:
-            ctx.sandbox.run(_SPEC)
+            _ = ctx.sandbox.run(_SPEC).run
 
         assert caught.value.kind is ExceptionKind.PRECONDITION

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import functools
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 
 from forze.application.contracts.authn import (
+    ApiKeyLifecycleDepKey,
     AuthnDepKey,
     AuthnResult,
     AuthnSpec,
@@ -26,7 +29,13 @@ from forze.application.contracts.authn.value_objects import (
     CredentialLifetime,
     RefreshTokenCredentials,
 )
+from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.execution import BeforeFactory, BeforeStep
 from forze.application.execution import ExecutionContext
+from forze.application.hooks.authn import AuthnRequired
+from forze.application.hooks.authz import AuthzBeforeAuthorize
+from forze.application.hooks.tenancy import TenantRequired
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import StrKeyNamespace
 from forze_kits.aggregates.authn import AuthnKernelOp, build_authn_registry
 from forze_kits.aggregates.authn.factories import build_authn_registry as build_registry
@@ -37,12 +46,55 @@ from forze_kits.aggregates.authn.handlers import (
     AuthnRefreshTokens,
     AuthnRequestPasswordReset,
     AuthnResetPassword,
+    AuthnRevokePrincipalApiKey,
     DeactivatePrincipalHandler,
 )
 
 from .registry_helpers import handler_at, registry_has_handler
 
 # ----------------------- #
+
+
+class _AppAuthorization:
+    """An app's own authorization step, declaring the permission it enforces."""
+
+    def __call__(self, ctx: object) -> object:
+        async def _allow(args: object) -> None:
+            _ = args
+
+        return _allow
+
+    def permission_keys(self) -> tuple[str, ...]:
+        return ("principals:admin",)
+
+
+class _AppStep(BeforeFactory):
+    """An app's own step that declares no permission: logging, rate limiting and the like."""
+
+    def __call__(self, ctx: object) -> object:
+        return _AppAuthorization()(ctx)
+
+
+class _AppAuthn(AuthnRequired):  # type: ignore[misc]
+    """An app's subclass of a Forze step that still only authenticates."""
+
+
+class _GuardedFn:
+    """A decorator-style wrapper exposing the step it wraps as ``__wrapped__``."""
+
+    def __init__(self, wrapped: object) -> None:
+        self.__wrapped__ = wrapped
+
+    def __call__(self, ctx: object) -> object:
+        return self.__wrapped__(ctx)  # type: ignore[operator]
+
+
+def _authorize() -> AuthzBeforeAuthorize:
+    return AuthzBeforeAuthorize(spec=AuthzSpec(name="api"), action="principals:admin")
+
+
+def _admin_guards() -> tuple[BeforeStep, ...]:
+    return AuthnRequired().to_step(), BeforeStep(id="app.admin", factory=_AppAuthorization())
 
 
 def _authn_spec() -> AuthnSpec:
@@ -102,6 +154,8 @@ def _mock_ctx(
             return password_reset
         if key is PrincipalDeactivationDepKey:
             return principal_deactivation
+        if key is ApiKeyLifecycleDepKey:
+            return AsyncMock()
         raise AssertionError(f"unexpected key {key!r}")
 
     deps.resolve_configurable = resolve_configurable
@@ -122,16 +176,174 @@ class TestBuildAuthnRegistry:
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.CHANGE_PASSWORD))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.REQUEST_PASSWORD_RESET))
         assert registry_has_handler(reg, ns.key(AuthnKernelOp.RESET_PASSWORD))
-        assert registry_has_handler(reg, ns.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
 
     def test_catalog_has_descriptor_for_every_op(self) -> None:
         spec = _authn_spec()
-        frozen = build_authn_registry(spec).freeze()
+        frozen = build_authn_registry(spec, admin_guards=_admin_guards()).freeze()
         catalog = frozen.catalog()
         ns = spec.default_namespace
         assert set(catalog) == {ns.key(op) for op in AuthnKernelOp}
         for entry in catalog.values():
             assert entry.descriptor is not None
+
+    @pytest.mark.parametrize(
+        "op",
+        [
+            AuthnKernelOp.DEACTIVATE_PRINCIPAL,
+            AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY,
+            AuthnKernelOp.LIST_PRINCIPAL_API_KEYS,
+        ],
+    )
+    def test_an_admin_operation_exists_only_behind_the_apps_guards(
+        self, op: AuthnKernelOp
+    ) -> None:
+        # An act on another principal is never registered unguarded, so no generated
+        # surface can reach it before the app has said who may.
+        spec = _authn_spec()
+        key = spec.default_namespace.key(op)
+
+        assert not registry_has_handler(build_authn_registry(spec), key)
+
+        # An iterable a filter emptied is truthy as a generator, and still no guard.
+        emptied = (step for step in (AuthnRequired().to_step(),) if False)
+        assert not registry_has_handler(build_authn_registry(spec, admin_guards=emptied), key)
+
+        guarded = build_authn_registry(spec, admin_guards=_admin_guards())
+        befores = {str(step.id) for step in guarded.get_plans()[key].iter_before_steps()}
+
+        assert guarded.freeze().catalog()[key].requires_authn
+        assert {"authn.principal", "app.admin"} <= befores
+
+    @pytest.mark.parametrize("step_id", [None, "app.signed_in"])
+    def test_authentication_alone_does_not_guard_an_admin_operation(
+        self, step_id: str | None
+    ) -> None:
+        # ``AuthnRequired`` admits every signed-in principal, under whatever step id it runs.
+        authn = AuthnRequired()
+        steps = (authn.to_step(),) if step_id is None else (authn.to_step(step_id=step_id),)
+
+        with pytest.raises(CoreException) as caught:
+            build_authn_registry(_authn_spec(), admin_guards=steps)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert "every signed-in principal" in str(caught.value)
+        assert "trust_admin_guards" in str(caught.value)
+
+    @pytest.mark.parametrize(
+        "guards",
+        [
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), TenantRequired().to_step(step_id="t")),
+                id="authn+tenant",
+            ),
+            pytest.param(lambda: (TenantRequired().to_step(step_id="t"),), id="tenant"),
+            # An app's own step authorizes only if it says what it enforces.
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="log", factory=_AppStep())),
+                id="authn+app-logging",
+            ),
+            pytest.param(lambda: (BeforeStep(id="app", factory=_AppStep()),), id="app-undeclared"),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="f", factory=lambda ctx: None)),
+                id="authn+app-fn",
+            ),
+            # Wrapped or subclassed, a step that declares nothing still declares nothing.
+            pytest.param(
+                lambda: (
+                    AuthnRequired().to_step(),
+                    BeforeStep(id="t", factory=functools.partial(TenantRequired())),
+                ),
+                id="partial-tenant",
+            ),
+            pytest.param(
+                lambda: (BeforeStep(id="w", factory=_GuardedFn(TenantRequired())),),
+                id="wrapped-tenant",
+            ),
+            pytest.param(lambda: (_AppAuthn().to_step(),), id="app-subclass-authn"),
+        ],
+    )
+    def test_guards_that_declare_no_authorization_are_refused(self, guards: Any) -> None:
+        with pytest.raises(CoreException) as caught:
+            build_authn_registry(_authn_spec(), admin_guards=guards())
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "admin_guards_unauthorized"
+        assert "permission_keys()" in str(caught.value)
+
+    @pytest.mark.parametrize(
+        "guards",
+        [
+            pytest.param(lambda: (AuthnRequired().to_step(), _authorize().to_step()), id="authn+authz"),
+            pytest.param(
+                lambda: (
+                    AuthnRequired().to_step(),
+                    TenantRequired().to_step(step_id="t"),
+                    _authorize().to_step(),
+                ),
+                id="authn+tenant+authz",
+            ),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="a", factory=_AppAuthorization())),
+                id="authn+app-declared",
+            ),
+            # Wrapping keeps what the wrapped step declares.
+            pytest.param(
+                lambda: (
+                    AuthnRequired().to_step(),
+                    BeforeStep(id="p", factory=functools.partial(functools.partial(_authorize()))),
+                ),
+                id="partial-of-partial-authz",
+            ),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="w", factory=_GuardedFn(_authorize()))),
+                id="wrapped-authz",
+            ),
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="m", factory=_authorize().__call__)),
+                id="bound-method-authz",
+            ),
+        ],
+    )
+    def test_a_step_that_declares_authorization_guards_it(self, guards: Any) -> None:
+        spec = _authn_spec()
+        catalog = build_authn_registry(spec, admin_guards=guards()).freeze().catalog()
+
+        assert spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY) in catalog
+
+    def test_an_app_step_shows_the_keys_it_declares(self) -> None:
+        spec = _authn_spec()
+        catalog = build_authn_registry(spec, admin_guards=_admin_guards()).freeze().catalog()
+
+        entry = catalog[spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)]
+        assert entry.required_permissions == ("principals:admin",)
+
+    @pytest.mark.parametrize(
+        "guards",
+        [
+            pytest.param(
+                lambda: (AuthnRequired().to_step(), BeforeStep(id="f", factory=lambda ctx: None)),
+                id="authn+opaque",
+            ),
+            pytest.param(lambda: (TenantRequired().to_step(step_id="t"),), id="tenant"),
+        ],
+    )
+    def test_an_app_that_trusts_its_guards_skips_the_check(self, guards: Any) -> None:
+        spec = _authn_spec()
+        registry = build_authn_registry(spec, admin_guards=guards(), trust_admin_guards=True)
+
+        assert registry_has_handler(
+            registry, spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)
+        )
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_factory_returns_handler(self) -> None:
+        spec = _authn_spec()
+        reg = build_authn_registry(spec, admin_guards=_admin_guards())
+        factory = handler_at(
+            reg, spec.default_namespace.key(AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY)
+        )
+        handler = factory(_mock_ctx())
+        assert isinstance(handler, AuthnRevokePrincipalApiKey)
 
     def test_self_service_ops_require_authn(self) -> None:
         # Ops that act on the current identity declare AuthnRequired, so the catalog
@@ -144,7 +356,7 @@ class TestBuildAuthnRegistry:
         flagged = {
             op.value
             for op in AuthnKernelOp
-            if catalog[ns.key(op)].requires_authn
+            if ns.key(op) in catalog and catalog[ns.key(op)].requires_authn
         }
 
         assert flagged == {
@@ -197,7 +409,7 @@ class TestBuildAuthnRegistry:
     @pytest.mark.asyncio
     async def test_deactivate_principal_factory_returns_handler(self) -> None:
         spec = _authn_spec()
-        reg = build_authn_registry(spec)
+        reg = build_authn_registry(spec, admin_guards=_admin_guards())
         factory = handler_at(reg, spec.default_namespace.key(AuthnKernelOp.DEACTIVATE_PRINCIPAL))
         handler = factory(_mock_ctx())
         assert isinstance(handler, DeactivatePrincipalHandler)

@@ -19,6 +19,7 @@ from .deps import (
 from .filters import (
     is_valid_filter_key,
     normalize_property_filter,
+    property_filter_forms,
     validate_property_filter_keys,
 )
 from .ports import (
@@ -108,5 +109,6 @@ __all__ = [
     "assert_key_field_is_string_typed",
     "validate_graph_module_spec",
     "normalize_property_filter",
+    "property_filter_forms",
     "validate_property_filter_keys",
 ]

@@ -98,3 +98,29 @@ def test_no_requirement_allows_a_best_effort_backend() -> None:
     spec = DistributedLockSpec(name="lock")  # requires_fencing_token defaults False
 
     assert ctx.dlock.command(spec) is not None
+
+
+def test_a_read_only_operation_gets_a_lock_that_refuses_on_use() -> None:
+    ctx = _ctx(_FencingLock())
+    spec = DistributedLockSpec(name="lock", requires_fencing_token=True)
+
+    with ctx.inv_ctx.bind_read_only():
+        port = ctx.dlock.command(spec)
+
+        with pytest.raises(CoreException, match="read-only"):
+            _ = port.acquire
+
+    # It names its port, not the context it holds (which carries the whole dependency graph).
+    assert "inv_ctx" not in repr(port) and len(repr(port)) < 500
+
+
+def test_a_read_only_operation_is_refused_a_lock_that_cannot_fence() -> None:
+    # What a read-only operation holds is the real port wherever it is used to lock, so the
+    # fencing requirement is judged on the backend all the same.
+    ctx = _ctx(_BestEffortLock())
+    spec = DistributedLockSpec(name="lock", requires_fencing_token=True)
+
+    with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="fencing") as ei:
+        ctx.dlock.command(spec)
+
+    assert ei.value.code == "dlock.fencing_unsupported"

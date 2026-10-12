@@ -14,6 +14,7 @@ from ..exceptions import exc
 from ..primitives import JsonDict
 from ._common import sequence_as_list, validate_batch_size
 from .model_codec import ModelDumpExcludeOptions
+from .sets import sorted_set_items
 
 # ----------------------- #
 
@@ -463,16 +464,17 @@ def _orjson_hashing_default(value: Any) -> Any:
     """``orjson`` fallback for the few types it cannot serialize natively.
 
     Mirrors the previous recursive normalization: ``Decimal`` → its string form,
-    ``set`` / ``frozenset`` → a list. Everything else orjson already handles (dict,
-    list, tuple, ``datetime``, ``date``, ``UUID``), so no whole-structure pre-pass
-    is needed — the callback is only invoked for these leaf types.
+    ``set`` / ``frozenset`` → a list in one order in every process
+    (:func:`~forze.base.serialization.sorted_set_items`). Everything else orjson already
+    handles (dict, list, tuple, ``datetime``, ``date``, ``UUID``), so no whole-structure
+    pre-pass is needed — the callback is only invoked for these leaf types.
     """
 
     if isinstance(value, Decimal):
         return str(value)
 
     if isinstance(value, (set, frozenset)):
-        return list(value)  # type: ignore[arg-type]
+        return sorted_set_items(value)
 
     raise TypeError(f"Cannot hash value of type {type(value).__name__}")
 

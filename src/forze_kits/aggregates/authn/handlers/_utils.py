@@ -89,3 +89,23 @@ def require_own_identity(
         )
 
     return identity
+
+
+def require_admin_identity(
+    resolver: Callable[[], AuthnIdentity | None],
+) -> AuthnIdentity:
+    """Pull the bound identity, refusing a delegated one (administrative guard).
+
+    An act on another principal is the administrator's own, never taken by an agent acting
+    for one. Whether the identity may administer at all is the operation's authorization.
+    """
+
+    identity = require_identity(resolver)
+
+    if identity.actor is not None:
+        raise exc.authorization(
+            "A delegated caller cannot act as an administrator",
+            code="delegate_denied",
+        )
+
+    return identity

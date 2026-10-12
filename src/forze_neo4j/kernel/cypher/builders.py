@@ -633,7 +633,8 @@ def _where(*preds: str) -> str:
 
 
 def property_predicate(alias: str, keys: Sequence[str]) -> str:
-    """Equality ``AND`` predicate over *keys* (params ``$pf_<key>``); empty for no keys.
+    """``AND`` predicate over *keys*, each property equal to one of the list ``$pf_<key>``
+    holds (one value, or a ``Decimal``'s two texts); empty for no keys.
 
     Each key lands inside a ``$pf_<key>`` parameter *name*, which — unlike the property
     access, protected by :func:`quote` — cannot be backtick-quoted. Keys are therefore
@@ -645,7 +646,7 @@ def property_predicate(alias: str, keys: Sequence[str]) -> str:
         if not is_valid_filter_key(key):
             raise ValueError(f"Invalid property-filter key: {key!r}")
 
-    return " AND ".join(f"{alias}.{quote(k)} = $pf_{k}" for k in keys)
+    return " AND ".join(f"{alias}.{quote(k)} IN $pf_{k}" for k in keys)
 
 
 def get_vertices_by_keys(label: str, key_field: str, *, tenant_field: str | None = None) -> str:

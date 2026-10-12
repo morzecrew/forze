@@ -15,6 +15,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.execution import ExecutionContext
+from forze.testing import unguarded
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_deps
 
@@ -63,7 +64,7 @@ def ctx() -> ExecutionContext:
 def test_ctx_graph_resolves_ports(ctx: ExecutionContext) -> None:
     spec = _spec()
     assert isinstance(ctx.graph.query(spec), GraphQueryPort)
-    assert isinstance(ctx.graph.command(spec), GraphCommandPort)
+    assert isinstance(unguarded(ctx.graph.command(spec)), GraphCommandPort)
 
 
 @pytest.mark.asyncio
@@ -195,3 +196,12 @@ async def test_mock_graph_fails_closed_without_tenant() -> None:
 
     with pytest.raises(CoreException, match="tenant_required"):
         await adapter.create_vertex("User", UserCreate(id="x"))
+
+
+@pytest.mark.asyncio
+async def test_a_decimal_filter_matches_either_stored_text() -> None:
+    from tests.support.graph_decimal_filters import DECIMAL_SPEC, assert_decimal_filters
+
+    ctx = context_from_deps(MockDepsModule(state=MockState())())
+
+    await assert_decimal_filters(ctx.graph.command(DECIMAL_SPEC), ctx.graph.query(DECIMAL_SPEC))

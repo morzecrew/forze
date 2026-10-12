@@ -400,3 +400,11 @@ async def test_decimal_keys_are_the_text_form_not_the_numeric_value(
     assert Decimal("1.50") == Decimal("1.5")
     assert await a.vertex_exists(VertexRef(kind="Price", key="1.50")) is True
     assert await a.vertex_exists(VertexRef(kind="Price", key="1.5")) is False
+
+
+async def test_a_decimal_filter_matches_either_stored_text(neo4j_client: Neo4jClient) -> None:
+    from tests.support.graph_decimal_filters import DECIMAL_SPEC, assert_decimal_filters
+
+    adapter = Neo4jGraphAdapter(spec=DECIMAL_SPEC, client=neo4j_client)
+
+    await assert_decimal_filters(adapter, adapter)
