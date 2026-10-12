@@ -61,7 +61,7 @@ def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
             h, mm = int(m.group(5)), 0
         if mm > 59 or h * 60 + mm > 14 * 60:
             # Max real UTC offset is ±14:00; reject ±14:30, ±15:00, ±09:99, …
-            raise exc.precondition(f"Timezone offset out of range: {wire!r}")
+            raise exc.precondition("Timezone offset out of range")
 
         total_min = sign * (h * 60 + mm)
         return ResolvedTimeBucketTimezone(
@@ -73,7 +73,9 @@ def parse_aggregate_timezone(wire: str | None) -> ResolvedTimeBucketTimezone:
     try:
         ZoneInfo(s)
     except ZoneInfoNotFoundError as e:
-        raise exc.precondition(f"Unknown timezone: {wire!r}") from e
+        raise exc.precondition(
+            "Unknown timezone: expected an IANA name or a fixed offset such as +03:00"
+        ) from e
 
     return ResolvedTimeBucketTimezone(mode="iana", iana=s, offset=None)
 
