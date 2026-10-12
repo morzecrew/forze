@@ -11,7 +11,8 @@ from unittest.mock import MagicMock
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-import rsa
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 import forze_gcs.kernel.client.client as gcs_client_module
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -24,11 +25,16 @@ from forze_gcs.kernel.client.value_objects import GCSConfig
 
 @pytest.fixture(scope="module")
 def service_key_pem() -> str:
-    """A throwaway PKCS#1 RSA key for local V4 signing."""
+    """A throwaway PKCS#8 RSA key for local V4 signing."""
 
-    _pub, priv = rsa.newkeys(2048)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
 
-    return priv.save_pkcs1().decode()
+    return pem
 
 
 class _FakeToken:
