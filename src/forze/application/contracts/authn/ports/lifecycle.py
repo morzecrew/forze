@@ -90,3 +90,23 @@ class ApiKeyLifecyclePort(Protocol):  # pragma: no cover
         identity: AuthnIdentity,
         key_ids: Sequence[str],
     ) -> Awaitable[None]: ...
+
+    def list_principal_api_keys(self, principal_id: UUID) -> Awaitable[Sequence[ApiKeyInfo]]:
+        """List any principal's API keys, revoked ones included, as an administrator.
+
+        Non-secret descriptors, as :meth:`list_api_keys` returns. No identity is checked
+        here, as for :meth:`revoke_principal_api_key`, and the lookup is global: API-key
+        accounts are not tenant-scoped. A principal with no keys, or none at all, lists
+        empty.
+        """
+        ...
+
+    def revoke_principal_api_key(self, key_id: str) -> Awaitable[None]:
+        """Revoke any principal's API key, as an administrator.
+
+        No identity is checked here: who may revoke another principal's key is the
+        calling operation's authorization to settle. The key is found by id alone, in every
+        tenant, since API-key accounts are not tenant-scoped. An unknown key is
+        ``not_found``; a revoked one is left as it is and answers as a revocation does.
+        """
+        ...

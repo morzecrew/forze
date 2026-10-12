@@ -51,8 +51,7 @@ tenant) is the privileged inverse, in a separate aggregate:
 `GET /tenants/{id}/members`, `POST /tenants/{id}/deactivate`, `POST`/`DELETE /memberships`).
 
 Because *who* may administer a tenant is your authorization model — not something the framework
-can define — these ops ship **unguarded**, exactly like `deactivate_principal` in the
-[authn recipe](authn-authz-tenancy-fastapi.md#enforce-on-operations). Bind `AuthnRequired` plus
+can define — these ops ship **unguarded**. Bind `AuthnRequired` plus
 an `AuthzBeforeAuthorize` on each operation before exposing the router (or keep ops off it with
 `include=`):
 

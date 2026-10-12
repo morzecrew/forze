@@ -896,6 +896,16 @@ class MockApiKeyLifecyclePort(ApiKeyLifecyclePort):
     ) -> None:
         _ = identity, key_ids
 
+    async def list_principal_api_keys(self, principal_id: UUID) -> Sequence[ApiKeyInfo]:
+        # Holds no keys: lists empty, as the real adapter lists a principal with none.
+        _ = principal_id
+        return []
+
+    async def revoke_principal_api_key(self, key_id: str) -> None:
+        # Holds no keys, so every id is unknown: answered as the real adapter answers one.
+        _ = key_id
+        raise exc.not_found("API key not found", code="api_key_not_found")
+
 
 @final
 @attrs.define(slots=True, kw_only=True)

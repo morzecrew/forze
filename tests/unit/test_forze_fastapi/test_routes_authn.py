@@ -14,12 +14,14 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from forze.application.contracts.authn import AuthnSpec
+from forze.application.contracts.execution import BeforeStep
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import (
     FrozenOperationRegistry,
     OperationRegistry,
 )
+from forze.application.hooks.authn import AuthnRequired
 from forze.base.exceptions import CoreException
 from forze.base.logging import configure_logging
 from forze.base.primitives import StrKeyNamespace
@@ -56,10 +58,18 @@ _EXPECTED_PATHS = {
     "/auth/change-password",
     "/auth/password-reset/request",
     "/auth/password-reset/confirm",
-    "/auth/deactivate",
     "/auth/api-keys",
     "/auth/api-keys/{id}",
 }
+
+# Acts on another principal: registered only behind the app's ``admin_guards``.
+_ADMIN_OPS = frozenset(
+    {
+        AuthnKernelOp.DEACTIVATE_PRINCIPAL,
+        AuthnKernelOp.REVOKE_PRINCIPAL_API_KEY,
+        AuthnKernelOp.LIST_PRINCIPAL_API_KEYS,
+    }
+)
 
 # Auth-flow action routes are all POST; the self-service API-key collection uses
 # resource verbs (POST create + GET list on the collection, DELETE on the item).
@@ -169,6 +179,31 @@ def _partial_registry(ns: StrKeyNamespace) -> FrozenOperationRegistry:
     ).freeze()
 
 
+async def _allow(args: Any) -> None:
+    _ = args
+
+
+class _AdminCheck:
+    """An app's own authorization step, declaring the permission it enforces (and here
+    allowing everyone)."""
+
+    def __call__(self, ctx: object) -> Any:
+        return _allow
+
+    def permission_keys(self) -> tuple[str, ...]:
+        return ("principals:admin",)
+
+
+def _guarded(*, allow_anonymous: bool = False) -> FrozenOperationRegistry:
+    """The authn registry with its admin operations, behind an app's own step (and
+    ``AuthnRequired`` unless *allow_anonymous*)."""
+
+    app_step = BeforeStep(id="app.admin", factory=_AdminCheck())
+    guards = (app_step,) if allow_anonymous else (AuthnRequired().to_step(), app_step)
+
+    return build_authn_registry(AUTHN_SPEC, admin_guards=guards).freeze()
+
+
 def _operation_ids(app: FastAPI) -> set[str]:
     return {
         operation["operationId"]
@@ -210,7 +245,30 @@ class TestAuthnRouteSurface:
             assert set(methods) == expected, path
 
     def test_operation_ids_are_registry_keys_verbatim(self) -> None:
-        assert _operation_ids(_build_app()) == {f"main.{op.value}" for op in AuthnKernelOp}
+        assert _operation_ids(_build_app()) == {
+            f"main.{op.value}" for op in AuthnKernelOp if op not in _ADMIN_OPS
+        }
+        assert _operation_ids(_build_app(registry=_guarded())) == {
+            f"main.{op.value}" for op in AuthnKernelOp
+        }
+
+    @pytest.mark.parametrize(
+        ("method", "path", "body"),
+        [
+            ("POST", "/auth/deactivate", {"principal_id": str(uuid4())}),
+            ("DELETE", f"/auth/admin/api-keys/{uuid4()}", None),
+            ("GET", f"/auth/admin/principals/{uuid4()}/api-keys", None),
+        ],
+        ids=["deactivate", "admin-revoke", "admin-list"],
+    )
+    def test_admin_routes_exist_only_behind_the_apps_guards(
+        self, method: str, path: str, body: Any
+    ) -> None:
+        unguarded = TestClient(_build_app())
+        guarded = TestClient(_build_app(registry=_guarded()))
+
+        assert unguarded.request(method, path, json=body).status_code in (404, 405)
+        assert guarded.request(method, path, json=body).status_code == 401
 
     def test_request_and_response_schemas_come_from_descriptors(self) -> None:
         spec = _build_app().openapi()
@@ -236,7 +294,6 @@ class TestAuthnRouteSurface:
         assert ok_ref("/auth/refresh").endswith("/AuthnTokenResponseDTO")
 
         assert body_ref("/auth/change-password").endswith("/AuthnChangePasswordRequestDTO")
-        assert body_ref("/auth/deactivate").endswith("/DeactivatePrincipalRequestDTO")
 
         # Password reset: request answers 202 with the uniform ack DTO; confirm
         # is a void 204.
@@ -256,9 +313,14 @@ class TestAuthnRouteSurface:
             "/auth/logout",
             "/auth/change-password",
             "/auth/password-reset/confirm",
-            "/auth/deactivate",
         ):
             assert "204" in spec["paths"][path]["post"]["responses"]
+
+        guarded = _build_app(registry=_guarded()).openapi()["paths"]["/auth/deactivate"]["post"]
+        assert guarded["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith(
+            "/DeactivatePrincipalRequestDTO"
+        )
+        assert "204" in guarded["responses"]
 
     def test_include_narrows_to_subset(self) -> None:
         app = _build_app(
@@ -364,18 +426,12 @@ class TestAuthnFlows:
         assert response.status_code == 401
         assert response.headers.get(ERROR_CODE_HEADER) == "auth_required"
 
-    def test_deactivate_attaches_and_ships_unguarded(self) -> None:
-        # Documents the default posture: deactivate_principal carries no
-        # built-in authn/authz guard — apps must bind AuthnRequired plus an
-        # authz before-hook on it (or exclude it) before exposing the router.
-        client = TestClient(_build_app())
+    def test_deactivate_refuses_anyone_anonymous_behind_any_guard(self) -> None:
+        client = TestClient(_build_app(registry=_guarded(allow_anonymous=True)))
 
-        response = client.post(
-            "/auth/deactivate",
-            json={"principal_id": str(uuid4())},
-        )
+        response = client.post("/auth/deactivate", json={"principal_id": str(uuid4())})
 
-        assert response.status_code == 204
+        assert response.status_code == 401
 
 
 # ....................... #
