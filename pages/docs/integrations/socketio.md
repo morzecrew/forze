@@ -131,6 +131,13 @@ resolver must return the identity with its `actor` chain intact, not normalized 
 subject. The publish-side `Audience.principal(id)` must
 use the same id the gateway joins with (`str(authn.principal_id)`).
 
+A client that opens several namespaces over one connection is authenticated once per
+namespace. Pass `share_identity=True` to each of them to authenticate once per Engine.IO
+connection instead. Later namespaces with the same credential and resolver reuse the
+first one's identity until it expires or the connection closes, and a different
+credential is checked again. It is opt-in because a namespace connecting just after the
+first no longer re-checks a revoked session.
+
 `build_socketio_connection_resolver` builds `resolve_connection` for you: a fixed
 credential ladder (connect/reauth `auth` payload, then the cookie, then
 `Authorization: Bearer`, then an opt-in query parameter) verified through the wired

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A socket.io client opening several namespaces can authenticate once.** `attach_realtime_connection(share_identity=True)` reuses the identity one Engine.IO connection resolved for its other namespaces with the same credential and resolver, until it expires or the connection closes; another credential is checked again.
+
 - **An outbox relay can deliver a row as soon as it commits.** `OutboxSpec(wake=OutboxWake(route=...))` publishes a wake on a pub/sub route after each flush's transaction commits, and the background relay runs a pass when it hears one; its poll stays the fallback for a lost wake.
 
 - **The outbox relay reclaims stale claims on its own cadence.** The reclaim runs at most once per `reclaim_every`, by default once per poll tick, rather than on every pass a wake starts.

@@ -16,6 +16,7 @@ require_socketio()
 
 # ....................... #
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager, aclosing
 from datetime import datetime
@@ -51,7 +52,7 @@ from forze.application.integrations.realtime import (
     RealtimePresence as RealtimePresence,  # re-export: established home
 )
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, utcnow
+from forze.base.primitives import HlcTimestamp, stable_payload_fingerprint, utcnow
 
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
@@ -175,6 +176,53 @@ async def _resolve(
 
 # ....................... #
 
+_SHARED_IDENTITY_KEY = "forze.shared_identity"
+"""Engine.IO session key holding the identities one connection resolved, for its namespaces.
+
+Socket.IO keeps each namespace's session in the Engine.IO session under the namespace's own
+name, which always starts with ``/``; this key cannot collide with one, and it is freed with
+the connection."""
+
+_SharedIdentities = dict[tuple[int, str], "asyncio.Task[RealtimeConnection | None]"]
+"""Keyed by the resolver's identity, so any callable can be one, and the credential's
+fingerprint."""
+
+
+def _credential_key(auth: Any) -> str | None:
+    """A fingerprint of the ``auth`` payload a namespace connect presents, or ``None`` when one
+    cannot be taken (then the connect is authenticated on its own).
+
+    No payload fingerprints too: the credential is then the handshake's cookie, header or
+    query parameter, which every namespace of one Engine.IO connection shares."""
+
+    try:
+        return stable_payload_fingerprint(auth)
+
+    except (TypeError, ValueError):
+        return None
+
+
+def _reusable(task: "asyncio.Task[RealtimeConnection | None] | None") -> bool:
+    """Whether a later connect may wait on or reuse *task*: one in flight, or one that
+    succeeded with an identity that has not expired. A failed or cancelled one is a miss,
+    whether or not anybody was waiting on it when it failed."""
+
+    if task is None:
+        return False
+
+    if not task.done():
+        return True
+
+    if task.cancelled() or task.exception() is not None:
+        return False
+
+    connection = task.result()
+
+    return connection is None or not connection.is_expired(utcnow())
+
+
+# ....................... #
+
 
 def _bind_connection(
     ctx: ExecutionContext,
@@ -234,6 +282,7 @@ class _ConnectionLifecycle:
     mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None
     cursors_factory: Callable[[ExecutionContext], MailboxCursors] | None = None
     runtime: ExecutionRuntime | None = None
+    share_identity: bool = False
 
     _replay_progress: dict[str, _ReplayProgress] = attrs.field(factory=dict, init=False)
     """Per-sid replay progress on this node, created at connect, dropped at disconnect."""
@@ -424,6 +473,47 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
+    async def _identify(self, connect: SocketIOConnect) -> RealtimeConnection | None:
+        """Resolve the connect, or reuse what this Engine.IO connection already resolved.
+
+        With :attr:`share_identity`, the namespaces one Engine.IO connection opens with the
+        same credential, through the same resolver, share one resolution: a connect arriving
+        while another is resolving waits for it rather than verifying the credential again.
+        A failed resolution is not kept, so the next connect tries afresh, and an identity
+        that has expired is resolved again.
+        """
+
+        if not self.share_identity:
+            return await _resolve(self.resolve, connect)
+
+        eio_sid = self.sio.manager.eio_sid_from_sid(connect.sid, self.namespace)
+        credential = _credential_key(connect.auth)
+
+        if eio_sid is None or credential is None:
+            return await _resolve(self.resolve, connect)
+
+        eio_session = await self.sio.eio.get_session(eio_sid)
+        shared: _SharedIdentities = eio_session.setdefault(_SHARED_IDENTITY_KEY, {})
+        key = (id(self.resolve), credential)
+        task = shared.get(key)
+
+        if task is None or not _reusable(task):
+            task = asyncio.ensure_future(_resolve(self.resolve, connect))
+            shared[key] = task
+
+        try:
+            # Shielded: one namespace's connect being cancelled must not cancel the resolution
+            # another namespace is waiting on.
+            return await asyncio.shield(task)
+
+        except BaseException:
+            if task.done() and shared.get(key) is task:
+                shared.pop(key, None)
+
+            raise
+
+    # ....................... #
+
     async def on_connect(self, sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
         """Negotiate the protocol, authenticate, auto-join the principal room, replay."""
 
@@ -434,7 +524,7 @@ class _ConnectionLifecycle:
             # lifetime (missing = 1); an unsupported one is refused before any auth work.
             negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
-            connection = await _resolve(self.resolve, connect)
+            connection = await self._identify(connect)
 
         except SocketIOConnectionRefusedError:
             raise
@@ -514,6 +604,7 @@ def attach_realtime_connection(
     mailbox_factory: Callable[[ExecutionContext], RealtimeMailbox] | None = None,
     cursors_factory: Callable[[ExecutionContext], MailboxCursors] | None = None,
     runtime: ExecutionRuntime | None = None,
+    share_identity: bool = False,
 ) -> None:
     """Register connect/disconnect handlers that auto-join the principal room.
 
@@ -536,6 +627,15 @@ def attach_realtime_connection(
     principal only — swapping the stored identity and ``expires_at`` without a reconnect
     (and without the replay a reconnect costs). Set ``expires_at`` when resolving so the
     expiry sweep has something to enforce between reauths.
+
+    *share_identity* (opt-in) authenticates once per Engine.IO connection rather than once
+    per namespace: a client opening several namespaces with the same credential has it
+    resolved once, by the first, and every later namespace attached with
+    ``share_identity=True`` and the same resolver reuses that identity until it expires or
+    the connection closes. A different credential is resolved again, and the resolver must
+    not depend on the namespace it is asked for. The cost is when a revocation is noticed:
+    a namespace connecting just after the first no longer re-checks the session. Nothing
+    else changes; ``realtime.reauth`` still resolves the fresh credential.
 
     .. important::
         Socket.IO keeps **one** ``connect`` handler per namespace, so this is the
@@ -563,6 +663,7 @@ def attach_realtime_connection(
         mailbox_factory=mailbox_factory,
         cursors_factory=cursors_factory,
         runtime=runtime,
+        share_identity=share_identity,
     )
 
     sio.on("connect", handler=lifecycle.on_connect, namespace=namespace)
