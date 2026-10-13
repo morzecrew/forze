@@ -9302,6 +9302,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A request filter can nest an element quantifier, as the port can.</strong> A quantifier inside another, or under an object element's <code>$values</code>, failed a request DTO or tool schema with a list of union errors; the filter types now express it. The nesting counts toward <code>max_depth</code>.</p>
 </li>
 <li>
+<p><strong>A filter's <code>max_depth</code> bounds how deep its <code>$and</code> / <code>$or</code> / <code>$not</code> nest, not how many it has</strong> (<strong>behaviour change</strong>). Every combinator counted toward it, so 40 <code>$not</code> side by side under one <code>$and</code> were refused as deeper than 32. Siblings now each sit one level down; <code>max_clauses</code> still bounds the width.</p>
+</li>
+<li>
 <p><strong>A Temporal schedule created from cron expressions can be described and listed.</strong> The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.</p>
 </li>
 <li>
