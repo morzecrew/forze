@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -32,7 +33,9 @@ from forze.application.contracts.outbox import (
     OutboxDestination,
     OutboxSpec,
     OutboxStatus,
+    OutboxWake,
 )
+from forze.application.contracts.pubsub import PubSubQueryDepKey
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
 from forze.application.execution import (
@@ -56,6 +59,7 @@ from forze_postgres.execution.lifecycle.capabilities import POSTGRES_CLIENT_CAPA
 from forze_postgres.kernel.client import PostgresClient
 from forze_redis import (
     RedisDepsModule,
+    RedisPubSubConfig,
     RedisStreamConfig,
     RedisStreamGroupConfig,
 )
@@ -1273,6 +1277,165 @@ async def test_relay_without_drain_leaves_the_row_for_the_next_process(
     assert [row["status"] for row in rows] == ["pending"]
     assert shared_state.queues == {}
 
+
+# ----------------------- #
+# Relay lifecycle: wake on commit
+#
+# covers: forze.application.contracts.outbox.OutboxWake
+
+
+def _wake_runtime(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    outbox_table: str,
+    shared_state: MockState,
+    *,
+    relay: bool,
+) -> tuple[ExecutionRuntime, OutboxSpec[_OutboxPayload]]:
+    """A Postgres outbox whose wake rides real Redis pub/sub; optionally relayed every 10 s."""
+
+    codec = PydanticModelCodec(_OutboxPayload)
+    wake = OutboxWake(route="outbox-wake", topic=f"it:outbox:wake:{uuid4().hex[:8]}")
+    outbox_spec = OutboxSpec(name="integration", codec=codec, wake=wake)
+    steps = (
+        outbox_relay_background_lifecycle_step(
+            outbox_spec=outbox_spec,
+            queue_spec=QueueSpec(name="relay", codec=codec),
+            interval=timedelta(seconds=10),
+            reclaim_stale_after=None,
+        ),
+    )
+
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(
+            PostgresDepsModule(
+                client=pg_client,
+                tx={"default"},
+                outboxes={"integration": PostgresOutboxConfig(relation=("public", outbox_table))},
+            ),
+            RedisDepsModule(
+                client=redis_client,
+                pubsub={"outbox-wake": RedisPubSubConfig(tenant_aware=False)},
+            ),
+        )
+        .with_modules(_mock_fallback(shared_state))
+        .freeze(),
+        lifecycle=LifecyclePlan.from_steps(*(steps if relay else ())).freeze(),
+    )
+
+    return runtime, outbox_spec
+
+
+async def _row_count(pg_client: PostgresClient, outbox_table: str) -> int:
+    rows = await pg_client.fetch_all(
+        sql.SQL("SELECT id FROM {t}").format(t=sql.Identifier("public", outbox_table))
+    )
+    return len(rows)
+
+
+@pytest.mark.asyncio
+async def test_a_wake_relays_committed_rows_long_before_the_poll(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    outbox_table: str,
+) -> None:
+    shared_state = MockState()
+    runtime, outbox_spec = _wake_runtime(
+        pg_client, redis_client, outbox_table, shared_state, relay=True
+    )
+    first_claim = asyncio.Event()
+    claim_pending = PostgresOutboxStore.claim_pending
+
+    async def _observed_claim(
+        self: PostgresOutboxStore[Any], **kwargs: Any
+    ) -> Sequence[OutboxClaim]:
+        try:
+            return await claim_pending(self, **kwargs)
+
+        finally:
+            first_claim.set()
+
+    with patch.object(PostgresOutboxStore, "claim_pending", _observed_claim):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            # The first pass ran empty and the next poll is 10 s away; give the listener a
+            # moment to subscribe, as a Redis subscription is live-only.
+            await asyncio.wait_for(first_claim.wait(), timeout=10.0)
+            await asyncio.sleep(0.3)
+
+            async with ctx.tx_ctx.scope("default"):
+                outbox = ctx.outbox.command(outbox_spec)
+                await outbox.stage("demo.created", _OutboxPayload(label="woken"))
+                await outbox.flush()
+
+            async with asyncio.timeout(2.0):
+                while not shared_state.queues.get("relay", {}).get("relay"):  # noqa: ASYNC110
+                    await asyncio.sleep(0.02)
+
+    assert len(shared_state.queues["relay"]["relay"]) == 1
+
+
+class _Abort(Exception):
+    """Rolls a transaction back on purpose."""
+
+
+async def _wakes_heard(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    outbox_table: str,
+    *,
+    commit: bool,
+) -> list[tuple[str, int]]:
+    """Flush one row and commit or roll back; what a wake subscriber heard, with the rows
+    another connection could read at the moment each wake arrived."""
+
+    runtime, outbox_spec = _wake_runtime(
+        pg_client, redis_client, outbox_table, MockState(), relay=False
+    )
+    wake = outbox_spec.wake
+    assert wake is not None
+    heard: list[tuple[str, int]] = []
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        query = ctx.deps.resolve_configurable(ctx, PubSubQueryDepKey, wake.spec, route=wake.route)
+
+        async def _listen() -> None:
+            async for message in query.subscribe([wake.topic]):
+                heard.append((message.payload.route, await _row_count(pg_client, outbox_table)))
+
+        listener = asyncio.create_task(_listen())
+        await asyncio.sleep(0.3)  # a Redis subscription is live-only
+
+        try:
+            # Only the deliberate abort is swallowed; a failing stage or flush still fails.
+            with suppress(_Abort):
+                async with ctx.tx_ctx.scope("default"):
+                    outbox = ctx.outbox.command(outbox_spec)
+                    await outbox.stage("demo.created", _OutboxPayload(label="x"))
+                    await outbox.flush()
+
+                    if not commit:
+                        raise _Abort
+
+            await asyncio.sleep(0.5)
+
+        finally:
+            listener.cancel()
+
+    return heard
+
+
+@pytest.mark.asyncio
+async def test_a_wake_is_heard_only_once_its_rows_are_committed(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    outbox_table: str,
+) -> None:
+    assert await _wakes_heard(pg_client, redis_client, outbox_table, commit=False) == []
+    assert await _wakes_heard(pg_client, redis_client, outbox_table, commit=True) == [
+        ("integration", 1)
+    ]
 
 # ----------------------- #
 # Admin (observability) port

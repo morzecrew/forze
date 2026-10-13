@@ -10,6 +10,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import stable_payload_fingerprint
 
 from ..base import BaseSpec
+from ..outbox import OutboxSpec
 from .fingerprint import entry_shape
 from .planes import disposition_of, plane_of_spec
 from .value_objects import (
@@ -111,6 +112,12 @@ class SpecRegistry:
                     identity=identity,
                 )
             )
+
+            if isinstance(spec, OutboxSpec) and spec.wake is not None:
+                # An outbox route with a wake also binds the wake's pub/sub route, on every
+                # process that flushes or relays it; a catalogue without it refuses the wake
+                # at its first resolution. It carries no rows, so it inherits nothing.
+                self.register(spec.wake.spec, source=source)
 
         return self
 

@@ -103,6 +103,9 @@ class RelayBinding:
     reclaim_stale_after: timedelta | None = timedelta(minutes=5)
     """Reset rows stuck ``processing`` longer than this before claim (``None`` skips)."""
 
+    reclaim_every: timedelta | None = None
+    """Least time between two stale-claim reclaims (``None``: once per poll tick)."""
+
     limit: int | None = None
     """Per-batch claim size (``None`` = backend default)."""
 
@@ -184,6 +187,7 @@ class RelayBinding:
             interval=self.interval,
             jitter=self.jitter,
             reclaim_stale_after=self.reclaim_stale_after,
+            reclaim_every=self.reclaim_every,
             limit=self.limit,
             max_attempts=self.max_attempts,
             retry_base_delay=self.retry_base_delay,

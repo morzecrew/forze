@@ -26,6 +26,13 @@ sio = build_socketio_server()            # pass redis_url=... for multi-process
 asgi = build_socketio_asgi_app(sio)      # or mount alongside a FastAPI app
 ```
 
+An emit to a room starts each socket's send as an eager task, which costs the event loop
+nothing when the send does not wait. python-socketio's own manager schedules a task per
+socket, and at a few thousand sockets in a room scheduling them costs more than sending. A
+send that does wait carries on beside the others, as the library's would, and the same
+packets reach the same sockets. Pass `client_manager=AsyncManager()` to keep the library's
+manager.
+
 ## Route commands to operations
 
 Declare commands on a namespace router — each maps an event to an operation, with
@@ -123,6 +130,13 @@ auto-joins the principal room, so do not also give `ForzeSocketIOAdapter` an
 resolver must return the identity with its `actor` chain intact, not normalized to its
 subject. The publish-side `Audience.principal(id)` must
 use the same id the gateway joins with (`str(authn.principal_id)`).
+
+A client that opens several namespaces over one connection is authenticated once per
+namespace. Pass `share_identity=True` to each of them to authenticate once per Engine.IO
+connection instead. Later namespaces with the same credential and resolver reuse the
+first one's identity until it expires or the connection closes, and a different
+credential is checked again. It is opt-in because a namespace connecting just after the
+first no longer re-checks a revoked session.
 
 `build_socketio_connection_resolver` builds `resolve_connection` for you: a fixed
 credential ladder (connect/reauth `auth` payload, then the cookie, then

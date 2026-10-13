@@ -1,12 +1,20 @@
 """Compose outbox command ports at the execution boundary."""
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel
 
+from forze.application._logger import logger
 from forze.application.contracts.crypto import BytesCipherPort, KeyringDepKey
 from forze.application.contracts.hlc import HlcCheckpointDepKey, HlcCheckpointPort
-from forze.application.contracts.outbox import OutboxRowPersistPort, OutboxSpec
+from forze.application.contracts.outbox import (
+    OutboxRowPersistPort,
+    OutboxSpec,
+    OutboxWakeSignal,
+)
+from forze.application.contracts.pubsub import PubSubCommandDepKey, PubSubCommandPort
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.crypto import enforce_required_reach
 from forze.application.integrations.outbox import OutboxStaging, StagingOutboxCommand
@@ -61,6 +69,57 @@ def _resolve_hlc_checkpoint(ctx: ExecutionContext) -> HlcCheckpointPort | None:
 # ....................... #
 
 
+def _wake_after_commit(
+    ctx: ExecutionContext, spec: OutboxSpec[Any]
+) -> Callable[[], Awaitable[None]] | None:
+    """The wake a flush calls once it wrote rows, or ``None`` when the route has none.
+
+    The pub/sub port is resolved here, when the command is built, so a wake route that is
+    not wired, or is tenant-aware, fails the operation as a configuration error instead of
+    every wake being dropped quietly. Publishing is deferred until the root transaction commits — a wake
+    must never arrive before its rows are visible, and a rollback publishes nothing — and
+    it is best-effort: a publish that fails or outlasts ``publish_timeout`` is logged,
+    never raised, as the relay's poll still delivers the rows.
+    """
+
+    wake = spec.wake
+
+    if wake is None:
+        return None
+
+    port: PubSubCommandPort[OutboxWakeSignal] = ctx.deps.resolve_configurable(
+        ctx, PubSubCommandDepKey, wake.spec, route=wake.spec.name
+    )
+    wake.require_tenant_global(port)
+    signal = OutboxWakeSignal(route=str(spec.name))
+    budget = wake.publish_timeout.total_seconds()
+
+    async def _publish() -> None:
+        try:
+            # Bounded: it runs before the operation returns, and a stalled broker must cost
+            # a writer at most this long, never its whole retry budget.
+            async with asyncio.timeout(budget):
+                await port.publish(wake.topic, signal)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            logger.warning(
+                "Outbox wake publish failed; the relay delivers the rows on its next poll",
+                outbox_route=str(spec.name),
+                exc_info=True,
+            )
+
+    async def _wake() -> None:
+        await ctx.tx_ctx.run_or_defer(_publish)
+
+    return _wake
+
+
+# ....................... #
+
+
 def build_staging_outbox_command[M: BaseModel](
     ctx: ExecutionContext,
     spec: OutboxSpec[M],
@@ -81,7 +140,7 @@ def build_staging_outbox_command[M: BaseModel](
         # a non-transactional route keeps the prior resume-from-(0,0) behavior.
         checkpoint=(_resolve_hlc_checkpoint(ctx) if spec.require_transaction else None),
     )
-    return StagingOutboxCommand(spec=spec, staging=staging)
+    return StagingOutboxCommand(spec=spec, staging=staging, wake=_wake_after_commit(ctx, spec))
 
 
 # ....................... #

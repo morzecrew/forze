@@ -15,6 +15,17 @@ class RedisConfig:
     """Redis connection pool configuration."""
 
     max_size: int = 20
+    pool_timeout: timedelta | None = None
+    """How long taking a connection from the pool waits once all ``max_size`` are in use.
+
+    ``None`` (the default) refuses it at once with a connection error. Set it when a burst
+    should queue for a connection rather than fail; a wait past it fails the same way.
+
+    It bounds each acquisition, for every user of the pool: commands, ``subscribe`` and
+    the invalidation hub alike. A call can therefore take up to this long plus its
+    ``socket_timeout``, and a read retried by ``read_retry_attempts`` waits again on each
+    attempt."""
+
     socket_timeout: timedelta | None = timedelta(seconds=5)
     connect_timeout: timedelta | None = None
     health_check_interval: timedelta | None = timedelta(seconds=30)
@@ -50,6 +61,9 @@ class RedisConfig:
     def __attrs_post_init__(self) -> None:
         if self.max_size < 1:
             raise exc.configuration("Max size must be at least 1")
+
+        if self.pool_timeout is not None and self.pool_timeout.total_seconds() <= 0:
+            raise exc.configuration("Pool timeout must be positive")
 
         if self.socket_timeout is not None and self.socket_timeout.total_seconds() <= 0:
             raise exc.configuration("Socket timeout must be positive")

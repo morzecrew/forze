@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from datetime import timedelta
 from typing import Any, Final, Literal, final
 from uuid import UUID
@@ -15,8 +16,10 @@ from forze.application.contracts.outbox import (
     OutboxDestinationKind,
     OutboxRelayResult,
     OutboxSpec,
+    OutboxWake,
+    OutboxWakeSignal,
 )
-from forze.application.contracts.pubsub import PubSubSpec
+from forze.application.contracts.pubsub import PubSubQueryDepKey, PubSubQueryPort, PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity
@@ -67,6 +70,9 @@ class _RelayPass:
 
     failed: int = 0
     """Rows terminally failed across the pass."""
+
+    reclaimed: bool = False
+    """Whether the pass's stale-claim reclaim ran: its first batch reclaimed and succeeded."""
 
     # ....................... #
 
@@ -161,6 +167,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     reclaim_stale_after: timedelta | None
     """The reclaim stale after to use."""
 
+    reclaim_every: timedelta | None = None
+    """Least time between two stale-claim reclaims; ``None`` keeps them a poll apart."""
+
     limit: int | None
     """The limit to use."""
 
@@ -202,6 +211,15 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         init=False,
     )
     """Stop signal and bounded teardown, shared with every other background loop."""
+
+    woken: asyncio.Event | None = attrs.field(default=None, init=False)
+    """Set by the wake listener when this route's rows committed; ``None`` without a wake."""
+
+    listener: asyncio.Task[None] | None = attrs.field(default=None, init=False)
+    """The wake listener, while the loop runs with a wake."""
+
+    last_reclaim_at: float | None = attrs.field(default=None, init=False)
+    """Loop time of the last pass that reclaimed stale claims; ``None`` before the first."""
 
     tenant_shard: list[UUID] | None = attrs.field(default=None, init=False)
     """The assigned shard, frozen at startup. ``None`` = tenant-global."""
@@ -251,6 +269,16 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
         if self.reclaim_stale_after is not None and self.reclaim_stale_after.total_seconds() <= 0:
             raise exc.configuration("Reclaim stale after must be positive")
+
+        if self.reclaim_every is not None:
+            if self.reclaim_every.total_seconds() <= 0:
+                raise exc.configuration("Reclaim every must be positive")
+
+            if self.reclaim_stale_after is None:
+                raise exc.configuration(
+                    "Reclaim every sets how often stale claims are reclaimed, and "
+                    "reclaim_stale_after=None reclaims none; set both or neither"
+                )
 
         if self.max_batches_per_tick < 1:
             raise exc.configuration("Max batches per tick must be >= 1")
@@ -343,6 +371,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         batches = claimed = published = retried = failed = 0
         last_batch: float | None = None
         stop: _PassStop = "cap"
+        reclaimed = False
 
         for batch_index in range(self.max_batches_per_tick):
             if not strict and self._stop_requested:
@@ -380,6 +409,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 continue
 
             last_batch = loop.time() - started
+            reclaimed = reclaimed or (reclaim and batch_index == 0)
 
             batches += 1
             claimed += result.claimed
@@ -412,6 +442,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             published=published,
             retried=retried,
             failed=failed,
+            reclaimed=reclaimed,
         )
 
     # ....................... #
@@ -420,7 +451,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         self,
         ctx: ExecutionContext,
         tenants: Sequence[UUID] | None,
-    ) -> None:
+        *,
+        reclaim: bool = True,
+    ) -> bool:
         """Drain the backlog once: globally, or per assigned tenant when sharded.
 
         *tenants* is the shard **frozen at startup** (``None`` for a tenant-global outbox).
@@ -428,27 +461,36 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         partition and forwards under it) and is isolated — one tenant's failure must not
         skip the rest of the shard this tick. Tenants are drained **sequentially** (one DB
         connection at a time); shard across instances to parallelize.
+
+        Returns whether every pass that was asked to reclaim stale claims did, so a reclaim
+        that failed or was cut short is retried on the next pass rather than a gap later.
         """
 
         if tenants is None:
-            await self._relay_once(ctx)
-            return
+            return (await self._relay_once(ctx, reclaim=reclaim)).reclaimed
+
+        reclaimed_all = True
 
         for tenant in tenants:
             if self._stop_requested:
                 # Leave the rest of the shard to the shutdown drain rather than opening a
                 # claim per remaining tenant on a process that is going away.
-                return
+                return False
 
             try:
                 with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-                    await self._relay_once(ctx)
+                    passed = await self._relay_once(ctx, reclaim=reclaim)
+
+                reclaimed_all = reclaimed_all and passed.reclaimed
 
             except asyncio.CancelledError:
                 raise
 
             except Exception:
                 logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
+                reclaimed_all = False
+
+        return reclaimed_all
 
     # ....................... #
 
@@ -501,24 +543,128 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _sleep_or_stop(self) -> bool:
-        """Wait out the jittered tick interval; ``True`` when a stop was requested."""
-
+    def _jittered_interval(self) -> float:
         # Jittered tick: N replicas polling at the same fixed interval synchronize into a
         # thundering herd against the claim query; the multiplicative jitter desynchronizes
         # them. Desynchronization jitter, not security randomness.
-        delay = self.interval.total_seconds() * (
+        return self.interval.total_seconds() * (
             1.0 + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
         )
 
-        return await self.control.sleep_or_stop(delay)
+    # ....................... #
+
+    async def _sleep_or_stop(self) -> bool:
+        """Wait out the jittered tick interval, or less when woken; ``True`` on a stop."""
+
+        delay = self._jittered_interval()
+        woken = self.woken
+        stop = self.control.event
+
+        if woken is None or stop is None:
+            return await self.control.sleep_or_stop(delay)
+
+        # A wake ends the wait early, as a stop does; the poll is what is left when neither
+        # comes. A wake that arrived during the pass is still set here, so it is not lost.
+        waits = [asyncio.ensure_future(woken.wait()), asyncio.ensure_future(stop.wait())]
+
+        try:
+            await asyncio.wait(waits, timeout=delay, return_when=asyncio.FIRST_COMPLETED)
+
+        finally:
+            for wait in waits:
+                wait.cancel()
+
+            await asyncio.gather(*waits, return_exceptions=True)
+
+        return stop.is_set()
+
+    # ....................... #
+
+    def _reclaim_due(self, now: float) -> bool:
+        """Whether a pass starting at loop time *now* reclaims stale claims.
+
+        Without a wake every pass is a poll tick, at least ``(1 - jitter) * interval`` after
+        the last one, so the default gap reclaims on every tick, as before wakes existed.
+        With a wake, passes follow commits; the gap keeps the reclaim ``UPDATE`` at the
+        poll's cadence instead of running it on every one of them.
+        """
+
+        if self.reclaim_stale_after is None:
+            return False
+
+        gap = (
+            self.reclaim_every.total_seconds()
+            if self.reclaim_every is not None
+            else self.interval.total_seconds() * (1.0 - self.jitter)
+        )
+
+        return self.last_reclaim_at is None or now - self.last_reclaim_at >= gap
+
+    # ....................... #
+
+    async def _listen(
+        self,
+        wake: OutboxWake,
+        query: PubSubQueryPort[OutboxWakeSignal],
+        woken: asyncio.Event,
+    ) -> None:
+        """Set *woken* for each wake naming this route, resubscribing after a failure.
+
+        A subscription that fails or ends is retried one poll interval later; meanwhile the
+        relay polls, so the only cost of a broken wake channel is the latency it was there to
+        save.
+        """
+
+        route = str(self.outbox_spec.name)
+
+        while True:
+            try:
+                async for message in query.subscribe([wake.topic]):
+                    if message.payload.route == route:
+                        woken.set()
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception:
+                logger.warning(
+                    "Outbox relay wake subscription failed; polling until it is back",
+                    outbox_route=route,
+                    exc_info=True,
+                )
+
+            # Jittered like the poll, so replicas that lost the channel together do not all
+            # resubscribe at once.
+            if await self.control.sleep_or_stop(self._jittered_interval()):
+                return
+
+    # ....................... #
+
+    async def _stop_listener(self) -> None:
+        listener, self.listener = self.listener, None
+
+        if listener is None:
+            return
+
+        listener.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await listener
 
     # ....................... #
 
     async def _loop(self, ctx: ExecutionContext) -> None:
         while True:
+            if self.woken is not None:
+                # Cleared before the pass reads, so a commit landing during it wakes the next.
+                self.woken.clear()
+
+            started = asyncio.get_running_loop().time()
+            due = self._reclaim_due(started)
+
             try:
-                await self._drain_tick(ctx, self.tenant_shard)
+                if await self._drain_tick(ctx, self.tenant_shard, reclaim=due) and due:
+                    self.last_reclaim_at = started
 
             except asyncio.CancelledError:
                 raise
@@ -543,6 +689,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         # The runtime's budget bounds us; our own is usually tighter.
         budget = min(deadline, clock.time() + self.shutdown_drain_timeout.total_seconds())
         stopped = await self.control.stop(deadline=budget)
+        await self._stop_listener()
 
         if not self.drain_on_shutdown or self.scope_ctx is None or self.drained:
             return stopped
@@ -649,6 +796,21 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         # silently stops draining. Restart to repartition — one consistent onboarding model,
         # shared with the gateway source and the group-ensure step.
         self.tenant_shard = list(self.tenants()) if self.tenants is not None else None
+        self.last_reclaim_at = None
+
+        wake = self.outbox_spec.wake
+
+        if wake is not None:
+            # Resolved at startup, so a wake route that is not wired fails the startup rather
+            # than leaving the relay polling and the wake quietly dead.
+            query: PubSubQueryPort[OutboxWakeSignal] = ctx.deps.resolve_configurable(
+                ctx, PubSubQueryDepKey, wake.spec, route=wake.spec.name
+            )
+            wake.require_tenant_global(query)
+            self.woken = asyncio.Event()
+            self.listener = asyncio.create_task(
+                self._listen(wake, query, self.woken), name=f"{self.control.loop_name}:wake"
+            )
 
         self.control.task = asyncio.create_task(self._loop(ctx), name=self.control.loop_name)
 
@@ -710,6 +872,7 @@ def outbox_relay_background_lifecycle_step(
     interval: timedelta = timedelta(seconds=30),
     jitter: float = 0.2,
     reclaim_stale_after: timedelta | None = timedelta(minutes=5),
+    reclaim_every: timedelta | None = None,
     limit: int | None = None,
     max_attempts: int = 5,
     retry_base_delay: timedelta = timedelta(seconds=1),
@@ -737,6 +900,16 @@ def outbox_relay_background_lifecycle_step(
     ±20%) so N replicas' relay loops do not synchronize into a thundering
     herd against the claim query. A failing batch is logged and does not
     abort the tick.
+
+    When *outbox_spec* declares a :class:`~forze.application.contracts.outbox.OutboxWake`, the
+    relay also listens for wakes and runs a pass as soon as a flush's rows commit, so
+    *interval* becomes the fallback for a lost wake rather than the delivery latency. The
+    wake route is resolved at startup and must be wired in this process.
+
+    *reclaim_stale_after* resets rows stuck ``processing`` on the first batch of a pass, at
+    most once per *reclaim_every* (``None``: once per poll tick). Passes driven by wakes in
+    between skip it, so the reclaim ``UPDATE`` runs at the poll's cadence however many
+    commits there are.
 
     *max_attempts*, *retry_base_delay*, and *retry_max_backoff* configure the
     per-row transient-failure retry policy — see
@@ -804,6 +977,7 @@ def outbox_relay_background_lifecycle_step(
         interval=interval,
         jitter=jitter,
         reclaim_stale_after=reclaim_stale_after,
+        reclaim_every=reclaim_every,
         limit=limit,
         max_attempts=max_attempts,
         retry_base_delay=retry_base_delay,
