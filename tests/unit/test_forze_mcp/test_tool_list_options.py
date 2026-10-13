@@ -226,6 +226,30 @@ class TestOutputSchemas:
         assert result.structured_content is None
         assert json.loads(result.content[0].text) == [3, 3]
 
+    async def test_an_optional_result_answers_null(self) -> None:
+        @attrs.define(slots=True)
+        class _Find(Handler[_In, _Out | None]):
+            async def __call__(self, args: _In) -> _Out | None:
+                return _Out(doubled=args.n * 2) if args.n else None
+
+        registry = (
+            OperationRegistry(handlers={"calc.find": lambda _c: _Find()})
+            .set_descriptor("calc.find", OperationDescriptor(input_type=_In, output_type=_Out | None))
+            .bind("calc.find")
+            .as_query()
+            .finish()
+            .freeze()
+        )
+        server = FastMCP("calc")
+        register_tools(server, registry, _ctx_factory)
+
+        async with Client(server) as client:
+            found = await client.call_tool("calc.find", {"n": 2})
+            nothing = await client.call_tool("calc.find", {"n": 0})
+
+        assert found.structured_content == {"result": {"doubled": 4}}
+        assert nothing.structured_content == {"result": None}
+
     async def test_kept_by_default(self) -> None:
         server = FastMCP("calc")
         register_tools(server, _calc(), _ctx_factory)

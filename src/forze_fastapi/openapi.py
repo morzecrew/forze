@@ -22,6 +22,7 @@ from copy import deepcopy
 from typing import Any, Final, cast
 
 from fastapi import FastAPI
+from fastapi.routing import APIRoute, iter_route_contexts
 
 from forze.base.exceptions import exc
 
@@ -36,6 +37,10 @@ _HTTP_METHODS: Final = frozenset(
 
 _APPLIED_MARKER: Final = "x-forze-conventions-applied"
 """Idempotency sentinel stamped on the schema once the conventions have been applied."""
+
+_REQUIRED_MARKER: Final = "x-forze-sent-fields-required"
+"""Idempotency sentinel stamped once the always-sent response fields are marked required; its
+own, so asking for it in a later application still takes effect."""
 
 _ERROR_SCHEMA: Final = "ForzeErrorResponse"
 _ERROR_REF: Final = f"#/components/schemas/{_ERROR_SCHEMA}"
@@ -333,7 +338,137 @@ def _document_errors(schema: dict[str, Any]) -> None:
 # ....................... #
 
 
-def apply_openapi_conventions(app: FastAPI) -> None:
+_SCHEMA_REF: Final = "#/components/schemas/"
+
+
+def _refs(node: Any, schemas: dict[str, Any], seen: set[str], *, names: bool = False) -> set[str]:
+    """Names of the component schemas *node* references, directly or through them.
+
+    Instance data (``example``, ``default``, …) is not walked: a ``$ref`` written there is a
+    value, not a reference. Under a map of names (``properties``, …) every key is a name.
+    """
+
+    if isinstance(node, list):
+        for value in node:  # pyright: ignore[reportUnknownVariableType]
+            _refs(value, schemas, seen)
+
+        return seen
+
+    if not isinstance(node, dict):
+        return seen
+
+    mapping = cast(dict[str, Any], node)
+    ref = mapping.get("$ref")
+
+    if isinstance(ref, str) and ref.startswith(_SCHEMA_REF):
+        name = ref.removeprefix(_SCHEMA_REF)
+
+        if name not in seen:
+            seen.add(name)
+            _refs(schemas.get(name), schemas, seen)
+
+    for key, value in mapping.items():
+        if names:
+            _refs(value, schemas, seen)
+
+        elif key in _NAME_MAPS and isinstance(value, dict):
+            _refs(value, schemas, seen, names=True)
+
+        elif key not in _DATA_KEYS:
+            _refs(value, schemas, seen)
+
+    return seen
+
+
+def _may_be_null(
+    prop: dict[str, Any], schemas: dict[str, Any], following: frozenset[str] = frozenset()
+) -> bool:
+    """Whether a property schema admits ``null``, through the components it references. One it
+    cannot tell about (``Any``, a reference outside the components) does; a reference back into
+    one being followed adds nothing."""
+
+    if isinstance(ref := prop.get("$ref"), str):
+        name = ref.removeprefix(_SCHEMA_REF)
+
+        if name in following:
+            return False
+
+        target = schemas.get(name) if ref.startswith(_SCHEMA_REF) else None
+
+        return target is None or _may_be_null(target, schemas, following | {name})
+
+    if (kind := prop.get("type")) is not None:
+        return kind == "null" or (isinstance(kind, list) and "null" in kind)
+
+    for union in ("anyOf", "oneOf"):
+        if union in prop:
+            return any(_may_be_null(option, schemas, following) for option in prop[union])
+
+    return True
+
+
+def _require_sent_fields(schema: dict[str, Any], app: FastAPI) -> None:
+    schemas: dict[str, Any] = schema.get("components", {}).get("schemas", {})
+    paths: dict[str, Any] = schema.get("paths", {})
+    keeps_nulls: set[str] = set()
+    drops_nulls: set[str] = set()
+    untouched: set[str] = set()
+
+    # As FastAPI walks them for the schema: an included router's routes, at their mounted path.
+    for context in iter_route_contexts(list(app.routes)):
+        if not isinstance(route := context.original_route, APIRoute):
+            continue
+
+        for method in context.methods or ():
+            operation = paths.get(context.path_format or "", {}).get(method.lower())
+
+            if operation is None:
+                continue
+
+            # Whatever a request sends may leave a field out.
+            _refs(operation.get("requestBody"), schemas, untouched)
+            _refs(operation.get("parameters"), schemas, untouched)
+
+            status = str(route.status_code or 200)
+            sent = _refs(operation.get("responses", {}).get(status), schemas, set())
+
+            if (
+                route.response_model_exclude_unset
+                or route.response_model_exclude_defaults
+                or route.response_model_include is not None
+                or route.response_model_exclude is not None
+            ):
+                untouched |= sent
+
+            elif route.response_model_exclude_none:
+                drops_nulls |= sent
+
+            else:
+                keeps_nulls |= sent
+
+    for name in (keeps_nulls | drops_nulls) - untouched:
+        if not (properties := schemas[name].get("properties")):
+            continue
+
+        # Where nulls are dropped, a nullable field is left out when null, though pydantic
+        # lists it required when it has no default.
+        required = [
+            field
+            for field, prop in properties.items()
+            if name not in drops_nulls or not _may_be_null(prop, schemas)
+        ]
+
+        if required:
+            schemas[name]["required"] = required
+
+        else:
+            schemas[name].pop("required", None)
+
+
+# ....................... #
+
+
+def apply_openapi_conventions(app: FastAPI, *, require_sent_fields: bool = False) -> None:
     """Document the Forze error envelope and render reST descriptions as Markdown.
 
     In *app*'s OpenAPI: FastAPI's default 422 (``HTTPValidationError``) becomes the
@@ -351,7 +486,16 @@ def apply_openapi_conventions(app: FastAPI) -> None:
     documented in either order, but text a wrapper applied later adds stays as written.
     It is idempotent.
 
+    With *require_sent_fields*, a response schema lists as required the fields every route that
+    returns it always sends (pydantic leaves a field with a default optional): every field, where
+    only routes that keep nulls return it; the fields that cannot be null, through the components
+    they reference, where any of them drops nulls (``response_model_exclude_none``, the default
+    of the routes Forze attaches), so a nullable field without a default is no longer listed. A
+    schema a request also uses, or that a route trims otherwise (``exclude_unset``,
+    ``include``, …), is left as it is. It can be asked for in a later call.
+
     :param app: The FastAPI application whose schema to adjust.
+    :param require_sent_fields: Mark always-sent response fields required.
     """
 
     original: Callable[[], dict[str, Any]] = app.openapi
@@ -359,12 +503,14 @@ def apply_openapi_conventions(app: FastAPI) -> None:
     def _openapi() -> dict[str, Any]:
         schema = original()
 
-        if schema.get(_APPLIED_MARKER):
-            return schema
+        if not schema.get(_APPLIED_MARKER):
+            _document_errors(schema)
+            _render_text(schema)
+            schema[_APPLIED_MARKER] = True
 
-        _document_errors(schema)
-        _render_text(schema)
-        schema[_APPLIED_MARKER] = True
+        if require_sent_fields and not schema.get(_REQUIRED_MARKER):
+            _require_sent_fields(schema, app)
+            schema[_REQUIRED_MARKER] = True
 
         return schema
 

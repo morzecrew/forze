@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenAPI can list the response fields an app always sends as required.** `apply_openapi_conventions(app, require_sent_fields=True)` requires every field of a schema only null-keeping routes return, and only the non-nullable ones where a route drops nulls. Schemas requests also use are left as they are.
+
+- **A cross-origin browser can read forze's response headers.** `AllowlistCORSMiddleware` is Starlette's CORS middleware answering an `OriginAllowlist` (loopback port ranges included) and exposing `EXPOSED_RESPONSE_HEADERS`: `X-Error-Code`, the invocation ids, and a download's filename, `ETag` and range headers.
+
 - **An administrator can revoke any principal's API key.** `build_authn_registry(admin_guards=...)` adds `revoke_principal_api_key` (`DELETE /admin/api-keys/{id}`) behind those guards, like `deactivate_principal`; unguarded, neither is registered. Both act in every tenant. **Breaking** for API-key lifecycle implementers.
 
 - **An administrator can list any principal's API keys**, to find one to revoke. `list_principal_api_keys` (`GET /admin/principals/{id}/api-keys`) returns the non-secret descriptors, revoked keys included, behind `admin_guards` only, and in every tenant. **Breaking** for API-key lifecycle implementers.
@@ -46,6 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Revoking an API key the caller does not hold is a 404** (**behaviour change**). `revoke_api_key` answered a malformed, unknown or another principal's key id with a 401, which a browser client reads as its session ending; it is now `not_found` (`api_key_not_found`). A revoked key still answers 204.
 
 - **An access token is checked on the clock that issued it.** `issue_token` stamps `iat` and `exp` from forze's time source, but PyJWT checked them on the wall clock, so under `FrozenTimeSource` every token was expired or not yet valid. `exp`, `iat` and `nbf` are now checked against `utcnow()`, with the leeway.
+
+- **An operation can declare an output that may be nothing.** `OperationDescriptor(output_type=Model | None)` (or `list[Model]`) is served as `200 null` over HTTP and `{"result": null}` over MCP; its catalog schema and fingerprint no longer fail. A model's schema, and so its fingerprint, is unchanged.
 
 - **A read-only operation cannot write through a port a command built and cached** (**behaviour change**). A query reusing a handler or adapter that a command built first held its real write port. A command accessor now always returns `GuardedWritePort`; in a test, `forze.testing.unguarded` reaches the port.
 

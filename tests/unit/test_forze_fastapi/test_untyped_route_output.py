@@ -339,3 +339,21 @@ class TestTheSchema:
         assert schema["content"]["application/json"]["schema"] == {
             "$ref": "#/components/schemas/_Row"
         }
+
+
+# ....................... #
+
+
+class TestAnOptionalOutput:
+    """An operation that can find nothing declares ``Model | None`` and answers ``null``."""
+
+    async def test_nothing_is_a_200_null_and_the_schema_says_it_may_be(self) -> None:
+        for result, body in ((None, None), (_Child(x=1), {"x": 1, "y": 2})):
+            response = await _post(_app(result, typed=_Child | None))  # type: ignore[arg-type]
+
+            assert (response.status_code, response.json()) == (200, body)
+
+        schema = _app(None, typed=_Child | None).openapi()  # type: ignore[arg-type]
+        ok = schema["paths"]["/run"]["post"]["responses"]["200"]["content"]["application/json"]
+
+        assert {"type": "null"} in ok["schema"]["anyOf"]
