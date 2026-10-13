@@ -1375,6 +1375,10 @@ async def test_a_wake_relays_committed_rows_long_before_the_poll(
     assert len(shared_state.queues["relay"]["relay"]) == 1
 
 
+class _Abort(Exception):
+    """Rolls a transaction back on purpose."""
+
+
 async def _wakes_heard(
     pg_client: PostgresClient,
     redis_client: RedisClient,
@@ -1404,14 +1408,15 @@ async def _wakes_heard(
         await asyncio.sleep(0.3)  # a Redis subscription is live-only
 
         try:
-            with suppress(RuntimeError):
+            # Only the deliberate abort is swallowed; a failing stage or flush still fails.
+            with suppress(_Abort):
                 async with ctx.tx_ctx.scope("default"):
                     outbox = ctx.outbox.command(outbox_spec)
                     await outbox.stage("demo.created", _OutboxPayload(label="x"))
                     await outbox.flush()
 
                     if not commit:
-                        raise RuntimeError("abort")
+                        raise _Abort
 
             await asyncio.sleep(0.5)
 
