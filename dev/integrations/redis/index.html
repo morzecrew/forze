@@ -6694,6 +6694,11 @@ resources on the deps module, open the pool from the lifecycle plan:</p>
     <span class="n">redis_lifecycle_step</span><span class="p">(</span><span class="n">dsn</span><span class="o">=</span><span class="s2">"redis://localhost:6379/0"</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">RedisConfig</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mi">20</span><span class="p">)),</span>
 <span class="p">)</span>
 </code></pre></div>
+<p>A pool holds at most <code>max_size</code> connections, and a call made while all of them are busy
+fails at once with a connection error. Set <code>RedisConfig(pool_timeout=timedelta(...))</code> to
+make it wait up to that long for one to be released instead, so a burst queues rather
+than fails. The wait applies to each acquisition, <code>subscribe</code> included, so a read
+retried by <code>read_retry_attempts</code> waits again on each attempt.</p>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
