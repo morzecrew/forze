@@ -57,12 +57,10 @@ async def test_a_full_pool_refuses_at_once_by_default(open_client) -> None:
     client = await open_client(RedisConfig(max_size=1))
     holder = await _hold_the_only_connection(client)
 
-    started = time.monotonic()
-
     with pytest.raises(CoreException, match="Redis connection error"):
         await client.get("pool-timeout:any")
 
-    assert time.monotonic() - started < _HOLD_MS / 1000 / 2
+    assert not holder.done()  # refused while the connection was still held, not after
     await holder
 
 
