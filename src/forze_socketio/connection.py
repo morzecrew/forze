@@ -183,18 +183,42 @@ Socket.IO keeps each namespace's session in the Engine.IO session under the name
 name, which always starts with ``/``; this key cannot collide with one, and it is freed with
 the connection."""
 
-_SharedIdentities = dict[tuple[Any, str], "asyncio.Task[RealtimeConnection | None]"]
+_SharedIdentities = dict[tuple[int, str], "asyncio.Task[RealtimeConnection | None]"]
+"""Keyed by the resolver's identity, so any callable can be one, and the credential's
+fingerprint."""
 
 
 def _credential_key(auth: Any) -> str | None:
-    """A fingerprint of the credential a namespace connect presents, or ``None`` if it has none
-    that can be compared (then the connect is authenticated on its own)."""
+    """A fingerprint of the ``auth`` payload a namespace connect presents, or ``None`` when one
+    cannot be taken (then the connect is authenticated on its own).
+
+    No payload fingerprints too: the credential is then the handshake's cookie, header or
+    query parameter, which every namespace of one Engine.IO connection shares."""
 
     try:
         return stable_payload_fingerprint(auth)
 
-    except Exception:
+    except (TypeError, ValueError):
         return None
+
+
+def _reusable(task: "asyncio.Task[RealtimeConnection | None] | None") -> bool:
+    """Whether a later connect may wait on or reuse *task*: one in flight, or one that
+    succeeded with an identity that has not expired. A failed or cancelled one is a miss,
+    whether or not anybody was waiting on it when it failed."""
+
+    if task is None:
+        return False
+
+    if not task.done():
+        return True
+
+    if task.cancelled() or task.exception() is not None:
+        return False
+
+    connection = task.result()
+
+    return connection is None or not connection.is_expired(utcnow())
 
 
 # ....................... #
@@ -470,16 +494,10 @@ class _ConnectionLifecycle:
 
         eio_session = await self.sio.eio.get_session(eio_sid)
         shared: _SharedIdentities = eio_session.setdefault(_SHARED_IDENTITY_KEY, {})
-        key = (self.resolve, credential)
+        key = (id(self.resolve), credential)
         task = shared.get(key)
 
-        if task is not None and task.done() and not task.cancelled() and task.exception() is None:
-            cached = task.result()
-
-            if cached is not None and cached.is_expired(utcnow()):
-                task = None
-
-        if task is None:
+        if task is None or not _reusable(task):
             task = asyncio.ensure_future(_resolve(self.resolve, connect))
             shared[key] = task
 

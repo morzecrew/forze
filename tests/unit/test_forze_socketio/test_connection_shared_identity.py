@@ -218,3 +218,37 @@ async def test_an_uncomparable_credential_is_authenticated_on_its_own() -> None:
         await server.handlers[namespace]["connect"](sid, {}, {1: "t1"})
 
     assert len(seen) == 2
+
+
+async def test_an_unhashable_resolver_still_shares() -> None:
+    class _Unhashable(_Resolver):
+        __hash__ = None  # type: ignore[assignment]  # defines equality without a hash
+
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, _Unhashable)
+
+    resolver = _Unhashable()
+    server = _server(resolver)
+
+    await _connect(server, "eio-1", "/lobby", "t1")
+    await _connect(server, "eio-1", "/chat", "t1")
+
+    assert resolver.seen == ["t1"]
+
+
+async def test_a_failure_nobody_was_waiting_for_is_not_replayed() -> None:
+    resolver = _Resolver()
+    resolver.bad.add("t1")
+    resolver.gate = asyncio.Event()
+    server = _server(resolver)
+
+    first = asyncio.create_task(_connect(server, "eio-1", "/lobby", "t1"))
+    await asyncio.sleep(0.01)
+    first.cancel()  # the only waiter goes away while the check is in flight
+    resolver.gate.set()
+    await asyncio.sleep(0.01)  # and the check then fails
+
+    resolver.bad.clear()
+    await _connect(server, "eio-1", "/chat", "t1")
+
+    assert resolver.seen == ["t1", "t1"]
