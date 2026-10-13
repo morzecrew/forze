@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from datetime import timedelta
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 from uuid import UUID
 
 import attrs
@@ -215,11 +216,16 @@ class AccessTokenService:
                 algorithms=[verifier.algorithm],
                 issuer=self.config.issuer,
                 audience=self.config.audience,
+                # The times are checked below, on the clock that stamped them: PyJWT would
+                # check them on the wall clock, which a bound time source does not move.
                 options={
                     "require": ["exp", "iat", "sub", "iss", "aud"],
+                    "verify_exp": False,
+                    "verify_iat": False,
+                    "verify_nbf": False,
                 },
-                leeway=leeway,
             )
+            _check_times(res, now=utcnow().timestamp(), leeway=leeway.total_seconds())
 
             self._n_verified += 1
             return AccessTokenClaims(**res)  # type: ignore[typeddict-item]
@@ -237,3 +243,27 @@ class AccessTokenService:
                 "Invalid access token",
                 code="invalid_access_token",
             ) from err
+
+
+# ....................... #
+
+
+def _check_times(claims: Mapping[str, Any], *, now: float, leeway: float) -> None:
+    """Judge ``exp``, ``iat`` and ``nbf`` against *now*, as PyJWT judges them against its own
+    clock: expired at ``exp`` less the leeway, not yet valid before ``iat`` or ``nbf`` plus it.
+
+    :raises jwt.InvalidTokenError: a time claim that is not a number, or not yet valid.
+    :raises jwt.ExpiredSignatureError: the token has expired.
+    """
+
+    times = {claim: claims[claim] for claim in ("exp", "iat", "nbf") if claim in claims}
+
+    for claim, value in times.items():
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise jwt.InvalidTokenError(f"The {claim} claim must be a number")
+
+    if times["exp"] <= now - leeway:
+        raise jwt.ExpiredSignatureError("Signature has expired")
+
+    if any(times[claim] > now + leeway for claim in ("iat", "nbf") if claim in times):
+        raise jwt.ImmatureSignatureError("The token is not yet valid")
