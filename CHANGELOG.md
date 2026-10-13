@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An access token is checked on the clock that issued it.** `issue_token` stamps `iat` and `exp` from forze's time source, but PyJWT checked them on the wall clock, so under `FrozenTimeSource` every token was expired or not yet valid. `exp`, `iat` and `nbf` are now checked against `utcnow()`, with the leeway.
 
+- **An operation can declare an output that may be nothing.** `OperationDescriptor(output_type=Model | None)` (or `list[Model]`) is served as `200 null` over HTTP and `{"result": null}` over MCP; its catalog schema and fingerprint no longer fail. A model's schema, and so its fingerprint, is unchanged.
+
 - **A read-only operation cannot write through a port a command built and cached** (**behaviour change**). A query reusing a handler or adapter that a command built first held its real write port. A command accessor now always returns `GuardedWritePort`; in a test, `forze.testing.unguarded` reaches the port.
 
 - **A filter, sort or aggregates expression refuses a key it does not define, naming it** (**behaviour change**). A request DTO dropped it, so `{"$values": {…}, "$bogus": 1}` returned a wider page and `{"$bogus": …}` failed as `{}`; the port ignored one beside `$values`, a second combinator, or a mistyped `$having`.

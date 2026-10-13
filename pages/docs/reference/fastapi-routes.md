@@ -412,7 +412,9 @@ shipped builder names the placeholders it fills, and a path with any other place
 refused. An `EndpointBuilder` of your own takes `(runner, input_type, op)`; give it a
 `path_params` frozenset to have its paths checked the same way.
 
-The operation's output type is the route's response model. An operation without one, such as
+The operation's output type is the route's response model. It need not be a bare model: an
+operation that may find nothing declares `output_type=Model | None` and answers `200` with
+`null`, and MCP returns it as `{"result": null}`. An operation without one, such as
 a federated search, still has a model result written as a typed route's is: fields that are
 `None` are left out unless the attacher passes `exclude_none=False`, and the OpenAPI schema
 documents an untyped body. Any other result, such as a dict or a list, is written as FastAPI

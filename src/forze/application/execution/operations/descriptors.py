@@ -12,10 +12,10 @@ because it is execution-semantic; :meth:`OperationCatalogEntry` joins the two.
 """
 
 from datetime import timedelta
-from typing import final
+from typing import Any, final
 
 import attrs
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from forze.application.contracts.querying import QueryDiscovery
 from forze.base.primitives import JsonDict, StrKey
@@ -37,8 +37,10 @@ class OperationDescriptor:
     input_type: type[BaseModel] | None = None
     """Input DTO type, used to derive the request schema. ``None`` for input-less ops."""
 
-    output_type: type[BaseModel] | None = None
-    """Output DTO type, used to derive the response schema. ``None`` for void ops."""
+    output_type: Any = None
+    """Output type, used to derive the response schema: a DTO, or any type pydantic validates —
+    ``Model | None`` for an operation that may find nothing (served as ``null``), a list.
+    ``None`` for void ops."""
 
     description: str | None = None
     """Human/LLM-facing description of what the operation does."""
@@ -81,7 +83,11 @@ class OperationDescriptor:
     def output_schema(self) -> JsonDict | None:
         """JSON schema for the output DTO, or ``None`` when the operation returns nothing."""
 
-        return None if self.output_type is None else self.output_type.model_json_schema()
+        if self.output_type is None:
+            return None
+
+        # A model's schema is the same either way, so its operation fingerprint is unchanged.
+        return TypeAdapter[Any](self.output_type).json_schema()
 
 
 # ....................... #
