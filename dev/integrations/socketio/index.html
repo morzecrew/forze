@@ -6787,6 +6787,12 @@ auto-joins the principal room, so do not also give <code>ForzeSocketIOAdapter</c
 resolver must return the identity with its <code>actor</code> chain intact, not normalized to its
 subject. The publish-side <code>Audience.principal(id)</code> must
 use the same id the gateway joins with (<code>str(authn.principal_id)</code>).</p>
+<p>A client that opens several namespaces over one connection is authenticated once per
+namespace. Pass <code>share_identity=True</code> to each of them to authenticate once per Engine.IO
+connection instead. Later namespaces with the same credential and resolver reuse the
+first one's identity until it expires or the connection closes, and a different
+credential is checked again. It is opt-in because a namespace connecting just after the
+first no longer re-checks a revoked session.</p>
 <p><code>build_socketio_connection_resolver</code> builds <code>resolve_connection</code> for you: a fixed
 credential ladder (connect/reauth <code>auth</code> payload, then the cookie, then
 <code>Authorization: Bearer</code>, then an opt-in query parameter) verified through the wired

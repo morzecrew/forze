@@ -9345,6 +9345,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A socket.io client opening several namespaces can authenticate once.</strong> <code>attach_realtime_connection(share_identity=True)</code> reuses the identity one Engine.IO connection resolved for its other namespaces with the same credential and resolver, until it expires or the connection closes; another credential is checked again.</p>
+</li>
+<li>
 <p><strong>An outbox relay can deliver a row as soon as it commits.</strong> <code>OutboxSpec(wake=OutboxWake(route=...))</code> publishes a wake on a pub/sub route after each flush's transaction commits, and the background relay runs a pass when it hears one; its poll stays the fallback for a lost wake.</p>
 </li>
 <li>
