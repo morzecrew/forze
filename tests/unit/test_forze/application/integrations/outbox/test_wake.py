@@ -159,11 +159,17 @@ async def test_a_stalled_wake_publish_does_not_hold_the_commit() -> None:
     async def _stalled(*_: Any, **__: Any) -> None:
         await asyncio.Event().wait()
 
-    with patch.object(MockPubSubAdapter, "publish", _stalled):
-        async with asyncio.timeout(3.0):
-            async with ctx.tx_ctx.scope("mock"):
-                await _stage_and_flush(ctx)
+    async def _commit() -> None:
+        async with ctx.tx_ctx.scope("mock"):
+            await _stage_and_flush(ctx)
 
+    with patch.object(MockPubSubAdapter, "publish", _stalled):
+        # Waited on rather than timed out: the post-commit drain is shielded, so a commit
+        # held by the wake could not be cancelled, only observed still running.
+        commit = asyncio.create_task(_commit())
+        done, _ = await asyncio.wait({commit}, timeout=3.0)
+
+    assert commit in done, "the commit waited on a stalled wake"
     assert _rows(state) == 1
 
 

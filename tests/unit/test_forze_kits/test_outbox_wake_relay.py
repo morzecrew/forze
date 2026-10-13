@@ -222,6 +222,24 @@ async def test_a_broken_wake_subscription_leaves_the_relay_polling_and_retrying(
             assert not startup.listener.done()
 
 
+async def test_a_failed_wake_subscription_is_retried_after_a_jittered_interval() -> None:
+    state = MockState()
+    attempts: list[None] = []
+
+    async def _refused(*_: Any, **__: Any) -> AsyncIterator[Any]:
+        attempts.append(None)
+        raise ConnectionError("broker down")
+        yield  # pragma: no cover - makes this an async generator
+
+    # The poll is 10 s; only the jittered interval, stubbed short, can bring the retries.
+    with (
+        patch.object(MockPubSubAdapter, "subscribe", _refused),
+        patch.object(_OutboxRelayBackgroundStartup, "_jittered_interval", return_value=0.02),
+    ):
+        async with _running(state):
+            await _until(lambda: len(attempts) >= 3)
+
+
 # ....................... #
 
 
