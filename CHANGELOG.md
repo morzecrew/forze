@@ -21,9 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An emit to a large socket.io room takes far less of the event loop.** The manager `build_socketio_server` builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass `client_manager=AsyncManager()` to keep python-socketio's manager.
 
+- **A reused refresh token raises `RefreshTokenReuseError`**, still rendered as the uniform refusal, and `TokenLifecyclePort` gains `revoke_chain_of_tokens`, so a caller refreshing inside a transaction can commit the family's revocation after the rollback. **Breaking** for token lifecycle implementers.
+
 ### Fixed
 
-- ...
+- **A failed deactivation, password change or reset no longer half-applies.** The authn kit's operations and the tenant switch run their writes in one transaction on `tx_route`, `"default"` unless set; `tx_route=None` opts out. **Breaking**: the deps need a transaction manager on that route.
+
+- **A login racing a deactivation can no longer leave the principal a live session.** Inside a transaction, login, refresh and the tenant switch read the principal with a row lock until the session commits. **Breaking** for eligibility ports: `require_authentication_allowed` takes `for_update`.
+
+- **Logging out revokes the live session of a principal with over 10,000 old ones.** Revocation now matches live sessions only, not every session the principal ever had.
+
+- **The mock's principal deactivation revokes the principal's sessions**, as the real one does.
 
 ## [0.12.0] - 2026-10-13
 

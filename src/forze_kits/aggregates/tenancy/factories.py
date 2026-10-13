@@ -5,9 +5,10 @@ from forze.application.execution import ExecutionContext
 from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
-from forze.base.primitives import StrKeyNamespace
+from forze.base.primitives import StrKey, StrKeyNamespace
 
 from ..authn.dto import AuthnTokenResponseDTO
+from ..authn.handlers._utils import tx_scope
 from .dto import TenantLeaveRequestDTO, TenantListDTO, TenantSwitchRequestDTO
 from .handlers import LeaveTenant, ListTenants, SwitchTenant
 from .operations import TenancyKernelOp
@@ -19,6 +20,7 @@ def build_tenancy_registry(
     spec: AuthnSpec,
     *,
     ns: StrKeyNamespace | None = None,
+    tx_route: StrKey | None = "default",
 ) -> OperationRegistry:
     """Build the tenant-selector registry (``list_tenants`` / ``switch_tenant`` / ``leave_tenant``).
 
@@ -30,6 +32,11 @@ def build_tenancy_registry(
     membership (keyed on the bound principal). Merge the result with the app's authn registry
     (or register it under the same namespace) and project it with
     :func:`~forze_fastapi.attach_tenancy_routes`.
+
+    :param tx_route: Transaction route ``switch_tenant`` issues the new session on, so its
+        eligibility check holds its lock until the session commits, as login's does. The
+        deps module must register a transaction manager on this route; ``None`` issues
+        without a transaction.
     """
 
     ns = ns or spec.default_namespace
@@ -51,6 +58,7 @@ def build_tenancy_registry(
                 spec,
                 route=spec.name,
             ),
+            tx=tx_scope(ctx, tx_route),
         )
 
     def _leave_tenant(ctx: ExecutionContext) -> LeaveTenant:

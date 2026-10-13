@@ -18,7 +18,7 @@ class PrincipalEligibilityPort(Protocol):  # pragma: no cover
 
         ``for_update`` reads the principal with a row lock, held until the caller's
         transaction ends. Issuing a session passes it, so a concurrent deactivation either
-        waits for the session and revokes it, or commits first and the issue is refused. A
-        port with no row to lock ignores it.
+        waits for the session and revokes it, or commits first and the issue is refused.
+        Outside a transaction, and in a port with no row to lock, the read is plain.
         """
         ...

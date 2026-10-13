@@ -1,6 +1,7 @@
 """Self-service handlers for the tenant selector (list memberships, switch active tenant)."""
 
 from collections.abc import Callable
+from contextlib import nullcontext
 
 import attrs
 
@@ -18,6 +19,7 @@ from forze.application.contracts.tenancy import (
 
 from ..authn.dto import AuthnTokenResponseDTO
 from ..authn.handlers._utils import (
+    TxScope,
     require_identity,
     require_own_identity,
     token_response_from_issued_tokens,
@@ -82,6 +84,9 @@ class SwitchTenant(Handler[TenantSwitchRequestDTO, AuthnTokenResponseDTO]):
     token_lifecycle: TokenLifecyclePort
     """Token lifecycle used to re-mint a token scoped to the selected tenant."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the new session is issued in."""
+
     async def __call__(self, args: TenantSwitchRequestDTO) -> AuthnTokenResponseDTO:
         identity = require_own_identity(self.resolver)
 
@@ -92,10 +97,11 @@ class SwitchTenant(Handler[TenantSwitchRequestDTO, AuthnTokenResponseDTO]):
             requested_tenant_id=args.id,
         )
 
-        tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(
-            identity,
-            tenant_id=args.id,
-        )
+        async with self.tx():
+            tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(
+                identity,
+                tenant_id=args.id,
+            )
 
         return token_response_from_issued_tokens(tokens)
 

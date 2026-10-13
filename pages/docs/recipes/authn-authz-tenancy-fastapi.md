@@ -170,6 +170,10 @@ curl -X POST /auth/login -d '{"login": "alice", "password": "…"}'
 curl -X POST /auth/logout -H "Authorization: Bearer <access_token>"   # → 204
 ```
 
+Each of these operations runs its writes in a transaction on `"default"`, so the deps
+need a transaction manager on that route, or pass `tx_route=` to name another. The
+[authn integration](../integrations/authn.md#notes) says what the transaction guarantees.
+
 `/login` and `/refresh` are deliberately reachable **without** a bearer token —
 the operations authenticate via their request bodies. `/logout` and
 `/change-password` answer `401` on their own when the middleware bound no

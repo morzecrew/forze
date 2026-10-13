@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import final
 from uuid import UUID
 
@@ -20,6 +21,11 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
     principal_qry: DocumentQueryPort[ReadPolicyPrincipal]
     """Query port for policy principals."""
 
+    in_transaction: Callable[[], bool] | None = None
+    """Whether a transaction is open. ``for_update`` locks only inside one: outside, there is
+    no transaction to hold the lock and the backend refuses the read. ``None``, when the
+    adapter is built without the probe, never locks. The deps module wires it."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -41,7 +47,7 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
                     "id": principal_id,
                 },
             },
-            for_update=for_update,
+            for_update=for_update and self.in_transaction is not None and self.in_transaction(),
         )
 
         if principal is None or not principal.is_active:

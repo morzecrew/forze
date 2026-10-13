@@ -4,7 +4,6 @@ import functools
 import inspect
 import types
 from collections.abc import Iterable
-from contextlib import nullcontext
 from typing import Any
 
 from forze.application.contracts.authn import (
@@ -54,7 +53,7 @@ from .handlers import (
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
-from .handlers._utils import TxScope
+from .handlers._utils import tx_scope
 from .operations import AuthnKernelOp
 
 # ----------------------- #
@@ -143,12 +142,6 @@ def build_authn_registry(
             code="admin_guards_unauthorized",
         )
 
-    def _tx(ctx: ExecutionContext) -> TxScope:
-        if tx_route is None:
-            return nullcontext
-
-        return functools.partial(ctx.tx_ctx.scope, tx_route)
-
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(
             authn=ctx.deps.resolve_configurable(ctx, AuthnDepKey, spec, route=spec.name),
@@ -158,7 +151,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
-            tx=_tx(ctx),
+            tx=tx_scope(ctx, tx_route),
         )
 
     def _refresh_tokens(ctx: ExecutionContext) -> AuthnRefreshTokens:
@@ -169,7 +162,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
-            tx=_tx(ctx),
+            tx=tx_scope(ctx, tx_route),
         )
 
     def _logout(ctx: ExecutionContext) -> AuthnLogout:
@@ -181,7 +174,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
-            tx=_tx(ctx),
+            tx=tx_scope(ctx, tx_route),
         )
 
     def _change_password(ctx: ExecutionContext) -> AuthnChangePassword:
@@ -193,7 +186,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
-            tx=_tx(ctx),
+            tx=tx_scope(ctx, tx_route),
         )
 
     def _request_password_reset(ctx: ExecutionContext) -> AuthnRequestPasswordReset:
@@ -215,7 +208,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
-            tx=_tx(ctx),
+            tx=tx_scope(ctx, tx_route),
         )
 
     def _deactivate_principal(ctx: ExecutionContext) -> DeactivatePrincipalHandler:
@@ -227,7 +220,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
-            tx=_tx(ctx),
+            tx=tx_scope(ctx, tx_route),
         )
 
     def _api_key_lifecycle(ctx: ExecutionContext) -> Any:

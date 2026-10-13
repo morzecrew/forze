@@ -13,7 +13,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from forze.application.contracts.authn import AuthnIdentity, AuthnSpec, IssuedTokens
+from forze.application.contracts.authn import (
+    AuthnIdentity,
+    AuthnSpec,
+    IssuedTokens,
+    PasswordCredentials,
+)
 from forze.application.contracts.authz import PrincipalRegistryDepKey
 from forze.application.contracts.document import DocumentCommandDepKey, DocumentQueryDepKey
 from forze.application.contracts.execution import BeforeStep
@@ -22,21 +27,34 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
+from forze_identity.authn.adapters import password_lifecycle, password_reset
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
 )
-from forze_identity.authn.application.specs import api_key_account_spec, session_spec
+from forze_identity.authn.application.specs import (
+    api_key_account_spec,
+    password_account_spec,
+    password_reset_spec,
+    session_spec,
+)
 from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
 from forze_identity.authz.execution.deps.deps import ConfigurablePrincipalRegistry
 from forze_kits.aggregates.authn import (
+    AuthnChangePasswordRequestDTO,
     AuthnKernelOp,
+    AuthnLoginRequestDTO,
     AuthnRefreshRequestDTO,
+    AuthnResetPasswordDTO,
     DeactivatePrincipalRequestDTO,
     build_authn_registry,
 )
+from forze_kits.aggregates.tenancy import TenancyKernelOp, build_tenancy_registry
+from forze_kits.aggregates.tenancy.dto import TenantSwitchRequestDTO
 from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock.adapters.identity import seed_password_account
+from forze_mock.adapters.identity.authn import MockTokenLifecyclePort
 from forze_mock.execution.factories import ConfigurableMockDocument, mock_journal_txmanager
 from tests.support.execution_context import context_from_deps, context_from_modules
 
@@ -46,12 +64,13 @@ pytest.importorskip("argon2")
 pytestmark = pytest.mark.unit
 
 ROUTE = "main"
-SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token"}))
+SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password"}))
 NS = SPEC.default_namespace
 KERNEL = AuthnKernelConfig(
     access_token_secret=b"k" * 32,
     refresh_token_pepper=b"p" * 32,
     api_key_pepper=b"a" * 32,
+    reset_token_pepper=b"r" * 32,
     password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
 )
 
@@ -60,12 +79,14 @@ async def _allow(args: Any) -> None:
     _ = args
 
 
-def _registry(tx_route: str | None = "default") -> Any:
+def _registry(**kwargs: Any) -> Any:
+    """The kit's registry; ``tx_route`` is the library default unless passed."""
+
     return build_authn_registry(
         SPEC,
         admin_guards=(BeforeStep(id="app.admin", factory=lambda ctx: _allow),),
         trust_admin_guards=True,
-        tx_route=tx_route,
+        **kwargs,
     ).freeze()
 
 
@@ -74,14 +95,26 @@ def _real_ctx() -> ExecutionContext:
 
     mock = MockDepsModule()
     document = ConfigurableMockDocument(module=mock)
-    names = {spec.name for spec in (session_spec, policy_principal_spec, api_key_account_spec)}
+    names = {
+        spec.name
+        for spec in (
+            session_spec,
+            policy_principal_spec,
+            api_key_account_spec,
+            password_account_spec,
+            password_reset_spec,
+        )
+    }
     deps = (
         AuthnDepsModule(
             kernel=KERNEL,
-            authn={ROUTE: frozenset({"token", "api_key"})},
+            authn={ROUTE: frozenset({"token", "api_key", "password"})},
             authz_route=ROUTE,
             principal_deactivation={ROUTE},
             token_lifecycle={ROUTE},
+            password_lifecycle={ROUTE},
+            password_account_provisioning={ROUTE},
+            password_reset={ROUTE},
         )()
         .merge(
             Deps.routed(
@@ -147,7 +180,7 @@ async def test_a_reused_refresh_token_revokes_its_family(
     # The lifecycle revokes the family and then raises, and the raise rolls its own revocation
     # back. The live session of the family must still be revoked once the refresh has failed.
     ctx = build()
-    registry = _registry(tx_route)
+    registry = _registry(tx_route=tx_route)
     principal = await _principal(ctx)
     first = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
         AuthnIdentity(principal_id=principal)
@@ -205,6 +238,55 @@ async def test_a_failed_deactivation_leaves_the_principal_and_its_sessions_as_th
     await _refresh(ctx, _registry(), _refresh_token(issued))
 
 
+@pytest.mark.parametrize("flow", ["change", "reset"])
+async def test_a_failed_password_flow_keeps_the_old_password(
+    monkeypatch: pytest.MonkeyPatch,
+    flow: str,
+) -> None:
+    ctx = _real_ctx()
+    principal = await _principal(ctx)
+    await ctx.authn.password_account_provisioning(SPEC).register_with_password(
+        principal,
+        PasswordCredentials(login="alice", password="pw-1"),
+    )
+    issued = await ctx.authn.password_reset(SPEC).request_reset("alice")
+    accounts = ctx.doc.query(password_account_spec)
+    filters: Any = {"$values": {"principal_id": principal}}
+    before = await accounts.find(filters)
+
+    # Logging out everywhere runs after the new hash was written (and a reset consumed).
+    async def fail(*_: Any) -> None:
+        raise exc.infrastructure("session store unavailable")
+
+    monkeypatch.setattr(password_lifecycle, "revoke_sessions_matching", fail)
+    monkeypatch.setattr(password_reset, "revoke_sessions_matching", fail)
+
+    if flow == "change":
+        op, args = (
+            AuthnKernelOp.CHANGE_PASSWORD,
+            AuthnChangePasswordRequestDTO(current_password="pw-1", new_password="pw-2"),
+        )
+    else:
+        assert issued is not None
+        op, args = (
+            AuthnKernelOp.RESET_PASSWORD,
+            AuthnResetPasswordDTO(token=issued.token, new_password="pw-2"),
+        )
+
+    with (
+        ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=principal)),
+        pytest.raises(CoreException, match="session store unavailable"),
+    ):
+        await run_operation(_registry(), NS.key(op), args, ctx)
+
+    after = await accounts.find(filters)
+    resets = await ctx.doc.query(password_reset_spec).find_many(filters=filters)
+
+    assert before is not None and after is not None
+    assert after.password_hash == before.password_hash
+    assert [row.used_at for row in resets.hits] == [None]
+
+
 async def test_deactivating_a_principal_on_the_mock_revokes_its_sessions() -> None:
     ctx = _mock_ctx()
     principal = uuid4()
@@ -222,3 +304,60 @@ async def test_deactivating_a_principal_on_the_mock_revokes_its_sessions() -> No
 
     with pytest.raises(CoreException, match="Invalid refresh token"):
         await _refresh(ctx, _registry(), _refresh_token(issued))
+
+
+@pytest.mark.parametrize("flow", ["login", "refresh", "switch_tenant", "logout"])
+async def test_every_session_operation_calls_its_lifecycle_inside_a_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    flow: str,
+) -> None:
+    # The eligibility lock is held only as long as the issuing transaction, so a flow that
+    # issues outside one does not serialize with a deactivation. Logout revokes inside one.
+    ctx = _mock_ctx()
+    principal = uuid4()
+    identity = AuthnIdentity(principal_id=principal)
+    depths: list[int] = []
+
+    for name in ("issue_tokens", "refresh_tokens", "revoke_tokens"):
+        original = getattr(MockTokenLifecyclePort, name)
+
+        async def spy(self: Any, *args: Any, _original: Any = original, **kwargs: Any) -> Any:
+            depths.append(ctx.tx_ctx.depth())
+            return await _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(MockTokenLifecyclePort, name, spy)
+
+    if flow == "login":
+        seed_password_account(
+            ctx.deps.provide(MockStateDepKey), login="alice", password="pw", principal_id=principal
+        )
+        await run_operation(
+            _registry(),
+            NS.key(AuthnKernelOp.PASSWORD_LOGIN),
+            AuthnLoginRequestDTO(login="alice", password="pw"),
+            ctx,
+        )
+
+    elif flow == "refresh":
+        issued = await ctx.authn.token_lifecycle(SPEC).issue_tokens(identity)
+        depths.clear()
+        await _refresh(ctx, _registry(), _refresh_token(issued))
+
+    elif flow == "logout":
+        with ctx.inv_ctx.bind_identity(authn=identity):
+            await run_operation(_registry(), NS.key(AuthnKernelOp.LOGOUT), None, ctx)
+
+    else:
+        manager = ctx.tenancy.require_manager(ROUTE)
+        tenant = await manager.provision_tenant()
+        await manager.attach_principal(principal, tenant.tenant_id)
+
+        with ctx.inv_ctx.bind_identity(authn=identity):
+            await run_operation(
+                build_tenancy_registry(SPEC).freeze(),
+                NS.key(TenancyKernelOp.SWITCH_TENANT),
+                TenantSwitchRequestDTO(id=tenant.tenant_id),
+                ctx,
+            )
+
+    assert depths == [1]
