@@ -8,6 +8,7 @@ from forze.application.contracts.authn import (
     ApiKeyLifecycleDepKey,
     ApiKeyVerifierDepKey,
     AuthnDepKey,
+    AuthnIdentity,
     PasswordAccountProvisioningDepKey,
     PasswordLifecycleDepKey,
     PasswordVerifierDepKey,
@@ -250,6 +251,13 @@ async def test_admin_api_key_revoke_is_not_found_like_the_real_adapter() -> None
 
     with pytest.raises(CoreException) as excinfo:
         await lifecycle(None, None).revoke_principal_api_key(str(uuid4()))
+
+    assert excinfo.value.kind is ExceptionKind.NOT_FOUND
+    assert excinfo.value.code == "api_key_not_found"
+
+    # A key its caller holds is just as unknown, and answered alike.
+    with pytest.raises(CoreException) as excinfo:
+        await lifecycle(None, None).revoke_api_key(AuthnIdentity(principal_id=uuid4()), str(uuid4()))
 
     assert excinfo.value.kind is ExceptionKind.NOT_FOUND
     assert excinfo.value.code == "api_key_not_found"

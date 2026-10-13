@@ -887,7 +887,9 @@ class MockApiKeyLifecyclePort(ApiKeyLifecyclePort):
         raise exc.internal("Mock API key lifecycle not configured")
 
     async def revoke_api_key(self, identity: AuthnIdentity, key_id: str) -> None:
+        # Holds no keys, so every id is unknown: answered as the real adapter answers one.
         _ = identity, key_id
+        raise exc.not_found("API key not found", code="api_key_not_found")
 
     async def revoke_many_api_keys(
         self,

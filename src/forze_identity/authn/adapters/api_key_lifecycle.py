@@ -312,15 +312,15 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         try:
-            parsed_id = UUID(key_id)
+            account = await find_api_key_account_by_id(self.ak_qry, UUID(key_id))
 
-        except ValueError as e:
-            raise exc.authentication("API key not found") from e
+        except ValueError:
+            account = None
 
-        account = await find_api_key_account_by_id(self.ak_qry, parsed_id)
-
+        # A 404, not a 401: the caller is signed in, and a browser client reads a 401 as its
+        # session ending. Another principal's key answers as a missing one, disclosing nothing.
         if account is None or account.principal_id != identity.principal_id:
-            raise exc.authentication("API key not found")
+            raise exc.not_found("API key not found", code="api_key_not_found")
 
         await self._revoke(account, revoked_by="owner")
 

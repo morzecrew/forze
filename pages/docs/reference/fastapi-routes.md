@@ -295,7 +295,8 @@ delegation key (`actor_principal_id`: another principal authentication accepts, 
 registered `service` principal when `AuthnDepsModule(authz_route=...)` is set; otherwise
 `422 delegate_invalid`) with a human `label` — `GET /api-keys`
 lists the caller's keys as non-secret descriptors (a `hint` like `ab12…wxyz`,
-never the secret), and `DELETE /api-keys/{id}` revokes one. This is the minting
+never the secret), and `DELETE /api-keys/{id}` revokes one (204, and 204 again for a key
+already revoked; a key the caller does not hold is a 404, as an unknown one is). This is the minting
 surface for the [MCP API-key flow](../integrations/mcp.md#protect-it-with-api-key-auth):
 the user issues a key here and pastes it into the agent host.
 
