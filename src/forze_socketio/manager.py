@@ -1,25 +1,27 @@
-"""Client managers whose room fan-out queues each socket's frame in turn.
+"""Client managers whose room fan-out schedules nothing for a send that does not wait.
 
 python-socketio's :class:`~socketio.async_manager.AsyncManager` encodes a room's frame
 once, then starts one ``asyncio`` task per receiving socket and waits on them all.
 Queuing a frame on a socket is a ``put`` on its Engine.IO queue, which does not wait, so
-the tasks buy nothing; at a few thousand sockets in a room, scheduling them is most of what
-the event loop does. The managers here send to each socket in turn instead: the same
-packets, in the same order, to the same sockets.
+at a few thousand sockets in a room, scheduling those tasks is most of what the event loop
+does. The managers here start each socket's send as an *eager* task instead: it runs at
+once, and one that completes without waiting is never scheduled on the loop at all.
 
-Two differences from the library, both on a socket that is already going away:
-
-- a send that fails (the socket closed between listing and sending) is logged and skipped,
-  where the library's task fails unobserved;
-- a socket whose ping timed out is closed by the send itself, and that close runs its
-  disconnect handler before the next socket is sent to, rather than beside it.
+A send that does wait, such as one closing a socket whose ping timed out (which runs that
+socket's disconnect handler), carries on beside the others exactly as the library's task
+would, and a caller that stops waiting on the emit, as the gateway's ``emit_timeout``
+does, leaves every send already started to finish. The same packets reach the same
+sockets; the one difference is that a send which fails is logged and skipped, where the
+library's task fails unobserved.
 
 An emit with a callback needs a distinct packet per socket and keeps the library's path.
 This relies on python-socketio internals (``get_participants``, ``_send_eio_packet``, the
 Engine.IO packet class), which is why forze owns it and pins the versions it supports.
 """
 
-from collections.abc import Awaitable, Callable
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
 from typing import Any
 
 from socketio import async_manager, packet
@@ -87,18 +89,49 @@ class FanoutManager(AsyncManager):
         ]
 
         send: Callable[[str, Any], Awaitable[None]] = self.server._send_eio_packet  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+        loop = asyncio.get_running_loop()
+        waiting: list[asyncio.Task[None]] = []
 
         # A copy of the room: a send that closes a socket changes the room under us.
         for sid, eio_sid in self.get_participants(namespace, room):
             if sid in skipped:
                 continue
 
-            try:
-                for frame in frames:
-                    await send(eio_sid, frame)
+            task = asyncio.eager_task_factory(loop, _send_frames(send, eio_sid, frames))
 
-            except Exception:
-                _logger.debug("Skipped a socket that went away mid fan-out", sid=sid, exc_info=True)
+            if task.done():
+                _report(task, sid)
+
+            else:
+                task.add_done_callback(partial(_report, sid=sid))
+                waiting.append(task)
+
+        if waiting:
+            # Not cancelled if the caller stops waiting: each send started is left to finish,
+            # as the library's tasks are.
+            await asyncio.wait(waiting)
+
+
+# ....................... #
+
+
+async def _send_frames(
+    send: Callable[[str, Any], Awaitable[None]], eio_sid: str, frames: Sequence[Any]
+) -> None:
+    """One socket's frames, in order."""
+
+    for frame in frames:
+        await send(eio_sid, frame)
+
+
+def _report(task: "asyncio.Task[None]", sid: str) -> None:
+    """Log a send that failed, so its exception is retrieved rather than left unobserved."""
+
+    if task.cancelled():
+        return
+
+    if (error := task.exception()) is not None:
+        _logger.debug("Skipped a socket that went away mid fan-out", sid=sid, error=repr(error))
 
 
 # ....................... #

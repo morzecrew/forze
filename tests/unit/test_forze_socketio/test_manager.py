@@ -95,30 +95,70 @@ async def test_an_emit_to_an_unknown_namespace_sends_nothing() -> None:
     assert sent == {}
 
 
-async def test_the_fan_out_starts_no_task_per_socket() -> None:
-    fanout, sent = await _server(FanoutManager())
+async def test_the_fan_out_schedules_nothing_for_sends_that_do_not_wait() -> None:
+    loop = asyncio.get_running_loop()
+    scheduled: dict[str, int] = {}
 
-    with patch.object(asyncio, "create_task", side_effect=AssertionError("a task")):
-        await fanout.manager.emit("chat", "x", NS, room="all")
+    for name, manager in (("library", AsyncManager()), ("fanout", FanoutManager())):
+        server, sent = await _server(manager)
 
-    assert len(sent) == 6
+        with patch.object(loop, "call_soon", wraps=loop.call_soon) as call_soon:
+            await server.manager.emit("chat", "x", NS, room="all")
+
+        scheduled[name] = call_soon.call_count
+        assert len(sent) == 6
+
+    assert scheduled["library"] >= 6  # a task per socket, each scheduled on the loop
+    assert scheduled["fanout"] == 0
 
 
-async def test_a_socket_that_fails_does_not_stop_the_rest() -> None:
+@pytest.mark.parametrize("waits_first", [False, True], ids=["at-once", "after-waiting"])
+async def test_a_socket_that_fails_is_logged_and_does_not_stop_the_rest(waits_first: bool) -> None:
     fanout, sent = await _server(FanoutManager())
     record = fanout._send_eio_packet
 
     async def _closed_one(eio_sid: str, pkt: Any) -> None:
         if eio_sid == "eio-2":
+            if waits_first:
+                await asyncio.sleep(0)
+
             raise ConnectionError("socket closed")
 
         await record(eio_sid, pkt)
 
     fanout._send_eio_packet = _closed_one  # type: ignore[method-assign]
+    eio_2 = _sid(fanout.manager, "eio-2")
 
-    await fanout.manager.emit("chat", "x", NS, room="all")
+    with patch("forze_socketio.manager._logger") as logger:
+        await fanout.manager.emit("chat", "x", NS, room="all")
 
     assert sorted(sent) == ["eio-0", "eio-1", "eio-3", "eio-4", "eio-5"]
+    assert [call.kwargs["sid"] for call in logger.debug.call_args_list] == [eio_2]
+
+
+async def test_a_socket_whose_send_blocks_does_not_hold_the_rest() -> None:
+    fanout, sent = await _server(FanoutManager())
+    record = fanout._send_eio_packet
+    released = asyncio.Event()
+
+    async def _closing_slowly(eio_sid: str, pkt: Any) -> None:
+        # A socket whose ping timed out runs its disconnect handler inside the send.
+        if eio_sid == "eio-1":
+            await released.wait()
+
+        await record(eio_sid, pkt)
+
+    fanout._send_eio_packet = _closing_slowly  # type: ignore[method-assign]
+
+    # The gateway bounds an emit with `wait_for`; cutting it must not cost the others.
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(fanout.manager.emit("chat", "x", NS, room="all"), 0.1)
+
+    assert sorted(sent) == ["eio-0", "eio-2", "eio-3", "eio-4", "eio-5"]
+
+    released.set()
+    await asyncio.sleep(0.01)
+    assert "eio-1" in sent  # and the slow one still gets its frame
 
 
 async def test_an_emit_with_a_callback_keeps_the_library_path() -> None:

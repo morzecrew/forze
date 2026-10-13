@@ -26,10 +26,12 @@ sio = build_socketio_server()            # pass redis_url=... for multi-process
 asgi = build_socketio_asgi_app(sio)      # or mount alongside a FastAPI app
 ```
 
-An emit to a room queues the frame on each socket in turn. python-socketio's own manager
-starts a task per socket, and at a few thousand sockets in a room scheduling those tasks
-costs more than sending. The same packets reach the same sockets in the same order. Pass
-`client_manager=AsyncManager()` to keep the library's behaviour.
+An emit to a room starts each socket's send as an eager task, which costs the event loop
+nothing when the send does not wait. python-socketio's own manager schedules a task per
+socket, and at a few thousand sockets in a room scheduling them costs more than sending. A
+send that does wait carries on beside the others, as the library's would, and the same
+packets reach the same sockets. Pass `client_manager=AsyncManager()` to keep the library's
+manager.
 
 ## Route commands to operations
 
