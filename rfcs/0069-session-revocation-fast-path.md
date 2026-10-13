@@ -44,11 +44,12 @@
 ## 1. Summary
 
 A token verification with the fast path enabled replaces the session-row read with one Redis
-`MGET`. It admits the token when three things hold:
+`MGET`. It admits the token when four things hold:
 
 - the session's admission record exists;
 - the record carries the principal's current generation;
-- the record names the token's subject and tenant.
+- the record, found under the token's subject and session, names the token's tenant;
+- the freshness fence is present.
 
 Every other outcome takes today's path: a miss, a mismatch, a Redis error or a timeout. A
 session-scoped invalidation (rotation, family revocation) deletes the session's admission
@@ -61,7 +62,7 @@ Postgres read and never admits a revoked session. The one window the fast path h
 invalidation still in flight. Normally its length is the outbox's delivery latency. A
 freshness fence that only the relay refreshes, and only while nothing on the route has failed
 or is pending too long, bounds it under every failure: a stuck, failed or undeliverable
-invalidation turns the fast path off within the fence's TTL (§5.4).
+invalidation turns the fast path off within the fence's tolerance plus its TTL (§5.4).
 
 The eligibility read stays until two things hold: session issue serializes with deactivation,
 and every write that deactivates a principal drops its generation. Then a present generation
@@ -155,11 +156,14 @@ All verified against the tree at the time of writing.
 Two key kinds and one fence, under a dedicated prefix:
 
 ```text
-authn:admit:g:{principal_id}  ->  <generation>                       (no TTL)
-authn:admit:s:{session_id}    ->  <generation>|<principal_id>|<tenant_id or ->
-                                   TTL = session.expires_at - now
-authn:admit:fresh             ->  1                                  TTL = fence TTL (§5.4)
+authn:admit:{<principal_id>}:g         ->  <generation>                    (no TTL)
+authn:admit:{<principal_id>}:s:<sid>   ->  <generation>|<tenant_id or ->   TTL = session.expires_at - now
+authn:admit:fresh                      ->  1                               TTL = fence TTL (§5.4)
 ```
+
+The record is keyed by the token's subject as well as its session. A token whose `sub` is
+not the session's principal therefore finds no record, and the authoritative path refuses it
+as a subject mismatch.
 
 - **A generation is random (128 bits), not a counter.** After a flush, a re-created
   generation is a value no admission record holds, never a reused one, so a flush can only
@@ -167,17 +171,23 @@ authn:admit:fresh             ->  1                                  TTL = fence
 - **An admission record says "this session was admitted under this generation".** It is
   never a statement that a session is revoked. That is the asymmetry the design rests on:
   any key that is missing reads as "ask Postgres".
+- **Redis Cluster.** `forze_redis`'s client is not cluster-aware today, so the target is a
+  single Redis (with or without Sentinel), where the three keys are one `MGET`. The braces are
+  a hash tag: a principal's record and generation share a slot. A cluster-aware adapter can
+  therefore read them with one `MGET` and the fence alongside it in the same pipeline, rather
+  than meeting `CROSSSLOT`.
 
 ### 5.2 The fast path
 
 ```python
 # inside _require_active_session, when the fast path is configured
-record, generation, fresh = await admit.mget(f"s:{sid}", f"g:{sub}", "fresh")  # one round trip
+record, generation, fresh = await admit.read(sub, sid)   # one MGET on a single node
+parsed = parse_record(record)                            # None unless exactly <generation>|<tenant>
 
-if fresh is not None and record is not None and generation is not None:
-    gen, principal, tenant = record.split("|")
-    if gen == generation and principal == sub and tenant == (tid or "-"):
-        return                                                   # admitted, no read
+if fresh is not None and parsed is not None and generation is not None:
+    gen, tenant = parsed
+    if gen == generation and tenant == (tid or "-"):
+        return                                           # admitted, no read
 
 # otherwise, the authoritative path exactly as today
 ```
@@ -185,6 +195,7 @@ if fresh is not None and record is not None and generation is not None:
 - **Failure semantics:**
   - A Redis error, or the bounded timeout expiring, is logged and counted, then falls through
     to the authoritative path. It is never raised.
+  - A value that does not parse as a record is a miss, never an error.
   - The fast path never refuses: refusal stays the authoritative path's job, so its codes and
     messages do not change.
 - **Eligibility is not covered yet.** It would be tempting to argue that an admission under the
@@ -217,18 +228,29 @@ if fresh is not None and record is not None and generation is not None:
 
 | Event | Redis effect | Delivered by |
 | --- | --- | --- |
-| A session is issued (login, refresh) | `SET s:{sid}` with the generation **read before the session row commits** | after commit, best effort |
+| A session is issued (login, refresh) | the admission script, **before the session row commits** | deadline-bound, best effort |
 | Refresh rotation | `DEL s:{old_sid}` | outbox |
 | Family revocation, reuse detection | `DEL s:{sid}` for each session of the family | outbox |
 | Logout, password change or reset, principal deactivation | `DEL g:{principal}` | outbox |
 | Any other write of `is_active=False` on the policy principal | `DEL g:{principal}` | outbox |
 
-**The snapshot is what makes an issue race safe.** Without it, a logout committing between
-the new session's commit and its admission write would drop the generation, the admission
-write would mint a fresh one, and the record would admit a session the logout revoked. Read
-before the commit, the admission carries the old generation, which no longer exists, and
-simply never matches. A principal with no generation gets one with `SET NX`, read back in
-the same step (one script, so a concurrent drop cannot fall between them).
+**The admission is written before the session row commits.** A write after the commit
+loses two races:
+- a logout committing between the session's commit and the write drops the generation, the
+  write mints a fresh one, and the record admits a session the logout revoked;
+- a rotation or family revocation committing in that gap has its `DEL` applied first, and the
+  late write recreates the record under a generation that is still current.
+
+Nothing can revoke a session before it commits, so any invalidation of it lands after an
+admission written earlier. That holds as long as no write executes late, which a write the
+issuer gave up waiting for could do. The admission is therefore two script calls:
+1. Mint the generation with `SET NX` if absent, and return it with Redis's own `TIME`.
+2. Write the record only while Redis's clock is before that time plus the issuer's timeout.
+
+The issuer commits once step 2 answered or its timeout has elapsed, counted from step 1's
+answer. By then Redis's clock has passed the deadline too, so a late execution of step 2 finds
+it passed and writes nothing. A transaction that rolls back leaves a record
+for a session id no token carries, which expires with its TTL.
 
 An admission write that fails costs that session its fast path (every check misses), so it
 does not need the outbox. An invalidation that fails would admit a revoked session, so it
@@ -252,7 +274,9 @@ does.
   attempt, and a row it cannot deliver stays pending. Either would leave a revoked session
   admitted for as long as its admission record lives (up to the session's lifetime), so
   delivery alone is not enough. After each pass, the relay asks the route's outbox admin port
-  for its depth and its oldest pending age. It refreshes `fresh` (`SET ... EX`, the fence TTL)
+  for its `failed` count and its oldest undrained age: pending or processing, a processing row
+  measured from its claim. The port gains that probe in phase 2, because `oldest_pending_age`
+  does not see a claim stranded in `processing`. It refreshes `fresh` (`SET ... EX`, the fence TTL)
   only when the route has no `failed` row and nothing pending or processing older than the
   fence's tolerance. The fast path admits only while `fresh` exists. So:
   - an invalidation that is parked, pending past the tolerance, or held behind a relay that
@@ -277,9 +301,12 @@ does.
 
 ```python
 class SessionAdmissionPort(Protocol):
-    async def admitted(self, session_id: UUID, principal_id: UUID) -> AdmissionRecord | None: ...
-    async def admit(self, session_id: UUID, record: AdmissionRecord, *, ttl: timedelta) -> None: ...
-    async def generation(self, principal_id: UUID) -> str: ...          # SET NX + read, one script
+    async def read(self, principal_id: UUID, session_id: UUID) -> AdmissionRead: ...  # record, generation, fence
+    async def generation(self, principal_id: UUID) -> tuple[str, datetime]: ...        # SET NX + TIME, one script
+    async def admit(
+        self, principal_id: UUID, session_id: UUID, record: AdmissionRecord,
+        *, ttl: timedelta, not_after: datetime,                                         # Redis time, from generation()
+    ) -> None: ...
     async def invalidate_sessions(self, session_ids: Sequence[UUID]) -> None: ...
     async def drop_generation(self, principal_id: UUID) -> None: ...
 
@@ -336,8 +363,10 @@ AuthnKernelConfig(
 - **Property: the fast path never admits what the authoritative path refuses, outside the
   set of invalidations still in the outbox.** It runs over every event in §5.3, interleaved
   with verifications, against the mock and against Redis plus Postgres.
-- **The issue race:** a logout committing between a session's commit and its admission write
-  leaves the session refused.
+- **The issue races:** a logout committing while a session is issued leaves the session
+  refused. An admission write held past its deadline and executed after the session's own
+  invalidation writes nothing.
+- **Malformed records:** a value of the wrong shape under an admission key is a miss.
 - **The eligibility race (phase 2b):** a deactivation committing between a login's or a
   refresh's eligibility check and its session insert either waits for the insert, then revokes
   the new session, or makes the issue fail its check. Never a live session for an inactive
@@ -407,10 +436,6 @@ The authn page gets a "Session check fast path" section:
 
 - Whether every writer of `is_active=False` on a policy principal is covered by §5.3. A
   census is part of phase 2b's entry condition.
-- How the fence sees a row stuck in `processing`. `OutboxAdminPort.oldest_pending_age`
-  measures pending rows, and `depth` counts processing ones without their age. Either the
-  admin port gains an oldest-undrained age, or the route's `reclaim_stale_after` is kept
-  inside the tolerance so a stranded claim returns to pending first. Phase 2 decides.
 - Where the fence refresh hooks into the relay: a post-pass callback on the background relay
   step, or a small lifecycle step of its own that probes the route and writes the fence.
   Phase 2 decides; either way only a process that relays the route writes it.
@@ -425,7 +450,7 @@ The authn page gets a "Session check fast path" section:
 | 1 | `LOCKED` | Redis holds admissions, never revocations: any missing or unreadable key means "ask Postgres". A deny-list design makes every lost key an admitted revoked session. |
 | 2 | `LOCKED` | Readers never write. A verification that misses takes the authoritative path and stores nothing, so no read can race an invalidation into a stale admission. |
 | 3 | `LOCKED` | An invalidation is staged in the outbox inside the transaction that changes the rows, and is never best-effort; the route declares `require_transaction=True` so a non-transactional revocation fails loudly. Losing one admits a revoked session until the session expires. |
-| 4 | `LOCKED` | An admission write uses the principal's generation read before the session row commits, minted with `SET NX` and read back in one step. Reading it after lets a concurrent principal-wide revocation be undone. |
+| 4 | `LOCKED` | An admission is written before the session row commits. Step 1 mints or reads the generation with Redis's time; step 2 writes the record only before a deadline set from that time. The issuer commits once step 2 answered or the deadline passed. Written after the commit, a delayed write could land after the session's own invalidation, or a principal-wide one, and admit a revoked session. |
 | 5 | `ASSUMED` | A generation is a random 128-bit value, not a counter, so a generation minted after a flush or a drop matches no surviving record. A principal-scoped invalidation drops it; the next session issued mints a fresh one. |
 | 6 | `ASSUMED` | The revocation paths get their transaction from a transaction route the authn kit binds on its operations (`build_authn_registry(tx_route=...)`), and the adapters stage through an outbox port their deps factory builds per request. An adapter-level scope would thread a transaction manager through every adapter and nest awkwardly in an app's own transaction. |
 | 7 | `ASSUMED` | The admission keys are carried by a dedicated `SessionAdmissionPort` (Redis and mock adapters, one conformance battery), not the cache contract, whose L1 layer, early expiry and soft deletes allow stale reads and which has no `SET NX`. |
@@ -433,7 +458,7 @@ The authn page gets a "Session check fast path" section:
 | 9 | `LOCKED` | The eligibility read stays until every session-issuing flow, login and refresh, serializes with deactivation (a locking read of the policy principal in the issuing transaction) and every write of `is_active=False` drops the generation. Then an eligibility decorator treats a present generation as eligible; the orchestrator and `VerifiedAssertion` do not change. Skipping it earlier admits a principal deactivated while it logged in. |
 | 10 | `ASSUMED` | The fast path is bounded by its own timeout (default 50 ms) behind a circuit breaker from the resilience executor, so a Redis outage costs a few timeouts rather than one per verification. Its errors and timeouts are counted, never raised. |
 | 11 | `ASSUMED` | The fast path never refuses; refusal and its error codes stay with the authoritative path. |
-| 12 | `LOCKED` | The fast path admits only while a freshness fence exists, and only the relay refreshes it, after a pass that finds the admission route with no `failed` row and nothing pending or processing older than the tolerance. Delivery alone cannot bound the window, because the relay parks a row after its last attempt and nothing drains a parked row on its own. |
+| 12 | `LOCKED` | The fast path admits only while a freshness fence exists, and only the relay refreshes it, after a pass that finds the admission route with no `failed` row and nothing pending or processing older than the tolerance. Processing age comes from an admin-port probe phase 2 adds, since `oldest_pending_age` misses a stranded claim. Delivery alone cannot bound the window, because the relay parks a row after its last attempt and nothing drains a parked row on its own. |
 | 13 | `ASSUMED` | The fence TTL defaults to 10 s and the tolerance to 5 s, and the admission route's relay polls inside the TTL. The defaults trade idle polling against the worst-case window. |
 
 ## 12. Phasing
@@ -444,7 +469,8 @@ The authn page gets a "Session check fast path" section:
    inserts become one transaction with a locking read of the policy principal. Independently a
    fix; ships first.
 2. **Admission keys and the session fast path.** The port and its adapters, the outbox route
-   and relay, the admission writes on issue, and the verifier fast path behind its breaker.
+   and relay, the admin port's oldest-undrained probe, the fence, the admission writes on
+   issue, and the verifier fast path behind its breaker.
    Opt-in. The eligibility read stays.
    - **2b. The eligibility skip.** After the census of `is_active=False` writers, each of
      them drops the generation, and the eligibility decorator takes over the read.
