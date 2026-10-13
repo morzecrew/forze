@@ -151,6 +151,12 @@ def test_quantifier_nesting_is_bounded_by_the_depth_limit() -> None:
     side_by_side = {"$values": {f"f{i}": {"$any": "x"} for i in range(40)}}
     QueryFilterExpressionParser.parse(side_by_side)
 
+    # Nor do the combinators before it: a shallow quantifier after 32 of them still parses.
+    after_combinators = {
+        "$and": [{"$not": {"$values": {"a": 1}}}] * 31 + [{"$values": {"tags": {"$any": "x"}}}]
+    }
+    QueryFilterExpressionParser.parse(after_combinators)
+
 
 def test_a_port_refuses_only_the_keys_a_type_does_not_define() -> None:
     """Required keys count as defined, as optional ones do."""

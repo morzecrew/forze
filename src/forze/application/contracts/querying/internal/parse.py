@@ -156,6 +156,7 @@ class QueryFilterLimits:
 @attrs.define(slots=True)
 class _ParseCtx:
     depth: int = 0
+    quantifier_depth: int = 0
     clause_count: int = 0
 
 
@@ -477,11 +478,18 @@ class QueryFilterExpressionParser:
             raise exc.precondition(f"Invalid element quantifier: {op!r}")
 
         # A quantifier recurses into its element like a combinator into its children, so its
-        # nesting is bounded by the same depth. Only nesting: on the way out the level is given
-        # back, and quantifiers side by side are each one level deep.
-        self._enter_combinator(ctx, 1)
+        # nesting is bounded by the same limit, on a count of its own: only quantifiers nested
+        # in quantifiers add to it, and the level is given back on the way out.
+        self._add_clauses(ctx, 1)
+
+        if ctx.quantifier_depth >= self.limits.max_depth:
+            raise exc.precondition(
+                f"Filter expression exceeds maximum depth of {self.limits.max_depth}",
+            )
+
+        ctx.quantifier_depth += 1
         inner = self._parse_element_constraint(inner_raw, ctx)
-        ctx.depth -= 1
+        ctx.quantifier_depth -= 1
 
         return QueryElem(
             path=field,
