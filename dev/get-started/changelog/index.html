@@ -9350,11 +9350,13 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>The outbox relay reclaims stale claims on its own cadence.</strong> The reclaim runs at most once per <code>reclaim_every</code>, by default once per poll tick, rather than on every pass a wake starts.</p>
 </li>
-<li><strong>A Redis call can wait for a free connection instead of failing.</strong> <code>RedisConfig(pool_timeout=...)</code>, also on <code>RedisSettings</code>, queues a call for up to that long once all <code>max_size</code> connections are in use; a retried read waits again. When unset, a full pool still refuses the call at once, as it does past the wait.</li>
+<li>
+<p><strong>A Redis call can wait for a free connection instead of failing.</strong> <code>RedisConfig(pool_timeout=...)</code>, also on <code>RedisSettings</code>, queues a call for up to that long once all <code>max_size</code> connections are in use; a retried read waits again. When unset, a full pool still refuses the call at once, as it does past the wait.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li><strong>An emit to a large socket.io room takes far less of the event loop.</strong> The manager <code>build_socketio_server</code> builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass <code>client_manager=AsyncManager()</code> to keep python-socketio's manager.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>

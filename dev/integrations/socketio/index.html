@@ -6699,6 +6699,12 @@ across multiple processes.</p>
 <span class="n">sio</span> <span class="o">=</span> <span class="n">build_socketio_server</span><span class="p">()</span>            <span class="c1"># pass redis_url=... for multi-process</span>
 <span class="n">asgi</span> <span class="o">=</span> <span class="n">build_socketio_asgi_app</span><span class="p">(</span><span class="n">sio</span><span class="p">)</span>      <span class="c1"># or mount alongside a FastAPI app</span>
 </code></pre></div>
+<p>An emit to a room starts each socket's send as an eager task, which costs the event loop
+nothing when the send does not wait. python-socketio's own manager schedules a task per
+socket, and at a few thousand sockets in a room scheduling them costs more than sending. A
+send that does wait carries on beside the others, as the library's would, and the same
+packets reach the same sockets. Pass <code>client_manager=AsyncManager()</code> to keep the library's
+manager.</p>
 <h2 id="route-commands-to-operations">Route commands to operations<a class="headerlink" href="#route-commands-to-operations" title="Permanent link">&para;</a></h2>
 <p>Declare commands on a namespace router — each maps an event to an operation, with
 typed payload and optional ack — then bind them through the adapter:</p>
