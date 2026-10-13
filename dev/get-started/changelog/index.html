@@ -9245,6 +9245,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>OpenAPI can list the response fields an app always sends as required.</strong> <code>apply_openapi_conventions(app, require_sent_fields=True)</code> requires every field of a schema only null-keeping routes return, and only the non-nullable ones where a route drops nulls. Schemas requests also use are left as they are.</p>
+</li>
+<li>
+<p><strong>A cross-origin browser can read forze's response headers.</strong> <code>AllowlistCORSMiddleware</code> is Starlette's CORS middleware answering an <code>OriginAllowlist</code> (loopback port ranges included) and exposing <code>EXPOSED_RESPONSE_HEADERS</code>: <code>X-Error-Code</code>, the invocation ids, and a download's filename, <code>ETag</code> and range headers.</p>
+</li>
+<li>
 <p><strong>An administrator can revoke any principal's API key.</strong> <code>build_authn_registry(admin_guards=...)</code> adds <code>revoke_principal_api_key</code> (<code>DELETE /admin/api-keys/{id}</code>) behind those guards, like <code>deactivate_principal</code>; unguarded, neither is registered. Both act in every tenant. <strong>Breaking</strong> for API-key lifecycle implementers.</p>
 </li>
 <li>
@@ -9297,6 +9303,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>An access token is checked on the clock that issued it.</strong> <code>issue_token</code> stamps <code>iat</code> and <code>exp</code> from forze's time source, but PyJWT checked them on the wall clock, so under <code>FrozenTimeSource</code> every token was expired or not yet valid. <code>exp</code>, <code>iat</code> and <code>nbf</code> are now checked against <code>utcnow()</code>, with the leeway.</p>
+</li>
+<li>
+<p><strong>An operation can declare an output that may be nothing.</strong> <code>OperationDescriptor(output_type=Model | None)</code> (or <code>list[Model]</code>) is served as <code>200 null</code> over HTTP and <code>{"result": null}</code> over <abbr title="Model Context Protocol">MCP</abbr>; its catalog schema and fingerprint no longer fail. A model's schema, and so its fingerprint, is unchanged.</p>
 </li>
 <li>
 <p><strong>A read-only operation cannot write through a port a command built and cached</strong> (<strong>behaviour change</strong>). A query reusing a handler or adapter that a command built first held its real write port. A command accessor now always returns <code>GuardedWritePort</code>; in a test, <code>forze.testing.unguarded</code> reaches the port.</p>

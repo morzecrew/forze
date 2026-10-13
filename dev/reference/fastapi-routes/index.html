@@ -7150,7 +7150,9 @@ declares them. Each
 shipped builder names the placeholders it fills, and a path with any other placeholder is
 refused. An <code>EndpointBuilder</code> of your own takes <code>(runner, input_type, op)</code>; give it a
 <code>path_params</code> frozenset to have its paths checked the same way.</p>
-<p>The operation's output type is the route's response model. An operation without one, such as
+<p>The operation's output type is the route's response model. It need not be a bare model: an
+operation that may find nothing declares <code>output_type=Model | None</code> and answers <code>200</code> with
+<code>null</code>, and <abbr title="Model Context Protocol">MCP</abbr> returns it as <code>{"result": null}</code>. An operation without one, such as
 a federated search, still has a model result written as a typed route's is: fields that are
 <code>None</code> are left out unless the attacher passes <code>exclude_none=False</code>, and the OpenAPI schema
 documents an untyped body. Any other result, such as a dict or a list, is written as FastAPI
@@ -7245,6 +7247,16 @@ become fenced blocks, and any other directive (<code>note</code>, <code>deprecat
 <code>versionadded</code>, …) becomes a labelled blockquote. Fenced blocks already in
 Markdown pass through as written. Call it last: text a later wrapper adds, such as a security scheme's
 description, stays as written.</p>
+<p>A generated client types a response field optional when its schema does not list it required,
+and pydantic leaves every field with a default optional, though the app sends it every time.
+<code>apply_openapi_conventions(app, require_sent_fields=True)</code> lists what every route returning a
+schema sends. Where only routes that keep nulls (<code>exclude_none=False</code>) return it, every field is
+required. Where a route drops nulls, the default for the routes Forze attaches, the fields that
+cannot be null are required, and a nullable one, left out when it is null, is not, even
+without a default. A schema is one component shared by all the routes that return it, so where
+a route that keeps nulls and one that drops them return the same model, its nullable fields
+are optional for both. A schema a request also uses is left as it is, and so is one a route
+trims some other way (<code>response_model_exclude_unset</code>, <code>include</code>, <code>exclude</code>).</p>
 
 
 

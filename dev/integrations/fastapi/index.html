@@ -6793,6 +6793,25 @@ your own websocket routes, opt out app-wide with <code>allow_raw_websockets=True
 then own identity, tenancy, and error shaping on every websocket route yourself.
 For governed duplex realtime, use the <a href="../socketio/">Socket.IO integration</a> or the
 WebSocket route below; for server-push, the <abbr title="Server-Side Encryption">SSE</abbr> route below.</p>
+<p>A browser front end on another origin needs CORS, and it reads forze's own response
+headers — the <code>X-Error-Code</code>, the request and correlation ids, a download's filename,
+validator and range headers —
+only once they are exposed. <code>AllowlistCORSMiddleware</code> is Starlette's <code>CORSMiddleware</code>
+answering the origins an allowlist names (a port range or <code>*</code> on a loopback host, for a dev
+server) and exposing <code>EXPOSED_RESPONSE_HEADERS</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.middlewares</span><span class="w"> </span><span class="kn">import</span> <span class="n">AllowlistCORSMiddleware</span>
+
+<span class="n">app</span><span class="o">.</span><span class="n">add_middleware</span><span class="p">(</span>
+    <span class="n">AllowlistCORSMiddleware</span><span class="p">,</span>
+    <span class="n">allowed_origins</span><span class="o">=</span><span class="p">[</span><span class="s2">"https://app.example.com"</span><span class="p">,</span> <span class="s2">"http://localhost:5173-5199"</span><span class="p">],</span>
+    <span class="n">allow_credentials</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">allow_methods</span><span class="o">=</span><span class="p">[</span><span class="s2">"*"</span><span class="p">],</span>
+    <span class="n">allow_headers</span><span class="o">=</span><span class="p">[</span><span class="s2">"*"</span><span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Add it last, so it is outermost: a refusal from the security middleware then carries the
+CORS headers too, and the browser can read its error code. An app that renames the invocation headers, or sets its own, passes
+<code>expose_headers=(*EXPOSED_RESPONSE_HEADERS, "X-Mine")</code>.</p>
 <h2 id="map-errors-to-http">Map errors to HTTP<a class="headerlink" href="#map-errors-to-http" title="Permanent link">&para;</a></h2>
 <p><code>register_exception_handlers</code> turns a <code>CoreException</code> into a response — the kind
 decides the status, the <code>code</code> rides an error-code header, and details are
