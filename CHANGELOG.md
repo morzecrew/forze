@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **An outbox relay can deliver a row as soon as it commits.** `OutboxSpec(wake=OutboxWake(route=...))` publishes a wake on a pub/sub route after each flush's transaction commits, and the background relay runs a pass when it hears one; its poll stays the fallback for a lost wake.
+
+- **The outbox relay reclaims stale claims on its own cadence.** The reclaim runs at most once per `reclaim_every`, by default once per poll tick, rather than on every pass a wake starts.
 
 ### Changed
 

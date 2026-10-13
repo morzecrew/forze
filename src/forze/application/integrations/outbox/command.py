@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import final
 from uuid import UUID
@@ -27,6 +27,9 @@ class StagingOutboxCommand[M: BaseModel]:
 
     staging: OutboxStaging[M]
     """Request-scoped staging buffer."""
+
+    wake: Callable[[], Awaitable[None]] | None = None
+    """Called after a flush that wrote rows, to wake the relay once they commit."""
 
     # ....................... #
 
@@ -65,4 +68,9 @@ class StagingOutboxCommand[M: BaseModel]:
     # ....................... #
 
     async def flush(self) -> int:
-        return await self.staging.flush()
+        written = await self.staging.flush()
+
+        if written and self.wake is not None:
+            await self.wake()
+
+        return written

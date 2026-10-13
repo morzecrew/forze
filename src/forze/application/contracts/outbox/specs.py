@@ -8,6 +8,7 @@ from forze.base.primitives import StrKey
 from forze.base.serialization import ModelCodec
 
 from ..base import BaseSpec, EncryptionReach
+from .wake import OutboxWake
 
 # ----------------------- #
 
@@ -98,6 +99,10 @@ class OutboxSpec[M](BaseSpec):
     transaction depth 0). Left ``False`` for routes deliberately flushed outside a
     transaction — e.g. the stage-then-relay pattern (``OutboxRelay``) or a standalone
     event emitter — which is why it is opt-in rather than the default."""
+
+    wake: OutboxWake | None = None
+    """Wake the background relay when a flush's rows commit, instead of leaving them for
+    its next poll (default ``None``: the relay only polls). See :class:`OutboxWake`."""
 
     # ....................... #
 

@@ -13,7 +13,7 @@ import attrs
 
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.inventory import SpecRegistry, SpecSource
-from forze.application.contracts.outbox import OutboxDestination, OutboxSpec
+from forze.application.contracts.outbox import OutboxDestination, OutboxSpec, OutboxWake
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.realtime import RealtimeSignal
 from forze.application.contracts.stream import StreamSpec
@@ -78,17 +78,20 @@ def realtime_outbox_spec(
     name: str = DEFAULT_REALTIME_CHANNEL,
     *,
     stream: str = DEFAULT_REALTIME_CHANNEL,
+    wake: OutboxWake | None = None,
 ) -> OutboxSpec[RealtimeSignal]:
     """Build the outbox route for durable realtime signals, relayed to *stream*.
 
     Durable signals are staged here in the transaction and the relay appends them
-    to the realtime stream after commit.
+    to the realtime stream after commit — at its next poll, or as soon as they commit
+    with a *wake*.
     """
 
     return OutboxSpec(
         name=name,
         codec=_REALTIME_CODEC,
         destination=OutboxDestination.stream(route=stream, channel=stream),
+        wake=wake,
     )
 
 
@@ -151,11 +154,19 @@ class RealtimeTransport:
 # ....................... #
 
 
-def build_realtime_transport(channel: str = DEFAULT_REALTIME_CHANNEL) -> RealtimeTransport:
-    """Build every realtime spec for *channel* from one name, so they stay in lock-step."""
+def build_realtime_transport(
+    channel: str = DEFAULT_REALTIME_CHANNEL,
+    *,
+    wake: OutboxWake | None = None,
+) -> RealtimeTransport:
+    """Build every realtime spec for *channel* from one name, so they stay in lock-step.
+
+    *wake* has the outbox relay deliver a durable signal as soon as it commits rather than
+    at its next poll (see :class:`~forze.application.contracts.outbox.OutboxWake`).
+    """
 
     return RealtimeTransport(
         stream_spec=realtime_stream_spec(channel),
-        outbox_spec=realtime_outbox_spec(channel, stream=channel),
+        outbox_spec=realtime_outbox_spec(channel, stream=channel, wake=wake),
         inbox_spec=realtime_inbox_spec(f"{channel}-inbox"),
     )
