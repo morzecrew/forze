@@ -229,10 +229,10 @@ if fresh is not None and parsed is not None and generation is not None:
 | Event | Redis effect | Delivered by |
 | --- | --- | --- |
 | A session is issued (login, refresh) | the admission script, **before the session row commits** | deadline-bound, best effort |
-| Refresh rotation | `DEL s:{old_sid}` | outbox |
-| Family revocation, reuse detection | `DEL s:{sid}` for each session of the family | outbox |
-| Logout, password change or reset, principal deactivation | `DEL g:{principal}` | outbox |
-| Any other write of `is_active=False` on the policy principal | `DEL g:{principal}` | outbox |
+| Refresh rotation | `DEL {principal}:s:{old_sid}` | outbox |
+| Family revocation, reuse detection | `DEL {principal}:s:{sid}` for each session of the family | outbox |
+| Logout, password change or reset, principal deactivation | `DEL {principal}:g` | outbox |
+| Any other write of `is_active=False` on the policy principal | `DEL {principal}:g` | outbox |
 
 **The admission is written before the session row commits.** A write after the commit
 loses two races:
@@ -259,9 +259,16 @@ does.
 ### 5.4 Delivery through the outbox
 
 - **Staging.** Each revoking adapter stages its invalidation in an outbox route dedicated to
-  session admission, in the transaction that stamps the rows. The payload is the session ids
-  to delete, or the principal whose generation to drop. The adapters get the route's outbox
-  command port from their deps factory, which already builds them per request.
+  session admission, in the transaction that stamps the rows. The payload always names the
+  principal, because every admission key sits under the principal's hash tag. It is either
+  that principal and the session ids to delete, or the principal whose generation to drop.
+  Every revoking path already holds the principal:
+  - rotation from the old session row;
+  - family revocation and reuse detection from their `principal_id` argument;
+  - `revoke_sessions_matching` from the rows it stamps.
+
+  The adapters get the route's outbox command port from their deps factory, which already
+  builds them per request.
 - **Enforced.** The route declares `require_transaction=True`, so a revocation run outside a
   transaction fails as a configuration error rather than staging an invalidation that is not
   atomic with its rows.
@@ -307,7 +314,7 @@ class SessionAdmissionPort(Protocol):
         self, principal_id: UUID, session_id: UUID, record: AdmissionRecord,
         *, ttl: timedelta, not_after: datetime,                                         # Redis time, from generation()
     ) -> None: ...
-    async def invalidate_sessions(self, session_ids: Sequence[UUID]) -> None: ...
+    async def invalidate_sessions(self, principal_id: UUID, session_ids: Sequence[UUID]) -> None: ...
     async def drop_generation(self, principal_id: UUID) -> None: ...
 
 AuthnKernelConfig(
@@ -367,6 +374,8 @@ AuthnKernelConfig(
   refused. An admission write held past its deadline and executed after the session's own
   invalidation writes nothing.
 - **Malformed records:** a value of the wrong shape under an admission key is a miss.
+- **Every invalidation reaches its key:** for each revoking path, the staged payload names
+  the principal, and once applied the session's record or the principal's generation is gone.
 - **The eligibility race (phase 2b):** a deactivation committing between a login's or a
   refresh's eligibility check and its session insert either waits for the insert, then revokes
   the new session, or makes the issue fail its check. Never a live session for an inactive
