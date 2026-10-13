@@ -16,10 +16,15 @@ class RedisConfig:
 
     max_size: int = 20
     pool_timeout: timedelta | None = None
-    """How long a call waits for a free connection once all ``max_size`` are in use.
+    """How long taking a connection from the pool waits once all ``max_size`` are in use.
 
     ``None`` (the default) refuses it at once with a connection error. Set it when a burst
-    should queue for a connection rather than fail; a wait past it fails the same way."""
+    should queue for a connection rather than fail; a wait past it fails the same way.
+
+    It bounds each acquisition, for every user of the pool: commands, ``subscribe`` and
+    the invalidation hub alike. A call can therefore take up to this long plus its
+    ``socket_timeout``, and a read retried by ``read_retry_attempts`` waits again on each
+    attempt."""
 
     socket_timeout: timedelta | None = timedelta(seconds=5)
     connect_timeout: timedelta | None = None

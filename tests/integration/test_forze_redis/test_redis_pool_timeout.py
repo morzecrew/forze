@@ -83,3 +83,24 @@ async def test_a_full_pool_waits_no_longer_than_its_timeout(open_client) -> None
 
     assert not holder.done()
     await holder
+
+
+async def test_a_retried_read_waits_again_on_each_attempt(open_client) -> None:
+    wait = timedelta(milliseconds=50)
+    client = await open_client(
+        RedisConfig(
+            max_size=1,
+            pool_timeout=wait,
+            read_retry_attempts=2,
+            read_retry_base_delay=timedelta(milliseconds=1),
+        )
+    )
+    holder = await _hold_the_only_connection(client)
+    started = time.monotonic()
+
+    with pytest.raises(CoreException, match="Redis connection error"):
+        await client.get("pool-timeout:any")
+
+    assert time.monotonic() - started >= 3 * wait.total_seconds()
+    assert not holder.done()
+    await holder
