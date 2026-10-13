@@ -218,9 +218,10 @@ def test_a_component_that_refers_to_itself_is_followed_once() -> None:
         schema = original()
         loop = {"anyOf": [{"$ref": "#/components/schemas/_Loop"}, {"type": "integer"}]}
         schema["components"]["schemas"]["_Loop"] = loop
-        schema["components"]["schemas"]["_Count"]["properties"]["loop"] = {
-            "$ref": "#/components/schemas/_Loop"
-        }
+        properties = schema["components"]["schemas"]["_Count"]["properties"]
+        properties["loop"] = {"$ref": "#/components/schemas/_Loop"}
+        # A reference this schema cannot resolve may name anything, null included.
+        properties["elsewhere"] = {"$ref": "https://example.com/schemas.json#/Thing"}
         return schema
 
     app.openapi = with_loop  # type: ignore[method-assign]

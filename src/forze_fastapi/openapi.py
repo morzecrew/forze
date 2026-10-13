@@ -358,7 +358,7 @@ def _refs(node: Any, schemas: dict[str, Any], seen: set[str], *, names: bool = F
         return seen
 
     mapping = cast(dict[str, Any], node)
-    ref = None if names else mapping.get("$ref")
+    ref = mapping.get("$ref")
 
     if isinstance(ref, str) and ref.startswith(_SCHEMA_REF):
         name = ref.removeprefix(_SCHEMA_REF)
