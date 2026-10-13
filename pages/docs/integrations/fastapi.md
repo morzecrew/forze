@@ -139,7 +139,8 @@ For governed duplex realtime, use the [Socket.IO integration](socketio.md) or th
 WebSocket route below; for server-push, the SSE route below.
 
 A browser front end on another origin needs CORS, and it reads forze's own response
-headers — the `X-Error-Code`, the request and correlation ids, a download's filename —
+headers — the `X-Error-Code`, the request and correlation ids, a download's filename,
+validator and range headers —
 only once they are exposed. `AllowlistCORSMiddleware` is Starlette's `CORSMiddleware`
 answering the origins an allowlist names (a port range or `*` on a loopback host, for a dev
 server) and exposing `EXPOSED_RESPONSE_HEADERS`:

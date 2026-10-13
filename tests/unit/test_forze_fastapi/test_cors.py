@@ -74,6 +74,8 @@ def test_the_list_names_every_header_forze_sets() -> None:
         invocation.caus_header.default,
         "Content-Disposition",
         "ETag",
+        "Accept-Ranges",
+        "Content-Range",
     ):
         assert str(header).lower() in names
 
@@ -123,3 +125,14 @@ async def test_an_app_can_expose_its_own_headers_too() -> None:
 def test_an_origin_that_is_not_one_is_refused_at_startup() -> None:
     with pytest.raises(CoreException, match="allowed_origins"):
         AllowlistCORSMiddleware(FastAPI(), allowed_origins=["https://app.example.com/path"])
+
+
+@pytest.mark.parametrize(
+    "setting", [{"allow_origins": ["*"]}, {"allow_origin_regex": r"https://.*\.example\.com"}]
+)
+def test_another_way_to_name_origins_is_refused(setting: dict[str, Any]) -> None:
+    """Starlette's own origin settings would bypass the allowlist (``*`` answers every origin)
+    or be silently ignored; the allowlist is the one place origins are named."""
+
+    with pytest.raises(CoreException, match="allowed_origins"):
+        AllowlistCORSMiddleware(FastAPI(), allowed_origins=["https://app.example.com"], **setting)

@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI can list the response fields an app always sends as required.** `apply_openapi_conventions(app, require_sent_fields=True)` requires every field of a schema only null-keeping routes return, and only the non-nullable ones where a route drops nulls. Schemas requests also use are left as they are.
 
-- **A cross-origin browser can read forze's response headers.** `AllowlistCORSMiddleware` is Starlette's CORS middleware answering an `OriginAllowlist` (loopback port ranges included) and exposing `EXPOSED_RESPONSE_HEADERS`: `X-Error-Code`, the request, correlation and causation ids, `Content-Disposition` and `ETag`.
+- **A cross-origin browser can read forze's response headers.** `AllowlistCORSMiddleware` is Starlette's CORS middleware answering an `OriginAllowlist` (loopback port ranges included) and exposing `EXPOSED_RESPONSE_HEADERS`: `X-Error-Code`, the invocation ids, and a download's filename, `ETag` and range headers.
 
 - **An administrator can revoke any principal's API key.** `build_authn_registry(admin_guards=...)` adds `revoke_principal_api_key` (`DELETE /admin/api-keys/{id}`) behind those guards, like `deactivate_principal`; unguarded, neither is registered. Both act in every tenant. **Breaking** for API-key lifecycle implementers.
 
