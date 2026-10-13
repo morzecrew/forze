@@ -1,7 +1,8 @@
 """Every analytics read path refuses an option :class:`AnalyticsRunOptions` does not define.
 
-Each backend reads its options on each path for itself, so each path is asked: a misspelt
-``max_rows`` or ``timeout`` that one path dropped would lift the bound the caller meant to set.
+Each backend reads its options on each path for itself, so every public method is asked: a
+misspelt ``max_rows`` or ``timeout`` that one path dropped would lift the bound the caller meant
+to set.
 """
 
 from __future__ import annotations
@@ -31,6 +32,23 @@ async def assert_every_path_refuses_an_unknown_option(
         "run_page": lambda: port.run_page(query_key, params, options=options),
         "run_cursor": lambda: port.run_cursor(query_key, params, options=options),
         "run_chunked": lambda: _drain(port.run_chunked(query_key, params, options=options)),
+        "project_run": lambda: port.project_run(["x"], query_key, params, options=options),
+        "project_run_page": lambda: port.project_run_page(
+            ["x"], query_key, params, options=options
+        ),
+        "project_run_cursor": lambda: port.project_run_cursor(
+            ["x"], query_key, params, options=options
+        ),
+        "project_run_chunked": lambda: _drain(
+            port.project_run_chunked(["x"], query_key, params, options=options)
+        ),
+        "select_run": lambda: port.select_run(BaseModel, query_key, params, options=options),
+        "select_run_page": lambda: port.select_run_page(
+            BaseModel, query_key, params, options=options
+        ),
+        "select_run_cursor": lambda: port.select_run_cursor(
+            BaseModel, query_key, params, options=options
+        ),
         "select_run_chunked": lambda: _drain(
             port.select_run_chunked(BaseModel, query_key, params, options=options)
         ),
