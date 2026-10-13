@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from forze.application.execution.operations import (
     OperationDescriptor,
@@ -40,6 +40,28 @@ class TestOperationDescriptor:
 
         assert d.input_schema() is None
         assert d.output_schema() is None
+
+    @pytest.mark.parametrize("output_type", [_Out | None, list[_Out]], ids=["optional", "list"])
+    def test_an_output_that_is_not_a_bare_model_has_a_schema(self, output_type: object) -> None:
+        """``Model | None`` (an operation that can find nothing) or a list is described, and
+        fingerprinted, like a model."""
+
+        d = OperationDescriptor(input_type=_In, output_type=output_type)
+
+        assert d.output_schema() == TypeAdapter(output_type).json_schema()
+
+        frozen = (
+            OperationRegistry(handlers={"op": lambda _c: None})
+            .set_descriptor("op", d)
+            .freeze()
+        )
+
+        assert frozen.operation_fingerprint("op")
+
+    def test_a_model_output_keeps_its_schema(self) -> None:
+        """Operation fingerprints hash this schema, so a model's must not change."""
+
+        assert OperationDescriptor(output_type=_Out).output_schema() == _Out.model_json_schema()
 
 
 # ....................... #

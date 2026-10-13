@@ -412,7 +412,9 @@ shipped builder names the placeholders it fills, and a path with any other place
 refused. An `EndpointBuilder` of your own takes `(runner, input_type, op)`; give it a
 `path_params` frozenset to have its paths checked the same way.
 
-The operation's output type is the route's response model. An operation without one, such as
+The operation's output type is the route's response model. It need not be a bare model: an
+operation that may find nothing declares `output_type=Model | None` and answers `200` with
+`null`, and MCP returns it as `{"result": null}`. An operation without one, such as
 a federated search, still has a model result written as a typed route's is: fields that are
 `None` are left out unless the attacher passes `exclude_none=False`, and the OpenAPI schema
 documents an untyped body. Any other result, such as a dict or a list, is written as FastAPI
@@ -519,3 +521,14 @@ become fenced blocks, and any other directive (`note`, `deprecated`,
 `versionadded`, …) becomes a labelled blockquote. Fenced blocks already in
 Markdown pass through as written. Call it last: text a later wrapper adds, such as a security scheme's
 description, stays as written.
+
+A generated client types a response field optional when its schema does not list it required,
+and pydantic leaves every field with a default optional, though the app sends it every time.
+`apply_openapi_conventions(app, require_sent_fields=True)` lists what every route returning a
+schema sends. Where only routes that keep nulls (`exclude_none=False`) return it, every field is
+required. Where a route drops nulls, the default for the routes Forze attaches, the fields that
+cannot be null are required, and a nullable one, left out when it is null, is not, even
+without a default. A schema is one component shared by all the routes that return it, so where
+a route that keeps nulls and one that drops them return the same model, its nullable fields
+are optional for both. A schema a request also uses is left as it is, and so is one a route
+trims some other way (`response_model_exclude_unset`, `include`, `exclude`).
