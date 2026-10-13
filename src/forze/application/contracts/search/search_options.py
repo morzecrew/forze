@@ -8,18 +8,39 @@ from forze.application.contracts.search.specs import (
     HubSearchSpec,
     SearchSpec,
 )
-from forze.application.contracts.search.types import SearchOptions
+from forze.application.contracts.search.types import (
+    HighlightOptions,
+    MultiSourceSearchOptions,
+    SearchOptions,
+    SearchResultSnapshotOptions,
+)
 from forze.base.exceptions import exc
 
 from ..._logger import logger
+from ..querying.expressions import refuse_unknown_keys
 
 # ----------------------- #
 
 
-def _strip_result_snapshot_leg_options(opts: dict[str, Any]) -> None:
-    """Remove the nested result snapshot request from options passed to hub/federation legs."""
+def refuse_unknown_search_options(
+    options: SearchOptions | None,
+    snapshot: SearchResultSnapshotOptions | None = None,
+) -> None:
+    """Refuse a key no search options type defines, in *options*, their highlight options or
+    *snapshot*, naming it.
 
-    opts.pop("result_snapshot", None)
+    Every search adapter reads its options through one of the three functions below, which
+    call this first, so an option passed straight to a port is held to the closed request
+    types. An adapter reads only the keys it knows; a misspelt one ran the search without it.
+
+    :raises exc.precondition: an unknown key.
+    """
+
+    refuse_unknown_keys(options, MultiSourceSearchOptions)
+    refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
+
+    if isinstance(highlight := (options or {}).get("highlight"), Mapping):
+        refuse_unknown_keys(cast(Mapping[str, Any], highlight), HighlightOptions)
 
 
 # ....................... #
@@ -29,14 +50,17 @@ def search_options_for_simple_adapter(
     options: SearchOptions | None,
     *,
     spec: SearchSpec[Any] | None = None,
+    snapshot: SearchResultSnapshotOptions | None = None,
 ) -> SearchOptions:
     """Normalize single-index search options, for *spec* when given.
 
-    Drops hub/federated member keys (warning when callers pass them) and fills
-    ``search_count`` from *spec*'s :attr:`~SearchSpec.default_search_count` when the request
-    leaves it out. Without *spec* no default is applied.
+    Refuses a key no search options type defines (in *snapshot* too), drops hub/federated
+    member keys (warning when callers pass them), and fills ``search_count`` from *spec*'s
+    :attr:`~SearchSpec.default_search_count` when the request leaves it out. Without *spec* no
+    default is applied.
     """
 
+    refuse_unknown_search_options(options, snapshot)
     opts = dict(options or {})
 
     if spec is not None and spec.default_search_count is not None:
@@ -63,6 +87,8 @@ def search_options_for_simple_adapter(
 def prepare_hub_search_options(
     hub_spec: HubSearchSpec[Any],
     options: SearchOptions | None,
+    *,
+    snapshot: SearchResultSnapshotOptions | None = None,
 ) -> tuple[SearchOptions, list[float]]:
     """Strip simple field-tuning and hub member keys; return leg options + per-member weights.
 
@@ -70,6 +96,7 @@ def prepare_hub_search_options(
     the request leaves it out.
     """
 
+    refuse_unknown_search_options(options, snapshot)
     opts = dict(options or {})
 
     if hub_spec.default_search_count is not None:
@@ -95,7 +122,6 @@ def prepare_hub_search_options(
     leg_opts.pop("member_weights", None)
     leg_opts.pop("members", None)
     leg_opts.pop("fusion", None)
-    _strip_result_snapshot_leg_options(leg_opts)
 
     return cast(SearchOptions, leg_opts), weights_list
 
@@ -106,9 +132,12 @@ def prepare_hub_search_options(
 def prepare_federated_search_options(
     federated_spec: FederatedSearchSpec[Any],
     options: SearchOptions | None,
+    *,
+    snapshot: SearchResultSnapshotOptions | None = None,
 ) -> tuple[SearchOptions, list[float]]:
     """Strip field-level tuning and federation member keys; return leg options + weights."""
 
+    refuse_unknown_search_options(options, snapshot)
     opts = dict(options or {})
 
     if "weights" in opts or "fields" in opts:
@@ -131,7 +160,6 @@ def prepare_federated_search_options(
     leg_opts.pop("member_weights", None)
     leg_opts.pop("members", None)
     leg_opts.pop("fusion", None)
-    _strip_result_snapshot_leg_options(leg_opts)
 
     return cast(SearchOptions, leg_opts), weights_list
 

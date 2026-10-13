@@ -31,6 +31,7 @@ from forze.application.contracts.dynamic_read import (
     DynamicReadPort,
     DynamicReadSpec,
 )
+from forze.application.contracts.querying import refuse_unknown_keys
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict
@@ -192,6 +193,7 @@ class DynamicReadAdapter(DynamicReadPort, TenancyMixin):
         """
 
         self._check_statement_size(statement)
+        refuse_unknown_keys(options, DynamicReadOptions)
 
         # Fail closed first: on a tenant-aware route with no bound tenant this raises
         # ``tenant_required``, which is the answer whether or not the statement is well-formed.

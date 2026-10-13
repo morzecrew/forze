@@ -344,6 +344,15 @@ async def test_offset_search_snapshot_hit() -> None:
     )
     assert [h.id for h in page.hits] == ["1"]
 
+    # A replay answers without running the search, and still refuses a misspelt option.
+    with pytest.raises(CoreException, match="fuzzzy"):
+        await adapter.search(
+            "alpha",
+            pagination={"limit": 10},
+            snapshot={"id": "run-1"},
+            options={"fuzzzy": True},  # type: ignore[typeddict-unknown-key]
+        )
+
 
 @pytest.mark.asyncio
 async def test_offset_search_snapshot_miss_falls_through() -> None:

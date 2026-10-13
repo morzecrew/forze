@@ -87,6 +87,7 @@ async def build_hub_search_plan(
     leg_options, member_weights_list = prepare_hub_search_options(
         host.hub_spec,
         options,
+        snapshot=snapshot,
     )
     weights_tuple = tuple(float(w) for w in member_weights_list)
 

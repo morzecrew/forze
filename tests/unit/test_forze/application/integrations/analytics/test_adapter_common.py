@@ -67,6 +67,10 @@ class TestRunOptionsHelpers:
         assert dry_run_enabled({"dry_run": True}) is True
         assert dry_run_enabled(None) is False
 
+    def test_dry_run_enabled_refuses_an_option_the_type_does_not_define(self) -> None:
+        with pytest.raises(CoreException, match="Unknown keys in AnalyticsRunOptions: dryrun, max_row"):
+            dry_run_enabled({"dryrun": True, "max_row": 1, "timeout": timedelta(seconds=1)})  # type: ignore[typeddict-unknown-key]
+
     def test_timeout_seconds(self) -> None:
         assert timeout_seconds(None) is None
         assert timeout_seconds({"timeout": timedelta(seconds=30)}) == 30

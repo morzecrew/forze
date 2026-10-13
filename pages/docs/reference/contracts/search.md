@@ -85,7 +85,8 @@ highlight requests below (`facets`, `facet_size`, `highlight`). Hub and federate
 resolve to a `MultiSourceSearchOptions` port that also carries member selection
 (`member_weights` / `members`), a post-merge cap (`merge_candidates`), and the `fusion`
 strategy (`"rrf"` / `"weighted"`); passing those keys to a single-index `query(...)` port is
-a type error.
+a type error. A key neither type defines is refused as a `precondition` naming it, at a
+request and at the port alike.
 
 A sort on a field the read model lacks is refused as the caller's error, a key after `id`
 included. On Postgres, a ranked page reads a capped pool of candidates (`max_candidates`, or

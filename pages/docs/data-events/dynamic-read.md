@@ -281,6 +281,8 @@ from it is confidently wrong. Per-call options clamp down and never up:
 rows = await port.run(sql, params, options={"row_cap": 500, "timeout": timedelta(seconds=2)})
 ```
 
+Any other option key is refused as a `precondition` naming it.
+
 Every code below is caller-caused, because on this plane the statement *is* the
 caller's input — an undefined relation here is a malformed request, not a broken
 database, and none of it egresses as `internal`.

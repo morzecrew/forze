@@ -12,6 +12,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    refuse_unknown_keys,
 )
 from forze.application.contracts.search import (
     FederatedSearchReadModel,
@@ -157,7 +158,7 @@ class MockFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchCountlessPage[FederatedSearchReadModel[M]]:
-        _ = snapshot
+        refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
         merged, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(merged, pagination)
         hits = [hit for hit, _ in window]
@@ -177,7 +178,7 @@ class MockFederatedSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchPage[FederatedSearchReadModel[M]]:
-        _ = snapshot
+        refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
         merged, hl_index = await self._merge_legs(query, filters, sorts, options)
         window = self._window(merged, pagination)
         hits = [hit for hit, _ in window]

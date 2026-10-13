@@ -15,6 +15,7 @@ from forze.application.contracts.analytics import (
 from forze.base.exceptions import CoreException
 from forze_postgres.adapters.analytics import PostgresAnalyticsAdapter
 from forze_postgres.execution.deps.configs import PostgresAnalyticsConfig, PostgresQueryConfig
+from tests.support.analytics_options import assert_every_path_refuses_an_unknown_option
 
 
 class _Row(BaseModel):
@@ -417,3 +418,7 @@ async def test_timeout_at_the_root_skips_capture_and_restore() -> None:
 
     assert mock.fetch_one_calls == []
     assert all("set_config" not in _rendered(q) for q, _ in mock.executes)
+
+
+async def test_every_path_refuses_an_unknown_option() -> None:
+    await assert_every_path_refuses_an_unknown_option(_adapter(_MockClient()), "counts", _Params())

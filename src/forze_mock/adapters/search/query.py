@@ -431,6 +431,8 @@ class MockSearchAdapter(MockTenancyMixin, SearchQueryPort[M]):
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        # Before a replay, which answers without reading the options, as Postgres does.
+        options = search_options_for_simple_adapter(options, spec=self.spec, snapshot=snapshot)
         rs_spec = self.spec.snapshot
         order = self._page_order(sorts)
 

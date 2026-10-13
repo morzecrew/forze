@@ -12,6 +12,7 @@ from forze.application.contracts.querying import (
     PaginationExpression,
     QueryFilterExpression,
     QuerySortExpression,
+    refuse_unknown_keys,
 )
 from forze.application.contracts.search import (
     HubSearchSpec,
@@ -211,7 +212,7 @@ class MockHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchCountlessPage[M]:
-        _ = snapshot
+        refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
         ordered = await self._merged_docs(query, filters, sorts, options)
         window = self._window(ordered, pagination)
         page_docs = [doc for doc, _ in window]
@@ -238,7 +239,7 @@ class MockHubSearchAdapter[M: BaseModel](
         options: SearchOptions | None = None,
         snapshot: SearchResultSnapshotOptions | None = None,
     ) -> SearchPage[M]:
-        _ = snapshot
+        refuse_unknown_keys(snapshot, SearchResultSnapshotOptions)
         ordered = await self._merged_docs(query, filters, sorts, options)
         window = self._window(ordered, pagination)
         page_docs = [doc for doc, _ in window]

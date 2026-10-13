@@ -22,6 +22,7 @@ from forze_bigquery.kernel.client.value_objects import (
     BigQueryInsertResult,
     BigQueryQueryResult,
 )
+from tests.support.analytics_options import assert_every_path_refuses_an_unknown_option
 
 
 class _Row(BaseModel):
@@ -337,3 +338,7 @@ async def test_no_query_dataset_leaves_default_unset() -> None:
     await adapter.run("counts", _Params())
 
     assert mock.datasets_seen[-1] is None
+
+
+async def test_every_path_refuses_an_unknown_option() -> None:
+    await assert_every_path_refuses_an_unknown_option(_adapter(_MockClient()), "counts", _Params())

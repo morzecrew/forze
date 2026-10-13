@@ -15,14 +15,17 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from forze.application.contracts.analytics import AnalyticsRunOptions
+from forze.application.contracts.dynamic_read import DynamicReadOptions
+from forze.application.contracts.inference import InferenceRunOptions
 from forze.application.contracts.querying import (
     AggregatesExpression,
-    QueryFilterExpression,
-    QuerySortExpression,
-)
-from forze.application.contracts.querying import (
     AggregatesExpressionParser,
+    QueryFilterExpression,
     QueryFilterExpressionParser,
+    QuerySortExpression,
+    QuerySortKeySpec,
+    refuse_unknown_keys,
 )
 from forze.application.contracts.search import (
     MultiSourceSearchOptions,
@@ -98,14 +101,39 @@ def test_a_filter_the_parser_accepts_passes_the_request_type(case: Any) -> None:
         (TypeAdapter[Any](SearchOptions), {"highlight": {"pre": "<b>"}}, "pre"),
         (TypeAdapter[Any](MultiSourceSearchOptions), {"membrs": ["a"]}, "membrs"),
         (TypeAdapter[Any](SearchResultSnapshotOptions), {"ttl": 5}, "ttl"),
+        (TypeAdapter[Any](AnalyticsRunOptions), {"max_row": 5}, "max_row"),
+        (TypeAdapter[Any](DynamicReadOptions), {"row_capp": 5}, "row_capp"),
+        (TypeAdapter[Any](InferenceRunOptions), {"timeot": 5}, "timeot"),
     ],
-    ids=["sort", "aggregate", "metric", "trunc", "search", "highlight", "multi", "snapshot"],
+    ids=[
+        "sort",
+        "aggregate",
+        "metric",
+        "trunc",
+        "search",
+        "highlight",
+        "multi",
+        "snapshot",
+        "analytics",
+        "dynamic_read",
+        "inference",
+    ],
 )
 def test_a_sibling_expression_type_refuses_a_key_it_does_not_define(
     adapter: TypeAdapter[Any], value: dict[str, Any], key: str
 ) -> None:
     with pytest.raises(ValidationError, match=f"\\{key}" if key.startswith("$") else key):
         adapter.validate_python(value)
+
+
+def test_a_port_refuses_only_the_keys_a_type_does_not_define() -> None:
+    """Required keys count as defined, as optional ones do."""
+
+    refuse_unknown_keys({"dir": "asc", "nulls": "last"}, QuerySortKeySpec)
+    refuse_unknown_keys(None, QuerySortKeySpec)
+
+    with pytest.raises(CoreException, match="Unknown key in QuerySortKeySpec: nul$"):
+        refuse_unknown_keys({"dir": "asc", "nul": "last"}, QuerySortKeySpec)
 
 
 def test_the_schema_says_no_other_keys() -> None:

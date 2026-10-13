@@ -310,6 +310,13 @@ an aggregates expression (`$groups`, `$computed`, `$having`, or a metric's `fiel
 included) is refused, never dropped. A single-index search request that names a hub or
 federated key (`members`, `member_weights`) is refused at the request too.
 
+Options handed to a port directly are held to the same types. A search port refuses an
+option, a highlight option or a `snapshot` option that no search options type defines.
+The analytics, dynamic-read and inference ports refuse a key their run options
+(`AnalyticsRunOptions`, `DynamicReadOptions`, `InferenceRunOptions`) do not define. Each
+refusal is a `precondition` naming the key, so a misspelt `timeout` or `row_cap` cannot
+run a call without the bound it meant to set.
+
 A backend can cap a filter lower than any spec's limits. On Firestore an `$in` takes
 at most 30 values, and a filter at most 30 disjunctions once expanded: an `$in`
 counts one per value, AND multiplies its parts' counts and OR adds them, so two

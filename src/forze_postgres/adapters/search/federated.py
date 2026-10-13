@@ -251,6 +251,7 @@ class PostgresFederatedSearchAdapter[M: BaseModel](
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
             options,
+            snapshot=snapshot,
         )
 
         rs_spec: SearchResultSnapshotSpec | None = self.federated_spec.snapshot

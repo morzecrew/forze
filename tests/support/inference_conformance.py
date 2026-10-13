@@ -201,6 +201,26 @@ async def check_a_stream_chunk_over_the_cap_is_served_not_refused(h: InferenceHa
     assert ei.value.code == UNSUPPORTED_INFERENCE_FEATURE_CODE
 
 
+async def check_an_unknown_option_is_refused_by_name(h: InferenceHarness) -> None:
+    """An option :class:`InferenceRunOptions` does not define is refused, naming it, on all
+    three calls: a misspelt ``timeout`` would otherwise lift the budget it meant to tighten."""
+
+    options: Any = {"timeot": timedelta(seconds=1)}
+    instance = Features(x=1.0, tag="a")
+
+    with pytest.raises(CoreException, match="timeot") as ei:
+        await h.port.predict(instance, options=options)
+
+    assert ei.value.kind == ExceptionKind.PRECONDITION
+
+    with pytest.raises(CoreException, match="timeot"):
+        await h.port.predict_many([instance], options=options)
+
+    with pytest.raises(CoreException, match="timeot"):
+        async for _chunk in h.port.predict_stream(one_chunk(instance), options=options):
+            pass
+
+
 async def check_an_empty_batch_is_a_no_op(h: InferenceHarness) -> None:
     """``predict_many([])`` returns ``[]`` without calling the backend."""
 
@@ -352,6 +372,7 @@ INFERENCE_BATTERY: tuple[Check, ...] = (
     check_the_oracle_mirrors_the_backends_capability_gates,
     check_an_unmirrored_oracle_diverges_from_a_capped_backend,
     check_a_stream_chunk_over_the_cap_is_served_not_refused,
+    check_an_unknown_option_is_refused_by_name,
     check_an_empty_batch_is_a_no_op,
     check_an_empty_chunk_yields_an_empty_chunk,
     check_mapping_instances_decode_through_the_input_codec,

@@ -66,7 +66,7 @@ Run a registered query by key with typed params; the shape × pagination naming 
 | `project_run*` / `select_run*` | `JsonDict` / caller-typed-model variants |
 
 `options: AnalyticsRunOptions` carries the per-run knobs — `dry_run`, `max_rows`, and
-`timeout`.
+`timeout`. Any other key is refused as a `precondition` naming it.
 
 ## Ingest port  (`ctx.analytics.ingest(spec)`)
 

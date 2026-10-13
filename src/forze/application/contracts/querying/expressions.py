@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal, NotRequired, TypeAlias, TypedDict
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
 from pydantic import ConfigDict, with_config
+
+from forze.base.exceptions import exc
 
 from .types import Array, HierarchyValue, Numeric, Scalar, TextPatternValue
 
@@ -361,6 +363,24 @@ CLOSED_EXPRESSION = ConfigDict(extra="forbid")
 """Validated as a pydantic type (a request DTO, a tool's input schema), an expression refuses a
 key it does not define. Dropped instead, an unknown key widened a filter, lost a ``$having``
 or a null placement, or emptied the expression, all without a word."""
+
+
+def refuse_unknown_keys(value: Mapping[str, Any] | None, shape: Any) -> None:
+    """Refuse a key of *value* that the TypedDict *shape* does not define, naming it.
+
+    The port's half of :data:`CLOSED_EXPRESSION`: a mapping handed to a port directly is never
+    validated as a pydantic type, and an adapter reads only the keys it knows, so a misspelt
+    option was dropped as quietly there.
+
+    :raises exc.precondition: *value* has a key *shape* does not define.
+    """
+
+    if value and (unknown := value.keys() - shape.__required_keys__ - shape.__optional_keys__):
+        raise exc.precondition(
+            f"Unknown {'key' if len(unknown) == 1 else 'keys'} in {shape.__name__}: "
+            + ", ".join(sorted(map(str, unknown))),
+        )
+
 
 for _expression in (
     QueryValueOpConjunction,

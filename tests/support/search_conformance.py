@@ -478,6 +478,7 @@ async def check_a_capped_page_is_a_prefix_of_the_page_order(h: SearchHarness) ->
 
 # ....................... #
 
+
 async def check_windows_partition_under_a_non_unique_sort(h: SearchHarness) -> None:
     """Windows tile even when the sort key ties — the classic source of lost rows.
 
@@ -518,6 +519,45 @@ async def check_phrase_combine_is_honored(h: SearchHarness) -> None:
     assert len(disjunction.hits) == len(CORPUS), h.backend
     assert list(unsatisfiable.hits) == [], h.backend
     assert sorted(_titles(conjunction)) == list(NOTES_TITLES), h.backend
+
+
+async def check_an_unknown_option_is_refused_by_name(h: SearchHarness) -> None:
+    """An option no search options type defines is refused, naming it, on every read path.
+
+    An adapter reads only the keys it knows, so a misspelt ``fuzzy`` was a search without it.
+    Each path is asked separately because each reads its options on its own.
+    """
+
+    unknown: Any = {"fuzzzy": True}
+    in_highlight: Any = {"highlight": {"pre_tagg": "<b>"}}
+    calls: list[tuple[str, Callable[[], Any]]] = [
+        ("fuzzzy", lambda: h.query.search_page(PROBE_TERM, None, {"limit": 5}, options=unknown)),
+        (
+            "pre_tagg",
+            lambda: h.query.search_page(PROBE_TERM, None, {"limit": 5}, options=in_highlight),
+        ),
+    ]
+
+    if h.supports_cursor:
+        calls.append(
+            (
+                "fuzzzy",
+                lambda: h.query.search_cursor(PROBE_TERM, None, {"limit": 5}, options=unknown),
+            )
+        )
+
+    # The request's snapshot options too, whether or not the spec keeps snapshots.
+    misspelt: Any = {"idd": "run-1"}
+    calls.append(
+        ("idd", lambda: h.query.search_page(PROBE_TERM, None, {"limit": 5}, snapshot=misspelt))
+    )
+
+    for key, call in calls:
+        with pytest.raises(CoreException) as refused:
+            await call()
+
+        assert refused.value.kind is ExceptionKind.PRECONDITION, h.backend
+        assert key in str(refused.value), f"{h.backend}: {refused.value}"
 
 
 async def check_the_stream_gate_matches_the_declaration(h: SearchHarness) -> None:
@@ -747,6 +787,7 @@ SEARCH_BATTERY: tuple[Check, ...] = (
     check_a_blank_query_is_declared_not_guessed,
     check_windows_partition_under_a_non_unique_sort,
     check_phrase_combine_is_honored,
+    check_an_unknown_option_is_refused_by_name,
     check_the_default_sort_orders_a_page_without_one,
     check_a_tie_breaks_by_id_in_the_sort_direction,
     check_a_cursor_walk_follows_the_offset_order,

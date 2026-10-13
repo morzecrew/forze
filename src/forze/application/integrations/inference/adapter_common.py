@@ -24,6 +24,7 @@ from forze.application.contracts.inference import (
     InferenceRunOptions,
     InferenceSpec,
 )
+from forze.application.contracts.querying import refuse_unknown_keys
 from forze.base.exceptions import exc
 from forze.base.primitives import bind_deadline, remaining_time
 
@@ -242,9 +243,12 @@ def bind_run_options(options: InferenceRunOptions | None) -> Generator[None]:
 
     ``timeout`` binds a tighten-only deadline (the effective budget is the earlier of the
     per-call timeout and the ambient invocation deadline); an absent option is a no-op
-    passthrough, so adapters wrap every call unconditionally.
+    passthrough, so adapters wrap every call unconditionally. A key
+    :class:`~forze.application.contracts.inference.InferenceRunOptions` does not define is
+    refused, so a misspelt ``timeout`` cannot lift the budget it meant to tighten.
     """
 
+    refuse_unknown_keys(options, InferenceRunOptions)
     timeout = options.get("timeout") if options else None
 
     with bind_deadline(timeout.total_seconds() if timeout is not None else None):

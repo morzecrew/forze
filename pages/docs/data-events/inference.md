@@ -143,7 +143,8 @@ silent degradation. The failure taxonomy at the boundary:
 
 Per-call options tighten, never extend: `options={"timeout": timedelta(...)}`
 binds a deadline that is the earlier of the per-call budget and the ambient
-invocation deadline.
+invocation deadline. A call with anything to score refuses a key other than `timeout` and
+`max_batch_size`, as a `precondition` naming it.
 
 The two timeout rows are worth telling apart. `inference_budget_exhausted` is a
 pre-flight refusal — the model was never asked, so nothing ran, nothing was
