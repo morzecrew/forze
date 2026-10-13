@@ -102,6 +102,10 @@ def _app() -> FastAPI:
     @app.get("/trimmed", response_model=_Trimmed, response_model_exclude_unset=True)
     async def trimmed() -> Any: ...
 
+    # Left out of the schema, as the JWKS and readiness routes are: nothing to mark.
+    @app.get("/hidden", response_model=_Trimmed, include_in_schema=False)
+    async def hidden() -> Any: ...
+
     @app.get("/only-nullable", response_model=_OnlyNullable, response_model_exclude_none=True)
     async def only_nullable() -> Any: ...
 
@@ -154,3 +158,87 @@ def test_left_out_unless_asked_for() -> None:
 
     assert _required(schema, "_Kept") == {"child"}
     assert _required(schema, "_Dropped") == {"cursor"}
+
+
+# ....................... #
+
+
+type _MaybeName = str | None
+"""A named alias pydantic documents as a component of its own, referenced by ``$ref``."""
+
+type _Tree = _Node | None
+
+
+class _Node(BaseModel):
+    child: _Tree = None
+
+
+class _Aliased(BaseModel):
+    name: _MaybeName = None
+    tree: _Tree = None
+    count: int = 0
+
+
+class _Count(BaseModel):
+    count: int = 0
+
+
+class _WithExample(BaseModel):
+    model_config = {"json_schema_extra": {"examples": [{"$ref": "#/components/schemas/Nope"}]}}
+
+    count: int = 0
+
+
+def _single(model: type[BaseModel], *, exclude_none: bool) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/one", response_model=model, response_model_exclude_none=exclude_none)
+    async def one() -> Any: ...
+
+    return app
+
+
+def test_a_reference_is_as_nullable_as_what_it_names() -> None:
+    """A named alias that admits null is left out when null, behind its ``$ref``; an alias that
+    refers to itself is followed once."""
+
+    app = _single(_Aliased, exclude_none=True)
+    apply_openapi_conventions(app, require_sent_fields=True)
+
+    assert _required(app.openapi(), "_Aliased") == {"count"}
+
+
+def test_a_component_that_refers_to_itself_is_followed_once() -> None:
+    """pydantic does not write such a loop, but an app's own component can."""
+
+    app = _single(_Count, exclude_none=True)
+    original = app.openapi
+
+    def with_loop() -> dict[str, Any]:
+        schema = original()
+        loop = {"anyOf": [{"$ref": "#/components/schemas/_Loop"}, {"type": "integer"}]}
+        schema["components"]["schemas"]["_Loop"] = loop
+        schema["components"]["schemas"]["_Count"]["properties"]["loop"] = {
+            "$ref": "#/components/schemas/_Loop"
+        }
+        return schema
+
+    app.openapi = with_loop  # type: ignore[method-assign]
+    apply_openapi_conventions(app, require_sent_fields=True)
+
+    assert _required(app.openapi(), "_Count") == {"count", "loop"}
+
+
+def test_a_reference_written_as_example_data_is_not_followed() -> None:
+    app = _single(_WithExample, exclude_none=False)
+    apply_openapi_conventions(app, require_sent_fields=True)
+
+    assert _required(app.openapi(), "_WithExample") == {"count"}
+
+
+def test_asking_again_with_require_sent_fields_takes_effect() -> None:
+    app = _single(_Child, exclude_none=False)
+    apply_openapi_conventions(app)
+    apply_openapi_conventions(app, require_sent_fields=True)
+
+    assert _required(app.openapi(), "_Child") == {"note", "size"}

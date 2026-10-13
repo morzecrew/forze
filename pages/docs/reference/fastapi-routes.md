@@ -524,9 +524,11 @@ description, stays as written.
 
 A generated client types a response field optional when its schema does not list it required,
 and pydantic leaves every field with a default optional, though the app sends it every time.
-`apply_openapi_conventions(app, require_sent_fields=True)` lists exactly what is sent. Where
-only routes that keep nulls (`exclude_none=False`) return a schema, every field is required.
-Where a route drops nulls, the default for the routes Forze attaches, the fields that cannot be
-null are required, and a nullable one, left out when it is null, is not, even without a
-default. A schema a request also uses is left as it is, and so is one a route trims some other
-way (`response_model_exclude_unset`, `include`, `exclude`).
+`apply_openapi_conventions(app, require_sent_fields=True)` lists what every route returning a
+schema sends. Where only routes that keep nulls (`exclude_none=False`) return it, every field is
+required. Where a route drops nulls, the default for the routes Forze attaches, the fields that
+cannot be null are required, and a nullable one, left out when it is null, is not, even
+without a default. A schema is one component shared by all the routes that return it, so where
+a route that keeps nulls and one that drops them return the same model, its nullable fields
+are optional for both. A schema a request also uses is left as it is, and so is one a route
+trims some other way (`response_model_exclude_unset`, `include`, `exclude`).
