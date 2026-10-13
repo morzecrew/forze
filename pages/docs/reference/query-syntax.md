@@ -291,7 +291,7 @@ always use the defaults.
 
 | Limit | Default | Applies to |
 |-------|---------|------------|
-| `max_depth` | 32 | nesting of `$and` / `$or` / `$not` and element quantifiers |
+| `max_depth` | 32 | nesting of `$and` / `$or` / `$not`, and separately of element quantifiers |
 | `max_clauses` | 256 | combinator children, `$values` / `$fields` keys, per-field operators |
 | `max_in_size` | 1000 | `$in` / `$nin`, array shortcuts, set-relation operands |
 | `max_pattern_length` | 256 | each `$like` / `$ilike` / `$regex` pattern |
