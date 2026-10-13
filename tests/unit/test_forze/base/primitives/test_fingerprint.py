@@ -4,7 +4,8 @@ import os
 import subprocess
 import sys
 import textwrap
-from enum import StrEnum
+from enum import Enum, StrEnum
+from typing import NamedTuple
 
 import pytest
 from pydantic import SecretStr
@@ -121,6 +122,30 @@ def test_a_str_enum_key_hashes_as_its_value_at_any_depth() -> None:
     assert stable_json_bytes({"x": [{"y": {_Name.ORDERS: [1]}}]}) == stable_json_bytes(
         {"x": [{"y": {"orders": [1]}}]}
     )
+
+
+class _MixedName(str, Enum):
+    """The ``(str, Enum)`` spelling, whose ``str()`` is ``_MixedName.ORDERS``, not its value."""
+
+    ORDERS = "orders"
+
+
+class _Point(NamedTuple):
+    x: int
+    y: int
+
+
+def test_a_string_key_hashes_as_its_text_whatever_its_str_returns() -> None:
+    assert stable_json_bytes({_MixedName.ORDERS: 1}) == stable_json_bytes({"orders": 1})
+
+
+def test_a_str_enum_key_leaves_the_values_as_the_plain_key_would() -> None:
+    """Only keys change: a value orjson renders through ``str`` (a named tuple) renders the same
+    under a ``StrEnum`` key as under the plain one."""
+
+    point = _Point(1, 2)
+
+    assert stable_json_bytes({_Name.ORDERS: point}) == stable_json_bytes({"orders": point})
 
 
 def test_a_key_that_is_not_a_string_is_still_refused() -> None:

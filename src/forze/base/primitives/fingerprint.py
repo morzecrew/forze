@@ -90,15 +90,20 @@ def stable_json_bytes(payload: Any) -> bytes:
 
 
 def _str_keys(value: Any) -> Any:
-    """*value* with each ``str``-subclass mapping key made a plain ``str``, at any depth."""
+    """*value* with each ``str``-subclass mapping key made a plain ``str``, at any depth.
+
+    The key's text, not its ``str()``: a ``(str, Enum)`` member prints as ``Name.MEMBER``. Only
+    the containers orjson renders natively are rebuilt; a ``tuple`` subclass such as a named
+    tuple is left whole, to render through ``_canonical`` as it does under a plain key.
+    """
 
     if isinstance(value, dict):
         return {
-            str(key) if isinstance(key, str) else key: _str_keys(item)
+            str.__str__(key) if isinstance(key, str) else key: _str_keys(item)
             for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
         }
 
-    if isinstance(value, list | tuple):
+    if isinstance(value, list) or type(value) is tuple:  # pyright: ignore[reportUnknownArgumentType]
         return [_str_keys(item) for item in cast("Sequence[Any]", value)]
 
     return value
