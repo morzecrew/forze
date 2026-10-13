@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A listed API key always carries `is_active` and `created_at`** (**Breaking** for API-key lifecycle implementers). `AuthnApiKeyListItemDTO` requires them, so generated clients type them as present; `hint` stays optional, as a key minted before hints has none. `ApiKeyInfo.created_at` is required.
+
 - **`/deactivate` answers 404 after upgrading: pass `admin_guards`** (**Breaking**). `deactivate_principal` is registered only behind them, so guards an app bound on the operation itself leave it absent; pass them as `admin_guards` instead (bound twice, a step fails at `freeze()`).
 
 - **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). An `include=` built from the whole enum fails at startup without `admin_guards`; with them, MCP's default read-only tools gain `list_principal_api_keys`.
@@ -38,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A forze model's `Decimal` graph key and stored text are fixed point** (**behaviour change**). A vertex keyed earlier by a `Decimal` that wrote in scientific form (`"1E+3"`) keeps that key; portability archive digests differ for such values.
 
 ### Fixed
+
+- **Revoking an API key the caller does not hold is a 404** (**behaviour change**). `revoke_api_key` answered a malformed, unknown or another principal's key id with a 401, which a browser client reads as its session ending; it is now `not_found` (`api_key_not_found`). A revoked key still answers 204.
+
+- **An access token is checked on the clock that issued it.** `issue_token` stamps `iat` and `exp` from forze's time source, but PyJWT checked them on the wall clock, so under `FrozenTimeSource` every token was expired or not yet valid. `exp`, `iat` and `nbf` are now checked against `utcnow()`, with the leeway.
 
 - **A read-only operation cannot write through a port a command built and cached** (**behaviour change**). A query reusing a handler or adapter that a command built first held its real write port. A command accessor now always returns `GuardedWritePort`; in a test, `forze.testing.unguarded` reaches the port.
 

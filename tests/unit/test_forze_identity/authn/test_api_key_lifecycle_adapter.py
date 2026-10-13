@@ -61,15 +61,47 @@ class TestApiKeyLifecycleAdapterInit:
 
 class TestApiKeyLifecycleAdapterRevoke:
     @pytest.mark.asyncio
-    async def test_revoke_invalid_key_id_raises_authentication(self) -> None:
-        adapter = _adapter()
+    @pytest.mark.parametrize("whose", ["malformed", "missing", "another principal's"])
+    async def test_revoking_a_key_the_caller_does_not_hold_is_not_found(self, whose: str) -> None:
+        """A 404, never a 401: a browser client reads a 401 as its session ending. A key the
+        caller does not hold answers as one that does not exist, so it discloses nothing."""
+
+        now = datetime.now(tz=UTC)
+        foreign = ReadApiKeyAccount(
+            id=uuid4(),
+            rev=1,
+            created_at=now,
+            last_update_at=now,
+            principal_id=uuid4(),
+            key_hash="h",
+            is_active=True,
+        )
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(return_value=foreign if whose == "another principal's" else None)
+        ak_cmd = _port()
+        ak_cmd.update = AsyncMock()
+        adapter = _adapter(ak_qry=ak_qry, ak_cmd=ak_cmd)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+        key_id = "not-a-uuid" if whose == "malformed" else str(foreign.id)
+
+        with pytest.raises(CoreException) as refused:
+            await adapter.revoke_api_key(AuthnIdentity(principal_id=uuid4()), key_id)
+
+        assert refused.value.kind is ExceptionKind.NOT_FOUND
+        assert refused.value.code == "api_key_not_found"
+        ak_cmd.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_lookup_is_not_reported_as_a_missing_key(self) -> None:
+        """Only a malformed id is "not found"; the lookup's own failure surfaces as itself."""
+
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(side_effect=ValueError("the store failed"))
+        adapter = _adapter(ak_qry=ak_qry)
         adapter.eligibility.require_authentication_allowed = AsyncMock()
 
-        with pytest.raises(exc, match="API key not found"):
-            await adapter.revoke_api_key(
-                AuthnIdentity(principal_id=uuid4()),
-                "not-a-uuid",
-            )
+        with pytest.raises(ValueError, match="the store failed"):
+            await adapter.revoke_api_key(AuthnIdentity(principal_id=uuid4()), str(uuid4()))
 
     @pytest.mark.asyncio
     async def test_revoke_deactivates_owned_key(self) -> None:

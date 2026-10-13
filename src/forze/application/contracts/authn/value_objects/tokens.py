@@ -61,11 +61,11 @@ class ApiKeyInfo:
     prefix: str | None = attrs.field(default=None)
     """Presentation/routing prefix, when the key carries one."""
 
+    created_at: datetime
+    """When the key was issued."""
+
     is_active: bool = attrs.field(default=True)
     """Whether the key is still usable (revocation flips this off)."""
-
-    created_at: datetime | None = attrs.field(default=None)
-    """When the key was issued."""
 
     expires_at: datetime | None = attrs.field(default=None)
     """Absolute expiry, or ``None`` for a non-expiring key."""

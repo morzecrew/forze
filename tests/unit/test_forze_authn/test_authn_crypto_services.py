@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import jwt
@@ -13,7 +13,7 @@ from forze.base.exceptions import CoreException
 
 pytestmark = pytest.mark.unit
 
-from forze.base.primitives import utcnow
+from forze.base.primitives import FrozenTimeSource, bind_time_source, utcnow
 from forze_identity.authn.services import (
     AccessTokenConfig,
     AccessTokenService,
@@ -199,3 +199,92 @@ async def test_access_token_detects_expiry() -> None:
     with pytest.raises(CoreException) as ei:
         await svc.verify_token(expired_token)
     assert ei.value.code == "access_token_expired"
+
+
+# ....................... #
+
+
+def _token_service() -> tuple[AccessTokenService, bytes, AccessTokenConfig]:
+    secret = secrets.token_bytes(32)
+    cfg = AccessTokenConfig(issuer="it", audience="api", expires_in=timedelta(minutes=15))
+
+    return AccessTokenService(signer=Hs256Signer(secret=secret), config=cfg), secret, cfg
+
+
+_FROZEN = datetime(2020, 1, 1, tzinfo=UTC)
+
+
+async def test_access_token_is_checked_on_the_clock_it_was_issued_on() -> None:
+    """A token stamped by forze's clock is judged by it, not by the process wall clock: under a
+    frozen clock a fresh token is valid, and one past its expiry on that clock has expired."""
+
+    svc, _secret, _cfg = _token_service()
+    source = FrozenTimeSource(_FROZEN)
+
+    with bind_time_source(source):
+        token = await svc.issue_token(principal_id=uuid4())
+        assert (await svc.verify_token(token))["iat"] == int(_FROZEN.timestamp())
+
+    # Expired at ``exp`` less the 10 s leeway, to the second, as PyJWT judges it.
+    with bind_time_source(FrozenTimeSource(_FROZEN + timedelta(minutes=15, seconds=9))):
+        await svc.verify_token(token)
+
+    with bind_time_source(FrozenTimeSource(_FROZEN + timedelta(minutes=15, seconds=10))):
+        with pytest.raises(CoreException) as ei:
+            await svc.verify_token(token)
+
+    assert ei.value.code == "access_token_expired"
+
+
+async def test_access_token_issued_ahead_of_the_clock_is_refused() -> None:
+    svc, secret, cfg = _token_service()
+    now = int(_FROZEN.timestamp())
+
+    for claim in ("iat", "nbf"):
+        payload = {
+            "iss": cfg.issuer,
+            "aud": cfg.audience,
+            "sub": str(uuid4()),
+            "iat": now,
+            "exp": now + 900,
+        }
+
+        with bind_time_source(FrozenTimeSource(_FROZEN)):
+            # Within the 10 s leeway it is valid; one second past it, not yet.
+            await svc.verify_token(jwt.encode({**payload, claim: now + 10}, secret, algorithm="HS256"))
+
+            with pytest.raises(CoreException) as ei:
+                await svc.verify_token(
+                    jwt.encode({**payload, claim: now + 11}, secret, algorithm="HS256")
+                )
+
+        assert ei.value.code == "invalid_access_token", claim
+
+
+async def test_access_token_time_claims_must_be_numbers() -> None:
+    svc, secret, cfg = _token_service()
+    now = int(_FROZEN.timestamp())
+
+    for claim, value in (
+        ("exp", "soon"),
+        ("iat", True),
+        ("nbf", "later"),
+        # A float that is not a time: an ``exp`` of NaN or infinity would never expire.
+        ("exp", float("nan")),
+        ("exp", float("inf")),
+        ("iat", float("-inf")),
+    ):
+        payload: dict[str, object] = {
+            "iss": cfg.issuer,
+            "aud": cfg.audience,
+            "sub": str(uuid4()),
+            "iat": now,
+            "exp": now + 900,
+        }
+        payload[claim] = value
+
+        with bind_time_source(FrozenTimeSource(_FROZEN)):
+            with pytest.raises(CoreException) as ei:
+                await svc.verify_token(jwt.encode(payload, secret, algorithm="HS256"))
+
+        assert ei.value.code == "invalid_access_token", claim
