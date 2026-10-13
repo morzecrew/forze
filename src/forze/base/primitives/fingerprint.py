@@ -76,7 +76,37 @@ def stable_json_bytes(payload: Any) -> bytes:
     differ from a ``str``-coerced encoding).
     """
 
-    return orjson.dumps(payload, option=orjson.OPT_SORT_KEYS, default=_canonical)
+    try:
+        return orjson.dumps(payload, option=orjson.OPT_SORT_KEYS, default=_canonical)
+
+    # orjson takes only an exact ``str`` as a key, so a payload keyed by a ``StrEnum`` (a spec or
+    # member name) is refused though every key is a string. Such keys hash as their values; any
+    # other key still raises, since an ``int`` would collide with its digits as a string.
+    except orjson.JSONEncodeError:
+        return orjson.dumps(_str_keys(payload), option=orjson.OPT_SORT_KEYS, default=_canonical)
+
+
+# ....................... #
+
+
+def _str_keys(value: Any) -> Any:
+    """*value* with each ``str``-subclass mapping key made a plain ``str``, at any depth.
+
+    The key's text, not its ``str()``: a ``(str, Enum)`` member prints as ``Name.MEMBER``. Only
+    the containers orjson renders natively are rebuilt; a ``tuple`` subclass such as a named
+    tuple is left whole, to render through ``_canonical`` as it does under a plain key.
+    """
+
+    if isinstance(value, dict):
+        return {
+            str.__str__(key) if isinstance(key, str) else key: _str_keys(item)
+            for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
+        }
+
+    if isinstance(value, list) or type(value) is tuple:  # pyright: ignore[reportUnknownArgumentType]
+        return [_str_keys(item) for item in cast("Sequence[Any]", value)]
+
+    return value
 
 
 # ....................... #

@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A federated search over members named by a `StrEnum` runs, in Postgres and Meilisearch.** Each search keys its snapshot by its members' default sorts, and a `StrEnum` name as that key failed it with a 500. A fingerprint now hashes a `StrEnum` key as its value; any other non-string key is still refused.
+
 - **Revoking an API key the caller does not hold is a 404** (**behaviour change**). `revoke_api_key` answered a malformed, unknown or another principal's key id with a 401, which a browser client reads as its session ending; it is now `not_found` (`api_key_not_found`). A revoked key still answers 204.
 
 - **An access token is checked on the clock that issued it.** `issue_token` stamps `iat` and `exp` from forze's time source, but PyJWT checked them on the wall clock, so under `FrozenTimeSource` every token was expired or not yet valid. `exp`, `iat` and `nbf` are now checked against `utcnow()`, with the leeway.
