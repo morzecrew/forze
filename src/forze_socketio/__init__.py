@@ -120,6 +120,7 @@ from .mailbox import (
     MailboxEntry,
     RealtimeMailbox,
 )
+from .manager import FanoutManager, FanoutRedisManager
 from .observability import (
     BackplaneHealth,
     RealtimeGatewayStats,
@@ -191,6 +192,8 @@ __all__ = [
     "InMemoryRealtimePresence",
     "CONNECTION_SESSION_KEY",
     "build_core_exception_ack",
+    "FanoutManager",
+    "FanoutRedisManager",
     "build_socketio_server",
     "build_socketio_asgi_app",
     "build_unhandled_exception_ack",

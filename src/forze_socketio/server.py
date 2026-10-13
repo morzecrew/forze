@@ -9,10 +9,11 @@ from typing import Any
 from pydantic import SecretStr
 from socketio.asgi import ASGIApp
 from socketio.async_manager import AsyncManager
-from socketio.async_redis_manager import AsyncRedisManager
 from socketio.async_server import AsyncServer
 
 from forze.base.exceptions import exc
+
+from .manager import FanoutManager, FanoutRedisManager
 
 # ----------------------- #
 
@@ -27,7 +28,11 @@ def build_socketio_server(
 ) -> AsyncServer:
     """Build an :class:`socketio.AsyncServer` with optional Redis backplane.
 
-    Uses the official Socket.IO Redis manager when ``redis_url`` is provided.
+    Uses the official Socket.IO Redis manager when ``redis_url`` is provided. Either way the
+    manager fans a room out with eager sends, so only a send that waits is scheduled on the
+    event loop rather than one task per socket (see :mod:`forze_socketio.manager`); pass your
+    own *client_manager*, such as the library's ``AsyncManager()``, to keep its behaviour
+    instead.
 
     :param redis_url: Optional Redis DSN for distributed Socket.IO delivery. A
         ``SecretStr`` is unwrapped here — the DSN carries the password — so
@@ -44,11 +49,14 @@ def build_socketio_server(
         raise exc.internal("Pass either `redis_url` or `client_manager`, not both")
 
     if redis_url is not None:
-        client_manager = AsyncRedisManager(
+        client_manager = FanoutRedisManager(
             redis_url.get_secret_value() if isinstance(redis_url, SecretStr) else redis_url,
             channel=redis_channel,
             write_only=redis_write_only,
         )
+
+    elif client_manager is None:
+        client_manager = FanoutManager()
 
     return AsyncServer(
         client_manager=client_manager,

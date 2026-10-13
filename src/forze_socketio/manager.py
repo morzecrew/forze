@@ -1,0 +1,156 @@
+"""Client managers whose room fan-out schedules nothing for a send that does not wait.
+
+python-socketio's :class:`~socketio.async_manager.AsyncManager` encodes a room's frame
+once, then starts one ``asyncio`` task per receiving socket and waits on them all.
+Queuing a frame on a socket is a ``put`` on its Engine.IO queue, which does not wait, so
+at a few thousand sockets in a room, scheduling those tasks is most of what the event loop
+does. The managers here start each socket's send as an *eager* task instead: it runs at
+once, and one that completes without waiting is never scheduled on the loop at all.
+
+A send that does wait, such as one closing a socket whose ping timed out (which runs that
+socket's disconnect handler), carries on beside the others exactly as the library's task
+would, and a caller that stops waiting on the emit, as the gateway's ``emit_timeout``
+does, leaves every send already started to finish. The same packets reach the same
+sockets; the one difference is that a send which fails is logged and skipped, where the
+library's task fails unobserved.
+
+A task factory the application installed on the loop is honoured: each send then goes
+through it, as the library's would, and the saving is the factory's to give.
+
+An emit with a callback needs a distinct packet per socket and keeps the library's path.
+This relies on python-socketio internals (``get_participants``, ``_send_eio_packet``, the
+Engine.IO packet class), which is why forze owns it and pins the versions it supports.
+"""
+
+import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
+from typing import Any
+
+from socketio import async_manager, packet
+from socketio.async_manager import AsyncManager
+from socketio.async_redis_manager import AsyncRedisManager
+
+from forze.base.logging import Logger
+
+# ----------------------- #
+
+_logger = Logger("socketio.fanout")
+
+_eio_packet: Any = async_manager.eio_packet  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+"""The Engine.IO packet module python-socketio frames with, taken from it rather than imported
+from a package forze does not depend on directly."""
+
+
+class FanoutManager(AsyncManager):
+    """An in-process client manager that fans a room out without a task per socket."""
+
+    async def emit(  # type: ignore[override]
+        self,
+        event: str,
+        data: Any,
+        namespace: str,
+        room: Any = None,
+        skip_sid: Any = None,
+        callback: Any = None,
+        to: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        if callback is not None:
+            await super().emit(
+                event,
+                data,
+                namespace,
+                room=room,
+                skip_sid=skip_sid,
+                callback=callback,
+                to=to,
+                **kwargs,
+            )
+            return
+
+        room = to or room
+
+        if namespace not in self.rooms:
+            return
+
+        # The library's argument shape: a tuple spreads into several arguments, anything
+        # else but None is one.
+        args: list[Any] = (
+            list(data)  # pyright: ignore[reportUnknownArgumentType]
+            if isinstance(data, tuple)
+            else ([] if data is None else [data])
+        )
+
+        skipped = skip_sid if isinstance(skip_sid, list) else [skip_sid]
+        encoded = self.server.packet_class(
+            packet.EVENT, namespace=namespace, data=[event, *args]
+        ).encode()
+        frames = [
+            _eio_packet.Packet(_eio_packet.MESSAGE, part)
+            for part in (encoded if isinstance(encoded, list) else [encoded])
+        ]
+
+        send: Callable[[str, Any], Awaitable[None]] = self.server._send_eio_packet  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
+        loop = asyncio.get_running_loop()
+        # An application's own task factory (instrumentation, a Task subclass) sees every send,
+        # as it would the library's; the eager start is only the default's replacement.
+        factory = loop.get_task_factory()
+        waiting: list[asyncio.Task[None]] = []
+
+        # A copy of the room: a send that closes a socket changes the room under us.
+        for sid, eio_sid in self.get_participants(namespace, room):
+            if sid in skipped:
+                continue
+
+            sending = _send_frames(send, eio_sid, frames)
+            task = (
+                asyncio.eager_task_factory(loop, sending)
+                if factory is None
+                else loop.create_task(sending)
+            )
+
+            if task.done():
+                _report(task, sid)
+
+            else:
+                task.add_done_callback(partial(_report, sid=sid))
+                waiting.append(task)
+
+        if waiting:
+            # Not cancelled if the caller stops waiting: each send started is left to finish,
+            # as the library's tasks are.
+            await asyncio.wait(waiting)
+
+
+# ....................... #
+
+
+async def _send_frames(
+    send: Callable[[str, Any], Awaitable[None]], eio_sid: str, frames: Sequence[Any]
+) -> None:
+    """One socket's frames, in order."""
+
+    for frame in frames:
+        await send(eio_sid, frame)
+
+
+def _report(task: "asyncio.Task[None]", sid: str) -> None:
+    """Log a send that failed, so its exception is retrieved rather than left unobserved."""
+
+    if task.cancelled():
+        return
+
+    if (error := task.exception()) is not None:
+        _logger.debug("Skipped a socket that went away mid fan-out", sid=sid, error=repr(error))
+
+
+# ....................... #
+
+
+class FanoutRedisManager(AsyncRedisManager, FanoutManager):
+    """The Redis backplane, delivering each host's share of a room through :class:`FanoutManager`.
+
+    The backplane hands a message to its local delivery with ``super().emit``, which this
+    class's method order resolves to :class:`FanoutManager` before the library's manager.
+    """
