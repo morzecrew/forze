@@ -23,6 +23,7 @@ from forze.application.contracts.querying import (
     AggregatesExpressionParser,
     QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
     QuerySortExpression,
     QuerySortKeySpec,
     refuse_unknown_keys,
@@ -124,6 +125,31 @@ def test_a_sibling_expression_type_refuses_a_key_it_does_not_define(
 ) -> None:
     with pytest.raises(ValidationError, match=f"\\{key}" if key.startswith("$") else key):
         adapter.validate_python(value)
+
+
+def _quantifiers_nested(depth: int) -> dict[str, Any]:
+    inner: Any = "x"
+
+    for _ in range(depth):
+        inner = {"$any": inner}
+
+    return {"$values": {"matrix": inner}}
+
+
+def test_quantifier_nesting_is_bounded_by_the_depth_limit() -> None:
+    """Nested quantifiers recurse like combinators, so ``max_depth`` bounds them: past it the
+    filter is refused, never a ``RecursionError``, however many clauses a spec allows."""
+
+    wide = QueryFilterExpressionParser(limits=QueryFilterLimits(max_clauses=1_000_000))
+    wide.parse_filter(_quantifiers_nested(32))
+
+    for depth in (33, 5_000):
+        with pytest.raises(CoreException, match="maximum depth of 32"):
+            wide.parse_filter(_quantifiers_nested(depth))
+
+    # Only nesting counts: quantifiers side by side are each one level deep.
+    side_by_side = {"$values": {f"f{i}": {"$any": "x"} for i in range(40)}}
+    QueryFilterExpressionParser.parse(side_by_side)
 
 
 def test_a_port_refuses_only_the_keys_a_type_does_not_define() -> None:

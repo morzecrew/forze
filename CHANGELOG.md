@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An option its type does not define is refused, naming it** (**behaviour change**). A search request refuses one in `options`, highlight or `snapshot` options, `result_snapshot`, or a single-index `members` / `member_weights` (a 422). Search, analytics, dynamic-read and inference ports ignored one; they refuse it.
 
-- **A request filter can nest an element quantifier, as the port can.** A quantifier inside another, or under an object element's `$values`, failed a request DTO or tool schema with a list of union errors; the filter types now express it.
+- **A request filter can nest an element quantifier, as the port can.** A quantifier inside another, or under an object element's `$values`, failed a request DTO or tool schema with a list of union errors; the filter types now express it. The nesting counts toward `max_depth`.
 
 - **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.
 
