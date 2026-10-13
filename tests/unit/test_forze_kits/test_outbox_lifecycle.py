@@ -247,7 +247,7 @@ async def test_drain_tick_isolates_a_failing_tenant() -> None:
     startup = _startup(tenants=lambda: [_T1, _T2])
     seen: list[UUID] = []
 
-    async def _once(self: Any, ctx: Any) -> None:
+    async def _once(self: Any, ctx: Any, **_: Any) -> None:
         tenant = ctx.inv_ctx.get_tenant().tenant_id
         seen.append(tenant)
         if tenant == _T1:
