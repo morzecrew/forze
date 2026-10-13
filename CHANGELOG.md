@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A listed API key always carries `hint`, `is_active` and `created_at`** (**Breaking** for API-key lifecycle implementers). `AuthnApiKeyListItemDTO` requires them, so generated clients type them as present; `hint` stays nullable for a key minted before hints existed. `ApiKeyInfo.created_at` is required.
+
 - **`/deactivate` answers 404 after upgrading: pass `admin_guards`** (**Breaking**). `deactivate_principal` is registered only behind them, so guards an app bound on the operation itself leave it absent; pass them as `admin_guards` instead (bound twice, a step fails at `freeze()`).
 
 - **`AuthnKernelOp` has members a default registry does not register** (**upgrade note**). An `include=` built from the whole enum fails at startup without `admin_guards`; with them, MCP's default read-only tools gain `list_principal_api_keys`.

@@ -166,8 +166,8 @@ class AuthnApiKeyListItemDTO(BaseDTO):
     key_id: UUID
     """Identifier of the key (used to revoke it)."""
 
-    hint: str | None = None
-    """Non-secret fingerprint of the key."""
+    hint: str | None
+    """Non-secret fingerprint of the key; ``None`` only on a key minted before hints existed."""
 
     label: str | None = None
     """Optional human label; display ``label or hint``."""
@@ -178,10 +178,10 @@ class AuthnApiKeyListItemDTO(BaseDTO):
     prefix: str | None = None
     """Presentation/routing prefix, when the key carries one."""
 
-    is_active: bool = True
+    is_active: bool
     """Whether the key is still usable."""
 
-    created_at: datetime | None = None
+    created_at: datetime
     """When the key was issued."""
 
     expires_at: datetime | None = None

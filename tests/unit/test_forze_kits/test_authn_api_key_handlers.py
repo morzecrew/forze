@@ -21,6 +21,7 @@ from forze.application.contracts.authn import (
 from forze.base.exceptions import exc
 from forze_kits.aggregates.authn import (
     AuthnApiKeyListDTO,
+    AuthnApiKeyListItemDTO,
     AuthnIssueApiKeyRequestDTO,
     AuthnIssuedApiKeyDTO,
     AuthnPrincipalRefDTO,
@@ -222,3 +223,22 @@ class TestAdminRevoke:
             await handler(AuthnRevokeApiKeyRequestDTO(id=uuid4()))
 
         assert port.revoked_by_admin == []
+
+
+# ....................... #
+
+
+def test_a_listed_key_requires_what_every_listing_sends() -> None:
+    """A generated client types ``hint``, ``is_active`` and ``created_at`` as always present:
+    every listing sets them. ``hint`` may still be null, on a key minted before hints existed."""
+
+    schema = AuthnApiKeyListItemDTO.model_json_schema(mode="serialization")
+
+    assert {"key_id", "hint", "is_active", "created_at"} <= set(schema["required"])
+    assert schema["properties"]["created_at"]["type"] == "string"
+    assert {"type": "null"} in schema["properties"]["hint"]["anyOf"]
+
+    # The contract states it too, so a lifecycle that leaves the issue time out fails where it
+    # builds the descriptor, not when a listing is served.
+    with pytest.raises(TypeError, match="created_at"):
+        ApiKeyInfo(key_id=uuid4())  # type: ignore[call-arg]
