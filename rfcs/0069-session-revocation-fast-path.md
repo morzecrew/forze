@@ -58,7 +58,10 @@ session issued mints a fresh one.
 Both are staged in the outbox inside the transaction that changes the rows, and relayed to
 Redis. Because Redis only ever holds *admissions*, a lost, evicted or flushed key costs a
 Postgres read and never admits a revoked session. The one window the fast path has is an
-invalidation still in flight, and its length is the outbox's delivery latency.
+invalidation still in flight. Normally its length is the outbox's delivery latency. A
+freshness fence that only the relay refreshes, and only while nothing on the route has failed
+or is pending too long, bounds it under every failure: a stuck, failed or undeliverable
+invalidation turns the fast path off within the fence's TTL (§5.4).
 
 The eligibility read stays until two things hold: session issue serializes with deactivation,
 and every write that deactivates a principal drops its generation. Then a present generation
@@ -140,8 +143,8 @@ All verified against the tree at the time of writing.
 **Non-goals**
 
 - **Not a cache of the session row.** Readers never write; the row stays the only truth.
-- **Not zero-latency revocation under a Redis partition.** An invalidation the relay cannot
-  deliver yet leaves the fast path admitting until it lands. §9 states the bound.
+- **Not zero-latency revocation under every failure.** An invalidation not yet applied leaves
+  the fast path admitting, but only until the freshness fence lapses. §9 states the bound.
 - **Not a token format change.** `sub`, `sid` and `tid` are enough.
 - **Not a general authz cache.** Grants stay in RFC 0068's territory.
 
@@ -149,12 +152,13 @@ All verified against the tree at the time of writing.
 
 ### 5.1 What Redis holds
 
-Two key kinds, under a dedicated prefix:
+Two key kinds and one fence, under a dedicated prefix:
 
 ```text
 authn:admit:g:{principal_id}  ->  <generation>                       (no TTL)
 authn:admit:s:{session_id}    ->  <generation>|<principal_id>|<tenant_id or ->
                                    TTL = session.expires_at - now
+authn:admit:fresh             ->  1                                  TTL = fence TTL (§5.4)
 ```
 
 - **A generation is random (128 bits), not a counter.** After a flush, a re-created
@@ -168,9 +172,9 @@ authn:admit:s:{session_id}    ->  <generation>|<principal_id>|<tenant_id or ->
 
 ```python
 # inside _require_active_session, when the fast path is configured
-record, generation = await admit.mget(f"s:{sid}", f"g:{sub}")   # one round trip, bounded
+record, generation, fresh = await admit.mget(f"s:{sid}", f"g:{sub}", "fresh")  # one round trip
 
-if record is not None and generation is not None:
+if fresh is not None and record is not None and generation is not None:
     gen, principal, tenant = record.split("|")
     if gen == generation and principal == sub and tenant == (tid or "-"):
         return                                                   # admitted, no read
@@ -198,9 +202,11 @@ if record is not None and generation is not None:
   per-request eligibility read refuses it. So in phase 2 the orchestrator keeps that read.
 
   It can go (phase 2b) once two things hold:
-  - Login's eligibility check and session insert are one transaction that reads the policy
-    principal with a lock (`for_update=True`, the document port's row lock), so a concurrent
-    deactivation waits for the insert or the login waits for the deactivation.
+  - Every flow that issues a session, login (`issue_tokens`, `token_lifecycle.py:104`) and
+    refresh (`refresh_tokens`, `:217`) alike, checks eligibility and inserts the session in one
+    transaction that reads the policy principal with a lock (`for_update=True`, the document
+    port's row lock). A concurrent deactivation then waits for the insert, or the issue waits
+    for the deactivation.
   - Every write of `is_active=False` drops the generation. `deactivate_principal` in the authz
     registry, which revokes no sessions, must do so too.
 
@@ -238,8 +244,26 @@ does.
   transaction fails as a configuration error rather than staging an invalidation that is not
   atomic with its rows.
 - **Relaying.** A relay applies the invalidations to Redis, with the route's `OutboxWake`, so
-  delivery follows the commit by milliseconds. Applying one twice is harmless: a `DEL` is
-  idempotent.
+  delivery follows the commit by milliseconds. A duplicate is safe. A session `DEL` is
+  idempotent. A generation drop delivered twice can also strand an admission minted between
+  the two deliveries, which costs that session Postgres reads until its next refresh, never a
+  wrong admission.
+- **The freshness fence.** The relay's retry policy can park a row as `failed` after its last
+  attempt, and a row it cannot deliver stays pending. Either would leave a revoked session
+  admitted for as long as its admission record lives (up to the session's lifetime), so
+  delivery alone is not enough. After each pass, the relay asks the route's outbox admin port
+  for its depth and its oldest pending age. It refreshes `fresh` (`SET ... EX`, the fence TTL)
+  only when the route has no `failed` row and nothing pending or processing older than the
+  fence's tolerance. The fast path admits only while `fresh` exists. So:
+  - an invalidation that is parked, pending past the tolerance, or held behind a relay that
+    cannot reach Redis stops the fence from being refreshed;
+  - within the fence TTL every verification falls back to Postgres, until the backlog drains
+    and an operator requeues anything parked;
+  - the worst-case window for any invalidation is the tolerance plus the TTL. With a wake and a
+    healthy relay it is still milliseconds.
+
+  The relay must pass more often than the fence TTL, so the route's poll interval is set below
+  it. That is one claim query and two admin probes per interval on an idle route.
 - **Precondition: the revocation paths must run in a transaction.** None does today (§3). The
   authn kit binds a transaction route on its operations, configurable as
   `build_authn_registry(tx_route=...)`. The adapters hold ports, not the execution context, so
@@ -268,6 +292,8 @@ AuthnKernelConfig(
             wake=OutboxWake(route="outbox-wake"),
         ),
         timeout=timedelta(milliseconds=50),
+        fence_ttl=timedelta(seconds=10),          # the relay polls well inside it
+        fence_tolerance=timedelta(seconds=5),     # oldest undelivered invalidation allowed
     ),
 )
 ```
@@ -312,9 +338,10 @@ AuthnKernelConfig(
   with verifications, against the mock and against Redis plus Postgres.
 - **The issue race:** a logout committing between a session's commit and its admission write
   leaves the session refused.
-- **The eligibility race (phase 2b):** a deactivation committing between a login's eligibility
-  check and its session insert either waits for the insert, then revokes the new session, or
-  makes the login fail its check. Never a live session for an inactive principal.
+- **The eligibility race (phase 2b):** a deactivation committing between a login's or a
+  refresh's eligibility check and its session insert either waits for the insert, then revokes
+  the new session, or makes the issue fail its check. Never a live session for an inactive
+  principal.
 - **Every fall-through:** a missing record, a missing generation, a generation mismatch, a
   subject or tenant mismatch, a Redis error, a timeout and a flush. Each takes the
   authoritative path and returns its result and code.
@@ -322,6 +349,10 @@ AuthnKernelConfig(
   that should not be.
 - **Delivery:** with a wake, a logout's next verification is refused within the relay
   latency; without a wake the configuration is refused at startup.
+- **The fence:** with the applier failing every attempt until the row parks, with the relay
+  stopped, and with Redis reachable by verifiers but not by the relay, a revoked session is
+  refused within the tolerance plus the fence TTL. The fast path resumes only after the
+  route drains.
 - **The breaker:** with Redis unreachable, verifications stop waiting the timeout after the
   breaker opens, and resume the fast path after a probe succeeds.
 - **Phase 1:** each revocation path commits atomically. A failure mid-deactivation leaves
@@ -336,9 +367,11 @@ The authn page gets a "Session check fast path" section:
 - the deployment requirements: a pub/sub wake route, and a Redis whose admission keys are
   never shared with data that may be flushed independently;
 - the one window, stated plainly. A revocation is enforced on the fast path once its outbox
-  row is relayed, which with a wake is milliseconds after commit and with Redis or the relay
-  down is when they recover. Until then the authoritative path, not the fast path, is what
-  refuses.
+  row is relayed, which with a wake is milliseconds after commit. If delivery stalls, the
+  fence lapses and the authoritative path refuses within the fence's tolerance plus its TTL,
+  until the backlog drains and anything parked is requeued;
+- what to alert on: the route's oldest pending age, its `failed` count, and the fence being
+  absent while Redis is up.
 
 ## 8. Out of scope
 
@@ -352,10 +385,12 @@ The authn page gets a "Session check fast path" section:
 
 - **The window.** An invalidation in the outbox is not yet enforced by the fast path. With
   a wake that is the relay latency; hh-backend-v2 measured about 10 ms p50 outbox lag with an
-  app-side wake under load. If
-  the relay is down, or Redis is unreachable by the relay but reachable by verifiers, it
-  lasts until they recover. Accepted, stated in the docs, and observable: outbox depth on
-  the admission route is the window's size.
+  app-side wake under load. Whatever the failure (a parked row, a stopped relay, Redis
+  reachable by verifiers but not by the relay), the fence bounds it to the tolerance plus the
+  fence TTL. Accepted, stated in the docs, and observable through the route's oldest pending
+  age and `failed` count; depth alone cannot show a single row ageing.
+- **The fence's polling.** It costs the idle polling the wake removes: one claim query and two
+  admin probes per interval on an otherwise quiet route. Accepted for the bound it buys.
 - **Operators reading "fast path" as "cache".** The docs say what it is not.
 - **Half the saving until phase 2b.** Phase 2 removes the session-row read and keeps the
   eligibility read. Accepted: the eligibility skip is unsound until its preconditions hold.
@@ -372,6 +407,13 @@ The authn page gets a "Session check fast path" section:
 
 - Whether every writer of `is_active=False` on a policy principal is covered by §5.3. A
   census is part of phase 2b's entry condition.
+- How the fence sees a row stuck in `processing`. `OutboxAdminPort.oldest_pending_age`
+  measures pending rows, and `depth` counts processing ones without their age. Either the
+  admin port gains an oldest-undrained age, or the route's `reclaim_stale_after` is kept
+  inside the tolerance so a stranded claim returns to pending first. Phase 2 decides.
+- Where the fence refresh hooks into the relay: a post-pass callback on the background relay
+  step, or a small lifecycle step of its own that probes the route and writes the fence.
+  Phase 2 decides; either way only a process that relays the route writes it.
 - Whether backends other than Postgres give the locking read the exclusion phase 2b needs.
   The document port degrades `for_update` modes elsewhere; phase 2b names the backends it
   supports.
@@ -388,21 +430,24 @@ The authn page gets a "Session check fast path" section:
 | 6 | `ASSUMED` | The revocation paths get their transaction from a transaction route the authn kit binds on its operations (`build_authn_registry(tx_route=...)`), and the adapters stage through an outbox port their deps factory builds per request. An adapter-level scope would thread a transaction manager through every adapter and nest awkwardly in an app's own transaction. |
 | 7 | `ASSUMED` | The admission keys are carried by a dedicated `SessionAdmissionPort` (Redis and mock adapters, one conformance battery), not the cache contract, whose L1 layer, early expiry and soft deletes allow stale reads and which has no `SET NX`. |
 | 8 | `ASSUMED` | Startup refuses the fast path when its outbox route has no `OutboxWake`, since the window would silently become the poll interval. |
-| 9 | `LOCKED` | The eligibility read stays until session issue serializes with deactivation (a locking read of the policy principal in the login transaction) and every write of `is_active=False` drops the generation. Then an eligibility decorator treats a present generation as eligible; the orchestrator and `VerifiedAssertion` do not change. Skipping it earlier admits a principal deactivated while it logged in. |
+| 9 | `LOCKED` | The eligibility read stays until every session-issuing flow, login and refresh, serializes with deactivation (a locking read of the policy principal in the issuing transaction) and every write of `is_active=False` drops the generation. Then an eligibility decorator treats a present generation as eligible; the orchestrator and `VerifiedAssertion` do not change. Skipping it earlier admits a principal deactivated while it logged in. |
 | 10 | `ASSUMED` | The fast path is bounded by its own timeout (default 50 ms) behind a circuit breaker from the resilience executor, so a Redis outage costs a few timeouts rather than one per verification. Its errors and timeouts are counted, never raised. |
 | 11 | `ASSUMED` | The fast path never refuses; refusal and its error codes stay with the authoritative path. |
+| 12 | `LOCKED` | The fast path admits only while a freshness fence exists, and only the relay refreshes it, after a pass that finds the admission route with no `failed` row and nothing pending or processing older than the tolerance. Delivery alone cannot bound the window, because the relay parks a row after its last attempt and nothing drains a parked row on its own. |
+| 13 | `ASSUMED` | The fence TTL defaults to 10 s and the tolerance to 5 s, and the admission route's relay polls inside the TTL. The defaults trade idle polling against the worst-case window. |
 
 ## 12. Phasing
 
 1. **Transactions on the revocation paths.** Logout, family revocation, refresh rotation,
    password change and reset, and principal deactivation each commit atomically, and the
-   mock's `deactivate` revokes sessions. Login's eligibility check and session insert become
-   one transaction with a locking read of the policy principal. Independently a fix; ships
-   first.
+   mock's `deactivate` revokes sessions. Login's and refresh's eligibility checks and session
+   inserts become one transaction with a locking read of the policy principal. Independently a
+   fix; ships first.
 2. **Admission keys and the session fast path.** The port and its adapters, the outbox route
    and relay, the admission writes on issue, and the verifier fast path behind its breaker.
    Opt-in. The eligibility read stays.
    - **2b. The eligibility skip.** After the census of `is_active=False` writers, each of
      them drops the generation, and the eligibility decorator takes over the read.
-3. **Docs and metrics.** The authn page section, fast-path hit, miss and error counters, and
-   outbox depth on the admission route as the revocation window.
+3. **Docs and metrics.** The authn page section; fast-path hit, miss and error counters; a
+   fence-absent counter; and the admission route's oldest pending age and `failed` count as
+   the revocation window.
