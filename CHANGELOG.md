@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- ...
+- **A socket.io emit to a large room costs far less.** `build_socketio_server` now builds a manager that queues the frame on each socket in turn, where python-socketio starts a task per socket; the same packets reach the same sockets. Pass `client_manager=AsyncManager()` to keep the library's.
 
 ### Fixed
 
