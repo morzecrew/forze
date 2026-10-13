@@ -158,6 +158,36 @@ def test_quantifier_nesting_is_bounded_by_the_depth_limit() -> None:
     QueryFilterExpressionParser.parse(after_combinators)
 
 
+def _negations_nested(depth: int) -> dict[str, Any]:
+    expr: dict[str, Any] = {"$values": {"a": 1}}
+
+    for _ in range(depth):
+        expr = {"$not": expr}
+
+    return expr
+
+
+def test_combinator_depth_counts_nesting_not_siblings() -> None:
+    """``max_depth`` bounds how deep ``$and`` / ``$or`` / ``$not`` nest; how many a filter has
+    side by side is ``max_clauses``' to bound."""
+
+    QueryFilterExpressionParser.parse(_negations_nested(32))
+
+    with pytest.raises(CoreException, match="maximum depth of 32"):
+        QueryFilterExpressionParser.parse(_negations_nested(33))
+
+    # Two levels deep, forty wide, whichever combinator the siblings are.
+    leaf = {"$values": {"a": 1}}
+
+    for sibling in ({"$not": leaf}, {"$and": [leaf]}, {"$or": [leaf]}):
+        QueryFilterExpressionParser.parse({"$and": [sibling] * 40})
+
+        # A finished sibling gives back exactly its own level: the next one is still 33 deep.
+        with pytest.raises(CoreException, match="maximum depth of 32"):
+            QueryFilterExpressionParser.parse({"$and": [sibling, _negations_nested(32)]})
+    QueryFilterExpressionParser.parse({"$or": [_negations_nested(31), _negations_nested(31)]})
+
+
 def test_a_port_refuses_only_the_keys_a_type_does_not_define() -> None:
     """Required keys count as defined, as optional ones do."""
 

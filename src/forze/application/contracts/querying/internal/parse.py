@@ -134,8 +134,9 @@ class QueryFilterLimits:
     """Configurable bounds for filter expression parsing."""
 
     max_depth: int = 32
-    """Maximum nesting depth of ``$and`` / ``$or`` / ``$not`` combinators and element
-    quantifiers."""
+    """Maximum nesting depth of ``$and`` / ``$or`` / ``$not`` combinators, and separately of
+    element quantifiers. Combinators side by side are each one level deep; their number is
+    bounded by :attr:`max_clauses`."""
 
     max_clauses: int = 256
     """Maximum number of clauses (combinator children, field keys, and per-field ops)."""
@@ -219,6 +220,7 @@ class QueryFilterExpressionParser:
             items = self._combinator_operands(expr["$and"], "$and")  # type: ignore[index]
             self._enter_combinator(ctx, len(items))
             nodes = [self._parse(item, ctx) for item in items]
+            ctx.depth -= 1
 
             return QueryAnd(tuple(nodes))
 
@@ -226,6 +228,7 @@ class QueryFilterExpressionParser:
             items = self._combinator_operands(expr["$or"], "$or")  # type: ignore[index]
             self._enter_combinator(ctx, len(items))
             nodes = [self._parse(item, ctx) for item in items]
+            ctx.depth -= 1
 
             return QueryOr(tuple(nodes))
 
@@ -238,8 +241,10 @@ class QueryFilterExpressionParser:
                 raise exc.precondition("$not requires a filter expression object")
 
             self._enter_combinator(ctx, 1)
+            node = QueryNot(self._parse(child, ctx))  # type: ignore[arg-type]
+            ctx.depth -= 1
 
-            return QueryNot(self._parse(child, ctx))  # type: ignore[arg-type]
+            return node
 
         raise exc.precondition("A filter expression cannot be empty")
 
@@ -269,6 +274,9 @@ class QueryFilterExpressionParser:
     # ....................... #
 
     def _enter_combinator(self, ctx: _ParseCtx, child_count: int) -> None:
+        """Go one level down, within ``max_depth``; the caller gives the level back once the
+        children are parsed, so siblings each sit one level down rather than adding up."""
+
         next_depth = ctx.depth + 1
 
         if next_depth > self.limits.max_depth:
