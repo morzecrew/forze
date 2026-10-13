@@ -166,8 +166,9 @@ class AuthnApiKeyListItemDTO(BaseDTO):
     key_id: UUID
     """Identifier of the key (used to revoke it)."""
 
-    hint: str | None
-    """Non-secret fingerprint of the key; ``None`` only on a key minted before hints existed."""
+    hint: str | None = None
+    """Non-secret fingerprint of the key; ``None`` only on a key minted before hints existed, which
+    a route that drops null fields leaves out."""
 
     label: str | None = None
     """Optional human label; display ``label or hint``."""
