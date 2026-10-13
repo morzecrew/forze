@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -638,3 +639,60 @@ async def test_federated_search_refuses_a_misspelt_snapshot_option(
         await port.search_page("token", snapshot=misspelt)
 
     assert refused.value.kind is ExceptionKind.PRECONDITION
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_federated_search_over_members_named_by_str_enum(pg_client: PostgresClient) -> None:
+    """Members named by ``StrEnum`` values, each with a default sort, are searched.
+
+    Every federated search keys its snapshot by the members' default sorts; a ``StrEnum`` name
+    as that key failed the search with a 500 before it ran.
+    """
+
+    await pg_client.execute("CREATE EXTENSION IF NOT EXISTS pgroonga;")
+
+    suffix = uuid4().hex[:10]
+    leg = StrEnum("Leg", {"A": f"enum_a_{suffix}", "B": f"enum_b_{suffix}"})  # type: ignore[misc]
+
+    for member in leg:
+        await pg_client.execute(
+            f"""
+            CREATE TABLE {member} (id uuid PRIMARY KEY, label text NOT NULL);
+            CREATE INDEX idx_{member} ON {member} USING pgroonga (label);
+            INSERT INTO {member} (id, label) VALUES ('{uuid4()}', 'enumtok {member}');
+            """
+        )
+
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            member: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", f"idx_{member}"),
+                                    read=("public", str(member)),
+                                    engine="pgroonga",
+                                ),
+                            )
+                            for member in leg
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+    members = tuple(
+        SearchSpec(name=member, model_type=FedHit, fields=["label"], default_sort={"label": "asc"})
+        for member in leg
+    )
+
+    page = await ctx.search.federated(
+        FederatedSearchSpec(name=f"fed_enum_{suffix}", members=members)
+    ).search_page("enumtok", pagination={"limit": 10})
+
+    assert sorted(str(hit.member) for hit in page.hits) == sorted(str(member) for member in leg)
