@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.12.0] - 2026-10-13
+
+### Added
+
 - **OpenAPI can list the response fields an app always sends as required.** `apply_openapi_conventions(app, require_sent_fields=True)` requires every field of a schema only null-keeping routes return, and only the non-nullable ones where a route drops nulls. Schemas requests also use are left as they are.
 
 - **A cross-origin browser can read forze's response headers.** `AllowlistCORSMiddleware` is Starlette's CORS middleware answering an `OriginAllowlist` (loopback port ranges included) and exposing `EXPOSED_RESPONSE_HEADERS`: `X-Error-Code`, the invocation ids, and a download's filename, `ETag` and range headers.
@@ -2122,7 +2136,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.11.1...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/morzecrew/forze/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/morzecrew/forze/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/morzecrew/forze/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/morzecrew/forze/compare/v0.9.0...v0.10.0
