@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A filter, sort or aggregates expression refuses a key it does not define, naming it** (**behaviour change**). A request DTO dropped it, so `{"$values": {…}, "$bogus": 1}` returned a wider page and `{"$bogus": …}` failed as `{}`; the port ignored one beside `$values`, a second combinator, or a mistyped `$having`.
 
-- **An option its type does not define is refused, naming it** (**behaviour change**). A search request refuses one in `options`, highlight or `snapshot` options, `result_snapshot`, or a single-index `members` / `member_weights` (a 422). Search, analytics, dynamic-read and inference ports ignored one; they refuse it.
+- **An unknown option is refused, naming it** (**behaviour change**). A search request refuses one in `options`, highlight or `snapshot` options, `result_snapshot`, or a single-index `members` (a 422). Search, analytics, dynamic-read and inference ports refuse one too; a single-index port only warns on `members`.
 
 - **A request filter can nest an element quantifier, as the port can.** A quantifier inside another, or under an object element's `$values`, failed a request DTO or tool schema with a list of union errors; the filter types now express it. The nesting counts toward `max_depth`.
 
