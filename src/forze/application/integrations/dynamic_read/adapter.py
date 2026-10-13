@@ -193,11 +193,11 @@ class DynamicReadAdapter(DynamicReadPort, TenancyMixin):
         """
 
         self._check_statement_size(statement)
-        refuse_unknown_keys(options, DynamicReadOptions)
 
         # Fail closed first: on a tenant-aware route with no bound tenant this raises
         # ``tenant_required``, which is the answer whether or not the statement is well-formed.
         tenant_id = self._tenant_id_for_resolve()
+        refuse_unknown_keys(options, DynamicReadOptions)
 
         bound: JsonDict = dict(params or {})
 

@@ -221,11 +221,16 @@ async def check_a_tenant_aware_route_without_a_tenant_fails_closed(
 ) -> None:
     """No bound tenant on a tenant-aware route is a refusal, not an unscoped read."""
 
-    with pytest.raises(CoreException) as ei:
-        await _port(h, _spec(), tenant=None, tenant_aware=True).run(h.rows_statement)
+    port = _port(h, _spec(), tenant=None, tenant_aware=True)
+    misspelt: Any = {"row_capp": 1}
 
-    assert ei.value.code == "tenant_required", h.backend
-    assert ei.value.kind == ExceptionKind.AUTHENTICATION, h.backend
+    # A malformed option does not outrank it: the missing tenant is the answer either way.
+    for options in (None, misspelt):
+        with pytest.raises(CoreException) as ei:
+            await port.run(h.rows_statement, options=options)
+
+        assert ei.value.code == "tenant_required", h.backend
+        assert ei.value.kind == ExceptionKind.AUTHENTICATION, h.backend
 
 
 async def check_two_tenants_read_disjoint_containers(h: DynamicReadHarness) -> None:
