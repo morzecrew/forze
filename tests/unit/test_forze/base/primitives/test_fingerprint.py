@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from enum import StrEnum
 
 import pytest
 from pydantic import SecretStr
@@ -106,6 +107,28 @@ def test_nested_sets_hash_identically_across_processes() -> None:
 def test_stable_json_bytes_falls_back_to_str() -> None:
     # Non-JSON-native values are coerced via ``default=str`` rather than raising.
     assert stable_json_bytes({"x": object}) == stable_json_bytes({"x": object})
+
+
+class _Name(StrEnum):
+    ORDERS = "orders"
+
+
+def test_a_str_enum_key_hashes_as_its_value_at_any_depth() -> None:
+    """A spec or member name may be a ``StrEnum``; keyed by one, a payload is still a string-keyed
+    payload, and fingerprints exactly as the plain string would."""
+
+    assert stable_json_bytes({_Name.ORDERS: 1}) == stable_json_bytes({"orders": 1})
+    assert stable_json_bytes({"x": [{"y": {_Name.ORDERS: [1]}}]}) == stable_json_bytes(
+        {"x": [{"y": {"orders": [1]}}]}
+    )
+
+
+def test_a_key_that_is_not_a_string_is_still_refused() -> None:
+    """Only string keys: an ``int`` key would fingerprint as its digits, the same as a ``"1"``
+    key, and two different payloads would share a fingerprint."""
+
+    with pytest.raises(TypeError):
+        stable_json_bytes({1: "a"})
 
 
 def test_stable_payload_fingerprint_is_deterministic_and_prefixed() -> None:
