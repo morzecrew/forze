@@ -255,12 +255,21 @@ async def test_admin_api_key_revoke_is_not_found_like_the_real_adapter() -> None
     assert excinfo.value.kind is ExceptionKind.NOT_FOUND
     assert excinfo.value.code == "api_key_not_found"
 
-    # A key its caller holds is just as unknown, and answered alike.
-    with pytest.raises(CoreException) as excinfo:
-        await lifecycle(None, None).revoke_api_key(AuthnIdentity(principal_id=uuid4()), str(uuid4()))
+    # Self-service revocation answers an unknown key alike, one at a time or several; an empty
+    # batch names no key, and revokes nothing, as the real adapter's loop does.
+    identity = AuthnIdentity(principal_id=uuid4())
 
-    assert excinfo.value.kind is ExceptionKind.NOT_FOUND
-    assert excinfo.value.code == "api_key_not_found"
+    for revoke in (
+        lambda: lifecycle(None, None).revoke_api_key(identity, str(uuid4())),
+        lambda: lifecycle(None, None).revoke_many_api_keys(identity, [str(uuid4())]),
+    ):
+        with pytest.raises(CoreException) as excinfo:
+            await revoke()
+
+        assert excinfo.value.kind is ExceptionKind.NOT_FOUND
+        assert excinfo.value.code == "api_key_not_found"
+
+    await lifecycle(None, None).revoke_many_api_keys(identity, [])
 
 
 async def test_admin_api_key_list_is_empty_like_a_keyless_principal() -> None:

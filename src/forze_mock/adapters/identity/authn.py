@@ -896,7 +896,9 @@ class MockApiKeyLifecyclePort(ApiKeyLifecyclePort):
         identity: AuthnIdentity,
         key_ids: Sequence[str],
     ) -> None:
-        _ = identity, key_ids
+        # Unknown as each single id is; an empty batch names none, as the real adapter's loop.
+        for key_id in key_ids:
+            await self.revoke_api_key(identity, key_id)
 
     async def list_principal_api_keys(self, principal_id: UUID) -> Sequence[ApiKeyInfo]:
         # Holds no keys: lists empty, as the real adapter lists a principal with none.
