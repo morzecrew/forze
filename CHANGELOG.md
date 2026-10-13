@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A cross-origin browser can read forze's response headers.** `AllowlistCORSMiddleware` is Starlette's CORS middleware answering an `OriginAllowlist` (loopback port ranges included) and exposing `EXPOSED_RESPONSE_HEADERS`: `X-Error-Code`, the request, correlation and causation ids, `Content-Disposition` and `ETag`.
+
 - **An administrator can revoke any principal's API key.** `build_authn_registry(admin_guards=...)` adds `revoke_principal_api_key` (`DELETE /admin/api-keys/{id}`) behind those guards, like `deactivate_principal`; unguarded, neither is registered. Both act in every tenant. **Breaking** for API-key lifecycle implementers.
 
 - **An administrator can list any principal's API keys**, to find one to revoke. `list_principal_api_keys` (`GET /admin/principals/{id}/api-keys`) returns the non-secret descriptors, revoked keys included, behind `admin_guards` only, and in every tenant. **Breaking** for API-key lifecycle implementers.

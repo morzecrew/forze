@@ -138,6 +138,28 @@ then own identity, tenancy, and error shaping on every websocket route yourself.
 For governed duplex realtime, use the [Socket.IO integration](socketio.md) or the
 WebSocket route below; for server-push, the SSE route below.
 
+A browser front end on another origin needs CORS, and it reads forze's own response
+headers — the `X-Error-Code`, the request and correlation ids, a download's filename —
+only once they are exposed. `AllowlistCORSMiddleware` is Starlette's `CORSMiddleware`
+answering the origins an allowlist names (a port range or `*` on a loopback host, for a dev
+server) and exposing `EXPOSED_RESPONSE_HEADERS`:
+
+```python
+from forze_fastapi.middlewares import AllowlistCORSMiddleware
+
+app.add_middleware(
+    AllowlistCORSMiddleware,
+    allowed_origins=["https://app.example.com", "http://localhost:5173-5199"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+Add it last, so it is outermost: a refusal from the security middleware then carries the
+CORS headers too, and the browser can read its error code. An app that renames the invocation headers, or sets its own, passes
+`expose_headers=(*EXPOSED_RESPONSE_HEADERS, "X-Mine")`.
+
 ## Map errors to HTTP
 
 `register_exception_handlers` turns a `CoreException` into a response — the kind
