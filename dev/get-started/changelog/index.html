@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.66">
+      <meta name="generator" content="zensical-0.0.67">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.1502b751.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.4ae390e2.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.96d1a7e4.min.css">
       
       
 
@@ -9231,6 +9231,7 @@
               <article class="md-content__inner md-typeset">
                 
                   
+
   
   
 
@@ -9295,7 +9296,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A filter, sort or aggregates expression refuses a key it does not define, naming it</strong> (<strong>behaviour change</strong>). A request DTO dropped it, so <code>{"$values": {…}, "$bogus": 1}</code> returned a wider page and <code>{"$bogus": …}</code> failed as <code>{}</code>; the port ignored one beside <code>$values</code>, a second combinator, or a mistyped <code>$having</code>.</p>
 </li>
 <li>
-<p><strong>A search request refuses an option it does not define</strong> (<strong>behaviour change</strong>). Search options are closed like filters: an unknown key in <code>options</code> or its highlight or snapshot options, <code>result_snapshot</code> (use <code>snapshot</code>), or a single-index search's <code>members</code> / <code>member_weights</code> (dropped with a warning) is a 422.</p>
+<p><strong>An unknown option is refused, naming it</strong> (<strong>behaviour change</strong>). A search request refuses one in <code>options</code>, highlight or <code>snapshot</code> options, or <code>result_snapshot</code> (a 422), as search, analytics, dynamic-read and inference ports now do. A single-index request refuses <code>members</code> / <code>member_weights</code>; its port only warns.</p>
+</li>
+<li>
+<p><strong>A request filter can nest an element quantifier, as the port can.</strong> A quantifier inside another, or under an object element's <code>$values</code>, failed a request DTO or tool schema with a list of union errors; the filter types now express it. The nesting counts toward <code>max_depth</code>.</p>
 </li>
 <li>
 <p><strong>A Temporal schedule created from cron expressions can be described and listed.</strong> The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.</p>
@@ -12236,7 +12240,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </footer>
       
     </div>
-    <div class="md-dialog" data-md-component="dialog">
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
       <div class="md-dialog__inner md-typeset"></div>
     </div>
     
@@ -12250,10 +12254,10 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
       
         
         
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.b7d3f789.min.js"></script>
+      <script src="../../assets/javascripts/bundle.67a597eb.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       

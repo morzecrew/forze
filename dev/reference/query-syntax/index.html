@@ -25,7 +25,7 @@
       
       
       <link rel="icon" href="../../_images/forze-multicolor.png">
-      <meta name="generator" content="zensical-0.0.66">
+      <meta name="generator" content="zensical-0.0.67">
     
     
       
@@ -36,12 +36,12 @@
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.1502b751.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.4ae390e2.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.812a03bb.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.96d1a7e4.min.css">
       
       
 
@@ -6747,6 +6747,7 @@
               <article class="md-content__inner md-typeset">
                 
                   
+
   
   
 
@@ -6964,9 +6965,15 @@ traverse a JSON/JSONB column. A few rules to know (Postgres):</p>
     <span class="s2">"quantity"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$gt"</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>
 <span class="p">}}}}}</span>
 </code></pre></div>
-<p>Quantifiers <strong>do not nest</strong> (<code>$any</code> inside <code>$any</code> is rejected), and inside an
-object-array <code>$values</code> the <code>null</code> / list / quantifier shortcuts aren't allowed —
-only literal operators (which still AND together per field).</p>
+<p>A quantifier can nest. Under an object element's <code>$values</code> it reaches a sub-array of
+that element, and directly inside another quantifier it ranges over an array of arrays:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"orders"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$any"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"items"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$any"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"sku"</span><span class="p">:</span> <span class="s2">"a"</span><span class="p">}}}}}}}}</span>
+<span class="p">{</span><span class="s2">"$values"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"matrix"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$any"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"$any"</span><span class="p">:</span> <span class="s2">"hot"</span><span class="p">}}}}</span>
+</code></pre></div>
+<p>A backend that cannot compile a nested quantifier refuses it with
+<code>query_feature_unsupported</code>. Inside an object-array <code>$values</code> the <code>null</code> and list
+shortcuts aren't allowed; a field takes a scalar, literal operators (which still AND
+together per field) or a nested quantifier.</p>
 <h2 id="comparing-fields-fields">Comparing fields — <code>$fields</code><a class="headerlink" href="#comparing-fields-fields" title="Permanent link">&para;</a></h2>
 <p>Compare one field to another, not to a literal. A bare string value is a <strong>field
 path</strong>, and only the equality/ordering operators apply (no membership, text, or
@@ -7086,7 +7093,7 @@ always use the defaults.</p>
 <tr>
 <td><code>max_depth</code></td>
 <td>32</td>
-<td>nesting of <code>$and</code> / <code>$or</code> / <code>$not</code></td>
+<td>nesting of <code>$and</code> / <code>$or</code> / <code>$not</code> and element quantifiers</td>
 </tr>
 <tr>
 <td><code>max_clauses</code></td>
@@ -7115,13 +7122,18 @@ regex with unsafe nesting/repetition — raises a <code>precondition</code> <cod
 (HTTP 400; the caller supplied a bad query) before the query runs. A request DTO built on
 these types (the kit's list, search, aggregate and stored-file requests) refuses it at its
 boundary; over HTTP that is a 422 whose message names the key, while an <abbr title="Model Context Protocol">MCP</abbr> tool reports
-only the field it rejected. A filter the types cannot express but the parser accepts (a
-nested element quantifier) is refused there with pydantic's own errors.</p>
+only the field it rejected.</p>
 <p>The rule holds for every expression: an unknown key in a sort spec (<code>{"dir", "nulls"}</code>), in
 an aggregates expression (<code>$groups</code>, <code>$computed</code>, <code>$having</code>, or a metric's <code>field</code>,
 <code>filter</code>, <code>p</code>) or in a request's search options (<code>snapshot</code> options and highlight options
 included) is refused, never dropped. A single-index search request that names a hub or
 federated key (<code>members</code>, <code>member_weights</code>) is refused at the request too.</p>
+<p>Options handed to a port directly are held to the same types. A search port refuses an
+option, a highlight option or a <code>snapshot</code> option that no search options type defines.
+The analytics, dynamic-read and inference ports refuse a key their run options
+(<code>AnalyticsRunOptions</code>, <code>DynamicReadOptions</code>, <code>InferenceRunOptions</code>) do not define. Each
+refusal is a <code>precondition</code> naming the key, so a misspelt <code>timeout</code> or <code>row_cap</code> cannot
+run a call without the bound it meant to set.</p>
 <p>A backend can cap a filter lower than any spec's limits. On Firestore an <code>$in</code> takes
 at most 30 values, and a filter at most 30 disjunctions once expanded: an <code>$in</code>
 counts one per value, AND multiplies its parts' counts and OR adds them, so two
@@ -7258,7 +7270,7 @@ fields; object-array quantifiers render as <code>$elemMatch</code>.</p>
 </footer>
       
     </div>
-    <div class="md-dialog" data-md-component="dialog">
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
       <div class="md-dialog__inner md-typeset"></div>
     </div>
     
@@ -7272,10 +7284,10 @@ fields; object-array quantifiers render as <code>$elemMatch</code>.</p>
       
         
         
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["search.highlight","navigation.footer","navigation.instant","navigation.instant.progress","navigation.tabs","navigation.sections","navigation.path","navigation.top","toc.follow","content.code.copy","content.code.select","content.code.annotate","content.tooltips"],"redirect":null,"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"alias":true,"default":"latest","provider":"mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.b7d3f789.min.js"></script>
+      <script src="../../assets/javascripts/bundle.67a597eb.min.js"></script>
       
         <script src="../../_javascripts/theme.js"></script>
       
