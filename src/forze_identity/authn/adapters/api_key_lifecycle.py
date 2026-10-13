@@ -312,10 +312,13 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         try:
-            account = await find_api_key_account_by_id(self.ak_qry, UUID(key_id))
+            parsed_id = UUID(key_id)
 
         except ValueError:
             account = None
+
+        else:
+            account = await find_api_key_account_by_id(self.ak_qry, parsed_id)
 
         # A 404, not a 401: the caller is signed in, and a browser client reads a 401 as its
         # session ending. Another principal's key answers as a missing one, disclosing nothing.

@@ -92,6 +92,18 @@ class TestApiKeyLifecycleAdapterRevoke:
         ak_cmd.update.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_a_failed_lookup_is_not_reported_as_a_missing_key(self) -> None:
+        """Only a malformed id is "not found"; the lookup's own failure surfaces as itself."""
+
+        ak_qry = _port()
+        ak_qry.find = AsyncMock(side_effect=ValueError("the store failed"))
+        adapter = _adapter(ak_qry=ak_qry)
+        adapter.eligibility.require_authentication_allowed = AsyncMock()
+
+        with pytest.raises(ValueError, match="the store failed"):
+            await adapter.revoke_api_key(AuthnIdentity(principal_id=uuid4()), str(uuid4()))
+
+    @pytest.mark.asyncio
     async def test_revoke_deactivates_owned_key(self) -> None:
         pid = uuid4()
         key_id = uuid4()
