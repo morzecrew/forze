@@ -109,13 +109,14 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        options = search_options_for_simple_adapter(options, spec=self.spec, snapshot=snapshot)
+
         # Mongo search does not produce facets or highlights; fail closed rather than
         # silently ignore a request (which would let a caller think sidecars were coming).
         reject_unsupported_facets(options, backend="Mongo")
         reject_unsupported_highlight(self.spec, options, backend="Mongo")
 
         # The encrypted-sort guard runs in the shared offset executor below.
-        options = search_options_for_simple_adapter(options, spec=self.spec)
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(options)
         pre_filter = self.render_filters(filters)
@@ -158,12 +159,12 @@ class MongoSimpleSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
+        options = search_options_for_simple_adapter(options, spec=self.spec)
         reject_unsupported_facets(options, backend="Mongo")
         reject_unsupported_highlight(self.spec, options, backend="Mongo")
         reject_encrypted_sort_fields(
             sorts, encryption=self.spec.encryption, spec_name=self.spec.name
         )
-        options = search_options_for_simple_adapter(options, spec=self.spec)
         terms = tuple(normalize_search_queries(query))
         combine = effective_phrase_combine(options)
         pre_filter = self.render_filters(filters)

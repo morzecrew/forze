@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.base import CountlessPage, CursorPage, Page
+from tests.support.analytics_options import assert_every_path_refuses_an_unknown_option
 from tests.unit.test_forze_duckdb.conftest import Params
 
 # ----------------------- #
@@ -287,3 +288,12 @@ def test_tenant_aware_config_rejects_unscoped_sql() -> None:
 
     with pytest.raises(CoreException, match="analytics_tenant_param_unreferenced"):
         config.validate_against_spec(spec)
+
+
+async def test_every_path_refuses_an_unknown_option(
+    events_parquet: str,
+    make_adapter: _AdapterFactory,
+) -> None:
+    await assert_every_path_refuses_an_unknown_option(
+        make_adapter(_sql(events_parquet)), "by_day", Params(min_total=0)
+    )

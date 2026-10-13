@@ -134,7 +134,8 @@ class QueryFilterLimits:
     """Configurable bounds for filter expression parsing."""
 
     max_depth: int = 32
-    """Maximum nesting depth of ``$and`` / ``$or`` / ``$not`` combinators."""
+    """Maximum nesting depth of ``$and`` / ``$or`` / ``$not`` combinators and element
+    quantifiers."""
 
     max_clauses: int = 256
     """Maximum number of clauses (combinator children, field keys, and per-field ops)."""
@@ -155,6 +156,7 @@ class QueryFilterLimits:
 @attrs.define(slots=True)
 class _ParseCtx:
     depth: int = 0
+    quantifier_depth: int = 0
     clause_count: int = 0
 
 
@@ -475,8 +477,19 @@ class QueryFilterExpressionParser:
         if op not in _QUANTIFIER_OPS:
             raise exc.precondition(f"Invalid element quantifier: {op!r}")
 
+        # A quantifier recurses into its element like a combinator into its children, so its
+        # nesting is bounded by the same limit, on a count of its own: only quantifiers nested
+        # in quantifiers add to it, and the level is given back on the way out.
         self._add_clauses(ctx, 1)
+
+        if ctx.quantifier_depth >= self.limits.max_depth:
+            raise exc.precondition(
+                f"Filter expression exceeds maximum depth of {self.limits.max_depth}",
+            )
+
+        ctx.quantifier_depth += 1
         inner = self._parse_element_constraint(inner_raw, ctx)
+        ctx.quantifier_depth -= 1
 
         return QueryElem(
             path=field,
@@ -539,7 +552,7 @@ class QueryFilterExpressionParser:
 
         if _QUANTIFIER_OPS & raw.keys():
             raise exc.precondition(
-                "An element quantifier cannot be combined with other operators",
+                f"An element quantifier cannot be combined with other operators ({_named(raw)})",
             )
 
         if all(k in _ELEMENT_OPS for k in raw):

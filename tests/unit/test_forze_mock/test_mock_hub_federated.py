@@ -288,3 +288,45 @@ async def test_a_hub_parses_its_filters_under_its_own_limits() -> None:
     wide_leg = await _hub_with_limits(hub_limits=None, leg_limits=_WIDE)
     with pytest.raises(CoreException):
         await wide_leg.search_page("hello", _MANY_IDS, pagination={"limit": 10})
+
+
+def _multi_leg_adapters(
+    state: MockState,
+) -> list[MockHubSearchAdapter[_Item] | MockFederatedSearchAdapter[_Item]]:
+    leg_a = SearchSpec(name="a", model_type=_Item, fields=["title"])
+    leg_b = SearchSpec(name="b", model_type=_Item, fields=["title"])
+
+    def legs() -> list[tuple[str, MockSearchAdapter[_Item]]]:
+        return [
+            ("a", MockSearchAdapter(state=state, spec=leg_a)),
+            ("b", MockSearchAdapter(state=state, spec=leg_b)),
+        ]
+
+    return [
+        MockHubSearchAdapter(
+            hub_spec=HubSearchSpec(name="hub", model_type=_Item, members=[leg_a, leg_b]),
+            legs=legs(),
+        ),
+        MockFederatedSearchAdapter(
+            federated_spec=FederatedSearchSpec(name="fed", members=[leg_a, leg_b]),
+            legs=legs(),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["search", "search_page"])
+@pytest.mark.parametrize(
+    ("kwargs", "key"),
+    [
+        ({"options": {"fuzzzy": True}}, "fuzzzy"),
+        ({"snapshot": {"idd": "run-1"}}, "idd"),
+    ],
+    ids=["option", "snapshot"],
+)
+async def test_a_hub_or_federated_search_refuses_a_key_no_type_defines(
+    method: str, kwargs: dict[str, object], key: str
+) -> None:
+    for adapter in _multi_leg_adapters(MockState()):
+        with pytest.raises(CoreException, match=key):
+            await getattr(adapter, method)("a", pagination={"limit": 10}, **kwargs)

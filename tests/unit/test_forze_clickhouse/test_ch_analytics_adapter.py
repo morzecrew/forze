@@ -21,6 +21,7 @@ from forze_clickhouse.kernel.client.value_objects import (
     ClickHouseInsertResult,
     ClickHouseQueryResult,
 )
+from tests.support.analytics_options import assert_every_path_refuses_an_unknown_option
 
 
 class _Row(BaseModel):
@@ -325,3 +326,7 @@ async def test_no_query_database_uses_static_default() -> None:
     await adapter.run("counts", _Params())
 
     assert mock.databases_seen[-1] == "analytics"
+
+
+async def test_every_path_refuses_an_unknown_option() -> None:
+    await assert_every_path_refuses_an_unknown_option(_adapter(_MockClient()), "counts", _Params())

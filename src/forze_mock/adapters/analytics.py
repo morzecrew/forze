@@ -37,6 +37,7 @@ from forze.application.integrations.analytics import (
     encode_ingest_payloads,
 )
 from forze.application.integrations.analytics.adapter_common import (
+    dry_run_enabled,
     validate_fetch_batch_size,
 )
 from forze.base.exceptions import exc
@@ -98,7 +99,7 @@ class MockAnalyticsAdapter[R: BaseModel, Ing: BaseModel](
     # ....................... #
 
     def _dry_run(self, options: AnalyticsRunOptions | None) -> bool:
-        return bool((options or {}).get("dry_run"))
+        return dry_run_enabled(options)
 
     # ....................... #
 

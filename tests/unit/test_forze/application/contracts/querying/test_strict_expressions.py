@@ -7,6 +7,7 @@ page, and ``{"$bogus": {...}}`` became ``{}``. Each now refuses it, naming the k
 
 from __future__ import annotations
 
+import json
 import random
 import re
 from typing import Any
@@ -14,14 +15,18 @@ from typing import Any
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from forze.application.contracts.analytics import AnalyticsRunOptions
+from forze.application.contracts.dynamic_read import DynamicReadOptions
+from forze.application.contracts.inference import InferenceRunOptions
 from forze.application.contracts.querying import (
     AggregatesExpression,
-    QueryFilterExpression,
-    QuerySortExpression,
-)
-from forze.application.contracts.querying import (
     AggregatesExpressionParser,
+    QueryFilterExpression,
     QueryFilterExpressionParser,
+    QueryFilterLimits,
+    QuerySortExpression,
+    QuerySortKeySpec,
+    refuse_unknown_keys,
 )
 from forze.application.contracts.search import (
     MultiSourceSearchOptions,
@@ -30,7 +35,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import CoreException
 from forze_kits.aggregates.document.dto import AggregatedListRequestDTO, ListRequestDTO
-from tests.support.query_dsl_corpus import REFUSALS
+from tests.support.query_dsl_corpus import CASES, REFUSALS, parse_corpus_filter
 
 # ----------------------- #
 
@@ -60,6 +65,17 @@ def test_a_valid_filter_is_kept_whole() -> None:
     assert ListRequestDTO.model_validate({"filters": filters}).filters == filters
 
 
+@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+def test_a_filter_the_parser_accepts_passes_the_request_type(case: Any) -> None:
+    """The request type is no narrower than the parser behind the port: a filter a backend
+    would serve is not refused at the door. Python-only operands (a set) go as JSON does."""
+
+    filters = json.loads(json.dumps(case.filters, default=list))
+    parse_corpus_filter(filters)
+
+    assert _FILTER.validate_python(filters) == filters
+
+
 @pytest.mark.parametrize(
     ("adapter", "value", "key"),
     [
@@ -86,14 +102,70 @@ def test_a_valid_filter_is_kept_whole() -> None:
         (TypeAdapter[Any](SearchOptions), {"highlight": {"pre": "<b>"}}, "pre"),
         (TypeAdapter[Any](MultiSourceSearchOptions), {"membrs": ["a"]}, "membrs"),
         (TypeAdapter[Any](SearchResultSnapshotOptions), {"ttl": 5}, "ttl"),
+        (TypeAdapter[Any](AnalyticsRunOptions), {"max_row": 5}, "max_row"),
+        (TypeAdapter[Any](DynamicReadOptions), {"row_capp": 5}, "row_capp"),
+        (TypeAdapter[Any](InferenceRunOptions), {"timeot": 5}, "timeot"),
     ],
-    ids=["sort", "aggregate", "metric", "trunc", "search", "highlight", "multi", "snapshot"],
+    ids=[
+        "sort",
+        "aggregate",
+        "metric",
+        "trunc",
+        "search",
+        "highlight",
+        "multi",
+        "snapshot",
+        "analytics",
+        "dynamic_read",
+        "inference",
+    ],
 )
 def test_a_sibling_expression_type_refuses_a_key_it_does_not_define(
     adapter: TypeAdapter[Any], value: dict[str, Any], key: str
 ) -> None:
     with pytest.raises(ValidationError, match=f"\\{key}" if key.startswith("$") else key):
         adapter.validate_python(value)
+
+
+def _quantifiers_nested(depth: int) -> dict[str, Any]:
+    inner: Any = "x"
+
+    for _ in range(depth):
+        inner = {"$any": inner}
+
+    return {"$values": {"matrix": inner}}
+
+
+def test_quantifier_nesting_is_bounded_by_the_depth_limit() -> None:
+    """Nested quantifiers recurse like combinators, so ``max_depth`` bounds them: past it the
+    filter is refused, never a ``RecursionError``, however many clauses a spec allows."""
+
+    wide = QueryFilterExpressionParser(limits=QueryFilterLimits(max_clauses=1_000_000))
+    wide.parse_filter(_quantifiers_nested(32))
+
+    for depth in (33, 5_000):
+        with pytest.raises(CoreException, match="maximum depth of 32"):
+            wide.parse_filter(_quantifiers_nested(depth))
+
+    # Only nesting counts: quantifiers side by side are each one level deep.
+    side_by_side = {"$values": {f"f{i}": {"$any": "x"} for i in range(40)}}
+    QueryFilterExpressionParser.parse(side_by_side)
+
+    # Nor do the combinators before it: a shallow quantifier after 32 of them still parses.
+    after_combinators = {
+        "$and": [{"$not": {"$values": {"a": 1}}}] * 31 + [{"$values": {"tags": {"$any": "x"}}}]
+    }
+    QueryFilterExpressionParser.parse(after_combinators)
+
+
+def test_a_port_refuses_only_the_keys_a_type_does_not_define() -> None:
+    """Required keys count as defined, as optional ones do."""
+
+    refuse_unknown_keys({"dir": "asc", "nulls": "last"}, QuerySortKeySpec)
+    refuse_unknown_keys(None, QuerySortKeySpec)
+
+    with pytest.raises(CoreException, match="Unknown key in QuerySortKeySpec: nul$"):
+        refuse_unknown_keys({"dir": "asc", "nul": "last"}, QuerySortKeySpec)
 
 
 def test_the_schema_says_no_other_keys() -> None:
@@ -116,6 +188,10 @@ def test_the_schema_says_no_other_keys() -> None:
         (
             {"$values": {"items": {"$any": {"$values": {"tags": {"$any": "x", "$eq": 1}}}}}},
             "an element quantifier cannot be combined",
+        ),
+        (
+            {"$values": {"matrix": {"$any": {"$any": "x", "$bogus": 1}}}},
+            "cannot be combined with other operators ($any, $bogus)",
         ),
     ],
 )

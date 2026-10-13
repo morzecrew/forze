@@ -3,9 +3,14 @@
 from datetime import timedelta
 from typing import TypedDict
 
+from pydantic import with_config
+
+from ..querying.expressions import CLOSED_EXPRESSION
+
 # ----------------------- #
 
 
+@with_config(CLOSED_EXPRESSION)
 class DynamicReadOptions(TypedDict, total=False):
     """Per-execution overrides for one dynamic-read call.
 

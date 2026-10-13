@@ -139,9 +139,18 @@ The whole array, compared against a list:
 }}}}}
 ```
 
-Quantifiers **do not nest** (`$any` inside `$any` is rejected), and inside an
-object-array `$values` the `null` / list / quantifier shortcuts aren't allowed —
-only literal operators (which still AND together per field).
+A quantifier can nest. Under an object element's `$values` it reaches a sub-array of
+that element, and directly inside another quantifier it ranges over an array of arrays:
+
+```python
+{"$values": {"orders": {"$any": {"$values": {"items": {"$any": {"$values": {"sku": "a"}}}}}}}}
+{"$values": {"matrix": {"$any": {"$any": "hot"}}}}
+```
+
+A backend that cannot compile a nested quantifier refuses it with
+`query_feature_unsupported`. Inside an object-array `$values` the `null` and list
+shortcuts aren't allowed; a field takes a scalar, literal operators (which still AND
+together per field) or a nested quantifier.
 
 ## Comparing fields — `$fields`
 
@@ -282,7 +291,7 @@ always use the defaults.
 
 | Limit | Default | Applies to |
 |-------|---------|------------|
-| `max_depth` | 32 | nesting of `$and` / `$or` / `$not` |
+| `max_depth` | 32 | nesting of `$and` / `$or` / `$not` and element quantifiers |
 | `max_clauses` | 256 | combinator children, `$values` / `$fields` keys, per-field operators |
 | `max_in_size` | 1000 | `$in` / `$nin`, array shortcuts, set-relation operands |
 | `max_pattern_length` | 256 | each `$like` / `$ilike` / `$regex` pattern |
@@ -293,14 +302,20 @@ regex with unsafe nesting/repetition — raises a `precondition` `CoreException`
 (HTTP 400; the caller supplied a bad query) before the query runs. A request DTO built on
 these types (the kit's list, search, aggregate and stored-file requests) refuses it at its
 boundary; over HTTP that is a 422 whose message names the key, while an MCP tool reports
-only the field it rejected. A filter the types cannot express but the parser accepts (a
-nested element quantifier) is refused there with pydantic's own errors.
+only the field it rejected.
 
 The rule holds for every expression: an unknown key in a sort spec (`{"dir", "nulls"}`), in
 an aggregates expression (`$groups`, `$computed`, `$having`, or a metric's `field`,
 `filter`, `p`) or in a request's search options (`snapshot` options and highlight options
 included) is refused, never dropped. A single-index search request that names a hub or
 federated key (`members`, `member_weights`) is refused at the request too.
+
+Options handed to a port directly are held to the same types. A search port refuses an
+option, a highlight option or a `snapshot` option that no search options type defines.
+The analytics, dynamic-read and inference ports refuse a key their run options
+(`AnalyticsRunOptions`, `DynamicReadOptions`, `InferenceRunOptions`) do not define. Each
+refusal is a `precondition` naming the key, so a misspelt `timeout` or `row_cap` cannot
+run a call without the bound it meant to set.
 
 A backend can cap a filter lower than any spec's limits. On Firestore an `$in` takes
 at most 30 values, and a filter at most 30 disjunctions once expanded: an `$in`

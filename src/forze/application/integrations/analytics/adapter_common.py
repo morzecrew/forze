@@ -18,6 +18,7 @@ from forze.application.contracts.base import (
 from forze.application.contracts.querying import (
     CursorPaginationExpression,
     PaginationExpression,
+    refuse_unknown_keys,
     resolved_cursor_limit,
 )
 from forze.application.integrations.crypto import decrypt_rows
@@ -102,6 +103,16 @@ def validated_params(
 
 
 def dry_run_enabled(options: AnalyticsRunOptions | None) -> bool:
+    """Whether *options* asks for a dry run, refusing a key
+    :class:`~forze.application.contracts.analytics.AnalyticsRunOptions` does not define.
+
+    Every backend asks this before it runs anything, on every path, so it is where an option
+    passed straight to the port is held to the type: a misspelt ``max_rows`` or ``timeout``
+    would otherwise lift a bound the caller meant to set.
+    """
+
+    refuse_unknown_keys(options, AnalyticsRunOptions)
+
     return bool((options or {}).get("dry_run"))
 
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal, NotRequired, TypeAlias, TypedDict
+from typing import Any, Literal, NotRequired, TypeAlias, TypedDict
 
 from pydantic import ConfigDict, with_config
+
+from forze.base.exceptions import exc
 
 from .types import Array, HierarchyValue, Numeric, Scalar, TextPatternValue
 
@@ -65,8 +67,20 @@ QueryElementOpConjunction = TypedDict(
 """Operator map for a single array element (equality, ordering, text patterns, and
 membership) — mirrors ``ALL_ELEMENT_OPS``."""
 
-QueryElementValueMapValue = QueryElementOpConjunction | Scalar
-"""Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``."""
+QueryElementQuantifierExpression = TypedDict(
+    "QueryElementQuantifierExpression",
+    {
+        "$any": "QueryElementConstraint",
+        "$all": "QueryElementConstraint",
+        "$none": "QueryElementConstraint",
+    },
+    total=False,
+)
+"""Element quantifier application on an array field."""
+
+QueryElementValueMapValue = QueryElementOpConjunction | Scalar | QueryElementQuantifierExpression
+"""Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``; a quantifier
+reaches into a sub-array of the object element."""
 
 QueryElementValueMap = Mapping[str, QueryElementValueMapValue]
 """Element-relative field map (object arrays)."""
@@ -77,19 +91,14 @@ QueryElementValuesPredicate = TypedDict(
 )
 """Element-relative ``$values`` bundle for object-array quantifiers."""
 
-QueryElementConstraint = QueryElementOpConjunction | Scalar | QueryElementValuesPredicate
-"""Inner constraint for ``$any`` / ``$all`` / ``$none`` (op map, scalar shortcut, or ``$values``)."""
-
-QueryElementQuantifierExpression = TypedDict(
-    "QueryElementQuantifierExpression",
-    {
-        "$any": QueryElementConstraint,
-        "$all": QueryElementConstraint,
-        "$none": QueryElementConstraint,
-    },
-    total=False,
+QueryElementConstraint: TypeAlias = (
+    QueryElementOpConjunction
+    | Scalar
+    | QueryElementValuesPredicate
+    | QueryElementQuantifierExpression
 )
-"""Element quantifier application on an array field."""
+"""Inner constraint for ``$any`` / ``$all`` / ``$none``: an op map, a scalar shortcut,
+``$values``, or a quantifier over an element that is itself an array."""
 
 QueryValueMapValue = (
     QueryValueOpConjunction | QueryValueShortcutValue | QueryElementQuantifierExpression
@@ -354,6 +363,24 @@ CLOSED_EXPRESSION = ConfigDict(extra="forbid")
 """Validated as a pydantic type (a request DTO, a tool's input schema), an expression refuses a
 key it does not define. Dropped instead, an unknown key widened a filter, lost a ``$having``
 or a null placement, or emptied the expression, all without a word."""
+
+
+def refuse_unknown_keys(value: Mapping[str, Any] | None, shape: Any) -> None:
+    """Refuse a key of *value* that the TypedDict *shape* does not define, naming it.
+
+    The port's half of :data:`CLOSED_EXPRESSION`: a mapping handed to a port directly is never
+    validated as a pydantic type, and an adapter reads only the keys it knows, so a misspelt
+    option was dropped as quietly there.
+
+    :raises exc.precondition: *value* has a key *shape* does not define.
+    """
+
+    if value and (unknown := value.keys() - shape.__required_keys__ - shape.__optional_keys__):
+        raise exc.precondition(
+            f"Unknown {'key' if len(unknown) == 1 else 'keys'} in {shape.__name__}: "
+            + ", ".join(sorted(map(str, unknown))),
+        )
+
 
 for _expression in (
     QueryValueOpConjunction,

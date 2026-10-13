@@ -43,7 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A filter, sort or aggregates expression refuses a key it does not define, naming it** (**behaviour change**). A request DTO dropped it, so `{"$values": {…}, "$bogus": 1}` returned a wider page and `{"$bogus": …}` failed as `{}`; the port ignored one beside `$values`, a second combinator, or a mistyped `$having`.
 
-- **A search request refuses an option it does not define** (**behaviour change**). Search options are closed like filters: an unknown key in `options` or its highlight or snapshot options, `result_snapshot` (use `snapshot`), or a single-index search's `members` / `member_weights` (dropped with a warning) is a 422.
+- **An unknown option is refused, naming it** (**behaviour change**). A search request refuses one in `options`, highlight or `snapshot` options, or `result_snapshot` (a 422), as search, analytics, dynamic-read and inference ports now do. A single-index request refuses `members` / `member_weights`; its port only warns.
+
+- **A request filter can nest an element quantifier, as the port can.** A quantifier inside another, or under an object element's `$values`, failed a request DTO or tool schema with a list of union errors; the filter types now express it. The nesting counts toward `max_depth`.
 
 - **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.
 

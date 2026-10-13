@@ -342,6 +342,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
             options,
+            snapshot=snapshot,
         )
 
         fp_computed = SearchResultSnapshot.federated_fingerprint(
@@ -590,6 +591,7 @@ class MeilisearchFederatedSearchAdapter[M: BaseModel](
         leg_opts, member_weights = prepare_federated_search_options(
             self.federated_spec,
             options,
+            snapshot=snapshot,
         )
 
         # Spec-level (RRF mode only): thin specs store/replay tiny ``(member, id)``

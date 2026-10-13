@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -572,3 +573,36 @@ async def test_federated_text_query_on_an_index_older_than_its_default_sort(
 
     assert page.count == 8
     assert len(page.hits) == 8
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("merge", ["federation", "rrf"])
+async def test_federated_search_refuses_a_misspelt_snapshot_option(
+    meilisearch_client, merge: str
+) -> None:
+    """Refused by name before any leg is queried, so the members need no indexes."""
+
+    spec = FederatedSearchSpec(name=f"fed_snap_{merge}", members=(_mem("a"), _mem("b")))
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                MeilisearchClientDepKey: meilisearch_client,
+                FederatedSearchQueryDepKey: ConfigurableMeilisearchFederatedSearch(
+                    config=MeilisearchFederatedSearchConfig(
+                        merge=merge,  # type: ignore[arg-type]
+                        members={
+                            "a": MeilisearchSearchConfig(index_uid=f"snap_{merge}_a"),
+                            "b": MeilisearchSearchConfig(index_uid=f"snap_{merge}_b"),
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+    misspelt: Any = {"idd": "run-1"}
+
+    with pytest.raises(CoreException, match="idd") as refused:
+        await ctx.search.federated(spec).search_page("alpha", snapshot=misspelt)
+
+    assert refused.value.kind is ExceptionKind.PRECONDITION

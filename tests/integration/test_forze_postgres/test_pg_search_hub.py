@@ -256,6 +256,11 @@ async def test_postgres_hub_pgroonga_search_links_or_legs(pg_client: PostgresCli
     assert n_off == 3
     assert {h.id for h in all_legs_off} == {lid1, lid2, lid3}
 
+    # A misspelt snapshot option is refused by name, not run under the spec's defaults.
+    misspelt: Any = {"idd": "run-1"}
+    with pytest.raises(CoreException, match="idd"):
+        await adapter.search_page("alpha", snapshot=misspelt)
+
     __p = await adapter.search_page("no_such_term_xyz")
     _ = __p.hits
     n_no_match = __p.count

@@ -1,5 +1,6 @@
 """Unit tests for Postgres search option normalization."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,13 +8,17 @@ from pydantic import BaseModel
 
 from forze.application.contracts.search import (
     FederatedSearchSpec,
+    HighlightOptions,
     HubSearchSpec,
+    MultiSourceSearchOptions,
+    SearchOptions,
     SearchSpec,
     prepare_federated_search_options,
     prepare_hub_search_options,
+    reject_federated_facets,
     search_options_for_simple_adapter,
 )
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
@@ -192,3 +197,92 @@ def test_search_options_for_simple_adapter_warns_on_members_only() -> None:
     fake_log.warning.assert_called()
     assert "members" not in opts
     assert opts.get("fuzzy") is True
+
+
+# ....................... #
+
+
+def _hub() -> HubSearchSpec[_M]:
+    return HubSearchSpec(name="hub", model_type=_M, members=[_leg("a"), _leg("b")])
+
+
+def _federated() -> FederatedSearchSpec[_M]:
+    return FederatedSearchSpec(name="fed", members=[_leg("a"), _leg("b")])
+
+
+_NORMALIZERS = {
+    "simple": lambda options: search_options_for_simple_adapter(options, spec=_leg("a")),
+    "hub": lambda options: prepare_hub_search_options(_hub(), options),
+    "federated": lambda options: prepare_federated_search_options(_federated(), options),
+}
+
+
+@pytest.mark.parametrize("normalize", _NORMALIZERS.values(), ids=list(_NORMALIZERS))
+@pytest.mark.parametrize(
+    ("options", "key"),
+    [
+        ({"fuzzzy": True}, "fuzzzy"),
+        # The old spelling of the request's ``snapshot`` argument.
+        ({"result_snapshot": {"mode": True}}, "result_snapshot"),
+        ({"highlight": {"pre_tagg": "<b>"}}, "pre_tagg"),
+    ],
+    ids=["option", "result_snapshot", "highlight"],
+)
+def test_an_option_no_type_defines_is_refused_by_name(
+    normalize: Any, options: dict[str, Any], key: str
+) -> None:
+    with pytest.raises(CoreException, match=key) as refused:
+        normalize(options)
+
+    assert refused.value.kind is ExceptionKind.PRECONDITION
+
+
+def test_a_snapshot_key_no_type_defines_is_refused_by_name() -> None:
+    snapshot: Any = {"id": "run-1", "ttl_second": 60}
+
+    for refuse in (
+        lambda: search_options_for_simple_adapter(None, spec=_leg("a"), snapshot=snapshot),
+        lambda: prepare_hub_search_options(_hub(), None, snapshot=snapshot),
+        lambda: prepare_federated_search_options(_federated(), None, snapshot=snapshot),
+    ):
+        with pytest.raises(CoreException, match="ttl_second"):
+            refuse()
+
+    # A federated search reads its options for facets first, and refuses there.
+    with pytest.raises(CoreException, match="fuzzzy"):
+        reject_federated_facets({"fuzzzy": True})  # type: ignore[typeddict-unknown-key]
+
+
+def test_every_option_the_type_defines_is_accepted() -> None:
+    options: dict[str, Any] = {
+        "fuzzy": True,
+        "weights": {"x": 1.0},
+        "fields": ["x"],
+        "phrase_combine": "all",
+        "max_candidates": 10,
+        "search_count": "exact",
+        "facets": ["x"],
+        "facet_size": 5,
+        "highlight": {
+            "fields": ["x"],
+            "pre_tag": "<b>",
+            "post_tag": "</b>",
+            "fragment_size": 10,
+            "max_fragments": 1,
+        },
+    }
+    multi: dict[str, Any] = {
+        "member_weights": {"a": 1.0},
+        "members": ["a"],
+        "merge_candidates": 10,
+        "fusion": "rrf",
+    }
+
+    # The lists track the types, so a key added to either is added here too.
+    assert options.keys() == SearchOptions.__optional_keys__
+    assert options["highlight"].keys() == HighlightOptions.__optional_keys__
+    assert options.keys() | multi.keys() == MultiSourceSearchOptions.__optional_keys__
+
+    assert search_options_for_simple_adapter(options, spec=_leg("a")) == options
+    prepare_hub_search_options(_hub(), {**options, **multi})
+    prepare_federated_search_options(_federated(), {**options, **multi})

@@ -12,6 +12,7 @@ from forze.application.contracts.analytics import (
 from forze.base.exceptions import CoreException
 from forze_mock.adapters.analytics import MockAnalyticsAdapter
 from forze_mock.state import MockState
+from tests.support.analytics_options import assert_every_path_refuses_an_unknown_option
 
 # ----------------------- #
 
@@ -244,3 +245,9 @@ async def test_append_success() -> None:
     assert result is not None
     assert result.accepted == 2
     assert len(state.analytics_ingest_log["events"]) == 2
+
+
+async def test_every_path_refuses_an_unknown_option() -> None:
+    state = MockState()
+    _seed(state)
+    await assert_every_path_refuses_an_unknown_option(_adapter(state), "counts", _Params())

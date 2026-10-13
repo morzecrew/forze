@@ -182,6 +182,19 @@ async def check_a_call_option_cannot_raise_the_cap(h: DynamicReadHarness) -> Non
     assert ei.value.code == ROW_CAP_EXCEEDED_CODE, h.backend
 
 
+async def check_an_unknown_option_is_refused_by_name(h: DynamicReadHarness) -> None:
+    """An option :class:`DynamicReadOptions` does not define is refused, naming it: a
+    misspelt ``row_cap`` would otherwise run the call under the route's wider ceiling."""
+
+    await h.seed(None, 1)
+    options: Any = {"row_capp": 1}
+
+    with pytest.raises(CoreException, match="row_capp") as ei:
+        await _port(h, _spec(row_cap=5)).run(h.rows_statement, options=options)
+
+    assert ei.value.kind == ExceptionKind.PRECONDITION, h.backend
+
+
 async def check_an_oversized_statement_is_refused(h: DynamicReadHarness) -> None:
     """A statement over the byte cap never reaches the engine."""
 
@@ -208,11 +221,16 @@ async def check_a_tenant_aware_route_without_a_tenant_fails_closed(
 ) -> None:
     """No bound tenant on a tenant-aware route is a refusal, not an unscoped read."""
 
-    with pytest.raises(CoreException) as ei:
-        await _port(h, _spec(), tenant=None, tenant_aware=True).run(h.rows_statement)
+    port = _port(h, _spec(), tenant=None, tenant_aware=True)
+    misspelt: Any = {"row_capp": 1}
 
-    assert ei.value.code == "tenant_required", h.backend
-    assert ei.value.kind == ExceptionKind.AUTHENTICATION, h.backend
+    # A malformed option does not outrank it: the missing tenant is the answer either way.
+    for options in (None, misspelt):
+        with pytest.raises(CoreException) as ei:
+            await port.run(h.rows_statement, options=options)
+
+        assert ei.value.code == "tenant_required", h.backend
+        assert ei.value.kind == ExceptionKind.AUTHENTICATION, h.backend
 
 
 async def check_two_tenants_read_disjoint_containers(h: DynamicReadHarness) -> None:
@@ -287,6 +305,7 @@ DYNAMIC_READ_BATTERY: tuple[Check, ...] = (
     check_one_row_over_the_cap_is_refused,
     check_a_call_option_clamps_the_cap_down,
     check_a_call_option_cannot_raise_the_cap,
+    check_an_unknown_option_is_refused_by_name,
     check_an_oversized_statement_is_refused,
     check_an_empty_statement_is_refused,
     check_a_tenant_aware_route_without_a_tenant_fails_closed,

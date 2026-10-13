@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,7 +20,7 @@ from forze.application.contracts.search import (
 )
 from forze.application.contracts.querying import UNSUPPORTED_QUERY_FEATURE_CODE
 from forze.application.execution import Deps
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_postgres.execution.deps import (
     ConfigurablePostgresFederatedSearch,
     ConfigurablePostgresSearch,
@@ -596,3 +597,44 @@ async def test_federated_search_refuses_to_aggregate(pg_client: PostgresClient) 
         await port.aggregate_search({"$computed": {"n": {"$count": None}}}, "token")
 
     assert refused.value.code == UNSUPPORTED_QUERY_FEATURE_CODE
+
+
+@pytest.mark.asyncio
+async def test_federated_search_refuses_a_misspelt_snapshot_option(
+    pg_client: PostgresClient,
+) -> None:
+    """Refused by name before any statement, as the aggregate refusal above is."""
+
+    suffix = uuid4().hex[:10]
+    legs = (f"a_{suffix}", f"b_{suffix}")
+    ctx = context_from_deps(
+        Deps.plain(
+            {
+                PostgresClientDepKey: pg_client,
+                PostgresIntrospectorDepKey: PostgresIntrospector(client=pg_client),
+                FederatedSearchQueryDepKey: ConfigurablePostgresFederatedSearch(
+                    config=PostgresFederatedSearchConfig(
+                        members={
+                            leg: PostgresFederatedSearchLegSearch(
+                                search=PostgresSearchConfig(
+                                    index=("public", f"idx_{leg}"),
+                                    read=("public", leg),
+                                    engine="pgroonga",
+                                ),
+                            )
+                            for leg in legs
+                        },
+                    ),
+                ),
+            }
+        )
+    )
+    port = ctx.search.federated(
+        FederatedSearchSpec(name=f"fed_snap_{suffix}", members=tuple(_mem(leg) for leg in legs))
+    )
+    misspelt: Any = {"idd": "run-1"}
+
+    with pytest.raises(CoreException, match="idd") as refused:
+        await port.search_page("token", snapshot=misspelt)
+
+    assert refused.value.kind is ExceptionKind.PRECONDITION

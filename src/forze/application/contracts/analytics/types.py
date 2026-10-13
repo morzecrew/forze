@@ -3,9 +3,14 @@
 from datetime import timedelta
 from typing import TypedDict
 
+from pydantic import with_config
+
+from ..querying.expressions import CLOSED_EXPRESSION
+
 # ----------------------- #
 
 
+@with_config(CLOSED_EXPRESSION)
 class AnalyticsRunOptions(TypedDict, total=False):
     """Adapter-specific options for a single analytics query execution.
 

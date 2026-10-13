@@ -14,6 +14,7 @@ from typing import Any
 
 from forze.base.exceptions import exc
 
+from .search_options import refuse_unknown_search_options
 from .specs import HubSearchSpec, SearchSpec
 from .types import SearchOptions
 from .value_objects import HitHighlights
@@ -389,7 +390,11 @@ def reject_federated_facets(options: SearchOptions | None) -> None:
     Federated facets are deferred — they need a per-member (`Mapping[member, FacetResults]`)
     response shape distinct from the flat single-index/hub `FacetResults`. Until that ships,
     a facet request is refused rather than silently dropped; facet each member index directly.
+    The first thing a federated search asks of its options, so it also refuses a key no
+    search options type defines.
     """
+
+    refuse_unknown_search_options(options)
 
     if (options or {}).get("facets"):
         raise exc.precondition(

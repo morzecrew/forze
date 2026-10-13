@@ -58,6 +58,7 @@ from .expressions import (
     QueryValueMapValue,
     QueryValueOpConjunction,
     QueryValuesPredicate,
+    refuse_unknown_keys,
 )
 from .field_policy import (
     QueryFieldGuard,
@@ -282,6 +283,7 @@ __all__ = [
     "validate_sort_fields",
     "with_id_tiebreaker",
     "row_value_for_sort_key",
+    "refuse_unknown_keys",
     "QueryConjunction",
     "QueryDisjunction",
 ]

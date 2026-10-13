@@ -376,7 +376,7 @@ class PostgresRankedPipelineSearchAdapter[M: BaseModel](
         return_type: type[BaseModel] | None = None,
         return_fields: Sequence[str] | None = None,
     ) -> Any:
-        options = search_options_for_simple_adapter(options, spec=self.spec)
+        options = search_options_for_simple_adapter(options, spec=self.spec, snapshot=snapshot)
 
         if not normalize_search_queries(query):
             return await self._offset_empty_query_browse(
