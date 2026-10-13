@@ -75,11 +75,11 @@ def _wake_after_commit(
     """The wake a flush calls once it wrote rows, or ``None`` when the route has none.
 
     The pub/sub port is resolved here, when the command is built, so a wake route that is
-    not wired fails the operation as a configuration error instead of every wake being
-    dropped quietly. Publishing is deferred until the root transaction commits — a wake
+    not wired, or is tenant-aware, fails the operation as a configuration error instead of
+    every wake being dropped quietly. Publishing is deferred until the root transaction commits — a wake
     must never arrive before its rows are visible, and a rollback publishes nothing — and
-    it is best-effort: a failed publish is logged, never raised, as the relay's poll still
-    delivers the rows.
+    it is best-effort: a publish that fails or outlasts ``publish_timeout`` is logged,
+    never raised, as the relay's poll still delivers the rows.
     """
 
     wake = spec.wake
@@ -90,11 +90,16 @@ def _wake_after_commit(
     port: PubSubCommandPort[OutboxWakeSignal] = ctx.deps.resolve_configurable(
         ctx, PubSubCommandDepKey, wake.spec, route=wake.spec.name
     )
+    wake.require_tenant_global(port)
     signal = OutboxWakeSignal(route=str(spec.name))
+    budget = wake.publish_timeout.total_seconds()
 
     async def _publish() -> None:
         try:
-            await port.publish(wake.topic, signal)
+            # Bounded: it runs before the operation returns, and a stalled broker must cost
+            # a writer at most this long, never its whole retry budget.
+            async with asyncio.timeout(budget):
+                await port.publish(wake.topic, signal)
 
         except asyncio.CancelledError:
             raise

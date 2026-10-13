@@ -1,10 +1,12 @@
 """Wake an outbox relay when rows commit, so it need not wait out its poll."""
 
-from typing import Final, final
+from datetime import timedelta
+from typing import Any, Final, final
 
 import attrs
 from pydantic import BaseModel, ConfigDict
 
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 from forze.base.serialization import PydanticModelCodec
 
@@ -55,6 +57,18 @@ class OutboxWake:
     topic: str = DEFAULT_OUTBOX_WAKE_TOPIC
     """Topic the wake is published on; outbox routes may share it."""
 
+    publish_timeout: timedelta = timedelta(seconds=1)
+    """How long publishing a wake may take before it is given up, logged and skipped.
+
+    The publish runs after commit but before the operation returns, so a stalled broker
+    would otherwise hold every writer of the route; a skipped wake costs one poll."""
+
+    # ....................... #
+
+    def __attrs_post_init__(self) -> None:
+        if self.publish_timeout <= timedelta(0):
+            raise exc.configuration("OutboxWake.publish_timeout must be positive")
+
     # ....................... #
 
     @property
@@ -62,3 +76,20 @@ class OutboxWake:
         """The pub/sub spec both sides resolve their port with."""
 
         return PubSubSpec(name=self.route, codec=PydanticModelCodec(OutboxWakeSignal))
+
+    # ....................... #
+
+    def require_tenant_global(self, port: Any) -> None:
+        """Refuse a pub/sub port that partitions by tenant.
+
+        A flush inside a tenant would publish into that tenant's partition, which the relay,
+        listening outside any tenant, never hears: every wake would be lost without a sign.
+        """
+
+        if getattr(port, "tenant_aware", False):
+            raise exc.configuration(
+                f"Outbox wake route {self.route!r} is tenant-aware, but a wake must be "
+                "tenant-global: the relay listens outside any tenant, so a wake published "
+                "into a tenant's partition is never heard. Wire the route with "
+                "tenant_aware=False."
+            )

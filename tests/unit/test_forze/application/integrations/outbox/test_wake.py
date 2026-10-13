@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import timedelta
 from typing import Any
 from unittest.mock import patch
 
@@ -15,8 +17,9 @@ from forze.application.contracts.outbox import (
     OutboxWake,
 )
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
-from forze_mock import MockDepsModule, MockState
+from forze_mock import MockDepsModule, MockRouteConfig, MockState
 from forze_mock.adapters.pubsub import MockPubSubAdapter
 from tests.support.execution_context import context_from_modules
 
@@ -147,3 +150,32 @@ def test_cataloguing_a_route_with_a_wake_catalogues_its_pubsub_route() -> None:
         (SpecPlane.OUTBOX, "orders-events"),
         (SpecPlane.PUBSUB, "outbox-wake"),
     }
+
+
+async def test_a_stalled_wake_publish_does_not_hold_the_commit() -> None:
+    state = MockState()
+    ctx = context_from_modules(MockDepsModule(state=state))
+
+    async def _stalled(*_: Any, **__: Any) -> None:
+        await asyncio.Event().wait()
+
+    with patch.object(MockPubSubAdapter, "publish", _stalled):
+        async with asyncio.timeout(3.0):
+            async with ctx.tx_ctx.scope("mock"):
+                await _stage_and_flush(ctx)
+
+    assert _rows(state) == 1
+
+
+async def test_a_tenant_aware_wake_route_is_refused() -> None:
+    ctx = context_from_modules(
+        MockDepsModule(routes={"outbox-wake": MockRouteConfig(tenant_aware=True)})
+    )
+
+    with pytest.raises(CoreException, match="tenant-global"):
+        ctx.outbox.command(SPEC)
+
+
+def test_a_wake_that_cannot_wait_to_publish_is_refused() -> None:
+    with pytest.raises(CoreException, match="publish_timeout must be positive"):
+        OutboxWake(route="outbox-wake", publish_timeout=timedelta(0))

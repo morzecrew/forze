@@ -64,8 +64,8 @@ lifecycle = LifecyclePlan.from_steps(
 
 A polling relay delivers a row up to one `interval` after it commits. Shortening the
 interval adds an idle claim query on every pass. Give the route a wake instead: each
-flush publishes a small signal on a pub/sub topic once its transaction commits, and the
-relay runs a pass as soon as it hears it.
+flush that wrote rows publishes a small signal on a pub/sub topic once its transaction
+commits, and the relay runs a pass as soon as it hears it.
 
 ```python
 from forze.application.contracts.outbox import OutboxWake
@@ -80,9 +80,10 @@ ORDER_EVENTS = OutboxSpec(
 
 The signal names only the route, so it can never carry or lose a row. A rollback
 publishes nothing, and a wake is never published before its rows are visible. A lost
-wake, or a broken pub/sub connection, leaves the row to the next poll, so keep the
-`interval` as the fallback. Wire the wake's pub/sub route, tenant-global, in every
-process that flushes the route and in the one that relays it.
+wake, a broken pub/sub connection, or a publish that outlasts `publish_timeout` (one
+second by default) leaves the row to the next poll, so keep the `interval` as the
+fallback. Wire the wake's pub/sub route in every process that flushes the route and in
+the one that relays it. The route must be tenant-global: a tenant-aware one is refused.
 
 With wakes, passes follow commits, so the stale-claim reclaim would run on each of them.
 It runs at most once per `reclaim_every`, which defaults to once per poll tick.
