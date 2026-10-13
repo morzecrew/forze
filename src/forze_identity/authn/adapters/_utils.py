@@ -8,7 +8,7 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     KeyedUpdate,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import utcnow
 
 from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
@@ -145,6 +145,9 @@ async def find_api_key_accounts_by_principal(
 _REVOKE_BATCH = 1_000
 """Sessions revoked per round trip."""
 
+_STALE_RETRIES = 3
+"""Consecutive batches a concurrent write may make stale before the revocation gives up."""
+
 
 async def revoke_sessions_matching(
     session_qry: DocumentQueryPort[ReadSession],
@@ -160,9 +163,14 @@ async def revoke_sessions_matching(
 
     Shared by cascaded principal deactivation (token lifecycle) and the
     password-change "log out everywhere" cascade. Only live sessions match: a revoked
-    or rotated one is already refused. A principal can hold any number of them (an
-    expired session is never revoked), so they are revoked in batches until a batch
+    or rotated one is already refused. Nothing revokes a session when it expires, so a
+    principal can hold any number of them, and they are revoked in batches until a batch
     comes back short; each batch's revocations drop those rows out of the filter.
+
+    A concurrent refresh can rotate a session between the read and the write, which makes
+    its revision stale and refuses the batch. The batch is then read again, so the rotated
+    session drops out and the session that replaced it is revoked instead; a batch that
+    goes stale more than a few times in a row raises.
     """
 
     filters: Any = {
@@ -172,6 +180,8 @@ async def revoke_sessions_matching(
             "rotated_at": None,
         },
     }
+
+    stale = 0
 
     while True:
         sessions = await session_qry.find_many(
@@ -187,7 +197,21 @@ async def revoke_sessions_matching(
             for x in sessions.hits
         ]
 
-        await session_cmd.update_many(upds, return_new=False)
+        try:
+            await session_cmd.update_many(upds, return_new=False)
+
+        except CoreException as error:
+            # Stale shows up as a revision mismatch when the read for the write sees the new
+            # revision, and as a conditional update that matched no row when it does not.
+            is_stale = error.code == "revision_mismatch" or error.kind is ExceptionKind.CONCURRENCY
+
+            if not is_stale or stale >= _STALE_RETRIES:
+                raise
+
+            stale += 1
+            continue
+
+        stale = 0
 
         if len(sessions.hits) < _REVOKE_BATCH:
             return

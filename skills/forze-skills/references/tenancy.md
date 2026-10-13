@@ -51,7 +51,7 @@ See [Multi-tenancy](https://morzecrew.github.io/forze/latest/identity-tenancy-en
 
 Two pre-built aggregates cover org switching and tenant administration:
 
-- **Self-service selector** — `build_tenancy_registry(spec)` (`forze_kits.aggregates.tenancy`) → `attach_tenancy_routes(...)`: a principal lists their own memberships and switches the active tenant (the choice rides the signed `tid` claim, re-validated against live membership per request). Needs `TenancyDepsModule` with both `tenant_resolver` and `tenant_management` routes, and a transaction manager on its `tx_route` (`"default"` unless set), which the switch issues its session in.
+- **Self-service selector** — `build_tenancy_registry(spec)` (`forze_kits.aggregates.tenancy`) → `attach_tenancy_routes(...)`: a principal lists their own memberships and switches the active tenant (the choice rides the signed `tid` claim, re-validated against live membership per request). Needs `TenancyDepsModule` with both `tenant_resolver` and `tenant_management` routes, and a transaction manager on its `tx_route` (`"default"` unless set), which the switch issues its session in; `tx_route=None` opts out and issues it without a transaction.
 - **Admin plane** — `build_tenancy_admin_registry(ns)` (`forze_kits.aggregates.tenancy_admin`, ops in `TenancyAdminKernelOp`) → `attach_tenancy_admin_routes(...)`: create a tenant, invite/remove members, list members, deactivate. These ops ship **unguarded** (who may administer is your authz model) — bind `AuthnRequired` + an `AuthzBeforeAuthorize` on each op before exposing the router.
 
 See [Tenant selector and admin recipe](https://morzecrew.github.io/forze/latest/recipes/tenant-selector-and-admin/).

@@ -68,10 +68,10 @@ and API-key revoke.
   document store (Postgres, Mongo, …). `kernel` is required only when a route
   mints first-party tokens.
 - **Transactions:** the kit's login, refresh, logout, password change and reset, and
-  deactivation, and the tenancy kit's tenant switch, run their writes in a transaction on
-  `tx_route` (`build_authn_registry(..., tx_route=...)`, default `"default"`). Register a
-  transaction manager on that route for the database holding the session and principal
-  documents, e.g. `PostgresDepsModule(..., tx={"default"})`. A deactivation then commits
+  deactivation run their writes in a transaction on `build_authn_registry(..., tx_route=...)`,
+  and the tenant switch on `build_tenancy_registry(..., tx_route=...)`; both default to
+  `"default"`. Register a transaction manager on each route you use, for the database
+  holding the session and principal documents, e.g. `PostgresDepsModule(..., tx={"default"})`. A deactivation then commits
   whole. On Postgres an issue also reads the principal with a row lock that lasts until its
   session commits, so a concurrent deactivation either revokes the new session or refuses
   the issue; Mongo's locking read takes no lock, so there the race remains.

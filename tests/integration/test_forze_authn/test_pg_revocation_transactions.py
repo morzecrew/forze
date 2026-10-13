@@ -231,3 +231,34 @@ async def test_an_issue_outside_a_transaction_reads_without_a_lock(
         await stack.tokens.issue_tokens(AuthnIdentity(principal_id=principal))
 
     assert len(await stack.sessions(principal)) == 1
+
+
+async def test_a_logout_racing_a_refresh_revokes_the_session_that_replaced_it(
+    pg_client: PostgresClient,
+) -> None:
+    # The logout reads the session before the refresh rotates it, so its revision goes
+    # stale; it must read again and revoke the replacement, not fail or miss it.
+    stack, principal = await _stack(pg_client)
+    issuer = await _issuer(stack, principal, "refresh")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async with asyncio.timeout(10):
+        refresh = asyncio.create_task(stack.held(issuer, entered, release))
+        await entered.wait()
+
+        logout = asyncio.create_task(
+            stack.in_tx(lambda: stack.tokens.revoke_tokens(AuthnIdentity(principal_id=principal)))
+        )
+        await asyncio.sleep(BLOCKED_FOR)
+
+        # It waits on the row the refresh rotated.
+        assert not logout.done()
+
+        release.set()
+        await refresh
+        await logout
+
+    sessions = await stack.sessions(principal)
+
+    assert len(sessions) == 2
+    assert _live(sessions) == []

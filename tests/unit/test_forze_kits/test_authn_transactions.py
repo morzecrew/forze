@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -433,3 +434,28 @@ async def test_logout_revokes_more_live_sessions_than_one_batch(
 
     assert len(sessions.hits) == 5
     assert all(session.revoked_at is not None for session in sessions.hits)
+
+
+@pytest.mark.parametrize(
+    ("error", "calls"),
+    [
+        pytest.param(exc.precondition("stale", code="revision_mismatch"), 4, id="mismatch"),
+        pytest.param(exc.concurrency("Failed to update records"), 4, id="no-row-matched"),
+        pytest.param(exc.precondition("other", code="something_else"), 1, id="other"),
+    ],
+)
+async def test_a_revocation_retries_a_stale_batch_only_so_often(
+    error: CoreException,
+    calls: int,
+) -> None:
+    session = MagicMock(id=uuid4(), rev=1)
+    qry = MagicMock()
+    qry.find_many = AsyncMock(return_value=MagicMock(hits=[session]))
+    cmd = MagicMock()
+    cmd.update_many = AsyncMock(side_effect=error)
+
+    with pytest.raises(CoreException) as caught:
+        await authn_utils.revoke_sessions_matching(qry, cmd, {"principal_id": uuid4()})
+
+    assert caught.value is error
+    assert cmd.update_many.await_count == calls

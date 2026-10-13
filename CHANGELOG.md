@@ -25,11 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A failed deactivation, password change or reset no longer half-applies.** The authn kit's operations and the tenant switch run their writes in one transaction on `tx_route`, `"default"` unless set; `tx_route=None` opts out. **Breaking**: the deps need a transaction manager on that route.
+- **A failed deactivation, password change or reset no longer half-applies.** Login, refresh, logout, password change and reset, deactivation and the tenant switch run their writes in one transaction on `tx_route`, `"default"` unless set; `None` opts out. **Breaking**: the deps need a transaction manager there.
 
 - **On Postgres, a login racing a deactivation can no longer leave the principal a live session.** Login, refresh and the tenant switch read the principal with a row lock until the session commits. **Breaking** for eligibility ports: `require_authentication_allowed` takes `for_update`.
 
-- **Logout, deactivation and a password change or reset revoke every live session, however many.** Revocation stopped at the store's implicit 10,000-row cap; it now revokes live sessions in batches until none is left.
+- **Logout, deactivation and a password change or reset revoke every live session, however many.** Revocation stopped at the store's implicit 10,000-row cap, or failed when a refresh rotated a session mid-way; it now revokes in batches, rereading a stale one.
 
 - **The mock's principal deactivation revokes the principal's sessions**, as the real one does.
 
