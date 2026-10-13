@@ -88,7 +88,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0066](0066-storage-guarantees.md) | Storage guarantees: the declared half of the capability convention | ✅ Complete | A spec declares a property its store must enforce — filtered uniqueness, non-overlap, per-key serialization — and each adapter declares which it can keep, reconciled at wiring, validated at startup. |
 | [0067](0067-period-and-overlap.md) | Period, its bounds, and the overlap oracle | ✅ Complete | One value object for a period and its bounds convention, the overlap predicate decided once, and a DST invariant asserting no two periods sharing a key overlap in a recorded history. |
 | [0068](0068-cross-process-grants-cache-invalidation.md) | Cross-process grants cache invalidation | 📝 Draft | How an opt-in grants-cache invalidation in one process reaches every other process: a broadcast over the cache push-invalidation capability, with the TTL kept as the backstop. |
-| [0069](0069-session-revocation-fast-path.md) | Session revocation fast path | 📝 Draft | Verifying an access token's session without a Postgres read: Redis admission records and principal generations, invalidated through the outbox, falling back to the row on any miss. |
+| [0069](0069-session-revocation-fast-path.md) | Session revocation fast path | 📝 Draft | Verifying an access token's session from Redis admission records and principal generations instead of Postgres reads, invalidated through the outbox, falling back to the rows on any miss. |
 
 ## Status legend
 

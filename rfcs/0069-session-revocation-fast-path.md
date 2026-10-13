@@ -1,8 +1,10 @@
 # RFC 0069 — Session revocation fast path
 
 - **Status:** 📝 Draft
-- **Scope:** An opt-in fast path for verifying an access token's session that needs no Postgres
-  read while Redis answers. A verification admits the token from two Redis keys:
+- **Scope:** An opt-in fast path for verifying an access token's session that replaces the
+  session-row read with one Redis read while Redis answers. Once two preconditions hold, it
+  replaces the policy-principal eligibility read too. A verification admits the token from two
+  Redis keys:
   - a per-session *admission* record, written when the session is issued;
   - a per-principal *generation*.
 
@@ -11,9 +13,10 @@
   change, so an invalidation is never lost, only delayed by its delivery. Touches:
   - the `forze_identity` token verifier, the session-issuing and session-revoking adapters,
     and the authn kernel configuration;
-  - a small Redis applier fed by the outbox.
+  - a small session-admission port, with Redis and mock adapters, written by an outbox relay.
 
-  It needs the revocation paths to run inside a transaction, which today none do. The
+  It needs the revocation paths to run inside a transaction, which today none do, and session
+  issue to serialize with deactivation before the eligibility read can go. The
   session row stays the source of truth, `forbid_cache_and_history` stays, and no reader
   ever writes. API keys, OIDC, and any change to the token format are out of scope.
 - **Related:** [`src/forze_identity/authn/verifiers/forze_jwt_token.py:80-133`](../src/forze_identity/authn/verifiers/forze_jwt_token.py)
@@ -40,8 +43,8 @@
 
 ## 1. Summary
 
-A token verification with the fast path enabled makes one Redis `MGET` and no Postgres read.
-It admits the token when three things hold:
+A token verification with the fast path enabled replaces the session-row read with one Redis
+`MGET`. It admits the token when three things hold:
 
 - the session's admission record exists;
 - the record carries the principal's current generation;
@@ -49,12 +52,17 @@ It admits the token when three things hold:
 
 Every other outcome takes today's path: a miss, a mismatch, a Redis error or a timeout. A
 session-scoped invalidation (rotation, family revocation) deletes the session's admission
-record. A principal-scoped one (logout, password change or reset, deactivation) replaces the
-principal's generation, which strands every admission record minted under the old one.
+record. A principal-scoped one (logout, password change or reset, deactivation) drops the
+principal's generation, which strands every admission record minted under it; the next
+session issued mints a fresh one.
 Both are staged in the outbox inside the transaction that changes the rows, and relayed to
 Redis. Because Redis only ever holds *admissions*, a lost, evicted or flushed key costs a
 Postgres read and never admits a revoked session. The one window the fast path has is an
 invalidation still in flight, and its length is the outbox's delivery latency.
+
+The eligibility read stays until two things hold: session issue serializes with deactivation,
+and every write that deactivates a principal drops its generation. Then a present generation
+stands in for that read too (§5.2), and a verification reads no Postgres at all.
 
 ## 2. Motivation
 
@@ -119,8 +127,9 @@ All verified against the tree at the time of writing.
 
 **Goals**
 
-- No Postgres read on a token verification while Redis answers and nothing about the
-  session or principal changed.
+- No session-row read on a token verification while Redis answers and nothing about the
+  session or principal changed (phase 2). Once its preconditions hold, no eligibility read
+  either (phase 2b).
 - A revoked or rotated session, or an ineligible principal, is refused by the fast path once
   its invalidation has been delivered. Delivery is bounded by the outbox relay; with a wake,
   that is milliseconds.
@@ -174,11 +183,29 @@ if record is not None and generation is not None:
     to the authoritative path. It is never raised.
   - The fast path never refuses: refusal stays the authoritative path's job, so its codes and
     messages do not change.
-- **Eligibility:** when the fast path admits, the orchestrator skips the eligibility read.
-  Every write that changes eligibility replaces the generation (§5.3), so an admission under
-  the current generation implies the principal was eligible when the record was minted and
-  has not changed since. How the orchestrator learns that the verifier admitted fast is
-  decision 9.
+- **Eligibility is not covered yet.** It would be tempting to argue that an admission under the
+  current generation implies an eligible principal, because a deactivation drops the
+  generation. Login and deactivation can interleave so that it does not:
+
+  1. Login checks eligibility: the principal is active.
+  2. Deactivation commits `is_active=False` and revokes the principal's sessions. The one about
+     to be issued does not exist yet.
+  3. The outbox drops the generation.
+  4. Login reads the generation for its snapshot, finds none, and mints a fresh one.
+  5. Login commits the session and admits it under that generation.
+
+  The session is active in Postgres, so the session check is right to admit it. Only today's
+  per-request eligibility read refuses it. So in phase 2 the orchestrator keeps that read.
+
+  It can go (phase 2b) once two things hold:
+  - Login's eligibility check and session insert are one transaction that reads the policy
+    principal with a lock (`for_update=True`, the document port's row lock), so a concurrent
+    deactivation waits for the insert or the login waits for the deactivation.
+  - Every write of `is_active=False` drops the generation. `deactivate_principal` in the authz
+    registry, which revokes no sessions, must do so too.
+
+  Then a present generation means "no deactivation since the last session issued under it",
+  and an eligibility decorator treats it as eligible (decision 9).
 
 ### 5.3 Who writes
 
@@ -187,14 +214,15 @@ if record is not None and generation is not None:
 | A session is issued (login, refresh) | `SET s:{sid}` with the generation **read before the session row commits** | after commit, best effort |
 | Refresh rotation | `DEL s:{old_sid}` | outbox |
 | Family revocation, reuse detection | `DEL s:{sid}` for each session of the family | outbox |
-| Logout, password change or reset, principal deactivation | `SET g:{principal}` to a fresh generation | outbox |
-| Any other write of the policy principal's `is_active` | `SET g:{principal}` to a fresh generation | outbox |
+| Logout, password change or reset, principal deactivation | `DEL g:{principal}` | outbox |
+| Any other write of `is_active=False` on the policy principal | `DEL g:{principal}` | outbox |
 
 **The snapshot is what makes an issue race safe.** Without it, a logout committing between
-the new session's commit and its admission write would replace the generation, and the
-admission would be written with the new value, admitting a session the logout revoked.
-Read before the commit, the admission carries the old generation and simply never matches.
-A principal with no generation yet gets one with `SET NX`, then reads it.
+the new session's commit and its admission write would drop the generation, the admission
+write would mint a fresh one, and the record would admit a session the logout revoked. Read
+before the commit, the admission carries the old generation, which no longer exists, and
+simply never matches. A principal with no generation gets one with `SET NX`, read back in
+the same step (one script, so a concurrent drop cannot fall between them).
 
 An admission write that fails costs that session its fast path (every check misses), so it
 does not need the outbox. An invalidation that fails would admit a revoked session, so it
@@ -204,28 +232,55 @@ does.
 
 - **Staging.** Each revoking adapter stages its invalidation in an outbox route dedicated to
   session admission, in the transaction that stamps the rows. The payload is the session ids
-  to delete, or the principal whose generation to replace.
+  to delete, or the principal whose generation to drop. The adapters get the route's outbox
+  command port from their deps factory, which already builds them per request.
+- **Enforced.** The route declares `require_transaction=True`, so a revocation run outside a
+  transaction fails as a configuration error rather than staging an invalidation that is not
+  atomic with its rows.
 - **Relaying.** A relay applies the invalidations to Redis, with the route's `OutboxWake`, so
   delivery follows the commit by milliseconds. Applying one twice is harmless: a `DEL` is
-  idempotent, and a second fresh generation strands nothing the first didn't.
-- **Precondition: the revocation paths must run in a transaction.** None does today (§3).
-  Making them do so is phase 1 and is worth doing on its own: principal deactivation's three
-  sequential writes can today leave a principal inactive with live sessions, or the reverse.
+  idempotent.
+- **Precondition: the revocation paths must run in a transaction.** None does today (§3). The
+  authn kit binds a transaction route on its operations, configurable as
+  `build_authn_registry(tx_route=...)`. The adapters hold ports, not the execution context, so
+  a scope inside them would mean threading a transaction manager through each one and nesting
+  awkwardly in an app's own transaction. An app calling the adapters directly opens its own
+  transaction, and the `require_transaction` check above makes forgetting it loud. This is
+  phase 1, and it is worth doing on its own: principal deactivation's three sequential writes
+  can today leave a principal inactive with live sessions, or the reverse.
 
 ### 5.5 Configuration
 
 ```python
+class SessionAdmissionPort(Protocol):
+    async def admitted(self, session_id: UUID, principal_id: UUID) -> AdmissionRecord | None: ...
+    async def admit(self, session_id: UUID, record: AdmissionRecord, *, ttl: timedelta) -> None: ...
+    async def generation(self, principal_id: UUID) -> str: ...          # SET NX + read, one script
+    async def invalidate_sessions(self, session_ids: Sequence[UUID]) -> None: ...
+    async def drop_generation(self, principal_id: UUID) -> None: ...
+
 AuthnKernelConfig(
     session_admission=SessionAdmission(
-        cache=CacheSpec(name="authn_session_admission", ...),   # carrier: decision 7
-        outbox=OutboxSpec(name="authn_session_admission", ..., wake=OutboxWake(route="outbox-wake")),
+        route="authn_session_admission",   # the port's deps route: Redis, or the mock
+        outbox=OutboxSpec(
+            name="authn_session_admission", ...,
+            require_transaction=True,
+            wake=OutboxWake(route="outbox-wake"),
+        ),
         timeout=timedelta(milliseconds=50),
     ),
 )
 ```
 
-Startup refuses a configuration whose outbox route has no `OutboxWake`. Without one, the
-window in §9 silently becomes the relay's poll interval.
+- **A dedicated port, not the cache contract.** `CacheSpec` is allowed to serve stale or
+  absent values on purpose: an in-process L1 layer, probabilistic early expiry, soft deletes.
+  An admission store must be read exactly from Redis, and it needs `SET NX` with its read-back
+  as one step. A conformance test runs the Redis and mock adapters against the same battery.
+- **Startup refuses** a configuration whose outbox route has no `OutboxWake`. Without one, the
+  window in §9 silently becomes the relay's poll interval.
+- **A circuit breaker** around the port, from forze's resilience executor, stops a Redis
+  outage costing every verification its full timeout. A few timeouts open it, and
+  verifications go straight to the authoritative path until a probe succeeds.
 
 ### 5.6 Alternatives considered
 
@@ -239,6 +294,10 @@ window in §9 silently becomes the relay's poll interval.
   invalidates one session and happens on every refresh. Bumping a principal-wide epoch for
   it would log out the principal's other devices, and family revocation needs per-session
   granularity too. Kept for principal-wide events only, as the generation.
+- **Carrying the keys on the cache contract.** It is already wired everywhere, but its
+  semantics allow a stale or missing read by design (an L1 layer, early expiry, soft
+  deletes), and it has no `SET NX`. The admission store's safety argument needs exact reads.
+  Rejected in favour of a five-method port.
 - **Broadcasting revocations to in-process caches over pub/sub.** At-most-once, with no
   signal that a message was missed (RFC 0068 §5 makes the same argument). Rejected.
 - **Writing Redis synchronously in the revocation and failing it when Redis is down.**
@@ -253,6 +312,9 @@ window in §9 silently becomes the relay's poll interval.
   with verifications, against the mock and against Redis plus Postgres.
 - **The issue race:** a logout committing between a session's commit and its admission write
   leaves the session refused.
+- **The eligibility race (phase 2b):** a deactivation committing between a login's eligibility
+  check and its session insert either waits for the insert, then revokes the new session, or
+  makes the login fail its check. Never a live session for an inactive principal.
 - **Every fall-through:** a missing record, a missing generation, a generation mismatch, a
   subject or tenant mismatch, a Redis error, a timeout and a flush. Each takes the
   authoritative path and returns its result and code.
@@ -260,6 +322,8 @@ window in §9 silently becomes the relay's poll interval.
   that should not be.
 - **Delivery:** with a wake, a logout's next verification is refused within the relay
   latency; without a wake the configuration is refused at startup.
+- **The breaker:** with Redis unreachable, verifications stop waiting the timeout after the
+  breaker opens, and resume the fast path after a probe succeeds.
 - **Phase 1:** each revocation path commits atomically. A failure mid-deactivation leaves
   neither the principal inactive with live sessions nor the reverse. The mock's `deactivate`
   revokes sessions as the real adapter does.
@@ -293,6 +357,11 @@ The authn page gets a "Session check fast path" section:
   lasts until they recover. Accepted, stated in the docs, and observable: outbox depth on
   the admission route is the window's size.
 - **Operators reading "fast path" as "cache".** The docs say what it is not.
+- **Half the saving until phase 2b.** Phase 2 removes the session-row read and keeps the
+  eligibility read. Accepted: the eligibility skip is unsound until its preconditions hold.
+- **Login serializes on the policy principal's row.** Phase 2b's locking read makes concurrent
+  logins of one principal wait for each other. That is a narrow contention (one principal),
+  and the price of eligibility never trailing a deactivation.
 - **Phase 1 changes the revocation adapters' transactional shape.** They gain a transaction
   they did not have. Tests pin atomicity, and the change is independently a fix.
 - **Generation churn.** A principal-wide event strands every admission record of that
@@ -301,11 +370,11 @@ The authn page gets a "Session check fast path" section:
 
 ## 10. Unresolved questions
 
-- How the revocation paths get their transaction: a transaction route bound by the authn
-  kit's operations, or a transaction scope inside the adapters. Decision 6.
-- Which contract carries the admission keys (§5.5). Decision 7.
-- Whether every writer of a policy principal's `is_active` is covered by §5.3. A census is
-  part of phase 2.
+- Whether every writer of `is_active=False` on a policy principal is covered by §5.3. A
+  census is part of phase 2b's entry condition.
+- Whether backends other than Postgres give the locking read the exclusion phase 2b needs.
+  The document port degrades `for_update` modes elsewhere; phase 2b names the backends it
+  supports.
 
 ## 11. Decisions
 
@@ -313,22 +382,27 @@ The authn page gets a "Session check fast path" section:
 | --- | --- | --- |
 | 1 | `LOCKED` | Redis holds admissions, never revocations: any missing or unreadable key means "ask Postgres". A deny-list design makes every lost key an admitted revoked session. |
 | 2 | `LOCKED` | Readers never write. A verification that misses takes the authoritative path and stores nothing, so no read can race an invalidation into a stale admission. |
-| 3 | `LOCKED` | An invalidation is staged in the outbox inside the transaction that changes the rows, and is never best-effort. Losing one admits a revoked session until the session expires. |
-| 4 | `LOCKED` | An admission write uses the principal's generation read before the session row commits. Reading it after lets a concurrent principal-wide revocation be overwritten. |
-| 5 | `ASSUMED` | A generation is a random 128-bit value, not a counter, so a re-created generation after a flush matches no surviving record. |
-| 6 | `OPEN` | How the revocation paths run in a transaction (a kit-bound transaction route or an adapter-level scope). Decide in phase 1 by which keeps the adapters usable outside the kit; log the choice. |
-| 7 | `OPEN` | The carrier of the admission keys: the cache contract (`get_many`, `set` with TTL, `delete`) or a small dedicated port. Decide by whether the cache contract can express `SET NX` and a bounded `MGET` without bending; log the choice. |
+| 3 | `LOCKED` | An invalidation is staged in the outbox inside the transaction that changes the rows, and is never best-effort; the route declares `require_transaction=True` so a non-transactional revocation fails loudly. Losing one admits a revoked session until the session expires. |
+| 4 | `LOCKED` | An admission write uses the principal's generation read before the session row commits, minted with `SET NX` and read back in one step. Reading it after lets a concurrent principal-wide revocation be undone. |
+| 5 | `ASSUMED` | A generation is a random 128-bit value, not a counter, so a generation minted after a flush or a drop matches no surviving record. A principal-scoped invalidation drops it; the next session issued mints a fresh one. |
+| 6 | `ASSUMED` | The revocation paths get their transaction from a transaction route the authn kit binds on its operations (`build_authn_registry(tx_route=...)`), and the adapters stage through an outbox port their deps factory builds per request. An adapter-level scope would thread a transaction manager through every adapter and nest awkwardly in an app's own transaction. |
+| 7 | `ASSUMED` | The admission keys are carried by a dedicated `SessionAdmissionPort` (Redis and mock adapters, one conformance battery), not the cache contract, whose L1 layer, early expiry and soft deletes allow stale reads and which has no `SET NX`. |
 | 8 | `ASSUMED` | Startup refuses the fast path when its outbox route has no `OutboxWake`, since the window would silently become the poll interval. |
-| 9 | `OPEN` | How the orchestrator learns the verifier admitted fast, so it can skip the eligibility read (a flag on the verification result or a fast-path eligibility adapter). Decide by what keeps the orchestrator's contract smallest; log the choice. |
-| 10 | `ASSUMED` | The fast path is bounded by its own timeout (default 50 ms), and its errors and timeouts are counted, never raised. |
+| 9 | `LOCKED` | The eligibility read stays until session issue serializes with deactivation (a locking read of the policy principal in the login transaction) and every write of `is_active=False` drops the generation. Then an eligibility decorator treats a present generation as eligible; the orchestrator and `VerifiedAssertion` do not change. Skipping it earlier admits a principal deactivated while it logged in. |
+| 10 | `ASSUMED` | The fast path is bounded by its own timeout (default 50 ms) behind a circuit breaker from the resilience executor, so a Redis outage costs a few timeouts rather than one per verification. Its errors and timeouts are counted, never raised. |
 | 11 | `ASSUMED` | The fast path never refuses; refusal and its error codes stay with the authoritative path. |
 
 ## 12. Phasing
 
 1. **Transactions on the revocation paths.** Logout, family revocation, refresh rotation,
    password change and reset, and principal deactivation each commit atomically, and the
-   mock's `deactivate` revokes sessions. Independently a fix; ships first.
-2. **Admission keys and the fast path.** The applier route and relay, the admission writes on
-   issue, the verifier fast path, and the eligibility skip. Opt-in.
+   mock's `deactivate` revokes sessions. Login's eligibility check and session insert become
+   one transaction with a locking read of the policy principal. Independently a fix; ships
+   first.
+2. **Admission keys and the session fast path.** The port and its adapters, the outbox route
+   and relay, the admission writes on issue, and the verifier fast path behind its breaker.
+   Opt-in. The eligibility read stays.
+   - **2b. The eligibility skip.** After the census of `is_active=False` writers, each of
+     them drops the generation, and the eligibility decorator takes over the read.
 3. **Docs and metrics.** The authn page section, fast-path hit, miss and error counters, and
    outbox depth on the admission route as the revocation window.
