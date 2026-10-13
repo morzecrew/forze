@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A Redis call can wait for a free connection instead of failing.** `RedisConfig(pool_timeout=...)`, also on `RedisSettings`, queues a call for up to that long once all `max_size` connections are in use. Unset, a full pool still refuses the call at once with a connection error, as it does past the wait.
 
 ### Changed
 

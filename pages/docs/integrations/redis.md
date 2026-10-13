@@ -75,6 +75,11 @@ lifecycle = LifecyclePlan.from_steps(
 )
 ```
 
+A pool holds at most `max_size` connections, and a call made while all of them are busy
+fails at once with a connection error. Set `RedisConfig(pool_timeout=timedelta(...))` to
+make it wait up to that long for one to be released instead, so a burst queues rather
+than fails.
+
 ## What it provides
 
 | Contract | Keyed by |
