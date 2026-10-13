@@ -18,10 +18,16 @@ TxScope = Callable[[], AbstractAsyncContextManager[object]]
 
 
 def tx_scope(ctx: ExecutionContext, tx_route: StrKey | None) -> TxScope:
-    """Open a transaction on *tx_route*, or none when it is ``None``."""
+    """Open a transaction on *tx_route*, or none when it is ``None``.
+
+    The route's manager is resolved now, so a deployment with none fails the wiring check
+    (and the handler's build) instead of its first login.
+    """
 
     if tx_route is None:
         return nullcontext
+
+    ctx.transaction(tx_route)
 
     return functools.partial(ctx.tx_ctx.scope, tx_route)
 

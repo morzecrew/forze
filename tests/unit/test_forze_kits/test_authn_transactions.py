@@ -27,6 +27,7 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
+from forze_identity.authn.adapters import _utils as authn_utils
 from forze_identity.authn.adapters import password_lifecycle, password_reset
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
@@ -53,6 +54,7 @@ from forze_kits.aggregates.authn import (
 from forze_kits.aggregates.tenancy import TenancyKernelOp, build_tenancy_registry
 from forze_kits.aggregates.tenancy.dto import TenantSwitchRequestDTO
 from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock.adapters.document import MockDocumentAdapter
 from forze_mock.adapters.identity import seed_password_account
 from forze_mock.adapters.identity.authn import MockTokenLifecyclePort
 from forze_mock.execution.factories import ConfigurableMockDocument, mock_journal_txmanager
@@ -90,7 +92,7 @@ def _registry(**kwargs: Any) -> Any:
     ).freeze()
 
 
-def _real_ctx() -> ExecutionContext:
+def _real_ctx(*, tx: bool = True) -> ExecutionContext:
     """The identity plane's adapters over mock documents and the journal transaction manager."""
 
     mock = MockDepsModule()
@@ -125,15 +127,11 @@ def _real_ctx() -> ExecutionContext:
                 }
             )
         )
-        .merge(
-            Deps.plain(
-                {
-                    MockStateDepKey: mock.state,
-                    TransactionManagerDepKey: mock_journal_txmanager,
-                }
-            )
-        )
+        .merge(Deps.plain({MockStateDepKey: mock.state}))
     )
+
+    if tx:
+        deps = deps.merge(Deps.plain({TransactionManagerDepKey: mock_journal_txmanager}))
 
     return context_from_deps(deps)
 
@@ -361,3 +359,77 @@ async def test_every_session_operation_calls_its_lifecycle_inside_a_transaction(
             )
 
     assert depths == [1]
+
+
+async def test_the_wired_eligibility_locks_the_principal_only_inside_a_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The deps module gives the policy-principal adapter its transaction probe: a backend
+    # refuses a locking read outside a transaction, so outside one the read is plain.
+    ctx = _real_ctx()
+    principal = await _principal(ctx)
+    locks: list[object] = []
+    original = MockDocumentAdapter.find
+
+    async def spy(self: Any, filters: Any, *, for_update: Any = False) -> Any:
+        if self.spec.name == policy_principal_spec.name:
+            locks.append(for_update)
+
+        return await original(self, filters, for_update=for_update)
+
+    monkeypatch.setattr(MockDocumentAdapter, "find", spy)
+    issued = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
+        AuthnIdentity(principal_id=principal)
+    )
+    await _refresh(ctx, _registry(), _refresh_token(issued))
+
+    assert locks == [False, True]
+
+
+async def test_a_refresh_inside_an_open_transaction_is_refused() -> None:
+    # Both of its scopes would be savepoints, and the reuse revocation would roll back with
+    # the enclosing transaction.
+    ctx = _mock_ctx()
+    issued = await ctx.authn.token_lifecycle(SPEC).issue_tokens(AuthnIdentity(principal_id=uuid4()))
+
+    async with ctx.tx_ctx.scope("default"):
+        with pytest.raises(CoreException) as caught:
+            await _refresh(ctx, _registry(), _refresh_token(issued))
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "authn_refresh_in_transaction"
+
+    # Outside one, the same token refreshes: nothing was read or written.
+    await _refresh(ctx, _registry(), _refresh_token(issued))
+
+
+async def test_a_registry_without_a_transaction_manager_fails_when_built() -> None:
+    ctx = _real_ctx(tx=False)
+
+    with pytest.raises(CoreException) as caught:
+        _registry().resolve(NS.key(AuthnKernelOp.LOGOUT), ctx)
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert "transaction_manager" in caught.value.summary
+
+
+async def test_logout_revokes_more_live_sessions_than_one_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(authn_utils, "_REVOKE_BATCH", 2)
+    ctx = _real_ctx()
+    principal = await _principal(ctx)
+    identity = AuthnIdentity(principal_id=principal)
+
+    for _ in range(5):
+        await ctx.authn.token_lifecycle(SPEC).issue_tokens(identity)
+
+    with ctx.inv_ctx.bind_identity(authn=identity):
+        await run_operation(_registry(), NS.key(AuthnKernelOp.LOGOUT), None, ctx)
+
+    sessions = await ctx.doc.query(session_spec).find_many(
+        filters={"$values": {"principal_id": principal}}
+    )
+
+    assert len(sessions.hits) == 5
+    assert all(session.revoked_at is not None for session in sessions.hits)

@@ -40,7 +40,8 @@ attach_tenancy_routes(
 The active tenant rides the signed `tid` claim and is re-validated against live membership on
 every request, so removing a principal from a tenant invalidates their scoped token at once.
 Requires a `TenancyDepsModule` wiring a `tenant_resolver` **and** `tenant_management` route
-(see [Wire the planes](authn-authz-tenancy-fastapi.md#wire-the-planes)).
+(see [Wire the planes](authn-authz-tenancy-fastapi.md#wire-the-planes)), and a transaction
+manager on the registry's `tx_route` (`"default"`), which the switch issues its session in.
 
 ## Tenant administration
 

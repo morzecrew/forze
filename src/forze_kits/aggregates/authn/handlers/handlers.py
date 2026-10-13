@@ -16,6 +16,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.contracts.execution import Handler
+from forze.base.exceptions import exc
 
 from ..dto import (
     AuthnApiKeyListDTO,
@@ -120,7 +121,22 @@ class AuthnRefreshTokens(Handler[AuthnRefreshRequestDTO, AuthnTokenResponseDTO])
 
     # ....................... #
 
+    in_transaction: Callable[[], bool] | None = None
+    """Whether a transaction is already open when the refresh starts."""
+
+    # ....................... #
+
     async def __call__(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
+        # Inside an enclosing transaction both scopes below are savepoints, and the re-raise
+        # would roll the reuse revocation back with it: refuse rather than lose it quietly.
+        if self.in_transaction is not None and self.in_transaction():
+            raise exc.configuration(
+                "refresh_tokens must not run inside an open transaction: a reused token's "
+                "family is revoked in a transaction of its own, which an enclosing one would "
+                "roll back. Run the operation without a plan-level transaction.",
+                code="authn_refresh_in_transaction",
+            )
+
         creds = RefreshTokenCredentials(token=args.refresh_token)
 
         try:

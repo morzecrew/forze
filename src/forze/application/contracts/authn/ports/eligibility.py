@@ -17,8 +17,9 @@ class PrincipalEligibilityPort(Protocol):  # pragma: no cover
         """Raise when ``principal_id`` is missing or inactive for authentication.
 
         ``for_update`` reads the principal with a row lock, held until the caller's
-        transaction ends. Issuing a session passes it, so a concurrent deactivation either
-        waits for the session and revokes it, or commits first and the issue is refused.
-        Outside a transaction, and in a port with no row to lock, the read is plain.
+        transaction ends. Issuing a session passes it, so on a backend whose locking read
+        excludes a concurrent update (Postgres) a deactivation either waits for the session
+        and revokes it, or commits first and the issue is refused. Outside a transaction,
+        and in a port with no row to lock, the read is plain.
         """
         ...

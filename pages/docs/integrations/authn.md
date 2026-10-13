@@ -72,9 +72,13 @@ and API-key revoke.
   `tx_route` (`build_authn_registry(..., tx_route=...)`, default `"default"`). Register a
   transaction manager on that route for the database holding the session and principal
   documents, e.g. `PostgresDepsModule(..., tx={"default"})`. A deactivation then commits
-  whole. An issue reads the principal with a row lock that lasts until its session commits,
-  so a concurrent deactivation either revokes the new session or refuses the issue.
+  whole. On Postgres an issue also reads the principal with a row lock that lasts until its
+  session commits, so a concurrent deactivation either revokes the new session or refuses
+  the issue; Mongo's locking read takes no lock, so there the race remains.
   `tx_route=None` runs the writes without a transaction and gives up both guarantees.
+  Refresh refuses to run inside a transaction the caller already opened: a reused refresh
+  token's family is revoked in a transaction of its own, which an enclosing one would roll
+  back.
 - **Browser clients:** the generated login/refresh/logout routes can carry their
   tokens in `HttpOnly` cookies instead of response bodies — see
   [cookie mode](../reference/fastapi-routes.md#cookie-mode).

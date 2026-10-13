@@ -163,6 +163,7 @@ def build_authn_registry(
                 route=spec.name,
             ),
             tx=tx_scope(ctx, tx_route),
+            in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
 
     def _logout(ctx: ExecutionContext) -> AuthnLogout:

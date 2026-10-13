@@ -74,9 +74,13 @@ class _SessionStore:
                     return session
             return None
 
-        async def find_many(filters: dict[str, Any]) -> CountlessPage[ReadSession]:
+        async def find_many(
+            filters: dict[str, Any],
+            pagination: dict[str, Any] | None = None,
+        ) -> CountlessPage[ReadSession]:
             values = filters["$values"]
             hits = [s for s in self.sessions.values() if self._matches(s, values)]
+            hits = hits[: (pagination or {}).get("limit")]
             return CountlessPage(hits=hits, page=1, size=len(hits))
 
         port.find = AsyncMock(side_effect=find)

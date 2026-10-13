@@ -142,6 +142,10 @@ async def find_api_key_accounts_by_principal(
 # ....................... #
 
 
+_REVOKE_BATCH = 1_000
+"""Sessions revoked per round trip."""
+
+
 async def revoke_sessions_matching(
     session_qry: DocumentQueryPort[ReadSession],
     session_cmd: DocumentCommandPort[
@@ -156,26 +160,37 @@ async def revoke_sessions_matching(
 
     Shared by cascaded principal deactivation (token lifecycle) and the
     password-change "log out everywhere" cascade. Only live sessions match: a revoked
-    or rotated one is already refused, and re-stamping every session a principal ever
-    had would lock each of them and run into the backend's implicit row cap.
+    or rotated one is already refused. A principal can hold any number of them (an
+    expired session is never revoked), so they are revoked in batches until a batch
+    comes back short; each batch's revocations drop those rows out of the filter.
     """
 
-    sessions = await session_qry.find_many(
-        filters={
-            "$values": {
-                **values,
-                "revoked_at": None,
-                "rotated_at": None,
-            },
-        }
-    )
+    filters: Any = {
+        "$values": {
+            **values,
+            "revoked_at": None,
+            "rotated_at": None,
+        },
+    }
 
-    upds = [
-        KeyedUpdate(id=x.id, rev=x.rev, dto=UpdateSessionCmd(revoked_at=utcnow()))
-        for x in sessions.hits
-    ]
+    while True:
+        sessions = await session_qry.find_many(
+            filters=filters,
+            pagination={"limit": _REVOKE_BATCH},
+        )
 
-    await session_cmd.update_many(upds, return_new=False)
+        if not sessions.hits:
+            return
+
+        upds = [
+            KeyedUpdate(id=x.id, rev=x.rev, dto=UpdateSessionCmd(revoked_at=utcnow()))
+            for x in sessions.hits
+        ]
+
+        await session_cmd.update_many(upds, return_new=False)
+
+        if len(sessions.hits) < _REVOKE_BATCH:
+            return
 
 
 # ....................... #

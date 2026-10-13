@@ -79,9 +79,11 @@ class TokenLifecyclePort(Protocol):  # pragma: no cover
     principal alone, so one minted for an agent acting for a user would drop the agent.
 
     ``issue_tokens`` and ``refresh_tokens`` check the principal's eligibility with a locking
-    read, so run them in a transaction: a deactivation then either waits for the new session
-    and revokes it, or commits first and the issue is refused. ``refresh_tokens`` raises
-    :class:`RefreshTokenReuseError` for a reused token, after revoking its family.
+    read, so run them in a transaction: on Postgres a deactivation then either waits for the
+    new session and revokes it, or commits first and the issue is refused.
+    ``refresh_tokens`` must raise :class:`RefreshTokenReuseError` for a reused token, after
+    revoking its family: a caller refreshing in a transaction relies on it to commit that
+    revocation once its own has rolled back.
     """
 
     def issue_tokens(
