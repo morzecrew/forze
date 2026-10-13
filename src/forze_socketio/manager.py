@@ -14,6 +14,9 @@ does, leaves every send already started to finish. The same packets reach the sa
 sockets; the one difference is that a send which fails is logged and skipped, where the
 library's task fails unobserved.
 
+A task factory the application installed on the loop is honoured: each send then goes
+through it, as the library's would, and the saving is the factory's to give.
+
 An emit with a callback needs a distinct packet per socket and keeps the library's path.
 This relies on python-socketio internals (``get_participants``, ``_send_eio_packet``, the
 Engine.IO packet class), which is why forze owns it and pins the versions it supports.
@@ -90,6 +93,9 @@ class FanoutManager(AsyncManager):
 
         send: Callable[[str, Any], Awaitable[None]] = self.server._send_eio_packet  # type: ignore[attr-defined]  # pyright: ignore[reportAttributeAccessIssue]
         loop = asyncio.get_running_loop()
+        # An application's own task factory (instrumentation, a Task subclass) sees every send,
+        # as it would the library's; the eager start is only the default's replacement.
+        factory = loop.get_task_factory()
         waiting: list[asyncio.Task[None]] = []
 
         # A copy of the room: a send that closes a socket changes the room under us.
@@ -97,7 +103,12 @@ class FanoutManager(AsyncManager):
             if sid in skipped:
                 continue
 
-            task = asyncio.eager_task_factory(loop, _send_frames(send, eio_sid, frames))
+            sending = _send_frames(send, eio_sid, frames)
+            task = (
+                asyncio.eager_task_factory(loop, sending)
+                if factory is None
+                else loop.create_task(sending)
+            )
 
             if task.done():
                 _report(task, sid)

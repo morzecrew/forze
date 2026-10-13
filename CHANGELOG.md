@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **A socket.io emit to a large room costs far less.** `build_socketio_server` now builds a manager that schedules nothing on the event loop for a socket whose send does not wait, where python-socketio schedules a task per socket. Pass `client_manager=AsyncManager()` to keep the library's manager.
+- **An emit to a large socket.io room takes far less of the event loop.** The manager `build_socketio_server` builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass `client_manager=AsyncManager()` to keep python-socketio's manager.
 
 ### Fixed
 

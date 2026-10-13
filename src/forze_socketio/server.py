@@ -29,9 +29,10 @@ def build_socketio_server(
     """Build an :class:`socketio.AsyncServer` with optional Redis backplane.
 
     Uses the official Socket.IO Redis manager when ``redis_url`` is provided. Either way the
-    manager fans a room out without scheduling a task per socket on the event loop (see
-    :mod:`forze_socketio.manager`); pass your own *client_manager*, such as the library's
-    ``AsyncManager()``, to keep its behaviour instead.
+    manager fans a room out with eager sends, so only a send that waits is scheduled on the
+    event loop rather than one task per socket (see :mod:`forze_socketio.manager`); pass your
+    own *client_manager*, such as the library's ``AsyncManager()``, to keep its behaviour
+    instead.
 
     :param redis_url: Optional Redis DSN for distributed Socket.IO delivery. A
         ``SecretStr`` is unwrapped here — the DSN carries the password — so

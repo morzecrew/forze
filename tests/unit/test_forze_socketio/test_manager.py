@@ -161,6 +161,27 @@ async def test_a_socket_whose_send_blocks_does_not_hold_the_rest() -> None:
     assert "eio-1" in sent  # and the slow one still gets its frame
 
 
+async def test_an_installed_task_factory_still_sees_every_send() -> None:
+    loop = asyncio.get_running_loop()
+    seen: list[str] = []
+
+    def _instrumented(loop: asyncio.AbstractEventLoop, coro: Any, **kwargs: Any) -> Any:
+        seen.append(coro.__qualname__)
+        return asyncio.Task(coro, loop=loop, **kwargs)
+
+    fanout, sent = await _server(FanoutManager())
+    loop.set_task_factory(_instrumented)
+
+    try:
+        await fanout.manager.emit("chat", "x", NS, room="all")
+
+    finally:
+        loop.set_task_factory(None)
+
+    assert len(sent) == 6
+    assert len(seen) == 6  # an app's instrumentation is not bypassed
+
+
 async def test_an_emit_with_a_callback_keeps_the_library_path() -> None:
     fanout, _ = await _server(FanoutManager())
 
