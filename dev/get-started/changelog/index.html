@@ -9275,6 +9275,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A listed API key always carries <code>is_active</code> and <code>created_at</code></strong> (<strong>Breaking</strong> for API-key lifecycle implementers). <code>AuthnApiKeyListItemDTO</code> requires them, so generated clients type them as present; <code>hint</code> stays optional, as a key minted before hints has none. <code>ApiKeyInfo.created_at</code> is required.</p>
+</li>
+<li>
 <p><strong><code>/deactivate</code> answers 404 after upgrading: pass <code>admin_guards</code></strong> (<strong>Breaking</strong>). <code>deactivate_principal</code> is registered only behind them, so guards an app bound on the operation itself leave it absent; pass them as <code>admin_guards</code> instead (bound twice, a step fails at <code>freeze()</code>).</p>
 </li>
 <li>
@@ -9289,6 +9292,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Revoking an API key the caller does not hold is a 404</strong> (<strong>behaviour change</strong>). <code>revoke_api_key</code> answered a malformed, unknown or another principal's key id with a 401, which a browser client reads as its session ending; it is now <code>not_found</code> (<code>api_key_not_found</code>). A revoked key still answers 204.</p>
+</li>
+<li>
+<p><strong>An access token is checked on the clock that issued it.</strong> <code>issue_token</code> stamps <code>iat</code> and <code>exp</code> from forze's time source, but PyJWT checked them on the wall clock, so under <code>FrozenTimeSource</code> every token was expired or not yet valid. <code>exp</code>, <code>iat</code> and <code>nbf</code> are now checked against <code>utcnow()</code>, with the leeway.</p>
+</li>
 <li>
 <p><strong>A read-only operation cannot write through a port a command built and cached</strong> (<strong>behaviour change</strong>). A query reusing a handler or adapter that a command built first held its real write port. A command accessor now always returns <code>GuardedWritePort</code>; in a test, <code>forze.testing.unguarded</code> reaches the port.</p>
 </li>
