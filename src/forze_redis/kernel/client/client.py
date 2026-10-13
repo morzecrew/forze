@@ -19,7 +19,7 @@ from typing import (
 
 import attrs
 from redis.asyncio.client import Pipeline, Redis
-from redis.asyncio.connection import ConnectionPool
+from redis.asyncio.connection import BlockingConnectionPool, ConnectionPool
 from redis.commands.core import AsyncScript
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
@@ -138,9 +138,19 @@ class RedisClient(RedisClientPort):
             if isinstance(dsn, SecretStr):
                 dsn = dsn.get_secret_value()
 
-            pool = ConnectionPool.from_url(  # pyright: ignore[reportUnknownMemberType]
+            # A blocking pool waits up to its timeout for a released connection; the plain
+            # one refuses the moment `max_connections` are in use.
+            pool_class: type[ConnectionPool] = ConnectionPool
+            pool_kwargs: dict[str, Any] = {}
+
+            if config.pool_timeout is not None:
+                pool_class = BlockingConnectionPool
+                pool_kwargs["timeout"] = config.pool_timeout.total_seconds()
+
+            pool = pool_class.from_url(  # pyright: ignore[reportUnknownMemberType]
                 dsn,
                 max_connections=config.max_size,
+                **pool_kwargs,
                 socket_timeout=socket_timeout,
                 socket_connect_timeout=connect_timeout,
                 decode_responses=False,

@@ -114,12 +114,14 @@ class TestConfig:
         config = RedisSettings(
             host="cache.internal",
             max_size=5,
+            pool_timeout=timedelta(milliseconds=250),
             socket_timeout=timedelta(seconds=2),
             connect_timeout=timedelta(seconds=1),
             client_name="orders-api",
         ).config
 
         assert config.max_size == 5
+        assert config.pool_timeout == timedelta(milliseconds=250)
         assert config.socket_timeout == timedelta(seconds=2)
         assert config.connect_timeout == timedelta(seconds=1)
         assert config.client_name == "orders-api"
@@ -149,3 +151,12 @@ class TestConfig:
 
         with pytest.raises(CoreException, match="Max size must be at least 1"):
             _ = RedisSettings(host="cache.internal", max_size=0).config
+
+    # ....................... #
+
+    @pytest.mark.parametrize("wait", [timedelta(0), timedelta(seconds=-1)])
+    def test_a_pool_timeout_that_cannot_be_waited_is_refused(self, wait: timedelta) -> None:
+        """Zero would wait nothing and still read as "waits": refuse it, as for the socket."""
+
+        with pytest.raises(CoreException, match="Pool timeout must be positive"):
+            _ = RedisSettings(host="cache.internal", pool_timeout=wait).config

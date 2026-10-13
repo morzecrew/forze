@@ -22,6 +22,7 @@ from .kernel.client import RedisConfig
 
 CLIENT_FIELDS = (
     "max_size",
+    "pool_timeout",
     "socket_timeout",
     "connect_timeout",
     "client_name",
@@ -61,6 +62,7 @@ class RedisSettings(EndpointSettings):
     # and an unset environment variable must never be the thing that turns a timeout off.
 
     max_size: int | None = None
+    pool_timeout: timedelta | None = None
     socket_timeout: timedelta | None = None
     connect_timeout: timedelta | None = None
     client_name: str | None = None
