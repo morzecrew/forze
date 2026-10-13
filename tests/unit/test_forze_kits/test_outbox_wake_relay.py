@@ -30,7 +30,7 @@ from forze_kits.integrations.outbox import (
     outbox_relay_background_lifecycle_step,
 )
 from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
-from forze_mock import MockDepsModule, MockState
+from forze_mock import MockDepsModule, MockRouteConfig, MockState
 from forze_mock.adapters.pubsub import MockPubSubAdapter
 
 # ----------------------- #
@@ -164,6 +164,44 @@ async def test_wake_driven_passes_reclaim_stale_claims_once_per_poll() -> None:
     assert reclaims == [timedelta(minutes=5), None, None, None]
 
 
+async def test_a_reclaim_that_failed_is_tried_again_on_the_next_pass() -> None:
+    state = MockState()
+    reclaims: list[timedelta | None] = []
+
+    async def _blip_once(self: OutboxRelay, *_: Any, **__: Any) -> OutboxRelayResult:
+        reclaims.append(self.reclaim_stale_after)
+
+        if len(reclaims) == 1:
+            raise ConnectionError("database blip")
+
+        return OutboxRelayResult()
+
+    every = {"reclaim_stale_after": timedelta(minutes=5), "reclaim_every": timedelta(minutes=1)}
+
+    with patch.object(OutboxRelay, "to_queue", _blip_once):
+        async with _running(state, **every) as (ctx, _):
+            passes = len(reclaims)
+            await _wake(ctx, "events")
+            await _until(lambda: len(reclaims) > passes)
+
+    # The startup pass's reclaim failed and its next batch ran without one; the wake's
+    # pass reclaims rather than waiting out the minute.
+    assert reclaims == [timedelta(minutes=5), None, timedelta(minutes=5)]
+
+
+async def test_a_tenant_aware_wake_route_fails_the_relay_startup() -> None:
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(
+            MockDepsModule(routes={"outbox-wake": MockRouteConfig(tenant_aware=True)})
+        ).freeze()
+    )
+    step = outbox_relay_background_lifecycle_step(outbox_spec=SPEC, queue_spec=QUEUE, interval=POLL)
+
+    async with runtime.scope():
+        with pytest.raises(CoreException, match="tenant-global"):
+            await step.startup(runtime.get_context())
+
+
 async def test_a_broken_wake_subscription_leaves_the_relay_polling_and_retrying() -> None:
     state = MockState()
     attempts: list[None] = []
@@ -195,33 +233,27 @@ def _startup(**overrides: Any) -> _OutboxRelayBackgroundStartup:
     return step.startup
 
 
-async def test_every_poll_tick_still_reclaims_by_default() -> None:
+def test_every_poll_tick_still_reclaims_by_default() -> None:
     startup = _startup()
-    now = asyncio.get_running_loop().time()
 
-    assert startup._reclaim_due()
-    assert not startup._reclaim_due()
+    assert startup._reclaim_due(1000.0)  # nothing reclaimed yet
 
+    startup.last_reclaim_at = 1000.0
+    assert not startup._reclaim_due(1001.0)
     # The shortest a jittered poll tick can be after the last one.
-    startup.last_reclaim_at = now - POLL.total_seconds() * 0.8
-    assert startup._reclaim_due()
+    assert startup._reclaim_due(1000.0 + POLL.total_seconds() * 0.8)
 
 
-async def test_reclaim_every_sets_the_gap_between_reclaims() -> None:
+def test_reclaim_every_sets_the_gap_between_reclaims() -> None:
     startup = _startup(reclaim_every=timedelta(minutes=1))
-    now = asyncio.get_running_loop().time()
+    startup.last_reclaim_at = 1000.0
 
-    assert startup._reclaim_due()
-
-    startup.last_reclaim_at = now - 59
-    assert not startup._reclaim_due()
-
-    startup.last_reclaim_at = now - 60
-    assert startup._reclaim_due()
+    assert not startup._reclaim_due(1059.0)
+    assert startup._reclaim_due(1060.0)
 
 
-async def test_no_reclaim_is_due_when_reclaim_is_off() -> None:
-    assert not _startup(reclaim_stale_after=None)._reclaim_due()
+def test_no_reclaim_is_due_when_reclaim_is_off() -> None:
+    assert not _startup(reclaim_stale_after=None)._reclaim_due(1000.0)
 
 
 @pytest.mark.parametrize(

@@ -71,6 +71,9 @@ class _RelayPass:
     failed: int = 0
     """Rows terminally failed across the pass."""
 
+    reclaimed: bool = False
+    """Whether the pass's stale-claim reclaim ran: its first batch reclaimed and succeeded."""
+
     # ....................... #
 
     @property
@@ -368,6 +371,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         batches = claimed = published = retried = failed = 0
         last_batch: float | None = None
         stop: _PassStop = "cap"
+        reclaimed = False
 
         for batch_index in range(self.max_batches_per_tick):
             if not strict and self._stop_requested:
@@ -405,6 +409,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 continue
 
             last_batch = loop.time() - started
+            reclaimed = reclaimed or (reclaim and batch_index == 0)
 
             batches += 1
             claimed += result.claimed
@@ -437,6 +442,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             published=published,
             retried=retried,
             failed=failed,
+            reclaimed=reclaimed,
         )
 
     # ....................... #
@@ -447,7 +453,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         tenants: Sequence[UUID] | None,
         *,
         reclaim: bool = True,
-    ) -> None:
+    ) -> bool:
         """Drain the backlog once: globally, or per assigned tenant when sharded.
 
         *tenants* is the shard **frozen at startup** (``None`` for a tenant-global outbox).
@@ -455,27 +461,36 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         partition and forwards under it) and is isolated — one tenant's failure must not
         skip the rest of the shard this tick. Tenants are drained **sequentially** (one DB
         connection at a time); shard across instances to parallelize.
+
+        Returns whether every pass that was asked to reclaim stale claims did, so a reclaim
+        that failed or was cut short is retried on the next pass rather than a gap later.
         """
 
         if tenants is None:
-            await self._relay_once(ctx, reclaim=reclaim)
-            return
+            return (await self._relay_once(ctx, reclaim=reclaim)).reclaimed
+
+        reclaimed_all = True
 
         for tenant in tenants:
             if self._stop_requested:
                 # Leave the rest of the shard to the shutdown drain rather than opening a
                 # claim per remaining tenant on a process that is going away.
-                return
+                return False
 
             try:
                 with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-                    await self._relay_once(ctx, reclaim=reclaim)
+                    passed = await self._relay_once(ctx, reclaim=reclaim)
+
+                reclaimed_all = reclaimed_all and passed.reclaimed
 
             except asyncio.CancelledError:
                 raise
 
             except Exception:
                 logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
+                reclaimed_all = False
+
+        return reclaimed_all
 
     # ....................... #
 
@@ -528,16 +543,20 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _sleep_or_stop(self) -> bool:
-        """Wait out the jittered tick interval, or less when woken; ``True`` on a stop."""
-
+    def _jittered_interval(self) -> float:
         # Jittered tick: N replicas polling at the same fixed interval synchronize into a
         # thundering herd against the claim query; the multiplicative jitter desynchronizes
         # them. Desynchronization jitter, not security randomness.
-        delay = self.interval.total_seconds() * (
+        return self.interval.total_seconds() * (
             1.0 + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
         )
 
+    # ....................... #
+
+    async def _sleep_or_stop(self) -> bool:
+        """Wait out the jittered tick interval, or less when woken; ``True`` on a stop."""
+
+        delay = self._jittered_interval()
         woken = self.woken
         stop = self.control.event
 
@@ -561,8 +580,8 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     # ....................... #
 
-    def _reclaim_due(self) -> bool:
-        """Whether this pass reclaims stale claims, and if so, start the next gap.
+    def _reclaim_due(self, now: float) -> bool:
+        """Whether a pass starting at loop time *now* reclaims stale claims.
 
         Without a wake every pass is a poll tick, at least ``(1 - jitter) * interval`` after
         the last one, so the default gap reclaims on every tick, as before wakes existed.
@@ -573,18 +592,13 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         if self.reclaim_stale_after is None:
             return False
 
-        now = asyncio.get_running_loop().time()
         gap = (
             self.reclaim_every.total_seconds()
             if self.reclaim_every is not None
             else self.interval.total_seconds() * (1.0 - self.jitter)
         )
 
-        if self.last_reclaim_at is not None and now - self.last_reclaim_at < gap:
-            return False
-
-        self.last_reclaim_at = now
-        return True
+        return self.last_reclaim_at is None or now - self.last_reclaim_at >= gap
 
     # ....................... #
 
@@ -619,7 +633,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                     exc_info=True,
                 )
 
-            if await self.control.sleep_or_stop(self.interval.total_seconds()):
+            # Jittered like the poll, so replicas that lost the channel together do not all
+            # resubscribe at once.
+            if await self.control.sleep_or_stop(self._jittered_interval()):
                 return
 
     # ....................... #
@@ -643,8 +659,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 # Cleared before the pass reads, so a commit landing during it wakes the next.
                 self.woken.clear()
 
+            started = asyncio.get_running_loop().time()
+            due = self._reclaim_due(started)
+
             try:
-                await self._drain_tick(ctx, self.tenant_shard, reclaim=self._reclaim_due())
+                if await self._drain_tick(ctx, self.tenant_shard, reclaim=due) and due:
+                    self.last_reclaim_at = started
 
             except asyncio.CancelledError:
                 raise
@@ -786,6 +806,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             query: PubSubQueryPort[OutboxWakeSignal] = ctx.deps.resolve_configurable(
                 ctx, PubSubQueryDepKey, wake.spec, route=wake.spec.name
             )
+            wake.require_tenant_global(query)
             self.woken = asyncio.Event()
             self.listener = asyncio.create_task(
                 self._listen(wake, query, self.woken), name=f"{self.control.loop_name}:wake"
