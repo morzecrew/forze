@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 from datetime import timedelta
+from math import isfinite
 from typing import Any, NotRequired, TypedDict
 from uuid import UUID
 
@@ -252,15 +253,16 @@ def _check_times(claims: Mapping[str, Any], *, now: float, leeway: float) -> Non
     """Judge ``exp``, ``iat`` and ``nbf`` against *now*, as PyJWT judges them against its own
     clock: expired at ``exp`` less the leeway, not yet valid before ``iat`` or ``nbf`` plus it.
 
-    :raises jwt.InvalidTokenError: a time claim that is not a number, or not yet valid.
+    :raises jwt.InvalidTokenError: a time claim that is not a finite number, or not yet valid.
     :raises jwt.ExpiredSignatureError: the token has expired.
     """
 
     times = {claim: claims[claim] for claim in ("exp", "iat", "nbf") if claim in claims}
 
     for claim, value in times.items():
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            raise jwt.InvalidTokenError(f"The {claim} claim must be a number")
+        # NaN and infinity are floats, not times: an ``exp`` of either would never expire.
+        if isinstance(value, bool) or not isinstance(value, int | float) or not isfinite(value):
+            raise jwt.InvalidTokenError(f"The {claim} claim must be a finite number")
 
     if times["exp"] <= now - leeway:
         raise jwt.ExpiredSignatureError("Signature has expired")

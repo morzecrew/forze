@@ -265,7 +265,15 @@ async def test_access_token_time_claims_must_be_numbers() -> None:
     svc, secret, cfg = _token_service()
     now = int(_FROZEN.timestamp())
 
-    for claim, value in (("exp", "soon"), ("iat", True), ("nbf", "later")):
+    for claim, value in (
+        ("exp", "soon"),
+        ("iat", True),
+        ("nbf", "later"),
+        # A float that is not a time: an ``exp`` of NaN or infinity would never expire.
+        ("exp", float("nan")),
+        ("exp", float("inf")),
+        ("iat", float("-inf")),
+    ):
         payload: dict[str, object] = {
             "iss": cfg.issuer,
             "aud": cfg.audience,
