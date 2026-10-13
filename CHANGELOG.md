@@ -11,9 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A socket.io client opening several namespaces can authenticate once.** `attach_realtime_connection(share_identity=True)` reuses the identity one Engine.IO connection resolved for its other namespaces with the same credential and resolver, until it expires or the connection closes; another credential is checked again.
 
+- **An outbox relay can deliver a row as soon as it commits.** `OutboxSpec(wake=OutboxWake(route=...))` publishes a wake on a pub/sub route after each flush's transaction commits, and the background relay runs a pass when it hears one; its poll stays the fallback for a lost wake.
+
+- **The outbox relay reclaims stale claims on its own cadence.** The reclaim runs at most once per `reclaim_every`, by default once per poll tick, rather than on every pass a wake starts.
+
+- **A Redis call can wait for a free connection instead of failing.** `RedisConfig(pool_timeout=...)`, also on `RedisSettings`, queues a call for up to that long once all `max_size` connections are in use; a retried read waits again. When unset, a full pool still refuses the call at once, as it does past the wait.
+
 ### Changed
 
-- ...
+- **An emit to a large socket.io room takes far less of the event loop.** The manager `build_socketio_server` builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass `client_manager=AsyncManager()` to keep python-socketio's manager.
 
 ### Fixed
 

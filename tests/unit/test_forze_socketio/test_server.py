@@ -38,7 +38,7 @@ class TestSocketIOServerBuilders:
     def test_build_server_configures_redis_manager(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(server_module, "AsyncRedisManager", StubRedisManager)
+        monkeypatch.setattr(server_module, "FanoutRedisManager", StubRedisManager)
         monkeypatch.setattr(server_module, "AsyncServer", StubAsyncServer)
 
         server = server_module.build_socketio_server(
@@ -81,4 +81,4 @@ class TestSocketIOServerBuilders:
     ) -> None:
         monkeypatch.setattr(server_module, "AsyncServer", StubAsyncServer)
         server = server_module.build_socketio_server()
-        assert server.kwargs.get("client_manager") is None
+        assert isinstance(server.kwargs.get("client_manager"), server_module.FanoutManager)

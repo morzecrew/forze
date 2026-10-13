@@ -27,10 +27,12 @@ from .value_objects import (
     OutboxStatus,
     StagedOutboxEntry,
 )
+from .wake import DEFAULT_OUTBOX_WAKE_TOPIC, OutboxWake, OutboxWakeSignal
 
 # ----------------------- #
 
 __all__ = [
+    "DEFAULT_OUTBOX_WAKE_TOPIC",
     "EncryptionReach",
     "IntegrationEvent",
     "OutboxAdminDepKey",
@@ -54,5 +56,7 @@ __all__ = [
     "OutboxSpec",
     "OutboxStagingContext",
     "OutboxStatus",
+    "OutboxWake",
+    "OutboxWakeSignal",
     "StagedOutboxEntry",
 ]
