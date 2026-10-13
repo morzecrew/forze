@@ -161,6 +161,41 @@ async def test_a_socket_whose_send_blocks_does_not_hold_the_rest() -> None:
     assert "eio-1" in sent  # and the slow one still gets its frame
 
 
+async def test_a_send_cancelled_while_waiting_is_not_reported_as_a_failure() -> None:
+    fanout, _ = await _server(FanoutManager())
+    record = fanout._send_eio_packet
+    released = asyncio.Event()
+
+    async def _held(eio_sid: str, pkt: Any) -> None:
+        if eio_sid == "eio-1":
+            await released.wait()
+
+        await record(eio_sid, pkt)
+
+    fanout._send_eio_packet = _held  # type: ignore[method-assign]
+
+    loop = asyncio.get_running_loop()
+    raised: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _, context: raised.append(context))
+
+    try:
+        with patch("forze_socketio.manager._logger") as logger:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(fanout.manager.emit("chat", "x", NS, room="all"), 0.05)
+
+            # What a loop shutting down does to a send still waiting.
+            (held,) = [t for t in asyncio.all_tasks() if t.get_coro().__name__ == "_send_frames"]
+            held.cancel()
+            await asyncio.gather(held, return_exceptions=True)
+            await asyncio.sleep(0)  # let its done-callback run
+
+    finally:
+        loop.set_exception_handler(None)
+
+    logger.debug.assert_not_called()
+    assert raised == []  # the callback did not raise reading a cancelled task
+
+
 async def test_an_installed_task_factory_still_sees_every_send() -> None:
     loop = asyncio.get_running_loop()
     seen: list[str] = []
