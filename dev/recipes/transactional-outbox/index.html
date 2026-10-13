@@ -5113,6 +5113,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#waking-the-relay-on-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Waking the relay on commit
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#consuming-on-the-other-side" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6472,6 +6483,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#waking-the-relay-on-commit" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Waking the relay on commit
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#consuming-on-the-other-side" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6734,6 +6756,28 @@ calling <code>flush()</code> by hand.</p>
     <span class="p">),</span>
 <span class="p">)</span>
 </code></pre></div>
+<h2 id="waking-the-relay-on-commit">Waking the relay on commit<a class="headerlink" href="#waking-the-relay-on-commit" title="Permanent link">&para;</a></h2>
+<p>A polling relay delivers a row up to one <code>interval</code> after it commits. Shortening the
+interval adds an idle claim query on every pass. Give the route a wake instead: each
+flush that wrote rows publishes a small signal on a pub/sub topic once its transaction
+commits, and the relay runs a pass as soon as it hears it.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.outbox</span><span class="w"> </span><span class="kn">import</span> <span class="n">OutboxWake</span>
+
+<span class="n">ORDER_EVENTS</span> <span class="o">=</span> <span class="n">OutboxSpec</span><span class="p">(</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">"order-events"</span><span class="p">,</span>
+    <span class="n">codec</span><span class="o">=</span><span class="n">PydanticModelCodec</span><span class="p">(</span><span class="n">OrderPlaced</span><span class="p">),</span>
+    <span class="n">destination</span><span class="o">=</span><span class="n">OutboxDestination</span><span class="o">.</span><span class="n">queue</span><span class="p">(</span><span class="n">route</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">,</span> <span class="n">channel</span><span class="o">=</span><span class="s2">"orders"</span><span class="p">),</span>
+    <span class="n">wake</span><span class="o">=</span><span class="n">OutboxWake</span><span class="p">(</span><span class="n">route</span><span class="o">=</span><span class="s2">"outbox-wake"</span><span class="p">),</span>  <span class="c1"># a pub/sub route, e.g. RedisPubSubConfig</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>The signal names only the route, so it can never carry or lose a row. A rollback
+publishes nothing, and a wake is never published before its rows are visible. A lost
+wake, a broken pub/sub connection, or a publish that outlasts <code>publish_timeout</code> (one
+second by default) leaves the row to the next poll, so keep the <code>interval</code> as the
+fallback. Wire the wake's pub/sub route in every process that flushes the route and in
+the one that relays it. The route must be tenant-global: a tenant-aware one is refused.</p>
+<p>With wakes, passes follow commits, so the stale-claim reclaim would run on each of them.
+It runs at most once per <code>reclaim_every</code>, which defaults to once per poll tick.</p>
 <h2 id="consuming-on-the-other-side">Consuming on the other side<a class="headerlink" href="#consuming-on-the-other-side" title="Permanent link">&para;</a></h2>
 <p><code>QueueConsumer</code> is the consumer-side counterpart — it replaces the hand-rolled
 <code>consume → dedupe → ack/nack</code> loop with the decisions already made correctly.

@@ -9344,6 +9344,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.12.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>An outbox relay can deliver a row as soon as it commits.</strong> <code>OutboxSpec(wake=OutboxWake(route=...))</code> publishes a wake on a pub/sub route after each flush's transaction commits, and the background relay runs a pass when it hears one; its poll stays the fallback for a lost wake.</p>
+</li>
+<li>
+<p><strong>The outbox relay reclaims stale claims on its own cadence.</strong> The reclaim runs at most once per <code>reclaim_every</code>, by default once per poll tick, rather than on every pass a wake starts.</p>
+</li>
 <li><strong>A Redis call can wait for a free connection instead of failing.</strong> <code>RedisConfig(pool_timeout=...)</code>, also on <code>RedisSettings</code>, queues a call for up to that long once all <code>max_size</code> connections are in use; a retried read waits again. When unset, a full pool still refuses the call at once, as it does past the wait.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
