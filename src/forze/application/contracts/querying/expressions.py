@@ -65,8 +65,20 @@ QueryElementOpConjunction = TypedDict(
 """Operator map for a single array element (equality, ordering, text patterns, and
 membership) — mirrors ``ALL_ELEMENT_OPS``."""
 
-QueryElementValueMapValue = QueryElementOpConjunction | Scalar
-"""Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``."""
+QueryElementQuantifierExpression = TypedDict(
+    "QueryElementQuantifierExpression",
+    {
+        "$any": "QueryElementConstraint",
+        "$all": "QueryElementConstraint",
+        "$none": "QueryElementConstraint",
+    },
+    total=False,
+)
+"""Element quantifier application on an array field."""
+
+QueryElementValueMapValue = QueryElementOpConjunction | Scalar | QueryElementQuantifierExpression
+"""Value for one element-relative field inside ``$any`` / ``$all`` / ``$none``; a quantifier
+reaches into a sub-array of the object element."""
 
 QueryElementValueMap = Mapping[str, QueryElementValueMapValue]
 """Element-relative field map (object arrays)."""
@@ -77,19 +89,14 @@ QueryElementValuesPredicate = TypedDict(
 )
 """Element-relative ``$values`` bundle for object-array quantifiers."""
 
-QueryElementConstraint = QueryElementOpConjunction | Scalar | QueryElementValuesPredicate
-"""Inner constraint for ``$any`` / ``$all`` / ``$none`` (op map, scalar shortcut, or ``$values``)."""
-
-QueryElementQuantifierExpression = TypedDict(
-    "QueryElementQuantifierExpression",
-    {
-        "$any": QueryElementConstraint,
-        "$all": QueryElementConstraint,
-        "$none": QueryElementConstraint,
-    },
-    total=False,
+QueryElementConstraint: TypeAlias = (
+    QueryElementOpConjunction
+    | Scalar
+    | QueryElementValuesPredicate
+    | QueryElementQuantifierExpression
 )
-"""Element quantifier application on an array field."""
+"""Inner constraint for ``$any`` / ``$all`` / ``$none``: an op map, a scalar shortcut,
+``$values``, or a quantifier over an element that is itself an array."""
 
 QueryValueMapValue = (
     QueryValueOpConjunction | QueryValueShortcutValue | QueryElementQuantifierExpression

@@ -7,6 +7,7 @@ page, and ``{"$bogus": {...}}`` became ``{}``. Each now refuses it, naming the k
 
 from __future__ import annotations
 
+import json
 import random
 import re
 from typing import Any
@@ -30,7 +31,7 @@ from forze.application.contracts.search import (
 )
 from forze.base.exceptions import CoreException
 from forze_kits.aggregates.document.dto import AggregatedListRequestDTO, ListRequestDTO
-from tests.support.query_dsl_corpus import REFUSALS
+from tests.support.query_dsl_corpus import CASES, REFUSALS, parse_corpus_filter
 
 # ----------------------- #
 
@@ -58,6 +59,17 @@ def test_a_valid_filter_is_kept_whole() -> None:
 
     assert _FILTER.validate_python(filters) == filters
     assert ListRequestDTO.model_validate({"filters": filters}).filters == filters
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c.name for c in CASES])
+def test_a_filter_the_parser_accepts_passes_the_request_type(case: Any) -> None:
+    """The request type is no narrower than the parser behind the port: a filter a backend
+    would serve is not refused at the door. Python-only operands (a set) go as JSON does."""
+
+    filters = json.loads(json.dumps(case.filters, default=list))
+    parse_corpus_filter(filters)
+
+    assert _FILTER.validate_python(filters) == filters
 
 
 @pytest.mark.parametrize(
@@ -116,6 +128,10 @@ def test_the_schema_says_no_other_keys() -> None:
         (
             {"$values": {"items": {"$any": {"$values": {"tags": {"$any": "x", "$eq": 1}}}}}},
             "an element quantifier cannot be combined",
+        ),
+        (
+            {"$values": {"matrix": {"$any": {"$any": "x", "$bogus": 1}}}},
+            "cannot be combined with other operators ($any, $bogus)",
         ),
     ],
 )

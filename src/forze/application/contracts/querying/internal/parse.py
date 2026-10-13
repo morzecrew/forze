@@ -539,7 +539,7 @@ class QueryFilterExpressionParser:
 
         if _QUANTIFIER_OPS & raw.keys():
             raise exc.precondition(
-                "An element quantifier cannot be combined with other operators",
+                f"An element quantifier cannot be combined with other operators ({_named(raw)})",
             )
 
         if all(k in _ELEMENT_OPS for k in raw):

@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A search request refuses an option it does not define** (**behaviour change**). Search options are closed like filters: an unknown key in `options` or its highlight or snapshot options, `result_snapshot` (use `snapshot`), or a single-index search's `members` / `member_weights` (dropped with a warning) is a 422.
 
+- **A request filter can nest an element quantifier, as the port can.** A quantifier inside another, or under an object element's `$values`, failed a request DTO or tool schema with a list of union errors; the filter types now express it.
+
 - **A Temporal schedule created from cron expressions can be described and listed.** The server keeps each expression only as a compiled calendar, so the timing came back empty; it now reads as an equivalent cron expression. A timing it cannot state exactly, such as one skipping periods, is refused; a listing skips it.
 
 - **A blank PGroonga search decrypts encrypted fields and refuses a sort on them, as a ranked search does.** A projection or `select_search` returned the ciphertext, and a sort on an encrypted field ordered the rows by it.
