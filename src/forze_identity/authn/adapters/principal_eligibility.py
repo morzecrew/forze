@@ -29,13 +29,19 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
 
     # ....................... #
 
-    async def require_authentication_allowed(self, principal_id: UUID) -> None:
+    async def require_authentication_allowed(
+        self,
+        principal_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> None:
         principal = await self.principal_qry.find(
             filters={
                 "$values": {
                     "id": principal_id,
                 },
-            }
+            },
+            for_update=for_update,
         )
 
         if principal is None or not principal.is_active:
@@ -60,5 +66,10 @@ class AllowAllPrincipalEligibilityAdapter(PrincipalEligibilityPort):
     API-key revoke) alone.
     """
 
-    async def require_authentication_allowed(self, principal_id: UUID) -> None:
-        del principal_id
+    async def require_authentication_allowed(
+        self,
+        principal_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> None:
+        del principal_id, for_update

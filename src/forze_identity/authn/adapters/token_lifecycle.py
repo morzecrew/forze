@@ -15,6 +15,7 @@ from forze.application.contracts.authn import (
     IssuedTokens,
     PrincipalEligibilityPort,
     RefreshTokenCredentials,
+    RefreshTokenReuseError,
     TokenLifecyclePort,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
@@ -101,7 +102,11 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                 code="delegate_denied",
             )
 
-        await self.eligibility.require_authentication_allowed(identity.principal_id)
+        # Locked until the session commits, so a concurrent deactivation cannot miss it.
+        await self.eligibility.require_authentication_allowed(
+            identity.principal_id,
+            for_update=True,
+        )
 
         now = utcnow()
 
@@ -209,12 +214,18 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                     tenant_id=old_session.tenant_id,
                 )
 
-            raise exc.authentication("Invalid refresh token")
+            raise RefreshTokenReuseError.detected(
+                old_session.principal_id,
+                old_session.family_id,
+            )
 
         if old_session.expires_at <= utcnow():
             raise exc.authentication("Refresh token expired")
 
-        await self.eligibility.require_authentication_allowed(old_session.principal_id)
+        await self.eligibility.require_authentication_allowed(
+            old_session.principal_id,
+            for_update=True,
+        )
 
         now = utcnow()
 

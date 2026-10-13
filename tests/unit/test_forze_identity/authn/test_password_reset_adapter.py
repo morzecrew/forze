@@ -353,10 +353,16 @@ class TestResetPassword:
         assert reset_args[0] == reset.id
         assert reset_args[2].used_at is not None
 
-        # ALL sessions of the principal revoked ("log out everywhere").
+        # ALL live sessions of the principal revoked ("log out everywhere").
         session_qry.find_many.assert_awaited_once()
         filters = session_qry.find_many.await_args.kwargs["filters"]
-        assert filters == {"$values": {"principal_id": account.principal_id}}
+        assert filters == {
+            "$values": {
+                "principal_id": account.principal_id,
+                "revoked_at": None,
+                "rotated_at": None,
+            }
+        }
         adapter.session_cmd.update_many.assert_awaited_once()
         upds = adapter.session_cmd.update_many.await_args.args[0]
         assert [(u.id, u.rev) for u in upds] == [(session.id, session.rev)]

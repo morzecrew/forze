@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from contextlib import nullcontext
 from uuid import UUID
 
 import attrs
@@ -7,7 +8,7 @@ from forze.application.contracts.authn import AuthnIdentity, PrincipalDeactivati
 from forze.application.contracts.execution import Handler
 from forze.domain.models import BaseDTO
 
-from ._utils import require_admin_identity
+from ._utils import TxScope, require_admin_identity
 
 # ----------------------- #
 
@@ -36,9 +37,13 @@ class DeactivatePrincipalHandler(Handler[DeactivatePrincipalRequestDTO, None]):
     deactivation: PrincipalDeactivationPort
     """Cascaded deactivation port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the policy, sessions and credentials commit in together."""
+
     # ....................... #
 
     async def __call__(self, args: DeactivatePrincipalRequestDTO) -> None:
         require_admin_identity(self.resolver)
 
-        await self.deactivation.deactivate(args.principal_id)
+        async with self.tx():
+            await self.deactivation.deactivate(args.principal_id)

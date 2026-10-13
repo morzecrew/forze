@@ -1,6 +1,7 @@
 """Shared helpers for authn usecases."""
 
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 
 from forze.application.contracts.authn import AuthnIdentity, CredentialLifetime, IssuedTokens
 from forze.base.exceptions import exc
@@ -8,6 +9,11 @@ from forze.base.exceptions import exc
 from ..dto import AuthnTokenResponseDTO
 
 # ----------------------- #
+
+TxScope = Callable[[], AbstractAsyncContextManager[object]]
+"""Opens the transaction a handler runs its lifecycle calls in (``nullcontext`` for none)."""
+
+# ....................... #
 
 
 def _expires_in_seconds(lifetime: CredentialLifetime | None) -> int | None:

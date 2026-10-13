@@ -4,6 +4,7 @@ import functools
 import inspect
 import types
 from collections.abc import Iterable
+from contextlib import nullcontext
 from typing import Any
 
 from forze.application.contracts.authn import (
@@ -22,7 +23,7 @@ from forze.application.execution.operations import OperationDescriptor
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.hooks.authn import AuthnRequired
 from forze.base.exceptions import exc
-from forze.base.primitives import StrKeyNamespace
+from forze.base.primitives import StrKey, StrKeyNamespace
 
 from .dto import (
     AuthnApiKeyListDTO,
@@ -53,6 +54,7 @@ from .handlers import (
     DeactivatePrincipalHandler,
     DeactivatePrincipalRequestDTO,
 )
+from .handlers._utils import TxScope
 from .operations import AuthnKernelOp
 
 # ----------------------- #
@@ -86,6 +88,7 @@ def build_authn_registry(
     reset_events: OutboxSpec[Any] | None = None,
     admin_guards: Iterable[BeforeStep] = (),
     trust_admin_guards: bool = False,
+    tx_route: StrKey | None = "default",
 ) -> OperationRegistry:
     """Build authn operation registry.
 
@@ -114,6 +117,13 @@ def build_authn_registry(
         administrators.
     :param trust_admin_guards: Skip that check, for a guard that authorizes without declaring
         its keys; the app then answers for ``admin_guards`` admitting only administrators.
+    :param tx_route: Transaction route the session-issuing and revoking operations run their
+        writes on: login, refresh, logout, password change and reset, and deactivation. Each
+        then commits or rolls back whole, and an issue's eligibility check holds its lock until
+        the session commits. Login checks the password before the transaction opens. The deps
+        module must register a transaction manager on this route; ``None`` runs the writes
+        without a transaction, so a failure part-way can leave a principal deactivated with
+        live sessions.
     """
 
     ns = ns or spec.default_namespace
@@ -133,6 +143,12 @@ def build_authn_registry(
             code="admin_guards_unauthorized",
         )
 
+    def _tx(ctx: ExecutionContext) -> TxScope:
+        if tx_route is None:
+            return nullcontext
+
+        return functools.partial(ctx.tx_ctx.scope, tx_route)
+
     def _password_login(ctx: ExecutionContext) -> AuthnPasswordLogin:
         return AuthnPasswordLogin(
             authn=ctx.deps.resolve_configurable(ctx, AuthnDepKey, spec, route=spec.name),
@@ -142,6 +158,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
+            tx=_tx(ctx),
         )
 
     def _refresh_tokens(ctx: ExecutionContext) -> AuthnRefreshTokens:
@@ -152,6 +169,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
+            tx=_tx(ctx),
         )
 
     def _logout(ctx: ExecutionContext) -> AuthnLogout:
@@ -163,6 +181,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
+            tx=_tx(ctx),
         )
 
     def _change_password(ctx: ExecutionContext) -> AuthnChangePassword:
@@ -174,6 +193,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
+            tx=_tx(ctx),
         )
 
     def _request_password_reset(ctx: ExecutionContext) -> AuthnRequestPasswordReset:
@@ -195,6 +215,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
+            tx=_tx(ctx),
         )
 
     def _deactivate_principal(ctx: ExecutionContext) -> DeactivatePrincipalHandler:
@@ -206,6 +227,7 @@ def build_authn_registry(
                 spec,
                 route=spec.name,
             ),
+            tx=_tx(ctx),
         )
 
     def _api_key_lifecycle(ctx: ExecutionContext) -> Any:

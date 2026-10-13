@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 
 import attrs
 
@@ -11,6 +12,7 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     PasswordLifecyclePort,
     RefreshTokenCredentials,
+    RefreshTokenReuseError,
     TokenLifecyclePort,
 )
 from forze.application.contracts.execution import Handler
@@ -28,6 +30,7 @@ from ..dto import (
     AuthnTokenResponseDTO,
 )
 from ._utils import (
+    TxScope,
     require_admin_identity,
     require_identity,
     require_own_identity,
@@ -47,6 +50,9 @@ class AuthnPasswordLogin(Handler[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
     token_lifecycle: TokenLifecyclePort
     """Token lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
     # ....................... #
 
     async def __call__(self, args: AuthnLoginRequestDTO) -> AuthnTokenResponseDTO:
@@ -55,8 +61,12 @@ class AuthnPasswordLogin(Handler[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
             password=args.password,
         )
 
+        # The password check stays outside the transaction: it holds no lock, and hashing
+        # inside one would hold a connection for the whole hash.
         authn = await self.authn.authenticate_with_password(creds)
-        tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(authn.identity)
+
+        async with self.tx():
+            tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(authn.identity)
 
         return token_response_from_issued_tokens(tokens)
 
@@ -81,6 +91,9 @@ class AuthnLogout(Handler[None, None]):
     token_lifecycle: TokenLifecyclePort
     """Token lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
     # ....................... #
 
     async def __call__(self, args: None) -> None:
@@ -88,7 +101,8 @@ class AuthnLogout(Handler[None, None]):
 
         identity = require_own_identity(self.resolver)
 
-        await self.token_lifecycle.revoke_tokens(identity)
+        async with self.tx():
+            await self.token_lifecycle.revoke_tokens(identity)
 
 
 # ....................... #
@@ -101,12 +115,28 @@ class AuthnRefreshTokens(Handler[AuthnRefreshRequestDTO, AuthnTokenResponseDTO])
     token_lifecycle: TokenLifecyclePort
     """Token lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
     # ....................... #
 
     async def __call__(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
         creds = RefreshTokenCredentials(token=args.refresh_token)
 
-        tokens: IssuedTokens = await self.token_lifecycle.refresh_tokens(creds)
+        try:
+            async with self.tx():
+                tokens: IssuedTokens = await self.token_lifecycle.refresh_tokens(creds)
+
+        except RefreshTokenReuseError as reuse:
+            # The raise rolled back the family revocation the lifecycle made before it, so
+            # commit that revocation on its own: reuse is the token-theft signal.
+            async with self.tx():
+                await self.token_lifecycle.revoke_chain_of_tokens(
+                    reuse.principal_id,
+                    reuse.family_id,
+                )
+
+            raise
 
         return token_response_from_issued_tokens(tokens)
 
@@ -124,16 +154,20 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
     password_lifecycle: PasswordLifecyclePort
     """Password lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
     # ....................... #
 
     async def __call__(self, args: AuthnChangePasswordRequestDTO) -> None:
         identity = require_own_identity(self.resolver)
 
-        await self.password_lifecycle.change_password(
-            identity,
-            args.current_password,
-            args.new_password,
-        )
+        async with self.tx():
+            await self.password_lifecycle.change_password(
+                identity,
+                args.current_password,
+                args.new_password,
+            )
 
 
 # ....................... #

@@ -15,6 +15,7 @@ from forze.application.contracts.authn import (
     PasswordVerifierDepKey,
     PrincipalEligibilityDepKey,
     PrincipalResolverDepKey,
+    TokenLifecycleDepKey,
     TokenVerifierDepKey,
     resolve_authn_event_emitter,
 )
@@ -1415,7 +1416,7 @@ class ConfigurableMockPasswordReset(_MockFactoryBase):
 @final
 @attrs.define(slots=True, kw_only=True)
 class ConfigurableMockPrincipalDeactivation(_MockFactoryBase):
-    """Build the mock principal deactivation stub with the route's event emitter."""
+    """Build the mock principal deactivation over the route's token lifecycle."""
 
     def __call__(
         self,
@@ -1423,6 +1424,10 @@ class ConfigurableMockPrincipalDeactivation(_MockFactoryBase):
         spec: AuthnSpec,
     ) -> MockPrincipalDeactivationPort:
         return MockPrincipalDeactivationPort(
+            token_lifecycle=context.deps.provide(TokenLifecycleDepKey, route=spec.name)(
+                context,
+                spec,
+            ),
             events=resolve_authn_event_emitter(context, spec),
         )
 

@@ -152,15 +152,21 @@ async def revoke_sessions_matching(
     ],
     values: Mapping[str, Any],
 ) -> None:
-    """Revoke (set ``revoked_at``) every session matching the ``$values`` filter.
+    """Revoke (set ``revoked_at``) every live session matching the ``$values`` filter.
 
     Shared by cascaded principal deactivation (token lifecycle) and the
-    password-change "log out everywhere" cascade.
+    password-change "log out everywhere" cascade. Only live sessions match: a revoked
+    or rotated one is already refused, and re-stamping every session a principal ever
+    had would lock each of them and run into the backend's implicit row cap.
     """
 
     sessions = await session_qry.find_many(
         filters={
-            "$values": dict(values),
+            "$values": {
+                **values,
+                "revoked_at": None,
+                "rotated_at": None,
+            },
         }
     )
 
