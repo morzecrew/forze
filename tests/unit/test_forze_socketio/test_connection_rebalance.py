@@ -404,7 +404,15 @@ class TestNoShedding:
 
         assert run_simulation(scenario, latency=_slow_views) == 0
 
-    def test_nothing_sheds_while_draining(self) -> None:
+    def test_nothing_sheds_or_is_read_while_draining(self) -> None:
+        reads: list[float] = []
+
+        def record(surface: str | None, route: str | None, op: str) -> float:
+            if op == "view":
+                reads.append(asyncio.get_running_loop().time())
+
+            return 0.0
+
         async def scenario() -> int:
             state, node = MockState(), _Node()
             await node.connect(100, "/lobby")
@@ -420,7 +428,9 @@ class TestNoShedding:
 
             return node.closed()
 
-        assert run_simulation(scenario) == 0
+        assert run_simulation(scenario, latency=record) == 0
+        # A replica on its way down does not read the fleet at all.
+        assert all(at < 0.5 for at in reads)
 
 
 class TestStop:
