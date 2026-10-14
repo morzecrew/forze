@@ -85,6 +85,8 @@ class _Lock:
     acquire_fails_on: frozenset[str] = frozenset()
     release_fails: bool = False
     release_delay: float = 0.0
+    reads_fail: bool = False
+    """Owner and ttl reads raise, as on a broken connection."""
     log: list[tuple[float, str, str, str]] = attrs.field(factory=list)
 
     @property
@@ -143,6 +145,9 @@ class _Lock:
         return await self.inner.is_locked(key)
 
     async def get_owner(self, key: str) -> str | None:
+        if self.reads_fail:
+            raise exc.infrastructure("read refused")
+
         return await self.inner.get_owner(key)
 
     async def get_ttl(self, key: str) -> timedelta | None:
@@ -1127,6 +1132,25 @@ class TestHandoff:
 
         _simulate(scenario)
 
+    def test_a_failed_handoff_check_keeps_the_term(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a", handoff="on_request", prefer=self._prefers(False))
+            await a.start()
+            await asyncio.sleep(1)
+            a.lock.reads_fail = True  # the holder can no longer read the want-lock
+            await asyncio.sleep(4)
+            await fleet.replica("b", handoff="on_request", prefer=self._prefers(True)).start()
+            await asyncio.sleep(30)
+
+            (run,) = fleet.runs
+            assert run.replica == "a" and run.term.live()  # renewed, and did not yield
+            assert len(a.lock.calls("reset")) == 3
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
     def test_two_preferring_replicas_do_not_pass_the_unit_back_and_forth(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
@@ -1194,6 +1218,21 @@ class TestHandoff:
 
 
 class TestWiring:
+    def test_a_second_startup_while_running_is_ignored(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a")
+            await a.start()
+            first = a.loop_task()
+            await a.start()
+
+            assert a.loop_task() is first
+            assert [loop.loop_name for loop in a.ctx.drainables.loops] == ["leadership:relay"]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
     def test_a_configuration_error_in_a_campaign_hook_stops_campaigning(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
