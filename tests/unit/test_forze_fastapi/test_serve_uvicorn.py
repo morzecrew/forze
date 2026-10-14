@@ -113,16 +113,15 @@ def _open_stream(port: int) -> Iterator[socket.socket]:
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 class TestServeUvicorn:
     def test_sigterm_withdraws_readiness_drains_then_exits_cleanly(self, tmp_path: Path) -> None:
-        with _serving(tmp_path, "quick") as (process, port, record):
-            with _open_stream(port):
-                started = time.monotonic()
-                process.send_signal(signal.SIGTERM)
+        with _serving(tmp_path, "quick") as (process, port, record), _open_stream(port):
+            started = time.monotonic()
+            process.send_signal(signal.SIGTERM)
 
-                # Still serving, but no longer ready: the balancer's cue to stop routing.
-                _wait_for("readiness to fail", lambda: _readiness(port) == 503, within=1.0)
+            # Still serving, but no longer ready: the balancer's cue to stop routing.
+            _wait_for("readiness to fail", lambda: _readiness(port) == 503, within=1.0)
 
-                code = process.wait(timeout=ANNOUNCE_DELAY + GRACEFUL_TIMEOUT + 5.0)
-                elapsed = time.monotonic() - started
+            code = process.wait(timeout=ANNOUNCE_DELAY + GRACEFUL_TIMEOUT + 5.0)
+            elapsed = time.monotonic() - started
 
         assert code == 0
         assert _events(record) == ["phase-started", "phase-done", "teardown", "served"]
