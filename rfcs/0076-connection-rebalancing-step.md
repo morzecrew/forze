@@ -1,6 +1,6 @@
 # RFC 0076 — Connection rebalancing step
 
-- **Status:** 📝 Draft — demand-gated: built when a second realtime app needs it.
+- **Status:** 🚧 In progress
 - **Scope:** A socket.io lifecycle step that sheds a replica's movable connections while it is
   well above the fleet's mean, so a fleet that drifted out of balance recovers without a
   restart. It composes three earlier RFCs:
