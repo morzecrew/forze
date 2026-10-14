@@ -8,10 +8,16 @@ from pydantic import BaseModel
 
 pytest.importorskip("redis")
 
+from forze.base.exceptions import CoreException
 from forze.base.serialization import PydanticModelCodec
 from forze_redis.adapters.codecs import RedisStreamCodec
-from forze_redis.adapters.stream import RedisStreamAdapter, RedisStreamGroupAdapter
+from forze_redis.adapters.stream import (
+    RedisStreamAdapter,
+    RedisStreamGroupAdapter,
+    RedisStreamGroupAdminAdapter,
+)
 from forze_redis.kernel.client import RedisClient
+from forze_redis.kernel.client.errors import BUSYGROUP_CODE
 
 
 class _Payload(BaseModel):
@@ -225,3 +231,20 @@ async def test_stream_group_adapter_pending_pages_with_exclusive_cursor(
     first, second = client.xpending.await_args_list
     assert first.kwargs == {"count": 100, "start_id": "-"}
     assert second.kwargs == {"count": 100, "start_id": "(1-99"}
+
+
+@pytest.mark.asyncio
+async def test_group_admin_ensure_group_tolerates_only_an_existing_group() -> None:
+    client = Mock(spec=RedisClient)
+    client.xgroup_create = AsyncMock(
+        side_effect=[
+            CoreException.conflict("exists", code=BUSYGROUP_CODE),
+            CoreException.infrastructure("Redis resource is busy."),
+        ]
+    )
+    admin = RedisStreamGroupAdminAdapter(client=client)
+
+    await admin.ensure_group("g", "s")
+
+    with pytest.raises(CoreException, match="busy"):
+        await admin.ensure_group("g", "s")

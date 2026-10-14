@@ -6,6 +6,7 @@ loop around transient transport failures on their read paths.
 """
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -62,6 +63,8 @@ async def retry_read(
             if on_retry is not None:
                 on_retry(i + 1)
 
-            await asyncio.sleep(delay * (2**i))
+            # ``ldexp`` scales by 2**i without an int-to-float conversion, which
+            # overflows past 1024 retries even for the legitimate zero delay.
+            await asyncio.sleep(math.ldexp(delay, i))
 
     raise exc.internal("Read retry loop exited without a result.")  # pragma: no cover

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -31,6 +32,7 @@ from forze_kits.integrations.durable import (
     resolve_durable_run_store,
     resolve_durable_step,
 )
+from forze_kits.integrations.durable import saga_executor as saga_executor_mod
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_modules
 
@@ -940,6 +942,22 @@ class TestDurableSagaTransientFailures:
         assert ei.value.kind is ExceptionKind.DOMAIN  # consistent: compensated
         # c attempted twice (initial + one retry), then rolled back in reverse.
         assert effects == ["do:a", "do:b", "do:c", "do:c", "undo:b", "undo:a"]
+
+    async def test_zero_delay_survives_more_than_a_thousand_retries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 0 * 2**1024 raises OverflowError (the int does not fit a float), which
+        # would replace the step's transient error once a zero-delay loop passed 1024.
+        # The retry warning renders a traceback; 1100 of them take minutes.
+        monkeypatch.setattr(saga_executor_mod, "logger", MagicMock())
+        fn = AsyncMock(
+            side_effect=[exc.infrastructure(f"blip {n}") for n in range(1100)]
+            + [{"ok": True}, AssertionError("retried past the script")]
+        )
+        executor = DurableSagaExecutor(retry_attempts=1100, retry_base_delay=0.0)
+
+        assert await executor._retry_transient("a", fn) == {"ok": True}
+        assert fn.await_count == 1101
 
     async def test_non_retryable_step_failure_compensates_without_retrying(self) -> None:
         ctx = context_from_modules(MockDepsModule())

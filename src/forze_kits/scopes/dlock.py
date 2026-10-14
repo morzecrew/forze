@@ -41,11 +41,13 @@ class DistributedLockScope:
     handle (``key`` / ``owner`` / ``token``). Tokens are monotonically increasing
     per key across lock generations; the extend heartbeat (``reset``) keeps the
     same generation, so the token never changes mid-scope. Thread the token into
-    downstream writes and reject stale ones storage-side::
+    downstream writes and reject, storage-side, any token lower than the highest one
+    observed; an equal token is the same generation, so the holder's own repeated
+    writes are accepted::
 
         async with dlock_scope.scope("invoice:42") as lock:
             # e.g. UPDATE invoice SET ..., fence = :token
-            #      WHERE id = 42 AND fence < :token
+            #      WHERE id = 42 AND fence <= :token
             await repo.update_invoice(invoice, fence_token=lock.token)
 
     Without that consumer-side check the scope remains best-effort exclusion

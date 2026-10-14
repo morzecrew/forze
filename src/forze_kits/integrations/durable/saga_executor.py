@@ -16,6 +16,7 @@ contract, so the same code runs over the mock (tests), Postgres (self-hosted), o
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, cast, final
 
@@ -540,7 +541,9 @@ class DurableSagaExecutor:
                     self.retry_attempts,
                     exc_info=True,
                 )
-                await asyncio.sleep(self.retry_base_delay * (2**attempt))
+                # ``ldexp`` scales by 2**attempt without an int-to-float conversion, which
+                # overflows past 1024 attempts even for the legitimate zero delay.
+                await asyncio.sleep(math.ldexp(self.retry_base_delay, attempt))
 
         return await fn()
 

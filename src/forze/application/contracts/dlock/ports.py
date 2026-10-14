@@ -47,8 +47,9 @@ class DistributedLockCommandPort(Protocol):  # pragma: no cover
     acquisition gets a strictly higher token; extending a live lease via
     :meth:`reset` keeps the same token). Consumers protect downstream writes by
     sending the token with the write and rejecting, storage-side, any token
-    lower than the highest one observed for that resource. The framework cannot
-    enforce that check — it is the consumer's storage-side responsibility.
+    lower than the highest one observed for that resource; an equal token is the
+    same generation and is accepted. The framework cannot enforce that check — it
+    is the consumer's storage-side responsibility.
     """
 
     spec: DistributedLockSpec

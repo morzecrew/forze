@@ -107,6 +107,16 @@ async def test_depth_reports_backlog_pending_and_rest(redis_client: RedisClient)
     assert at_rest.at_rest
 
 
+async def test_ensure_group_twice_keeps_the_group(redis_client: RedisClient) -> None:
+    # The second XGROUP CREATE answers BUSYGROUP; ensuring is idempotent, so it is no error.
+    admin = RedisStreamGroupAdminAdapter(client=redis_client)
+
+    await admin.ensure_group("twice", "it-ensure-twice", start_id="0")
+    await admin.ensure_group("twice", "it-ensure-twice", start_id="0")
+
+    assert (await admin.depth("twice", "it-ensure-twice")).at_rest
+
+
 async def test_depth_on_missing_group_raises_not_found(redis_client: RedisClient) -> None:
     admin = RedisStreamGroupAdminAdapter(client=redis_client)
     other = RedisStreamGroupAdminAdapter(client=redis_client)

@@ -17,7 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **A retry past its 1,024th attempt no longer fails with `OverflowError`.** Resilience retries and outbox redelivery keep their backoff at the cap however many attempts came before, and a zero-delay saga step or client read keeps retrying.
+
+- **Ensuring a Redis consumer group that already exists no longer fails**, so the realtime group-ensure step survives a restart. A `BUSYGROUP` reply now maps to a conflict coded `redis_busygroup` rather than a generic busy infrastructure error.
+
+- **A `SERVERLESS` runtime now refuses the durable recovery and scheduler steps** at assembly, as it does the realtime sweeps: each runs a background loop a frozen function cannot host. **Breaking** for serverless apps that assembled them.
+
+- **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now fences with `fence <= :token`, accepting an equal token, the same lock generation, as the contract does.
 
 ## [0.13.0] - 2026-10-14
 
