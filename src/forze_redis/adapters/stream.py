@@ -26,9 +26,10 @@ from forze.application.contracts.stream import (
     StreamQueryPort,
 )
 from forze.application.contracts.tenancy import TenancyMixin
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 from ..kernel.client import RedisClientPort
+from ..kernel.client.errors import BUSYGROUP_CODE
 from .codecs import RedisStreamCodec
 
 # ----------------------- #
@@ -386,8 +387,8 @@ class RedisStreamGroupAdminAdapter(AckStreamGroupAdminPort, TenancyMixin):
                 _stream_physical(self, stream), group, id=start_id, mkstream=True
             )
 
-        except Exception as error:
-            if "BUSYGROUP" not in str(error):
+        except CoreException as error:
+            if error.code != BUSYGROUP_CODE:
                 raise
 
     # ....................... #

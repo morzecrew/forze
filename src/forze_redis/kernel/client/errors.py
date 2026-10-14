@@ -20,6 +20,11 @@ from forze.base.exceptions import (
 
 # ----------------------- #
 
+BUSYGROUP_CODE = "redis_busygroup"
+"""Code of the conflict a ``BUSYGROUP`` reply maps to: the consumer group already exists."""
+
+# ....................... #
+
 
 @static_fn_conformity(ExceptionMapper)  # type: ignore[type-abstract]
 def _redis_eh(  # skipcq: PY-R1000
@@ -89,6 +94,15 @@ def _redis_eh(  # skipcq: PY-R1000
             if head == "WRONGTYPE":
                 return CoreException.infrastructure(
                     "Redis key has wrong type.",
+                    details=details,
+                )
+
+            # An existing consumer group, not a busy server: ``ensure_group`` tolerates
+            # it by this code, so it must not share the generic busy mapping.
+            if head == "BUSYGROUP":
+                return CoreException.conflict(
+                    "Redis consumer group already exists.",
+                    code=BUSYGROUP_CODE,
                     details=details,
                 )
 

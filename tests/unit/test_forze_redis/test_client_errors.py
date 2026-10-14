@@ -37,7 +37,6 @@ class TestRedisErrorHandler:
         [
             ("WRONGTYPE ...", "wrong type"),
             ("BUSY Redis is busy running a script", "busy"),
-            ("BUSYGROUP Consumer Group name already exists", "busy"),
             ("something else", "response error"),
             # Leading token is the RESP code: a key/value echoing WRONGTYPE or
             # BUSY mid-message must NOT be classified by it.
@@ -49,6 +48,16 @@ class TestRedisErrorHandler:
         r = _redis_eh(redis_errors.ResponseError(message), site="op")
         assert isinstance(r, CoreException) and r.kind == ExceptionKind.INFRASTRUCTURE
         assert needle in r.summary
+
+    def test_busygroup_is_a_coded_conflict(self) -> None:
+        # An existing consumer group is not a busy server: an idempotent ensure
+        # tolerates it, so it needs a code of its own to be told apart.
+        r = _redis_eh(
+            redis_errors.ResponseError("BUSYGROUP Consumer Group name already exists"),
+            site="op",
+        )
+        assert isinstance(r, CoreException) and r.kind == ExceptionKind.CONFLICT
+        assert r.code == "redis_busygroup"
 
     def test_unknown_exception_fallback(self) -> None:
         r = exc_interceptor.mapper(RuntimeError("boom"), site="my_op")
