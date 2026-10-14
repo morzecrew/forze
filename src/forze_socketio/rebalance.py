@@ -207,7 +207,9 @@ class _Rebalance:
         view = await port.view()
         mine = next((member for member in view.members if member.id == self.me), None)
 
-        if mine is None:
+        # Again after the read: a drain announced meanwhile has stopped the step's shed, and a
+        # shed started now would close connections the drain is already closing.
+        if mine is None or scope_readiness(ctx) != "ready":
             return
 
         load, targets = _live_counts(self.sio, namespaces=self.namespaces, movable=self.movable)

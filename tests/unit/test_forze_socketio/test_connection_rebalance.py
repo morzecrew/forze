@@ -139,6 +139,12 @@ async def _peers(state: MockState, *loads: int) -> None:
 Probe = Callable[[ExecutionRuntime], Awaitable[None]]
 
 
+def _slow_views(surface: str | None, route: str | None, op: str) -> float:
+    """Every fleet view takes two seconds of virtual time."""
+
+    return 2.0 if op == "view" else 0.0
+
+
 async def _serve(state: MockState, step: Any, probe: Probe) -> None:
     """Run *step* in a runtime on the mock fleet while *probe* looks on."""
 
@@ -268,6 +274,22 @@ class TestRate:
         # Every second: one each sixth tick. Every 30 s: five each tick. A hundred either way.
         assert run_simulation(scenario) == 100
 
+    def test_slow_ticks_keep_the_rate(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(200, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+
+            # Ticks start every 3 s; the one at 600 s reads until 602 s and sheds.
+            await _serve(state, _step(node, per_minute=10), _sleep(602.5))
+
+            return node.closed()
+
+        # Each view takes 2 s, so ticks one second apart start 3 s apart: the allowance
+        # follows the time that passed, not the ticks, and a minute still sheds ten.
+        assert run_simulation(scenario, latency=_slow_views) == 100
+
     def test_a_long_wait_banks_at_most_a_minute(self) -> None:
         async def scenario() -> int:
             state, node = MockState(), _Node()
@@ -362,6 +384,25 @@ class TestNoShedding:
             return node.closed()
 
         assert run_simulation(scenario) == 0
+
+    def test_a_drain_announced_during_the_read_starts_no_shed(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(100, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+
+            async def probe(runtime: ExecutionRuntime) -> None:
+                # The tick at 3 s holds an allowance and reads the view until 5 s.
+                await asyncio.sleep(4)
+                runtime.begin_draining()
+                await asyncio.sleep(30)
+
+            await _serve(state, _step(node), probe)
+
+            return node.closed()
+
+        assert run_simulation(scenario, latency=_slow_views) == 0
 
     def test_nothing_sheds_while_draining(self) -> None:
         async def scenario() -> int:
