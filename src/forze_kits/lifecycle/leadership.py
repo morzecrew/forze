@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
 import weakref
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import timedelta
@@ -44,7 +45,7 @@ from forze.base.primitives import StrKey, current_entropy_source, monotonic
 from forze_kits.lifecycle._logger import logger
 
 if TYPE_CHECKING:
-    from opentelemetry.metrics import CallbackOptions, Meter, Observation
+    from opentelemetry.metrics import CallbackOptions, Meter
 
 # ----------------------- #
 
@@ -321,12 +322,23 @@ class _StepState:
 _LIVE_STATES: Final[weakref.WeakSet[_StepState]] = weakref.WeakSet()
 """Every live step's state, read by :func:`instrument_leadership` at collection time."""
 
+_LIVE_STATES_LOCK: Final[threading.Lock] = threading.Lock()
+"""Guards the registry: a step built on one thread must not change it while a metrics reader
+on another is iterating it."""
+
 
 def _new_state(startup: _LeadershipStartup) -> _StepState:
     state = _StepState(key=startup.spec.key)
-    _LIVE_STATES.add(state)
+
+    with _LIVE_STATES_LOCK:
+        _LIVE_STATES.add(state)
 
     return state
+
+
+def _live_states() -> list[_StepState]:
+    with _LIVE_STATES_LOCK:
+        return list(_LIVE_STATES)
 
 
 # ....................... #
@@ -352,7 +364,7 @@ def instrument_leadership(*, meter: Meter | None = None) -> None:
     def _held(_options: CallbackOptions) -> Iterable[Observation]:
         totals: dict[str, int] = {}
 
-        for state in list(_LIVE_STATES):
+        for state in _live_states():
             totals[state.key] = totals.get(state.key, 0) + int(state.holding)
 
         for key, value in totals.items():
@@ -361,7 +373,7 @@ def instrument_leadership(*, meter: Meter | None = None) -> None:
     def _ended(_options: CallbackOptions) -> Iterable[Observation]:
         totals: dict[tuple[str, str], int] = {}
 
-        for state in list(_LIVE_STATES):
+        for state in _live_states():
             # A copy: the step's loop may add a reason while a reader thread collects.
             for reason, count in dict(state.terms_ended).items():
                 totals[state.key, reason] = totals.get((state.key, reason), 0) + count
