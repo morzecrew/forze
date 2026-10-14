@@ -107,6 +107,38 @@ class TestSpreadCloses:
 
     # ....................... #
 
+    async def test_a_late_last_start_waits_only_what_is_left_of_window_plus_tail(
+        self,
+    ) -> None:
+        window, tail = 0.1, 0.5
+
+        async def quick() -> None:
+            return None
+
+        async def stuck() -> None:
+            await asyncio.sleep(60)
+
+        async def hog() -> None:
+            await asyncio.sleep(0.03)
+            time.sleep(0.4)  # noqa: ASYNC251 - holds the loop mid-window: the starts fall behind
+
+        clock = asyncio.get_running_loop()
+        began = clock.time()
+        hogging = asyncio.ensure_future(hog())
+        outcome = await spread_closes(
+            [stuck, *(quick for _ in range(9))],
+            timedelta(seconds=window),
+            tail=timedelta(seconds=tail),
+        )
+        await hogging
+
+        # The last start lands about 0.43 s in, past the 0.1 s window: a full tail after it
+        # would end near 0.93 s. What is left of window + tail ends it near 0.6 s.
+        assert outcome.timed_out == 1
+        assert clock.time() - began < window + tail + 0.15
+
+    # ....................... #
+
     async def test_nothing_to_close_returns_at_once(self) -> None:
         began = time.monotonic()
         outcome = await spread_closes([], timedelta(seconds=10), tail=timedelta(seconds=10))

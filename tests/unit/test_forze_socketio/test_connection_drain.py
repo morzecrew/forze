@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from itertools import pairwise
 from typing import Any
 from uuid import UUID
 
@@ -356,12 +355,15 @@ class TestDrainStep:
         runtime = _runtime(step)
 
         async with runtime.scope():
+            began = clock.time()
             await runtime.drain(timedelta(seconds=30))
 
-        # Five closes over half a second start a tenth apart: not at once, not at the end.
-        gaps = [later - earlier for earlier, later in pairwise(closed_at)]
+        # Close i of five starts at i tenths of a second: not at once, not at the end. Each
+        # is held to its own slot, so one late start does not fail the rest.
         assert len(closed_at) == 5
-        assert all(0.05 < gap < 0.25 for gap in gaps)
+
+        for index, at in enumerate(sorted(closed_at)):
+            assert at - began == pytest.approx(index * 0.1, abs=0.08)
 
     # ....................... #
 
