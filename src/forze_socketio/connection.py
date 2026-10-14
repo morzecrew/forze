@@ -561,9 +561,6 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
-    def _draining(self) -> bool:
-        return self.draining is not None and self.draining()
-
     # ....................... #
 
     def _refused(
@@ -579,17 +576,69 @@ class _ConnectionLifecycle:
     # ....................... #
 
     def _accepted(self, sid: str) -> None:
-        if self.stats is None:
-            return
+        if self.stats is not None:
+            self._counted.add(sid)
+            self.stats.connected(self.namespace)
 
-        # A transport that closed while this connect ran has already been through
-        # on_disconnect, which found nothing to uncount: counting it now would leave the
-        # count one too high for good.
+    # ....................... #
+
+    async def _goes_on(self, sid: str, connection: RealtimeConnection | None = None) -> bool:
+        """Whether the connect may go on; checked before each stage of work and as its last step.
+
+        ``False`` when its transport is gone — closed by the drain or by the client while the
+        connect waited: it stops quietly, having been through :meth:`on_disconnect` already,
+        and would otherwise fail on the session it no longer has. Raises the refusal to raise
+        when the replica is draining, or when the draining source fails. What *connection*
+        stored is undone first, since a connect that stops never reaches
+        :meth:`on_disconnect`.
+        """
+
         if not self.sio.manager.is_connected(sid, self.namespace):
-            return
+            if connection is not None:
+                await self._undo_connect(sid, connection)
 
-        self._counted.add(sid)
-        self.stats.connected(self.namespace)
+            return False
+
+        try:
+            draining = self.draining is not None and self.draining()
+
+        except Exception as error:
+            log_server_error(error)
+
+            if connection is not None:
+                await self._undo_connect(sid, connection)
+
+            raise self._refused(
+                "internal", SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL)
+            ) from error
+
+        if draining:
+            raise await self._turn_away(sid, connection)
+
+        return True
+
+    # ....................... #
+
+    async def _staged[T](self, stage: ConnectRefusal, work: Callable[[], Awaitable[T]]) -> T:
+        """Run one stage of the connect, refusing under *stage* if it fails."""
+
+        try:
+            return await work()
+
+        except SocketIOConnectionRefusedError:
+            if self.stats is not None:
+                self.stats.refused(self.namespace, stage)
+
+            raise
+
+        except CoreException as error:
+            raise self._refused(stage, _core_refusal(error)) from error
+
+        except Exception as error:
+            log_server_error(error)
+            raise self._refused(
+                "internal", SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL)
+            ) from error
 
     # ....................... #
 
@@ -646,50 +695,37 @@ class _ConnectionLifecycle:
     async def on_connect(self, sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
         """Admit, negotiate the protocol, authenticate, auto-join the principal room, replay.
 
-        While the replica is draining the connect is refused — first before any of that
-        work, and again as the last step, for a connect that was already under way.
+        While the replica is draining the connect is turned away — before any of that work,
+        again after admission and after authentication, and as the last step, for a connect
+        that was already under way.
         """
 
-        if self._draining():
-            raise await self._turn_away(sid)
+        if not await self._goes_on(sid):
+            return
 
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
-        stage: ConnectRefusal = "admission"
 
-        try:
-            if self.admission is not None:
-                await self.admission(connect)
+        if self.admission is not None:
+            admission = self.admission
+            await self._staged("admission", lambda: admission(connect))
 
+            if not await self._goes_on(sid):
+                return
+
+        async def negotiate() -> None:
             # Handshake first: the connection speaks exactly one protocol version for its
             # lifetime (missing = 1); an unsupported one is refused before any auth work.
-            stage = "protocol"
             negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
-            stage = "auth"
-            connection = await self._identify(connect)
+        await self._staged("protocol", negotiate)
+        connection = await self._staged("auth", lambda: self._identify(connect))
 
-        except SocketIOConnectionRefusedError:
-            if self.stats is not None:
-                self.stats.refused(self.namespace, stage)
-
-            raise
-
-        except CoreException as error:
-            raise self._refused(stage, _core_refusal(error)) from error
-
-        except Exception as error:
-            log_server_error(error)
-            raise self._refused(
-                "internal", SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL)
-            ) from error
+        if not await self._goes_on(sid):
+            return
 
         if connection is None:
-            # anonymous: no principal room, may still join topics later
-            if self._draining():
-                raise await self._turn_away(sid)
-
             self._accepted(sid)
-            return
+            return  # anonymous: no principal room, may still join topics later
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
         session[IDENTITY_SESSION_KEY] = connection.authn
@@ -723,12 +759,10 @@ class _ConnectionLifecycle:
             self._replay_progress.pop(sid, None)
             raise
 
-        # Last: a connect that waited in admission, authentication or replay while the
-        # drain listed its connections may have missed the drain.
-        if self._draining():
-            raise await self._turn_away(sid, connection)
-
-        self._accepted(sid)
+        # Last: a connect that waited in replay while the drain listed its connections may
+        # have missed the drain, and its transport may have closed meanwhile.
+        if await self._goes_on(sid, connection):
+            self._accepted(sid)
 
     # ....................... #
 

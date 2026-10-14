@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -28,6 +29,9 @@ _ROOM = f"t:{_TENANT}:principal:{_PRINCIPAL}"
 
 class _StubSio:
     """Records handlers, rooms, and per-sid sessions."""
+
+    manager = SimpleNamespace(is_connected=lambda _sid, _namespace: True)
+    """Every sid stays connected: the connect checks before each stage that it still is."""
 
     def __init__(self) -> None:
         self.handlers: dict[str, Any] = {}

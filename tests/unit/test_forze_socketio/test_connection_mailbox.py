@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -38,6 +39,9 @@ def _signal(text: str) -> RealtimeSignal:
 
 
 class _StubSio:
+    manager = SimpleNamespace(is_connected=lambda _sid, _namespace: True)
+    """Every sid stays connected: the connect checks before each stage that it still is."""
+
     def __init__(self) -> None:
         self.handlers: dict[str, Any] = {}
         self.sessions: dict[str, dict[str, Any]] = {}

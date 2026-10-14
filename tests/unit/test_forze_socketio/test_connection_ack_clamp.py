@@ -17,6 +17,7 @@ import asyncio
 import contextvars
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -86,6 +87,9 @@ def _signal(text: str) -> RealtimeSignal:
 
 
 class _StubSio:
+    manager = SimpleNamespace(is_connected=lambda _sid, _namespace: True)
+    """Every sid stays connected: the connect checks before each stage that it still is."""
+
     def __init__(self) -> None:
         self.handlers: dict[str, Any] = {}
         self.sessions: dict[str, dict[str, Any]] = {}

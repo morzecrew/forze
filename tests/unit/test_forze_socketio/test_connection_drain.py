@@ -29,7 +29,7 @@ from forze.application.integrations.realtime import (
     InMemoryRealtimeMailbox,
     InMemoryRealtimePresence,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import GENERIC_INTERNAL_DETAIL, exc
 from forze_socketio import (
     CONNECTION_SESSION_KEY,
     IDENTITY_SESSION_KEY,
@@ -526,6 +526,149 @@ class TestLateConnect:
 
         assert stats.connect_refused == {("/", "draining"): 1}
         assert stats.connections == {}
+
+
+# ----------------------- #
+
+
+class _RecordingPresence(InMemoryRealtimePresence):
+    joins = 0
+
+    async def joined(self, room: str, sid: str) -> None:
+        self.joins += 1
+        await super().joined(room, sid)
+
+
+class TestConnectUnderWay:
+    """A connect is checked again once admission and authentication have run."""
+
+    async def _held(
+        self, server: AsyncServer, *, where: str, **options: Any
+    ) -> tuple[asyncio.Future[str], asyncio.Event, list[str]]:
+        held, release = asyncio.Event(), asyncio.Event()
+        resolved: list[str] = []
+
+        async def admission(_connect: SocketIOConnect) -> None:
+            if where == "admission":
+                held.set()
+                await release.wait()
+
+        async def resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
+            resolved.append(connect.sid)
+
+            if where == "auth":
+                held.set()
+                await release.wait()
+
+            return await _resolve(connect)
+
+        attach_realtime_connection(server, resolve=resolve, admission=admission, **options)
+        connecting = asyncio.ensure_future(_connect(server, "eio-1"))
+        await asyncio.wait_for(held.wait(), timeout=1.0)
+
+        return connecting, release, resolved
+
+    # ....................... #
+
+    @pytest.mark.parametrize("where", ["admission", "auth"])
+    async def test_one_whose_transport_closed_meanwhile_stops_quietly(self, where: str) -> None:
+        server = _server()
+        presence = InMemoryRealtimePresence()
+        stats = RealtimeConnectionStats()
+        connecting, release, resolved = await self._held(
+            server, where=where, presence=presence, stats=stats
+        )
+
+        await server.eio.disconnect("eio-1")  # the drain, or the client, closed it
+        release.set()
+        await asyncio.wait_for(connecting, timeout=1.0)  # no KeyError from a gone session
+
+        assert resolved == ([] if where == "admission" else [connecting.result()])
+        assert await presence.count(_ROOM) == 0
+        assert stats.connections == {}
+        assert stats.connect_refused == {}
+
+    # ....................... #
+
+    @pytest.mark.parametrize("where", ["admission", "auth"])
+    async def test_one_the_drain_overtook_is_turned_away_before_it_is_stored(
+        self, where: str
+    ) -> None:
+        server = _server()
+        presence = _RecordingPresence()
+        runtime = _runtime()
+        socket = _socket(server, "eio-1")
+
+        async with runtime.scope():
+            connecting, release, resolved = await self._held(
+                server, where=where, presence=presence, draining=lambda: runtime.draining
+            )
+            runtime.begin_draining()
+            release.set()
+
+            with pytest.raises(SocketIOConnectionRefusedError):
+                await asyncio.wait_for(connecting, timeout=1.0)
+
+        assert len(resolved) == (0 if where == "admission" else 1)
+        assert socket.closed
+        assert IDENTITY_SESSION_KEY not in socket.session.get("/", {})
+        assert presence.joins == 0  # turned away before it joined, not undone after
+
+    # ....................... #
+
+    @pytest.mark.parametrize("late", [False, True])
+    async def test_a_draining_source_that_raises_refuses_as_internal_and_undoes(
+        self, late: bool
+    ) -> None:
+        server = _server()
+        presence = InMemoryRealtimePresence()
+        stats = RealtimeConnectionStats()
+        resolved: list[str] = []
+
+        def draining() -> bool:
+            if resolved or not late:
+                raise RuntimeError("readiness source unavailable")
+
+            return False
+
+        async def resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
+            resolved.append(connect.sid)
+            return await _resolve(connect)
+
+        attach_realtime_connection(
+            server, resolve=resolve, presence=presence, draining=draining, stats=stats
+        )
+
+        with pytest.raises(SocketIOConnectionRefusedError) as caught:
+            await _connect(server, "eio-1")
+
+        assert caught.value.error_args == {"message": GENERIC_INTERNAL_DETAIL}
+        assert stats.connect_refused == {("/", "internal"): 1}
+        assert await presence.count(_ROOM) == 0
+        assert list(server.manager.get_participants("/", _ROOM)) == []
+        assert IDENTITY_SESSION_KEY not in _socket(server, "eio-1").session.get("/", {})
+
+    # ....................... #
+
+    async def test_a_late_turn_away_drops_the_replay_progress_even_if_the_close_fails(
+        self,
+    ) -> None:
+        server = _server()
+        runtime = _runtime()
+        _socket(server, "eio-1", fails=True)  # the transport close raises
+
+        async def resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
+            runtime.begin_draining()  # the announcement lands while this connect is under way
+            return await _resolve(connect)
+
+        _replayed(server, _runtime(), resolve=resolve, draining=lambda: runtime.draining)
+        lifecycle = server.handlers["/"]["connect"].__self__
+
+        async with runtime.scope():
+            with pytest.raises(SocketIOConnectionRefusedError):
+                await _connect(server, "eio-1")
+
+        assert lifecycle._replay_progress == {}  # pyright: ignore[reportPrivateUsage]
 
 
 # ----------------------- #
