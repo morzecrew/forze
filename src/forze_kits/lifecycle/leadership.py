@@ -80,6 +80,10 @@ _STOP_SLACK: Final[timedelta] = timedelta(seconds=1)
 # ....................... #
 
 
+class _Unanswered(TimeoutError):
+    """An acquire the step stopped waiting for; it may still land, and is settled apart."""
+
+
 def _positive(name: str, value: timedelta) -> None:
     if value.total_seconds() <= 0:
         raise exc.configuration(f"Leadership {name} must be positive")
@@ -449,17 +453,29 @@ class _Campaign:
                 return None
 
             await self._advance()
-            acquired = await self._acquire()
 
         except Exception as error:
-            terminal = self._terminal(error)
+            return self._failed(error)
 
-            if terminal is not None:
-                return terminal
+        try:
+            acquired = await self._acquire()
 
+        except _Unanswered as error:
+            # An asker whose acquires hang holds a want-lock that looks fresh each time it asks;
+            # giving up at once keeps two yields to it at least a ttl apart.
             self._warn("Leadership campaign for %s failed; retrying at the next tick", error)
-            await self._missed()
+            await self._give_up()
             return None
+
+        except Exception as error:
+            terminal = self._failed(error)
+
+            if terminal is None:
+                await self._missed()
+
+            return terminal
+
+        self.missed = 0  # an answered acquire ends a run of failed ones
 
         if acquired is None:
             return None
@@ -548,16 +564,26 @@ class _Campaign:
     # ....................... #
 
     async def _missed(self) -> None:
-        # Only a failed acquire counts. One answered ``None`` met a holder, which yields at its
-        # next renewal or prefers the unit and never will.
+        # Only failed lease acquires count, and only in a row. One answered ``None`` met a
+        # holder, which yields at its next renewal or prefers the unit and never will.
         if self.want_owner is None:
             return
 
         self.missed += 1
 
         if self.missed >= _ASK_ATTEMPTS:
-            await self._drop_want()
-            self.ask_after = monotonic() + self.spec.lock.ttl.total_seconds()
+            await self._give_up()
+
+    # ....................... #
+
+    async def _give_up(self) -> None:
+        """Release the want-lock, and do not ask again for a ttl."""
+
+        if self.want_owner is None:
+            return
+
+        await self._drop_want()
+        self.ask_after = monotonic() + self.spec.lock.ttl.total_seconds()
 
     # ....................... #
 
@@ -644,7 +670,7 @@ class _Campaign:
             if self.stop.is_set():
                 return None
 
-            raise TimeoutError(f"Leadership acquire of {key} was not answered in time")
+            raise _Unanswered(f"Leadership acquire of {key} was not answered in time")
 
         try:
             acquired = request.result()
@@ -698,6 +724,16 @@ class _Campaign:
         return task.result()
 
     # ....................... #
+
+    def _failed(self, error: Exception) -> Exception | None:
+        """Log a failed tick; the error to stop campaigning on, if it is one."""
+
+        terminal = self._terminal(error)
+
+        if terminal is None:
+            self._warn("Leadership campaign for %s failed; retrying at the next tick", error)
+
+        return terminal
 
     def _terminal(self, error: Exception) -> Exception | None:
         """The error to stop campaigning on, or ``None`` for one worth retrying."""

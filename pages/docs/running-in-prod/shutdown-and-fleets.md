@@ -319,10 +319,11 @@ holder yields at its next renewal, unless it prefers the unit itself or the aske
 renewed its request within two campaign intervals — a dead asker's want-lock outlives it
 by a TTL, and yielding to it would only leave the unit unled. Other replicas stand aside while someone asks, until they have
 seen the lease free for three campaign intervals, so a fleet whose asker cannot take the
-lease is unled for about four at most. An asker whose acquires keep failing
-gives the want-lock up after three tries and does not ask again for one TTL, so it cannot
-take the unit from every holder in turn. A replica that `may_campaign` refuses never
-asks.
+lease is unled for about four at most. An asker gives the want-lock up after three failed
+acquires in a row, or at once when one is not answered in time, and does not ask again for
+one TTL, so holders yield to an asker that cannot take the unit at most once a TTL. A
+failing `prefer` or want-lock read does not count: that replica just campaigns without
+handoff. A replica that `may_campaign` refuses never asks.
 
 ### Operating it
 

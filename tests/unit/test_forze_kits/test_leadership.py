@@ -93,6 +93,8 @@ class _Lock:
     late_reply_raises: float = 0.0
     """The next lease acquire takes the lock at once, and its reply fails this much later."""
     acquire_fails_at: frozenset[int] = frozenset()
+    answers_none: bool = False
+    """Lease acquires answer ``None`` without taking the lock, as if it were always held."""
     """Which lease acquires, counted from one, raise without taking the lock."""
     lease_acquires: int = 0
     log: list[tuple[float, str, str, str]] = attrs.field(factory=list)
@@ -115,6 +117,9 @@ class _Lock:
 
             if self.lease_acquires in self.acquire_fails_at:
                 raise exc.infrastructure("acquire refused")
+
+            if self.answers_none:
+                return None
 
         if key == KEY and self.late_reply_raises:
             delay, self.late_reply_raises = self.late_reply_raises, 0.0
@@ -1149,12 +1154,14 @@ class TestHandoff:
             b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
             b.lock.acquire_delay = 30.0  # past the wait bound: the string is retired
             await b.start()
-            await asyncio.sleep(30)
+            await asyncio.sleep(2)
+            b.lock.acquire_delay = 0.0  # the next acquires answer at once
+            await asyncio.sleep(70)  # b gave up at +25; it asks again after a ttl
 
             wants = [owner for _, owner in b.lock.calls("acquire", f"{KEY}:want")]
             leases = [owner for _, owner in b.lock.calls("acquire")]
             assert len(set(wants)) >= 2
-            assert wants == leases[: len(wants)]  # each ask under the string it acquires with
+            assert all(want in leases for want in wants)  # each ask under a string it acquires with
             assert (b.lock.calls("release", f"{KEY}:want")[0][1]) == wants[0]
 
             await fleet.stop_all()
@@ -1188,7 +1195,7 @@ class TestHandoff:
             await fleet.replica("a", handoff="on_request", prefer=self._prefers(False)).start()
             await asyncio.sleep(9)
             b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
-            b.lock.acquire_delay = 1000.0  # asks at +9 and +35, and never takes the lease
+            b.lock.answers_none = True  # keeps asking, and never takes the lease
             await b.start()
             await asyncio.sleep(60)
 
