@@ -1,7 +1,9 @@
-"""Run resolved lifecycle graphs in wave order."""
+"""Run resolved lifecycle graphs in wave order, and a scope's drain phases."""
 
 import asyncio
-from typing import TYPE_CHECKING
+from collections.abc import Coroutine, Sequence
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any, Final
 
 from forze.application._logger import logger
 from forze.application.contracts.execution import ExecutionGraph, LifecycleStep
@@ -10,7 +12,17 @@ from forze.base.primitives import StrKey
 from ..graph_run import run_graph_waves_reverse
 
 if TYPE_CHECKING:
-    from ..context import ExecutionContext
+    from ..context import DrainPhase, ExecutionContext
+
+# ----------------------- #
+
+DRAIN_PHASE_FLOOR_SECONDS: Final[float] = 0.1
+"""A drain phase whose allowance falls below this is skipped rather than started: no
+phase does useful work in less, and starting one only to cancel it at once is noise."""
+
+DRAIN_PHASE_CANCEL_GRACE_SECONDS: Final[float] = 1.0
+"""How long a drain phase cancelled at the end of its allowance gets to unwind before it is
+abandoned. A drain therefore returns within its budget plus this."""
 
 # ----------------------- #
 
@@ -198,6 +210,53 @@ def _drop_pending_result(task: "asyncio.Task[None]") -> None:
 # ....................... #
 
 
+async def _run_bounded(
+    work: Coroutine[Any, Any, None],
+    *,
+    timeout: float,
+    cancel_grace: float = 0.0,
+) -> tuple["asyncio.Task[None]", bool]:
+    """Run *work* as a task for at most *timeout* seconds, then cancel and abandon it.
+
+    Past *timeout* the task is cancelled and given up to *cancel_grace* seconds to unwind.
+    One still running after that is abandoned: left to finish on its own, its outcome
+    retrieved when it does. Not awaited, unlike ``asyncio.timeout`` — work that swallows the
+    cancellation would hold the caller forever, and the callers here are on their way to
+    process exit.
+
+    :returns: The task, and whether it overran *timeout*. An overrun task that is not
+        ``done()`` was abandoned.
+    """
+
+    task = asyncio.ensure_future(work)
+    overran = False
+
+    try:
+        await asyncio.wait({task}, timeout=timeout)
+
+        if not task.done():
+            overran = True
+            task.cancel()  # best-effort; the work may ignore it
+
+            if cancel_grace > 0:
+                await asyncio.wait({task}, timeout=cancel_grace)
+
+    except asyncio.CancelledError:
+        # Our wait was cancelled: don't leave the work running detached — cancel it,
+        # drain its result so it can't warn on GC, then propagate the cancellation.
+        task.cancel()
+        _drop_pending_result(task)
+        raise
+
+    if overran:
+        _drop_pending_result(task)
+
+    return task, overran
+
+
+# ....................... #
+
+
 async def _run_shutdown_step_logged(
     step: LifecycleStep,
     ctx: "ExecutionContext",
@@ -225,27 +284,12 @@ async def _run_shutdown_step_logged(
 
         return
 
-    # Bounded teardown: run the hook as a task and abandon it if it exceeds *step_timeout*
-    # so a single wedged hook (a broker flush that never returns, a connection that will not
-    # drain) can never block teardown of the remaining steps — and thus process exit. Run
-    # detached and move on rather than ``asyncio.timeout``: a hook that swallows the
-    # cancellation would still block the latter, whereas not awaiting the abandoned task
-    # guarantees progress (it leaks the task, acceptable during shutdown).
-    task = asyncio.ensure_future(_run_shutdown_step(step, ctx))
+    # Bounded teardown: abandon a hook that exceeds *step_timeout*, so a single wedged hook
+    # (a broker flush that never returns, a connection that will not drain) can never block
+    # teardown of the remaining steps — and thus process exit.
+    task, overran = await _run_bounded(_run_shutdown_step(step, ctx), timeout=step_timeout)
 
-    try:
-        done, _pending = await asyncio.wait({task}, timeout=step_timeout)
-
-    except asyncio.CancelledError:
-        # Our wait was cancelled: don't leave the hook running detached — cancel it,
-        # drain its result so it can't warn on GC, then propagate the cancellation.
-        task.cancel()
-        _drop_pending_result(task)
-        raise
-
-    if task not in done:
-        task.cancel()  # best-effort; the hook may ignore it
-        _drop_pending_result(task)
+    if overran:
         logger.error(
             "Lifecycle shutdown hook '%s' exceeded its %.1fs timeout; "
             "abandoning it and continuing teardown",
@@ -312,3 +356,68 @@ async def run_lifecycle_shutdown(
         lambda step: _run_shutdown_step_logged(step, ctx, step_timeout=step_timeout),
         concurrent=False,
     )
+
+
+# ....................... #
+
+
+async def _run_drain_phase(phase: "DrainPhase", allowance: float) -> None:
+    await phase.run(timedelta(seconds=allowance))
+
+
+# ....................... #
+
+
+async def run_drain_phases(phases: Sequence["DrainPhase"], *, budget: float) -> None:
+    """Run *phases* in order, all of them within *budget* seconds.
+
+    Each phase may take ``min(max_duration, budget left)`` and is told that figure. A phase
+    that overruns it is cancelled; one that ignores the cancellation is abandoned after
+    :data:`DRAIN_PHASE_CANCEL_GRACE_SECONDS`. A phase left less than
+    :data:`DRAIN_PHASE_FLOOR_SECONDS` is skipped. Every outcome other than success is
+    logged, and a failed phase never stops the next one: this runs on the way to process
+    exit, where nothing could act on an exception.
+    """
+
+    clock = asyncio.get_running_loop()
+    deadline = clock.time() + budget
+
+    for phase in phases:
+        left = deadline - clock.time()
+        allowance = (
+            left if phase.max_duration is None else min(phase.max_duration.total_seconds(), left)
+        )
+
+        if allowance < DRAIN_PHASE_FLOOR_SECONDS:
+            logger.warning(
+                "Drain phase '%s' skipped: %.2fs of the drain budget left, under the %.1fs floor",
+                phase.name,
+                max(0.0, allowance),
+                DRAIN_PHASE_FLOOR_SECONDS,
+            )
+            continue
+
+        logger.trace("Running drain phase '%s' (%.2fs allowed)", phase.name, allowance)
+
+        task, overran = await _run_bounded(
+            _run_drain_phase(phase, allowance),
+            timeout=allowance,
+            cancel_grace=DRAIN_PHASE_CANCEL_GRACE_SECONDS,
+        )
+
+        if not task.done():
+            logger.error(
+                "Drain phase '%s' overran its %.2fs and ignored cancellation for %.1fs; "
+                "abandoned it",
+                phase.name,
+                allowance,
+                DRAIN_PHASE_CANCEL_GRACE_SECONDS,
+            )
+
+        elif overran:
+            logger.warning(
+                "Drain phase '%s' overran its %.2fs; cancelled it", phase.name, allowance
+            )
+
+        elif not task.cancelled() and (error := task.exception()) is not None:
+            logger.error("Drain phase '%s' failed", phase.name, exc_info=error)

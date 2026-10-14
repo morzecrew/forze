@@ -1,5 +1,6 @@
 """Execution runtime for scoped dependency and lifecycle management."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from datetime import timedelta
@@ -35,6 +36,7 @@ from .context.lifecycle import scope_readiness
 from .context.transaction import AfterCommitErrorHandler
 from .deps import FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
+from .lifecycle.run import run_drain_phases
 from .posture import ProductionPosture
 
 # ----------------------- #
@@ -152,6 +154,15 @@ class ExecutionRuntime:
     teardown (which closes the clients they depend on). ``0.0`` skips the
     wait (still rejects new work); expiry proceeds with a logged warning, it
     never blocks shutdown indefinitely. No in-flight work exits immediately.
+    """
+
+    drain_budget: timedelta = timedelta(seconds=10)
+    """The budget :meth:`shutdown` gives :meth:`drain` when nothing drained the scope first.
+
+    It is shared by every registered drain phase, and spent before :attr:`drain_timeout`
+    starts: readiness is withdrawn, the phases run while operations are still admitted, and
+    only then does the gate close. With no phase registered a drain costs nothing. A phase
+    that ignores its cancellation can stretch it by up to one second.
     """
 
     shutdown_step_timeout: timedelta = timedelta(seconds=10)
@@ -376,6 +387,73 @@ class ExecutionRuntime:
 
     # ....................... #
 
+    def begin_draining(self) -> None:
+        """Announce a drain: withdraw readiness while operations are still admitted.
+
+        :attr:`ready` turns false and :attr:`draining` true at once, so a load balancer
+        stops routing new work here, while the drain gate stays open and work already routed
+        finishes normally — the gate closes only in :meth:`shutdown`. Steps see it as
+        ``ctx.lifecycle.announced``. Idempotent; a no-op outside a scope.
+        """
+
+        ctx = self._active_context()
+
+        if ctx is not None and ctx.lifecycle.announce():
+            logger.info("Drain announced: readiness withdrawn, operations still admitted")
+
+    # ....................... #
+
+    async def drain(
+        self,
+        budget: timedelta,
+        *,
+        announce_delay: timedelta = timedelta(0),
+    ) -> None:
+        """Announce a drain, then run the scope's drain phases within *budget*.
+
+        In order: :meth:`begin_draining`; a wait of *announce_delay*, so the load balancer
+        notices readiness failing before anything starts closing; then every phase
+        registered in ``ctx.drain_phases``, in ascending order. Each phase may take
+        ``min(max_duration, budget left)`` and is told that figure; one that overruns it is
+        cancelled, one that ignores the cancellation is abandoned after a second, and one
+        left under 100 ms is skipped — each logged. So this returns within
+        ``announce_delay + budget`` plus that second.
+
+        Runs at most once per scope. A call while a drain is running waits for it; a call
+        after it returns at once. Before lifecycle startup finished, or outside a scope,
+        there is nothing to drain yet and nothing is claimed: the call logs and returns, and
+        :meth:`shutdown` still drains once startup completes. The drain gate is not touched —
+        operations are admitted until :meth:`shutdown` closes it.
+
+        :param budget: Shared by every phase.
+        :param announce_delay: How long readiness fails before the first phase starts.
+        """
+
+        ctx = self._active_context()
+
+        if ctx is None or not ctx.lifecycle.started:
+            logger.info("Drain requested before lifecycle startup finished; nothing to drain")
+            return
+
+        phases = ctx.drain_phases
+
+        if not phases.claim():
+            await phases.wait()
+            return
+
+        try:
+            self.begin_draining()
+
+            if announce_delay > timedelta(0):
+                await asyncio.sleep(announce_delay.total_seconds())
+
+            await run_drain_phases(phases.phases, budget=budget.total_seconds())
+
+        finally:
+            phases.finish()
+
+    # ....................... #
+
     def get_context(self) -> ExecutionContext:
         """Return the current execution context.
 
@@ -431,7 +509,12 @@ class ExecutionRuntime:
     async def shutdown(self) -> None:
         """Drain in-flight operations, run lifecycle shutdown hooks, reset the context.
 
-        Draining comes first (see :attr:`drain_timeout`): the scope stops
+        When lifecycle startup finished and nobody drained the scope yet, :meth:`drain` runs
+        first, with :attr:`drain_budget`: the drain phases get their window while the gate
+        is still open. After a partial startup failure, rollback has already shut the steps
+        down, so no phase runs against closed resources.
+
+        Draining in-flight work comes next (see :attr:`drain_timeout`): the scope stops
         admitting new top-level invocations and gives in-flight operations a
         bounded window to finish before lifecycle teardown closes the clients
         they depend on. A drain-timeout expiry is logged and shutdown proceeds.
@@ -450,6 +533,14 @@ class ExecutionRuntime:
 
         try:
             ctx = self.__ctx.get()
+
+            if ctx.lifecycle.started:
+                try:
+                    await self.drain(self.drain_budget)
+
+                except Exception:
+                    # Teardown must still run: a drain is best-effort, the shutdown is not.
+                    logger.exception("Drain failed; shutting down without it")
 
             if not await ctx.drain_gate.drain(self.drain_timeout.total_seconds()):
                 # Drain expired with work still running. Cancel the stragglers and let them

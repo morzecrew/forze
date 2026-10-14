@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A replica can withdraw readiness before refusing work, and drain while it still serves.** `runtime.begin_draining()` fails readiness, operations still admitted; `runtime.drain(budget, announce_delay=)` runs the phases steps put on `ctx.drain_phases`. `shutdown()` drains first if nobody did, within `drain_budget`.
+
 - **The worker probe listener can check dependencies, and needs no runtime.** `probe_listener_step(checks=, check_timeout=)` answers through `evaluate_readiness`, the evaluator `attach_readiness_route` now uses, so both answer alike from the same probes. Steps read `ctx.lifecycle.started` and `.announced`.
 
 ### Changed
 
-- **Readiness waits for lifecycle startup.** `runtime.ready`, the readiness route and the probe listener answer `503 unavailable` until every startup step has returned, where a scope used to report ready as soon as it existed.
+- **Readiness waits for lifecycle startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503 unavailable` until every startup step returned. `ctx.drain_gate.draining` still means operations are refused.
 
 ### Deprecated
 

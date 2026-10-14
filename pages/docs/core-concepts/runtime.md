@@ -52,11 +52,13 @@ async with runtime.scope():
 ```
 
 1. **Create context** — resolve the frozen deps into live ports.
-2. **Startup** — run lifecycle startup steps in dependency order.
+2. **Startup** — run lifecycle startup steps in dependency order. The scope
+   reports ready once every step has started.
 3. **Serve** — the application handles requests.
-4. **Drain** — stop admitting new invocations; give in-flight operations a
-   bounded window to finish (see
-   [Shutdown & fleets](../running-in-prod/shutdown-and-fleets.md)).
+4. **Drain** — announce the drain so readiness fails, run the drain phases steps
+   registered, then stop admitting new invocations and give in-flight operations
+   a bounded window to finish (see
+   [Graceful deploys](../running-in-prod/shutdown-and-fleets.md#graceful-deploys)).
 5. **Shutdown** — run shutdown steps in reverse.
 6. **Reset** — clear the context.
 

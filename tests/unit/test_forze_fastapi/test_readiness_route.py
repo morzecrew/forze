@@ -302,29 +302,30 @@ def _free_port() -> int:
 
 
 _PARITY_CASES: dict[
-    str, tuple[dict[str, _FakeClient], dict[str, DepKey[Any]], bool, str]
+    str, tuple[dict[str, _FakeClient], dict[str, DepKey[Any]], str | None, str]
 ] = {
-    "healthy": ({"postgres": _FakeClient()}, {}, False, "ready"),
+    "healthy": ({"postgres": _FakeClient()}, {}, None, "ready"),
     "one unhealthy": (
         {"postgres": _FakeClient(), "redis": _FakeClient(detail="refused", ok=False)},
         {},
-        False,
+        None,
         "degraded",
     ),
     "one hanging": (
         {"postgres": _FakeClient(), "redis": _FakeClient(hang=True)},
         {},
-        False,
+        None,
         "degraded",
     ),
-    "one raising": ({"postgres": _FakeClient(raises=ValueError("dsn"))}, {}, False, "degraded"),
+    "one raising": ({"postgres": _FakeClient(raises=ValueError("dsn"))}, {}, None, "degraded"),
     "one unregistered": (
         {"postgres": _FakeClient()},
         {"redis": DepKey[Any]("nope")},
-        False,
+        None,
         "degraded",
     ),
-    "gate closed": ({"postgres": _FakeClient()}, {}, True, "draining"),
+    "drain announced": ({"postgres": _FakeClient()}, {}, "announce", "draining"),
+    "gate closed": ({"postgres": _FakeClient()}, {}, "close", "draining"),
 }
 
 
@@ -334,7 +335,7 @@ class TestListenerAndRouteAgree:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("case", list(_PARITY_CASES))
     async def test_the_same_probes_give_the_same_answer(self, case: str) -> None:
-        clients, extra, close_gate, expected = _PARITY_CASES[case]
+        clients, extra, action, expected = _PARITY_CASES[case]
         keys: dict[str, DepKey[Any]] = {name: DepKey[Any](name) for name in clients}
         probes = {**keys, **extra}
         timeout = timedelta(seconds=0.05)
@@ -354,7 +355,10 @@ class TestListenerAndRouteAgree:
         client = TestClient(app)
 
         async with runtime.scope():
-            if close_gate:
+            if action == "announce":
+                runtime.begin_draining()
+
+            elif action == "close":
                 await runtime.get_context().drain_gate.drain(0.0)
 
             route = client.get("/readyz")

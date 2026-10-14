@@ -1,0 +1,389 @@
+"""Announcing a drain, and the phases that run between the announcement and teardown."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
+from typing import Any
+
+import attrs
+import pytest
+
+from forze.application.contracts.execution import Handler, LifecycleStep
+from forze.application.execution import ExecutionContext, build_runtime
+from forze.application.execution.lifecycle.run import DRAIN_PHASE_CANCEL_GRACE_SECONDS
+from forze.application.execution.operations.registry import OperationRegistry
+from forze.application.execution.runtime import ExecutionRuntime
+from forze.base.exceptions import CoreException, ExceptionKind
+
+# ----------------------- #
+
+Phase = Callable[[timedelta], Awaitable[None]]
+
+
+def _registering(*phases: tuple[str, Phase, dict[str, Any]]) -> LifecycleStep:
+    """A step that registers *phases* at startup, the way a real step would."""
+
+    async def startup(ctx: ExecutionContext) -> None:
+        for name, phase, options in phases:
+            ctx.drain_phases.register(name, phase, **options)
+
+    return LifecycleStep(id="phases", startup=startup)
+
+
+def _runtime(*steps: LifecycleStep, budget: timedelta = timedelta(seconds=5)) -> ExecutionRuntime:
+    return build_runtime(
+        lifecycle_steps=steps,
+        drain_timeout=timedelta(0),
+        drain_budget=budget,
+    )
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _Echo(Handler[str, str]):
+    async def __call__(self, args: str) -> str:
+        return args
+
+
+# ----------------------- #
+
+
+class TestBeginDraining:
+    @pytest.mark.asyncio
+    async def test_readiness_fails_while_operations_are_still_admitted(self) -> None:
+        runtime = _runtime()
+        echo = OperationRegistry(handlers={"op": lambda _ctx: _Echo()}).freeze()
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            runtime.begin_draining()
+            runtime.begin_draining()  # idempotent
+
+            assert runtime.ready is False
+            assert runtime.draining is True
+            assert ctx.lifecycle.announced is True
+            # Readiness is withdrawn; operations are not refused.
+            assert ctx.drain_gate.draining is False
+            assert await echo.resolve("op", ctx)("still served") == "still served"
+
+        # Shutdown afterwards still closed the gate.
+        assert ctx.drain_gate.draining is True
+
+    # ....................... #
+
+    def test_outside_a_scope_it_does_nothing(self) -> None:
+        runtime = _runtime()
+
+        runtime.begin_draining()
+
+        assert runtime.draining is False
+
+
+# ----------------------- #
+
+
+class TestDrainPhases:
+    @pytest.mark.asyncio
+    async def test_phases_run_once_in_order_each_told_its_allowance(self) -> None:
+        ran: list[tuple[str, timedelta]] = []
+
+        def recording(name: str) -> Phase:
+            async def phase(allowed: timedelta) -> None:
+                ran.append((name, allowed))
+
+            return phase
+
+        runtime = _runtime(
+            _registering(
+                ("late", recording("late"), {"order": 2}),
+                ("capped", recording("capped"), {"order": 1, "max_duration": timedelta(seconds=1)}),
+                ("uncapped", recording("uncapped"), {"order": 1}),
+            ),
+            budget=timedelta(seconds=5),
+        )
+
+        async with runtime.scope():
+            await runtime.drain(timedelta(seconds=5))
+            await runtime.drain(timedelta(seconds=5))  # at most once per scope
+
+        assert [name for name, _ in ran] == ["capped", "uncapped", "late"]
+        assert ran[0][1] == timedelta(seconds=1)
+        assert timedelta(seconds=4.5) < ran[1][1] <= timedelta(seconds=5)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_an_overrunning_phase_is_cancelled_and_the_next_still_runs(self) -> None:
+        cancelled = asyncio.Event()
+        after: list[timedelta] = []
+
+        async def overrun(_allowed: timedelta) -> None:
+            try:
+                await asyncio.sleep(60)
+
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        async def next_phase(allowed: timedelta) -> None:
+            after.append(allowed)
+
+        runtime = _runtime(
+            _registering(
+                ("overrun", overrun, {"order": 1, "max_duration": timedelta(seconds=0.2)}),
+                ("next", next_phase, {"order": 2}),
+            )
+        )
+
+        async with runtime.scope():
+            clock = asyncio.get_running_loop()
+            started = clock.time()
+
+            await runtime.drain(timedelta(seconds=5))
+
+            elapsed = clock.time() - started
+
+        assert cancelled.is_set()
+        assert 0.2 <= elapsed < 1.0
+        assert len(after) == 1 and timedelta(seconds=4) < after[0] < timedelta(seconds=4.9)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_phase_that_swallows_cancellation_is_abandoned_within_the_bound(
+        self,
+    ) -> None:
+        stop = False
+        swallowed = 0
+        alive = 0
+
+        async def stubborn(_allowed: timedelta) -> None:
+            nonlocal swallowed, alive
+
+            for _ in range(400):  # bounded: 20s at most, whatever happens to `stop`
+                if stop:
+                    return
+
+                alive += 1
+
+                try:
+                    await asyncio.sleep(0.05)
+
+                except asyncio.CancelledError:
+                    swallowed += 1
+
+        budget = 0.3
+        runtime = _runtime(_registering(("stubborn", stubborn, {})))
+
+        async with runtime.scope():
+            clock = asyncio.get_running_loop()
+            started = clock.time()
+
+            await asyncio.wait_for(runtime.drain(timedelta(seconds=budget)), timeout=10.0)
+
+            elapsed = clock.time() - started
+            beats_at_return = alive
+
+            await asyncio.sleep(0.2)
+
+            # Abandoned, not stopped: it ignored the cancel and is still running.
+            assert swallowed >= 1
+            assert alive > beats_at_return
+
+            stop = True
+
+        assert budget + DRAIN_PHASE_CANCEL_GRACE_SECONDS - 0.1 <= elapsed
+        assert elapsed < budget + DRAIN_PHASE_CANCEL_GRACE_SECONDS + 0.5
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_phase_left_less_than_the_floor_is_skipped(self) -> None:
+        ran: list[str] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("phase")
+
+        runtime = _runtime(_registering(("starved", phase, {})))
+
+        async with runtime.scope():
+            await runtime.drain(timedelta(seconds=0.05))
+
+        assert ran == []
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_failing_phase_does_not_stop_the_next(self) -> None:
+        ran: list[str] = []
+
+        async def boom(_allowed: timedelta) -> None:
+            raise RuntimeError("phase failed")
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("next")
+
+        runtime = _runtime(
+            _registering(("boom", boom, {"order": 1}), ("next", phase, {"order": 2}))
+        )
+
+        async with runtime.scope():
+            await runtime.drain(timedelta(seconds=1))
+
+        assert ran == ["next"]
+
+
+# ----------------------- #
+
+
+class TestShutdownDrainsFirst:
+    @pytest.mark.asyncio
+    async def test_shutdown_runs_the_phases_before_closing_the_gate_and_tearing_down(
+        self,
+    ) -> None:
+        seen: list[tuple[str, bool, bool]] = []
+        captured: list[ExecutionContext] = []
+
+        async def startup(ctx: ExecutionContext) -> None:
+            captured.append(ctx)
+
+            async def phase(_allowed: timedelta) -> None:
+                seen.append(("phase", ctx.lifecycle.announced, ctx.drain_gate.draining))
+
+            ctx.drain_phases.register("phase", phase)
+
+        async def teardown(ctx: ExecutionContext) -> None:
+            seen.append(("teardown", ctx.lifecycle.announced, ctx.drain_gate.draining))
+
+        runtime = _runtime(LifecycleStep(id="step", startup=startup, shutdown=teardown))
+
+        async with runtime.scope():
+            pass
+
+        # Announced, gate still open during the phase; closed by the time teardown runs.
+        assert seen == [("phase", True, False), ("teardown", True, True)]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_shutdown_after_an_explicit_drain_does_not_run_the_phases_again(
+        self,
+    ) -> None:
+        ran: list[str] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("phase")
+
+        runtime = _runtime(_registering(("phase", phase, {})))
+
+        async with runtime.scope():
+            await runtime.drain(timedelta(seconds=1))
+
+        assert ran == ["phase"]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_partial_startup_failure_runs_no_phase(self) -> None:
+        ran: list[str] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("phase")
+
+        async def failing(_ctx: ExecutionContext) -> None:
+            raise RuntimeError("startup failed")
+
+        runtime = _runtime(
+            _registering(("phase", phase, {})),
+            LifecycleStep(id="failing", startup=failing, depends_on=("phases",)),
+        )
+
+        with pytest.raises(RuntimeError, match="startup failed"):
+            async with runtime.scope():
+                pass
+
+        assert ran == []
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_drain_asked_for_during_startup_leaves_the_phases_to_shutdown(
+        self,
+    ) -> None:
+        """A signal can arrive mid-startup. Nothing is drained or claimed yet."""
+
+        ran: list[str] = []
+        holder: list[ExecutionRuntime] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("phase")
+
+        async def drains_early(_ctx: ExecutionContext) -> None:
+            await holder[0].drain(timedelta(seconds=1))
+            ran.append("early drain returned")
+
+        runtime = _runtime(
+            _registering(("phase", phase, {})),
+            LifecycleStep(id="early", startup=drains_early, depends_on=("phases",)),
+        )
+        holder.append(runtime)
+
+        async with runtime.scope():
+            assert runtime.ready is True  # the early call did not announce anything
+
+        assert ran == ["early drain returned", "phase"]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_second_drain_waits_for_the_running_one(self) -> None:
+        release = asyncio.Event()
+        ran: list[str] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("phase")
+            await release.wait()
+
+        runtime = _runtime(_registering(("phase", phase, {})))
+
+        async with runtime.scope():
+            first = asyncio.create_task(runtime.drain(timedelta(seconds=5)))
+            await asyncio.sleep(0.05)
+
+            second = asyncio.create_task(runtime.drain(timedelta(seconds=5)))
+            await asyncio.sleep(0.05)
+
+            assert not second.done()
+
+            release.set()
+            await asyncio.wait_for(asyncio.gather(first, second), timeout=5.0)
+
+        assert ran == ["phase"]
+
+
+# ----------------------- #
+
+
+class TestDrainPhaseRegistration:
+    @pytest.mark.asyncio
+    async def test_a_name_is_registered_once(self) -> None:
+        async def phase(_allowed: timedelta) -> None:
+            pass
+
+        runtime = _runtime()
+
+        async with runtime.scope():
+            phases = runtime.get_context().drain_phases
+            phases.register("phase", phase)
+
+            with pytest.raises(CoreException) as caught:
+                phases.register("phase", phase)
+
+            assert caught.value.kind == ExceptionKind.CONFIGURATION
+
+            with pytest.raises(CoreException) as caught:
+                phases.register("other", phase, max_duration=timedelta(0))
+
+            assert caught.value.kind == ExceptionKind.CONFIGURATION

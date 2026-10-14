@@ -40,7 +40,7 @@ from .background import BackgroundOwners
 from .drain import OperationDrainGate
 from .drainable import Drainables
 from .invocation import InvocationContext
-from .lifecycle import LifecycleState
+from .lifecycle import DrainPhases, LifecycleState
 from .transaction import AfterCommitErrorHandler, TransactionContext
 
 # ----------------------- #
@@ -166,6 +166,10 @@ class ExecutionContext:
     """Whether lifecycle startup finished and whether a drain was announced, for lifecycle
     steps to read from their hook's ``ctx`` (see
     :mod:`~forze.application.execution.context.lifecycle`)."""
+
+    drain_phases: DrainPhases = attrs.field(factory=DrainPhases, init=False, repr=False)
+    """Work steps register to run between a drain's announcement and teardown, while the
+    replica still serves (see :class:`~forze.application.execution.context.lifecycle.DrainPhases`)."""
 
     background_owners: BackgroundOwners = attrs.field(
         factory=BackgroundOwners,
