@@ -11,6 +11,8 @@ ticks take milliseconds and every count below is exact.
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
@@ -518,6 +520,29 @@ class TestReport:
 
         # Four carry a counted namespace; only the two lobby-only ones may move.
         assert run_simulation(scenario) == {"connections": 4, "movable": 2}
+
+    def test_a_failing_selector_keeps_each_connection_and_is_logged_once(
+        self, error_log_buf: io.StringIO
+    ) -> None:
+        def broken(namespace: str, sid: str) -> bool:
+            raise RuntimeError("selector bug")
+
+        async def scenario() -> Report:
+            node = _Node()
+            await node.connect(50, "/lobby")
+
+            return connection_report(node.server, namespaces=("/lobby",), movable=broken)()
+
+        assert run_simulation(scenario) == {"connections": 50, "movable": 0}
+
+        rows = [
+            json.loads(line)
+            for line in error_log_buf.getvalue().splitlines()
+            if line.startswith("{")
+        ]
+        # Listed on every tick and every beat: the count once, and the first error once.
+        assert [row["level"] for row in rows] == ["warning", "critical"]
+        assert "50 connection(s)" in rows[0]["event"]
 
 
 class TestWiring:

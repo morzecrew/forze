@@ -189,8 +189,8 @@ async def close_spread(
 
         if outcome.failed or outcome.timed_out:
             error_logger.warning(
-                "Drain started %d of %d closes: %d closed, %d failed, %d still closing "
-                "carry on in the background",
+                "Started %d of %d closes: %d closed, %d failed, %d still closing carry "
+                "on in the background",
                 len(closes),
                 len(eio_sids),
                 outcome.closed,
@@ -210,6 +210,7 @@ def _selected(
     *,
     namespaces: Sequence[str],
     select: ConnectionSelector | None,
+    failures: list[Exception],
 ) -> bool:
     if namespace not in namespaces:
         return False
@@ -222,7 +223,7 @@ def _selected(
 
     except Exception as error:
         # Per-connection isolation: a selector that fails keeps that connection open.
-        log_server_error(error)
+        failures.append(error)
 
         return False
 
@@ -248,14 +249,24 @@ def _closable(
 ) -> list[tuple[str, str]]:
     """The *transports* whose every namespace may be closed, as ``(namespace, eio_sid)``."""
 
-    return [
+    failures: list[Exception] = []
+    closable = [
         (members[0][0], eio_sid)
         for eio_sid, members in transports.items()
         if all(
-            _selected(namespace, sid, namespaces=namespaces, select=select)
+            _selected(namespace, sid, namespaces=namespaces, select=select, failures=failures)
             for namespace, sid in members
         )
     ]
+
+    if failures:
+        # Once per listing, not per connection: the rebalance lists on every tick and beat.
+        error_logger.warning(
+            "A connection selector raised for %d connection(s); they stay open", len(failures)
+        )
+        log_server_error(failures[0])
+
+    return closable
 
 
 def _drain_targets(
