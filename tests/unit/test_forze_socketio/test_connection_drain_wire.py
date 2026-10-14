@@ -17,6 +17,7 @@ the real socket.io-client under node when ``FORZE_SOCKETIO_CLIENT_NODE_PATH`` na
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -24,6 +25,7 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 import socketio
 import uvicorn
@@ -126,6 +128,65 @@ class TestTransportClose:
 
             assert await asyncio.wait_for(ws.recv(), 2) == "41"
             await ws.close()
+
+
+class _Polling:
+    """A raw Engine.IO long-polling client that never leaves a poll pending between calls."""
+
+    def __init__(self, client: httpx.AsyncClient, port: int) -> None:
+        self.client = client
+        self.url = f"http://127.0.0.1:{port}/socket.io/"
+        self.sid = ""
+
+    async def open(self) -> None:
+        reply = await self.client.get(self.url, params={"EIO": "4", "transport": "polling"})
+        self.sid = json.loads(reply.text[1:])["sid"]
+
+    async def post(self, packet: str) -> httpx.Response:
+        return await self.client.post(
+            self.url, params={"EIO": "4", "transport": "polling", "sid": self.sid}, content=packet
+        )
+
+    async def poll(self) -> httpx.Response:
+        return await self.client.get(
+            self.url, params={"EIO": "4", "transport": "polling", "sid": self.sid}
+        )
+
+
+class TestPollingTransport:
+    async def test_a_connect_turned_away_while_draining_does_not_hang_its_request(self) -> None:
+        sio, stats, state = _replica()
+        state["draining"] = True
+
+        async with _serving(sio) as port, httpx.AsyncClient(timeout=3) as http:
+            polling = _Polling(http, port)
+            await polling.open()
+
+            # No poll is pending: the turned-away connect must not wait for one.
+            assert (await asyncio.wait_for(polling.post("40"), timeout=3)).status_code == 200
+            after = await asyncio.wait_for(polling.poll(), timeout=3)
+
+        assert stats.connect_refused == {("/", "draining"): 1}
+        # Either way the client sees its transport end, and reconnects.
+        assert after.status_code == 400 or after.text.startswith("1")
+
+    # ....................... #
+
+    async def test_the_drain_closes_a_polling_client_with_no_poll_pending(self) -> None:
+        sio, _stats, _state = _replica()
+
+        async with _serving(sio) as port, httpx.AsyncClient(timeout=3) as http:
+            polling = _Polling(http, port)
+            await polling.open()
+            await polling.post("40")
+            assert (await polling.poll()).text.startswith("40")  # connected; nothing pending
+
+            closed = await asyncio.wait_for(
+                close_spread(sio, _targets(sio), timedelta(seconds=0.05), tail=timedelta(1)),
+                timeout=3,
+            )
+
+        assert closed == 1  # finished, not left waiting for a poll that never comes
 
 
 # ----------------------- #

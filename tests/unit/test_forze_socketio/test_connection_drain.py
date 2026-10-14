@@ -342,13 +342,15 @@ class TestDrainStep:
         for index in range(5):
             await _connect(server, f"eio-{index}")
 
-        original = server.eio.disconnect
+        for index in range(5):
+            socket = _socket(server, f"eio-{index}")
+            original = socket.close
 
-        async def recording(eio_sid: str) -> None:
-            closed_at.append(clock.time())
-            await original(eio_sid)
+            async def recording(*args: Any, _original: Any = original, **kwargs: Any) -> None:
+                closed_at.append(clock.time())
+                await _original(*args, **kwargs)
 
-        server.eio.disconnect = recording  # type: ignore[method-assign]
+            socket.close = recording  # type: ignore[method-assign]
         step = connection_drain_lifecycle_step(
             server, window=timedelta(seconds=0.5), tail=timedelta(seconds=0.5)
         )
@@ -367,7 +369,7 @@ class TestDrainStep:
 
     # ....................... #
 
-    @pytest.mark.parametrize("missing", ["sockets", "disconnect", "create_queue"])
+    @pytest.mark.parametrize("missing", ["sockets", "create_queue"])
     def test_an_engine_io_without_what_the_close_uses_is_refused_when_built(
         self, missing: str
     ) -> None:

@@ -324,9 +324,12 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
   yourself.
 - **A connect that arrives while the replica drains** is turned away the same way: its
   Engine.IO connection is closed, every namespace on it included, and the JavaScript client
-  reconnects with its backoff — through the balancer, which by then sends it elsewhere. A
-  refused connect would not do: socket.io's JavaScript client treats a `connect_error` from
-  the server as final and stops. The check runs before authentication, again once admission
+  reconnects — through the balancer, which by then sends it elsewhere. Its transport did
+  open, so the client starts its backoff over each time and retries at its base
+  `reconnectionDelay` until it lands on another replica. A refused connect would not do:
+  socket.io's JavaScript client treats a `connect_error` from the server as final and
+  stops. Over long-polling the client sees its next poll fail rather than a close, and
+  reconnects the same way. The check runs before authentication, again once admission
   and authentication have run, and as the connect's last step; a connect turned away late
   has its presence, room and identity undone first. Only if the close fails does the client
   see a refusal: `Server is draining`, with `{"code": "realtime_draining"}` as its data.

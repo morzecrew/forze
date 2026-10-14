@@ -54,24 +54,31 @@ async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
     the drain and a draining replica's refusal close connections this way.
     """
 
-    # Captured first: the disconnect forgets the socket.
     socket = sio.eio.sockets.get(eio_sid)
-    await sio.eio.disconnect(eio_sid)
 
-    if socket is not None:
-        # python-engineio sends the Engine.IO CLOSE packet but leaves a WebSocket open until
-        # the client closes it, and socket.io's JavaScript client ignores CLOSE on a
-        # WebSocket — it would sit there until its ping timeout. The engine's own
-        # end-of-stream sentinel ends the socket's writer, which closes the WebSocket. A
-        # polling socket is unaffected: its CLOSE rides the next poll.
-        socket.queue.put_nowait(None)
+    if socket is None:
+        return  # already gone
+
+    # What python-engineio's own disconnect does, less its wait for the client to fetch the
+    # CLOSE packet: a polling client with no poll pending never does — its next poll is
+    # refused once the socket is closed — and the wait would hold this close for good.
+    # Closing runs Socket.IO's disconnect handlers for every namespace on the connection.
+    await socket.close(wait=False)
+
+    # The CLOSE packet alone leaves a WebSocket open until the client closes it, and
+    # socket.io's JavaScript client ignores CLOSE on a WebSocket — it would sit there until
+    # its ping timeout. The engine's own end-of-stream sentinel ends the socket's writer,
+    # which closes the WebSocket. A polling client reads the CLOSE from a pending poll, or
+    # has its next poll refused; either way its transport ends, and it reconnects.
+    socket.queue.put_nowait(None)
+    sio.eio.sockets.pop(eio_sid, None)
 
 
 def _require_close_internals(sio: AsyncServer) -> None:
     """Refuse a server whose Engine.IO side lacks what :func:`close_transport` uses.
 
-    The close reads python-engineio internals — its socket table, its disconnect, and the
-    queue each socket's writer drains, which ends on a ``None`` — that a release could
+    The close reads python-engineio internals — its socket table, a socket's ``close``, and
+    the queue each socket's writer drains, which ends on a ``None`` — that a release could
     change. A drain finding out at drain time would close nothing; this finds out at
     assembly instead.
     """
@@ -81,7 +88,6 @@ def _require_close_internals(sio: AsyncServer) -> None:
         name
         for name, present in (
             ("sockets", isinstance(getattr(eio, "sockets", None), dict)),
-            ("disconnect", callable(getattr(eio, "disconnect", None))),
             ("create_queue", callable(getattr(eio, "create_queue", None))),
         )
         if not present
