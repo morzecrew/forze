@@ -43,7 +43,7 @@ The exit order is: withdraw readiness, run the drain phases while still serving,
 - A step reads `ctx.lifecycle.started` and `ctx.lifecycle.announced` from its hook's `ctx` — it cannot hold the runtime whose plan contains it.
 - Under FastAPI, serve with `await serve_uvicorn(uvicorn.Config(app), runtime, drain_budget=...)` from `forze_fastapi`, so `SIGTERM` drains before uvicorn stops accepting. `uvicorn app:app` closes WebSockets at once (1012) and, without `--timeout-graceful-shutdown`, waits for open streams without limit.
 
-Fit `announce_delay + drain budget + uvicorn graceful timeout + drain_timeout + lifecycle shutdown` inside the orchestrator's grace period, or the process is killed mid-phase.
+Fit the worst case — `announce_delay + drain budget + 1 s + uvicorn graceful timeout + drain_timeout + shutdown_step_timeout × (3 + lifecycle steps)` — inside the orchestrator's grace period, or the process is killed mid-phase; `serve_uvicorn` logs the sum at startup. Off the main thread, pass `serve_uvicorn(..., stop=asyncio.Event())` and set it to drain and stop.
 
 ## Quiesce: bring the planes to rest
 

@@ -29,6 +29,7 @@ from typing import Any, Final
 import uvicorn
 
 from forze.application.execution import ExecutionRuntime
+from forze.application.execution.lifecycle.run import DRAIN_PHASE_CANCEL_GRACE_SECONDS
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
 
@@ -189,9 +190,12 @@ async def serve_uvicorn(
 
     The app must hold *runtime*'s scope open — ``FastAPI(lifespan=runtime_lifespan(runtime))``.
 
-    An orderly exit takes up to ``announce_delay + drain_budget + graceful timeout +
-    runtime.drain_timeout`` plus lifecycle shutdown, and that has to fit in the
-    orchestrator's grace period. The figures are logged when the server starts.
+    An orderly exit takes up to ``announce_delay + drain_budget + 1 s`` (a phase that
+    ignores its cancellation) ``+ graceful timeout + runtime.drain_timeout +
+    runtime.shutdown_step_timeout × (3 + lifecycle steps)`` — the three being cancelling the
+    operations ``drain_timeout`` left running, stopping the background loops, and closing
+    detached background work. That worst case has to fit in the orchestrator's grace
+    period; it is logged, figure by figure, when the server starts.
 
     :param config: The uvicorn configuration. ``timeout_graceful_shutdown`` is set to
         *graceful_timeout*, rounded up to whole seconds, when unset; a value already set is
@@ -218,14 +222,25 @@ async def serve_uvicorn(
         # restart into a kill at the grace period.
         config.timeout_graceful_shutdown = math.ceil(graceful_timeout.total_seconds())
 
-    _logger.info(
-        "Exit budget: announce %.1fs + drain %.1fs + graceful %ss + drain_timeout %.1fs "
-        "+ lifecycle shutdown (up to %.1fs per step)",
+    steps = len(runtime.lifecycle.graph.steps)
+    step_timeout = runtime.shutdown_step_timeout.total_seconds()
+    figures = (
         announce_delay.total_seconds(),
         drain_budget.total_seconds(),
-        config.timeout_graceful_shutdown,
+        DRAIN_PHASE_CANCEL_GRACE_SECONDS,
+        float(config.timeout_graceful_shutdown),
         runtime.drain_timeout.total_seconds(),
-        runtime.shutdown_step_timeout.total_seconds(),
+        step_timeout * (3 + steps),
+    )
+
+    _logger.info(
+        "Worst-case exit %.1fs: announce %.1fs + drain %.1fs + abandoned phase %.1fs "
+        "+ graceful %.1fs + drain_timeout %.1fs + shutdown %.1fs (%.1fs x (3 + %d step(s))); "
+        "fit it inside the orchestrator's grace period",
+        sum(figures),
+        *figures,
+        step_timeout,
+        steps,
     )
 
     server = _DrainingServer(

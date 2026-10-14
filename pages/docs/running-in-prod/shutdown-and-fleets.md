@@ -16,13 +16,20 @@ mistakes that only N replicas can make.
 `runtime_lifespan` — does not tear infrastructure down under in-flight work.
 It drains first:
 
-1. The scope stops admitting new top-level invocations. They fail with a
+1. If nothing drained the scope yet, its drain phases run, while operations are
+   still admitted — see [Graceful deploys](#graceful-deploys).
+2. The scope stops admitting new top-level invocations. They fail with a
    **retryable** `throttled` (`code="draining"`) — a **429** at the FastAPI
    edge, a requeue-worthy nack for a queue consumer.
-2. In-flight operations get a bounded window — `drain_timeout`, default 10
+3. In-flight operations get a bounded window — `drain_timeout`, default 10
    seconds — to finish before lifecycle teardown closes the clients they
-   depend on.
-3. Lifecycle shutdown runs as usual, in reverse wave order.
+   depend on. Whatever is still running after it is cancelled.
+4. Background loops stop between units of work, and detached background work is
+   cancelled.
+5. Lifecycle shutdown runs as usual, in reverse wave order.
+
+Each of the last three steps is bounded by `shutdown_step_timeout` (10 seconds by
+default), per lifecycle step in the last.
 
 ```python
 runtime = build_runtime(..., drain_timeout=timedelta(seconds=20))
@@ -241,20 +248,26 @@ the scope's state from the `ctx` its hooks receive instead:
 ### Fit the budget to the grace period
 
 The orchestrator kills the process when its grace period runs out — on
-Kubernetes, `terminationGracePeriodSeconds`, 30 seconds by default. Everything an
-orderly exit does has to fit inside it:
+Kubernetes, `terminationGracePeriodSeconds`, 30 seconds by default. The worst
+case of an orderly exit has to fit inside it:
 
 ```text
 announce_delay
-+ drain budget                (drain_budget when shutdown() drains)
-+ the HTTP graceful timeout   (uvicorn's timeout_graceful_shutdown)
-+ drain_timeout               (in-flight operations)
-+ lifecycle shutdown          (up to shutdown_step_timeout per step)
++ drain budget                  (drain_budget when shutdown() drains)
++ 1 s                           (a phase that ignores its cancellation)
++ the HTTP graceful timeout     (uvicorn's timeout_graceful_shutdown)
++ drain_timeout                 (in-flight operations)
++ shutdown_step_timeout × 3     (cancelling what drain_timeout left running,
+                                 stopping background loops, closing background work)
++ shutdown_step_timeout × steps (lifecycle shutdown, one per step)
 ```
 
-A budget that does not fit gets the process killed in the middle of a phase or of
-teardown — exactly the exit this ordering exists to avoid. Raise the grace period
-or shrink the budgets until it fits, with headroom.
+With every default and no HTTP server that is already 51 seconds before the first
+lifecycle step: 10 for the drain, 1, 10 for `drain_timeout` and 3 × 10. Most exits
+take a fraction of it, but the grace period has to cover the one that does not. A budget that does not fit gets the process killed
+in the middle of a phase or of teardown — exactly the exit this ordering exists
+to avoid. Shrink the timeouts, raise the grace period, or both, with headroom.
+`serve_uvicorn` logs this sum, figure by figure, when the server starts.
 
 ## Declare the fleet posture
 

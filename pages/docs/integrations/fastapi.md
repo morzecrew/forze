@@ -199,19 +199,32 @@ import asyncio
 from datetime import timedelta
 
 import uvicorn
+from forze.application.execution import build_runtime
 from forze_fastapi import serve_uvicorn
 
+runtime = build_runtime(
+    ...,
+    drain_timeout=timedelta(seconds=5),
+    shutdown_step_timeout=timedelta(seconds=2),
+)
 config = uvicorn.Config(app, host="0.0.0.0", port=8000)
 
 asyncio.run(
     serve_uvicorn(
         config,
         runtime,
-        drain_budget=timedelta(seconds=10),
-        announce_delay=timedelta(seconds=5),
+        drain_budget=timedelta(seconds=5),
+        announce_delay=timedelta(seconds=3),
+        graceful_timeout=timedelta(seconds=5),
     )
 )
 ```
+
+The worst case of that exit is 25 seconds plus 2 per lifecycle step — the
+[sum](../running-in-prod/shutdown-and-fleets.md#fit-the-budget-to-the-grace-period)
+`serve_uvicorn` logs at startup. Past two steps it no longer fits Kubernetes'
+default 30-second grace period: set `terminationGracePeriodSeconds` from the
+logged figure, with headroom.
 
 On the first `SIGTERM` or `SIGINT` it runs `runtime.drain()` — readiness fails at
 once, `announce_delay` passes, the drain phases run — and only then lets uvicorn
