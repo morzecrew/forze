@@ -7,6 +7,7 @@ announced or the drain gate closes. It never needs a handle on the runtime.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import timedelta
 from typing import TYPE_CHECKING, Final, Literal, final
@@ -49,6 +50,9 @@ class _Membership:
     spec: FleetSpec
     report: Callable[[], Report]
     member_id: str | None
+    bound: timedelta
+    """The longest a beat may take: ``ttl - every``. A beat that finishes within it renews
+    the entry before it expires, since the next one starts ``every`` later."""
 
     ctx: ExecutionContext | None = attrs.field(default=None, init=False)
     port: FleetPort | None = attrs.field(default=None, init=False)
@@ -79,7 +83,16 @@ class _Membership:
 
         ctx, port = self._bound()
 
-        await port.beat(self.me, _STATE[scope_readiness(ctx)], self.report())
+        try:
+            # Bounded, so one hung beat cannot stall the loop for good; the next one retries.
+            async with asyncio.timeout(self.bound.total_seconds()):
+                await port.beat(self.me, _STATE[scope_readiness(ctx)], self.report())
+
+        except TimeoutError as error:
+            raise exc.timeout(
+                f"Fleet beat took longer than {self.bound}, the fleet's ttl less the interval",
+                code="fleet.beat_timeout",
+            ) from error
 
     # ....................... #
 
@@ -154,7 +167,8 @@ def fleet_membership_lifecycle_step(
     """Keep this replica's entry in the fleet *spec* names, from startup to shutdown.
 
     At startup the step beats once as ``starting``, then beats every *every* from a supervised
-    loop: a failed beat is logged and the next one tries again. The state follows the scope:
+    loop: a failed beat is logged and the next one tries again, and a beat that takes longer
+    than ``ttl - every`` is abandoned as failed. The state follows the scope:
     ``starting`` until lifecycle startup finished, ``serving`` after, ``draining`` once a
     drain is announced or the drain gate closes. On stop it leaves the fleet, or lingers.
 
@@ -196,7 +210,7 @@ def fleet_membership_lifecycle_step(
     if member_id is not None:
         validate_member_id(member_id)
 
-    membership = _Membership(spec=spec, report=report, member_id=member_id)
+    membership = _Membership(spec=spec, report=report, member_id=member_id, bound=spec.ttl - every)
     loop = periodic_lifecycle_step(
         tick=membership.beat,
         interval=every,

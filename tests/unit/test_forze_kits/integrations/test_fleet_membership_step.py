@@ -195,11 +195,13 @@ class TestStop:
 
 @attrs.define
 class _FlakyFleet:
-    """A fleet port whose beats fail on the calls named in *fail_on*."""
+    """A fleet port whose beats fail on the calls in *fail_on*, or hang on those in *hang_on*."""
 
-    fail_on: frozenset[int]
+    fail_on: frozenset[int] = frozenset()
+    hang_on: frozenset[int] = frozenset()
     calls: int = 0
     left: list[str] = attrs.field(factory=list)
+    cancelled: list[int] = attrs.field(factory=list)
 
     async def beat(
         self,
@@ -214,6 +216,16 @@ class _FlakyFleet:
         if self.calls in self.fail_on:
             raise RuntimeError(f"beat {self.calls} failed")
 
+        if self.calls in self.hang_on:
+            call = self.calls
+
+            try:
+                await asyncio.sleep(30)  # bounded: a lost timeout fails the test, not pytest
+
+            except asyncio.CancelledError:
+                self.cancelled.append(call)
+                raise
+
         member = Member(id=member_id, state=state, since=utcnow(), report=report)
 
         return FleetView(members=[member], at=utcnow())
@@ -225,15 +237,40 @@ class _FlakyFleet:
         self.left.append(member_id)
 
 
-def _flaky_runtime(port: _FlakyFleet) -> ExecutionRuntime:
+def _flaky_runtime(port: _FlakyFleet, spec: FleetSpec = SPEC) -> ExecutionRuntime:
     return build_runtime(
         deps=Deps.plain({FleetDepKey: lambda _ctx, _spec: port}),
-        lifecycle_steps=fleet_membership_lifecycle_step(SPEC, every=EVERY, member_id="me"),
+        lifecycle_steps=fleet_membership_lifecycle_step(spec, every=EVERY, member_id="me"),
         drain_timeout=timedelta(0),
     )
 
 
 class TestSupervision:
+    async def test_a_hung_beat_is_abandoned_and_the_loop_beats_on(self) -> None:
+        # ttl 300 ms, every 20 ms: a beat may take 280 ms before it is abandoned.
+        port = _FlakyFleet(hang_on=frozenset({2}))
+        spec = FleetSpec(name="gateways", ttl=timedelta(milliseconds=300))
+
+        async with _flaky_runtime(port, spec).scope():
+
+            async def beat_again() -> bool:
+                return port.calls >= 4
+
+            await _until(beat_again, timeout=2.0)
+
+        assert port.cancelled == [2]
+
+    async def test_a_hung_first_beat_fails_startup(self) -> None:
+        port = _FlakyFleet(hang_on=frozenset({1}))
+        spec = FleetSpec(name="gateways", ttl=timedelta(milliseconds=300))
+
+        with pytest.raises(CoreException) as caught:
+            async with _flaky_runtime(port, spec).scope():
+                pass
+
+        assert caught.value.code == "fleet.beat_timeout"
+        assert port.cancelled == [1]
+
     async def test_a_failed_beat_does_not_stop_the_loop(self) -> None:
         port = _FlakyFleet(fail_on=frozenset({2, 3}))
 

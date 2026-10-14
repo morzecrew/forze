@@ -57,9 +57,10 @@ state follows the runtime it runs in:
 | `draining` | a drain was announced — `runtime.begin_draining()` or `runtime.drain()` — or the drain gate closed |
 
 Peers see a change at the next beat. `every` must be below half the `ttl`, so one missed beat
-does not drop the member; a step built with more is refused. A beat that fails is logged and
-the next one tries again, but the first one fails startup, so an unwired fleet or a report
-the codec refuses stops the boot rather than logging on every beat.
+does not drop the member; a step built with more is refused. A beat that fails, or takes
+longer than `ttl − every`, is logged and the next one tries again, but the first one fails
+startup, so an unwired fleet or a report the codec refuses stops the boot rather than logging
+on every beat.
 
 On stop the step does one of two things:
 
