@@ -229,9 +229,15 @@ only when the event loop closes and cancels the lifespan — at the end of
   stream or long poll cannot hold the exit forever. The figures of the
   [exit budget](../running-in-prod/shutdown-and-fleets.md#fit-the-budget-to-the-grace-period)
   are logged when the server starts.
-- **Main thread only.** Signal handlers can be installed only there. Run
-  elsewhere, `serve_uvicorn` installs none, and you call `runtime.drain()`
-  yourself.
+- **Off the main thread, pass `stop`.** Signal handlers can be installed only on
+  the main thread, so elsewhere `serve_uvicorn` installs none. Pass
+  `stop=asyncio.Event()` and set it on the server's loop — from another thread,
+  `loop.call_soon_threadsafe(stop.set)` — to drain and stop as a first signal
+  would. Setting it works on the main thread too.
+- **A signal during startup drains later.** Until the lifespan startup finishes
+  there is nothing to drain: the server exits once it does, and the drain phases
+  run in the lifespan shutdown, after the server stopped accepting. A later
+  signal cannot cut them short there.
 - **No re-raised signal.** Uvicorn raises the signal again once its server
   returns; `serve_uvicorn` does not, so your process decides how it exits.
 

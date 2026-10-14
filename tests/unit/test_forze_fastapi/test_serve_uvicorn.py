@@ -21,10 +21,11 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
-from forze.application.execution import build_runtime
+from forze.application.contracts.execution import LifecycleStep
+from forze.application.execution import ExecutionContext, build_runtime
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_fastapi import serve_uvicorn
+from forze_fastapi import runtime_lifespan, serve_uvicorn
 from forze_fastapi.serving import _DrainingServer  # pyright: ignore[reportPrivateUsage]
 
 # ----------------------- #
@@ -359,3 +360,63 @@ class TestSignalCapture:
         # The drain observed its own cancellation.
         assert runtime.cancelled is True
         assert (server.should_exit, server.force_exit) == (True, True)
+
+
+    # ....................... #
+
+    def test_off_the_main_thread_the_stop_event_drains_and_stops_the_server(self) -> None:
+        """No signal handler can be installed there; the event is the way in."""
+
+        events: list[str] = []
+        port = _free_port()
+
+        async def phase(_allowed: timedelta) -> None:
+            events.append("phase")
+
+        async def startup(ctx: ExecutionContext) -> None:
+            ctx.drain_phases.register("phase", phase)
+
+        async def teardown(_ctx: ExecutionContext) -> None:
+            events.append("teardown")
+
+        runtime = build_runtime(
+            lifecycle_steps=LifecycleStep(id="step", startup=startup, shutdown=teardown),
+            drain_timeout=timedelta(0),
+        )
+        app = FastAPI(lifespan=runtime_lifespan(runtime))
+
+        async def worker() -> None:
+            stop = asyncio.Event()
+            config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+            serving = asyncio.create_task(
+                serve_uvicorn(config, runtime, drain_budget=timedelta(seconds=1), stop=stop)
+            )
+
+            for _ in range(200):  # bounded wait for startup to finish
+                if runtime.ready:
+                    break
+
+                await asyncio.sleep(0.02)
+
+            assert runtime.ready
+            stop.set()
+
+            await asyncio.wait_for(serving, timeout=10.0)
+            events.append("served")
+
+        failures: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                asyncio.run(worker())
+
+            except BaseException as error:  # surfaced to the test thread below
+                failures.append(error)
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join(timeout=20.0)
+
+        assert not thread.is_alive()
+        assert failures == []
+        assert events == ["phase", "teardown", "served"]

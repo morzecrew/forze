@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from contextvars import Context, copy_context
 from datetime import timedelta
 from types import FrameType
-from typing import Final
+from typing import Any, Final
 
 import uvicorn
 
@@ -52,12 +52,14 @@ class _DrainingServer(uvicorn.Server):
         *,
         drain_budget: timedelta,
         announce_delay: timedelta,
+        stop: asyncio.Event | None = None,
     ) -> None:
         super().__init__(config)
 
         self._runtime = runtime
         self._drain_budget = drain_budget
         self._announce_delay = announce_delay
+        self._stop = stop
         self._loop: asyncio.AbstractEventLoop | None = None
         self._context: Context = copy_context()
         self._drain_task: asyncio.Task[None] | None = None
@@ -66,17 +68,16 @@ class _DrainingServer(uvicorn.Server):
 
     @contextmanager
     def capture_signals(self) -> Generator[None]:
-        # Only the main thread can install signal handlers. Off it none are installed, as
-        # uvicorn does, and the app calls ``runtime.drain()`` itself.
-        if threading.current_thread() is not threading.main_thread():
-            yield
-            return
-
         self._loop = asyncio.get_running_loop()
         self._context = copy_context()
-        # ``signal.signal`` rather than the loop's handlers, as uvicorn does, so the
-        # previous handlers can be put back.
-        previous = {sig: signal.signal(sig, self._on_signal) for sig in _HANDLED_SIGNALS}
+        watch = None if self._stop is None else self._loop.create_task(self._watch(self._stop))
+        previous: dict[int, Any] = {}
+
+        # Only the main thread can install signal handlers. Off it none are installed, as
+        # uvicorn does, and the stop event is the way in. ``signal.signal`` rather than the
+        # loop's handlers, as uvicorn does, so the previous handlers can be put back.
+        if threading.current_thread() is threading.main_thread():
+            previous = {sig: signal.signal(sig, self._on_signal) for sig in _HANDLED_SIGNALS}
 
         try:
             yield
@@ -84,6 +85,9 @@ class _DrainingServer(uvicorn.Server):
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
+
+            if watch is not None:
+                watch.cancel()
 
             if self._drain_task is not None and not self._drain_task.done():
                 self._drain_task.cancel()
@@ -102,6 +106,15 @@ class _DrainingServer(uvicorn.Server):
             self._loop.call_soon_threadsafe(
                 self._on_signal_in_loop, sig, context=self._context.copy()
             )
+
+    # ....................... #
+
+    async def _watch(self, stop: asyncio.Event) -> None:
+        await stop.wait()
+
+        if self._drain_task is None:
+            _logger.info("Stop requested: draining before the server stops")
+            self._drain_task = asyncio.ensure_future(self._drain())
 
     # ....................... #
 
@@ -151,6 +164,7 @@ async def serve_uvicorn(
     drain_budget: timedelta,
     announce_delay: timedelta = timedelta(0),
     graceful_timeout: timedelta = timedelta(seconds=10),
+    stop: asyncio.Event | None = None,
 ) -> None:
     """Serve *config*'s app with uvicorn, draining *runtime* before the server stops.
 
@@ -164,10 +178,16 @@ async def serve_uvicorn(
     drain short. Uvicorn then skips the lifespan shutdown, so the runtime tears down only when the event loop
     closes and cancels the lifespan task (at the end of ``asyncio.run``).
 
+    Setting *stop* does what the first signal does, from any thread of the process —
+    set it on the server's loop (``loop.call_soon_threadsafe(stop.set)``). Off the main
+    thread it is the only way in: no signal handler can be installed there, and none is.
+    The previous handlers are restored on return, and the signal is not raised again.
+
+    A signal during the lifespan startup finds nothing to drain yet: the server exits once
+    startup finishes, and the drain phases run in the lifespan shutdown instead — after the
+    server stopped accepting, where a later signal cannot cut them short.
+
     The app must hold *runtime*'s scope open — ``FastAPI(lifespan=runtime_lifespan(runtime))``.
-    Run it from the main thread: elsewhere no signal handler can be installed, none is, and
-    the app calls ``runtime.drain()`` itself. The previous handlers are restored on return,
-    and the signal is not raised again.
 
     An orderly exit takes up to ``announce_delay + drain_budget + graceful timeout +
     runtime.drain_timeout`` plus lifecycle shutdown, and that has to fit in the
@@ -181,6 +201,7 @@ async def serve_uvicorn(
     :param announce_delay: How long readiness fails before the first phase starts.
     :param graceful_timeout: How long the server waits for open connections — an SSE
         stream, a long poll — before cancelling them.
+    :param stop: Set it to drain and stop, as the first signal would.
 
     :raises CoreException: ``configuration`` — the installed uvicorn has no
         ``Server.capture_signals``.
@@ -212,6 +233,7 @@ async def serve_uvicorn(
         runtime,
         drain_budget=drain_budget,
         announce_delay=announce_delay,
+        stop=stop,
     )
 
     await server.serve()
