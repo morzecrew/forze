@@ -836,9 +836,11 @@ def attach_realtime_connection(
     While *draining* returns true a connect is turned away by closing its Engine.IO
     connection — as the drain closes connections — so socket.io's JavaScript client
     reconnects with its backoff, through the balancer, to another replica; a refused connect
-    alone would make it give up for good. It is checked before any other work and again as
-    the connect's last step; a connect turned away there first undoes its presence, its room
-    and its stored identity. The refusal ``Server is draining``, data
+    alone would make it give up for good. It is checked before any other work, again after
+    admission and after authentication, and as the connect's last step; a connect turned
+    away there first undoes its presence, its room and its stored identity. A connect whose
+    transport closed meanwhile stops quietly at the same checks, and a *draining* that raises
+    refuses the connect as an internal error. The refusal ``Server is draining``, data
     ``{"code": "realtime_draining"}``, is raised too and reaches the client only if the close
     failed. Pass the **serving**
     runtime's, ``draining=lambda: runtime.draining``: nothing defaults it, and the replay
