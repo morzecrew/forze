@@ -458,6 +458,26 @@ class TestRelease:
 
         _simulate(scenario)
 
+    def test_a_body_that_unwinds_within_the_release_timeout_is_released(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            # Ignores its end, and takes half a second to unwind once cancelled: the loop's
+            # stop grace must cover the yield grace, that unwind and the release.
+            a = fleet.replica("a", lead=fleet.body("a", listens=False, resists=0.5))
+            await a.start()
+            await asyncio.sleep(3)
+
+            stopped_at = monotonic()
+            await a.stop()
+
+            (run,) = fleet.runs
+            assert run.cancelled == stopped_at + GRACE
+            assert run.finished == stopped_at + GRACE + 0.5
+            assert a.lock.calls("release")[-1][0] == run.finished
+            assert await a.lock.inner.is_locked(KEY) is False
+
+        _simulate(scenario)
+
     def test_a_replica_does_not_lead_beside_a_body_it_abandoned(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
@@ -667,6 +687,30 @@ class TestHandoff:
 
             await asyncio.sleep(60)
             assert len(fleet.runs) == 2  # and it is not handed back
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_other_replicas_defer_to_the_asker(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a", handoff="on_request", prefer=self._prefers(False))
+            await a.start()
+            await asyncio.sleep(0.5)
+            # Ticks at +0.5, +2.5, ... +10.5: the first to see the lease free after the holder
+            # yields at +10, ahead of the asker's tick at +11.
+            n = fleet.replica("n", handoff="on_request", prefer=self._prefers(False))
+            await n.start()
+            await asyncio.sleep(4.5)
+            await fleet.replica("b", handoff="on_request", prefer=self._prefers(True)).start()
+            await asyncio.sleep(20)
+
+            assert [run.replica for run in fleet.runs] == ["a", "b"]
+            yielded_at = fleet.runs[0].saw_end
+            assert yielded_at is not None
+            # n's tick at +10.5 saw the lease free and the want-lock held, and sat out.
+            assert not [at for at, _ in n.lock.calls("acquire") if yielded_at < at < yielded_at + 1]
 
             await fleet.stop_all()
 
