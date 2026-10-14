@@ -21,6 +21,7 @@ from socketio.async_server import AsyncServer
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
 from forze.application.contracts.authn import AuthnIdentity
+from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution import build_runtime
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.application.integrations.realtime import (
@@ -314,7 +315,15 @@ class TestDrainingRefusal:
             return await _resolve(connect)
 
         if wiring == "replay":
-            _replayed(server, runtime, resolve=resolve, stats=stats)
+            # Replay opens a scope per connect, so it runs on a runtime of its own; the
+            # draining source is the serving runtime, whatever replay is wired with.
+            _replayed(
+                server,
+                _runtime(),
+                resolve=resolve,
+                draining=lambda: runtime.draining,
+                stats=stats,
+            )
 
         else:
             attach_realtime_connection(
@@ -334,6 +343,41 @@ class TestDrainingRefusal:
         assert resolved == []
         assert stats.connect_refused == {("/", "draining"): 1}
         assert stats.connections == {}
+
+    # ....................... #
+
+    async def test_the_replay_runtime_draining_its_own_scope_refuses_nothing(self) -> None:
+        server = _server()
+        tearing_down = asyncio.Event()
+
+        async def slow_shutdown(_ctx: Any) -> None:
+            tearing_down.set()
+            await asyncio.sleep(0.2)
+
+        # A replay scope's own teardown announces a drain on the replay runtime.
+        replay = build_runtime(
+            lifecycle_steps=LifecycleStep(id="client", shutdown=slow_shutdown),
+            drain_timeout=timedelta(0),
+        )
+        _replayed(server, replay, resolve=_resolve)
+
+        first = asyncio.ensure_future(_connect(server, "eio-1"))
+        await asyncio.wait_for(tearing_down.wait(), timeout=1.0)
+
+        assert replay.draining is True
+        await _connect(server, "eio-2")  # accepted: the replica is not draining
+        await first
+
+        assert _open(server) == {"eio-1", "eio-2"}
+
+    # ....................... #
+
+    async def test_replay_without_a_draining_source_warns_at_attach(
+        self, error_log_buf: Any
+    ) -> None:
+        _replayed(_server(), _runtime(), resolve=_resolve)
+
+        assert "draining" in error_log_buf.getvalue()
 
     # ....................... #
 

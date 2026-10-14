@@ -59,6 +59,7 @@ from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
     build_core_exception_ack,
     build_unhandled_exception_ack,
+    error_logger,
     is_server_error_kind,
     log_server_error,
 )
@@ -560,11 +561,7 @@ class _ConnectionLifecycle:
     # ....................... #
 
     def _draining(self) -> bool:
-        if self.draining is not None:
-            return self.draining()
-
-        # Replay wires a runtime: its drain is this replica's.
-        return self.runtime is not None and self.runtime.draining
+        return self.draining is not None and self.draining()
 
     # ....................... #
 
@@ -783,9 +780,10 @@ def attach_realtime_connection(
     draining`` and the data ``{"code": "realtime_draining"}``, so a client can tell it from
     an authentication failure and retry, with jittered backoff, on another replica. It is
     checked before any other work and again as the connect's last step; a connect refused
-    there first undoes its presence, its room and its stored identity. *draining* defaults to
-    ``runtime.draining`` when *runtime* is given; without one, pass
-    ``draining=lambda: runtime.draining`` to have connects refused while the replica drains.
+    there first undoes its presence, its room and its stored identity. Pass the **serving**
+    runtime's, ``draining=lambda: runtime.draining``: nothing defaults it, and the replay
+    *runtime* is not the one to read — replay opens a scope of its own per connect, so it
+    runs on a runtime that never drains with the replica.
 
     *admission* runs after the first draining check and before the protocol is negotiated or
     the connection authenticated: it returns to admit the connect, and awaiting it delays the
@@ -813,6 +811,14 @@ def attach_realtime_connection(
         raise exc.configuration(
             "Offline replay needs all of mailbox_factory, cursors_factory, and runtime "
             "(or none) — partial wiring would silently disable replay"
+        )
+
+    if runtime is not None and draining is None:
+        error_logger.warning(
+            "attach_realtime_connection on %s: replay is wired without draining=, so connects "
+            "are not refused while the replica drains; the replay runtime is not the serving "
+            "runtime — pass draining=lambda: <serving runtime>.draining",
+            namespace,
         )
 
     lifecycle = _ConnectionLifecycle(
