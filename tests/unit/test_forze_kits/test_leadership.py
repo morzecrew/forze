@@ -752,8 +752,8 @@ class TestRelease:
 
             sent, owner = a.lock.calls("acquire")[0]
             assert (sent + 25.0, owner) in a.lock.calls("release")
-            (successor,) = fleet.by("b")
-            assert successor.started <= sent + 25.0 + CAMPAIGN
+            first = fleet.runs[0]  # either replica: the lease was free again at +25
+            assert first.started <= sent + 25.0 + CAMPAIGN
 
             await fleet.stop_all()
 

@@ -18,7 +18,6 @@ import asyncio
 import math
 import weakref
 from collections.abc import Awaitable, Callable, Iterable
-from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final, Literal, cast, final
 
@@ -700,14 +699,19 @@ class _Campaign:
         owner: str,
     ) -> None:
         async def settle() -> None:
-            with suppress(Exception):
-                if await request is not None:
-                    logger.info(
-                        "Leadership acquire of %s landed after the step stopped waiting; "
-                        "releasing it",
-                        key,
-                    )
-                    await self._release(key, owner)
+            try:
+                landed = await request is not None
+
+            except Exception:
+                landed = True  # it may have taken the lock before its answer was lost
+
+            if landed:
+                logger.info(
+                    "Leadership acquire of %s answered after the step stopped waiting; "
+                    "releasing it",
+                    key,
+                )
+                await self._release(key, owner)
 
         task = asyncio.ensure_future(settle())
         self.stragglers.add(task)
