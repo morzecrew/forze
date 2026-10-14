@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 
 import attrs
 
@@ -11,9 +12,11 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     PasswordLifecyclePort,
     RefreshTokenCredentials,
+    RefreshTokenReuseError,
     TokenLifecyclePort,
 )
 from forze.application.contracts.execution import Handler
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 from ..dto import (
     AuthnApiKeyListDTO,
@@ -28,6 +31,7 @@ from ..dto import (
     AuthnTokenResponseDTO,
 )
 from ._utils import (
+    TxScope,
     require_admin_identity,
     require_identity,
     require_own_identity,
@@ -35,6 +39,11 @@ from ._utils import (
 )
 
 # ----------------------- #
+
+_FAMILY_REVOCATION_ATTEMPTS = 3
+"""Fresh transactions a reused token's family revocation gets before its conflict is raised."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -47,6 +56,9 @@ class AuthnPasswordLogin(Handler[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
     token_lifecycle: TokenLifecyclePort
     """Token lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
     # ....................... #
 
     async def __call__(self, args: AuthnLoginRequestDTO) -> AuthnTokenResponseDTO:
@@ -55,8 +67,12 @@ class AuthnPasswordLogin(Handler[AuthnLoginRequestDTO, AuthnTokenResponseDTO]):
             password=args.password,
         )
 
+        # The password check stays outside the transaction: it holds no lock, and hashing
+        # inside one would hold a connection for the whole hash.
         authn = await self.authn.authenticate_with_password(creds)
-        tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(authn.identity)
+
+        async with self.tx():
+            tokens: IssuedTokens = await self.token_lifecycle.issue_tokens(authn.identity)
 
         return token_response_from_issued_tokens(tokens)
 
@@ -81,6 +97,9 @@ class AuthnLogout(Handler[None, None]):
     token_lifecycle: TokenLifecyclePort
     """Token lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
     # ....................... #
 
     async def __call__(self, args: None) -> None:
@@ -88,7 +107,8 @@ class AuthnLogout(Handler[None, None]):
 
         identity = require_own_identity(self.resolver)
 
-        await self.token_lifecycle.revoke_tokens(identity)
+        async with self.tx():
+            await self.token_lifecycle.revoke_tokens(identity)
 
 
 # ....................... #
@@ -101,14 +121,66 @@ class AuthnRefreshTokens(Handler[AuthnRefreshRequestDTO, AuthnTokenResponseDTO])
     token_lifecycle: TokenLifecyclePort
     """Token lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
+    # ....................... #
+
+    in_transaction: Callable[[], bool] | None = None
+    """Whether a transaction is already open when the refresh starts."""
+
     # ....................... #
 
     async def __call__(self, args: AuthnRefreshRequestDTO) -> AuthnTokenResponseDTO:
+        # Inside an enclosing transaction both scopes below are savepoints, and the re-raise
+        # would roll the reuse revocation back with it: refuse rather than lose it quietly.
+        if self.in_transaction is not None and self.in_transaction():
+            raise exc.configuration(
+                "refresh_tokens must not run inside an open transaction: a reused token's "
+                "family is revoked in a transaction of its own, which an enclosing one would "
+                "roll back. Run the operation without a plan-level transaction.",
+                code="authn_refresh_in_transaction",
+            )
+
         creds = RefreshTokenCredentials(token=args.refresh_token)
 
-        tokens: IssuedTokens = await self.token_lifecycle.refresh_tokens(creds)
+        try:
+            async with self.tx():
+                tokens: IssuedTokens = await self.token_lifecycle.refresh_tokens(creds)
+
+        except RefreshTokenReuseError as reuse:
+            # The raise rolled back the family revocation the lifecycle made before it, so
+            # commit that revocation on its own: reuse is the token-theft signal.
+            await self._revoke_family(reuse)
+            raise
 
         return token_response_from_issued_tokens(tokens)
+
+    # ....................... #
+
+    async def _revoke_family(self, reuse: RefreshTokenReuseError) -> None:
+        # A concurrent refresh can conflict with the revocation, and a backend may abort the
+        # transaction on a conflict, so each attempt runs in a fresh one.
+        attempt = 0
+
+        while True:
+            attempt += 1
+
+            try:
+                async with self.tx():
+                    await self.token_lifecycle.revoke_chain_of_tokens(
+                        reuse.principal_id,
+                        reuse.family_id,
+                    )
+
+                return
+
+            except CoreException as error:
+                if error.kind is not ExceptionKind.CONCURRENCY:
+                    raise
+
+                if attempt == _FAMILY_REVOCATION_ATTEMPTS:
+                    raise
 
 
 # ....................... #
@@ -124,16 +196,20 @@ class AuthnChangePassword(Handler[AuthnChangePasswordRequestDTO, None]):
     password_lifecycle: PasswordLifecyclePort
     """Password lifecycle port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the lifecycle calls run in."""
+
     # ....................... #
 
     async def __call__(self, args: AuthnChangePasswordRequestDTO) -> None:
         identity = require_own_identity(self.resolver)
 
-        await self.password_lifecycle.change_password(
-            identity,
-            args.current_password,
-            args.new_password,
-        )
+        async with self.tx():
+            await self.password_lifecycle.change_password(
+                identity,
+                args.current_password,
+                args.new_password,
+            )
 
 
 # ....................... #

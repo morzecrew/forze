@@ -8,7 +8,7 @@ from forze.application.contracts.document import (
     DocumentQueryPort,
     KeyedUpdate,
 )
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import utcnow
 
 from ..domain.models.account import ReadApiKeyAccount, ReadPasswordAccount
@@ -142,6 +142,41 @@ async def find_api_key_accounts_by_principal(
 # ....................... #
 
 
+_REVOKE_BATCH = 1_000
+"""Sessions revoked per round trip."""
+
+_STALE_RETRIES = 3
+"""Consecutive batches a concurrent write may make stale before the revocation gives up."""
+
+
+def _detected_stale(error: CoreException) -> bool:
+    """Whether *error* is a stale batch the store detected itself, its transaction usable.
+
+    Stale shows up as a revision mismatch when the read for the write sees the new revision,
+    and as a conditional update that matched no row when it does not. Either is raised by
+    the store with no driver error behind it. A conflict the backend reports arrives
+    translated from a driver error, and the backend has aborted the transaction with it.
+    """
+
+    if error.code != "revision_mismatch" and error.kind is not ExceptionKind.CONCURRENCY:
+        return False
+
+    seen: set[int] = set()
+    current = error.__cause__ or error.__context__
+
+    while current is not None and id(current) not in seen:
+        if not isinstance(current, CoreException):
+            return False
+
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+
+    return True
+
+
+# ....................... #
+
+
 async def revoke_sessions_matching(
     session_qry: DocumentQueryPort[ReadSession],
     session_cmd: DocumentCommandPort[
@@ -152,24 +187,60 @@ async def revoke_sessions_matching(
     ],
     values: Mapping[str, Any],
 ) -> None:
-    """Revoke (set ``revoked_at``) every session matching the ``$values`` filter.
+    """Revoke (set ``revoked_at``) every live session matching the ``$values`` filter.
 
     Shared by cascaded principal deactivation (token lifecycle) and the
-    password-change "log out everywhere" cascade.
+    password-change "log out everywhere" cascade. Only live sessions match: a revoked
+    or rotated one is already refused. Nothing revokes a session when it expires, so a
+    principal can hold any number of them, and they are revoked in batches until a batch
+    comes back short; each batch's revocations drop those rows out of the filter.
+
+    A concurrent refresh can rotate a session between the read and the write, which makes
+    its revision stale and refuses the batch. The batch is then read again, so the rotated
+    session drops out and the session that replaced it is revoked instead; a batch that
+    goes stale more than a few times in a row raises. A conflict the backend itself reports
+    (a deadlock, a Mongo write conflict) has aborted the transaction, so it propagates for
+    the transaction's owner to retry in a fresh one.
     """
 
-    sessions = await session_qry.find_many(
-        filters={
-            "$values": dict(values),
-        }
-    )
+    filters: Any = {
+        "$values": {
+            **values,
+            "revoked_at": None,
+            "rotated_at": None,
+        },
+    }
 
-    upds = [
-        KeyedUpdate(id=x.id, rev=x.rev, dto=UpdateSessionCmd(revoked_at=utcnow()))
-        for x in sessions.hits
-    ]
+    stale = 0
 
-    await session_cmd.update_many(upds, return_new=False)
+    while True:
+        sessions = await session_qry.find_many(
+            filters=filters,
+            pagination={"limit": _REVOKE_BATCH},
+        )
+
+        if not sessions.hits:
+            return
+
+        upds = [
+            KeyedUpdate(id=x.id, rev=x.rev, dto=UpdateSessionCmd(revoked_at=utcnow()))
+            for x in sessions.hits
+        ]
+
+        try:
+            await session_cmd.update_many(upds, return_new=False)
+
+        except CoreException as error:
+            if not _detected_stale(error) or stale >= _STALE_RETRIES:
+                raise
+
+            stale += 1
+            continue
+
+        stale = 0
+
+        if len(sessions.hits) < _REVOKE_BATCH:
+            return
 
 
 # ....................... #

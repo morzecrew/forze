@@ -67,6 +67,18 @@ and API-key revoke.
 - **Document-backed:** wire the account / session / identity-mapping specs to a
   document store (Postgres, Mongo, …). `kernel` is required only when a route
   mints first-party tokens.
+- **Transactions:** the kit's login, refresh, logout, password change and reset, and
+  deactivation run their writes in a transaction on `build_authn_registry(..., tx_route=...)`,
+  and the tenant switch on `build_tenancy_registry(..., tx_route=...)`; both default to
+  `"default"`. Register a transaction manager on each route you use, for the database
+  holding the session and principal documents, e.g. `PostgresDepsModule(..., tx={"default"})`. A deactivation then commits
+  whole. On Postgres an issue also reads the principal with a row lock that lasts until its
+  session commits, so a concurrent deactivation either revokes the new session or refuses
+  the issue; Mongo's locking read takes no lock, so there the race remains.
+  `tx_route=None` runs the writes without a transaction and gives up both guarantees.
+  Refresh refuses to run inside a transaction the caller already opened: a reused refresh
+  token's family is revoked in a transaction of its own, which an enclosing one would roll
+  back.
 - **Browser clients:** the generated login/refresh/logout routes can carry their
   tokens in `HttpOnly` cookies instead of response bodies — see
   [cookie mode](../reference/fastapi-routes.md#cookie-mode).

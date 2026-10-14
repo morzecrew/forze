@@ -1,5 +1,7 @@
 """Self-service password reset handlers (request + confirm)."""
 
+from contextlib import nullcontext
+
 import attrs
 
 from forze.application.contracts.authn import PasswordResetPort
@@ -15,6 +17,7 @@ from ..events import (
     AUTHN_PASSWORD_RESET_REQUESTED,
     AuthnPasswordResetRequestedPayload,
 )
+from ._utils import TxScope
 
 # ----------------------- #
 
@@ -93,7 +96,11 @@ class AuthnResetPassword(Handler[AuthnResetPasswordDTO, None]):
     password_reset: PasswordResetPort
     """Self-service password reset port."""
 
+    tx: TxScope = nullcontext
+    """Opens the transaction the new hash, the consumed token and the revocation commit in."""
+
     # ....................... #
 
     async def __call__(self, args: AuthnResetPasswordDTO) -> None:
-        await self.password_reset.reset_password(args.token, args.new_password)
+        async with self.tx():
+            await self.password_reset.reset_password(args.token, args.new_password)

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import final
 from uuid import UUID
 
@@ -20,6 +21,11 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
     principal_qry: DocumentQueryPort[ReadPolicyPrincipal]
     """Query port for policy principals."""
 
+    in_transaction: Callable[[], bool] | None = None
+    """Whether a transaction is open. ``for_update`` locks only inside one: outside, there is
+    no transaction to hold the lock and the backend refuses the read. ``None``, when the
+    adapter is built without the probe, never locks. The deps module wires it."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -29,13 +35,19 @@ class PolicyPrincipalEligibilityAdapter(PrincipalEligibilityPort):
 
     # ....................... #
 
-    async def require_authentication_allowed(self, principal_id: UUID) -> None:
+    async def require_authentication_allowed(
+        self,
+        principal_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> None:
         principal = await self.principal_qry.find(
             filters={
                 "$values": {
                     "id": principal_id,
                 },
-            }
+            },
+            for_update=for_update and self.in_transaction is not None and self.in_transaction(),
         )
 
         if principal is None or not principal.is_active:
@@ -60,5 +72,10 @@ class AllowAllPrincipalEligibilityAdapter(PrincipalEligibilityPort):
     API-key revoke) alone.
     """
 
-    async def require_authentication_allowed(self, principal_id: UUID) -> None:
-        del principal_id
+    async def require_authentication_allowed(
+        self,
+        principal_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> None:
+        del principal_id, for_update

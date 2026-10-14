@@ -358,6 +358,7 @@ class ConfigurablePolicyPrincipalEligibility:
         _ = spec
         return PolicyPrincipalEligibilityAdapter(
             principal_qry=ctx.doc.query(policy_principal_spec),
+            in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
 
 

@@ -242,8 +242,9 @@ class TestEmissionMatrix:
         port = ctx.authn.principal_deactivation(AUTHN_SPEC)
         await port.deactivate(principal_id)
 
-        assert _kinds(mod) == [AuthnEventKind.PRINCIPAL_DEACTIVATED]
-        assert mod.state.authn_events[0].principal_id == principal_id
+        # The session leg logs the principal out, as the real cascade's does.
+        assert _kinds(mod) == [AuthnEventKind.LOGOUT, AuthnEventKind.PRINCIPAL_DEACTIVATED]
+        assert {e.principal_id for e in mod.state.authn_events} == {principal_id}
 
     async def test_raw_login_never_reaches_the_event_stream(self) -> None:
         mod, ctx, reg = _env()

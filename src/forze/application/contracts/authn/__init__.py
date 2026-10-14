@@ -55,6 +55,7 @@ from .ports import (
     PrincipalDeactivationPort,
     PrincipalEligibilityPort,
     PrincipalResolverPort,
+    RefreshTokenReuseError,
     TokenLifecyclePort,
     TokenVerifierPort,
 )
@@ -139,6 +140,7 @@ __all__ = [
     "PrincipalResolverDepPort",
     "PrincipalResolverPort",
     "RefreshTokenCredentials",
+    "RefreshTokenReuseError",
     "TokenLifecycleDepKey",
     "TokenLifecycleDepPort",
     "TokenLifecyclePort",

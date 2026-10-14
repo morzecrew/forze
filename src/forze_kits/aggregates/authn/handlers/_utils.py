@@ -1,13 +1,38 @@
 """Shared helpers for authn usecases."""
 
+import functools
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 
 from forze.application.contracts.authn import AuthnIdentity, CredentialLifetime, IssuedTokens
+from forze.application.execution import ExecutionContext
 from forze.base.exceptions import exc
+from forze.base.primitives import StrKey
 
 from ..dto import AuthnTokenResponseDTO
 
 # ----------------------- #
+
+TxScope = Callable[[], AbstractAsyncContextManager[object]]
+"""Opens the transaction a handler runs its lifecycle calls in (``nullcontext`` for none)."""
+
+
+def tx_scope(ctx: ExecutionContext, tx_route: StrKey | None) -> TxScope:
+    """Open a transaction on *tx_route*, or none when it is ``None``.
+
+    The route's manager is resolved now, so a deployment with none fails the wiring check
+    (and the handler's build) instead of its first login.
+    """
+
+    if tx_route is None:
+        return nullcontext
+
+    ctx.transaction(tx_route)
+
+    return functools.partial(ctx.tx_ctx.scope, tx_route)
+
+
+# ....................... #
 
 
 def _expires_in_seconds(lifetime: CredentialLifetime | None) -> int | None:

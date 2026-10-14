@@ -21,9 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An emit to a large socket.io room takes far less of the event loop.** The manager `build_socketio_server` builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass `client_manager=AsyncManager()` to keep python-socketio's manager.
 
+- **A reused refresh token raises `RefreshTokenReuseError`**, rendered as the uniform refusal, and the refresh operation commits the family's revocation after its rollback. **Breaking** for token lifecycle implementers: raise it on reuse, or the revocation rolls back, and implement `revoke_chain_of_tokens`.
+
 ### Fixed
 
-- ...
+- **A failed deactivation, password change or reset no longer half-applies.** Login, refresh, logout, password change and reset, and deactivation commit whole on `build_authn_registry(tx_route=)`, the tenant switch on `build_tenancy_registry`'s. **Breaking**: each needs a transaction manager, `"default"` unless set.
+
+- **On Postgres, a login racing a deactivation can no longer leave the principal a live session.** Login, refresh and the tenant switch read the principal with a row lock until the session commits. **Breaking** for eligibility ports: `require_authentication_allowed` takes `for_update`.
+
+- **Logout, deactivation and a password change or reset revoke every live session, however many.** Revocation stopped at the store's implicit 10,000-row cap, or failed when a refresh rotated a session mid-way; it now revokes in batches, rereading a stale one.
+
+- **The mock's principal deactivation revokes the principal's sessions**, as the real one does.
 
 ## [0.12.0] - 2026-10-13
 

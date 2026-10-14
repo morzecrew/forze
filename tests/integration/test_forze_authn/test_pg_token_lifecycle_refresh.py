@@ -223,4 +223,8 @@ async def test_refresh_reuse_revokes_token_family(pg_client: PostgresClient) -> 
             filters={"$values": {"principal_id": pid}},
         )
 
-    assert all(s.revoked_at is not None for s in sessions.hits)
+    # The rotated session was already refused; the family's live one is now revoked.
+    live = [s for s in sessions.hits if s.rotated_at is None]
+    assert len(sessions.hits) == 2
+    assert len(live) == 1
+    assert live[0].revoked_at is not None

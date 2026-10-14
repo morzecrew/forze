@@ -37,8 +37,10 @@ class PrincipalDeactivationAdapter(PrincipalDeactivationPort):
 
     async def deactivate(self, principal_id: UUID) -> None:
         await self.principal_registry.deactivate_principal(principal_id)
-        await self.token_lifecycle.revoke_tokens(AuthnIdentity(principal_id=principal_id))
+        # Credentials before sessions: a password change and reset write the account and
+        # then the sessions, and the same order keeps them from deadlocking with this.
         await self.credentials.deactivate_all(principal_id)
+        await self.token_lifecycle.revoke_tokens(AuthnIdentity(principal_id=principal_id))
 
         if self.events is not None:
             await self.events.emit(

@@ -61,6 +61,10 @@ RESET_EVENTS = OutboxSpec(
 registry = build_authn_registry(AUTH, reset_events=RESET_EVENTS).freeze()
 ```
 
+The confirm step writes the new hash, consumes the token and revokes the principal's
+sessions in one transaction on the registry's `tx_route` (`"default"`), so the deps need a
+transaction manager there.
+
 Unknown logins stage nothing — the uniform ack is all an outside observer sees.
 
 ## Notes

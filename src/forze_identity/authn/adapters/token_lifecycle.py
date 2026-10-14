@@ -15,10 +15,11 @@ from forze.application.contracts.authn import (
     IssuedTokens,
     PrincipalEligibilityPort,
     RefreshTokenCredentials,
+    RefreshTokenReuseError,
     TokenLifecyclePort,
 )
 from forze.application.contracts.document import DocumentCommandPort, DocumentQueryPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import utcnow
 from forze_identity._secure_spec import forbid_cache_and_history
 
@@ -101,7 +102,11 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                 code="delegate_denied",
             )
 
-        await self.eligibility.require_authentication_allowed(identity.principal_id)
+        # Locked until the session commits, so a concurrent deactivation cannot miss it.
+        await self.eligibility.require_authentication_allowed(
+            identity.principal_id,
+            for_update=True,
+        )
 
         now = utcnow()
 
@@ -198,7 +203,20 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             raise exc.authentication("Invalid refresh token")
 
         if old_session.rotated_at is not None:
-            await self.revoke_chain_of_tokens(old_session.principal_id, old_session.family_id)
+            reuse = RefreshTokenReuseError.detected(
+                old_session.principal_id,
+                old_session.family_id,
+            )
+            failure: CoreException | None = None
+
+            # The reuse is reported even when this revocation fails (a concurrent refresh
+            # can conflict with it, and a conflict may abort the transaction): the caller
+            # revokes the family again in a fresh transaction on that signal.
+            try:
+                await self.revoke_chain_of_tokens(old_session.principal_id, old_session.family_id)
+
+            except CoreException as error:
+                failure = error
 
             # Reuse of a rotated token is the canonical token-theft signal:
             # emitted (best-effort) before the uniform error propagates.
@@ -209,12 +227,15 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                     tenant_id=old_session.tenant_id,
                 )
 
-            raise exc.authentication("Invalid refresh token")
+            raise reuse from failure
 
         if old_session.expires_at <= utcnow():
             raise exc.authentication("Refresh token expired")
 
-        await self.eligibility.require_authentication_allowed(old_session.principal_id)
+        await self.eligibility.require_authentication_allowed(
+            old_session.principal_id,
+            for_update=True,
+        )
 
         now = utcnow()
 

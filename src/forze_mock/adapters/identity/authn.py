@@ -23,6 +23,7 @@ from forze.application.contracts.authn.ports.eligibility import PrincipalEligibi
 from forze.application.contracts.authn.ports.lifecycle import (
     ApiKeyLifecyclePort,
     PasswordLifecyclePort,
+    RefreshTokenReuseError,
     TokenLifecyclePort,
 )
 from forze.application.contracts.authn.ports.provisioning import (
@@ -157,7 +158,8 @@ def _revoke_sessions_matching(
         if family_id is not None and session.get("family_id") != family_id:
             continue
 
-        if session.get("revoked_at") is None:
+        # Live sessions only, as the real helper matches: a rotated one is already refused.
+        if session.get("revoked_at") is None and session.get("rotated_at") is None:
             session["revoked_at"] = now
 
 
@@ -358,17 +360,29 @@ class MockPrincipalResolverPort(PrincipalResolverPort):
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockPrincipalEligibilityPort(PrincipalEligibilityPort):
-    async def require_authentication_allowed(self, principal_id: UUID) -> None:
-        _ = principal_id
+    async def require_authentication_allowed(
+        self,
+        principal_id: UUID,
+        *,
+        for_update: bool = False,
+    ) -> None:
+        _ = principal_id, for_update
 
 
 @final
 @attrs.define(slots=True, kw_only=True)
 class MockPrincipalDeactivationPort(PrincipalDeactivationPort):
+    """Revoke a principal's sessions on deactivation, as the real cascade does."""
+
+    token_lifecycle: TokenLifecyclePort
+    """Token lifecycle whose sessions a deactivation revokes."""
+
     events: AuthnEventEmitter | None = None
     """Optional authn event emitter; emits ``PRINCIPAL_DEACTIVATED``."""
 
     async def deactivate(self, principal_id: UUID) -> None:
+        await self.token_lifecycle.revoke_tokens(AuthnIdentity(principal_id=principal_id))
+
         if self.events is not None:
             await self.events.emit(
                 AuthnEventKind.PRINCIPAL_DEACTIVATED,
@@ -432,7 +446,10 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
             )
 
         if self.eligibility is not None:
-            await self.eligibility.require_authentication_allowed(identity.principal_id)
+            await self.eligibility.require_authentication_allowed(
+                identity.principal_id,
+                for_update=True,
+            )
 
         ensure_mock_tx_writable(store=f"identity:authn:{self.route}")
 
@@ -460,34 +477,37 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
         ensure_mock_tx_writable(store=f"identity:authn:{self.route}")
 
         now = utcnow()
-        old_session: dict[str, Any] | None = None
-        reused_session: dict[str, Any] | None = None
 
-        with self.state.lock:
-            store = _route_store(self.state, self.route)
-
-            try:
+        try:
+            with self.state.lock:
+                store = _route_store(self.state, self.route)
                 old_session = self._validate_refresh(store, refresh_token.token, now)
 
-            except _RefreshReuse as reuse:
-                # Family already revoked under the lock; emit (best-effort,
-                # outside the lock) before the uniform error propagates.
-                reused_session = reuse.session
+        except _RefreshReuse as reuse:
+            # The family was revoked under the lock, released by now: emit (best-effort)
+            # before the uniform error propagates.
+            reused = reuse.session
+            principal = UUID(str(reused["principal_id"]))
 
-        if reused_session is not None or old_session is None:
-            if self.events is not None and reused_session is not None:
+            if self.events is not None:
                 await self.events.emit(
                     AuthnEventKind.REFRESH_REUSE_DETECTED,
-                    principal_id=UUID(str(reused_session["principal_id"])),
-                    tenant_id=_tenant_uuid(reused_session.get("tenant_id")),
+                    principal_id=principal,
+                    tenant_id=_tenant_uuid(reused.get("tenant_id")),
                 )
 
-            raise exc.authentication("Invalid refresh token")
+            raise RefreshTokenReuseError.detected(
+                principal,
+                UUID(str(reused["family_id"])),
+            ) from None
 
         principal_id = str(old_session["principal_id"])
 
         if self.eligibility is not None:
-            await self.eligibility.require_authentication_allowed(UUID(principal_id))
+            await self.eligibility.require_authentication_allowed(
+                UUID(principal_id),
+                for_update=True,
+            )
 
         with self.state.lock:
             store = _route_store(self.state, self.route)
@@ -530,6 +550,20 @@ class MockTokenLifecyclePort(TokenLifecyclePort):
             await self.events.emit(
                 AuthnEventKind.LOGOUT,
                 principal_id=identity.principal_id,
+            )
+
+    # ....................... #
+
+    async def revoke_chain_of_tokens(self, principal_id: UUID, family_id: UUID) -> None:
+        ensure_mock_tx_writable(store=f"identity:authn:{self.route}")
+
+        with self.state.lock:
+            store = _route_store(self.state, self.route)
+            _revoke_sessions_matching(
+                store,
+                principal_id=str(principal_id),
+                family_id=family_id.hex,
+                now=utcnow(),
             )
 
     # ....................... #
