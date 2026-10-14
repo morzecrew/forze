@@ -420,17 +420,18 @@ the way the drain does: at the Engine.IO level, spread over `every`, each given 
 `every` to finish.
 
 **Route least-connections.** It is a prerequisite, not a tuning choice: a balancer that
-round-robins or hashes can send the shed clients straight back, and the step then moves load
-in circles.
+round-robins, hashes, or pins a client to its replica with a sticky cookie can send the shed
+clients straight back, and the step then moves load in circles.
 
 **The report counts transports.** One Engine.IO connection carries every namespace its
 client opened, and closing it ends them all, so every count is of Engine.IO connections, not
 of namespace connections. A connection is movable when every namespace on it is in
 `namespaces` and passes `movable(namespace, sid)`; one game namespace keeps the whole
-connection. The step reads its peers' counts from their membership reports, under `load`
-(`"connections"`) and `movable_report` (`"movable"`). `connection_report` returns the
-`report=` callable that fills both with the counting the step uses for its own: give the two
-the same `namespaces` and `movable`. A replica that reports no load is left out of the mean,
+connection. The step reads its peers' loads from their membership reports, under `load`
+(`"connections"`); only its own movable count limits its shed, so a peer's `movable_report`
+(`"movable"`) is there for you to watch. `connection_report` returns the `report=` callable
+that fills both with the counting the step uses for its own: give the two the same
+`namespaces` and `movable`. A replica that reports no load is left out of the mean,
 and sheds nothing itself.
 
 **When it sheds.** Only while all of these hold:
@@ -446,10 +447,12 @@ and sheds nothing itself.
 - No earlier shed is still closing, and `cooldown` (default: `settle`) has passed since the
   last one ended, long enough for its clients to land elsewhere and be reported.
 
-**The rate.** Each tick adds `per_minute` for each minute that passed to an allowance, keeping
-the fraction and banking at most one minute's worth; a shed spends whole connections. So
-`per_minute` holds however short `every` is: a low rate sheds one connection every few ticks,
-not one every tick. The step's `member_id` must be the membership step's; both default to
+**The rate.** `per_minute` is a sustained rate. Each tick adds `per_minute` for each minute
+that passed to an allowance, keeping the fraction, and a shed spends whole connections, so the
+rate holds however short `every` is: a low rate sheds one connection every few ticks, not one
+every tick. The allowance banks one minute's worth at most and a shed can spend it all at
+once, so with a cooldown under a minute a single minute can see up to twice `per_minute`; the
+default cooldown keeps every minute within it. The step's `member_id` must be the membership step's; both default to
 `instance_id()`. It needs a long-running process, so a `SERVERLESS` runtime refuses it.
 
 ## Settings

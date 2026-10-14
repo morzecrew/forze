@@ -319,17 +319,20 @@ def connection_rebalance_lifecycle_step(
     least-connections so they land on a replica with room.
 
     Counts are Engine.IO transports. A transport is movable when every namespace it carries
-    is in *namespaces* and accepted by *movable*. Peers' counts come from their membership
-    reports under *load* and *movable_report*, in the same unit:
-    :func:`connection_report` fills them. A replica that reports no *load* is left out of
-    the mean and sheds nothing itself, and so does one with no entry in the view or not
-    serving. This replica's own reported values are never used: its live counts replace them.
+    is in *namespaces* and accepted by *movable*. Peers' loads come from their membership
+    reports under *load*, in the same unit; only this replica's own movable count limits its
+    shed. :func:`connection_report` fills both keys. A replica that reports no *load* is
+    left out of the mean and sheds nothing itself, and so does one with no entry in the view
+    or not serving. This replica's own reported values are never used: its live counts
+    replace them.
 
     :param fleet: The fleet the membership step beats into.
     :param every: How often to tick.
     :param movable: ``(namespace, sid) -> bool``: whether that connection may be moved. One
         that raises keeps that transport, logged.
-    :param per_minute: The most connections shed in a minute.
+    :param per_minute: The sustained shed rate, in connections a minute. One minute's worth
+        is banked at most, and a shed can spend it all at once, so with a *cooldown* under a
+        minute one minute can see up to twice this.
     :param member_id: This replica's id in the fleet; the membership step's, which is
         :func:`~forze.base.primitives.instance_id` when ``None``.
     :param namespaces: The namespaces counted and shed.
