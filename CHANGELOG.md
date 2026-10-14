@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An emit to a large socket.io room takes far less of the event loop.** The manager `build_socketio_server` builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass `client_manager=AsyncManager()` to keep python-socketio's manager.
 
-- **A reused refresh token raises `RefreshTokenReuseError`**, rendered as the uniform refusal, and the refresh operation commits the family's revocation after its rollback. **Breaking** for token lifecycle implementers: raise it on reuse, or the revocation rolls back, and implement `revoke_chain_of_tokens`.
+- **A reused refresh token raises `RefreshTokenReuseError`**, still the uniform refusal; refresh commits the family's revocation after rolling back, so it refuses a transaction its caller opened. **Breaking** for those callers and for token lifecycles, which must raise it on reuse and implement `revoke_chain_of_tokens`.
 
 ### Fixed
 
@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Logout, deactivation and a password change or reset revoke every live session, however many.** Revocation stopped at the store's implicit 10,000-row cap, or failed when a refresh rotated a session mid-way; it now revokes in batches, rereading a stale one.
 
-- **The mock's principal deactivation revokes the principal's sessions**, as the real one does.
+- **The mock's principal deactivation revokes the principal's sessions**, emitting `LOGOUT` before `PRINCIPAL_DEACTIVATED`, as the real one does.
 
 ## [0.12.0] - 2026-10-13
 
