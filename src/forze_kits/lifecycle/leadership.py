@@ -571,7 +571,7 @@ class _Campaign:
     def _settle_late(self, request: asyncio.Future[AcquiredLock | None], owner: str) -> None:
         async def settle() -> None:
             with suppress(Exception):
-                if await asyncio.shield(request) is not None:
+                if await request is not None:
                     logger.info(
                         "Leadership acquire for %s landed after the step stopped waiting; "
                         "releasing it",
