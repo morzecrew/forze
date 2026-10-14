@@ -202,12 +202,19 @@ publisher = LeadershipSpec(
 )
 
 
+async def claim(ctx, term):
+    # ... SET fence = :token WHERE fence < :token — no row: another holder has this token
+    return await claim_lobby_fence(ctx, term.token)
+
+
 async def publish(ctx, term):
     while term.live():  # one unit at a time, so the body stops between units
-        await publish_lobby_snapshot(ctx, fence=term.token)
+        # ... WHERE fence <= :token — no row: a newer holder has written, so stop
+        if not await publish_lobby_snapshot(ctx, fence=term.token):
+            return
 
 
-step = leadership_lifecycle_step(publisher, owner=instance_id, lead=publish)
+step = leadership_lifecycle_step(publisher, owner=instance_id, lead=publish, claim=claim)
 ```
 
 The step's startup only starts the campaign, on every replica, so it is marked
@@ -261,7 +268,13 @@ UPDATE digests SET body = :body, fence = :token WHERE name = :name AND fence <= 
 ```
 
 Pass the claim as `claim=`; the step runs it before `lead`, and a claim that matches no
-row ends the term as `unclaimed` and campaigns again. The
+row ends the term as `unclaimed` and campaigns again. A later write that matches no row
+means a newer holder has written: end the term by returning from `lead`.
+
+After the lock backend loses its data, its fencing counter starts again from one while the
+store keeps the highest fence it saw. Every term's claim is then refused, and the fleet
+climbs one token per campaign interval until the counter passes the store's fence — leadership
+stalls for as many campaigns as the store's fence is high. The
 [one-replica publisher recipe](../recipes/run-on-one-replica.md) runs the whole pattern.
 
 ### The clock behind `margin`
