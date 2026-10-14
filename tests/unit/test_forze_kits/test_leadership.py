@@ -66,7 +66,9 @@ class _Lock:
     reset_plan: list[float | None] = attrs.field(factory=list)
     """Per reset call, in order: answer after this many seconds, or ``None`` to hang."""
     acquire_delay: float = 0.0
+    """Seconds an acquire of the lease (not the want-lock) takes to land."""
     acquire_fails_on: frozenset[str] = frozenset()
+    release_fails: bool = False
     log: list[tuple[float, str, str, str]] = attrs.field(factory=list)
 
     @property
@@ -82,7 +84,7 @@ class _Lock:
         if key in self.acquire_fails_on:
             raise exc.infrastructure("acquire refused")
 
-        if self.acquire_delay:
+        if key == KEY and self.acquire_delay:
             await asyncio.sleep(self.acquire_delay)
 
         return await self.inner.acquire(key, owner)
@@ -98,6 +100,9 @@ class _Lock:
 
     async def release(self, key: str, owner: str) -> bool:
         self.log.append((monotonic(), "release", key, owner))
+
+        if self.release_fails:
+            raise exc.infrastructure("release refused")
 
         return await self.inner.release(key, owner)
 
@@ -540,6 +545,87 @@ class TestRelease:
 # ....................... #
 
 
+    def test_an_acquire_in_flight_at_a_stop_is_released_when_it_lands(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a")
+            a.lock.acquire_delay = 5.0
+            await a.start()
+            await asyncio.sleep(1)
+            await a.stop()
+
+            assert a.loop_task().done()
+            await asyncio.sleep(5)
+
+            sent, owner = a.lock.calls("acquire")[0]
+            assert (sent + 5.0, owner) in a.lock.calls("release")
+            assert await a.lock.inner.is_locked(KEY) is False
+            assert not fleet.runs
+
+        _simulate(scenario)
+
+    def test_an_acquire_in_flight_at_a_kill_is_released_when_it_lands(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a")
+            a.lock.acquire_delay = 5.0
+            await a.start()
+            await asyncio.sleep(1)
+            a.kill()
+            await asyncio.sleep(5)
+
+            sent, owner = a.lock.calls("acquire")[0]
+            assert (sent + 5.0, owner) in a.lock.calls("release")
+            assert await a.lock.inner.is_locked(KEY) is False
+
+        _simulate(scenario)
+
+    def test_a_failed_release_leaves_the_lease_to_lapse(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            started: list[float] = []
+
+            async def lead(_ctx: Any, _term: Term) -> None:
+                started.append(monotonic())
+                await asyncio.sleep(1)
+
+            a = fleet.replica("a", lead=lead)
+            a.lock.release_fails = True
+            await a.start()
+            await asyncio.sleep(TTL + 2 * CAMPAIGN)
+
+            released_at = a.lock.calls("release")[0][0]
+            attempts = [at for at, _ in a.lock.calls("acquire")]
+            # The failure is the release's alone: the campaign keeps its own pace, with no
+            # supervisor backoff, and the lease lapses at its ttl instead.
+            assert attempts[1] == released_at + CAMPAIGN
+            assert len(started) == 2
+            assert started[1] >= started[0] + TTL
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_body_that_raises_after_its_term_ended_is_still_released(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def lead(_ctx: Any, term: Term) -> None:
+                await term.ended.wait()
+                raise RuntimeError("raised while winding down")
+
+            a = fleet.replica("a", lead=lead)
+            await a.start()
+            await asyncio.sleep(1)
+            await a.stop()
+
+            assert a.loop_task().done()
+            assert a.lock.calls("release")
+            assert await a.lock.inner.is_locked(KEY) is False
+
+        _simulate(scenario)
+
+
 class TestOwnersAndTokens:
     def test_replicas_sharing_an_owner_never_both_lead(self) -> None:
         async def scenario() -> None:
@@ -735,6 +821,26 @@ class TestHandoff:
 
         _simulate(scenario)
 
+    def test_the_want_lock_rides_the_string_the_next_term_acquires_under(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            await fleet.replica("a", handoff="on_request", prefer=self._prefers(True)).start()
+            await asyncio.sleep(1)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            b.lock.acquire_delay = 30.0  # past the wait bound: the string is retired
+            await b.start()
+            await asyncio.sleep(30)
+
+            wants = [owner for _, owner in b.lock.calls("acquire", f"{KEY}:want")]
+            leases = [owner for _, owner in b.lock.calls("acquire")]
+            assert len(set(wants)) >= 2
+            assert wants == leases[: len(wants)]  # each ask under the string it acquires with
+            assert (b.lock.calls("release", f"{KEY}:want")[0][1]) == wants[0]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
     def test_two_preferring_replicas_do_not_pass_the_unit_back_and_forth(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
@@ -798,6 +904,39 @@ class TestHandoff:
 
 
 class TestWiring:
+    def test_a_configuration_error_in_a_campaign_hook_stops_campaigning(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def broken(_ctx: Any) -> bool:
+                raise exc.configuration("misconfigured")
+
+            a = fleet.replica("a", may_campaign=broken)
+            await a.start()
+            await asyncio.sleep(10)
+
+            assert a.loop_task().done()
+            assert not a.lock.log
+
+        _simulate(scenario)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"key": ""},
+            {"margin": timedelta(seconds=-1)},
+            {"yield_grace": timedelta(seconds=-1)},
+            {"campaign_every": timedelta(0)},
+            {"release_timeout": timedelta(0)},
+            {"renew_every": timedelta(0)},
+        ],
+    )
+    def test_the_spec_refuses_nonsense(self, kwargs: dict[str, Any]) -> None:
+        with pytest.raises(CoreException) as ei:
+            LeadershipSpec(lock=LOCK, **{"key": KEY, **kwargs})
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
     def test_the_spec_refuses_a_grace_that_does_not_fit_the_lease(self) -> None:
         with pytest.raises(CoreException) as ei:
             LeadershipSpec(lock=LOCK, key=KEY, renew_every=timedelta(seconds=24))
@@ -814,6 +953,8 @@ class TestWiring:
         [
             ({"fence_floor": object()}, "leadership.fence_floor_unsupported"),
             ({"handoff": "on_request"}, None),
+            ({"handoff": "always"}, None),
+            ({"owner": ""}, None),
         ],
     )
     def test_the_step_refuses_what_it_cannot_honour(
@@ -823,7 +964,7 @@ class TestWiring:
             return None
 
         with pytest.raises(CoreException) as ei:
-            leadership_lifecycle_step(SPEC, owner="pod", lead=lead, **kwargs)
+            leadership_lifecycle_step(SPEC, lead=lead, **{"owner": "pod", **kwargs})
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
         assert code is None or ei.value.code == code
