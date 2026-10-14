@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Ensuring a Redis consumer group that already exists no longer fails**, so the realtime group-ensure step survives a restart. A `BUSYGROUP` reply now maps to a conflict coded `redis_busygroup` rather than a generic busy infrastructure error.
 
+- **A `SERVERLESS` runtime now refuses the durable recovery and scheduler steps** at assembly, as it already refused the realtime sweeps: each runs a background loop a function frozen between invocations cannot host. Run them as a separate long-running worker.
+
 ## [0.13.0] - 2026-10-14
 
 ### Added

@@ -617,8 +617,9 @@ def realtime_mailbox_retention_lifecycle_step(
     retained window on its next connect and dedups by envelope id.
 
     Deletes are idempotent and monotonic, so any interval and any number of concurrent
-    sweepers are safe; under a ``FLEET`` profile wrap it with a singleton step to avoid
-    redundant round trips. *tenants* mirrors the sharded gateway: on ``tenant_aware``
+    sweepers are safe, and the sweep runs on every replica. A singleton step does not make
+    it one sweeper: the guard covers startup only, which just launches the loop.
+    *tenants* mirrors the sharded gateway: on ``tenant_aware``
     mailbox/cursor routes, pass ``lambda: shard.tenants`` to sweep each assigned
     tenant's collections; ``None`` sweeps the tenant-global collections once.
     """
@@ -688,8 +689,9 @@ def realtime_stream_trim_lifecycle_step(
     the cap.
 
     Safe on any interval and on every node concurrently (the floor is monotonic; racing
-    trims are wasted round trips, not hazards) — under a ``FLEET`` profile, wrap it with a
-    singleton lifecycle step if you want exactly one sweeper.
+    trims are wasted round trips, not hazards), and it runs on every node. A singleton
+    lifecycle step does not make it one sweeper: the guard covers startup only, which just
+    launches the loop.
 
     *tenants* mirrors the sharded gateway/relay: on a ``tenant_aware`` (namespace-tier)
     stream route, each sweep binds every assigned tenant in turn and trims its per-tenant

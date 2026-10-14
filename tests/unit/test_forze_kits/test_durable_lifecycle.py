@@ -20,7 +20,10 @@ from forze.application.contracts.durable.function import (
     DurableFunctionInvokeSpec,
     DurableFunctionSpec,
 )
-from forze.base.exceptions import CoreException
+from forze.application.execution import DeploymentProfile
+from forze.application.execution.lifecycle import LifecyclePlan
+from forze.application.execution.runtime import ExecutionRuntime
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
@@ -83,6 +86,39 @@ def _cron_spec() -> DurableFunctionSpec[_Args, _Args]:
         run=DurableFunctionInvokeSpec(args_type=_Args),
         triggers=(DurableFunctionCronTrigger(expression="0 3 * * *"),),
     )
+
+
+# ....................... #
+
+
+class TestServerlessRefusal:
+    # Both steps run a background loop for the process lifetime, which a function
+    # frozen between invocations cannot host.
+
+    @pytest.mark.parametrize(
+        "step",
+        [
+            pytest.param(
+                lambda: durable_recovery_background_lifecycle_step(runner=_real_runner()),
+                id="recovery",
+            ),
+            pytest.param(
+                lambda: durable_scheduler_background_lifecycle_step(
+                    scheduler=DurableScheduler()
+                ),
+                id="scheduler",
+            ),
+        ],
+    )
+    def test_serverless_runtime_refuses_the_step(self, step: Any) -> None:
+        built = step()
+        plan = LifecyclePlan.from_steps(built).freeze()
+
+        with pytest.raises(CoreException) as ei:
+            ExecutionRuntime(lifecycle=plan, deployment=DeploymentProfile.SERVERLESS)
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert str(built.id) in ei.value.summary
 
 
 # ....................... #

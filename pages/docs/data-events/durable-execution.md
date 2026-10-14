@@ -110,7 +110,8 @@ so a body hung on a dead peer can't pin a recovery slot forever. `TIMED_OUT` is 
 terminal rather than a flavour of `FAILED` because the two send you to different places —
 `FAILED` to the body's code, `TIMED_OUT` to the cap, the workload's size, or a hung peer. Set
 it above your longest body, or `None` to remove the cap; re-enqueue a timed-out run to retry
-it. Run the scanner on every replica, or pair it with the singleton lifecycle guard to elect one.
+it. Run the scanner on every replica: the singleton lifecycle guard covers startup only, so it
+cannot elect one scanner.
 `max_concurrency` bounds how many runs a sweep recovers at once. Enqueue with
 `run_at=<when>` for a **delayed** run — the scan skips it until it's due.
 

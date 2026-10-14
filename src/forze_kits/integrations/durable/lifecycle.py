@@ -231,9 +231,10 @@ def durable_recovery_background_lifecycle_step(
     the runner re-binds each run's tenant to execute it.
 
     Concurrent scanners are safe (``FOR UPDATE SKIP LOCKED`` + a fence on the terminal
-    write), so this can run on every replica; pair with the ``forze_kits`` singleton
-    lifecycle guard if you prefer a single elected scanner. Production deployments often
-    prefer an external cron / workflow scheduler over in-process polling.
+    write), so run this on every replica. The ``forze_kits`` singleton lifecycle guard
+    does not elect a single scanner: it guards startup only, and startup here just launches
+    the loop, so every replica still scans. Production deployments often prefer an external
+    cron / workflow scheduler over in-process polling.
     """
 
     startup = _DurableRecoveryBackgroundStartup(
@@ -247,7 +248,12 @@ def durable_recovery_background_lifecycle_step(
     )
     shutdown = _DurableRecoveryBackgroundShutdown(startup=startup)
 
-    return LifecycleStep(id=step_id, startup=startup, shutdown=shutdown)
+    return LifecycleStep(
+        id=step_id,
+        startup=startup,
+        shutdown=shutdown,
+        requires_long_running=True,
+    )
 
 
 # ....................... #
@@ -458,9 +464,10 @@ def durable_scheduler_background_lifecycle_step(
     assigned tenant in turn and fires its schedules (and the specs are ensured per tenant);
     the shard is frozen at startup. Omit it for a tagged store (one unbound sweep).
 
-    Concurrent schedulers are safe (idempotent run keys + compare-and-set advance), so this
-    can run on every replica; pair with the singleton lifecycle guard for a single elected
-    scheduler. Production deployments often prefer an external scheduler over in-process
+    Concurrent schedulers are safe (idempotent run keys + compare-and-set advance), so run
+    this on every replica. The singleton lifecycle guard does not elect a single scheduler:
+    it guards startup only, and startup here just launches the loop, so every replica still
+    schedules. Production deployments often prefer an external scheduler over in-process
     polling.
     """
 
@@ -475,4 +482,9 @@ def durable_scheduler_background_lifecycle_step(
     )
     shutdown = _DurableSchedulerBackgroundShutdown(startup=startup)
 
-    return LifecycleStep(id=step_id, startup=startup, shutdown=shutdown)
+    return LifecycleStep(
+        id=step_id,
+        startup=startup,
+        shutdown=shutdown,
+        requires_long_running=True,
+    )
