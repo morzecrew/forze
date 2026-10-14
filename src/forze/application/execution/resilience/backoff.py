@@ -20,7 +20,13 @@ def compute_delay(
 
     base = strategy.base.total_seconds()
     cap = strategy.max.total_seconds()
-    raw = min(cap, base * (strategy.multiplier ** (attempt - 1)))
+
+    try:
+        raw = min(cap, base * (float(strategy.multiplier) ** (attempt - 1)))
+
+    except OverflowError:
+        # A float power past ~1e308 raises instead of saturating; the cap still holds.
+        raw = cap
 
     if strategy.jitter == "none":
         return raw

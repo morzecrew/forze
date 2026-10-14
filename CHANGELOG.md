@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **A retry past its 1,024th attempt no longer fails with `OverflowError`.** Resilience retries and outbox redelivery keep their backoff at the cap however many attempts came before, and a zero-delay saga step or client read keeps retrying.
 
 ## [0.13.0] - 2026-10-14
 

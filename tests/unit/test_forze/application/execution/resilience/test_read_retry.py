@@ -145,3 +145,12 @@ async def test_on_retry_hook_receives_attempt_numbers(
 
     # hook fires before each sleep, with the 1-based retry number
     assert hook_calls == [1, 2]
+
+
+async def test_zero_delay_survives_more_than_a_thousand_retries() -> None:
+    # 0 * 2**1024 raises OverflowError (the int does not fit a float), which
+    # would replace the transient error once a zero-delay loop passed 1024.
+    fn = _Flaky(1100)
+
+    assert await retry_read(fn, attempts=1100, base_delay=0.0) == "ok"
+    assert fn.calls == 1101

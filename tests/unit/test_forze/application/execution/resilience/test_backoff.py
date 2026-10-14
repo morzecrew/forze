@@ -5,6 +5,8 @@ from __future__ import annotations
 import random
 from datetime import timedelta
 
+import pytest
+
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.execution.resilience.backoff import compute_delay
 
@@ -57,3 +59,12 @@ def test_decorrelated_within_bounds() -> None:
         delay = compute_delay(_backoff("decorrelated"), 1, prev, rng)
         assert 1.0 <= delay <= 10.0
         prev = delay
+
+
+@pytest.mark.parametrize("jitter", ["none", "full", "equal", "decorrelated"])
+@pytest.mark.parametrize("attempt", [1, 2, 1024, 1025, 10_000])
+def test_cap_holds_for_any_attempt(jitter: str, attempt: int) -> None:
+    # The exponential term overflows a float long before a retry loop with a
+    # large max_attempts (or an outbox row's attempt count) stops growing.
+    delay = compute_delay(_backoff(jitter), attempt, 0.0, random.Random(4))
+    assert 0.0 <= delay <= 10.0
