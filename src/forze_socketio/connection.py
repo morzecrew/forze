@@ -158,6 +158,14 @@ subject would join the subject's room as the subject."""
 
 # ....................... #
 
+ConnectionAdmission = Callable[[SocketIOConnect], Awaitable[None]]
+"""Admit a connect before it is authenticated: return to admit it, raise a
+:class:`CoreException` to refuse it. Awaiting delays the connect, so an app can pace
+admissions by its own rules."""
+
+
+# ....................... #
+
 # RealtimePresence / InMemoryRealtimePresence live in the transport-neutral kernel
 # (forze.application.integrations.realtime), imported above and re-exported here —
 # presence is only honest if every transport reports into the same store.
@@ -317,6 +325,7 @@ class _ConnectionLifecycle:
     runtime: ExecutionRuntime | None = None
     share_identity: bool = False
     draining: Callable[[], bool] | None = None
+    admission: ConnectionAdmission | None = None
     stats: RealtimeConnectionStats | None = None
 
     _replay_progress: dict[str, _ReplayProgress] = attrs.field(factory=dict, init=False)
@@ -616,7 +625,7 @@ class _ConnectionLifecycle:
     # ....................... #
 
     async def on_connect(self, sid: str, environ: Mapping[str, Any], auth: Any = None) -> None:
-        """Negotiate the protocol, authenticate, auto-join the principal room, replay.
+        """Admit, negotiate the protocol, authenticate, auto-join the principal room, replay.
 
         While the replica is draining the connect is refused — first before any of that
         work, and again as the last step, for a connect that was already under way.
@@ -626,11 +635,15 @@ class _ConnectionLifecycle:
             raise self._refused("draining", _draining_refusal())
 
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
-        stage: ConnectRefusal = "protocol"
+        stage: ConnectRefusal = "admission"
 
         try:
+            if self.admission is not None:
+                await self.admission(connect)
+
             # Handshake first: the connection speaks exactly one protocol version for its
             # lifetime (missing = 1); an unsupported one is refused before any auth work.
+            stage = "protocol"
             negotiate_realtime_protocol(auth.get("protocol") if isinstance(auth, Mapping) else None)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
             stage = "auth"
@@ -691,8 +704,8 @@ class _ConnectionLifecycle:
             self._replay_progress.pop(sid, None)
             raise
 
-        # Last: a connect that waited in authentication or replay while the drain listed
-        # its connections may have missed the drain.
+        # Last: a connect that waited in admission, authentication or replay while the
+        # drain listed its connections may have missed the drain.
         if self._draining():
             await self._undo_connect(sid, connection)
             raise self._refused("draining", _draining_refusal())
@@ -734,6 +747,7 @@ def attach_realtime_connection(
     runtime: ExecutionRuntime | None = None,
     share_identity: bool = False,
     draining: Callable[[], bool] | None = None,
+    admission: ConnectionAdmission | None = None,
     stats: RealtimeConnectionStats | None = None,
 ) -> None:
     """Register connect/disconnect handlers that auto-join the principal room.
@@ -775,8 +789,14 @@ def attach_realtime_connection(
     ``runtime.draining`` when *runtime* is given; without one, pass
     ``draining=lambda: runtime.draining`` to have connects refused while the replica drains.
 
+    *admission* runs after the first draining check and before the protocol is negotiated or
+    the connection authenticated: it returns to admit the connect, and awaiting it delays the
+    connect, so an app can pace admissions by its own rules. A :class:`CoreException` it
+    raises refuses the connect like a resolver's: its client-safe summary, or for a
+    server-side kind the generic detail, logged.
+
     *stats* counts this namespace's open connections and its refused connects by reason
-    (``protocol``, ``auth``, ``draining``, ``internal``); export it with
+    (``protocol``, ``auth``, ``draining``, ``admission``, ``internal``); export it with
     :func:`~forze_socketio.instrument_realtime_connections`.
 
     .. important::
@@ -807,6 +827,7 @@ def attach_realtime_connection(
         runtime=runtime,
         share_identity=share_identity,
         draining=draining,
+        admission=admission,
         stats=stats,
     )
 

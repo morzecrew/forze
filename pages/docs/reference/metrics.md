@@ -178,7 +178,7 @@ intervals; `-1` is a wiring problem, not an outage.
 | Metric | Instrument | Unit | Labels | Notes |
 |---|---|---|---|---|
 | `forze.realtime.connections` | observable up-down counter | 1 | `forze.realtime.namespace` | connections open on this node |
-| `forze.realtime.connect_refused` | observable counter | 1 | `forze.realtime.namespace`, `forze.realtime.reason` | `protocol`, `auth`, `draining`, `internal` |
+| `forze.realtime.connect_refused` | observable counter | 1 | `forze.realtime.namespace`, `forze.realtime.reason` | `protocol`, `auth`, `draining`, `admission`, `internal` |
 | `forze.realtime.drain_closed` | observable counter | 1 | `forze.realtime.outcome` | closes the drain started: `closed`, `failed`, `timed_out` |
 
 **What to watch:** `connect_refused{reason="draining"}` that keeps climbing long after a

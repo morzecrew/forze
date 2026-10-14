@@ -54,9 +54,9 @@ REALTIME_CONNECTIONS_COUNTER = "forze.realtime.connections"
 REALTIME_CONNECT_REFUSED_COUNTER = "forze.realtime.connect_refused"
 REALTIME_DRAIN_CLOSED_COUNTER = "forze.realtime.drain_closed"
 
-ConnectRefusal = Literal["protocol", "auth", "draining", "internal"]
+ConnectRefusal = Literal["protocol", "auth", "draining", "admission", "internal"]
 """Why a connect was refused: an unsupported protocol, failed authentication, the replica
-draining, or an unexpected error."""
+draining, the app's admission hook, or an unexpected error."""
 
 # ....................... #
 
@@ -344,7 +344,7 @@ def instrument_realtime_connections(
       ``forze.realtime.namespace``.
     - ``forze.realtime.connect_refused`` — refused connects, labelled
       ``forze.realtime.namespace`` and ``forze.realtime.reason`` (``protocol``, ``auth``,
-      ``draining``, ``internal``).
+      ``draining``, ``admission``, ``internal``).
     - ``forze.realtime.drain_closed`` — closes the drain started, labelled
       ``forze.realtime.outcome`` (``closed``, ``failed``, ``timed_out``).
 
