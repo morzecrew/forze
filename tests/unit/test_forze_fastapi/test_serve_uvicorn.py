@@ -285,7 +285,6 @@ class TestSignalCapture:
 
         assert config.timeout_graceful_shutdown == effective
 
-
     # ....................... #
 
     @pytest.mark.asyncio
@@ -309,3 +308,54 @@ class TestSignalCapture:
             await asyncio.wait_for(server._drain_task, timeout=5.0)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
 
         assert runtime.seen == [None]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_repeated_sigterm_does_not_cut_the_drain(self) -> None:
+        """A SIGTERM can arrive twice: to the process group, and again from a wrapper."""
+
+        runtime = _FakeRuntime()
+        server = _server(runtime)
+
+        with server.capture_signals():
+            server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+            await _settled(server)
+            server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+            await asyncio.sleep(0.05)
+
+            drain = server._drain_task  # pyright: ignore[reportPrivateUsage]
+            assert drain is not None and not drain.done()
+            assert (server.should_exit, server.force_exit, runtime.cancelled) == (
+                False,
+                False,
+                False,
+            )
+
+            runtime.release.set()
+            await asyncio.wait_for(drain, timeout=5.0)
+
+        assert (server.should_exit, server.force_exit) == (True, False)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("first", [signal.SIGTERM, signal.SIGINT])
+    async def test_a_sigint_during_the_drain_forces_the_exit(self, first: int) -> None:
+        runtime = _FakeRuntime()
+        server = _server(runtime)
+
+        with server.capture_signals():
+            server._on_signal(first, None)  # pyright: ignore[reportPrivateUsage]
+            await _settled(server)
+            server._on_signal(signal.SIGINT, None)  # pyright: ignore[reportPrivateUsage]
+
+            for _ in range(100):  # bounded: the cancel lands within a few loop turns
+                if runtime.cancelled:
+                    break
+
+                await asyncio.sleep(0.01)
+
+        # The drain observed its own cancellation.
+        assert runtime.cancelled is True
+        assert (server.should_exit, server.force_exit) == (True, True)

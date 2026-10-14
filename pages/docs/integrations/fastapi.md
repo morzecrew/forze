@@ -217,8 +217,10 @@ On the first `SIGTERM` or `SIGINT` it runs `runtime.drain()` — readiness fails
 once, `announce_delay` passes, the drain phases run — and only then lets uvicorn
 exit: stop accepting, finish in-flight requests, run the lifespan shutdown where
 the runtime closes its gate and tears down. A drain that fails still lets the
-server exit. A second signal cancels the drain and exits without waiting for open
-connections. Uvicorn then skips the lifespan shutdown, so the runtime tears down
+server exit. A `SIGINT` during the drain cancels it and exits without waiting for
+open connections; a repeated `SIGTERM` is logged and ignored, so a signal delivered
+twice — to the process group and again by a wrapper — cannot cut a deploy short.
+After a forced exit uvicorn skips the lifespan shutdown, so the runtime tears down
 only when the event loop closes and cancels the lifespan — at the end of
 `asyncio.run`.
 

@@ -114,9 +114,16 @@ class _DrainingServer(uvicorn.Server):
 
             return
 
+        if sig != signal.SIGINT:
+            # Only a SIGINT forces the exit, as with uvicorn. A SIGTERM sent twice — to the
+            # process group and again by a wrapper forwarding it — must not cut the drain.
+            _logger.warning("%s received again: still draining; a SIGINT forces the exit", name)
+
+            return
+
         # ``force_exit`` alone would not stop a drain in progress, and ``should_exit`` alone
         # would still wait for open connections.
-        _logger.warning("%s received again: exiting without waiting for the drain", name)
+        _logger.warning("%s received during the drain: exiting without waiting for it", name)
         self._drain_task.cancel()
         self.should_exit = True
         self.force_exit = True
@@ -152,8 +159,9 @@ async def serve_uvicorn(
     runs the drain phases; then it exits the way uvicorn does — stops accepting, finishes
     in-flight requests within the graceful timeout, runs the lifespan shutdown, where the
     runtime closes its gate and tears down. A drain that fails still lets the server exit. A
-    second signal cancels the drain and exits without waiting for open connections; uvicorn
-    then skips the lifespan shutdown, so the runtime tears down only when the event loop
+    SIGINT after that cancels the drain and exits without waiting for open connections — a
+    repeated SIGTERM is logged and ignored, so a signal delivered twice cannot cut a deploy's
+    drain short. Uvicorn then skips the lifespan shutdown, so the runtime tears down only when the event loop
     closes and cancels the lifespan task (at the end of ``asyncio.run``).
 
     The app must hold *runtime*'s scope open — ``FastAPI(lifespan=runtime_lifespan(runtime))``.
