@@ -27,7 +27,7 @@ pytestmark = pytest.mark.asyncio
 # ----------------------- #
 
 KEY = "relay"
-TTL, RENEW, CAMPAIGN = 1.5, 0.3, 0.2
+TTL, RENEW, CAMPAIGN, MARGIN = 1.5, 0.3, 0.2, 0.1
 SLACK = 0.5
 """Room for real scheduling and round trips on top of a bound."""
 
@@ -40,21 +40,57 @@ SPEC = LeadershipSpec(
     key=KEY,
     renew_every=timedelta(seconds=RENEW),
     campaign_every=timedelta(seconds=CAMPAIGN),
-    margin=timedelta(seconds=0.1),
+    margin=timedelta(seconds=MARGIN),
     yield_grace=timedelta(seconds=0.3),
     release_timeout=timedelta(seconds=0.3),
 )
 
 
 @attrs.define(slots=True, eq=False)
+class _Recorded:
+    """The Redis lock, noting when each renewal was sent."""
+
+    inner: RedisDistributedLockAdapter
+    resets: list[float] = attrs.field(factory=list)
+
+    @property
+    def spec(self) -> DistributedLockSpec:
+        return self.inner.spec
+
+    async def acquire(self, key: str, owner: str) -> Any:
+        return await self.inner.acquire(key, owner)
+
+    async def reset(self, key: str, owner: str) -> bool:
+        if key == KEY:
+            self.resets.append(monotonic())
+
+        return await self.inner.reset(key, owner)
+
+    async def release(self, key: str, owner: str) -> bool:
+        return await self.inner.release(key, owner)
+
+    async def is_locked(self, key: str) -> bool:
+        return await self.inner.is_locked(key)
+
+    async def get_owner(self, key: str) -> str | None:
+        return await self.inner.get_owner(key)
+
+    async def get_ttl(self, key: str) -> timedelta | None:
+        return await self.inner.get_ttl(key)
+
+
+@attrs.define(slots=True, eq=False)
 class _Dlock:
     lock: RedisDistributedLockAdapter
+    recorded: _Recorded = attrs.field(
+        default=attrs.Factory(lambda self: _Recorded(inner=self.lock), takes_self=True)
+    )
 
-    def command(self, _spec: DistributedLockSpec) -> RedisDistributedLockAdapter:
-        return self.lock
+    def command(self, _spec: DistributedLockSpec) -> _Recorded:
+        return self.recorded
 
-    def query(self, _spec: DistributedLockSpec) -> RedisDistributedLockAdapter:
-        return self.lock
+    def query(self, _spec: DistributedLockSpec) -> _Recorded:
+        return self.recorded
 
 
 @attrs.define(slots=True, eq=False)
@@ -86,7 +122,13 @@ class _Fleet:
             spec=SPEC.lock,
         )
 
-    async def start(self, name: str, *, owner: str | None = None) -> tuple[Any, _Ctx]:
+    async def start(
+        self,
+        name: str,
+        *,
+        owner: str | None = None,
+        **step_kw: Any,
+    ) -> tuple[Any, _Ctx]:
         async def lead(_ctx: Any, term: Term) -> None:
             run = _Run(replica=name, term=term, started=monotonic())
             self.runs.append(run)
@@ -101,7 +143,7 @@ class _Fleet:
             finally:
                 run.finished = monotonic()
 
-        step = leadership_lifecycle_step(SPEC, owner=owner or name, lead=lead)
+        step = leadership_lifecycle_step(SPEC, owner=owner or name, lead=lead, **step_kw)
         ctx = _Ctx(dlock=_Dlock(lock=self.lock()))
         await step.startup(ctx)  # type: ignore[arg-type]
         self.replicas.append((step, ctx))
@@ -165,7 +207,7 @@ async def test_takeover_after_a_kill_within_ttl_plus_a_campaign_interval(
     fleet = _Fleet(client=redis_client)
 
     try:
-        first, _ = await fleet.start("a")
+        first, first_ctx = await fleet.start("a")
         await _wait_for(lambda: len(fleet.runs) == 1, within=1)
         await fleet.start("b")
         await asyncio.sleep(1)
@@ -177,6 +219,9 @@ async def test_takeover_after_a_kill_within_ttl_plus_a_campaign_interval(
         old, new = fleet.runs
         assert new.replica == "b"
         assert new.started - killed_at <= TTL + CAMPAIGN + SLACK
+        # Redis held the lease for a ttl from the last renewal the dead leader sent.
+        last_renewal = max(first_ctx.dlock.recorded.resets)
+        assert new.started >= last_renewal + TTL - MARGIN
         assert new.term.token is not None and old.term.token is not None
         assert new.term.token > old.term.token
         fleet.assert_one_at_a_time()
@@ -222,12 +267,42 @@ async def test_replicas_sharing_an_owner_never_both_lead(redis_client: RedisClie
         await _wait_for(lambda: len(fleet.runs) == 2, within=TTL + CAMPAIGN + SLACK)
 
         old, new = fleet.runs
+        assert new.started >= max(ctx.dlock.recorded.resets) + TTL - MARGIN
         assert old.term.owner != new.term.owner
         # The old term's late release cannot delete the successor's lease.
         lock = ctx.dlock.lock
         assert await lock.release(KEY, old.term.owner) is False
         assert await lock.get_owner(KEY) == new.term.owner
         fleet.assert_one_at_a_time()
+
+    finally:
+        await fleet.stop_all()
+
+
+async def test_a_preferring_replica_takes_the_unit_at_the_next_renewal(
+    redis_client: RedisClient,
+) -> None:
+    fleet = _Fleet(client=redis_client)
+
+    def prefers(value: bool) -> Any:
+        async def prefer(_ctx: Any) -> bool:
+            return value
+
+        return prefer
+
+    try:
+        await fleet.start("a", handoff="on_request", prefer=prefers(False))
+        await _wait_for(lambda: len(fleet.runs) == 1, within=1)
+        await fleet.start("b", handoff="on_request", prefer=prefers(True))
+        await _wait_for(lambda: len(fleet.runs) == 2, within=RENEW + CAMPAIGN + SLACK)
+
+        holder, asker = fleet.runs
+        assert holder.term.reason == "yielded"
+        assert asker.replica == "b"
+        fleet.assert_one_at_a_time()
+
+        await asyncio.sleep(3 * RENEW)
+        assert len(fleet.runs) == 2  # a preferring holder keeps it
 
     finally:
         await fleet.stop_all()
