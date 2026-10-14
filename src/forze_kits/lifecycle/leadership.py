@@ -20,7 +20,7 @@ import weakref
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Final, Literal, final
+from typing import TYPE_CHECKING, Any, Final, Literal, cast, final
 
 import attrs
 
@@ -29,6 +29,7 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandPort,
     DistributedLockQueryPort,
     DistributedLockSpec,
+    FenceAdvancing,
 )
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.execution.background import (
@@ -104,8 +105,9 @@ class LeadershipSpec:
     """
 
     lock: DistributedLockSpec
-    """The lock the lease lives on. Its ``ttl`` is the lease's length, and
-    ``requires_fencing_token`` makes a backend without fencing tokens fail closed."""
+    """The lock the lease lives on. Its ``ttl`` is the lease's length;
+    ``requires_fencing_token`` makes a backend without fencing tokens fail closed, and
+    ``requires_fence_advance`` (needed by ``fence_floor``) one that cannot advance them."""
 
     key: str
     """The lease's key. Every replica campaigning for the same unit of work uses the same key."""
@@ -368,6 +370,7 @@ class _Campaign:
     may_campaign: Callable[[ExecutionContext], Awaitable[bool]] | None
     handoff: Handoff
     prefer: Callable[[ExecutionContext], Awaitable[bool]] | None
+    fence_floor: Callable[[ExecutionContext], Awaitable[int]] | None
     claim: Callable[[ExecutionContext, Term], Awaitable[bool]] | None
     ctx: ExecutionContext
     cmd: DistributedLockCommandPort
@@ -444,6 +447,7 @@ class _Campaign:
             if not await self._allowed():
                 return None
 
+            await self._advance()
             acquired = await self._acquire()
 
         except Exception as error:
@@ -552,6 +556,27 @@ class _Campaign:
             self.candidate = f"{self.owner}:{current_entropy_source().randbits(64):016x}"
 
         return self.candidate
+
+    # ....................... #
+
+    async def _advance(self) -> None:
+        """With ``fence_floor``, move the counter past the store's fence while the lease is free.
+
+        Only then: a held lease's next token comes after its release, and the floor is read
+        again before that. With the counter intact the advance changes nothing.
+        """
+
+        if self.fence_floor is None or self.query is None:
+            return
+
+        if await self._call(self.query.is_locked(self.spec.key)):
+            return
+
+        floor = await self._call(self.fence_floor(self.ctx))
+        # Required on the spec, so resolution already refused a backend without it; the
+        # accessor's stand-in never matches a protocol check, hence a cast and not a probe.
+        advancing = cast(FenceAdvancing, self.cmd)
+        await self._call(advancing.advance_fence(self.spec.key, past=floor))
 
     # ....................... #
 
@@ -975,6 +1000,7 @@ class _LeadershipStartup(LifecycleHook):
     may_campaign: Callable[[ExecutionContext], Awaitable[bool]] | None
     handoff: Handoff
     prefer: Callable[[ExecutionContext], Awaitable[bool]] | None
+    fence_floor: Callable[[ExecutionContext], Awaitable[int]] | None
     claim: Callable[[ExecutionContext, Term], Awaitable[bool]] | None
 
     # ....................... #
@@ -1028,7 +1054,7 @@ class _LeadershipStartup(LifecycleHook):
         cmd = ctx.dlock.command(self.spec.lock)
         query = (
             ctx.dlock.query(self.spec.lock)
-            if self.spec.verify or self.handoff == "on_request"
+            if self.spec.verify or self.handoff == "on_request" or self.fence_floor is not None
             else None
         )
 
@@ -1040,6 +1066,7 @@ class _LeadershipStartup(LifecycleHook):
             may_campaign=self.may_campaign,
             handoff=self.handoff,
             prefer=self.prefer,
+            fence_floor=self.fence_floor,
             claim=self.claim,
             ctx=ctx,
             cmd=cmd,
@@ -1131,12 +1158,17 @@ def leadership_lifecycle_step(
         yield it, through a second lock on ``{key}:want``.
     :param prefer: Whether this replica prefers the unit; required with handoff. A holder that
         prefers it never yields.
-    :param fence_floor: Not supported yet: no lock backend can advance its fencing counter.
+    :param fence_floor: Reads the highest fence the store holds for this unit. While the
+        lease is free, the step moves the lock's fencing counter past it before acquiring, so
+        after the lock backend loses its data the next term's token is above the store's
+        fence. Requires ``spec.lock.requires_fence_advance``.
     :param claim: Claims the term's fencing token in the store before *lead* runs; ``False``
-        ends the term as ``unclaimed``. Requires ``spec.lock.requires_fencing_token``.
+        ends the term as ``unclaimed``. Requires a lock spec that requires fencing tokens
+        (``requires_fencing_token`` or ``requires_fence_advance``).
     :param step_id: The lifecycle step id; defaults to ``leadership:<key>``.
-    :raises CoreException: ``configuration``, for handoff without *prefer*, any
-        *fence_floor*, or *claim* on a lock that does not require fencing tokens.
+    :raises CoreException: ``configuration``, for handoff without *prefer*, *fence_floor* on
+        a lock that does not require the advance, or *claim* on one that does not require
+        fencing tokens. A backend without a required capability fails at startup.
     """
 
     if not owner:
@@ -1148,14 +1180,16 @@ def leadership_lifecycle_step(
     if handoff == "on_request" and prefer is None:
         raise exc.configuration("Leadership handoff on request needs `prefer`")
 
-    if fence_floor is not None:
+    if fence_floor is not None and not spec.lock.requires_fence_advance:
         raise exc.configuration(
-            "Leadership fence_floor needs a lock backend that can advance its fencing "
-            "counter, and none can yet; omit it",
-            code="leadership.fence_floor_unsupported",
+            "Leadership fence_floor needs a lock that can advance its fencing counter: set "
+            "requires_fence_advance on the lock spec",
+            code="leadership.fence_floor_without_advance",
         )
 
-    if claim is not None and not spec.lock.requires_fencing_token:
+    if claim is not None and not (
+        spec.lock.requires_fencing_token or spec.lock.requires_fence_advance
+    ):
         raise exc.configuration(
             "Leadership claim needs a fencing token to claim: set requires_fencing_token on "
             "the lock spec",
@@ -1169,6 +1203,7 @@ def leadership_lifecycle_step(
         may_campaign=may_campaign,
         handoff=handoff,
         prefer=prefer,
+        fence_floor=fence_floor,
         claim=claim,
     )
 

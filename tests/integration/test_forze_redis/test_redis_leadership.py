@@ -78,6 +78,9 @@ class _Recorded:
     async def get_ttl(self, key: str) -> timedelta | None:
         return await self.inner.get_ttl(key)
 
+    async def advance_fence(self, key: str, *, past: int) -> int:
+        return await self.inner.advance_fence(key, past=past)
+
 
 @attrs.define(slots=True, eq=False)
 class _Dlock:
@@ -111,6 +114,7 @@ class _Run:
 @attrs.define(slots=True, eq=False)
 class _Fleet:
     client: RedisClient
+    spec: LeadershipSpec = SPEC
     namespace: str = attrs.field(factory=lambda: f"it:leader:{uuid4().hex[:12]}")
     runs: list[_Run] = attrs.field(factory=list)
     replicas: list[tuple[Any, _Ctx]] = attrs.field(factory=list)
@@ -119,7 +123,7 @@ class _Fleet:
         return RedisDistributedLockAdapter(
             client=self.client,
             namespace=self.namespace,
-            spec=SPEC.lock,
+            spec=self.spec.lock,
         )
 
     async def start(
@@ -143,7 +147,7 @@ class _Fleet:
             finally:
                 run.finished = monotonic()
 
-        step = leadership_lifecycle_step(SPEC, owner=owner or name, lead=lead, **step_kw)
+        step = leadership_lifecycle_step(self.spec, owner=owner or name, lead=lead, **step_kw)
         ctx = _Ctx(dlock=_Dlock(lock=self.lock()))
         await step.startup(ctx)  # type: ignore[arg-type]
         self.replicas.append((step, ctx))
@@ -303,6 +307,58 @@ async def test_a_preferring_replica_takes_the_unit_at_the_next_renewal(
 
         await asyncio.sleep(3 * RENEW)
         assert len(fleet.runs) == 2  # a preferring holder keeps it
+
+    finally:
+        await fleet.stop_all()
+
+
+async def test_after_a_flushall_the_next_term_claims_at_once(
+    redis_client: RedisClient,
+    redis_container: Any,
+) -> None:
+    advancing = attrs.evolve(
+        SPEC,
+        lock=DistributedLockSpec(
+            name="it-leader",
+            ttl=timedelta(seconds=TTL),
+            requires_fence_advance=True,
+        ),
+    )
+    fleet = _Fleet(client=redis_client, spec=advancing)
+    store = {"fence": 50}  # the store saw tokens up to 50 before Redis lost its counters
+    claims: list[tuple[int, bool]] = []
+
+    async def claim(_ctx: Any, term: Term) -> bool:
+        assert term.token is not None
+        ok = store["fence"] < term.token
+        store["fence"] = max(store["fence"], term.token)
+        claims.append((term.token, ok))
+        return ok
+
+    async def floor(_ctx: Any) -> int:
+        return store["fence"]
+
+    redis_container.get_client().flushall()
+
+    try:
+        for name in ("a", "b"):
+            await fleet.start(name, claim=claim, fence_floor=floor)
+
+        await _wait_for(lambda: len(fleet.runs) == 1, within=1)
+        assert claims == [(51, True)]
+
+        flushed_at = monotonic()
+        redis_container.get_client().flushall()  # the lease and the counter, gone again
+        await _wait_for(lambda: len(fleet.runs) == 2, within=RENEW + CAMPAIGN + SLACK)
+
+        old, new = fleet.runs
+        assert claims == [(51, True), (52, True)]  # no refused claim, no climb
+        assert new.started - flushed_at <= RENEW + CAMPAIGN + SLACK
+        # The lease vanished under the old holder, so a successor can start before the old
+        # holder's next renewal says so; the store's fence, now 52, refuses its writes.
+        assert old.term.token is not None and old.term.token < store["fence"]
+        await _wait_for(lambda: old.finished is not None, within=RENEW + SLACK)
+        assert old.term.reason == "lost"
 
     finally:
         await fleet.stop_all()

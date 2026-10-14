@@ -21,14 +21,21 @@ import pytest
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
-from forze.application.contracts.dlock import AcquiredLock, DistributedLockSpec
+from forze.application.contracts.dlock import (
+    AcquiredLock,
+    DistributedLockCapabilities,
+    DistributedLockCommandDepKey,
+    DistributedLockQueryDepKey,
+    DistributedLockSpec,
+)
 from forze.application.contracts.execution import LifecycleStep
-from forze.application.execution import DeploymentProfile
+from forze.application.execution import DeploymentProfile, Deps
 from forze.application.execution.context.drainable import Drainables
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import monotonic
+from forze.testing import context_from_deps
 from forze_dst.runtime import run_simulation
 from forze_kits.lifecycle import (
     LeadershipSpec,
@@ -140,6 +147,11 @@ class _Lock:
 
     async def get_ttl(self, key: str) -> timedelta | None:
         return await self.inner.get_ttl(key)
+
+    async def advance_fence(self, key: str, *, past: int) -> int:
+        self.log.append((monotonic(), "advance", key, str(past)))
+
+        return await self.inner.advance_fence(key, past=past)
 
 
 @attrs.define(slots=True, eq=False)
@@ -1240,7 +1252,7 @@ class TestWiring:
     @pytest.mark.parametrize(
         ("kwargs", "code"),
         [
-            ({"fence_floor": object()}, "leadership.fence_floor_unsupported"),
+            ({"fence_floor": object()}, "leadership.fence_floor_without_advance"),
             ({"handoff": "on_request"}, None),
             ({"handoff": "always"}, None),
             ({"owner": ""}, None),
@@ -1330,6 +1342,184 @@ def _deps(state: MockState) -> Any:
 
 
 # ....................... #
+
+
+class TestFenceFloor:
+    """After the lock backend loses its counter, ``fence_floor`` moves it past the store's."""
+
+    # Only the advance flag: it requires fencing tokens too.
+    ADVANCING = attrs.evolve(SPEC, lock=DistributedLockSpec(name="leader", requires_fence_advance=True))
+
+    def _claims(self, store: dict[str, int], log: list[tuple[float, int, bool]]) -> Any:
+        async def claim(_ctx: Any, term: Term) -> bool:
+            assert term.token is not None
+            ok = store["fence"] < term.token
+            store["fence"] = max(store["fence"], term.token)
+            log.append((monotonic(), term.token, ok))
+            return ok
+
+        return claim
+
+    def test_the_first_term_after_a_loss_claims_at_once(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            store = {"fence": 50}  # the store saw tokens up to 50; the lock backend is empty
+            claims: list[tuple[float, int, bool]] = []
+
+            async def floor(_ctx: Any) -> int:
+                return store["fence"]
+
+            for name in ("a", "b"):
+                await fleet.replica(
+                    name,
+                    spec=self.ADVANCING,
+                    claim=self._claims(store, claims),
+                    fence_floor=floor,
+                ).start()
+
+            await asyncio.sleep(30)
+
+            assert claims == [(0.0, 51, True)]
+            assert [run.term.token for run in fleet.runs] == [51]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_without_it_the_fleet_stalls_until_the_counter_catches_up(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            store = {"fence": 50}
+            claims: list[tuple[float, int, bool]] = []
+
+            for name in ("a", "b"):
+                await fleet.replica(name, claim=self._claims(store, claims)).start()
+
+            await asyncio.sleep(200)
+
+            first = next(at for at, _, ok in claims if ok)
+            assert [token for _, token, ok in claims if ok][:1] == [51]
+            assert first >= 50 * CAMPAIGN * 0.9  # a token per campaign interval, roughly
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_it_advances_only_while_the_lease_is_free(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            reads: list[float] = []
+
+            async def floor(_ctx: Any) -> int:
+                reads.append(monotonic())
+                return 0
+
+            await fleet.replica("a", spec=self.ADVANCING, fence_floor=floor).start()
+            await asyncio.sleep(1)
+            await fleet.replica("b", spec=self.ADVANCING, fence_floor=floor).start()
+            await asyncio.sleep(30)
+
+            assert reads == [0.0]  # a's first campaign; b found the lease held every time
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_failing_floor_skips_the_campaign_and_is_retried(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            calls: list[float] = []
+
+            async def floor(_ctx: Any) -> int:
+                calls.append(monotonic())
+
+                if len(calls) <= 2:
+                    raise exc.infrastructure("the store is unreachable")
+
+                return 0
+
+            a = fleet.replica("a", spec=self.ADVANCING, fence_floor=floor)
+            await a.start()
+            await asyncio.sleep(10)
+
+            assert calls[:3] == [0.0, CAMPAIGN, 2 * CAMPAIGN]
+            assert a.lock.calls("acquire")[0][0] == 2 * CAMPAIGN  # none before the floor read
+            (run,) = fleet.runs
+            assert run.started == 2 * CAMPAIGN
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_configuration_error_in_the_floor_stops_campaigning(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def floor(_ctx: Any) -> int:
+                raise exc.configuration("no such table")
+
+            a = fleet.replica("a", spec=self.ADVANCING, fence_floor=floor)
+            await a.start()
+            await asyncio.sleep(10)
+
+            assert a.loop_task().done()
+            assert not a.lock.calls("acquire")
+
+        _simulate(scenario)
+
+    def test_it_needs_the_capability_on_the_spec(self) -> None:
+        async def lead(_ctx: Any, _term: Term) -> None:
+            return None
+
+        async def floor(_ctx: Any) -> int:
+            return 0
+
+        with pytest.raises(CoreException) as ei:
+            leadership_lifecycle_step(SPEC, owner="pod", lead=lead, fence_floor=floor)
+
+        assert ei.value.code == "leadership.fence_floor_without_advance"
+
+    def test_a_backend_without_the_capability_fails_at_startup(self) -> None:
+        async def scenario() -> None:
+            class _FencingOnly:
+                """Issues fencing tokens and cannot advance a counter."""
+
+                def capabilities(self) -> DistributedLockCapabilities:
+                    return DistributedLockCapabilities(fencing_tokens=True)
+
+            async def lead(_ctx: Any, _term: Term) -> None:
+                return None
+
+            async def floor(_ctx: Any) -> int:
+                return 0
+
+            step = leadership_lifecycle_step(
+                self.ADVANCING, owner="pod", lead=lead, fence_floor=floor
+            )
+            ctx = context_from_deps(
+                Deps.plain(
+                    {
+                        DistributedLockCommandDepKey: lambda _c, _s: _FencingOnly(),
+                        DistributedLockQueryDepKey: lambda _c, _s: _FencingOnly(),
+                    }
+                )
+            )
+
+            with pytest.raises(CoreException) as ei:
+                await step.startup(ctx)
+
+            assert ei.value.code == "dlock.fence_advance_unsupported"
+
+        _simulate(scenario)
+
+    def test_a_claim_is_accepted_with_either_fencing_flag(self) -> None:
+        async def lead(_ctx: Any, _term: Term) -> None:
+            return None
+
+        async def claim(_ctx: Any, _term: Term) -> bool:
+            return True
+
+        leadership_lifecycle_step(self.ADVANCING, owner="pod", lead=lead, claim=claim)
 
 
 class TestMetrics:
