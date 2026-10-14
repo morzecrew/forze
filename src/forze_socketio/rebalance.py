@@ -214,8 +214,8 @@ class _Rebalance:
         if mine is None or self.load not in mine.report:
             return
 
-        # Again after the read: a drain announced meanwhile has stopped the step's shed, and a
-        # shed started now would close connections the drain is already closing.
+        # Again after the read: a drain announced meanwhile closes the connections itself, and
+        # the runtime may already have stopped this step's shed, so a new one would run on.
         if scope_readiness(ctx) != "ready":
             return
 
