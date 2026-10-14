@@ -154,7 +154,8 @@ All verified against the tree at the time of writing.
 PostgresOutboxConfig(
     relation=("ops", "outbox"),
     storage="consume",                   # "retain" (today's, the default) | "consume"
-    pass_deadline=timedelta(seconds=5),  # consume mode: the longest a pass holds its locks
+    pass_deadline=timedelta(seconds=5),  # consume mode: when a pass stops publishing
+    pass_statement_timeout=timedelta(seconds=1),  # consume mode: each claim and mark statement
     delivery_log=OutboxDeliveryLog(      # optional, consume mode only
         relation=("ops", "outbox_delivered"),
     ),
@@ -192,9 +193,17 @@ began.
   changed, so they return to `pending` as they were.
 - Each publish is bounded by the shorter of `publish_timeout` and the budget left. A publish
   cut short is a transient failure, retried with backoff.
-- As a backstop, the scope sets `idle_in_transaction_session_timeout` locally to the deadline
-  plus a margin. A relay that stalls outright, for example on a blocked event loop, then
-  loses its session and rolls back (5.3), rather than holding the locks.
+- **The scope bounds the database side too.** It sets three timeouts locally:
+  - `statement_timeout` and `lock_timeout` to `pass_statement_timeout`, so a claim or mark
+    blocked on a lock, such as a delivery-log insert, fails rather than waits;
+  - `idle_in_transaction_session_timeout` to the deadline plus a margin.
+
+  A statement that times out fails the pass (5.3). A relay that stalls outright, for example
+  on a blocked event loop, loses its session and rolls back rather than holding the locks.
+
+So a pass holds its locks for at most `pass_deadline`, plus its final mark statements, each
+bounded by `pass_statement_timeout`. There are a few of them: the last published chunk and
+one statement per distinct retry count.
 
 A per-publish timeout alone bounds nothing: the relay marks published rows only every 32
 publishes and flushes retries at the end of the pass, so a batch of slow publishes leaves the
@@ -355,10 +364,12 @@ Postgres integration:
   and parked rows.
 - **A relay dying mid-pass.** Kill the relay between the claim and the commit. The rows are
   still pending, and a second relay publishes them.
-- **The pass deadline.** Against a destination slower than the deadline allows, the pass
-  stops at the deadline, commits what it published, and leaves the rows it did not reach
-  unchanged. A pass that stalls without yielding is cut off by the server-side timeout, and
-  its rows return.
+- **The pass deadline.**
+  - Against a destination slower than the deadline allows, the pass stops at the deadline,
+    commits what it published, and leaves the rows it did not reach unchanged.
+  - A mark blocked on a lock fails at `pass_statement_timeout` and rolls the pass back.
+  - A pass that stalls without yielding is cut off by the idle timeout, and its rows
+    return.
 - **Per-row failure.** One row's publish raises, or exceeds `publish_timeout`, and the rest of
   its batch is published and deleted. The failing row keeps its incremented `attempts` and
   its backoff, and at `max_attempts` it is parked, not retried forever. A row that will not
@@ -412,7 +423,8 @@ destination's latency.
 - **A connection and the batch's row locks are held for a pass.** Today each claim and mark
   is a short statement of its own. Under consume, a pass holds one pooled connection, and the
   locks on its batch, for the length of its publishes. For a Redis `XADD` per row that is
-  milliseconds. `pass_deadline` bounds it, with the server-side timeout as a backstop. Concurrent relays skip the
+  milliseconds. `pass_deadline` and `pass_statement_timeout` bound it, with the idle timeout
+  as a backstop. Concurrent relays skip the
   locked rows, so they do not wait. Accepted and documented.
 - **A re-stage waits for a pass.** Staging an event whose row a pass has deleted but not yet
   committed makes the `INSERT … ON CONFLICT` wait for that pass. The pass's length bounds it.
@@ -461,7 +473,7 @@ destination's latency.
 | 10 | `ASSUMED` | Other backends keep retain mode only. |
 | 11 | `LOCKED` | Under consume, a pass that raises ends the background step's tick, and consecutive failed ticks back off. A wake does not cut a backoff short. A rolled-back pass makes its whole batch claimable at once, so today's "log and run the next pass" would republish it up to `max_batches_per_tick` times a tick, and its retry state would never persist. |
 | 12 | `ASSUMED` | `OutboxRelay` gains an optional `publish_timeout`. A publish that exceeds it is a transient failure, retried with backoff. |
-| 13 | `LOCKED` | Under consume, a pass is bounded by `pass_deadline` (default 5 s). The relay publishes nothing past it, bounds each publish by the budget left, and commits what it did; rows it did not reach are unchanged. The scope also sets `idle_in_transaction_session_timeout` locally as a backstop. A per-publish timeout alone does not bound a pass, because marks flush only every 32 publishes and retries at its end. |
+| 13 | `LOCKED` | Under consume, a pass stops publishing at `pass_deadline` (default 5 s), bounds each publish by the budget left, and commits what it did; rows it did not reach are unchanged. The scope sets `statement_timeout` and `lock_timeout` locally to `pass_statement_timeout` (default 1 s) and `idle_in_transaction_session_timeout` to the deadline plus a margin. So locks are held for at most the deadline plus a few bounded mark statements. A per-publish timeout alone bounds nothing, because marks flush only every 32 publishes and retries at the pass's end. |
 
 ## 12. Phasing
 
