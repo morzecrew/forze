@@ -16,7 +16,9 @@ from testcontainers.redis import RedisContainer
 
 from forze.application.contracts.fleet import FleetSpec, FleetView
 from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.execution import build_runtime
 from forze.base.primitives import bind_time_source
+from forze_kits.integrations.fleet import fleet_membership_lifecycle_step
 from forze_redis import RedisDepsModule, RedisFleetConfig
 from forze_redis.adapters import RedisFleetAdapter
 from forze_redis.kernel.client import RedisClient
@@ -245,3 +247,33 @@ class TestWiring:
 
         assert isinstance(ctx.fleet(spec), RedisFleetAdapter)
         assert view.members[0].since == view.at
+
+    async def test_the_membership_step_joins_and_leaves(
+        self, redis_client: RedisClient, namespace: str
+    ) -> None:
+        spec = _spec(ttl=timedelta(seconds=2))
+        peer = RedisFleetAdapter(client=redis_client, namespace=namespace, spec=spec)
+        runtime = build_runtime(
+            RedisDepsModule(
+                client=redis_client,
+                fleets={str(spec.name): RedisFleetConfig(namespace=namespace)},
+            ),
+            lifecycle_steps=fleet_membership_lifecycle_step(
+                spec, every=timedelta(milliseconds=50), member_id="me"
+            ),
+            drain_timeout=timedelta(0),
+        )
+
+        async with runtime.scope():
+            for _ in range(100):  # bounded: five seconds at most
+                view = await peer.view()
+
+                if [(m.id, m.state) for m in view.members] == [("me", "serving")]:
+                    break
+
+                await asyncio.sleep(0.05)
+
+            else:
+                raise AssertionError(f"never saw the step serving: {view.members}")
+
+        assert (await peer.view()).members == ()

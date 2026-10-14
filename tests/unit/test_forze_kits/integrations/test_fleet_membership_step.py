@@ -19,13 +19,20 @@ from forze.application.contracts.fleet import (
     MemberState,
     Report,
 )
-from forze.application.execution import DeploymentProfile, Deps, ExecutionRuntime, build_runtime
+from forze.application.execution import (
+    DeploymentProfile,
+    Deps,
+    ExecutionRuntime,
+    LifecyclePlan,
+    build_runtime,
+)
 from forze.base.exceptions import CoreException
 from forze.base.primitives import instance_id, utcnow
 from forze_kits.integrations.fleet import fleet_membership_lifecycle_step
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockFleetAdapter
 from forze_mock.state import MockState
+from tests.support.execution_context import context_from_modules
 
 # ----------------------- #
 
@@ -164,6 +171,23 @@ class TestStop:
         # Well inside the fleet's own ttl: the linger entry lives for linger_for alone.
         await _until(gone, timeout=1.0)
         assert await _state_of(observer, "peer") == "serving"
+
+    async def test_a_hand_driven_shutdown_stops_the_loop_before_it_leaves(self) -> None:
+        # No runtime stops the loop here, so the step's own shutdown must, or the loop's
+        # next beat writes the entry back after the leave.
+        state = MockState()
+        observer = _observer(state)
+        ctx = context_from_modules(MockDepsModule(state=state))
+        plan = LifecyclePlan.from_steps(
+            fleet_membership_lifecycle_step(SPEC, every=EVERY, member_id="me")
+        ).freeze()
+
+        await plan.startup(ctx)
+        await _until(lambda: _is(observer, "me", "starting"))
+        await plan.shutdown(ctx)
+        await asyncio.sleep(0.1)  # five beat intervals
+
+        assert await _state_of(observer, "me") is None
 
 
 # ....................... #
