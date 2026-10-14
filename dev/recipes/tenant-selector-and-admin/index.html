@@ -6533,7 +6533,8 @@ and gives two operations that <code>attach_tenancy_routes</code> projects:</p>
 <p>The active tenant rides the signed <code>tid</code> claim and is re-validated against live membership on
 every request, so removing a principal from a tenant invalidates their scoped token at once.
 Requires a <code>TenancyDepsModule</code> wiring a <code>tenant_resolver</code> <strong>and</strong> <code>tenant_management</code> route
-(see <a href="../authn-authz-tenancy-fastapi/#wire-the-planes">Wire the planes</a>).</p>
+(see <a href="../authn-authz-tenancy-fastapi/#wire-the-planes">Wire the planes</a>), and a transaction
+manager on the registry's <code>tx_route</code> (<code>"default"</code>), which the switch issues its session in.</p>
 <h2 id="tenant-administration">Tenant administration<a class="headerlink" href="#tenant-administration" title="Permanent link">&para;</a></h2>
 <p>The selector is <strong>self-service</strong> — every op acts on the caller's <em>own</em> membership. Managing
 <em>other</em> tenants and members (create an org, invite/remove a member, list members, deactivate a

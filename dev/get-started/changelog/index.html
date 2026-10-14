@@ -9359,11 +9359,27 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>An emit to a large socket.io room takes far less of the event loop.</strong> The manager <code>build_socketio_server</code> builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass <code>client_manager=AsyncManager()</code> to keep python-socketio's manager.</li>
+<li>
+<p><strong>An emit to a large socket.io room takes far less of the event loop.</strong> The manager <code>build_socketio_server</code> builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass <code>client_manager=AsyncManager()</code> to keep python-socketio's manager.</p>
+</li>
+<li>
+<p><strong>A reused refresh token raises <code>RefreshTokenReuseError</code></strong>, rendered as the uniform refusal, and the refresh operation commits the family's revocation after its rollback. <strong>Breaking</strong> for token lifecycle implementers: raise it on reuse, or the revocation rolls back, and implement <code>revoke_chain_of_tokens</code>.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>A failed deactivation, password change or reset no longer half-applies.</strong> Login, refresh, logout, password change and reset, and deactivation commit whole on <code>build_authn_registry(tx_route=)</code>, the tenant switch on <code>build_tenancy_registry</code>'s. <strong>Breaking</strong>: each needs a transaction manager, <code>"default"</code> unless set.</p>
+</li>
+<li>
+<p><strong>On Postgres, a login racing a deactivation can no longer leave the principal a live session.</strong> Login, refresh and the tenant switch read the principal with a row lock until the session commits. <strong>Breaking</strong> for eligibility ports: <code>require_authentication_allowed</code> takes <code>for_update</code>.</p>
+</li>
+<li>
+<p><strong>Logout, deactivation and a password change or reset revoke every live session, however many.</strong> Revocation stopped at the store's implicit 10,000-row cap, or failed when a refresh rotated a session mid-way; it now revokes in batches, rereading a stale one.</p>
+</li>
+<li>
+<p><strong>The mock's principal deactivation revokes the principal's sessions</strong>, as the real one does.</p>
+</li>
 </ul>
 <h2 id="0120-2026-10-13"><a href="https://github.com/morzecrew/forze/compare/v0.11.1...v0.12.0">0.12.0</a> - 2026-10-13<a class="headerlink" href="#0120-2026-10-13" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>

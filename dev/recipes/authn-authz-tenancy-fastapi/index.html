@@ -6711,6 +6711,9 @@ and <code>attach_authn_routes</code> projects them onto a router —
 <span class="c1"># → {"access_token": "…", "refresh_token": "…", "access_token_type": "Bearer", …}</span>
 curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>/auth/logout<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;access_token&gt;"</span><span class="w">   </span><span class="c1"># → 204</span>
 </code></pre></div>
+<p>Each of these operations runs its writes in a transaction on <code>"default"</code>, so the deps
+need a transaction manager on that route, or pass <code>tx_route=</code> to name another. The
+<a href="../../integrations/authn/#notes">authn integration</a> says what the transaction guarantees.</p>
 <p><code>/login</code> and <code>/refresh</code> are deliberately reachable <strong>without</strong> a bearer token —
 the operations authenticate via their request bodies. <code>/logout</code> and
 <code>/change-password</code> answer <code>401</code> on their own when the middleware bound no

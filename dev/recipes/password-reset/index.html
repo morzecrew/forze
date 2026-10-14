@@ -6546,6 +6546,9 @@ email/SMS command in your notify consumer:</p>
 <span class="p">)</span>
 <span class="n">registry</span> <span class="o">=</span> <span class="n">build_authn_registry</span><span class="p">(</span><span class="n">AUTH</span><span class="p">,</span> <span class="n">reset_events</span><span class="o">=</span><span class="n">RESET_EVENTS</span><span class="p">)</span><span class="o">.</span><span class="n">freeze</span><span class="p">()</span>
 </code></pre></div>
+<p>The confirm step writes the new hash, consumes the token and revokes the principal's
+sessions in one transaction on the registry's <code>tx_route</code> (<code>"default"</code>), so the deps need a
+transaction manager there.</p>
 <p>Unknown logins stage nothing — the uniform ack is all an outside observer sees.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
