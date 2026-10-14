@@ -4,7 +4,7 @@
 - **Scope:** A lifecycle step that elects one replica to run a body for as long as it holds a
   renewing lease. It covers:
   - campaigning, renewal and release;
-  - a `Term` that tells the body the moment its lease is lost, expired, yielded or stopped;
+  - a `Term` that tells the body when its lease is lost, about to expire, yielded or stopped;
   - a fencing token per term;
   - an opt-in handoff, where a preferred replica asks the holder to yield.
 
@@ -30,17 +30,18 @@
 ## 1. Summary
 
 `leadership_lifecycle_step(spec, owner=..., lead=...)` campaigns for a lease on every replica,
-and runs `lead(ctx, term)` on the one that holds it:
-- it renews the lease while the body runs;
-- it ends the term on the earliest of a refused renewal, a passed deadline, a stop or a
-  yield;
-- it gives the body a grace period to return before cancelling it;
-- it releases the lease on the way out, so a successor leads within one campaign interval
-  rather than a full TTL.
+and runs `lead(ctx, term)` on the one that holds it.
+- **Renewal.** It renews the lease while the body runs.
+- **Ending a term.** It ends the term early enough that the body's grace period finishes before
+  the lease could lapse.
+- **A lost lease.** It cancels the body at once when the lease is known to be lost.
+- **Release.** It releases the lease only once the body has finished, so a successor leads
+  within one campaign interval rather than a full TTL.
 
-`term.token` carries the lock's fencing token for the body's writes. With
-`handoff="on_request"`, a replica that prefers the unit asks for it, and the holder yields at
-its next renewal.
+Each term uses its own owner string, so a late release or renewal from an old term can never
+touch a newer holder's lease. `term.token` carries the lock's fencing token for the body's
+writes. With `handoff="on_request"`, a replica that prefers the unit asks for it, and the
+holder yields at its next renewal.
 
 ## 2. Motivation
 
@@ -82,37 +83,48 @@ All verified against the tree at the time of writing.
     (`specs.py:15-41`). `AcquiredLock` carries `token: int | None`
     (`value_objects.py:31-58`).
   - A spec that requires fencing fails closed on a backend without it (`deps.py:46-79`).
-- **The Redis backend** acquires with `SET NX PX` and draws the token from a separate `INCR`
-  counter (`forze_redis/kernel/scripts.py:5-21`). `reset` re-arms the TTL
-  (`forze_redis/adapters/dlock.py:150-157`).
+- **The Redis backend.**
+  - It acquires with `SET NX PX` and draws the token from a separate `INCR` counter
+    (`forze_redis/kernel/scripts.py:5-21`).
+  - `reset` re-arms the TTL (`forze_redis/adapters/dlock.py:150-157`).
+  - `release` and `reset` compare only the owner string (`scripts.py:24-44`). Two terms that
+    share an owner string are therefore indistinguishable to Redis.
+  - The expiry is stored as an absolute wall-clock time.
 - **The singleton guard** (`singleton.py:29-117`) ignores the token, never renews and never
-  retries. It is marked `mutates_shared_state=True, singleton_guarded=True`.
+  retries.
 - **The scope** yields `AcquiredLock`, whose token is stable across `reset`. It exposes no
   event or callback for a lost lock (`scopes/dlock.py:40-54`, `:148`).
 - **Loop primitives.**
-  - `BackgroundLoopControl` provides `arm`, `request_stop`, `sleep_or_stop` and `stop`.
-  - `run_supervised` restarts with a jittered backoff and treats a configuration error as
-    terminal.
+  - `BackgroundLoopControl.stop` gives a loop `min(stop_grace, deadline)` before cancelling
+    it, and `stop_grace` defaults to 5 s (`loop.py:45`, `:152`).
+  - `run_supervised` restarts with a jittered backoff, and treats a configuration error as
+    terminal (`supervise.py:124`).
   - Loops registered with `ctx.drainables` are stopped by the runtime before teardown
     (`runtime.py:462`).
-- **Step markers.** `LifecycleStep` has `mutates_shared_state`, `singleton_guarded` and
-  `requires_long_running`. The `FLEET` profile refuses a step that mutates shared state
-  without `singleton_guarded`, and `SERVERLESS` refuses `requires_long_running`
-  (`runtime.py:269-296`).
+- **Step markers.**
+  - `mutates_shared_state` means the step's *startup* writes shared infrastructure.
+    `singleton_guarded` means that startup runs on one replica at a time
+    (`contracts/execution/value_objects.py:208-221`).
+  - The `FLEET` profile refuses a mutating step without the guard (`runtime.py:269-281`).
+  - `SERVERLESS` refuses `requires_long_running`.
 - **No other leader election exists** in `src/`. The closest are per-run durable leases
   (`run_store.py:234-255`) and in-process single-flight lanes, which are unrelated.
+- **dlock has no shared conformance battery,** only per-adapter tests
+  (`tests/unit/test_forze_mock/test_mock_dlock.py`,
+  `tests/unit/test_forze_redis/test_dlock_adapter.py`).
 
 ## 4. Goals / Non-goals
 
 **Goals**
 
-- At most one replica runs a given `lead` body at a time, as long as every holder is
-  responsive and the lock backend keeps its data. Fencing covers the cases where it is not
-  or does not (5.4).
-- The body learns that its term ended, without polling the backend.
+- A responsive leader runs its body only while it holds the lease. That holds as long as
+  Redis's clock does not jump forward by more than `margin` (5.4). Fencing covers leaders that
+  are not responsive, and backends that lost their data.
+- The body learns that its term is ending, without polling the backend.
 - A stopping leader hands over within one campaign interval, and a dead one within the lease
-  TTL.
-- An opt-in handoff, so a preferred replica can take a unit back without a restart.
+  TTL plus one campaign interval.
+- An opt-in handoff, so a preferred replica can take a unit back without a restart, and that
+  cannot leave the fleet without a leader.
 - No new port, and the step works over any dlock backend, the mock included.
 
 **Non-goals**
@@ -136,32 +148,43 @@ class LeadershipSpec:
     key: str
     renew_every: timedelta | None = None      # default lock.ttl / 3
     campaign_every: timedelta = timedelta(seconds=2)
-    margin: timedelta = timedelta(seconds=1)  # deadline = renewal sent + ttl - margin
+    margin: timedelta = timedelta(seconds=1)  # allowance for Redis's clock and the network
     yield_grace: timedelta = timedelta(seconds=5)
+    release_timeout: timedelta = timedelta(seconds=1)
     verify: bool = False                      # Term.held() also reads the owner
 
 
 def leadership_lifecycle_step(
     spec: LeadershipSpec,
     *,
-    owner: str,
+    owner: str,                               # a prefix; each term appends its own nonce
     lead: Callable[[ExecutionContext, Term], Awaitable[None]],
     may_campaign: Callable[[ExecutionContext], Awaitable[bool]] | None = None,
     handoff: Literal["none", "on_request"] = "none",
     prefer: Callable[[ExecutionContext], Awaitable[bool]] | None = None,
     fence_floor: Callable[[ExecutionContext], Awaitable[int]] | None = None,
-    step_id: StrKey = "leadership",
-) -> LifecycleStep: ...   # requires_long_running, mutates_shared_state, singleton_guarded
+    step_id: StrKey | None = None,            # default f"leadership:{spec.key}"
+) -> LifecycleStep: ...
 ```
 
-- **Validation.** `margin < lock.ttl` and `renew_every + margin < lock.ttl` are checked when
-  the spec is built. `handoff="on_request"` requires `prefer`.
+- **Validation, when the spec is built:**
+  - `renew_every + yield_grace + margin < lock.ttl`, so a term's grace period ends before the
+    lease could lapse;
+  - `campaign_every < lock.ttl`;
+  - `handoff="on_request"` requires `prefer`.
+- **Startup checks.** When `fence_floor` is given, the step checks the backend for RFC 0072's
+  capability at startup. A missing capability then fails assembly, rather than becoming a
+  configuration error that would stop the supervised loop for good while the process stays
+  up.
 - **The loop.** The step runs one campaign loop under `BackgroundLoopControl` and
-  `run_supervised`, registered with `ctx.drainables`.
-- **The markers.**
-  - `singleton_guarded=True` is honest: the body runs on one replica.
-  - `mutates_shared_state=True` describes the body.
-  - `requires_long_running=True` keeps it off `SERVERLESS`.
+  `run_supervised`, registered with `ctx.drainables`. Its `stop_grace` is set to
+  `yield_grace + release_timeout` plus a second, so stopping it can finish the term's grace
+  and its release.
+- **The markers.** Only `requires_long_running=True`, which keeps the step off `SERVERLESS`.
+  - Its startup runs on every replica and writes nothing shared; it only starts the campaign
+    loop.
+  - `mutates_shared_state` and `singleton_guarded` describe startup, so neither applies.
+  - The body's exclusivity is this step's own guarantee, not a marker's.
 
 ### 5.2 The term
 
@@ -169,83 +192,113 @@ def leadership_lifecycle_step(
 class Term(Protocol):
     token: int | None                   # the lock's fencing token, stable for the term
     ended: asyncio.Event                # set once, by the step
-    reason: TermEnd | None              # "lost" | "expired" | "stopped" | "yielded" | "returned"
-    def live(self) -> bool: ...         # not ended and before the deadline; no I/O
-    async def held(self) -> bool: ...   # live(), and with verify, the backend still names us
+    reason: TermEnd | None              # "lost" | "expiring" | "stopped" | "yielded" | "returned" | "raised"
+    def live(self) -> bool: ...         # not ended; no I/O
+    async def held(self) -> bool: ...   # live(), and with verify, the backend still names this term
 ```
 
-**The deadline** is `t_sent + lock.ttl - margin`, where `t_sent` is the monotonic time just
-before the acquire or the latest successful renewal was sent. It is never measured from the
-answer. A renewal that took long to come back therefore shortens the term, and never
-lengthens it.
+**Owners are per term.** Each acquire uses `f"{owner}:{nonce}"`, with a fresh random nonce.
+Every reset, release and want-lock call of that term uses the same string.
+- A late release from an old term therefore never deletes a successor's lease, even if both
+  replicas were given the same `owner`, or a replacement pod reuses a name.
+- A zombie's renewals fail against the new holder's lease.
 
-**A term ends on the first of these:**
-- a renewal answered `False`, because the lease is gone (`lost`);
-- the deadline passing without a successful renewal, for example while the backend is
-  unreachable (`expired`);
-- the step stopping (`stopped`);
-- a handoff (`yielded`);
-- the body returning on its own (`returned`).
+**Two deadlines,** both measured from `t_sent`, the monotonic time just before the acquire or
+the latest successful renewal was sent:
+- the **hard deadline**, `t_sent + lock.ttl - margin`, by which the lease may be gone;
+- the **soft deadline**, `hard - yield_grace`, by which the body must be told.
 
-**When it ends:**
-1. The step sets `term.ended`.
-2. The body has `yield_grace` to return at a unit boundary, and is cancelled after that.
-3. The step releases the lease if it may still hold it. The release is shielded, so a
-   cancelled stop still releases.
-4. The step goes back to campaigning, unless it is stopping.
+Neither is measured from the answer. A renewal that took long to come back therefore shortens
+the term, and never lengthens it.
 
-A body that raises ends its term the same way, and `run_supervised` backs off before the next
-campaign.
+**How a term ends:**
+
+| Reason | When | The body |
+| --- | --- | --- |
+| `lost` | a renewal answered `False`: the lease is already gone | cancelled at once; no grace |
+| `expiring` | the soft deadline passed without a successful renewal | grace until the hard deadline, then cancelled |
+| `stopped` | the step is stopping | `yield_grace`, then cancelled |
+| `yielded` | a handoff (5.5) | `yield_grace`, then cancelled |
+| `returned` | the body returned on its own | already done |
+| `raised` | the body raised | already done; `run_supervised` backs off before the next campaign |
+
+- **Renewals continue** through the grace of a `stopped` or `yielded` term. The lease stays the
+  step's until the body is done, so a successor cannot overlap it.
+- **Release follows the body.** The step releases only after the body's task has finished, or
+  has been cancelled and awaited. If the cancelled body does not finish within
+  `release_timeout`, the step does not release. The lease then lapses at its TTL, and a
+  successor cannot start while the old body may still run.
 
 ### 5.3 Campaigning and renewal
 
-- **Campaigning.** Every `campaign_every`, a replica that is not stopping, whose
-  `may_campaign` allows it, and that is not deferring to a handoff (5.5) does three things:
-  1. With `fence_floor` set, it advances the fence first (RFC 0072).
-  2. It tries `acquire`.
+- **Campaigning.** Every `campaign_every`, a replica that is not stopping, whose `may_campaign`
+  allows it, and that is not deferring to a handoff (5.5) does three things:
+  1. With `fence_floor` set and the lease free (`is_locked` is false), it advances the fence
+     first (RFC 0072). It does not read the store's fence on every tick.
+  2. It tries `acquire` with a fresh per-term owner.
   3. On success, it starts a term and runs `lead` in a task.
-- **Renewal.** Every `renew_every`, it calls `reset`.
-  - `True` moves the deadline.
+- **A late acquire.** After an acquire that failed or timed out, the replica checks the
+  owner. If it names the owner it just tried, the acquire landed late and Redis now holds a
+  lease nobody uses, so the replica releases it. Without this, a late acquire leaves the fleet
+  without a leader for up to a TTL.
+- **Renewal.** Every `renew_every`, it calls `reset` with the term's owner.
+  - `True` moves both deadlines.
   - `False` ends the term as `lost`.
-  - An error or a timeout leaves the deadline where it was, and the term ends as `expired`
-    once it passes.
+  - An error or a timeout leaves the deadlines where they were.
 
-  Each renewal is bounded by a timeout shorter than the time left before the deadline.
-- **Stop.** The step ends the term as `stopped`, waits out the grace period, releases and
-  returns. A successor that is campaigning takes over within `campaign_every`.
+  Each renewal is bounded by a timeout shorter than the time left before the soft deadline.
+- **Stop.** The step ends the term as `stopped`, keeps renewing through the grace period, waits
+  for the body as above, releases, and returns. A campaigning successor takes over within
+  `campaign_every`.
 
 ### 5.4 What it guarantees, and what fencing is for
 
-- **A responsive leader stops acting within `margin`** of the moment its lease could be gone.
-  The deadline is measured locally, from before the renewal was sent.
+- **A responsive leader runs its body only while it holds the lease.**
+  - A `lost` term cancels the body at once.
+  - Every other end leaves the body's grace inside the hard deadline. The validation in 5.1
+    makes that possible.
+  - The step releases only after the body is done.
+
+  This assumes Redis's clock does not jump forward by more than `margin` while the lease runs.
+  Redis stores the expiry as an absolute wall-clock time, so an NTP step or a failover to a
+  replica with a faster clock ends the lease early. `margin` is sized for the deployment's
+  clock discipline, and the docs say so.
+- **After a `lost` answer,** the body may still run until its cancellation lands, while a
+  successor already holds the lease. Fencing covers that gap.
 - **A leader that is not responsive is not stopped by any of this:** a paused process, a
-  blocked event loop, a long GC. Neither is one whose lock backend lost its data, so the
-  lease is gone while the leader cannot yet know it. Those are what the fencing token is for.
+  blocked event loop, a long GC. Neither is one whose lock backend lost its data, so the lease
+  is gone while the leader cannot yet know it. Those are what the fencing token is for.
   - The body passes `term.token` with each write it makes as leader.
-  - The store refuses a token lower than the highest it has seen. This is the contract's
-    rule, stated the same way in its example since the bug-fix branch.
+  - The store refuses a token lower than the highest it has seen. This is the contract's rule,
+    stated the same way in its example since the bug-fix branch.
 - **Requiring fencing.** A spec that needs a token sets `lock.requires_fencing_token`, and a
   backend without one fails closed, as today.
-- **After Redis loses its data,** the fence counter restarts low, and the tokens it draws are
-  refused until it catches up. RFC 0072's fence advance closes that gap: `fence_floor` lets
-  the step move the counter past the highest stored fence before campaigning.
-- **`verify=True`** makes `held()` also read the owner through the query port. A body can
-  then check before an expensive or irreversible unit, at the cost of one read. This catches
-  a backend that lost the key between renewals.
+- **After Redis loses its data,** the fence counter restarts low. RFC 0072's fence advance, via
+  `fence_floor`, moves it to a new epoch above every earlier token before the step campaigns.
+- **`verify=True`** makes `held()` also read the owner through the query port, and compare it
+  with the term's per-term owner. A body can then check before an expensive or irreversible
+  unit, at the cost of one read.
 
 ### 5.5 Handoff on request
 
-With `handoff="on_request"`, a replica that does not hold the lease, but whose `prefer` returns
-true, asks for it by holding a second lock on the same backend, `{key}:want`. It acquires the
-want-lock and renews it on each campaign tick.
-- **The holder** reads the want-lock's owner at each renewal. If another replica holds it,
-  and the holder's own `prefer` is false, it ends its term as `yielded` and releases. A holder
-  that prefers the unit itself never yields, so two preferring replicas cannot pass the unit
-  back and forth.
-- **Other replicas** skip their campaign while another replica holds the want-lock, so the
-  one that asked is the only campaigner once the lease is free.
-- **The asker** releases the want-lock once it holds the lease. If it dies first, the
-  want-lock expires within its TTL, and campaigning goes back to normal.
+With `handoff="on_request"`, a replica that does not hold the lease, whose `prefer` returns
+true and whose `may_campaign` allows it, asks for the lease by holding a second lock on the
+same backend, `{key}:want`. It acquires the want-lock and renews it on each campaign tick.
+
+- **The holder** reads the want-lock's owner at each renewal. If another replica holds it, and
+  the holder's own `prefer` is false, it ends its term as `yielded`. It then releases once the
+  body is done (5.2). A holder that prefers the unit itself never yields, so two preferring
+  replicas cannot pass the unit back and forth.
+- **Other replicas** skip their campaign while another replica holds the want-lock, with one
+  exception. If the lease has been free for longer than three campaign intervals, they
+  campaign anyway. An asker that cannot acquire therefore never leaves the fleet without a
+  leader.
+- **The asker** releases the want-lock:
+  - once it holds the lease;
+  - when it stops;
+  - after three consecutive campaigns that did not get the lease.
+
+  If it dies, the want-lock expires within its TTL.
 
 The handoff costs one owner read per renewal, and only when it is enabled.
 
@@ -263,6 +316,9 @@ The handoff costs one owner read per renewal, and only when it is enabled.
 - **Making the singleton guard hold its lock for the step's lifetime.** It would silently
   change a step that startup-only work uses correctly today, such as group ensure. Rejected
   in favour of a second step.
+- **One owner string per replica, as the caller gives it.** That is the first draft. Redis
+  compares only the owner string, so a shared or reused name lets an old term's release or
+  renewal act on a newer holder's lease. Rejected for per-term owners.
 - **A dedicated leadership port with a Raft-like backend.** The guarantee is bounded by the
   lock backend either way, and every deployment already has the dlock ports. Rejected until
   a deployment needs more than lease plus fencing.
@@ -273,30 +329,41 @@ Unit tests run against the mock dlock with a controllable clock. Integration tes
 Redis.
 - **One leader.** Three replicas campaign, and exactly one runs `lead`.
 - **Takeover.**
-  - The leader stops: it releases, and a successor leads within `campaign_every`.
-  - The leader is killed without releasing: a successor leads within the lease TTL.
-- **Losing the lease.**
-  - Delete the lease key under a running term: `term.ended` is set as `lost` at the next
-    renewal.
-  - Make renewals hang: the term ends as `expired` at the deadline, measured from when the
-    last good renewal was sent.
-- **Grace.** A body that ignores `term.ended` is cancelled after `yield_grace`, and the lease
-  is released.
+  - The leader stops: it releases after its body finishes, and a successor leads within
+    `campaign_every`.
+  - The leader is killed without releasing: a successor leads within `ttl + campaign_every`.
+- **No overlap with the backend intact:**
+  - Make renewals hang. The term ends as `expiring` at the soft deadline, and the body is gone
+    before the hard deadline. A successor never starts before it.
+  - A body that ignores `term.ended` is cancelled at the hard deadline.
+  - With a cancelled body that will not finish, the step does not release, and no successor
+    starts until the TTL.
+- **Losing the lease.** Delete the lease key under a running term. The term ends as `lost` at
+  the next renewal, and the body is cancelled at once.
+- **Per-term owners.**
+  - Two replicas given the same `owner` never both lead.
+  - An old term's late release does not delete the new holder's lease.
+- **A late acquire.** An acquire that times out but lands is released, and the fleet elects a
+  leader within one campaign interval.
 - **Fencing.** Tokens grow strictly across terms, and `term.token` is stable within one.
 - **Handoff.**
   - A preferring replica takes the unit from a non-preferring holder at the holder's next
     renewal.
   - Two preferring replicas do not pass the unit back and forth.
-  - A wanting replica that dies lets the others campaign once its want-lock expires.
-- **`may_campaign`.** A replica it refuses never leads.
-- **Markers.** The `FLEET` profile accepts the step, and `SERVERLESS` refuses it.
+  - An asker that `may_campaign` refuses never takes the want-lock.
+  - An asker that cannot acquire releases the want-lock after three tries, and the fleet still
+    elects a leader.
+- **Configuration.** A `fence_floor` without the capability fails at assembly. Validation
+  refuses `renew_every + yield_grace + margin >= ttl`.
 - **Bounded doubles.** Every retry loop's double is a bounded script, so a lost loop bound
   fails in milliseconds.
 
 ## 7. Docs
 
-- A "Run one replica's worth of work" section on the lifecycle page: when to use this step,
-  when the singleton guard is enough, and what fencing is for.
+- A "Run one replica's worth of work" section on the lifecycle page:
+  - when to use this step, and when the singleton guard is enough;
+  - what fencing is for;
+  - the clock assumption behind `margin`.
 - A recipe: an outbox relay or a publisher behind leadership, with a fenced write.
 - The durable and realtime docstrings corrected on the bug-fix branch gain a pointer to this
   step.
@@ -311,19 +378,21 @@ Redis.
 
 ## 9. Risks
 
-- **Read as consensus.** The docs say what the term guarantees: a responsive leader stops
-  within `margin`, and an unresponsive one is stopped by fencing. Bodies that skip fencing
-  are told what they are giving up.
-- **Short TTLs and slow backends.** A TTL close to the backend's latency makes terms flap.
-  Validation enforces `renew_every + margin < ttl`, and the docs suggest a TTL of at least ten
-  times the renewal latency.
-- **A body that never checks `term.ended`** is cancelled after the grace period. Cancellation
-  at an arbitrary await is what the grace period exists to avoid, so the docs show the
-  unit-boundary pattern.
+- **Read as consensus.** The docs say what the term guarantees: a responsive leader stays
+  inside its lease, under the clock assumption. Everything else is covered by fencing.
+  Bodies that skip fencing are told what they are giving up.
+- **Short TTLs and slow backends.** A TTL close to the backend's latency makes terms flap. The
+  validation enforces the arithmetic, and the docs suggest a TTL of at least ten times the
+  renewal latency.
+- **A body that never checks `term.ended`** is cancelled at its deadline. Cancellation at an
+  arbitrary await is what the grace period exists to avoid, so the docs show the unit-boundary
+  pattern.
+- **A configuration error in the body** stops the supervised loop for good, as it does for any
+  supervised loop, while the process stays up. The step logs it as such, and the docs say so.
 
 ## 10. Unresolved questions
 
-- Whether `Term` is a Protocol with a private implementation or a concrete frozen-ish class.
+- Whether `Term` is a Protocol with a private implementation or a concrete class.
   Implementation decides; the Protocol is the contract.
 - Whether the gauge and the counter belong in the existing telemetry module or a new
   leadership one. Implementation decides.
@@ -333,22 +402,25 @@ Redis.
 | # | Grade | Decision |
 | --- | --- | --- |
 | 1 | `LOCKED` | Lifetime leadership is a new step, `leadership_lifecycle_step`, built on the existing dlock ports. `singleton_lifecycle_step` keeps its startup-only semantics. |
-| 2 | `LOCKED` | A term ends on the first of: a refused renewal, the deadline passing, a stop, a yield, or the body returning. The step sets `term.ended`, gives the body `yield_grace`, then cancels it and releases the lease, shielded. |
-| 3 | `LOCKED` | The deadline is measured from the monotonic time before the acquire or the latest successful renewal was sent, minus `margin`, never from the answer. |
-| 4 | `ASSUMED` | `renew_every` defaults to `ttl / 3`, and `renew_every + margin < ttl` is validated at construction. |
-| 5 | `ASSUMED` | Handoff uses a second lock, `{key}:want`, on the same backend. A holder whose own `prefer` is true never yields, and non-askers skip campaigning while another replica holds the want-lock. |
-| 6 | `ASSUMED` | `verify=True` makes `held()` read the owner through the query port. Off by default, since a read per check is a cost the body opts into. |
+| 2 | `LOCKED` | A term is told it is ending by a soft deadline, `hard − yield_grace`, so its grace finishes inside the lease. A `lost` term cancels the body at once. Renewals continue through the grace of a stopped or yielded term, and the lease is released only after the body is done. If the body cannot be confirmed done, the lease is left to expire. |
+| 3 | `LOCKED` | Both deadlines are measured from the monotonic time before the acquire or the latest successful renewal was sent, never from the answer. The hard deadline is `t_sent + ttl − margin`, and `margin` absorbs Redis clock jumps. |
+| 4 | `ASSUMED` | `renew_every` defaults to `ttl / 3`. `renew_every + yield_grace + margin < ttl` and `campaign_every < ttl` are validated at construction. |
+| 5 | `ASSUMED` | Handoff uses a second lock, `{key}:want`, taken only when `may_campaign` allows it. A holder whose own `prefer` is true never yields. Non-askers defer to the want-lock unless the lease has been free for three campaign intervals. The asker releases the want-lock on acquiring, on stop, and after three failed campaigns. |
+| 6 | `ASSUMED` | `verify=True` makes `held()` read the owner and compare it with the term's own. Off by default. |
 | 7 | `ASSUMED` | The fencing token is exposed as `term.token`. A spec that needs one sets `requires_fencing_token`, which already fails closed on a backend without fencing. |
-| 8 | `ASSUMED` | With `fence_floor` set, the step advances the fence before each acquire, through RFC 0072's capability, and fails closed when the backend lacks it. |
-| 9 | `ASSUMED` | The step is marked `singleton_guarded`, `mutates_shared_state` and `requires_long_running`. |
+| 8 | `ASSUMED` | With `fence_floor`, the step advances the fence before acquiring, only while the lease is free, through RFC 0072's capability. The capability is checked at startup, so a missing one fails assembly. |
+| 9 | `ASSUMED` | The step is marked only `requires_long_running`. Its startup writes nothing shared and runs on every replica; the body's exclusivity is the step's guarantee. |
 | 10 | `OPEN` | Whether `Term` is a Protocol or a concrete class, and where its metrics live. |
+| 11 | `LOCKED` | Every term uses its own owner string (`owner` plus a nonce) for acquire, reset, release and the want-lock, because Redis compares only the owner string. |
+| 12 | `ASSUMED` | After an acquire that failed or timed out, the replica releases the lease if the owner names the owner it just tried, so a late acquire cannot leave the fleet without a leader. |
 
 ## 12. Phasing
 
 1. **The step:**
-   - the spec;
-   - campaign, renewal, term end, grace and release;
-   - fencing token exposure, `may_campaign`, `verify`;
+   - the spec and its validation;
+   - per-term owners;
+   - campaign, renewal, both deadlines, the grace rules and release-after-body;
+   - fencing token exposure, `may_campaign` and `verify`;
    - the metrics;
    - the docs and the recipe.
 2. **Handoff on request.**
