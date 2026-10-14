@@ -458,6 +458,25 @@ class TestRelease:
 
         _simulate(scenario)
 
+    def test_renewals_continue_through_a_stopped_terms_grace(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            spec = attrs.evolve(SPEC, renew_every=timedelta(seconds=2))
+            a = fleet.replica("a", spec=spec, lead=fleet.body("a", listens=False))
+            await a.start()
+            await asyncio.sleep(3)
+
+            stopped_at = monotonic()
+            await a.stop()
+
+            (run,) = fleet.runs
+            assert run.cancelled == stopped_at + GRACE
+            in_grace = [at for at, _ in a.lock.calls("reset") if stopped_at < at < run.cancelled]
+            assert len(in_grace) >= 2
+            assert a.lock.calls("release")[-1][0] == run.cancelled
+
+        _simulate(scenario)
+
     def test_a_body_that_unwinds_within_the_release_timeout_is_released(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
