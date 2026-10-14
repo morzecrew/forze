@@ -1,4 +1,4 @@
-"""Distributed-lock fencing capability: spec.requires_fencing_token fails closed at resolve."""
+"""Distributed-lock fencing capabilities: the spec's requirements fail closed at resolve."""
 
 from __future__ import annotations
 
@@ -60,6 +60,23 @@ class _FencingDisabledLock:
 
     async def reset(self, key: str, owner: str) -> bool:
         return True
+
+
+class _AdvancingLock(_FencingLock):
+    """Reports fence advance and implements it."""
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        return DistributedLockCapabilities(fencing_tokens=True, fence_advance=True)
+
+    async def advance_fence(self, key: str, *, past: int) -> int:
+        return past
+
+
+class _ClaimsAdvanceWithoutMethodLock(_FencingLock):
+    """Reports fence advance but has no ``advance_fence`` — a backend that lies."""
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        return DistributedLockCapabilities(fencing_tokens=True, fence_advance=True)
 
 
 def _ctx(port: object):
@@ -124,3 +141,33 @@ def test_a_read_only_operation_is_refused_a_lock_that_cannot_fence() -> None:
         ctx.dlock.command(spec)
 
     assert ei.value.code == "dlock.fencing_unsupported"
+
+
+def test_requires_fence_advance_resolves_against_an_advancing_backend() -> None:
+    ctx = _ctx(_AdvancingLock())
+    spec = DistributedLockSpec(name="lock", requires_fence_advance=True)
+    assert ctx.dlock.command(spec) is not None
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [_FencingLock(), _BestEffortLock(), _ClaimsAdvanceWithoutMethodLock()],
+    ids=["flag-false", "not-fencing-aware", "flag-without-method"],
+)
+def test_requires_fence_advance_fails_closed(backend: object) -> None:
+    ctx = _ctx(backend)
+    spec = DistributedLockSpec(name="lock", requires_fence_advance=True)
+
+    with pytest.raises(CoreException, match="fence advance") as ei:
+        ctx.dlock.command(spec)
+    assert ei.value.code == "dlock.fence_advance_unsupported"
+
+
+def test_a_read_only_operation_is_refused_a_lock_that_cannot_advance() -> None:
+    ctx = _ctx(_FencingLock())
+    spec = DistributedLockSpec(name="lock", requires_fence_advance=True)
+
+    with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="fence advance") as ei:
+        ctx.dlock.command(spec)
+
+    assert ei.value.code == "dlock.fence_advance_unsupported"

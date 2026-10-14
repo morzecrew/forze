@@ -21,6 +21,23 @@ after the lock key expires — this is the fencing guarantee; the cost is one
 small permanent key per lock key. ``RELEASE_DLOCK`` must never delete it.
 """
 
+ADVANCE_DLOCK_FENCE: Final = """
+local raw = redis.call('GET', KEYS[1])
+if tonumber(raw or '0') < tonumber(ARGV[1]) then
+    redis.call('SET', KEYS[1], ARGV[1])
+    return ARGV[1]
+end
+return raw or '0'
+"""
+"""Redis script to move a distributed lock's fencing counter up to at least a given value.
+
+KEYS[1] is the per-key fencing counter ``ACQUIRE_DLOCK`` increments; ARGV[1] the value, as
+a decimal string. Sets the counter to ARGV[1] when it is lower (or absent), never lowers it,
+and returns the counter after the call as the stored string. Numbers go in and out as
+strings because Lua formats a number above 10^14 with an exponent. The comparison is in
+doubles, exact only up to 2^53 - 1, so the caller bounds ARGV[1] to that.
+"""
+
 RELEASE_DLOCK: Final = """
 if redis.call("GET", KEYS[1]) == ARGV[1] then
     return redis.call("DEL", KEYS[1])

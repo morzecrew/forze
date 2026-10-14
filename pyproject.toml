@@ -596,6 +596,11 @@ scenario = "forze_dst.conformance.transfer:run_transfer"
 dep_keys = []
 engines = ["postgres"]
 
+[tool.conformance_manifest.planes.dlock]
+scenario = "tests.support.dlock_conformance:DLOCK_BATTERY"
+dep_keys = ["distributed_lock_command", "distributed_lock_query"]
+engines = ["mock", "redis"]
+
 [tool.conformance_manifest.planes.sandbox]
 scenario = "tests.support.sandbox_conformance:SANDBOX_BATTERY"
 dep_keys = ["sandbox_run"]
@@ -677,8 +682,6 @@ deserves a battery across all of them.\
 kind = "single-engine"
 keys = [
     "cache",
-    "distributed_lock_command",
-    "distributed_lock_query",
     "pubsub_command",
     "pubsub_query",
     "search_result_snapshot",
@@ -686,8 +689,8 @@ keys = [
 reason = """
 Redis is the only backend that registers these, so there is no second implementation to \
 compare it against; the mock stands in for it in unit tests and any divergence would be \
-mock-vs-Redis alone. A second cache, lock, pub/sub or snapshot backend turns this claim \
-false and fails the checker.\
+mock-vs-Redis alone. A second cache, pub/sub or snapshot backend turns this claim false \
+and fails the checker.\
 """
 
 [[tool.conformance_manifest.exempt_groups]]

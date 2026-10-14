@@ -1,7 +1,12 @@
 from forze.base.exceptions import exc
 
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey, GuardedWritePort
-from .ports import DistributedLockCommandPort, DistributedLockQueryPort, FencingAware
+from .ports import (
+    DistributedLockCommandPort,
+    DistributedLockQueryPort,
+    FenceAdvancing,
+    FencingAware,
+)
 from .specs import DistributedLockSpec
 
 # ----------------------- #
@@ -49,7 +54,9 @@ class DistributedLockDeps(ConvenientDeps):
         Fail-closed: when ``spec.requires_fencing_token`` is set, a backend that does not
         report monotonic fencing tokens (not :class:`FencingAware`, or ``fencing_tokens=False``)
         is rejected here at resolve, so a fencing-dependent consumer is never silently wired
-        onto best-effort exclusion.
+        onto best-effort exclusion. ``spec.requires_fence_advance`` does the same for a
+        backend that cannot move its fencing counter (not :class:`FenceAdvancing`, or
+        ``fence_advance=False``).
         """
 
         port: DistributedLockCommandPort = self._resolve_command(
@@ -58,7 +65,7 @@ class DistributedLockDeps(ConvenientDeps):
             route=spec.name,
         )
 
-        if not spec.requires_fencing_token:
+        if not (spec.requires_fencing_token or spec.requires_fence_advance):
             return port
 
         # A read-only operation's stand-in is judged by the backend it resolves to, since it
@@ -69,11 +76,23 @@ class DistributedLockDeps(ConvenientDeps):
             else port
         )
 
-        if not (isinstance(backend, FencingAware) and backend.capabilities().fencing_tokens):
+        caps = backend.capabilities() if isinstance(backend, FencingAware) else None
+
+        if spec.requires_fencing_token and not (caps is not None and caps.fencing_tokens):
             raise exc.configuration(
                 f"Distributed lock {spec.name!r} requires fencing tokens, but the wired "
                 "backend does not issue them (not FencingAware / fencing_tokens=False).",
                 code="dlock.fencing_unsupported",
+            )
+
+        if spec.requires_fence_advance and not (
+            caps is not None and caps.fence_advance and isinstance(backend, FenceAdvancing)
+        ):
+            raise exc.configuration(
+                f"Distributed lock {spec.name!r} requires fence advance, but the wired "
+                "backend cannot move its fencing counter (not FenceAdvancing / "
+                "fence_advance=False).",
+                code="dlock.fence_advance_unsupported",
             )
 
         return port
