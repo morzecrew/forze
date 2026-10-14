@@ -5,6 +5,8 @@ from __future__ import annotations
 import multiprocessing
 import os
 import socket
+import subprocess  # nosec B404 — fixed argv, runs this interpreter
+import sys
 
 from forze.base.primitives import (
     SeededEntropySource,
@@ -85,3 +87,19 @@ class TestInstanceId:
         assert child_id != parent
         assert child_id.split(":")[1] == str(child.pid)
         assert instance_id() == parent
+
+
+class TestWithoutFork:
+    def test_imports_where_the_platform_has_no_fork_hook(self) -> None:
+        # Windows has neither ``os.fork`` nor ``os.register_at_fork``; importing must not need them.
+        script = (
+            "import os; del os.fork, os.register_at_fork\n"
+            "from forze.base.primitives import instance_id\n"
+            "print(instance_id())\n"
+        )
+        result = subprocess.run(  # nosec B603 — this interpreter, a fixed script
+            [sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert len(result.stdout.strip().rsplit(":", 2)) == 3

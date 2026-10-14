@@ -12,8 +12,10 @@ _IDS: Final[dict[int, str]] = {}
 """Process id → the id minted for it. Keyed by pid, so a forked child mints its own."""
 
 # A child forgets its ancestors' ids, so a descendant that reuses a dead ancestor's pid
-# still mints a new one.
-os.register_at_fork(after_in_child=_IDS.clear)
+# still mints a new one. Platforms without ``fork`` (Windows) have no such hook, and a
+# spawned process starts with an empty cache anyway.
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_IDS.clear)
 
 # ....................... #
 
