@@ -496,7 +496,7 @@ The authn page gets a "Session check fast path" section:
 | 23 | `ASSUMED` | The verifier and every revoking adapter read one configuration value, so one process cannot run readers without writers. The fast path is refused when either registry's `tx_route` is `None`: the authn write-through would run inline and fail the operation, and a tenant switch would read the epoch without its lock. |
 | 24 | `ASSUMED` | `ttl` is required and has no default: it is the window, and the operator picks it. |
 | 25 | `LOCKED` | The eligibility read stays until every write of `is_active=False` raises the epoch, enforced at the policy principal's write path rather than by a census. Then a decorator skips a read only for a non-locking call about the admitted token's own subject, in the request that admitted it; locking calls (issue) and actor checks always read. Postgres only. |
-| 26 | `ASSUMED` | API-key states (phase 2c) are keyed by digest and carry a MAC under a server key, over the prefix, the digest, the principal, the actor, the key's expiry, the state and an absolute not-after. The not-after is the earlier of Redis's read time plus `ttl` and the key's expiry. The verifier refuses a state past its not-after, checks the key's expiry as today, and treats a state whose MAC fails as a miss. Keys keep the eligibility read. |
+| 26 | `ASSUMED` | API-key states (phase 2c) are keyed by digest and carry a MAC under a server key, over the prefix, the digest, the principal, the actor, the key's expiry, the state and an absolute not-after. The not-after is the earlier of Redis's read time plus `ttl` and the key's expiry. The verifier refuses a state past its not-after by Redis's `TIME` from the same read script, so one clock sets and checks it. It also checks the key's expiry as today, and treats a state whose MAC fails as a miss. Keys keep the eligibility read. |
 | 27 | `LOCKED` | Every issue reads the epoch with `FOR SHARE` after upserting its row, and every raise is an atomic upsert (`INSERT … ON CONFLICT DO UPDATE`) as its first statement, which locks the row or claims its key. So a principal-wide revocation and an issue serialize on Postgres, even when no row existed, and a login, refresh or tenant switch cannot commit a session a concurrent logout misses. |
 | 28 | `ASSUMED` | A revocation of chosen sessions or a family writes the state of each session it stamped and of its family, whatever the binding, so a family revocation refuses session-bound tokens and a change of binding is safe. A revocation that ends every session of a principal raises the epoch instead. |
 
@@ -756,13 +756,13 @@ otherwise mint a key, or copy a victim's state onto their own key's digest, or r
 - **The not-after** is the earlier of two times: Redis's `TIME` when the lookup's read script
   ran plus `ttl`, and the key's own expiry. A replayed state therefore expires no later than
   any other state would.
-- **The verifier checks two things, whatever Redis's expiry says,** both against its own
-  clock:
-  - it refuses a state past its not-after;
+- **The verifier checks two things, whatever Redis's expiry says:**
+  - it refuses a state past its not-after, judged against Redis's `TIME` from the same read
+    script that fetched the state;
   - it checks the key's own expiry, as it does today.
 
-  Skew between Redis's clock and the verifier's adds to the bound, and NTP keeps it to
-  milliseconds.
+  The not-after is set and checked in Redis's clock, so the bound has no skew term. Someone
+  who can write Redis's keys cannot move its clock.
 - **A state whose MAC fails is a miss.**
 - **The MAC key and its rotation** belong to the configuration.
 
@@ -821,8 +821,14 @@ hh-backend-v2's acceptance list, plus what the corrections need:
   - an issue that commits after the logout carries the raised epoch and stays admitted.
 
   Both orders also hold when the epoch row did not exist before.
-- **A delayed epoch write-through.** Hold an older raise's write-through past a newer raise
-  and past the newer key's expiry. It writes the newer epoch, never the older.
+- **A delayed epoch write-through, in both orders** against a newer raise:
+  - held before its Postgres read: it reads and writes the newer epoch;
+  - held after its read, with the read before the newer commit: it writes the older epoch,
+    whose expiry was fixed before that read. The older epoch expires within `ttl` of the
+    newer commit, or has already expired when it lands.
+
+  In both orders, a token carrying the older `pep` is refused from `ttl` after the newer
+  commit at the latest.
 - **Write-through failure.** A write-through that fails every attempt: the operation succeeds
   and logs, and the credential is refused within `ttl`.
 - **2b.** A locking eligibility call, and an actor check, always read.
