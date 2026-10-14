@@ -621,22 +621,18 @@ class TestConnectUnderWay:
         self, late: bool
     ) -> None:
         server = _server()
-        presence = InMemoryRealtimePresence()
+        presence = _RecordingPresence()
         stats = RealtimeConnectionStats()
-        resolved: list[str] = []
 
         def draining() -> bool:
-            if resolved or not late:
+            # Late: fails only at the last check, once the connect joined its room.
+            if presence.joins or not late:
                 raise RuntimeError("readiness source unavailable")
 
             return False
 
-        async def resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
-            resolved.append(connect.sid)
-            return await _resolve(connect)
-
         attach_realtime_connection(
-            server, resolve=resolve, presence=presence, draining=draining, stats=stats
+            server, resolve=_resolve, presence=presence, draining=draining, stats=stats
         )
 
         with pytest.raises(SocketIOConnectionRefusedError) as caught:
@@ -644,6 +640,7 @@ class TestConnectUnderWay:
 
         assert caught.value.error_args == {"message": GENERIC_INTERNAL_DETAIL}
         assert stats.connect_refused == {("/", "internal"): 1}
+        assert presence.joins == (1 if late else 0)
         assert await presence.count(_ROOM) == 0
         assert list(server.manager.get_participants("/", _ROOM)) == []
         assert IDENTITY_SESSION_KEY not in _socket(server, "eio-1").session.get("/", {})
@@ -657,11 +654,18 @@ class TestConnectUnderWay:
         runtime = _runtime()
         _socket(server, "eio-1", fails=True)  # the transport close raises
 
-        async def resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
-            runtime.begin_draining()  # the announcement lands while this connect is under way
-            return await _resolve(connect)
+        class _Announcing(InMemoryRealtimePresence):
+            async def joined(self, room: str, sid: str) -> None:
+                runtime.begin_draining()  # lands after the replay progress was registered
+                await super().joined(room, sid)
 
-        _replayed(server, _runtime(), resolve=resolve, draining=lambda: runtime.draining)
+        _replayed(
+            server,
+            _runtime(),
+            resolve=_resolve,
+            presence=_Announcing(),
+            draining=lambda: runtime.draining,
+        )
         lifecycle = server.handlers["/"]["connect"].__self__
 
         async with runtime.scope():
