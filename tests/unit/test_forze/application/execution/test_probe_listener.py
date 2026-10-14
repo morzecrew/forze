@@ -659,9 +659,7 @@ class TestProbeListenerChecks:
 
         return build_runtime(
             deps=Deps.plain({keys[name]: client for name, client in clients.items()}),
-            lifecycle_steps=probe_listener_step(
-                host="127.0.0.1", port=port, checks=keys, **kwargs
-            ),
+            lifecycle_steps=probe_listener_step(host="127.0.0.1", port=port, checks=keys, **kwargs),
             drain_timeout=timedelta(0),
         )
 
@@ -710,7 +708,6 @@ class TestProbeListenerChecks:
         }
         # Liveness runs no check: a pod whose database is down is not to be restarted.
         assert live == (200, '{"status":"alive"}')
-
 
     # ....................... #
 
@@ -766,3 +763,53 @@ class TestProbeListenerChecks:
 
         assert stopped is True
         assert events == ["cancelled"]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_check_that_outlives_the_stop_is_reported(self) -> None:
+        """A check that ignores its cancellation past the deadline: the stop says so."""
+
+        port = _free_port()
+        started = asyncio.Event()
+
+        class _Stubborn:
+            async def health(self) -> tuple[str, bool]:
+                started.set()
+
+                try:
+                    await asyncio.sleep(5.0)
+
+                except asyncio.CancelledError:
+                    await asyncio.sleep(0.5)  # unwinds, but slowly
+
+                return "ok", True
+
+        key = DepKey[Any]("stubborn")
+        step = probe_listener_step(
+            host="127.0.0.1", port=port, checks={"slow": key}, check_timeout=timedelta(seconds=10)
+        )
+        runtime = build_runtime(
+            deps=Deps.plain({key: _Stubborn()}), lifecycle_steps=step, drain_timeout=timedelta(0)
+        )
+
+        async with runtime.scope():
+            _reader, writer = await asyncio.open_connection("127.0.0.1", port)
+
+            try:
+                writer.write(b"GET /readyz HTTP/1.1\r\nHost: probe\r\n\r\n")
+                await writer.drain()
+                await asyncio.wait_for(started.wait(), timeout=5.0)
+
+                clock = asyncio.get_running_loop()
+                stopped = await step.startup.stop(deadline=clock.time() + 0.1)  # type: ignore[attr-defined]
+
+            finally:
+                writer.close()
+
+                with suppress(OSError):
+                    await writer.wait_closed()
+
+            await asyncio.sleep(0.6)  # let the stubborn check finish before the scope ends
+
+        assert stopped is False

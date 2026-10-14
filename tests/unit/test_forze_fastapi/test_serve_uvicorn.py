@@ -181,16 +181,20 @@ class _FakeRuntime:
     drain_timeout = timedelta(0)
     shutdown_step_timeout = timedelta(0)
 
-    def __init__(self) -> None:
+    def __init__(self, *, fails: bool = False) -> None:
         self.seen: list[str | None] = []
         self.release = asyncio.Event()
         self.cancelled = False
+        self.fails = fails
 
     def get_context(self) -> object:
         raise exc.internal("no scope")
 
     async def drain(self, _budget: timedelta, *, announce_delay: timedelta) -> None:
         self.seen.append(_REQUEST.get())
+
+        if self.fails:
+            raise RuntimeError("drain failed")
 
         try:
             await asyncio.wait_for(self.release.wait(), timeout=10.0)
@@ -364,7 +368,6 @@ class TestSignalCapture:
         assert runtime.cancelled is True
         assert (server.should_exit, server.force_exit) == (True, True)
 
-
     # ....................... #
 
     def test_off_the_main_thread_the_stop_event_drains_and_stops_the_server(self) -> None:
@@ -424,7 +427,6 @@ class TestSignalCapture:
         assert failures == []
         assert events == ["phase", "teardown", "served"]
 
-
     # ....................... #
 
     @pytest.mark.asyncio
@@ -465,3 +467,60 @@ class TestSignalCapture:
             assert drain.cancelled()
 
         assert ran == []
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_drain_that_raises_still_lets_the_server_exit(self) -> None:
+        server = _server(_FakeRuntime(fails=True))
+
+        with server.capture_signals():
+            server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+            await _settled(server)
+            await asyncio.wait({server._drain_task}, timeout=5.0)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+        assert (server.should_exit, server.force_exit) == (True, False)
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_the_server_returning_cancels_a_drain_still_running(self) -> None:
+        runtime = _FakeRuntime()
+        server = _server(runtime)
+
+        with server.capture_signals():
+            server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+            await _settled(server)
+            drain = server._drain_task  # pyright: ignore[reportPrivateUsage]
+
+        assert drain is not None
+        await asyncio.wait({drain}, timeout=5.0)
+
+        assert drain.cancelled() and runtime.cancelled
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_stop_after_a_signal_starts_no_second_drain(self) -> None:
+        runtime = _FakeRuntime()
+        stop = asyncio.Event()
+        server = _DrainingServer(
+            uvicorn.Config(FastAPI()),
+            cast(ExecutionRuntime, runtime),
+            drain_budget=timedelta(seconds=1),
+            announce_delay=timedelta(0),
+            stop=stop,
+        )
+
+        with server.capture_signals():
+            server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+            await _settled(server)
+            first = server._drain_task  # pyright: ignore[reportPrivateUsage]
+
+            stop.set()
+            await asyncio.sleep(0.05)
+
+            assert server._drain_task is first  # pyright: ignore[reportPrivateUsage]
+            assert len(runtime.seen) == 1
+
+            runtime.release.set()

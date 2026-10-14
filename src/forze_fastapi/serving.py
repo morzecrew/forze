@@ -61,7 +61,10 @@ class _DrainingServer(uvicorn.Server):
         self._drain_budget = drain_budget
         self._announce_delay = announce_delay
         self._stop = stop
-        self._loop: asyncio.AbstractEventLoop | None = None
+        # Built by ``serve_uvicorn`` on the loop and in the task that serves: the loop the
+        # signal handler hands over to, and the context — the server's own, no request's —
+        # its callback runs in.
+        self._loop = asyncio.get_running_loop()
         self._context: Context = copy_context()
         self._drain_task: asyncio.Task[None] | None = None
 
@@ -69,8 +72,6 @@ class _DrainingServer(uvicorn.Server):
 
     @contextmanager
     def capture_signals(self) -> Generator[None]:
-        self._loop = asyncio.get_running_loop()
-        self._context = copy_context()
         watch = None if self._stop is None else self._loop.create_task(self._watch(self._stop))
         previous: dict[int, Any] = {}
 
@@ -103,10 +104,7 @@ class _DrainingServer(uvicorn.Server):
         # its selector: hand over to the loop, which ``call_soon_threadsafe`` wakes. In the
         # server's own context — by default the callback would copy the context of whatever
         # the signal interrupted, a request handler's bindings included.
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(
-                self._on_signal_in_loop, sig, context=self._context.copy()
-            )
+        self._loop.call_soon_threadsafe(self._on_signal_in_loop, sig, context=self._context.copy())
 
     # ....................... #
 
