@@ -1596,7 +1596,8 @@ class TestWiring:
         with pytest.raises(CoreException) as ei:
             LeadershipSpec(lock=LOCK, key="relay:want")
 
-        assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.code == "leadership.key_reserved"
+        LeadershipSpec(lock=LOCK, key="relay:wanted")
 
     def test_the_spec_refuses_a_grace_that_does_not_fit_the_lease(self) -> None:
         # 23 + 5 + 1 + 1 = 30: the grace fits, but the unwind after it would not.

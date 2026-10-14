@@ -68,6 +68,9 @@ Handoff = Literal["none", "on_request"]
 LEADERSHIP_HELD_GAUGE = "forze.leadership.held"
 LEADERSHIP_TERMS_ENDED_COUNTER = "forze.leadership.terms_ended"
 
+_WANT_SUFFIX: Final[str] = ":want"
+"""What a unit's handoff lock adds to its lease key; refused at the end of a lease key."""
+
 _DEFER_INTERVALS: Final[int] = 3
 """Campaign intervals the lease may stay free before replicas stop deferring to an asker."""
 
@@ -126,7 +129,8 @@ class LeadershipSpec:
     ``requires_fence_advance`` (needed by ``fence_floor``) one that cannot advance them."""
 
     key: str
-    """The lease's key. Every replica campaigning for the same unit of work uses the same key."""
+    """The lease's key. Every replica campaigning for the same unit of work uses the same key.
+    It may not end in ``:want``, the suffix of a unit's handoff lock."""
 
     renew_every: timedelta | None = None
     """How often the holder renews the lease. ``None`` renews every third of ``lock.ttl``."""
@@ -160,6 +164,15 @@ class LeadershipSpec:
     def __attrs_post_init__(self) -> None:
         if not self.key:
             raise exc.configuration("Leadership key must not be empty")
+
+        if self.key.endswith(_WANT_SUFFIX):
+            # Another step's handoff asks for its unit on `<its key>:want`; a lease on such a
+            # key would share that lock.
+            raise exc.configuration(
+                f"Leadership key must not end in {_WANT_SUFFIX!r}: that is the handoff lock of "
+                f"the unit {self.key.removesuffix(_WANT_SUFFIX)!r}",
+                code="leadership.key_reserved",
+            )
 
         _positive("campaign_every", self.campaign_every)
         _positive("release_timeout", self.release_timeout)
@@ -422,7 +435,7 @@ class _Campaign:
 
     @property
     def want_key(self) -> str:
-        return f"{self.spec.key}:want"
+        return f"{self.spec.key}{_WANT_SUFFIX}"
 
     @property
     def stop(self) -> asyncio.Event:
