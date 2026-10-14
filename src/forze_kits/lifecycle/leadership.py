@@ -138,7 +138,9 @@ class LeadershipSpec:
     """How often the holder renews the lease. ``None`` renews every third of ``lock.ttl``."""
 
     campaign_every: timedelta = timedelta(seconds=2)
-    """How often a replica that does not hold the lease tries to acquire it."""
+    """How often a replica that does not hold the lease tries to acquire it; also the bound on
+    each campaign call — ``may_campaign``, ``prefer``, ``fence_floor``, a lock read — and on the
+    holder's handoff check."""
 
     margin: timedelta = timedelta(seconds=1)
     """Allowance for the lock backend's clock and the network.
@@ -155,8 +157,8 @@ class LeadershipSpec:
 
     release_timeout: timedelta = timedelta(seconds=1)
     """How long a cancelled body gets to finish. One that takes longer keeps the lease until it
-    lapses, unreleased. Also the bound on each release call and campaign read, and no longer
-    than ``yield_grace``."""
+    lapses, unreleased. Also the bound on each release call, and no longer than
+    ``yield_grace``."""
 
     verify: bool = False
     """Make :meth:`Term.held` also read the lease's owner from the backend."""

@@ -298,8 +298,10 @@ step = leadership_lifecycle_step(
 A replica that finds the lease free reads the floor and moves the lock's counter past it
 before acquiring, so the first term after a loss draws a token above the store's fence and
 its claim goes through at once. With the counter intact the advance changes nothing. A lock
-backend that cannot advance its counter fails the step at startup; a floor that cannot be
-read skips that campaign, like any other campaign error. The
+backend that cannot advance its counter fails the step at startup. A floor that cannot be
+read in time is skipped and the replica acquires anyway: a token below the store's fence is
+refused by the claim, and the next campaign reads the floor again. A floor the lock can
+never advance past, such as `None`, stops the campaign for good. The
 [Redis page](../integrations/redis.md#fencing-after-data-loss) covers the capability
 itself. The
 [one-replica publisher recipe](../recipes/run-on-one-replica.md) runs the whole pattern.
