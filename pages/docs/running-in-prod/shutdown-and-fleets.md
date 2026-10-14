@@ -291,6 +291,10 @@ asks.
 - **Stopping.** The step stops within `yield_grace + release_timeout` plus a second.
   Keep that under the runtime's `shutdown_step_timeout` (ten seconds by default), or the
   loop is cancelled before it releases and the next leader waits out the TTL.
+- **Campaign calls.** `may_campaign`, `prefer` and the campaign's reads of the lock are
+  each cut off after `release_timeout`; one that overruns or raises skips that campaign. An
+  acquire is never cancelled: one that lands after the step stopped waiting, or that
+  raised after landing, is released at once.
 - **A body that raises** is released and restarted after the supervisor's backoff. A
   `configuration` error stops campaigning for good, with a critical log, while the
   process stays up — wiring does not fix itself by retrying.

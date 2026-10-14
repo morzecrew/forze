@@ -750,6 +750,26 @@ class TestRelease:
 
         _simulate(scenario)
 
+    def test_a_hanging_campaign_callback_does_not_hold_up_a_stop(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def never(_ctx: Any) -> bool:
+                await asyncio.sleep(FOREVER)
+                return True
+
+            a = fleet.replica("a", may_campaign=never)
+            await a.start()
+            await asyncio.sleep(0.5)
+
+            stopped_at = monotonic()
+            await a.stop()
+
+            assert a.loop_task().done()
+            assert monotonic() - stopped_at < RELEASE
+
+        _simulate(scenario)
+
     def test_a_failed_release_leaves_the_lease_to_lapse(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
@@ -1139,9 +1159,13 @@ class TestHandoff:
             await fleet.replica("c", handoff="on_request", prefer=self._prefers(False)).start()
             await asyncio.sleep(30)
 
-            failed = b.lock.calls("acquire")
-            gave_up = b.lock.calls("release", f"{KEY}:want")
-            assert gave_up and gave_up[0][0] == failed[2][0]  # at the third failed campaign
+            third = b.lock.calls("acquire")[2][0]  # every lease acquire of b's raises
+            asks = [at for at, _ in b.lock.calls("acquire", f"{KEY}:want")]
+            # Each failed acquire retires its string, and the want-lock moves to the next one;
+            # the third gives the want-lock up, and b does not ask again for a ttl.
+            assert third in [at for at, _ in b.lock.calls("release", f"{KEY}:want")]
+            assert asks[:3] == [at for at, _ in b.lock.calls("acquire")][:3]
+            assert not [at for at in asks if third < at < third + TTL]
             (leader,) = fleet.runs
             assert leader.replica in {"a", "c"}
             assert leader.started - start <= (3 + 1) * CAMPAIGN

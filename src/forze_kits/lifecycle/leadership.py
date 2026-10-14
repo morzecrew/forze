@@ -451,11 +451,13 @@ class _Campaign:
             if is_terminal_crash(error):
                 return error
 
-            logger.warning(
-                "Leadership campaign for %s failed; retrying at the next tick",
-                self.spec.key,
-                exc_info=error,
-            )
+            if not self.stop.is_set():
+                logger.warning(
+                    "Leadership campaign for %s failed; retrying at the next tick",
+                    self.spec.key,
+                    exc_info=error,
+                )
+
             await self._missed()
             return None
 
@@ -469,14 +471,14 @@ class _Campaign:
     async def _allowed(self) -> bool:
         free_since, self.free_since = self.free_since, None
 
-        if self.may_campaign is not None and not await self.may_campaign(self.ctx):
+        if self.may_campaign is not None and not await self._call(self.may_campaign(self.ctx)):
             await self._drop_want()
             return False
 
         if self.handoff == "none" or self.prefer is None:
             return True
 
-        if await self.prefer(self.ctx) and monotonic() >= self.ask_after:
+        if await self._call(self.prefer(self.ctx)) and monotonic() >= self.ask_after:
             await self._ask()
 
         else:
@@ -495,11 +497,13 @@ class _Campaign:
             await self._release(self.want_key, self.want_owner)
             self.want_owner = None
 
-        if self.want_owner is not None and await self.cmd.reset(self.want_key, self.want_owner):
+        if self.want_owner is not None and await self._call(
+            self.cmd.reset(self.want_key, self.want_owner)
+        ):
             return
 
-        acquired = await self.cmd.acquire(self.want_key, candidate)
-        self.want_owner = candidate if acquired is not None else None
+        acquired = await self._take(self.want_key, timeout=self.spec.release_timeout)
+        self.want_owner = acquired.owner if acquired is not None else None
 
     # ....................... #
 
@@ -507,10 +511,10 @@ class _Campaign:
         if self.query is None:  # pragma: no cover - resolved whenever handoff is on
             return False
 
-        if await self.query.get_owner(self.want_key) is None:
+        if await self._call(self.query.get_owner(self.want_key)) is None:
             return False
 
-        if await self.query.is_locked(self.spec.key):
+        if await self._call(self.query.is_locked(self.spec.key)):
             return True
 
         now = monotonic()
@@ -553,55 +557,94 @@ class _Campaign:
     # ....................... #
 
     async def _acquire(self) -> tuple[AcquiredLock, float] | None:
-        owner = self._candidate()
         sent = monotonic()
-        request = asyncio.ensure_future(self.cmd.acquire(self.spec.key, owner))
+        acquired = await self._take(
+            self.spec.key,
+            timeout=timedelta(seconds=self._soft(sent) - sent),
+        )
+
+        return None if acquired is None else (acquired, sent)
+
+    # ....................... #
+
+    async def _take(self, key: str, *, timeout: timedelta) -> AcquiredLock | None:
+        """Acquire *key* under the candidate string, and never cancel the request.
+
+        A request on the wire may land however its caller ends. One the step stopped waiting
+        for, or whose wait was cancelled, is released under its own string when it lands; one
+        that raised may have landed before its answer was lost, and is released at once. Either
+        way the string is retired: no term used it.
+        """
+
+        owner = self._candidate()
+        request = asyncio.ensure_future(self.cmd.acquire(key, owner))
 
         try:
-            await self._until({request}, timeout=self._soft(sent) - monotonic())
+            await self._until({request}, timeout=timeout.total_seconds())
 
         except BaseException:
-            self._settle_late(request, owner)
+            self._settle_late(request, key, owner)
             raise
 
         if not request.done():
-            # Cancelling the request would not stop it landing, so it runs on, and a lease it
-            # lands is released under its own string. That string is retired with it.
-            self._settle_late(request, owner)
+            self._settle_late(request, key, owner)
             self.candidate = None
 
             if self.stop.is_set():
                 return None
 
-            raise TimeoutError(f"Leadership acquire of {self.spec.key} was not answered in time")
+            raise TimeoutError(f"Leadership acquire of {key} was not answered in time")
 
-        acquired = request.result()
+        try:
+            acquired = request.result()
 
-        if acquired is None:
+        except Exception:
+            await self._release(key, owner)
+            self.candidate = None
+            raise
+
+        if acquired is not None and self.stop.is_set():
+            await self._release(key, owner)
             return None
 
-        if self.stop.is_set():
-            await self._release(self.spec.key, acquired.owner)
-            return None
-
-        return acquired, sent
+        return acquired
 
     # ....................... #
 
-    def _settle_late(self, request: asyncio.Future[AcquiredLock | None], owner: str) -> None:
+    def _settle_late(
+        self,
+        request: asyncio.Future[AcquiredLock | None],
+        key: str,
+        owner: str,
+    ) -> None:
         async def settle() -> None:
             with suppress(Exception):
                 if await request is not None:
                     logger.info(
-                        "Leadership acquire for %s landed after the step stopped waiting; "
+                        "Leadership acquire of %s landed after the step stopped waiting; "
                         "releasing it",
-                        self.spec.key,
+                        key,
                     )
-                    await self._release(self.spec.key, owner)
+                    await self._release(key, owner)
 
         task = asyncio.ensure_future(settle())
         self.stragglers.add(task)
         task.add_done_callback(self.stragglers.discard)
+
+    # ....................... #
+
+    async def _call[T](self, call: Awaitable[T]) -> T:
+        """A campaign read or one of the app's callbacks, bounded by ``release_timeout`` and by
+        a stop request; one that overruns is cancelled."""
+
+        task = asyncio.ensure_future(call)
+        await self._until({task}, timeout=self.spec.release_timeout.total_seconds())
+
+        if not task.done():
+            task.cancel()
+            raise TimeoutError(f"Leadership campaign call for {self.spec.key} overran")
+
+        return task.result()
 
     # ....................... #
 
