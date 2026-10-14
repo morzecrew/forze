@@ -178,6 +178,120 @@ comfortably exceed the step's duration — no heartbeat extends it here.
     run-exactly-once semantics, which a skip-if-held lock does not give —
     run it as a deploy step in your pipeline, not as a runtime step.
 
+## Run one replica's worth of work
+
+The singleton guard holds its lock only while startup runs, so it cannot keep one
+replica doing something for the life of the process. A replica that starts later finds
+the lock free and starts the work again, and when the replica that started it dies,
+nobody takes over. For work that must run on one replica at a time — a publisher, a
+single sequencer, a coordinator — use `leadership_lifecycle_step`. Every replica
+campaigns for a renewing lease, and the one that holds it runs your body until the
+lease is gone.
+
+Work that tolerates running everywhere needs neither. The framework's outbox relay,
+durable recovery and scheduler pollers and realtime sweeps are safe on every replica, so
+run them unwrapped.
+
+```python
+from forze.application.contracts.dlock import DistributedLockSpec
+from forze_kits.lifecycle import LeadershipSpec, leadership_lifecycle_step
+
+publisher = LeadershipSpec(
+    lock=DistributedLockSpec(name="lobby-publisher", requires_fencing_token=True),
+    key="lobby-publisher",
+)
+
+
+async def publish(ctx, term):
+    while term.live():  # one unit at a time, so the body stops between units
+        await publish_lobby_snapshot(ctx, fence=term.token)
+
+
+step = leadership_lifecycle_step(publisher, owner=instance_id, lead=publish)
+```
+
+The step's startup only starts the campaign, on every replica, so it is marked
+`requires_long_running` and nothing else: `FLEET` accepts it without a singleton guard,
+and `SERVERLESS` refuses it.
+
+### How a term ends
+
+The leader renews the lease every `renew_every` (a third of the lock's TTL by default)
+and tells the body that its term is ending through `term.ended`, early enough that the
+body's `yield_grace` finishes before the lease could lapse. Both deadlines are measured
+from when the latest successful renewal was **sent**, so a slow answer shortens the term
+rather than lengthening it.
+
+| `term.reason` | When | What happens to the body |
+|---|---|---|
+| `lost` | a renewal answers that the lease is gone | cancelled at once |
+| `expiring` | renewals failed until `yield_grace` before the lease could lapse | cancelled when the grace runs out |
+| `stopped` | the process is shutting down | cancelled after `yield_grace` |
+| `yielded` | another replica asked for the unit (see below) | cancelled after `yield_grace` |
+| `returned` / `raised` | the body ended on its own | — |
+| `unclaimed` | the `claim` hook found its token already claimed | `lead` never runs |
+
+The lease is released only once the body is done, and the next replica leads within one
+`campaign_every`. A body that does not finish within `release_timeout` of being cancelled
+keeps the lease until its TTL runs out, so no successor starts beside it. Write the body
+to stop at unit boundaries: cancellation at an arbitrary await is what the grace exists
+to avoid.
+
+### What fencing is for
+
+A responsive leader whose body honours cancellation runs only while it holds the lease.
+Nothing in the lease can stop a leader that is **not** responsive: a paused process, a
+blocked event loop, a body that ignores cancellation, or a lock backend that lost its
+data while the leader cannot yet know. Fencing covers those. Set
+`requires_fencing_token` on the lock, pass `term.token` with every write the body makes,
+and have the store refuse a token lower than the highest it has seen.
+
+A token can repeat after the lock backend loses its data, so the first write of a term
+**claims** the token and later writes accept an equal one:
+
+```sql
+-- claim, before the body's first write: the stored fence must be strictly lower
+UPDATE digests SET fence = :token WHERE name = :name AND fence < :token;
+-- every later write of the term
+UPDATE digests SET body = :body, fence = :token WHERE name = :name AND fence <= :token;
+```
+
+Pass the claim as `claim=`; the step runs it before `lead`, and a claim that matches no
+row ends the term as `unclaimed` and campaigns again. The
+[one-replica publisher recipe](../recipes/run-on-one-replica.md) runs the whole pattern.
+
+### The clock behind `margin`
+
+Redis keeps a lease's expiry on its own clock. If that clock steps forward — an NTP
+correction, a failover to a replica whose clock runs ahead — the lease ends early, while
+the leader still counts on its own monotonic clock. `margin` (one second by default) is
+the allowance for that: the leader treats its lease as gone `margin` before the TTL.
+Size it for your deployment's clock discipline, and keep the TTL at least ten times the
+backend's renewal latency, or terms flap.
+
+### Handoff on request
+
+With `handoff="on_request"`, a replica whose `prefer(ctx)` returns true asks for the unit
+by holding a second lock, `{key}:want`, and the holder yields at its next renewal unless
+it prefers the unit itself. Other replicas stand aside while someone asks, unless the
+lease has been free for three campaign intervals. An asker whose acquires keep failing
+gives the want-lock up after three tries and does not ask again for one TTL, so it cannot
+take the unit from every holder in turn. A replica that `may_campaign` refuses never
+asks.
+
+### Operating it
+
+- **Stopping.** The step stops within `yield_grace + release_timeout` plus a second.
+  Keep that under the runtime's `shutdown_step_timeout` (ten seconds by default), or the
+  loop is cancelled before it releases and the next leader waits out the TTL.
+- **A body that raises** is released and restarted after the supervisor's backoff. A
+  `configuration` error stops campaigning for good, with a critical log, while the
+  process stays up — wiring does not fix itself by retrying.
+- **Metrics.** `instrument_leadership()` exports `forze.leadership.held` and
+  `forze.leadership.terms_ended`; see the [metric catalog](../reference/metrics.md#leadership).
+  A sustained rate of `lost` or `expiring` means the lock backend is slow or unreachable
+  from the leader.
+
 ## What's shared, what's per-process
 
 Most coordination state already lives in your backends (idempotency records,
