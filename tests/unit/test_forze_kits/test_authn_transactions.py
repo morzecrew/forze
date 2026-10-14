@@ -442,6 +442,16 @@ async def test_logout_revokes_more_live_sessions_than_one_batch(
     assert all(session.revoked_at is not None for session in sessions.hits)
 
 
+def _wrapped_by_the_store() -> CoreException:
+    """A stale conflict the store raised over another of its own errors, in a cycle."""
+
+    inner = exc.concurrency("Failed to update records")
+    error = exc.concurrency("Conflict. Please retry.")
+    error.__cause__ = inner
+    inner.__cause__ = error
+    return error
+
+
 def _server_reported() -> CoreException:
     """A conflict translated from a driver error, as a deadlock or a write conflict is."""
 
@@ -456,6 +466,7 @@ def _server_reported() -> CoreException:
         pytest.param(exc.precondition("stale", code="revision_mismatch"), 4, id="mismatch"),
         pytest.param(exc.concurrency("Failed to update records"), 4, id="no-row-matched"),
         pytest.param(_server_reported(), 1, id="server-reported"),
+        pytest.param(_wrapped_by_the_store(), 4, id="wrapped-by-the-store"),
         pytest.param(exc.precondition("other", code="something_else"), 1, id="other"),
     ],
 )
@@ -515,3 +526,39 @@ async def test_a_reuse_revocation_that_conflicts_still_revokes_the_family(
 
     with pytest.raises(CoreException, match="Invalid refresh token"):
         await _refresh(ctx, registry, second.refresh_token)
+
+
+@pytest.mark.parametrize(
+    ("error", "calls"),
+    [
+        pytest.param(exc.concurrency("Write conflict. Please retry."), 4, id="conflict"),
+        pytest.param(exc.infrastructure("store unavailable"), 2, id="other"),
+    ],
+)
+async def test_a_family_revocation_that_keeps_failing_raises_its_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    error: CoreException,
+    calls: int,
+) -> None:
+    # The in-line attempt and then the handler's: a conflict gets three fresh transactions,
+    # anything else none, and the failure surfaces rather than a refusal that hides it.
+    ctx = _real_ctx()
+    registry = _registry()
+    principal = await _principal(ctx)
+    first = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
+        AuthnIdentity(principal_id=principal)
+    )
+    await _refresh(ctx, registry, _refresh_token(first))
+    made: list[int] = []
+
+    async def failing(*_: Any, **__: Any) -> None:
+        made.append(1)
+        raise error
+
+    monkeypatch.setattr(token_lifecycle, "revoke_sessions_matching", failing)
+
+    with pytest.raises(CoreException) as caught:
+        await _refresh(ctx, registry, _refresh_token(first))
+
+    assert caught.value is error
+    assert len(made) == calls
