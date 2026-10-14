@@ -238,6 +238,12 @@ class TestExcess:
         assert view.excess("a", load="load", settle=self._SETTLE) == 0
         assert view.excess("c", load="load", settle=self._SETTLE) == 2
 
+    def test_loads_near_the_float_limit_do_not_overflow_the_mean(self) -> None:
+        view = self._fleet(("a", 1e308), ("b", 1e308), ("c", 1.7e308))
+        mean = 1e308 / 3 + 1e308 / 3 + 1.7e308 / 3
+
+        assert view.excess("c", load="load", settle=self._SETTLE) == math.ceil(1.7e308 - mean)
+
     def test_never_negative_whatever_smallest_and_movable_say(self) -> None:
         view = _view(_member("a", load=0), _member("b", load=10, movable=-3))
 

@@ -206,7 +206,8 @@ class FleetView:
         if mine is None:
             return 0
 
-        mean = sum(loads.values()) / len(loads)
+        # Divided before summing: a sum of large finite loads can overflow to infinity.
+        mean = sum(value / len(loads) for value in loads.values())
 
         if mine <= mean * (1 + tolerance):
             return 0
