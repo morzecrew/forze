@@ -1,0 +1,440 @@
+"""Rebalancing: a replica well above its fleet's mean sheds movable transports, at a rate.
+
+# covers: forze_socketio.rebalance (connection_rebalance_lifecycle_step, connection_report)
+
+Run against python-socketio's own server and manager, with Engine.IO sockets stood in by a
+fake whose close fires the library's own Engine.IO disconnect, as a real socket does. The
+fleet is the mock, and the step runs in a runtime on the virtual-time loop, so minutes of
+ticks take milliseconds and every count below is exact.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
+from typing import Any
+
+import pytest
+from socketio.async_server import AsyncServer
+
+from forze.application.contracts.fleet import FleetSpec, MemberState, Report
+from forze.application.execution import DeploymentProfile, build_runtime
+from forze.application.execution.runtime import ExecutionRuntime
+from forze.base.exceptions import CoreException
+from forze_dst.runtime import run_simulation
+from forze_mock import MockDepsModule
+from forze_mock.adapters import MockFleetAdapter
+from forze_mock.state import MockState
+from forze_socketio import connection_rebalance_lifecycle_step, connection_report
+
+# ----------------------- #
+
+SPEC = FleetSpec(name="gateways", ttl=timedelta(hours=1))
+SECOND = timedelta(seconds=1)
+
+
+class _Socket:
+    """An Engine.IO socket stand-in: its close takes *delay*, then fires the disconnect."""
+
+    def __init__(self, server: AsyncServer, eio_sid: str, delay: float) -> None:
+        self.server = server
+        self.sid = eio_sid
+        self.delay = delay
+        self.queue: asyncio.Queue[Any] = asyncio.Queue()
+        self.closed = False
+        self.closes = 0
+        self.cancelled = False
+
+    async def close(self, wait: bool = True, abort: bool = False, reason: Any = None) -> None:
+        self.closes += 1
+
+        try:
+            await asyncio.sleep(self.delay)
+
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+        await self.server.eio._trigger_event("disconnect", self.sid, reason, run_async=False)
+        self.closed = True
+
+
+class _Node:
+    """One replica's server and the sockets it was given."""
+
+    def __init__(self) -> None:
+        self.server = AsyncServer()
+        self.sockets: dict[str, _Socket] = {}
+
+    async def connect(self, count: int, *namespaces: str, delay: float = 0.0) -> list[str]:
+        """Open *count* Engine.IO connections, each carrying every one of *namespaces*."""
+
+        eio_sids = [f"eio-{len(self.sockets) + index}" for index in range(count)]
+
+        for eio_sid in eio_sids:
+            self.sockets[eio_sid] = _Socket(self.server, eio_sid, delay)
+            self.server.eio.sockets[eio_sid] = self.sockets[eio_sid]
+            self.server.environ[eio_sid] = {}
+
+            for namespace in namespaces:
+                await self.server.manager.connect(eio_sid, namespace)
+
+        return eio_sids
+
+    def closed(self, eio_sids: list[str] | None = None) -> int:
+        """How many of *eio_sids* (or of every socket) closed."""
+
+        chosen = self.sockets if eio_sids is None else eio_sids
+
+        return sum(1 for eio_sid in chosen if self.sockets[eio_sid].closed)
+
+    def close_calls(self) -> int:
+        return sum(socket.closes for socket in self.sockets.values())
+
+    def namespace_connections(self) -> int:
+        return sum(
+            1
+            for namespace in list(self.server.manager.get_namespaces())
+            for _ in self.server.manager.get_participants(namespace, None)
+        )
+
+
+def _lobby(namespace: str, sid: str) -> bool:
+    return namespace == "/lobby"
+
+
+def _step(node: _Node, **overrides: Any) -> Any:
+    options: dict[str, Any] = {
+        "fleet": SPEC,
+        "every": SECOND,
+        "member_id": "me",
+        "namespaces": ("/lobby", "/game"),
+        "movable": _lobby,
+        "per_minute": 600,
+        "settle": timedelta(0),
+        "cooldown": timedelta(0),
+    }
+    options.update(overrides)
+
+    return connection_rebalance_lifecycle_step(node.server, **options)
+
+
+async def _beat(
+    state: MockState,
+    member_id: str,
+    report: Report,
+    member_state: MemberState = "serving",
+) -> None:
+    fleet = MockFleetAdapter(spec=SPEC, state=state, namespace=str(SPEC.name))
+    await fleet.beat(member_id, member_state, report)
+
+
+async def _peers(state: MockState, *loads: int) -> None:
+    for index, load in enumerate(loads):
+        await _beat(state, f"peer-{index}", {"connections": load, "movable": load})
+
+
+Probe = Callable[[ExecutionRuntime], Awaitable[None]]
+
+
+async def _serve(state: MockState, step: Any, probe: Probe) -> None:
+    """Run *step* in a runtime on the mock fleet while *probe* looks on."""
+
+    runtime = build_runtime(
+        MockDepsModule(state=state), lifecycle_steps=step, drain_timeout=timedelta(0)
+    )
+
+    async with runtime.scope():
+        await probe(runtime)
+
+
+def _sleep(seconds: float) -> Probe:
+    async def probe(_runtime: ExecutionRuntime) -> None:
+        await asyncio.sleep(seconds)
+
+    return probe
+
+
+# ----------------------- #
+
+
+class TestShedding:
+    def test_sheds_toward_the_mean_at_the_rate_and_only_movable(self) -> None:
+        async def scenario() -> tuple[int, int, int, int]:
+            state, node = MockState(), _Node()
+            lobby = await node.connect(30, "/lobby")
+            game = await node.connect(10, "/game")
+            await _peers(state, 20, 20)
+            await _beat(state, "me", {})
+            seen: list[int] = []
+
+            async def probe(_runtime: ExecutionRuntime) -> None:
+                await asyncio.sleep(60.5)
+                seen.append(node.closed())
+                await asyncio.sleep(600)
+
+            await _serve(state, _step(node, per_minute=6), probe)
+
+            return seen[0], node.closed(lobby), node.closed(game), len(node.server.eio.sockets)
+
+        first_minute, lobby_closed, game_closed, still_open = run_simulation(scenario)
+
+        # 40 against peers at 20: the mean is 26.7, so 40 is 50% above it. The allowance
+        # starts empty and fills at 6 a minute, one every ten seconds.
+        assert first_minute == 6
+        # It stops at 24, the most within 15% of the mean (24 + 20 + 20) / 3.
+        assert lobby_closed == 16
+        assert game_closed == 0
+        assert still_open == 24
+
+
+class TestNoDoubleShedding:
+    def test_a_tick_while_a_shed_is_closing_does_nothing(self) -> None:
+        async def scenario() -> list[int]:
+            state, node = MockState(), _Node()
+            # Each close takes 0.8 s: ten spread over one second end at 2.7 s, past the
+            # next tick at 2 s.
+            await node.connect(100, "/lobby", delay=0.8)
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+            seen: list[int] = []
+
+            async def probe(_runtime: ExecutionRuntime) -> None:
+                for moment in (1.55, 2.5, 3.02):
+                    await asyncio.sleep(moment - asyncio.get_running_loop().time())
+                    seen.append(node.close_calls())
+
+            await _serve(state, _step(node, per_minute=600), probe)
+
+            return seen
+
+        # Ten a second: the 1 s tick sheds ten; the 2 s tick finds them closing and leaves
+        # them; the 3 s tick sheds again once they are done.
+        assert run_simulation(scenario) == [6, 10, 11]
+
+    def test_a_tick_inside_the_cooldown_does_nothing(self) -> None:
+        async def scenario() -> list[int]:
+            state, node = MockState(), _Node()
+            await node.connect(100, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+            seen: list[int] = []
+
+            async def probe(_runtime: ExecutionRuntime) -> None:
+                for moment in (2.5, 11.5, 12.01):
+                    await asyncio.sleep(moment - asyncio.get_running_loop().time())
+                    seen.append(node.closed())
+
+            await _serve(state, _step(node, cooldown=timedelta(seconds=10)), probe)
+
+            return seen
+
+        # The 1 s shed ends at 1.9 s; the next may start ten seconds after, at the 12 s tick.
+        assert run_simulation(scenario) == [10, 10, 11]
+
+    def test_the_live_count_sets_the_shed_not_a_stale_report(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(30, "/lobby")
+            await _peers(state, 30, 30)
+            # Its own last report is from before a shed: 100 open, far above the mean.
+            await _beat(state, "me", {"connections": 100, "movable": 100})
+
+            await _serve(state, _step(node), _sleep(10))
+
+            return node.closed()
+
+        assert run_simulation(scenario) == 0
+
+
+class TestRate:
+    @pytest.mark.parametrize("every", [SECOND, timedelta(seconds=30)])
+    def test_ten_a_minute_whatever_the_interval(self, every: timedelta) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(200, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+
+            # Ten minutes of ticks, then up to just before the next one, so the last
+            # shed's closes have landed.
+            seconds = 600 + every.total_seconds() - 0.1
+            await _serve(state, _step(node, every=every, per_minute=10), _sleep(seconds))
+
+            return node.closed()
+
+        # Every second: one each sixth tick. Every 30 s: five each tick. A hundred either way.
+        assert run_simulation(scenario) == 100
+
+
+class TestSharedTransports:
+    def test_a_transport_with_a_namespace_that_may_not_move_is_never_shed(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(40, "/lobby", "/game")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+
+            await _serve(state, _step(node), _sleep(10))
+
+            return node.closed()
+
+        assert run_simulation(scenario) == 0
+
+    def test_an_excess_of_twenty_closes_twenty_transports(self) -> None:
+        async def scenario() -> tuple[int, int]:
+            state, node = MockState(), _Node()
+            await node.connect(40, "/lobby", "/chat")
+            await _peers(state, 10, 10)
+            await _beat(state, "me", {})
+
+            await _serve(
+                state,
+                _step(
+                    node,
+                    namespaces=("/lobby", "/chat"),
+                    movable=lambda namespace, sid: True,
+                    per_minute=6000,
+                    cooldown=timedelta(hours=1),
+                ),
+                _sleep(5),
+            )
+
+            return node.closed(), node.namespace_connections()
+
+        # 40 transports against a mean of 20 is 20 over: twenty transports close, and the
+        # forty connections they carried with them.
+        assert run_simulation(scenario) == (20, 40)
+
+
+class TestNoShedding:
+    @pytest.mark.parametrize(
+        ("case", "settle"),
+        [
+            ("unsettled", timedelta(hours=1)),
+            ("below the tolerance", timedelta(0)),
+            ("peers without a report", timedelta(0)),
+            ("no entry of its own", timedelta(0)),
+            ("not serving", timedelta(0)),
+        ],
+    )
+    def test_nothing_sheds(self, case: str, settle: timedelta) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(34, "/lobby")
+
+            if case == "below the tolerance":
+                await _peers(state, 30, 30)  # the mean is 31.3; 15% above is 36
+
+            elif case == "peers without a report":
+                await _beat(state, "peer-0", {})
+                await _beat(state, "peer-1", {"movable": 0})
+
+            else:
+                await _peers(state, 0, 0)
+
+            if case == "not serving":
+                await _beat(state, "me", {}, "starting")
+
+            elif case != "no entry of its own":
+                await _beat(state, "me", {})
+
+            await _serve(state, _step(node, settle=settle), _sleep(60))
+
+            return node.closed()
+
+        assert run_simulation(scenario) == 0
+
+    def test_nothing_sheds_while_draining(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(100, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+
+            async def probe(runtime: ExecutionRuntime) -> None:
+                await asyncio.sleep(0.5)  # before the first tick that could shed
+                runtime.begin_draining()
+                await asyncio.sleep(60)
+
+            await _serve(state, _step(node), probe)
+
+            return node.closed()
+
+        assert run_simulation(scenario) == 0
+
+
+class TestStop:
+    def test_shutdown_cancels_a_shed_still_closing(self) -> None:
+        async def scenario() -> tuple[bool, bool, float]:
+            state, node = MockState(), _Node()
+            (first,) = await node.connect(1, "/lobby", delay=8)
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+
+            # At 10 s the allowance holds one; its close would take until 18 s.
+            await _serve(state, _step(node, every=timedelta(seconds=10), per_minute=6), _sleep(12))
+
+            socket = node.sockets[first]
+
+            return socket.cancelled, socket.closed, asyncio.get_running_loop().time()
+
+        cancelled, closed, left_at = run_simulation(scenario)
+
+        assert cancelled and not closed
+        assert left_at < 18
+
+
+# ....................... #
+
+
+class TestReport:
+    def test_counts_transports_and_the_movable_ones(self) -> None:
+        async def scenario() -> Report:
+            node = _Node()
+            await node.connect(2, "/lobby")
+            await node.connect(1, "/lobby", "/game")
+            await node.connect(1, "/game")
+            await node.connect(1, "/other")
+
+            report = connection_report(node.server, namespaces=("/lobby", "/game"), movable=_lobby)
+
+            return report()
+
+        # Four carry a counted namespace; only the two lobby-only ones may move.
+        assert run_simulation(scenario) == {"connections": 4, "movable": 2}
+
+
+class TestWiring:
+    @pytest.mark.parametrize(
+        ("overrides", "match"),
+        [
+            ({"every": timedelta(0)}, "interval must be positive"),
+            ({"per_minute": 0}, "at least 1 a minute"),
+            ({"tolerance": -0.1}, "tolerance"),
+            ({"tolerance": float("nan")}, "tolerance"),
+            ({"settle": -SECOND}, "must not be negative"),
+            ({"cooldown": -SECOND}, "must not be negative"),
+            ({"namespaces": ()}, "at least one namespace"),
+        ],
+    )
+    def test_bad_arguments_are_refused_at_construction(
+        self, overrides: dict[str, Any], match: str
+    ) -> None:
+        with pytest.raises(CoreException, match=match):
+            _step(_Node(), **overrides)
+
+    def test_an_invalid_member_id_is_refused_at_construction(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            _step(_Node(), member_id="a\tb")
+
+        assert caught.value.code == "fleet.member_id_invalid"
+
+    def test_a_serverless_runtime_refuses_it(self) -> None:
+        with pytest.raises(CoreException, match="SERVERLESS"):
+            build_runtime(
+                MockDepsModule(),
+                lifecycle_steps=_step(_Node()),
+                deployment=DeploymentProfile.SERVERLESS,
+            )

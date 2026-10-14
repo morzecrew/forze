@@ -227,13 +227,8 @@ def _selected(
         return False
 
 
-def _drain_targets(
-    sio: AsyncServer,
-    *,
-    namespaces: Sequence[str],
-    select: ConnectionSelector | None,
-) -> list[tuple[str, str]]:
-    """This node's Engine.IO connections whose every namespace the drain may close."""
+def _transports(sio: AsyncServer) -> dict[str, list[tuple[str, str]]]:
+    """This node's Engine.IO connections, each with the ``(namespace, sid)`` pairs it carries."""
 
     transports: dict[str, list[tuple[str, str]]] = {}
 
@@ -241,6 +236,17 @@ def _drain_targets(
     for namespace in cast("list[str]", list(sio.manager.get_namespaces())):
         for sid, eio_sid in sio.manager.get_participants(namespace, None):
             transports.setdefault(eio_sid, []).append((namespace, sid))
+
+    return transports
+
+
+def _closable(
+    transports: dict[str, list[tuple[str, str]]],
+    *,
+    namespaces: Sequence[str],
+    select: ConnectionSelector | None,
+) -> list[tuple[str, str]]:
+    """The *transports* whose every namespace may be closed, as ``(namespace, eio_sid)``."""
 
     return [
         (members[0][0], eio_sid)
@@ -250,6 +256,17 @@ def _drain_targets(
             for namespace, sid in members
         )
     ]
+
+
+def _drain_targets(
+    sio: AsyncServer,
+    *,
+    namespaces: Sequence[str],
+    select: ConnectionSelector | None,
+) -> list[tuple[str, str]]:
+    """This node's Engine.IO connections whose every namespace the drain may close."""
+
+    return _closable(_transports(sio), namespaces=namespaces, select=select)
 
 
 # ....................... #
