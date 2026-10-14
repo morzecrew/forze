@@ -473,8 +473,12 @@ with the window fitted to the phase's allowance like the
 - **A WebSocket tail** closes with 1012 (service restart), and the client reconnects with
   `last_event_id`.
 
-While the replica drains, the routes refuse new connections. They read the state from the
-context `ctx_dep` returns, so pass the runtime's — `runtime.get_context`:
+A stream still replaying the mailbox when the phase reaches it ends once its replay has. A
+WebSocket route attached without a hub has no live tail, and the drain does not reach it.
+
+While the replica drains, from the drain's announcement on, the routes turn new connections
+away. The drain step tells them through the hub, so it does not matter what `ctx_dep`
+returns; a route without a hub reads the state from that context instead:
 
 - **A new SSE request** is answered 200 with a stream that carries only a `retry:` of
   1–3 seconds, jittered, and ends at once, with `X-Error-Code: realtime_draining`. A

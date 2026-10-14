@@ -41,6 +41,7 @@ from forze.application.execution.background import (
     spread_closes,
     spread_drain_lifecycle_step,
 )
+from forze.application.execution.context.lifecycle import scope_readiness
 from forze.application.integrations.realtime import RealtimePresence
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
@@ -551,9 +552,13 @@ def realtime_sse_drain_lifecycle_step(
     phase; when the runtime drains it ends every subscription the hub holds, spread over
     *window* so the clients' reconnects are spread too: an SSE response finishes, and the
     browser reconnects with its ``Last-Event-ID``; a WebSocket closes with 1012, and the
-    client reconnects with ``last_event_id``. The window and tail are fitted to the phase's
-    allowance, and below the drain floor (100 ms) the phase is skipped. Streams opened while
-    the replica drains are refused by the routes themselves.
+    client reconnects with ``last_event_id``. A stream still replaying ends once its replay
+    has. The window and tail are fitted to the phase's allowance, and below the drain floor
+    (100 ms) the phase is skipped.
+
+    At startup the step also has *hub* follow its scope's readiness, so the routes turn new
+    streams away from the drain's announcement on, whatever context their ``ctx_dep``
+    returns.
 
     :param window: The longest the ends are spread over.
     :param tail: Bounds the phase after the last end; ending a subscription is immediate.
@@ -568,7 +573,7 @@ def realtime_sse_drain_lifecycle_step(
     ) -> None:
         await spread_closes([_ending(one) for one in subscriptions], window, tail=tail)
 
-    return spread_drain_lifecycle_step(
+    step = spread_drain_lifecycle_step(
         collect=lambda: hub.subscriptions,
         close=close,
         window=window,
@@ -576,3 +581,9 @@ def realtime_sse_drain_lifecycle_step(
         order=order,
         step_id=step_id,
     )
+
+    async def startup(ctx: ExecutionContext) -> None:
+        hub.follow_drain(lambda: scope_readiness(ctx) == "draining")
+        await step.startup(ctx)
+
+    return attrs.evolve(step, startup=startup)

@@ -134,8 +134,12 @@ def _sse_frame(*, event: str, event_id: str | None, payload: dict[str, Any]) -> 
 # ....................... #
 
 
-def _draining(ctx: ExecutionContext) -> bool:
-    """Whether the replica is on its way down: a drain was announced, or the gate closed."""
+def _draining(ctx: ExecutionContext, hub: RealtimeSseHub | None) -> bool:
+    """Whether the replica is on its way down, as the hub's drain step reports it or, for a
+    route without a hub, as the request's context does."""
+
+    if hub is not None and hub.draining:
+        return True
 
     return scope_readiness(ctx) == "draining"
 
@@ -412,8 +416,9 @@ def attach_realtime_sse_route(
     Socket.IO analog is app code calling ``enter_room``), never a client-asserted
     fact. Principal-addressed delivery needs no authorizer.
 
-    While the replica drains (a drain announced, read from the request's context) a new
-    stream is answered 200 with only a jittered ``retry:`` (1–3 s) and
+    While the replica drains — as the *hub*'s drain step reports it, or for a route without
+    a hub as the request's context does — a new stream is answered 200 with only a jittered
+    ``retry:`` (1–3 s) and
     ``X-Error-Code: realtime_draining``, so ``EventSource`` reconnects — a non-200 would end
     it for good. :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` ends the
     open ones.
@@ -437,7 +442,7 @@ def attach_realtime_sse_route(
     ) -> StreamingResponse:
         ctx = ctx_dep()
 
-        if _draining(ctx):
+        if _draining(ctx, hub):
             return _retry_elsewhere()
 
         principal = _authenticated_principal(ctx)
@@ -467,7 +472,7 @@ def attach_realtime_sse_route(
             else None
         )
 
-        if subscription is not None and _draining(ctx):
+        if subscription is not None and _draining(ctx, hub):
             # The drain may have ended the hub's subscribers before this one joined.
             hub.unsubscribe(subscription)  # type: ignore[union-attr]
             return _retry_elsewhere()

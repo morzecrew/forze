@@ -11,7 +11,7 @@ Each app holds a real runtime scope whose plan carries the hub's drain step, dri
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any
@@ -43,6 +43,8 @@ from forze_fastapi.realtime import (
     realtime_sse_drain_lifecycle_step,
 )
 from forze_fastapi.realtime.ws import WS_RECONNECT_CLOSE
+from forze_mock import MockDepsModule, MockState
+from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
 
@@ -61,16 +63,16 @@ def _runtime(hub: RealtimeSseHub, *, window: float = 0.3) -> ExecutionRuntime:
 class _BindIdentity:
     """Stands in for the security middleware: binds the principal on the scope's context."""
 
-    def __init__(self, app: ASGIApp, *, runtime: ExecutionRuntime) -> None:
+    def __init__(self, app: ASGIApp, *, ctx_dep: Callable[[], ExecutionContext]) -> None:
         self.app = app
-        self.runtime = runtime
+        self.ctx_dep = ctx_dep
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
-        ctx = self.runtime.get_context()
+        ctx = self.ctx_dep()
 
         with ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=_PRINCIPAL)):
             await self.app(scope, receive, send)
@@ -88,12 +90,17 @@ def _grant_and_announce(runtime: ExecutionRuntime) -> Any:
 
 @asynccontextmanager
 async def _sse(
-    hub: RealtimeSseHub, runtime: ExecutionRuntime, **attach: Any
+    hub: RealtimeSseHub,
+    runtime: ExecutionRuntime,
+    *,
+    ctx_dep: Callable[[], ExecutionContext] | None = None,
+    **attach: Any,
 ) -> AsyncIterator[httpx.AsyncClient]:
+    ctx_dep = ctx_dep or runtime.get_context
     router = APIRouter()
     attach_realtime_sse_route(
         router,
-        ctx_dep=runtime.get_context,
+        ctx_dep=ctx_dep,
         mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
         cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
         hub=hub,
@@ -102,7 +109,7 @@ async def _sse(
     app = FastAPI()
     app.include_router(router)
     register_exception_handlers(app)
-    app.add_middleware(_BindIdentity, runtime=runtime)  # type: ignore[arg-type]
+    app.add_middleware(_BindIdentity, ctx_dep=ctx_dep)  # type: ignore[arg-type]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -134,6 +141,12 @@ def _assert_told_to_retry(response: httpx.Response) -> None:
 
 
 # ----------------------- #
+
+
+def _bare_context() -> ExecutionContext:
+    """A context outside the runtime's scope, as the shipped recipes pass to ``ctx_dep``."""
+
+    return context_from_deps(MockDepsModule(state=MockState())())
 
 
 class TestSseDrain:
@@ -186,6 +199,19 @@ class TestSseDrain:
 
     # ....................... #
 
+    async def test_a_route_given_a_bare_context_learns_the_drain_from_the_hub(self) -> None:
+        hub = RealtimeSseHub()
+        runtime = _runtime(hub)
+        bare = _bare_context()
+
+        async with runtime.scope(), _sse(hub, runtime, ctx_dep=lambda: bare) as client:
+            runtime.begin_draining()
+            response = await asyncio.wait_for(client.get("/realtime/sse"), timeout=5)
+
+        _assert_told_to_retry(response)
+
+    # ....................... #
+
     async def test_a_stream_the_drain_overtook_mid_connect_is_told_to_retry(self) -> None:
         hub = RealtimeSseHub()
         runtime = _runtime(hub)
@@ -205,8 +231,11 @@ class TestSseDrain:
 # ----------------------- #
 
 
-def _ws(hub: RealtimeSseHub, *, handshakes: list[str], announce: bool = False) -> TestClient:
+def _ws(
+    hub: RealtimeSseHub, *, handshakes: list[str], announce: bool = False, bare: bool = False
+) -> TestClient:
     runtime = _runtime(hub)
+    bare_ctx = _bare_context()
 
     async def resolve(_connect: WsConnect) -> WsConnection:
         handshakes.append("resolve")
@@ -219,7 +248,7 @@ def _ws(hub: RealtimeSseHub, *, handshakes: list[str], announce: bool = False) -
     router = APIRouter()
     attach_realtime_ws_route(
         router,
-        ctx_dep=runtime.get_context,
+        ctx_dep=(lambda: bare_ctx) if bare else runtime.get_context,
         resolve=resolve,
         mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
         cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
@@ -298,3 +327,20 @@ class TestWebSocketDrain:
 
         assert caught.value.code == WS_RECONNECT_CLOSE
         assert hub.subscribers == 0
+
+    # ....................... #
+
+    def test_a_route_given_a_bare_context_learns_the_drain_from_the_hub(self) -> None:
+        hub, handshakes = RealtimeSseHub(), []
+
+        with _ws(hub, handshakes=handshakes, bare=True) as client:
+            client.post("/announce")
+
+            with (
+                client.websocket_connect("/realtime/ws") as ws,
+                pytest.raises(WebSocketDisconnect) as caught,
+            ):
+                ws.receive_json()
+
+        assert caught.value.code == WS_RECONNECT_CLOSE
+        assert handshakes == []

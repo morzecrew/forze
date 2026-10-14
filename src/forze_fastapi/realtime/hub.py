@@ -18,6 +18,7 @@ require_fastapi()
 # ....................... #
 
 import asyncio
+from collections.abc import Callable
 from typing import final
 from uuid import UUID
 
@@ -145,12 +146,33 @@ class RealtimeSseHub:
 
     _subscriptions: set[SseSubscription] = attrs.field(factory=set, init=False)
 
+    _draining: Callable[[], bool] | None = attrs.field(default=None, init=False, repr=False)
+
     def __attrs_post_init__(self) -> None:
         if self.queue_size <= 0:
             raise exc.configuration("SSE hub queue_size must be positive")
 
         self.ready = asyncio.Event()
         self.ready.set()
+
+    # ....................... #
+
+    @property
+    def draining(self) -> bool:
+        """Whether the replica is draining, as the hub's drain step reports it.
+
+        The SSE and WebSocket routes turn new streams away while it is true, whatever
+        context their ``ctx_dep`` returns. ``False`` until a drain step follows the scope.
+        """
+
+        return self._draining is not None and self._draining()
+
+    # ....................... #
+
+    def follow_drain(self, draining: Callable[[], bool]) -> None:
+        """Report *draining* as :attr:`draining`; the hub's drain step calls it at startup."""
+
+        self._draining = draining
 
     # ....................... #
 

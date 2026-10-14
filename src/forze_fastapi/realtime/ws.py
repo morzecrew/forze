@@ -398,8 +398,8 @@ def attach_realtime_ws_route(
     ``realtime.reauth`` swaps in a fresh ``expires_at`` without reconnecting), the
     same contract as the Socket.IO expiry sweep.
 
-    While the replica drains (a drain announced, read from the context) a new upgrade is
-    accepted and closed with 1012, as the route's other refusals are, because a close
+    While the replica drains — as the *hub*'s drain step reports it, or without a hub as the
+    context does — a new upgrade is accepted and closed with 1012, as the route's other refusals are, because a close
     before accept is an opaque 403. A live tail whose hub subscription the drain ends —
     :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` — closes with 1012
     too, and the client reconnects with ``last_event_id``.
@@ -443,7 +443,7 @@ def attach_realtime_ws_route(
     async def ws_endpoint(websocket: WebSocket) -> None:
         ctx = ctx_dep()
 
-        if _draining(ctx):
+        if _draining(ctx, hub):
             await websocket.accept()
             await websocket.close(code=WS_RECONNECT_CLOSE, reason=_DRAINING_REASON)
             return
@@ -496,7 +496,7 @@ def attach_realtime_ws_route(
             else None
         )
 
-        if subscription is not None and _draining(ctx):
+        if subscription is not None and _draining(ctx, hub):
             # The drain may have ended the hub's subscribers before this one joined.
             hub.unsubscribe(subscription)  # type: ignore[union-attr]
             await websocket.close(code=WS_RECONNECT_CLOSE, reason=_DRAINING_REASON)
