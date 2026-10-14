@@ -30,15 +30,13 @@ from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.adapters import _utils as authn_utils
 from forze_identity.authn.adapters import password_lifecycle, password_reset, token_lifecycle
-from forze_identity.authn.adapters.credential_deactivation import (
-    AuthnCredentialDeactivationHelper,
-)
 from forze_identity.authn.application.specs import (
     api_key_account_spec,
     password_account_spec,
     password_reset_spec,
     session_spec,
 )
+from forze_identity.authn.domain.models.account import CreateApiKeyAccountCmd
 from forze_identity.authn.services import PasswordConfig
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
@@ -207,16 +205,19 @@ async def test_a_failed_deactivation_leaves_the_principal_and_its_sessions_as_th
     issued = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
         AuthnIdentity(principal_id=principal)
     )
+    await ctx.doc.command(api_key_account_spec).create(
+        CreateApiKeyAccountCmd(principal_id=principal, key_hash="h")
+    )
 
-    # The credential leg runs last, after the principal and its sessions were written.
+    # The session leg runs last, after the principal and its credentials were written.
     async def fail(*_: Any) -> None:
-        raise exc.infrastructure("credential store unavailable")
+        raise exc.infrastructure("session store unavailable")
 
-    monkeypatch.setattr(AuthnCredentialDeactivationHelper, "deactivate_all", fail)
+    monkeypatch.setattr(token_lifecycle, "revoke_sessions_matching", fail)
 
     with (
         ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=uuid4())),
-        pytest.raises(CoreException, match="credential store unavailable"),
+        pytest.raises(CoreException, match="session store unavailable"),
     ):
         await run_operation(
             _registry(),
@@ -230,7 +231,12 @@ async def test_a_failed_deactivation_leaves_the_principal_and_its_sessions_as_th
         filters={"$values": {"principal_id": principal}}
     )
 
+    keys = await ctx.doc.query(api_key_account_spec).find_many(
+        filters={"$values": {"principal_id": principal}}
+    )
+
     assert row.is_active
+    assert [key.is_active for key in keys.hits] == [True]
     assert [session.revoked_at for session in sessions.hits] == [None]
 
     # And the session still refreshes: nothing of the failed deactivation committed.
@@ -436,11 +442,20 @@ async def test_logout_revokes_more_live_sessions_than_one_batch(
     assert all(session.revoked_at is not None for session in sessions.hits)
 
 
+def _server_reported() -> CoreException:
+    """A conflict translated from a driver error, as a deadlock or a write conflict is."""
+
+    error = exc.concurrency("Deadlock detected. Please retry.")
+    error.__cause__ = RuntimeError("deadlock detected")
+    return error
+
+
 @pytest.mark.parametrize(
     ("error", "calls"),
     [
         pytest.param(exc.precondition("stale", code="revision_mismatch"), 4, id="mismatch"),
         pytest.param(exc.concurrency("Failed to update records"), 4, id="no-row-matched"),
+        pytest.param(_server_reported(), 1, id="server-reported"),
         pytest.param(exc.precondition("other", code="something_else"), 1, id="other"),
     ],
 )

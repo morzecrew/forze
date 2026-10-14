@@ -26,6 +26,7 @@ from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_identity.authn.adapters import (
+    PasswordLifecycleAdapter,
     PolicyPrincipalEligibilityAdapter,
     PrincipalDeactivationAdapter,
     TokenLifecycleAdapter,
@@ -33,9 +34,12 @@ from forze_identity.authn.adapters import (
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
 )
+from forze_identity.authn.application.specs import password_account_spec
+from forze_identity.authn.domain.models.account import CreatePasswordAccountCmd
 from forze_identity.authn.services import (
     AccessTokenService,
     Hs256Signer,
+    PasswordService,
     RefreshTokenConfig,
     RefreshTokenService,
 )
@@ -262,3 +266,76 @@ async def test_a_logout_racing_a_refresh_revokes_the_session_that_replaced_it(
 
     assert len(sessions) == 2
     assert _live(sessions) == []
+
+
+async def test_a_deactivation_and_a_password_change_do_not_deadlock(
+    pg_client: PostgresClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both write the password account and the sessions. Taken in opposite orders, a
+    # deactivation and a password change of one principal each wait on the other's lock,
+    # and Postgres aborts one of them.
+    stack, principal = await _stack(pg_client)
+    ctx = stack.ctx
+    passwords = PasswordService()
+    pa_qry = ctx.document.query(password_account_spec)
+    pa_cmd = ctx.document.command(password_account_spec)
+
+    with ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+        await pa_cmd.create(
+            CreatePasswordAccountCmd(
+                principal_id=principal,
+                username="bob",
+                password_hash=passwords.hash_password_sync("old-secret"),
+            ),
+            return_new=False,
+        )
+        await stack.tokens.issue_tokens(AuthnIdentity(principal_id=principal))
+
+    deactivation = PrincipalDeactivationAdapter(
+        principal_registry=stack.deactivation.principal_registry,
+        token_lifecycle=stack.tokens,
+        credentials=AuthnCredentialDeactivationHelper(pa_qry=pa_qry, pa_cmd=pa_cmd),
+    )
+    change = PasswordLifecycleAdapter(
+        password_svc=passwords,
+        pa_qry=pa_qry,
+        pa_cmd=pa_cmd,
+        eligibility=PolicyPrincipalEligibilityAdapter(
+            principal_qry=ctx.document.query(policy_principal_spec)
+        ),
+        session_qry=ctx.document.query(session_spec),
+        session_cmd=ctx.document.command(session_spec),
+    )
+
+    # Hold the deactivation where it reaches the credentials, its transaction open.
+    paused, go = asyncio.Event(), asyncio.Event()
+    close_credentials = AuthnCredentialDeactivationHelper.deactivate_all
+
+    async def held(self: Any, principal_id: UUID) -> None:
+        paused.set()
+        await go.wait()
+        await close_credentials(self, principal_id)
+
+    monkeypatch.setattr(AuthnCredentialDeactivationHelper, "deactivate_all", held)
+
+    async with asyncio.timeout(15):
+        deactivate = asyncio.create_task(stack.in_tx(lambda: deactivation.deactivate(principal)))
+        await paused.wait()
+
+        changing = asyncio.create_task(
+            stack.in_tx(
+                lambda: change.change_password(
+                    AuthnIdentity(principal_id=principal),
+                    "old-secret",
+                    "new-secret",
+                )
+            )
+        )
+        await asyncio.sleep(BLOCKED_FOR)
+        go.set()
+
+        results = await asyncio.gather(deactivate, changing, return_exceptions=True)
+
+    assert [r for r in results if isinstance(r, BaseException)] == []
+    assert _live(await stack.sessions(principal)) == []
