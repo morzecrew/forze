@@ -89,7 +89,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0067](0067-period-and-overlap.md) | Period, its bounds, and the overlap oracle | ✅ Complete | One value object for a period and its bounds convention, the overlap predicate decided once, and a DST invariant asserting no two periods sharing a key overlap in a recorded history. |
 | [0068](0068-cross-process-grants-cache-invalidation.md) | Cross-process grants cache invalidation | 📝 Draft | How an opt-in grants-cache invalidation in one process reaches every other process: a broadcast over the cache push-invalidation capability, with the TTL kept as the backstop. |
 | [0069](0069-session-revocation-fast-path.md) | Session revocation fast path | 🚧 In progress | Verifying an access token from Redis-cached revocation states (a principal epoch claim, family liveness) that expire within a TTL and are written through on revocation; misses read the rows. |
-| [0070](0070-outbox-consume-mode.md) | Outbox consume mode | 📝 Draft | An opt-in Postgres outbox mode where a relay pass locks its batch in one transaction and deletes each row once published, so a row is written twice and never pruned. |
+| [0070](0070-outbox-consume-mode.md) | Outbox consume mode | 📝 Draft | An opt-in Postgres outbox mode where a relay pass locks its batch in one transaction and deletes each row once published, so a row published first time is written twice, never pruned. |
 
 ## Status legend
 

@@ -1,16 +1,17 @@
 # RFC 0070 — Outbox consume mode
 
 - **Status:** 📝 Draft
-- **Scope:** An opt-in storage mode for the Postgres outbox that writes a row twice, at staging
-  and when it is deleted after its publish, rather than three times plus a retention delete.
+- **Scope:** An opt-in storage mode for the Postgres outbox that writes a row that publishes on
+  its first try twice, at staging and when it is deleted after its publish, rather than three
+  times plus a retention delete. A retry or a park adds an update, as today.
   - A relay pass runs in one transaction. It locks a batch without creating new row versions,
     publishes each row, deletes the published ones, and records retries and parks per row,
     then commits.
   - A failed pass ends the background step's tick and backs it off.
   - An optional insert-only delivery log keeps "was it delivered" answerable.
 
-  The outbox ports keep their methods and meanings, and the relay gains a pass scope and a
-  publish timeout. Staging, other backends' outboxes and exactly-once delivery are out of
+  The outbox ports keep their methods and meanings. The relay gains a pass scope, a pass
+  deadline and a publish timeout. Staging, other backends' outboxes and exactly-once delivery are out of
   scope.
 - **Related:**
   - [`src/forze_postgres/adapters/outbox.py`](../src/forze_postgres/adapters/outbox.py): the
@@ -135,8 +136,8 @@ All verified against the tree at the time of writing.
 - The same at-least-once delivery, and the same order within a route when one relay drains it.
 - Per-row failure handling unchanged: retries with backoff, parking, `requeue_failed`.
 - A failed pass never republishes its batch in a tight loop.
-- Optionally, "was this event delivered, and when" answered from an append-only log that is
-  dropped by partition.
+- Optionally, "was this event's delivery committed, and when" answered from an append-only
+  log that is dropped by partition.
 
 **Non-goals**
 
@@ -153,6 +154,7 @@ All verified against the tree at the time of writing.
 PostgresOutboxConfig(
     relation=("ops", "outbox"),
     storage="consume",                   # "retain" (today's, the default) | "consume"
+    pass_deadline=timedelta(seconds=5),  # consume mode: the longest a pass holds its locks
     delivery_log=OutboxDeliveryLog(      # optional, consume mode only
         relation=("ops", "outbox_delivered"),
     ),
@@ -160,7 +162,7 @@ PostgresOutboxConfig(
 
 OutboxRelay(
     outbox_spec=...,
-    publish_timeout=timedelta(seconds=2),   # new; recommended in consume mode
+    publish_timeout=timedelta(seconds=2),   # new, optional: bounds one publish
 )
 ```
 
@@ -171,15 +173,32 @@ Configuration refuses `delivery_log` under `storage="retain"`.
 `OutboxQueryPort` gains one method with a default body:
 
 ```python
-def pass_scope(self) -> AbstractAsyncContextManager[object]:
+def pass_scope(self) -> AbstractAsyncContextManager[OutboxPassBudget | None]:
     """Scope one relay pass: claim, publish and mark. A no-op unless the store needs it."""
-    return nullcontext()
+    return nullcontext(None)
 ```
 
-`relay_outbox_claims` enters it around a pass. The Postgres store in consume mode returns its
-client's `transaction()`. Inside a caller's transaction on the same client, that becomes a
-savepoint, which is how a hand-driven relay with a lease fences the pass (5.6). Mongo, the
-mock and retain mode keep the no-op.
+`relay_outbox_claims` enters it around a pass, and treats a store that lacks the method (one
+that implements the protocol structurally) as having the no-op.
+- **Postgres in consume mode.** The scope opens the client's `transaction()`. Inside a
+  caller's transaction on the same client, that becomes a savepoint, which is how a
+  hand-driven relay with a lease fences the pass (5.6).
+- **Mongo, the mock and retain mode** keep the no-op.
+
+**The pass deadline.** The consume scope yields a budget ending `pass_deadline` after the pass
+began.
+- The relay checks it before each publish. Once it has passed, the relay publishes no more
+  rows, flushes its marks and lets the scope commit. The rows it did not reach were never
+  changed, so they return to `pending` as they were.
+- Each publish is bounded by the shorter of `publish_timeout` and the budget left. A publish
+  cut short is a transient failure, retried with backoff.
+- As a backstop, the scope sets `idle_in_transaction_session_timeout` locally to the deadline
+  plus a margin. A relay that stalls outright, for example on a blocked event loop, then
+  loses its session and rolls back (5.3), rather than holding the locks.
+
+A per-publish timeout alone bounds nothing: the relay marks published rows only every 32
+publishes and flushes retries at the end of the pass, so a batch of slow publishes leaves the
+transaction idle for their sum.
 
 Inside the pass, consume mode changes what each method writes:
 
@@ -197,8 +216,8 @@ under consume and the pass's row lock is what marks it as this relay's. A mark t
 fewer rows than it was given is a defect, and the tests pin the row count.
 
 The relay loop does not change, so per-row handling is exactly today's. A row that will not
-decode is parked. A row whose publish fails or exceeds `publish_timeout` gets its attempt
-count and backoff, and is parked at `max_attempts`. Every published row is deleted. The whole
+decode is parked. A row whose publish fails or exceeds its bound gets its attempt count and
+backoff, and is parked at `max_attempts`. Every published row is deleted. The whole
 pass commits once.
 
 ### 5.3 A failed pass
@@ -265,6 +284,9 @@ INSERT INTO ops.outbox_delivered (id, outbox_route, event_id, published_at)
 SELECT id, outbox_route, event_id, %(now)s FROM consumed
 ```
 
+- **What a log row proves.** A row means the event was published and its consumption
+  committed. A missing row does not prove the event was never delivered. A pass that
+  published and then rolled back leaves none, and the next pass's publish adds one.
 - **No unique key on the event.** A re-staged event can be delivered twice (5.4), and a
   partitioned table's unique keys must include the partition column anyway. The log carries
   a plain index on `event_id`, and "was X delivered" may return more than one row.
@@ -294,9 +316,11 @@ pass wrapper on the step; that is left out until someone needs it.
    `reclaim_stale_after`, and the next pass consumes them.
 2. Published rows already in the table are left to the application's existing retention job,
    which can go once they are gone.
-3. Once no `processing` row is left, set `reclaim_stale_after=None`. Only then drop
-   `processing_at`, `published_at`, and any index that existed only for them: reclaim reads
-   `processing_at`, and with the column gone every pass would fail. The docs give the
+3. Once no `processing` row is left, set `reclaim_stale_after=None`. Once the retention job
+   has removed every `published` row, retire the job. Only then drop `processing_at`,
+   `published_at`, and any index that existed only for them. Reclaim reads `processing_at`,
+   and with that column gone every pass would fail. The retention job reads `published_at`,
+   so dropping it first would break the job. The docs give the
    statements in this order; the application owns its migrations.
 
 Mixed deployments, with retain and consume relays on one route, stay at-least-once. A row
@@ -331,6 +355,10 @@ Postgres integration:
   and parked rows.
 - **A relay dying mid-pass.** Kill the relay between the claim and the commit. The rows are
   still pending, and a second relay publishes them.
+- **The pass deadline.** Against a destination slower than the deadline allows, the pass
+  stops at the deadline, commits what it published, and leaves the rows it did not reach
+  unchanged. A pass that stalls without yielding is cut off by the server-side timeout, and
+  its rows return.
 - **Per-row failure.** One row's publish raises, or exceeds `publish_timeout`, and the rest of
   its batch is published and deleted. The failing row keeps its incremented `attempts` and
   its backoff, and at `max_attempts` it is parked, not retried forever. A row that will not
@@ -367,8 +395,8 @@ Unit and conformance:
 - the migration steps.
 
 The relay page states that a consume pass holds one connection and the batch's row locks for
-the length of its publishes, and recommends `publish_timeout` below
-`idle_in_transaction_session_timeout`.
+up to `pass_deadline`, and how to size the deadline against the batch size and the
+destination's latency.
 
 ## 8. Out of scope
 
@@ -384,7 +412,7 @@ the length of its publishes, and recommends `publish_timeout` below
 - **A connection and the batch's row locks are held for a pass.** Today each claim and mark
   is a short statement of its own. Under consume, a pass holds one pooled connection, and the
   locks on its batch, for the length of its publishes. For a Redis `XADD` per row that is
-  milliseconds. The batch size and `publish_timeout` bound it. Concurrent relays skip the
+  milliseconds. `pass_deadline` bounds it, with the server-side timeout as a backstop. Concurrent relays skip the
   locked rows, so they do not wait. Accepted and documented.
 - **A re-stage waits for a pass.** Staging an event whose row a pass has deleted but not yet
   committed makes the `INSERT … ON CONFLICT` wait for that pass. The pass's length bounds it.
@@ -400,17 +428,17 @@ the length of its publishes, and recommends `publish_timeout` below
 - **The narrower dedup window** (5.4) and **the wider duplicate window** (5.3). Documented.
   Consumers deduplicate by event id regardless.
 - **A long pass holds back vacuum's horizon** for its length. That is milliseconds at the
-  intended batch sizes, and `publish_timeout` bounds a slow destination.
+  intended batch sizes, and `pass_deadline` bounds a slow destination.
 
 ## 10. Unresolved questions
 
 - **Whether `pass_scope` is the right seam.** Three costs came out of review:
-  - a structurally implemented third-party store lacks the method, so the relay would have
-    to tolerate its absence;
+  - a structurally implemented third-party store lacks the method, so the relay has to
+    tolerate its absence (row 3);
   - port proxies wrap a synchronous method as an instant span, so tracing and DST fault
     injection see nothing of the pass;
-  - the client's `transaction()` yields a connection, so the scope's type is wider than
-    `None`.
+  - the client's `transaction()` yields a connection, so the consume scope wraps it to yield
+    the pass budget instead.
 
   Implementation decides between the scope and a relay `tx_route` (5.8), with the lean in
   row 3.
@@ -423,16 +451,17 @@ the length of its publishes, and recommends `publish_timeout` below
 | --- | --- | --- |
 | 1 | `LOCKED` | Consume mode is a Postgres store setting (`storage="consume"`, default `"retain"`). The outbox ports keep their methods and meanings, and the relay's per-row loop does not change: the mode changes what each store method writes and which status its marks match. |
 | 2 | `LOCKED` | A pass runs in one transaction from claim to commit. The claim locks with `FOR UPDATE SKIP LOCKED` without updating, and refuses to run outside a transaction. Without a transaction spanning the publish there is no lock to stand in for `processing`. |
-| 3 | `ASSUMED` | `OutboxQueryPort.pass_scope()` has a no-op default. The relay core enters it once per pass, and the Postgres consume store returns its client's transaction, which nests as a savepoint in a caller's. A relay `tx_route` is the fallback if the scope's costs (§10) prove real. |
+| 3 | `ASSUMED` | `OutboxQueryPort.pass_scope()` has a no-op default, and the relay treats a store without it as having the no-op. The relay core enters it once per pass, and the Postgres consume store returns its client's transaction, which nests as a savepoint in a caller's. A relay `tx_route` is the fallback if the scope's costs (§10) prove real. |
 | 4 | `LOCKED` | Per-row failure handling stays: retries keep their attempt count and backoff, and a row is parked at `max_attempts` or when it will not decode. Under consume each mark matches `pending`, since a claimed row is never `processing`. A published row is deleted at its mark, not at its claim. Deleting at claim and rolling back on failure would lose the attempt count and retry a poison row first on every pass, forever. |
 | 5 | `ASSUMED` | A parked row stays in the table as `status = 'failed'`, so `requeue_failed` and the admin probes keep working. |
 | 6 | `ASSUMED` | `UNIQUE (outbox_route, event_id)` stays, and its dedup now covers pending rows only. Documented as a narrowing. |
-| 7 | `ASSUMED` | The delivery log is optional and insert-only, has no unique key on the event, and is written in the same statement as the delete, so a failure to log fails the pass. forze never manages its partitions. |
+| 7 | `ASSUMED` | The delivery log is optional and insert-only, has no unique key on the event, and is written in the same statement as the delete, so a failure to log fails the pass. A row proves committed consumption, and a missing row does not prove the event was never delivered. forze never manages its partitions. |
 | 8 | `ASSUMED` | A hand-driven relay fences by opening its own transaction around the pass, with the pass scope nested as a savepoint. The background step gets no fence. |
 | 9 | `ASSUMED` | Consume mode never writes `processing_at` or `published_at`. Reclaim still reads `processing_at`, so rows left by retain mode drain without a migration step, and the column can go only once reclaim is turned off. |
 | 10 | `ASSUMED` | Other backends keep retain mode only. |
 | 11 | `LOCKED` | Under consume, a pass that raises ends the background step's tick, and consecutive failed ticks back off. A wake does not cut a backoff short. A rolled-back pass makes its whole batch claimable at once, so today's "log and run the next pass" would republish it up to `max_batches_per_tick` times a tick, and its retry state would never persist. |
-| 12 | `ASSUMED` | `OutboxRelay` gains `publish_timeout`. A publish that exceeds it is a transient failure, retried with backoff. It is recommended under consume, where a hung destination would otherwise hold the pass's locks and connection. |
+| 12 | `ASSUMED` | `OutboxRelay` gains an optional `publish_timeout`. A publish that exceeds it is a transient failure, retried with backoff. |
+| 13 | `LOCKED` | Under consume, a pass is bounded by `pass_deadline` (default 5 s). The relay publishes nothing past it, bounds each publish by the budget left, and commits what it did; rows it did not reach are unchanged. The scope also sets `idle_in_transaction_session_timeout` locally as a backstop. A per-publish timeout alone does not bound a pass, because marks flush only every 32 publishes and retries at its end. |
 
 ## 12. Phasing
 
@@ -441,7 +470,7 @@ the length of its publishes, and recommends `publish_timeout` below
    - `pass_scope` and the relay core entering it;
    - the method variants and their `pending` predicates;
    - the background step's tick end and backoff;
-   - `publish_timeout`;
+   - `pass_deadline` and `publish_timeout`;
    - the conformance leg;
    - the integration tests in §6 apart from the load comparison;
    - the schema page.
