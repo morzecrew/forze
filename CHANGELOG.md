@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A replica can withdraw readiness before refusing work, and drain while it still serves.** `runtime.begin_draining()` fails readiness, operations still admitted; `runtime.drain(budget, announce_delay=)` runs the phases steps put on `ctx.drain_phases`. `shutdown()` drains first if nobody did, within `drain_budget`.
 
+- **An embedded uvicorn drains the runtime on `SIGTERM` before it stops.** `forze_fastapi.serve_uvicorn(config, runtime, drain_budget=)` runs `runtime.drain()` on the first `SIGTERM` or `SIGINT` and exits on a second. It sets a finite graceful timeout when none is set, so an open SSE stream cannot hold the exit.
+
 - **The worker probe listener can check dependencies, and needs no runtime.** `probe_listener_step(checks=, check_timeout=)` answers through `evaluate_readiness`, the evaluator `attach_readiness_route` now uses, so both answer alike from the same probes. Steps read `ctx.lifecycle.started` and `.announced`.
 
 ### Changed
