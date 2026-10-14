@@ -26,24 +26,63 @@ nesting — and its encoding is capped at `report_max_bytes`. A beat that breaks
 or carries a member id with a tab, a newline or a brace, is refused before anything is
 sent. Numbers read back exactly as they were reported.
 
-## Beat and read
+## Join the fleet
 
-`ctx.fleet(spec)` resolves the port for a `FleetSpec`:
+Every replica runs `fleet_membership_lifecycle_step`, which keeps its entry current for as
+long as it runs:
 
 ```python
 from datetime import timedelta
 
 from forze.application.contracts.fleet import FleetSpec
-from forze.base.primitives import instance_id
+from forze_kits.integrations.fleet import fleet_membership_lifecycle_step
 
 GATEWAYS = FleetSpec(name="gateways", ttl=timedelta(seconds=10))
 
+membership = fleet_membership_lifecycle_step(
+    GATEWAYS,
+    every=timedelta(seconds=3),
+    report=lambda: {"load": open_connections()},
+    depends_on=("redis_lifecycle",),
+)
+```
 
-async def heartbeat(ctx, load: int) -> int:
-    fleet = ctx.fleet(GATEWAYS)
-    view = await fleet.beat(instance_id(), "serving", {"load": load})
+At startup it beats once as `starting`, then beats every `every` from a background loop. Its
+state follows the runtime it runs in:
 
-    return view.share(1000, instance_id())
+| State | While |
+|-------|-------|
+| `starting` | lifecycle startup has not finished |
+| `serving` | startup finished, and no drain has begun |
+| `draining` | a drain was announced — `runtime.begin_draining()` or `runtime.drain()` — or the drain gate closed |
+
+Peers see a change at the next beat. `every` must be below half the `ttl`, so one missed beat
+does not drop the member; a step built with more is refused. A beat that fails is logged and
+the next one tries again, but the first one fails startup, so an unwired fleet or a report
+the codec refuses stops the boot rather than logging on every beat.
+
+On stop the step does one of two things:
+
+- `on_stop="leave"`, the default, removes the entry at once, so peers re-rank immediately.
+- `on_stop="linger"` writes one last `draining` entry that lives for `linger_for`, so peers
+  see the deploy in progress for that long without the process waiting for it. That entry's
+  own `ttl` shortens no one else's life.
+
+Both write to the fleet's backend, so name the step that closes its client in
+`depends_on` — the Redis client's step above — and the membership step stops first. The
+step writes only its own entry and removes expired ones, which is safe from every replica at
+once: a `FLEET` runtime accepts it without a singleton guard. It needs a long-running
+process, so a `SERVERLESS` runtime refuses it.
+
+## Read the fleet
+
+`ctx.fleet(spec)` resolves the port, so any code can read the fleet without beating:
+
+```python
+async def my_share(ctx, me: str) -> int:
+    view = await ctx.fleet(GATEWAYS).view()
+
+    return view.share(1000, me)
 ```
 
 | Method | What it does |
@@ -52,6 +91,9 @@ async def heartbeat(ctx, load: int) -> int:
 | `view()` | reads the live members without writing anything |
 | `leave(member_id)` | removes this member's entry at once, so peers stop counting it immediately |
 
+The step calls `beat` and `leave` for you; call them yourself only for an entry the step
+does not keep.
+
 `FleetSpec` fields:
 
 | Field | Type | Default | Meaning |
@@ -59,10 +101,6 @@ async def heartbeat(ctx, load: int) -> int:
 | `name` | `str \| StrEnum` | required | the fleet; every replica of the service beats into the same one |
 | `ttl` | `timedelta` | `10s` | how long an entry lives without another beat |
 | `report_max_bytes` | `int` | `1024` | the largest encoded report a beat may carry |
-
-Beat at under half the `ttl`, so one missed beat does not drop the member. A beat's own
-`ttl` sets only that member's expiry: a short final beat — a replica announcing `draining`
-for a few seconds before it exits — expires on its own and never shortens anyone else's.
 
 ## The policies
 
@@ -107,13 +145,14 @@ member's entry. The mock implements the same model in memory, on a clock a test 
 
 ## Choosing a member id
 
-`instance_id()` returns `host:pid:nonce`. The nonce is random per process, so a restarted
-process is a new member even when it reuses a pid. That is the safe default, with one cost:
+The step beats as `instance_id()`, which returns `host:pid:nonce`. The nonce is random per
+process, so a restarted process is a new member even when it reuses a pid. That is the safe
+default, with one cost:
 every restart removes one id and adds another, so a rolling deploy reshuffles every unit
 `rank` assigns.
 
-A platform that gives each replica a stable name, such as a StatefulSet pod's, can beat with
-that name instead, and `rank` then survives restarts. The cost moves: two processes sharing
+A platform that gives each replica a stable name, such as a StatefulSet pod's, can pass it
+as the step's `member_id`, and `rank` then survives restarts. The cost moves: two processes sharing
 the name — a stuck process and its replacement — write one entry between them, and the
 fleet sees one member where there are two.
 
@@ -138,4 +177,4 @@ reports.
 
 A stalled replica stays a member until its entry expires, beating or not, so `ttl` is your
 failure-detection latency. A shorter `ttl` notices a dead replica sooner and costs more
-frequent beats; keep the beat interval below half of it either way.
+frequent beats; the step's `every` stays below half of it either way.

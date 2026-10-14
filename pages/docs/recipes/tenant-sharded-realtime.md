@@ -64,9 +64,11 @@ other, then takes the tenants it ranks first for among the serving and starting 
 
 The shard is consumed when the steps are built, before the runtime exists, so build the
 port directly — a `RedisFleetAdapter` over a `RedisClient` you initialize for it. Once
-assigned, keep the replica beating, `serving` once it takes traffic, at under half the
-`ttl`, so replicas started later rank it in. The first replica of a fresh fleet finds only
-itself and takes every tenant.
+assigned, keep the replica in the fleet with the
+[membership step](../running-in-prod/fleet-membership.md#join-the-fleet) on the same
+`FleetSpec` and member id, so replicas started later rank it in; it beats `serving` once
+startup finishes. The first replica of a fresh fleet finds only itself and takes every
+tenant.
 
 The assignment is a snapshot, sound only when every replica starts within one `ttl` of
 the others — an all-at-once rollout — and only while the fleet keeps that shape:
