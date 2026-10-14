@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
+
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
@@ -11,8 +14,18 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
     DistributedLockSpec,
 )
+from forze.application.contracts.resilience import (
+    PortPolicy,
+    RateLimitStrategy,
+    ResilienceExecutorDepKey,
+    ResiliencePolicy,
+    ResiliencePortPoliciesDepKey,
+)
 from forze.application.execution import Deps, DepsRegistry, ExecutionContext
+from forze.application.execution.port_proxy_base import PortProxy
+from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.base.exceptions import CoreException
+from forze.testing import unguarded
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_deps
 
@@ -81,10 +94,63 @@ class _ClaimsAdvanceWithoutMethodLock(_FencingLock):
         return DistributedLockCapabilities(fencing_tokens=True, fence_advance=True)
 
 
+class _AdvanceFlagOffLock(_FencingLock):
+    """Has ``advance_fence`` but reports ``fence_advance=False`` — the flag must decide."""
+
+    async def advance_fence(self, key: str, *, past: int) -> int:
+        return past
+
+
 def _ctx(port: object):
     return context_from_deps(
         Deps.plain({DistributedLockCommandDepKey: lambda _c, _s: port})
     )
+
+
+async def _no_sleep(_delay: float) -> None:
+    return None
+
+
+class _PassThroughInterceptor:
+    async def around(self, call: Any, nxt: Any) -> Any:
+        return await nxt(call)
+
+
+def _wrapped_ctx(backend: Deps) -> ExecutionContext:
+    """Resolve *backend* under every proxy the runtime can put around a port.
+
+    A resilience port policy, OTel port spans, runtime tracing and an interceptor, stacked:
+    each forwards methods through ``__getattr__``, which a protocol check never consults.
+    """
+
+    policy = ResiliencePolicy(
+        name="lock",
+        strategies=(RateLimitStrategy(permits=1000, per=timedelta(seconds=1)),),
+    )
+    resilience = Deps.plain(
+        {
+            ResilienceExecutorDepKey: InProcessResilienceExecutor(
+                policies={"lock": policy}, sleep=_no_sleep
+            ),
+            ResiliencePortPoliciesDepKey: {
+                DistributedLockCommandDepKey: PortPolicy(
+                    key=DistributedLockCommandDepKey, policy="lock"
+                )
+            },
+        }
+    )
+    registry = (
+        DepsRegistry.from_deps(resilience)
+        .with_deps(backend)
+        .with_tracing(runtime=True)
+        .with_otel_port_spans(tracer=TracerProvider().get_tracer("test"))
+        .with_interceptors(_PassThroughInterceptor())
+    )
+    return ExecutionContext(deps=registry.freeze().resolve())
+
+
+def _plain(port: object) -> Deps:
+    return Deps.plain({DistributedLockCommandDepKey: lambda _c, _s: port})
 
 
 def test_requires_fencing_resolves_against_a_fencing_backend() -> None:
@@ -153,8 +219,13 @@ def test_requires_fence_advance_resolves_against_an_advancing_backend() -> None:
 
 @pytest.mark.parametrize(
     "backend",
-    [_FencingLock(), _BestEffortLock(), _ClaimsAdvanceWithoutMethodLock()],
-    ids=["flag-false", "not-fencing-aware", "flag-without-method"],
+    [
+        _FencingLock(),
+        _AdvanceFlagOffLock(),
+        _BestEffortLock(),
+        _ClaimsAdvanceWithoutMethodLock(),
+    ],
+    ids=["flag-false", "flag-false-with-method", "not-fencing-aware", "flag-without-method"],
 )
 def test_requires_fence_advance_fails_closed(backend: object) -> None:
     ctx = _ctx(backend)
@@ -180,12 +251,37 @@ def test_a_read_only_operation_is_refused_a_lock_that_cannot_advance() -> None:
     [{"requires_fencing_token": True}, {"requires_fence_advance": True}],
     ids=["fencing", "fence-advance"],
 )
-def test_a_traced_backend_still_meets_its_requirements(flags: dict[str, bool]) -> None:
-    # OTel port spans wrap every resolved port in a proxy that forwards methods through
-    # __getattr__; the capability check must see through it, not refuse a capable backend.
-    registry = DepsRegistry.from_modules(MockDepsModule()).with_otel_port_spans(
-        tracer=TracerProvider().get_tracer("test")
-    )
-    ctx = ExecutionContext(deps=registry.freeze().resolve())
+def test_a_wrapped_backend_still_meets_its_requirements(flags: dict[str, bool]) -> None:
+    # The capability check must see through the proxies, not refuse a capable backend.
+    spec = DistributedLockSpec(name="lock", **flags)
 
-    assert ctx.dlock.command(DistributedLockSpec(name="lock", **flags)) is not None
+    for backend in (MockDepsModule()(), _plain(_AdvancingLock())):
+        port = _wrapped_ctx(backend).dlock.command(spec)
+        assert isinstance(unguarded(port), PortProxy)  # the stack is really there
+
+
+_REFUSED_WRAPPED = [
+    ("requires_fencing_token", _BestEffortLock(), "dlock.fencing_unsupported"),
+    ("requires_fencing_token", _FencingDisabledLock(), "dlock.fencing_unsupported"),
+    ("requires_fence_advance", _BestEffortLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _FencingLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _AdvanceFlagOffLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _ClaimsAdvanceWithoutMethodLock(), "dlock.fence_advance_unsupported"),
+]
+
+
+@pytest.mark.parametrize(
+    ("flag", "backend", "code"),
+    _REFUSED_WRAPPED,
+    ids=[f"{flag}-{type(backend).__name__}" for flag, backend, _ in _REFUSED_WRAPPED],
+)
+def test_a_wrapped_backend_that_cannot_is_still_refused(
+    flag: str, backend: object, code: str
+) -> None:
+    # Seeing through the proxies must not turn into waving them through.
+    ctx = _wrapped_ctx(_plain(backend))
+
+    with pytest.raises(CoreException) as ei:
+        ctx.dlock.command(DistributedLockSpec(name="lock", **{flag: True}))
+
+    assert ei.value.code == code
