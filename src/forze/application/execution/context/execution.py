@@ -144,7 +144,9 @@ class ExecutionContext:
     """Lifecycle step ids that completed startup and were not yet shut down.
 
     Managed by the lifecycle runner so each step's shutdown runs at most once per
-    successful startup and never without one (e.g. after a partial startup failure)."""
+    successful startup and never without one (e.g. after a partial startup failure). Per
+    step; whether startup as a whole finished is ``lifecycle.started`` (see
+    :attr:`lifecycle`)."""
 
     # ....................... #
 

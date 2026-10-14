@@ -10,16 +10,13 @@ from forze.application._logger import logger
 from forze.application.contracts.execution import ExecutionGraph, LifecycleStep
 from forze.base.primitives import StrKey
 
+from ..context.lifecycle import DRAIN_PHASE_FLOOR_SECONDS
 from ..graph_run import run_graph_waves_reverse
 
 if TYPE_CHECKING:
     from ..context import DrainPhase, ExecutionContext
 
 # ----------------------- #
-
-DRAIN_PHASE_FLOOR_SECONDS: Final[float] = 0.1
-"""A drain phase whose allowance falls below this is skipped rather than started: no
-phase does useful work in less, and starting one only to cancel it at once is noise."""
 
 DRAIN_PHASE_CANCEL_GRACE_SECONDS: Final[float] = 1.0
 """How long a drain phase cancelled at the end of its allowance gets to unwind before it is

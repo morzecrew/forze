@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from contextvars import Context, copy_context
 from datetime import timedelta
-from typing import TYPE_CHECKING, Literal, final
+from typing import TYPE_CHECKING, Final, Literal, final
 
 import attrs
 
@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 Readiness = Literal["ready", "draining", "unavailable"]
 """A scope's readiness: serving, on its way down, or not serving yet."""
+
+DRAIN_PHASE_FLOOR_SECONDS: Final[float] = 0.1
+"""A drain phase whose allowance falls below this is skipped rather than started: no
+phase does useful work in less, and starting one only to cancel it at once is noise. A
+``max_duration`` under it is refused at registration."""
 
 
 # ....................... #
@@ -45,7 +50,12 @@ class LifecycleState:
 
     @property
     def started(self) -> bool:
-        """Lifecycle startup finished: every step's startup hook returned."""
+        """Lifecycle startup finished: every step's startup hook returned.
+
+        The scope as a whole, not one step: which steps are up, and still owe a shutdown,
+        is :attr:`ExecutionContext.lifecycle_started
+        <forze.application.execution.context.ExecutionContext.lifecycle_started>`.
+        """
 
         return self._started
 
@@ -157,12 +167,15 @@ class DrainPhases:
             early phase may spend the whole budget and leave the later ones nothing.
 
         :raises CoreException: ``configuration`` — the name is taken, or *max_duration* is
-            not positive.
+            under the 100 ms floor (:data:`DRAIN_PHASE_FLOOR_SECONDS`) a phase is skipped
+            below.
         """
 
-        if max_duration is not None and max_duration <= timedelta(0):
+        if max_duration is not None and max_duration.total_seconds() < DRAIN_PHASE_FLOOR_SECONDS:
+            # It would be skipped on every drain: refused here, where the mistake is made.
             raise exc.configuration(
-                f"Drain phase {name!r} needs a positive max_duration, got {max_duration}"
+                f"Drain phase {name!r} needs a max_duration of at least "
+                f"{DRAIN_PHASE_FLOOR_SECONDS}s, got {max_duration}"
             )
 
         if any(one.name == name for one in self._phases):

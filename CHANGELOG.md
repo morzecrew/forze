@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Readiness waits for lifecycle startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503 unavailable` until every startup step returned. `ctx.drain_gate.draining` still means operations are refused.
+- **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.
+
+- **The readiness route logs a failed dependency check under the application logger**, as "Readiness check … failed". Alerts keyed on the `fastapi.probes` logger no longer match.
 
 ### Deprecated
 

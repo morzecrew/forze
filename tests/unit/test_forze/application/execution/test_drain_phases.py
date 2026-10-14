@@ -557,7 +557,11 @@ class TestDrainPhaseRegistration:
 
             assert caught.value.kind == ExceptionKind.CONFIGURATION
 
-            with pytest.raises(CoreException) as caught:
-                phases.register("other", phase, max_duration=timedelta(0))
+            # A cap that is not positive, or under the floor a phase is skipped below.
+            for cap in (timedelta(0), timedelta(milliseconds=50)):
+                with pytest.raises(CoreException) as caught:
+                    phases.register("other", phase, max_duration=cap)
 
-            assert caught.value.kind == ExceptionKind.CONFIGURATION
+                assert caught.value.kind == ExceptionKind.CONFIGURATION
+
+            phases.register("at the floor", phase, max_duration=timedelta(milliseconds=100))
