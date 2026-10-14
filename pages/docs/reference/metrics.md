@@ -169,6 +169,23 @@ A dead `AsyncRedisManager` listener silently stops every cross-node emit and not
 python-socketio surfaces it. Alarm on `seconds_since_ok` exceeding a few heartbeat
 intervals; `-1` is a wiring problem, not an outage.
 
+## Realtime connections
+
+`instrument_realtime_connections(stats)`, with the same `RealtimeConnectionStats` handed to
+`attach_realtime_connection` and `connection_drain_lifecycle_step`. Labelled
+`forze.realtime.channel`.
+
+| Metric | Instrument | Unit | Labels | Notes |
+|---|---|---|---|---|
+| `forze.realtime.connections` | observable up-down counter | 1 | `forze.realtime.namespace` | connections open on this node |
+| `forze.realtime.connect_refused` | observable counter | 1 | `forze.realtime.namespace`, `forze.realtime.reason` | `protocol`, `auth`, `draining`, `internal` |
+| `forze.realtime.drain_closed` | observable counter | 1 | `forze.realtime.outcome` | closes the drain started: `closed`, `failed`, `timed_out` |
+
+**What to watch:** `connect_refused{reason="draining"}` that keeps climbing long after a
+deploy means a balancer still routes to a replica it should have dropped, and any
+`drain_closed{outcome="timed_out"}` means the drain's tail is too short for this node's
+closes.
+
 ## Realtime mailbox
 
 `instrument_realtime_mailbox(mailbox, cursors)`. Labelled `forze.realtime.channel`.

@@ -6,6 +6,10 @@ source) one :class:`RealtimeGatewayStats`, call :func:`instrument_realtime_gatew
 assembly, and every delivery outcome becomes an observable counter. OpenTelemetry is imported
 lazily, so an uninstrumented app pays nothing.
 
+Connections have their own instruments (:func:`instrument_realtime_connections`): how many
+are open per namespace, how many connects were refused and why, and how the drain's closes
+ended.
+
 Depth/lag is deliberately **not** a counter here: backlog is a property of the consumer
 group, not of this process — poll
 :meth:`~forze.application.contracts.stream.AckStreamGroupAdminPort.depth` (the quiesce sweep
@@ -20,7 +24,7 @@ require_socketio()
 
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Literal, final
 
 import attrs
 
@@ -28,6 +32,8 @@ from forze.base.primitives import utcnow
 
 if TYPE_CHECKING:
     from opentelemetry.metrics import CallbackOptions, Meter, Observation
+
+    from forze.application.execution.background import SpreadOutcome
 
 # ----------------------- #
 
@@ -43,6 +49,14 @@ GATEWAY_POISONED_COUNTER = "forze.realtime.gateway.poisoned"
 
 BACKPLANE_SECONDS_SINCE_OK_GAUGE = "forze.realtime.backplane.seconds_since_ok"
 BACKPLANE_CONSECUTIVE_FAILURES_GAUGE = "forze.realtime.backplane.consecutive_failures"
+
+REALTIME_CONNECTIONS_COUNTER = "forze.realtime.connections"
+REALTIME_CONNECT_REFUSED_COUNTER = "forze.realtime.connect_refused"
+REALTIME_DRAIN_CLOSED_COUNTER = "forze.realtime.drain_closed"
+
+ConnectRefusal = Literal["protocol", "auth", "draining", "internal"]
+"""Why a connect was refused: an unsupported protocol, failed authentication, the replica
+draining, or an unexpected error."""
 
 # ....................... #
 
@@ -135,6 +149,63 @@ class RealtimeGatewayStats:
 
     poisoned: int = 0
     """Durable signals dropped at the delivery ceiling — every one is a bounded loss."""
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class RealtimeConnectionStats:
+    """This node's connection counts, for :func:`instrument_realtime_connections`.
+
+    Hand one instance to ``attach_realtime_connection`` for every namespace and to
+    ``connection_drain_lifecycle_step``. Plain ints mutated on the event loop; the
+    instruments read them at scrape time.
+    """
+
+    connections: dict[str, int] = attrs.field(factory=dict)
+    """Accepted connections open on this node, by namespace."""
+
+    connect_refused: dict[tuple[str, ConnectRefusal], int] = attrs.field(factory=dict)
+    """Refused connects, by namespace and reason."""
+
+    drain_closed: dict[str, int] = attrs.field(factory=dict)
+    """Closes the drain started, by outcome: ``closed``, ``failed`` or ``timed_out``."""
+
+    # ....................... #
+
+    def connected(self, namespace: str) -> None:
+        """Count an accepted connection."""
+
+        self.connections[namespace] = self.connections.get(namespace, 0) + 1
+
+    # ....................... #
+
+    def disconnected(self, namespace: str) -> None:
+        """Uncount a connection that was counted."""
+
+        self.connections[namespace] = self.connections.get(namespace, 0) - 1
+
+    # ....................... #
+
+    def refused(self, namespace: str, reason: ConnectRefusal) -> None:
+        """Count a refused connect."""
+
+        key = (namespace, reason)
+        self.connect_refused[key] = self.connect_refused.get(key, 0) + 1
+
+    # ....................... #
+
+    def drained(self, outcome: "SpreadOutcome") -> None:
+        """Count how the drain's closes ended."""
+
+        for name, count in (
+            ("closed", outcome.closed),
+            ("failed", outcome.failed),
+            ("timed_out", outcome.timed_out),
+        ):
+            self.drain_closed[name] = self.drain_closed.get(name, 0) + count
 
 
 # ----------------------- #
@@ -255,4 +326,81 @@ def instrument_realtime_backplane(
         lambda: float(health.consecutive_failures),
         "Failed backplane probes since the last success.",
         "1",
+    )
+
+
+# ----------------------- #
+
+
+def instrument_realtime_connections(
+    stats: RealtimeConnectionStats,
+    *,
+    channel: str = "realtime",
+    meter: "Meter | None" = None,
+) -> None:
+    """Export the node's connection counts as OTel observable instruments.
+
+    - ``forze.realtime.connections`` — an up-down counter of open connections, labelled
+      ``forze.realtime.namespace``.
+    - ``forze.realtime.connect_refused`` — refused connects, labelled
+      ``forze.realtime.namespace`` and ``forze.realtime.reason`` (``protocol``, ``auth``,
+      ``draining``, ``internal``).
+    - ``forze.realtime.drain_closed`` — closes the drain started, labelled
+      ``forze.realtime.outcome`` (``closed``, ``failed``, ``timed_out``).
+
+    Every series also carries ``forze.realtime.channel``. Emits via the global OTel meter
+    unless *meter* is supplied. Call once at assembly time, with the *stats* handed to
+    ``attach_realtime_connection`` and the drain step.
+    """
+
+    from opentelemetry import metrics
+
+    meter = meter or metrics.get_meter("forze")
+
+    def connections(_options: "CallbackOptions") -> "Iterable[Observation]":
+        return [
+            metrics.Observation(
+                count, {"forze.realtime.channel": channel, "forze.realtime.namespace": namespace}
+            )
+            for namespace, count in stats.connections.items()
+        ]
+
+    def refused(_options: "CallbackOptions") -> "Iterable[Observation]":
+        return [
+            metrics.Observation(
+                count,
+                {
+                    "forze.realtime.channel": channel,
+                    "forze.realtime.namespace": namespace,
+                    "forze.realtime.reason": reason,
+                },
+            )
+            for (namespace, reason), count in stats.connect_refused.items()
+        ]
+
+    def drain_closed(_options: "CallbackOptions") -> "Iterable[Observation]":
+        return [
+            metrics.Observation(
+                count, {"forze.realtime.channel": channel, "forze.realtime.outcome": outcome}
+            )
+            for outcome, count in stats.drain_closed.items()
+        ]
+
+    meter.create_observable_up_down_counter(
+        REALTIME_CONNECTIONS_COUNTER,
+        callbacks=[connections],
+        unit="1",
+        description="Open realtime connections on this node.",
+    )
+    meter.create_observable_counter(
+        REALTIME_CONNECT_REFUSED_COUNTER,
+        callbacks=[refused],
+        unit="1",
+        description="Refused realtime connects, by reason.",
+    )
+    meter.create_observable_counter(
+        REALTIME_DRAIN_CLOSED_COUNTER,
+        callbacks=[drain_closed],
+        unit="1",
+        description="Connections the drain closed, by outcome.",
     )

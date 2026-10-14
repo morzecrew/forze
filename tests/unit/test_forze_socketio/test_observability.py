@@ -11,10 +11,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from forze.application.execution.background import SpreadOutcome
 from forze_socketio import (
     BackplaneHealth,
+    RealtimeConnectionStats,
     RealtimeGatewayStats,
     instrument_realtime_backplane,
+    instrument_realtime_connections,
     instrument_realtime_gateway,
 )
 
@@ -31,6 +34,9 @@ class _StubMeter:
         self.callbacks[name] = callbacks[0]
 
     def create_observable_gauge(self, name: str, *, callbacks: Any, **_: Any) -> None:
+        self.callbacks[name] = callbacks[0]
+
+    def create_observable_up_down_counter(self, name: str, *, callbacks: Any, **_: Any) -> None:
         self.callbacks[name] = callbacks[0]
 
 
@@ -101,3 +107,43 @@ def test_backplane_instrument_reflects_health() -> None:
 
     assert _scrape(meter, "forze.realtime.backplane.seconds_since_ok") >= 0.0
     assert _scrape(meter, "forze.realtime.backplane.consecutive_failures") == 1.0
+
+
+def _series(meter: _StubMeter, name: str) -> dict[tuple[str, ...], float]:
+    """Every observation of *name*, keyed by its labels other than the channel."""
+
+    return {
+        tuple(
+            value
+            for key, value in sorted(observation.attributes.items())
+            if key != "forze.realtime.channel"
+        ): observation.value
+        for observation in meter.callbacks[name](None)
+    }
+
+
+def test_connection_instruments_reflect_the_stats_by_label() -> None:
+    stats = RealtimeConnectionStats()
+    meter = _StubMeter()
+
+    instrument_realtime_connections(stats, meter=meter)  # pyright: ignore[reportArgumentType]
+
+    stats.connected("/")
+    stats.connected("/")
+    stats.connected("/chat")
+    stats.disconnected("/")
+    stats.refused("/", "draining")
+    stats.refused("/", "draining")
+    stats.refused("/chat", "auth")
+    stats.drained(SpreadOutcome(closed=3, failed=1, timed_out=0))
+
+    assert _series(meter, "forze.realtime.connections") == {("/",): 1, ("/chat",): 1}
+    assert _series(meter, "forze.realtime.connect_refused") == {
+        ("/", "draining"): 2,
+        ("/chat", "auth"): 1,
+    }
+    assert _series(meter, "forze.realtime.drain_closed") == {
+        ("closed",): 3,
+        ("failed",): 1,
+        ("timed_out",): 0,
+    }

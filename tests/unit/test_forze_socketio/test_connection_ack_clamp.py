@@ -46,6 +46,9 @@ class _ConcurrentRuntime:
     scope (an ``ExecutionRuntime`` allows a single open scope at a time). The mailbox
     and cursors are injected in-memory objects, so state is shared regardless."""
 
+    draining = False
+    """Never draining: the connection reads it as its default draining source."""
+
     def __init__(self) -> None:
         self._current: contextvars.ContextVar[ExecutionRuntime | None] = contextvars.ContextVar(
             "ack_clamp_runtime", default=None
