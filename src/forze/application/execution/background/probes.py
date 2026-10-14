@@ -22,7 +22,7 @@ import warnings
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Final, final
+from typing import TYPE_CHECKING, Any, Final, cast, final
 
 import attrs
 
@@ -223,6 +223,11 @@ class _ProbeListenerStartup(LifecycleHook):
     drain budget and log a "did not close" warning about a listener that had no work left.
     """
 
+    handlers: set[asyncio.Task[Any]] = attrs.field(factory=set, init=False, repr=False)
+    """Request handlers still running, so shutdown can cancel them. Closing a connection
+    does not stop its handler: one waiting on a slow dependency check would otherwise run on
+    after the stop, against clients teardown is about to close."""
+
     # ....................... #
 
     @property
@@ -258,11 +263,24 @@ class _ProbeListenerStartup(LifecycleHook):
         for writer in tuple(self.connections):
             writer.close()
 
+        handlers = tuple(self.handlers)
+
+        for task in handlers:
+            task.cancel()
+
         clock = asyncio.get_running_loop()
         budget = max(0.0, deadline - clock.time())
 
         try:
             await asyncio.wait_for(asyncio.shield(server.wait_closed()), timeout=budget)
+
+            if handlers:
+                _done, pending = await asyncio.wait(
+                    handlers, timeout=max(0.0, deadline - clock.time())
+                )
+
+                if pending:
+                    raise TimeoutError
 
         except TimeoutError:
             logger.warning(
@@ -304,6 +322,9 @@ class _ProbeListenerStartup(LifecycleHook):
 
             return
 
+        # ``asyncio.start_server`` runs every handler as a task of its own.
+        handler = cast("asyncio.Task[Any]", asyncio.current_task())
+        self.handlers.add(handler)
         self.connections.add(writer)
 
         try:
@@ -322,6 +343,7 @@ class _ProbeListenerStartup(LifecycleHook):
 
         finally:
             self.connections.discard(writer)
+            self.handlers.discard(handler)
             writer.close()
 
             with suppress(ConnectionError, OSError):
