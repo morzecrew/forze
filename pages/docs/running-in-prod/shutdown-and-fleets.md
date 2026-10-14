@@ -330,10 +330,14 @@ asks.
   the grace, then the body's unwind, the release, and a want-lock's or a late acquire's
   release. Keep that under the runtime's `shutdown_step_timeout` (ten seconds by default),
   or the loop is cancelled before it releases and the next leader waits out the TTL.
-- **Campaign calls.** `may_campaign`, `prefer` and the campaign's reads of the lock are
-  each cut off after `release_timeout`; one that overruns or raises skips that campaign. An
-  acquire is never cancelled: one that lands after the step stopped waiting, or that
-  raised after landing, is released at once.
+- **Campaign calls.** `may_campaign`, `prefer`, `fence_floor` and the campaign's reads of
+  the lock are each cut off after `campaign_every`. Handoff and the fence floor are
+  best-effort: when `prefer`, the want-lock or the floor fails or overruns, the replica
+  campaigns as if they were off — acquiring without the advance at worst draws a token the
+  claim refuses. `may_campaign` is the app's own gate, so a failure there sits that
+  campaign out. A `configuration` error from any of them stops campaigning for good, as
+  below. An acquire is never cancelled: one that lands after the step stopped waiting, or
+  whose answer is lost after it landed, is released.
 - **A body that raises** is released and restarted after the supervisor's backoff. A
   `configuration` error stops campaigning for good, with a critical log, while the
   process stays up — wiring does not fix itself by retrying.

@@ -451,16 +451,12 @@ class _Campaign:
             acquired = await self._acquire()
 
         except Exception as error:
-            if is_terminal_crash(error):
-                return error
+            terminal = self._terminal(error)
 
-            if not self.stop.is_set():
-                logger.warning(
-                    "Leadership campaign for %s failed; retrying at the next tick",
-                    self.spec.key,
-                    exc_info=error,
-                )
+            if terminal is not None:
+                return terminal
 
+            self._warn("Leadership campaign for %s failed; retrying at the next tick", error)
             await self._missed()
             return None
 
@@ -474,11 +470,32 @@ class _Campaign:
     async def _allowed(self) -> bool:
         free_since, self.free_since = self.free_since, None
 
+        # The app's own gate: a refusal, or a failure to answer, sits the campaign out.
         if self.may_campaign is not None and not await self._call(self.may_campaign(self.ctx)):
             await self._drop_want()
             return False
 
         if self.handoff == "none" or self.prefer is None:
+            return True
+
+        try:
+            return await self._handoff(free_since)
+
+        except Exception as error:
+            if self._terminal(error) is not None:
+                raise
+
+            # Handoff is a courtesy, never a guard: a replica that cannot read or keep it
+            # campaigns as if it were off, so a free lease is never left unled on its account.
+            self._warn("Leadership handoff for %s failed; campaigning without it", error)
+            self.free_since = None
+            await self._drop_want()
+            return True
+
+    # ....................... #
+
+    async def _handoff(self, free_since: float | None) -> bool:
+        if self.prefer is None:  # pragma: no cover - required with handoff
             return True
 
         if await self._call(self.prefer(self.ctx)) and monotonic() >= self.ask_after:
@@ -505,7 +522,7 @@ class _Campaign:
         ):
             return
 
-        acquired = await self._take(self.want_key, timeout=self.spec.release_timeout)
+        acquired = await self._take(self.want_key, timeout=self.spec.campaign_every)
         self.want_owner = acquired.owner if acquired is not None else None
 
     # ....................... #
@@ -569,14 +586,23 @@ class _Campaign:
         if self.fence_floor is None or self.query is None:
             return
 
-        if await self._call(self.query.is_locked(self.spec.key)):
-            return
+        try:
+            if await self._call(self.query.is_locked(self.spec.key)):
+                return
 
-        floor = await self._call(self.fence_floor(self.ctx))
-        # Required on the spec, so resolution already refused a backend without it; the
-        # accessor's stand-in never matches a protocol check, hence a cast and not a probe.
-        advancing = cast(FenceAdvancing, self.cmd)
-        await self._call(advancing.advance_fence(self.spec.key, past=floor))
+            floor = await self._call(self.fence_floor(self.ctx))
+            # Required on the spec, so resolution already refused a backend without it; the
+            # accessor's stand-in never matches a protocol check, hence a cast and not a probe.
+            advancing = cast(FenceAdvancing, self.cmd)
+            await self._call(advancing.advance_fence(self.spec.key, past=floor))
+
+        except Exception as error:
+            if self._terminal(error) is not None:
+                raise
+
+            # Acquiring without the advance is safe: a token below the store's fence is
+            # refused by the claim and by the fenced writes, and the next campaign tries again.
+            self._warn("Leadership fence advance for %s failed; campaigning without it", error)
 
     # ....................... #
 
@@ -658,17 +684,28 @@ class _Campaign:
     # ....................... #
 
     async def _call[T](self, call: Awaitable[T]) -> T:
-        """A campaign read or one of the app's callbacks, bounded by ``release_timeout`` and by
+        """A campaign read or one of the app's callbacks, bounded by a campaign interval and by
         a stop request; one that overruns is cancelled."""
 
         task = asyncio.ensure_future(call)
-        await self._until({task}, timeout=self.spec.release_timeout.total_seconds())
+        await self._until({task}, timeout=self.spec.campaign_every.total_seconds())
 
         if not task.done():
             task.cancel()
             raise TimeoutError(f"Leadership campaign call for {self.spec.key} overran")
 
         return task.result()
+
+    # ....................... #
+
+    def _terminal(self, error: Exception) -> Exception | None:
+        """The error to stop campaigning on, or ``None`` for one worth retrying."""
+
+        return error if is_terminal_crash(error) else None
+
+    def _warn(self, message: str, error: Exception) -> None:
+        if not self.stop.is_set():
+            logger.warning(message, self.spec.key, exc_info=error)
 
     # ....................... #
 
