@@ -658,7 +658,7 @@ class _Campaign:
             "Leadership term for %s started",
             self.spec.key,
             owner=term.owner,
-            token=term.token,
+            fence=term.token,  # a key named *token* is scrubbed from logs
         )
 
         body = asyncio.ensure_future(self._body(term))
@@ -717,7 +717,7 @@ class _Campaign:
             "Leadership term for %s ended",
             self.spec.key,
             owner=term.owner,
-            token=term.token,
+            fence=term.token,  # a key named *token* is scrubbed from logs
             reason=term.reason,
         )
 
