@@ -275,6 +275,11 @@ class TestConstruction:
     def test_every_just_below_half_the_ttl_is_accepted(self) -> None:
         fleet_membership_lifecycle_step(SPEC, every=timedelta(milliseconds=999))
 
+    @pytest.mark.parametrize("on_stop", ["Leave", "stay", ""])
+    def test_an_unknown_on_stop_is_refused(self, on_stop: str) -> None:
+        with pytest.raises(CoreException, match="on_stop"):
+            fleet_membership_lifecycle_step(SPEC, every=EVERY, on_stop=on_stop)  # type: ignore[arg-type]
+
     def test_a_linger_needs_a_lifetime(self) -> None:
         with pytest.raises(CoreException, match="linger"):
             fleet_membership_lifecycle_step(SPEC, every=EVERY, on_stop="linger")

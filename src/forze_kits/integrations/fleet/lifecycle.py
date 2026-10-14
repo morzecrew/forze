@@ -175,8 +175,9 @@ def fleet_membership_lifecycle_step(
         fleet backend's client, since stopping writes to it.
     :param step_id: The step's id.
     :returns: The lifecycle step.
-    :raises CoreException: ``configuration`` for an *every* of half the ttl or more, or a
-        linger with no *linger_for*; ``validation`` for an invalid *member_id*.
+    :raises CoreException: ``configuration`` for an *every* of half the ttl or more, an
+        *on_stop* other than ``leave`` or ``linger``, or a linger with no *linger_for*;
+        ``validation`` for an invalid *member_id*.
     """
 
     if every * 2 >= spec.ttl:
@@ -184,6 +185,10 @@ def fleet_membership_lifecycle_step(
             f"Fleet membership beats every {every}, which must be below half of the "
             f"fleet's ttl ({spec.ttl}) so one missed beat does not drop the member"
         )
+
+    if on_stop not in ("leave", "linger"):
+        # Refused here, or a typo surfaces only at shutdown, as a failed linger beat.
+        raise exc.configuration(f"Fleet membership on_stop is 'leave' or 'linger', not {on_stop!r}")
 
     if on_stop == "linger" and linger_for < timedelta(milliseconds=1):
         raise exc.configuration("Fleet membership lingers for at least 1 millisecond")
