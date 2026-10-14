@@ -4,7 +4,8 @@ Every replica campaigns for a lease on the distributed-lock ports. The one that 
 the body in a task, renews the lease while the body runs, and tells the body through its
 :class:`Term` when the term is ending — early enough that the body's grace period finishes
 before the lease could lapse. The lease is released only once the body is done, so a successor
-takes over within one campaign interval rather than a full TTL.
+takes over within one campaign interval rather than a full TTL — unless the release fails, and
+the lease lapses at its TTL.
 
 Each term acquires under its own owner string, the caller's ``owner`` plus a fresh nonce,
 because a lock backend compares owners by string alone: a late release or renewal from an old
@@ -440,8 +441,9 @@ class _Campaign:
     """When this replica first saw the lease free, over its latest run of ticks that deferred
     to an asker; any other tick starts the count again."""
 
-    stragglers: set[asyncio.Task[None]] = attrs.field(factory=set)
-    """Acquires the step stopped waiting for, settling in the background."""
+    stragglers: set[asyncio.Task[Any]] = attrs.field(factory=set)
+    """Acquires the step stopped waiting for, and releases it does not wait on, settling in the
+    background; a stop waits for them up to ``release_timeout``."""
 
     # ....................... #
 
@@ -746,7 +748,10 @@ class _Campaign:
                 )
                 await self._release(key, owner)
 
-        task = asyncio.ensure_future(settle())
+        self._beside(settle())
+
+    def _beside(self, work: Awaitable[Any]) -> None:
+        task = asyncio.ensure_future(work)
         self.stragglers.add(task)
         task.add_done_callback(self.stragglers.discard)
 
@@ -881,7 +886,10 @@ class _Campaign:
         self.free_since = None
 
         if self.want_owner is not None:
-            await self._drop_want()
+            # Released beside the term rather than before it: a stop landing during the release
+            # would otherwise cost one more release timeout than the stop budget allows.
+            owner, self.want_owner, self.missed = self.want_owner, None, 0
+            self._beside(self._release(self.want_key, owner))
 
         term = Term(
             key=self.spec.key,
