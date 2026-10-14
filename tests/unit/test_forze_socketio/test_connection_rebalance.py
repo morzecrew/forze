@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from socketio.async_server import AsyncServer
 
+from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.fleet import FleetSpec, MemberState, Report
 from forze.application.execution import DeploymentProfile, build_runtime
 from forze.application.execution.runtime import ExecutionRuntime
@@ -267,6 +268,22 @@ class TestRate:
         # Every second: one each sixth tick. Every 30 s: five each tick. A hundred either way.
         assert run_simulation(scenario) == 100
 
+    def test_a_long_wait_banks_at_most_a_minute(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(200, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+
+            # Ten minutes before the fleet counts as settled, then the first shed.
+            settle = timedelta(minutes=10)
+            await _serve(state, _step(node, per_minute=10, settle=settle), _sleep(601.5))
+
+            return node.closed()
+
+        # Ten minutes refilled a minute's worth, not ten.
+        assert run_simulation(scenario) == 10
+
 
 class TestSharedTransports:
     def test_a_transport_with_a_namespace_that_may_not_move_is_never_shed(self) -> None:
@@ -366,23 +383,34 @@ class TestNoShedding:
 
 
 class TestStop:
-    def test_shutdown_cancels_a_shed_still_closing(self) -> None:
-        async def scenario() -> tuple[bool, bool, float]:
+    def test_shutdown_cancels_a_shed_still_closing_before_teardown(self) -> None:
+        async def scenario() -> tuple[list[bool], bool, float]:
             state, node = MockState(), _Node()
             (first,) = await node.connect(1, "/lobby", delay=8)
             await _peers(state, 0, 0)
             await _beat(state, "me", {})
-
-            # At 10 s the allowance holds one; its close would take until 18 s.
-            await _serve(state, _step(node, every=timedelta(seconds=10), per_minute=6), _sleep(12))
-
             socket = node.sockets[first]
+            seen_in_teardown: list[bool] = []
 
-            return socket.cancelled, socket.closed, asyncio.get_running_loop().time()
+            async def record(_ctx: object) -> None:
+                await asyncio.sleep(0)
+                seen_in_teardown.append(socket.cancelled)
 
-        cancelled, closed, left_at = run_simulation(scenario)
+            # Started after the rebalance step, so torn down before it.
+            later = LifecycleStep(
+                id="later", shutdown=record, depends_on=("realtime_connection_rebalance",)
+            )
+            # At 10 s the allowance holds one; its close would take until 18 s.
+            rebalance = _step(node, every=timedelta(seconds=10), per_minute=6)
+            await _serve(state, [rebalance, later], _sleep(12))
 
-        assert cancelled and not closed
+            return seen_in_teardown, socket.closed, asyncio.get_running_loop().time()
+
+        seen_in_teardown, closed, left_at = run_simulation(scenario)
+
+        # Stopped with the background loops, before any step's teardown.
+        assert seen_in_teardown == [True]
+        assert not closed
         assert left_at < 18
 
 
