@@ -16,7 +16,7 @@ from forze.application.contracts.authn import (
     TokenLifecyclePort,
 )
 from forze.application.contracts.execution import Handler
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 
 from ..dto import (
     AuthnApiKeyListDTO,
@@ -39,6 +39,11 @@ from ._utils import (
 )
 
 # ----------------------- #
+
+_FAMILY_REVOCATION_ATTEMPTS = 3
+"""Fresh transactions a reused token's family revocation gets before its conflict is raised."""
+
+# ....................... #
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
@@ -146,15 +151,31 @@ class AuthnRefreshTokens(Handler[AuthnRefreshRequestDTO, AuthnTokenResponseDTO])
         except RefreshTokenReuseError as reuse:
             # The raise rolled back the family revocation the lifecycle made before it, so
             # commit that revocation on its own: reuse is the token-theft signal.
-            async with self.tx():
-                await self.token_lifecycle.revoke_chain_of_tokens(
-                    reuse.principal_id,
-                    reuse.family_id,
-                )
-
+            await self._revoke_family(reuse)
             raise
 
         return token_response_from_issued_tokens(tokens)
+
+    # ....................... #
+
+    async def _revoke_family(self, reuse: RefreshTokenReuseError) -> None:
+        # A concurrent refresh can conflict with the revocation, and a backend may abort the
+        # transaction on a conflict, so each attempt runs in a fresh one.
+        for attempt in range(_FAMILY_REVOCATION_ATTEMPTS):
+            try:
+                async with self.tx():
+                    await self.token_lifecycle.revoke_chain_of_tokens(
+                        reuse.principal_id,
+                        reuse.family_id,
+                    )
+
+                return
+
+            except CoreException as error:
+                last = attempt == _FAMILY_REVOCATION_ATTEMPTS - 1
+
+                if error.kind is not ExceptionKind.CONCURRENCY or last:
+                    raise
 
 
 # ....................... #

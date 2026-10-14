@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A failed deactivation, password change or reset no longer half-applies.** Login, refresh, logout, password change and reset, deactivation and the tenant switch run their writes in one transaction on `tx_route`, `"default"` unless set; `None` opts out. **Breaking**: the deps need a transaction manager there.
+- **A failed deactivation, password change or reset no longer half-applies.** Login, refresh, logout, password change and reset, and deactivation commit whole on `build_authn_registry(tx_route=)`, the tenant switch on `build_tenancy_registry`'s. **Breaking**: each needs a transaction manager, `"default"` unless set.
 
 - **On Postgres, a login racing a deactivation can no longer leave the principal a live session.** Login, refresh and the tenant switch read the principal with a row lock until the session commits. **Breaking** for eligibility ports: `require_authentication_allowed` takes `for_update`.
 

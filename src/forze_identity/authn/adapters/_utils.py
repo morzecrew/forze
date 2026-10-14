@@ -170,7 +170,9 @@ async def revoke_sessions_matching(
     A concurrent refresh can rotate a session between the read and the write, which makes
     its revision stale and refuses the batch. The batch is then read again, so the rotated
     session drops out and the session that replaced it is revoked instead; a batch that
-    goes stale more than a few times in a row raises.
+    goes stale more than a few times in a row raises. A backend that aborts the transaction
+    on a conflict (Mongo) cannot be read again inside it, so there the conflict propagates
+    for the transaction's owner to retry in a fresh one.
     """
 
     filters: Any = {

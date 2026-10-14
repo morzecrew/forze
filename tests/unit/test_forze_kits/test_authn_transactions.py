@@ -29,7 +29,7 @@ from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig
 from forze_identity.authn.adapters import _utils as authn_utils
-from forze_identity.authn.adapters import password_lifecycle, password_reset
+from forze_identity.authn.adapters import password_lifecycle, password_reset, token_lifecycle
 from forze_identity.authn.adapters.credential_deactivation import (
     AuthnCredentialDeactivationHelper,
 )
@@ -463,3 +463,40 @@ async def test_a_revocation_retries_a_stale_batch_only_so_often(
 
     assert caught.value is error
     assert cmd.update_many.await_count == calls
+
+
+@pytest.mark.parametrize("failures", [1, 2], ids=["in-line", "in-line-and-first-retry"])
+async def test_a_reuse_revocation_that_conflicts_still_revokes_the_family(
+    monkeypatch: pytest.MonkeyPatch,
+    failures: int,
+) -> None:
+    # A concurrent refresh can make the revocation conflict, and on Mongo a conflict aborts
+    # the transaction, so no retry inside it can recover. The reuse must still be reported,
+    # and the family revoked in a fresh transaction.
+    ctx = _real_ctx()
+    registry = _registry()
+    principal = await _principal(ctx)
+    first = await ctx.authn.token_lifecycle(SPEC).issue_tokens(
+        AuthnIdentity(principal_id=principal)
+    )
+    second = await _refresh(ctx, registry, _refresh_token(first))
+    original = token_lifecycle.revoke_sessions_matching
+    left = [failures]
+
+    async def conflicting(*args: Any, **kwargs: Any) -> None:
+        if left[0]:
+            left[0] -= 1
+            raise exc.concurrency("Write conflict during transaction. Please retry.")
+
+        await original(*args, **kwargs)
+
+    monkeypatch.setattr(token_lifecycle, "revoke_sessions_matching", conflicting)
+
+    with pytest.raises(CoreException) as caught:
+        await _refresh(ctx, registry, _refresh_token(first))
+
+    assert caught.value.kind is ExceptionKind.AUTHENTICATION
+    assert caught.value.summary == "Invalid refresh token"
+
+    with pytest.raises(CoreException, match="Invalid refresh token"):
+        await _refresh(ctx, registry, second.refresh_token)
