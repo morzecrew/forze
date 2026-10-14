@@ -324,7 +324,7 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
 - **A connect refused while draining** fails with the message `Server is draining` and
   `{"code": "realtime_draining"}` as its data (`err.data.code` on the JavaScript
   `connect_error`). The check runs before authentication, and again as the connect's last
-  step, after which a refused connect has its presence, room and identity undone. Retry with
+  step; a connect refused there has its presence, room and identity undone first. Retry with
   jittered backoff: behind sticky sessions an immediate retry lands on the same replica
   until the balancer notices it is not ready. Other refusals keep their message-only shape.
 

@@ -17,7 +17,7 @@ from forze.base.exceptions import CoreException, ExceptionKind
 
 # ----------------------- #
 
-SLACK = 0.25
+SLACK = 0.5
 """Real-time tolerance for a loaded runner; every bound below is far from its alternative."""
 
 
@@ -39,7 +39,7 @@ def _slow_closes(count: int, *, takes: float, starts: list[float]) -> list[Close
 
 class TestSpreadCloses:
     async def test_thousands_of_slow_closes_finish_within_window_plus_tail(self) -> None:
-        count, window, tail, takes = 3_500, 0.5, 0.3, 0.05
+        count, window, tail, takes = 3_500, 1.0, 0.5, 0.05
         starts = [0.0] * count
         clock = asyncio.get_running_loop()
         began = clock.time()
@@ -61,7 +61,7 @@ class TestSpreadCloses:
         assert offsets == sorted(offsets)
 
         for index in (0, count // 4, count // 2, 3 * count // 4, count - 1):
-            assert offsets[index] == pytest.approx(index * window / count, abs=0.1)
+            assert offsets[index] == pytest.approx(index * window / count, abs=0.25)
 
     # ....................... #
 

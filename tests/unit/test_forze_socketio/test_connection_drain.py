@@ -421,6 +421,58 @@ class TestLateConnect:
         assert stats.connections == {"/": 0}
         assert stats.connect_refused == {("/", "draining"): 1}
 
+    # ....................... #
+
+    async def test_an_undo_step_that_fails_does_not_replace_the_refusal(self) -> None:
+        server = _server()
+        runtime = _runtime()
+
+        class _BrokenPresence(InMemoryRealtimePresence):
+            async def left(self, room: str, sid: str) -> None:
+                raise ConnectionResetError("presence store unreachable")
+
+        async def resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
+            runtime.begin_draining()  # the announcement lands while this connect is under way
+            return await _resolve(connect)
+
+        attach_realtime_connection(
+            server,
+            resolve=resolve,
+            presence=_BrokenPresence(),
+            draining=lambda: runtime.draining,
+        )
+
+        async with runtime.scope():
+            with pytest.raises(SocketIOConnectionRefusedError) as caught:
+                await _connect(server, "eio-1")
+
+        assert caught.value.error_args["data"] == {"code": "realtime_draining"}
+        # The steps after the failed one still ran.
+        assert list(server.manager.get_participants("/", _ROOM)) == []
+        assert IDENTITY_SESSION_KEY not in _socket(server, "eio-1").session.get("/", {})
+
+    # ....................... #
+
+    async def test_an_anonymous_connect_finishing_while_draining_is_refused(self) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+        runtime = _runtime()
+
+        async def resolve(_connect: SocketIOConnect) -> RealtimeConnection | None:
+            runtime.begin_draining()
+            return None
+
+        attach_realtime_connection(
+            server, resolve=resolve, draining=lambda: runtime.draining, stats=stats
+        )
+
+        async with runtime.scope():
+            with pytest.raises(SocketIOConnectionRefusedError):
+                await _connect(server, "eio-1")
+
+        assert stats.connect_refused == {("/", "draining"): 1}
+        assert stats.connections == {}
+
 
 # ----------------------- #
 

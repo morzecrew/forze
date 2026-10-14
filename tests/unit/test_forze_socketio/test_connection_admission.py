@@ -172,3 +172,19 @@ class TestAdmission:
 
         assert recorder.calls == []
         assert stats.connect_refused == {("/", "draining"): 1}
+
+    # ....................... #
+
+    async def test_its_own_refusal_reaches_the_client_as_raised(self) -> None:
+        server, recorder = AsyncServer(), _Recorder()
+
+        async def admission(_connect: SocketIOConnect) -> None:
+            raise SocketIOConnectionRefusedError("Busy", {"retry_after": 3})
+
+        stats = _attach(server, recorder, admission)
+
+        with pytest.raises(SocketIOConnectionRefusedError) as caught:
+            await _connect(server)
+
+        assert caught.value.error_args == {"message": "Busy", "data": {"retry_after": 3}}
+        assert stats.connect_refused == {("/", "admission"): 1}

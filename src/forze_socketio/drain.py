@@ -185,8 +185,8 @@ def connection_drain_lifecycle_step(
     The window and the tail are fitted to what the phase may still take after listing: the
     tail to at most half of it, the window to at most the rest, never longer than
     configured. Below the drain floor (100 ms) the phase is skipped and the connections
-    close when the server stops. Connects that arrive while the replica drains are refused by
-    ``attach_realtime_connection`` (``realtime_draining``), so the phase lists once.
+    close when the server stops. The phase lists once: give ``attach_realtime_connection``
+    its ``draining`` source and connects arriving meanwhile are refused (``realtime_draining``).
 
     :param window: The longest the closes are spread over.
     :param tail: The longest the closes may take after the last start.
