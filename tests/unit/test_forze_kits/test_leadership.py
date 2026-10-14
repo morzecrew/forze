@@ -565,9 +565,9 @@ class TestDeadlines:
 
             a = fleet.replica("a", lead=lead)
             await a.start()
-            await asyncio.sleep(30)
+            await asyncio.sleep(17)
 
-            (run,) = fleet.runs
+            (run,) = fleet.runs  # the next term starts at the next campaign, at +18
             assert run.cancelled is None
             assert run.finished == 16.0
             assert run.term.reason == "returned"

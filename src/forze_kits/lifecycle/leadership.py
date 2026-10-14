@@ -219,7 +219,8 @@ class Term:
     backend does not issue tokens."""
 
     ended: asyncio.Event = attrs.field(factory=asyncio.Event, init=False)
-    """Set once, by the step, when the term ends."""
+    """Set by the step when the term ends; wait on it. The term's state is the step's own, so a
+    body that sets it signals only its own waiters: the term goes on."""
 
     reason: TermEnd | None = attrs.field(default=None, init=False)
     """Why the term ended; ``None`` while it is live."""
@@ -234,9 +235,9 @@ class Term:
     # ....................... #
 
     def live(self) -> bool:
-        """Whether the term has not ended. No I/O."""
+        """Whether the step has not ended the term. No I/O."""
 
-        return not self.ended.is_set()
+        return self.reason is None
 
     # ....................... #
 
@@ -261,7 +262,7 @@ class Term:
     # ....................... #
 
     def _end(self, reason: TermEnd) -> None:
-        if self.ended.is_set():
+        if self.reason is not None:
             return
 
         self.reason = reason
