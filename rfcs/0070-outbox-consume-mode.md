@@ -193,17 +193,27 @@ began.
   changed, so they return to `pending` as they were.
 - Each publish is bounded by the shorter of `publish_timeout` and the budget left. A publish
   cut short is a transient failure, retried with backoff.
-- **The scope bounds the database side too.** It sets three timeouts locally:
+- **The scope bounds the database side too, when it owns the transaction.** When the pass
+  opens the root transaction, the scope sets three timeouts with `SET LOCAL`:
   - `statement_timeout` and `lock_timeout` to `pass_statement_timeout`, so a claim or mark
     blocked on a lock, such as a delivery-log insert, fails rather than waits;
   - `idle_in_transaction_session_timeout` to the deadline plus a margin.
 
-  A statement that times out fails the pass (5.3). A relay that stalls outright, for example
-  on a blocked event loop, loses its session and rolls back rather than holding the locks.
+  They end with the pass's transaction. A statement that times out fails the pass (5.3). A
+  relay that stalls outright, for example on a blocked event loop, loses its session and
+  rolls back rather than holding the locks. A destination on the same client runs its SQL
+  under the same `statement_timeout` (§9).
+- **Inside a caller's transaction the scope sets nothing.** `SET LOCAL` would outlive the
+  savepoint and stay in force for the rest of the caller's transaction, including its fence
+  check. It would also replace any stricter limits the caller had set. So a caller that
+  fences a pass (5.6) owns its transaction's timeouts, and the docs say so. The publishing
+  deadline still applies, because the relay enforces it.
+- **Both durations must be positive,** and configuration refuses zero or less. In Postgres a
+  zero `statement_timeout` means no limit at all.
 
-So a pass holds its locks for at most `pass_deadline`, plus its final mark statements, each
-bounded by `pass_statement_timeout`. There are a few of them: the last published chunk and
-one statement per distinct retry count.
+So a pass that owns its transaction holds its locks for at most `pass_deadline`, plus its
+final mark statements, each bounded by `pass_statement_timeout`. There are a few of them: the
+last published chunk and one statement per distinct retry count.
 
 A per-publish timeout alone bounds nothing: the relay marks published rows only every 32
 publishes and flushes retries at the end of the pass, so a batch of slow publishes leaves the
@@ -432,7 +442,8 @@ destination's latency.
 - **A destination on the same Postgres client joins the pass.** The store and the destination
   share the client's context-bound connection, so the publish runs inside the pass's
   transaction. That makes the delete and the delivery atomic, but an SQL error in the
-  destination aborts the whole pass (5.3). No destination forze ships is Postgres-backed.
+  destination aborts the whole pass (5.3). Its statements also run under the pass's
+  `statement_timeout`, so a destination slower than `pass_statement_timeout` fails the pass. No destination forze ships is Postgres-backed.
   Documented.
 - **Retry policies on the query port.** A resilience retry inside an aborted transaction
   always fails, and a statement timeout aborts the transaction. Under consume a failed
@@ -473,7 +484,7 @@ destination's latency.
 | 10 | `ASSUMED` | Other backends keep retain mode only. |
 | 11 | `LOCKED` | Under consume, a pass that raises ends the background step's tick, and consecutive failed ticks back off. A wake does not cut a backoff short. A rolled-back pass makes its whole batch claimable at once, so today's "log and run the next pass" would republish it up to `max_batches_per_tick` times a tick, and its retry state would never persist. |
 | 12 | `ASSUMED` | `OutboxRelay` gains an optional `publish_timeout`. A publish that exceeds it is a transient failure, retried with backoff. |
-| 13 | `LOCKED` | Under consume, a pass stops publishing at `pass_deadline` (default 5 s), bounds each publish by the budget left, and commits what it did; rows it did not reach are unchanged. The scope sets `statement_timeout` and `lock_timeout` locally to `pass_statement_timeout` (default 1 s) and `idle_in_transaction_session_timeout` to the deadline plus a margin. So locks are held for at most the deadline plus a few bounded mark statements. A per-publish timeout alone bounds nothing, because marks flush only every 32 publishes and retries at the pass's end. |
+| 13 | `LOCKED` | Under consume, a pass stops publishing at `pass_deadline` (default 5 s), bounds each publish by the budget left, and commits what it did; rows it did not reach are unchanged. When the pass owns its root transaction, the scope sets `statement_timeout` and `lock_timeout` to `pass_statement_timeout` (default 1 s) and `idle_in_transaction_session_timeout` to the deadline plus a margin, all with `SET LOCAL`. Inside a caller's transaction it sets nothing, because `SET LOCAL` would outlive the savepoint and override the caller's limits. Both durations must be positive. A per-publish timeout alone bounds nothing, because marks flush only every 32 publishes and retries at the pass's end. |
 
 ## 12. Phasing
 
