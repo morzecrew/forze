@@ -881,8 +881,9 @@ class _Campaign:
 
         hard, soft = self._hard(sent), self._soft(sent)
         next_renewal = sent + renew_every
-        renewal: asyncio.Task[tuple[bool | None, bool]] | None = None
+        renewal: asyncio.Task[bool | None] | None = None
         renewal_sent = sent
+        check: asyncio.Task[bool] | None = None
         grace_end: float | None = None
 
         try:
@@ -890,7 +891,7 @@ class _Campaign:
                 now = monotonic()
 
                 if renewal is not None and renewal.done():
-                    renewed, wanted = renewal.result()
+                    renewed = renewal.result()
                     renewal = None
 
                     if renewed is False:
@@ -904,6 +905,15 @@ class _Campaign:
 
                     if renewed:
                         hard, soft = self._hard(renewal_sent), self._soft(renewal_sent)
+
+                        # Asked apart from the renewal, so a slow check never holds back the
+                        # deadlines a successful reset moved.
+                        if self.handoff == "on_request" and term.live() and check is None:
+                            check = asyncio.ensure_future(self._check(term))
+
+                if check is not None and check.done():
+                    wanted = check.result()
+                    check = None
 
                     if wanted and term.live():
                         term._end("yielded")
@@ -940,6 +950,9 @@ class _Campaign:
                 if renewal is not None:
                     waits.add(renewal)
 
+                if check is not None:
+                    waits.add(check)
+
                 await self._until(
                     waits,
                     timeout=min(t for t in wakes if t is not None) - monotonic(),
@@ -949,23 +962,17 @@ class _Campaign:
             return False
 
         finally:
-            if renewal is not None:
-                renewal.cancel()
+            for task in (renewal, check):
+                if task is not None:
+                    task.cancel()
 
     # ....................... #
 
-    async def _renew(self, term: Term, bound: float) -> tuple[bool | None, bool]:
-        """Reset the lease, bounded; ``None`` when the answer is unknown.
-
-        With handoff on, a successful renewal also reads the want-lock, within what is left of
-        the bound: the second item says whether another replica asks and this one does not
-        prefer the unit.
-        """
-
-        deadline = monotonic() + bound
+    async def _renew(self, term: Term, bound: float) -> bool | None:
+        """Reset the lease, bounded; ``None`` when the answer is unknown."""
 
         try:
-            renewed = await asyncio.wait_for(self.cmd.reset(self.spec.key, term.owner), bound)
+            return await asyncio.wait_for(self.cmd.reset(self.spec.key, term.owner), bound)
 
         except Exception as error:
             logger.warning(
@@ -973,15 +980,18 @@ class _Campaign:
                 self.spec.key,
                 error=repr(error),
             )
-            return None, False
+            return None
 
-        if not renewed or self.handoff == "none" or not term.live():
-            return renewed, False
+    # ....................... #
+
+    async def _check(self, term: Term) -> bool:
+        """Whether another replica asks and this one does not prefer the unit, bounded by a
+        campaign interval; a check that fails or overruns keeps the term."""
 
         try:
-            wanted = await asyncio.wait_for(
+            return await asyncio.wait_for(
                 self._wanted_by_another(term),
-                max(0.0, deadline - monotonic()),
+                self.spec.campaign_every.total_seconds(),
             )
 
         except Exception as error:
@@ -990,9 +1000,7 @@ class _Campaign:
                 self.spec.key,
                 error=repr(error),
             )
-            wanted = False
-
-        return True, wanted
+            return False
 
     # ....................... #
 
