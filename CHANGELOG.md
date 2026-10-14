@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `SERVERLESS` runtime now refuses the durable recovery and scheduler steps** at assembly, as it does the realtime sweeps: each runs a background loop a frozen function cannot host. **Breaking** for serverless apps that assembled them.
 
+- **A lock spec with `requires_fencing_token` no longer refuses a capable backend whose ports are wrapped** by OTel port spans, tracing, interceptors or a resilience port policy; resolving it failed with `dlock.fencing_unsupported`.
+
 - **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now accepts an equal token on a holder's later writes, the same lock generation, as the contract does.
 
 ## [0.13.0] - 2026-10-14

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 
 from forze.application.contracts.dlock import (
     AcquiredLock,
@@ -10,8 +11,9 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
     DistributedLockSpec,
 )
-from forze.application.execution import Deps
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext
 from forze.base.exceptions import CoreException
+from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -171,3 +173,19 @@ def test_a_read_only_operation_is_refused_a_lock_that_cannot_advance() -> None:
         ctx.dlock.command(spec)
 
     assert ei.value.code == "dlock.fence_advance_unsupported"
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [{"requires_fencing_token": True}, {"requires_fence_advance": True}],
+    ids=["fencing", "fence-advance"],
+)
+def test_a_traced_backend_still_meets_its_requirements(flags: dict[str, bool]) -> None:
+    # OTel port spans wrap every resolved port in a proxy that forwards methods through
+    # __getattr__; the capability check must see through it, not refuse a capable backend.
+    registry = DepsRegistry.from_modules(MockDepsModule()).with_otel_port_spans(
+        tracer=TracerProvider().get_tracer("test")
+    )
+    ctx = ExecutionContext(deps=registry.freeze().resolve())
+
+    assert ctx.dlock.command(DistributedLockSpec(name="lock", **flags)) is not None

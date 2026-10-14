@@ -1,13 +1,9 @@
 from forze.base.exceptions import exc
 
 from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey, GuardedWritePort
-from .ports import (
-    DistributedLockCommandPort,
-    DistributedLockQueryPort,
-    FenceAdvancing,
-    FencingAware,
-)
+from .ports import DistributedLockCommandPort, DistributedLockQueryPort
 from .specs import DistributedLockSpec
+from .value_objects import DistributedLockCapabilities
 
 # ----------------------- #
 
@@ -76,7 +72,15 @@ class DistributedLockDeps(ConvenientDeps):
             else port
         )
 
-        caps = backend.capabilities() if isinstance(backend, FencingAware) else None
+        # Probed by attribute rather than by protocol ``isinstance``: a port wrapped for
+        # tracing, interception or a resilience policy forwards its methods through
+        # ``__getattr__``, which a protocol check never consults, so it would refuse a
+        # capable backend.
+        report = getattr(backend, "capabilities", None)
+        caps = report() if callable(report) else None
+
+        if not isinstance(caps, DistributedLockCapabilities):
+            caps = None
 
         if spec.requires_fencing_token and not (caps is not None and caps.fencing_tokens):
             raise exc.configuration(
@@ -86,7 +90,9 @@ class DistributedLockDeps(ConvenientDeps):
             )
 
         if spec.requires_fence_advance and not (
-            caps is not None and caps.fence_advance and isinstance(backend, FenceAdvancing)
+            caps is not None
+            and caps.fence_advance
+            and callable(getattr(backend, "advance_fence", None))
         ):
             raise exc.configuration(
                 f"Distributed lock {spec.name!r} requires fence advance, but the wired "
