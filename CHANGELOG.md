@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A replica keeps its fleet entry current from startup to shutdown.** `fleet_membership_lifecycle_step(spec, every=)` beats `starting`, then `serving` once startup finishes, then `draining` once a drain is announced, and leaves the fleet or lingers on stop.
 
+- **An overloaded socket.io replica sheds connections toward the fleet's mean.** `connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)` closes movable connections at a bounded rate once the fleet has settled; `connection_report(sio, movable=)` fills the membership report it reads.
+
 ### Changed
 
 - **The `socketio` extra bounds `python-engineio` below 5.** The connection drain closes connections through its internals, and refuses at assembly a server that lacks them.

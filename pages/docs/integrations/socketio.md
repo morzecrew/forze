@@ -358,6 +358,99 @@ connections per namespace), `forze.realtime.connect_refused` (by reason: `protoc
 `auth`, `draining`, `admission`, `internal`) and `forze.realtime.drain_closed` (closes the
 drain started, by outcome). See the [metric catalog](../reference/metrics.md#realtime-connections).
 
+## Rebalance a fleet
+
+A least-connections balancer places every new connection on the emptiest replica, but a
+socket that stays open never moves. After a deploy the replica that restarted last holds few
+connections and the others hold the rest, and when clients stay connected for hours, so does
+the imbalance. If your clients reconnect often anyway — page loads, short sessions — the
+balancer evens the fleet out on its own, and you do not need this.
+
+The rebalance step lets a replica well above the fleet's mean close a few of its connections
+at a time, only those you mark movable. Their clients reconnect through the balancer to
+replicas with room. Each replica learns the others' counts from
+[fleet membership](../running-in-prod/fleet-membership.md), so every replica runs both steps:
+
+```python
+from datetime import timedelta
+
+from forze.application.contracts.fleet import FleetSpec
+from forze.application.execution import build_runtime
+from forze_kits.integrations.fleet import fleet_membership_lifecycle_step
+from forze_socketio import (
+    build_socketio_server,
+    connection_rebalance_lifecycle_step,
+    connection_report,
+)
+
+GATEWAYS = FleetSpec(name="gateways", ttl=timedelta(seconds=10))
+NAMESPACES = ("/lobby", "/game")
+
+
+def movable(namespace: str, sid: str) -> bool:
+    return namespace == "/lobby"  # a game connection never moves
+
+
+sio = build_socketio_server()
+runtime = build_runtime(
+    deps_module,  # wires the fleet, e.g. RedisDepsModule(fleets=...)
+    lifecycle_steps=[
+        fleet_membership_lifecycle_step(
+            GATEWAYS,
+            every=timedelta(seconds=3),
+            report=connection_report(sio, namespaces=NAMESPACES, movable=movable),
+            depends_on=("redis_lifecycle",),
+        ),
+        connection_rebalance_lifecycle_step(
+            sio,
+            fleet=GATEWAYS,
+            every=timedelta(seconds=10),
+            namespaces=NAMESPACES,
+            movable=movable,
+            per_minute=60,
+        ),
+    ],
+)
+```
+
+Every `every`, the step reads the fleet's view, puts its own live counts in its own entry,
+and asks [`FleetView.excess`](../running-in-prod/fleet-membership.md#the-policies) how far
+above the mean it is. It closes that many movable connections, no more than its rate allows,
+the way the drain does: at the Engine.IO level, spread over `every`, each given up to another
+`every` to finish.
+
+**Route least-connections.** It is a prerequisite, not a tuning choice: a balancer that
+round-robins or hashes can send the shed clients straight back, and the step then moves load
+in circles.
+
+**The report counts transports.** One Engine.IO connection carries every namespace its
+client opened, and closing it ends them all, so every count is of Engine.IO connections, not
+of namespace connections. A connection is movable when every namespace on it is in
+`namespaces` and passes `movable(namespace, sid)`; one game namespace keeps the whole
+connection. The step reads its peers' counts from their membership reports, under `load`
+(`"connections"`) and `movable_report` (`"movable"`). `connection_report` returns the
+`report=` callable that fills both with the counting the step uses for its own: give the two
+the same `namespaces` and `movable`. A replica that reports no load is left out of the mean.
+
+**When it sheds.** Only while all of these hold:
+
+- Every replica in the view has been serving for `settle` (120 s by default), so nobody sheds
+  during a deploy. Shedding does not change a replica's state, so it does not restart this
+  clock.
+- This replica has an entry in the view, is serving, and is not draining. A draining replica
+  closes everything through its [drain](#drain-a-replica) instead; a shed already running
+  when the drain begins finishes, or is cancelled before teardown.
+- Its count is more than `tolerance` (15%) above the mean. Peers' reports can be a beat old;
+  the tolerance absorbs that.
+- No earlier shed is still closing, and `cooldown` (default: `settle`) has passed since the
+  last one ended, long enough for its clients to land elsewhere and be reported.
+
+**The rate.** Each tick adds `per_minute` for each minute that passed to an allowance, keeping
+the fraction and banking at most one minute's worth; a shed spends whole connections. So
+`per_minute` holds however short `every` is: a low rate sheds one connection every few ticks,
+not one every tick. The step's `member_id` must be the membership step's; both default to
+`instance_id()`. It needs a long-running process, so a `SERVERLESS` runtime refuses it.
+
 ## Settings
 
 `SocketIOSettings` carries the Redis backplane: the URL (as a `SecretStr` — it holds the
@@ -381,6 +474,7 @@ URL from a `RedisSettings.dsn`; this package cannot import `forze_redis` itself.
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
 | `realtime_identity_expiry_lifecycle_step` | drop connections whose credential (`expires_at`) has lapsed |
 | `connection_drain_lifecycle_step` + `close_spread` | close a leaving replica's connections spread over a window, before the server stops |
+| `connection_rebalance_lifecycle_step` + `connection_report` | shed an overloaded replica's movable connections toward the fleet's mean, at a bounded rate |
 | `RealtimeConnectionStats` + `instrument_realtime_connections` | open and refused connects, and the drain's closes |
 | `realtime.reauth` (built-in event) | refresh a rotating token in place — same principal, no reconnect |
 | `RealtimeGatewayStats` + `instrument_realtime_gateway` | delivery counters for the live path (emitted / failed / skipped / poisoned) |
