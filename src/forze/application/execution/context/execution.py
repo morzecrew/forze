@@ -40,6 +40,7 @@ from .background import BackgroundOwners
 from .drain import OperationDrainGate
 from .drainable import Drainables
 from .invocation import InvocationContext
+from .lifecycle import LifecycleState
 from .transaction import AfterCommitErrorHandler, TransactionContext
 
 # ----------------------- #
@@ -160,6 +161,11 @@ class ExecutionContext:
     )
     """In-flight operation accounting for graceful shutdown (see
     :mod:`~forze.application.execution.context.drain`)."""
+
+    lifecycle: LifecycleState = attrs.field(factory=LifecycleState, init=False, repr=False)
+    """Whether lifecycle startup finished and whether a drain was announced, for lifecycle
+    steps to read from their hook's ``ctx`` (see
+    :mod:`~forze.application.execution.context.lifecycle`)."""
 
     background_owners: BackgroundOwners = attrs.field(
         factory=BackgroundOwners,

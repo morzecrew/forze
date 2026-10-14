@@ -46,10 +46,13 @@ from forze_fastapi.routes import attach_readiness_route
 attach_readiness_route(router, runtime)   # GET /readyz
 ```
 
-`200` while a scope is active and not draining; `503 draining` once shutdown
-flips the gate, `503 unavailable` before the scope exists. Point your
-orchestrator's readiness check here and the rollout sequence takes care of
-itself: routing stops, in-flight work drains, teardown runs.
+`200` once lifecycle startup has finished, until the scope starts draining.
+`503 unavailable` before that — before the scope exists, and while later startup
+steps are still running, so a pod is never routed to with half its clients open.
+`503 draining` from the moment the scope starts draining: when a drain is
+announced (see [Graceful deploys](#graceful-deploys)), or when shutdown closes the
+gate. Point your orchestrator's readiness check here and the rollout sequence
+takes care of itself: routing stops, in-flight work drains, teardown runs.
 
 Point *liveness* somewhere else — at `attach_liveness_route(router)`, which answers
 `200` unconditionally. A draining pod is alive but not ready; one endpoint answering
@@ -62,11 +65,13 @@ lifecycle step:
 ```python
 from forze.application.execution.background import probe_listener_step
 
-lifecycle_steps.append(probe_listener_step(runtime, port=8079))
+lifecycle_steps.append(probe_listener_step(port=8079))
 ```
 
-Stdlib `asyncio`, no HTTP framework, same runtime state, same drain semantics: it
-reports `draining` for the whole window and closes only after. See
+Stdlib `asyncio`, no HTTP framework. The step reads the scope's state from the
+`ctx` its startup hook receives, so it takes no runtime and sits in the plan of the
+runtime it reports on. It answers through the same evaluator as the FastAPI route,
+reports `draining` for the whole window, and closes only after. See
 [The Grafana stack](grafana-stack.md#probes) for the Kubernetes mapping.
 
 ### Are the dependencies reachable?
@@ -125,6 +130,18 @@ also runs every probe, so the probe period is a real query rate against each
 dependency.
 
 No `probes` (the default) leaves the drain-gate-only behaviour untouched.
+
+The probe listener takes the same map as `checks`, with `check_timeout` per check,
+and gives the same answer and the same body as the route from the same probes.
+Liveness, on either, runs no check:
+
+```python
+probe_listener_step(
+    port=8079,
+    checks={"postgres": PostgresClientDepKey},
+    check_timeout=timedelta(seconds=2),
+)
+```
 
 ## Declare the fleet posture
 

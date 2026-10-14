@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from datetime import timedelta
 from typing import Any, cast
 
 import attrs
+import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from forze.application.contracts.deps import DepKey, Deps
-from forze.application.execution import DepsRegistry
+from forze.application.execution import DepsRegistry, build_runtime
+from forze.application.execution.background import probe_listener_step
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze_fastapi.routes import attach_readiness_route
@@ -286,3 +289,78 @@ class TestReadinessProbes:
             "ok": False,
             "detail": "TimeoutError",
         }
+
+
+# ----------------------- #
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+
+        return probe.getsockname()[1]
+
+
+_PARITY_CASES: dict[
+    str, tuple[dict[str, _FakeClient], dict[str, DepKey[Any]], bool, str]
+] = {
+    "healthy": ({"postgres": _FakeClient()}, {}, False, "ready"),
+    "one unhealthy": (
+        {"postgres": _FakeClient(), "redis": _FakeClient(detail="refused", ok=False)},
+        {},
+        False,
+        "degraded",
+    ),
+    "one hanging": (
+        {"postgres": _FakeClient(), "redis": _FakeClient(hang=True)},
+        {},
+        False,
+        "degraded",
+    ),
+    "one raising": ({"postgres": _FakeClient(raises=ValueError("dsn"))}, {}, False, "degraded"),
+    "one unregistered": (
+        {"postgres": _FakeClient()},
+        {"redis": DepKey[Any]("nope")},
+        False,
+        "degraded",
+    ),
+    "gate closed": ({"postgres": _FakeClient()}, {}, True, "draining"),
+}
+
+
+class TestListenerAndRouteAgree:
+    """The stdlib listener and the FastAPI route share one evaluator: same probes, same answer."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", list(_PARITY_CASES))
+    async def test_the_same_probes_give_the_same_answer(self, case: str) -> None:
+        clients, extra, close_gate, expected = _PARITY_CASES[case]
+        keys: dict[str, DepKey[Any]] = {name: DepKey[Any](name) for name in clients}
+        probes = {**keys, **extra}
+        timeout = timedelta(seconds=0.05)
+        port = _free_port()
+
+        runtime = build_runtime(
+            deps=Deps.plain({keys[name]: client for name, client in clients.items()}),
+            lifecycle_steps=probe_listener_step(
+                host="127.0.0.1", port=port, checks=probes, check_timeout=timeout
+            ),
+            drain_timeout=timedelta(0),
+        )
+        router = APIRouter()
+        attach_readiness_route(router, runtime, probes=probes, probe_timeout=timeout)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        async with runtime.scope():
+            if close_gate:
+                await runtime.get_context().drain_gate.drain(0.0)
+
+            route = client.get("/readyz")
+
+            async with httpx.AsyncClient(timeout=5.0) as http:
+                listener = await http.get(f"http://127.0.0.1:{port}/readyz")
+
+        assert route.json()["status"] == expected
+        assert (listener.status_code, listener.json()) == (route.status_code, route.json())

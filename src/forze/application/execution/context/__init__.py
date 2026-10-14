@@ -8,6 +8,7 @@ from .drain import OperationDrainGate, is_draining_refusal
 from .drainable import DrainableLoop, Drainables, StoppedLoops
 from .execution import ExecutionContext, ExecutionContextFactory
 from .invocation import InvocationMetadata
+from .lifecycle import LifecycleState
 
 # ----------------------- #
 
@@ -17,6 +18,7 @@ __all__ = [
     "StoppedLoops",
     "ExecutionContext",
     "InvocationMetadata",
+    "LifecycleState",
     "OperationDrainGate",
     "is_draining_refusal",
     "ExecutionContextFactory",

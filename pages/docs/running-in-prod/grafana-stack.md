@@ -293,18 +293,18 @@ Every process gets both probes, including the ones that are not HTTP servers.
     ```python
     from forze.application.execution.background import probe_listener_step
 
-    lifecycle_steps.append(probe_listener_step(runtime, port=8079))
+    lifecycle_steps.append(probe_listener_step(port=8079))
     ```
 
     Stdlib `asyncio` only — an outbox relay does not grow an HTTP framework to answer two
-    endpoints. Serves the same paths, from the same runtime state.
+    endpoints. Serves the same paths, and answers through the same evaluator.
 
 Kubernetes doctrine:
 
 | Probe | Path | Why |
 |---|---|---|
 | `livenessProbe` | `/livez` | answers `200` while the event loop schedules work — reaching the handler *is* the check |
-| `readinessProbe` | `/readyz` | `ready` / `draining` / `unavailable`, from the runtime's drain gate |
+| `readinessProbe` | `/readyz` | `ready` / `draining` / `unavailable`: ready only once startup finished and until a drain begins |
 | `startupProbe` | `/readyz` | same endpoint, generous `failureThreshold` for slow assembly |
 
 The separation is the point. A draining pod is **alive but not ready**: readiness takes it

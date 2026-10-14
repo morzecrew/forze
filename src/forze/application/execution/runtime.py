@@ -31,6 +31,7 @@ from forze.base.primitives import (
 )
 
 from .context import ExecutionContext
+from .context.lifecycle import scope_readiness
 from .context.transaction import AfterCommitErrorHandler
 from .deps import FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
@@ -339,33 +340,39 @@ class ExecutionRuntime:
 
     @property
     def draining(self) -> bool:
-        """Whether the scope is draining (rejecting new invocations).
+        """Whether the scope is on its way down: a drain was announced, or the drain gate
+        closed.
 
-        ``False`` outside a scope. Flip your readiness probe on this so the
-        load balancer stops routing before the drain window starts.
+        ``False`` outside a scope. Operations are refused only once the gate closes — read
+        ``ctx.drain_gate.draining`` for that; this turns true at the announcement, while
+        operations are still admitted.
         """
 
-        try:
-            ctx = self.__ctx.get()
+        ctx = self._active_context()
 
-        except CoreException:
-            return False
-
-        return ctx.drain_gate.draining
+        return ctx is not None and scope_readiness(ctx) == "draining"
 
     # ....................... #
 
     @property
     def ready(self) -> bool:
-        """Readiness probe payload: a scope is active and not draining."""
+        """Readiness probe payload: a scope is active, its lifecycle startup finished, and it
+        is not draining (no drain announced, drain gate open)."""
+
+        ctx = self._active_context()
+
+        return ctx is not None and scope_readiness(ctx) == "ready"
+
+    # ....................... #
+
+    def _active_context(self) -> ExecutionContext | None:
+        """The current scope's context, or ``None`` outside a scope."""
 
         try:
-            ctx = self.__ctx.get()
+            return self.__ctx.get()
 
         except CoreException:
-            return False
-
-        return not ctx.drain_gate.draining
+            return None
 
     # ....................... #
 
@@ -405,12 +412,17 @@ class ExecutionRuntime:
     # ....................... #
 
     async def startup(self) -> None:
-        """Run lifecycle startup hooks with the current context."""
+        """Run lifecycle startup hooks with the current context.
+
+        Once every hook has returned, ``ctx.lifecycle.started`` is set and :attr:`ready` can
+        turn true; a startup that raises leaves it unset.
+        """
 
         logger.info("Starting execution runtime")
 
         ctx = self.__ctx.get()
         await self.lifecycle.startup(ctx)
+        ctx.lifecycle.mark_started()
 
         logger.info("Execution runtime startup completed")
 
