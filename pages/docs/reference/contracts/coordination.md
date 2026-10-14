@@ -42,18 +42,24 @@ The port lifecycle the wrap drives:
 | `name` | `str \| StrEnum` | required | lock namespace |
 | `ttl` | `timedelta` | `30s` | lease lifetime — a held lock auto-expires after this |
 | `requires_fencing_token` | `bool` | `False` | fail closed at wiring unless the backend issues fencing tokens (`AcquiredLock.token`) |
+| `requires_fence_advance` | `bool` | `False` | fail closed at wiring unless the backend implements `FenceAdvancing` |
 
 | Port | Method | Notes |
 |------|--------|-------|
 | command | `acquire(key, owner)` | returns an `AcquiredLock` (with an optional fencing `token`), or `None` if already held |
 | command | `release(key, owner)` | release if owned; returns whether it was |
 | command | `reset(key, owner)` | renew the lease — reset the TTL of a held lock (the fencing token doesn't change); returns whether it was held |
+| command | `advance_fence(key, *, past)` | `FenceAdvancing` only: move the key's fencing counter to at least `past` (0 to 2⁵³ − 1), so the next token is above it; never lowers it; returns the counter |
 | query | `is_locked(key)` | presence check |
 | query | `get_owner(key)` | the current owner, or `None` |
 | query | `get_ttl(key)` | remaining lease time, or `None` |
 
 For a long-held critical section, use the `DistributedLockScope` kit with an `extend_interval`
 to renew the lease rather than picking a large `ttl`.
+
+A fenced write claims its token first (`fence < :token`), then accepts an equal fence
+(`fence <= :token`); a lower token is always refused. The rule, and when to call
+`advance_fence`, are in [Fencing after data loss](../../integrations/redis.md#fencing-after-data-loss).
 
 ## Implemented by
 

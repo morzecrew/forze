@@ -188,20 +188,95 @@ a per-key `<lock key>:fence` counter; the counter has no TTL and is never
 deleted on release, so tokens stay monotonic even after expiry — at the cost of
 one small permanent key per lock key).
 
-Protect downstream writes by sending the token with the write and rejecting,
-storage-side, any token lower than the highest one observed for that resource; an
-equal token is the same generation and is accepted:
+Protect downstream writes by sending the token with the write. The store keeps
+the highest fence per resource, and a holder writes in two shapes:
+
+```sql
+-- The first write under a token claims it. 0 rows: another holder has it, end the term.
+UPDATE invoice SET ..., fence = :token WHERE id = 42 AND fence < :token;
+
+-- Every later write under the same token: an equal fence is the holder's own claim.
+UPDATE invoice SET ..., fence = :token WHERE id = 42 AND fence <= :token;
+```
+
+A lower token is refused by both. In code, the claim is the first thing the
+holder writes:
 
 ```python
 async with dlock_scope.scope("invoice:42") as lock:
-    # e.g. UPDATE ... SET fence = :token WHERE id = 42 AND fence <= :token
+    if not await repo.claim_invoice(invoice, fence_token=lock.token):
+        return  # another holder has this token
+
     await repo.update_invoice(invoice, fence_token=lock.token)
 ```
 
-Extending a live lease (`reset`, the scope's heartbeat) keeps the same token —
-only a fresh acquisition starts a new generation. Without the consumer-side
-token check the lock remains best-effort exclusion; the check is what upgrades
-it to fenced exclusion.
+Keep whether you have claimed in memory for the term; a restarted process
+acquires again and gets a new token. Extending a live lease (`reset`, the
+scope's heartbeat) keeps the same token — only a fresh acquisition starts a new
+generation. Without the consumer-side checks the lock remains best-effort
+exclusion; the checks are what upgrade it to fenced exclusion.
+
+## Fencing after data loss
+
+The fence counter lives in Redis, so a Redis that loses its data restarts every
+counter at 1. Two things then go wrong:
+
+- **New tokens are refused.** The store's fence is far above the restarted
+  counter, so it refuses every write until the counter climbs back past it.
+- **Tokens repeat.** Once the counter catches up, it hands out tokens it already
+  issued. The store cannot tell you which: it only knows tokens that were
+  written, and a holder may have drawn a token it has not written yet.
+
+`advance_fence` fixes the first, and the claim makes the second harmless. Before
+acquiring, read the highest fence the store holds **for that key** and move the
+counter up to it:
+
+```python
+from typing import cast
+
+from forze.application.contracts.dlock import DistributedLockSpec, FenceAdvancing
+
+spec = DistributedLockSpec(
+    name="invoices",
+    requires_fencing_token=True,
+    requires_fence_advance=True,
+)
+
+
+async def advance_then_lock(ctx, repo, dlock_scope):
+    lock = cast(FenceAdvancing, ctx.dlock.command(spec))
+    stored = await repo.highest_fence("invoice:42")  # SELECT fence ... WHERE id = 42
+    await lock.advance_fence("invoice:42", past=stored)
+
+    async with dlock_scope.scope("invoice:42") as held:
+        ...  # claim with held.token, then write
+```
+
+- **With the counter intact,** the call changes nothing, so call it on every
+  acquire rather than trying to detect a loss.
+- **With the counter lost,** the next token is above the stored fence, so the
+  store accepts it.
+- **It never lowers the counter** and needs no lock ownership; racing calls
+  settle on the largest value. `past` must be an integer from 0 to 2⁵³ − 1 and is
+  refused before anything is sent.
+- **Set `requires_fence_advance`** so resolving the port fails at wiring on a
+  backend without it. Narrow the port with `cast`: `ctx.dlock.command` returns a
+  guarded stand-in, and `isinstance(port, FenceAdvancing)` is always false on it.
+
+The next token can still equal one a holder drew before the loss and never
+wrote. Both holders then try the claim, the store serializes the two `UPDATE`s,
+and exactly one finds the fence lower. The other gets zero rows and ends its term
+having written nothing. That holds after any number of losses, and for any
+`past`, zero included.
+
+**One window remains.** An older holder with a lower token that has already
+claimed it can keep writing until the new holder's claim raises the stored fence.
+The new holder's claim is what stops it, so claim as the term begins, before the
+first unit of work.
+
+**AOF persistence complements this; it does not replace it.** `appendfsync
+everysec` narrows a loss to about a second of `INCR`s but does not close it, and
+it is a server setting forze cannot check.
 
 ## Notes
 
