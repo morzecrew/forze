@@ -274,7 +274,32 @@ means a newer holder has written: end the term by returning from `lead`.
 After the lock backend loses its data, its fencing counter starts again from one while the
 store keeps the highest fence it saw. Every term's claim is then refused, and the fleet
 climbs one token per campaign interval until the counter passes the store's fence — leadership
-stalls for as many campaigns as the store's fence is high. The
+stalls for as many campaigns as the store's fence is high. `fence_floor` is the fix: give the
+step a read of the store's highest fence, and set `requires_fence_advance` on the lock spec.
+
+```python
+publisher = LeadershipSpec(
+    lock=DistributedLockSpec(name="lobby-publisher", requires_fence_advance=True),
+    key="lobby-publisher",
+)
+
+
+async def lobby_fence(ctx):
+    return await read_lobby_fence(ctx)  # SELECT fence FROM lobby WHERE id = 1
+
+
+step = leadership_lifecycle_step(
+    publisher, owner=instance_id, lead=publish, claim=claim, fence_floor=lobby_fence
+)
+```
+
+A replica that finds the lease free reads the floor and moves the lock's counter past it
+before acquiring, so the first term after a loss draws a token above the store's fence and
+its claim goes through at once. With the counter intact the advance changes nothing. A lock
+backend that cannot advance its counter fails the step at startup; a floor that cannot be
+read skips that campaign, like any other campaign error. The
+[Redis page](../integrations/redis.md#fencing-after-data-loss) covers the capability
+itself. The
 [one-replica publisher recipe](../recipes/run-on-one-replica.md) runs the whole pattern.
 
 ### The clock behind `margin`

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from examples.recipes.leadership.app import FencedDigests, run_fleet
+from examples.recipes.leadership.app import FencedDigests, recover_after_loss, run_fleet
 from forze_dst.runtime import run_simulation
 
 
@@ -26,3 +26,9 @@ def test_the_fence_refuses_a_stale_holder() -> None:
     assert store.write(2, "new")
     assert not store.write(1, "stale")
     assert store.published == [(2, "new")]
+
+
+def test_after_a_lock_backend_loss_the_first_term_claims_at_once() -> None:
+    store = run_simulation(lambda: recover_after_loss(run_for=1.0))
+
+    assert store.published[0] == (51, "pod-a #1")

@@ -16,8 +16,9 @@ mock, two replicas in one process.
 
 ## The lease
 
-The lock spec requires fencing tokens, so a lock backend without them fails at startup
-instead of leaving the writes unfenced:
+The lock spec requires fencing tokens and a counter that can be moved up after a loss
+(`requires_fence_advance`), so a lock backend without them fails at startup instead of
+leaving the writes unfenced:
 
 ```python
 --8<-- "recipes/leadership/app.py:spec"
@@ -43,8 +44,10 @@ serializes them, and exactly one finds the fence lower.
 
 ## The step
 
-The claim runs as the `claim` hook, before the body. The body publishes one unit at a
-time, checks `term.live()` between units, and stops at the first write the fence refuses:
+The claim runs as the `claim` hook, before the body, and `fence_floor` reads the store's
+fence for the step to advance the lock's counter past while the lease is free. The body
+publishes one unit at a time, checks `term.live()` between units, and stops at the first
+write the fence refuses:
 
 ```python
 --8<-- "recipes/leadership/app.py:step"
@@ -67,6 +70,20 @@ uv run python -m examples.recipes.leadership.app
 One replica publishes with token 1. The script stops it the way a deploy does: its term
 ends as `stopped`, the body finishes its unit, the lease is released, and the other
 replica takes over within half a second with token 2.
+
+## After the lock backend loses its data
+
+The script then starts a replica over an empty lock backend and a store that has already
+seen token 50 — what a Redis restart without persistence leaves behind:
+
+```python
+--8<-- "recipes/leadership/app.py:loss"
+```
+
+The lease is free, so the step reads the floor, moves the counter to 50 and acquires: the
+first term draws 51 and its claim goes through at once. Without `fence_floor` the counter
+would start again at 1, every claim up to 50 would be refused, and the unit would go unled
+for fifty campaign intervals.
 
 ## Notes
 

@@ -41,7 +41,9 @@ PUBLISHER = LeadershipSpec(
     lock=DistributedLockSpec(
         name="digest-publisher",
         ttl=timedelta(seconds=6),
-        requires_fencing_token=True,  # a backend without tokens fails at startup
+        # Fencing tokens, and a counter that can be moved up after a loss; a backend
+        # without both fails at startup.
+        requires_fence_advance=True,
     ),
     key="digest-publisher",
     renew_every=timedelta(seconds=2),
@@ -92,6 +94,10 @@ def publisher_step(store: FencedDigests, *, owner: str) -> LifecycleStep:
         # before this term writes anything.
         return term.token is not None and store.claim(term.token)
 
+    async def floor(_ctx: ExecutionContext) -> int:
+        # Read while the lease is free: the counter is moved past it before acquiring.
+        return store.fence
+
     async def publish(_ctx: ExecutionContext, term: Term) -> None:
         sequence = 0
 
@@ -104,7 +110,13 @@ def publisher_step(store: FencedDigests, *, owner: str) -> LifecycleStep:
             with suppress(TimeoutError):
                 await asyncio.wait_for(term.ended.wait(), timeout=PUBLISH_EVERY)
 
-    return leadership_lifecycle_step(PUBLISHER, owner=owner, lead=publish, claim=claim)
+    return leadership_lifecycle_step(
+        PUBLISHER,
+        owner=owner,
+        lead=publish,
+        claim=claim,
+        fence_floor=floor,
+    )
 
 
 # --8<-- [end:step]
@@ -138,9 +150,30 @@ async def run_fleet(*, lead_for: float = 2.0, then: float = 2.0) -> FencedDigest
     return store
 
 
+# --8<-- [start:loss]
+async def recover_after_loss(*, run_for: float = 1.0) -> FencedDigests:
+    """A lock backend that lost its data, under a store that wrote up to token 50."""
+
+    store = FencedDigests(fence=50)
+    ctx = ExecutionContext(
+        deps=DepsRegistry.from_modules(MockDepsModule(state=MockState())).freeze().resolve()
+    )
+    await publisher_step(store, owner="pod-a").startup(ctx)
+    await asyncio.sleep(run_for)  # the first term draws 51 and claims it at once
+    await ctx.drainables.stop_all(grace=5)
+
+    return store
+
+
+# --8<-- [end:loss]
+
+
 async def main() -> None:
     store = await run_fleet()
     log.info("published", first=store.published[0], last=store.published[-1])
+
+    recovered = await recover_after_loss()
+    log.info("after a lock-backend loss", first=recovered.published[0])
 
 
 if __name__ == "__main__":
