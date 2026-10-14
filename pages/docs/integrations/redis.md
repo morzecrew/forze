@@ -261,10 +261,13 @@ async def advance_then_lock(ctx, repo, worker_id):
         ...  # claim with held.token, then write, checking every write's rows
 ```
 
-- **With the counter intact,** the call changes nothing, so call it on every
-  acquire rather than trying to detect a loss.
-- **With the counter lost,** the next token is above the stored fence, so the
-  store accepts it.
+- **With the counter intact,** the counter is already above every fence the
+  store holds, so the call changes nothing. Call it on every acquire rather than
+  trying to detect a loss.
+- **With the counter lost,** the next token is above the fence you read. The
+  store's fence can still rise before your claim, if a holder from before the
+  loss claims a higher token it drew then. Your claim then finds zero rows,
+  a refusal like any other: end the term and acquire again.
 - **It never lowers the counter** and needs no lock ownership; racing calls
   settle on the largest value. `past` must be a plain `int` from 0 to 2⁵³ − 1
   and is refused before anything is sent.
