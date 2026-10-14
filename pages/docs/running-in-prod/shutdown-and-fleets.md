@@ -218,16 +218,19 @@ and `SERVERLESS` refuses it.
 
 The leader renews the lease every `renew_every` (a third of the lock's TTL by default)
 and tells the body that its term is ending through `term.ended`, early enough that the
-body's `yield_grace` finishes before the lease could lapse. Both deadlines are measured
-from when the latest successful renewal was **sent**, so a slow answer shortens the term
-rather than lengthening it.
+body's `yield_grace` — and, if it overruns, the `release_timeout` it gets to unwind once
+cancelled — finishes before the lease could lapse. Both deadlines are measured from when
+the latest successful renewal was **sent**, so a slow answer shortens the term rather than
+lengthening it. The spec refuses timings that do not fit:
+`renew_every + yield_grace + release_timeout + margin` must be shorter than the TTL, and
+`release_timeout` no longer than `yield_grace`.
 
 | `term.reason` | When | What happens to the body |
 |---|---|---|
 | `lost` | a renewal answers that the lease is gone | cancelled at once |
-| `expiring` | renewals failed until `yield_grace` before the lease could lapse | cancelled when the grace runs out |
-| `stopped` | the process is shutting down | cancelled after `yield_grace` |
-| `yielded` | another replica asked for the unit (see below) | cancelled after `yield_grace` |
+| `expiring` | renewals failed until `yield_grace` before the lease could lapse | cancelled `release_timeout` before the lease could lapse |
+| `stopped` | the process is shutting down | cancelled after `yield_grace`, or earlier if renewals are failing |
+| `yielded` | another replica asked for the unit (see below) | as for `stopped` |
 | `returned` / `raised` | the body ended on its own | — |
 | `unclaimed` | the `claim` hook found its token already claimed | `lead` never runs |
 
@@ -240,10 +243,10 @@ avoid.
 
 ### What fencing is for
 
-A responsive leader whose body honours cancellation runs only while it holds the lease.
-Nothing in the lease can stop a leader that is **not** responsive: a paused process, a
-blocked event loop, a body that ignores cancellation, or a lock backend that lost its
-data while the leader cannot yet know. Fencing covers those. Set
+A responsive leader whose body finishes within `release_timeout` of being cancelled runs
+only while it holds the lease. Nothing in the lease can stop a leader that is **not**
+responsive: a paused process, a blocked event loop, a body that ignores cancellation, or
+a lock backend that lost its data while the leader cannot yet know. Fencing covers those. Set
 `requires_fencing_token` on the lock, pass `term.token` with every write the body makes,
 and have the store refuse a token lower than the highest it has seen.
 

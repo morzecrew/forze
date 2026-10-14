@@ -390,7 +390,7 @@ class TestDeadlines:
 
         _simulate(scenario)
 
-    def test_a_body_that_ignores_its_end_is_cancelled_at_the_hard_deadline(self) -> None:
+    def test_a_body_that_ignores_its_end_is_cancelled_before_the_hard_deadline(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
             a = fleet.replica("a", lead=fleet.body("a", listens=False))
@@ -402,7 +402,7 @@ class TestDeadlines:
             sent = _first_acquire(a)
             leader, successor, *_ = fleet.runs
             assert leader.replica == "a"
-            assert leader.cancelled == sent + TTL - MARGIN
+            assert leader.cancelled == sent + TTL - MARGIN - RELEASE
             assert successor.started >= leader.cancelled
             fleet.assert_one_at_a_time()
 
@@ -461,8 +461,9 @@ class TestDeadlines:
 
             hard = _first_acquire(a) + TTL - MARGIN
             leader = fleet.by("a")[0]
-            assert leader.finished == hard  # done by the hard deadline, the margin untouched
-            assert a.lock.calls("release")[0][0] == leader.finished
+            # Done by the hard deadline, the margin untouched. At exactly the bound the step may
+            # not see it finish, and leaves the lease to lapse; either way nothing overlaps.
+            assert leader.finished == hard
             fleet.assert_one_at_a_time()
 
             await fleet.stop_all()
@@ -612,7 +613,7 @@ class TestRelease:
             await asyncio.sleep(200)
 
             first, second = fleet.runs
-            assert first.cancelled == _first_acquire(a) + TTL - MARGIN
+            assert first.cancelled == _first_acquire(a) + TTL - MARGIN - RELEASE
             assert not a.lock.calls("release")  # abandoned, so left to lapse
             assert first.finished is not None
             assert second.started >= first.finished
@@ -1164,10 +1165,21 @@ class TestWiring:
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
     def test_the_spec_refuses_a_grace_that_does_not_fit_the_lease(self) -> None:
+        # 23 + 5 + 1 + 1 = 30: the grace fits, but the unwind after it would not.
         with pytest.raises(CoreException) as ei:
-            LeadershipSpec(lock=LOCK, key=KEY, renew_every=timedelta(seconds=24))
+            LeadershipSpec(lock=LOCK, key=KEY, renew_every=timedelta(seconds=23))
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
+        LeadershipSpec(lock=LOCK, key=KEY, renew_every=timedelta(seconds=22))
+
+        # A cut before the soft deadline would cancel a body before it is told.
+        with pytest.raises(CoreException):
+            LeadershipSpec(
+                lock=LOCK,
+                key=KEY,
+                yield_grace=timedelta(seconds=1),
+                release_timeout=timedelta(seconds=2),
+            )
 
         with pytest.raises(CoreException):
             LeadershipSpec(lock=LOCK, key=KEY, campaign_every=timedelta(seconds=30))

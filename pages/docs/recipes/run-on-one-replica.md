@@ -23,8 +23,9 @@ instead of leaving the writes unfenced:
 --8<-- "recipes/leadership/app.py:spec"
 ```
 
-`renew_every + yield_grace + margin` must be shorter than the TTL, and the spec refuses
-anything else when it is built: the body's grace has to end before the lease could lapse.
+`renew_every + yield_grace + release_timeout + margin` must be shorter than the TTL, and
+the spec refuses anything else when it is built: the body's grace, and its unwind if it is
+cancelled, have to end before the lease could lapse.
 
 ## The fenced store
 
@@ -70,8 +71,8 @@ replica takes over within half a second with token 2.
 ## Notes
 
 - **Keep the body's units short.** It is told its term is ending `yield_grace` before the
-  deadline and cancelled after that. A unit that cannot finish in the grace is cut off
-  mid-way.
+  deadline and cancelled after that, and must then finish within `release_timeout`. A unit
+  that cannot finish in the grace is cut off mid-way.
 - **Fence every write the body makes as leader**, not only the first. A leader that is
   paused past its lease keeps its `term`, and only the store can refuse it.
 - **Wire the store's check yourself.** The framework issues the token; refusing a lower

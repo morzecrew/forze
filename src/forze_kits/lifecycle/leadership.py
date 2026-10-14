@@ -51,10 +51,10 @@ TermEnd = Literal["lost", "expiring", "stopped", "yielded", "returned", "raised"
 
 - ``lost`` — a renewal answered that the lease is gone; the body is cancelled at once.
 - ``expiring`` — the soft deadline passed without a successful renewal; the body is cancelled
-  at the hard deadline.
-- ``stopped`` — the step is stopping; the body is cancelled after ``yield_grace``.
-- ``yielded`` — another replica asked for the lease; the body is cancelled after
-  ``yield_grace``.
+  ``release_timeout`` before the hard deadline, so its unwind is done by then.
+- ``stopped`` — the step is stopping; the body is cancelled after ``yield_grace``, or
+  ``release_timeout`` before the hard deadline if that comes first.
+- ``yielded`` — another replica asked for the lease; cancelled as for ``stopped``.
 - ``returned`` — the body returned on its own.
 - ``raised`` — the body raised; the supervisor backs off before the next campaign.
 - ``unclaimed`` — the ``claim`` hook found the term's token already claimed.
@@ -97,9 +97,10 @@ def _non_negative(name: str, value: timedelta) -> None:
 class LeadershipSpec:
     """What a leadership step campaigns for, and how its terms are timed.
 
-    Validated when built: a term's renewal interval, grace and clock margin must fit inside the
-    lease, so the body's grace ends before the lease could lapse, and a replica must campaign
-    more often than a lease lives.
+    Validated when built: a term's renewal interval, grace, unwind and clock margin must fit
+    inside the lease, so a body told its term is ending — and, if it overruns, cancelled — is
+    done before the lease could lapse; and a replica must campaign more often than a lease
+    lives.
     """
 
     lock: DistributedLockSpec
@@ -124,11 +125,14 @@ class LeadershipSpec:
     """
 
     yield_grace: timedelta = timedelta(seconds=5)
-    """How long a body gets to finish after its term ends, before it is cancelled."""
+    """How long a body gets to finish after its term ends, before it is cancelled. Never cut
+    short while renewals succeed; when they fail, cut at ``release_timeout`` before the hard
+    deadline."""
 
     release_timeout: timedelta = timedelta(seconds=1)
-    """How long a cancelled body gets to finish before the lease is left to lapse instead of
-    being released; also the bound on each release call."""
+    """How long a cancelled body gets to finish. One that takes longer keeps the lease until it
+    lapses, unreleased. Also the bound on each release call and campaign read, and no longer
+    than ``yield_grace``."""
 
     verify: bool = False
     """Make :meth:`Term.held` also read the lease's owner from the backend."""
@@ -147,13 +151,28 @@ class LeadershipSpec:
         if self.renew_every is not None:
             _positive("renew_every", self.renew_every)
 
-        if self.renew_interval + self.yield_grace + self.margin >= self.lock.ttl:
+        if self.release_timeout > self.yield_grace:
             raise exc.configuration(
-                "Leadership renew_every + yield_grace + margin must be shorter than the lock's "
-                "ttl, so a term's grace ends before its lease could lapse",
+                "Leadership release_timeout must not exceed yield_grace: a body is cancelled "
+                "release_timeout before the hard deadline, which must not come before it is told",
+                details={
+                    "release_timeout": str(self.release_timeout),
+                    "yield_grace": str(self.yield_grace),
+                },
+            )
+
+        if (
+            self.renew_interval + self.yield_grace + self.release_timeout + self.margin
+            >= self.lock.ttl
+        ):
+            raise exc.configuration(
+                "Leadership renew_every + yield_grace + release_timeout + margin must be shorter "
+                "than the lock's ttl, so a term's grace and its unwind end before the lease could "
+                "lapse",
                 details={
                     "renew_every": str(self.renew_interval),
                     "yield_grace": str(self.yield_grace),
+                    "release_timeout": str(self.release_timeout),
                     "margin": str(self.margin),
                     "ttl": str(self.lock.ttl),
                 },
@@ -749,6 +768,9 @@ class _Campaign:
 
         renew_every = self.spec.renew_interval.total_seconds()
         grace = self.spec.yield_grace.total_seconds()
+        # The latest a body may be cancelled: one that finishes within release_timeout of its
+        # cancellation is then done by the hard deadline.
+        unwind = self.spec.release_timeout.total_seconds()
 
         hard, soft = self._hard(sent), self._soft(sent)
         next_renewal = sent + renew_every
@@ -778,16 +800,16 @@ class _Campaign:
 
                     if wanted and term.live():
                         term._end("yielded")
-                        grace_end = now + grace
+                        grace_end = min(now + grace, hard - unwind)
 
                 if term.live():
                     if self.stop.is_set():
                         term._end("stopped")
-                        grace_end = now + grace
+                        grace_end = min(now + grace, hard - unwind)
 
                     elif now >= soft:
                         term._end("expiring")
-                        grace_end = hard
+                        grace_end = hard - unwind
 
                 if grace_end is not None and now >= grace_end:
                     return False
@@ -1027,14 +1049,18 @@ def leadership_lifecycle_step(
       gone;
     - the **soft** deadline, ``yield_grace`` before it, by which the body is told.
 
-    A renewal answered ``False`` ends the term as ``lost`` and cancels the body at once. A
+    A body still running when its grace ends is cancelled, at the latest ``release_timeout``
+    before the hard deadline, so one that finishes within ``release_timeout`` of its
+    cancellation is done by the hard deadline. A renewal answered ``False`` ends the term as
+    ``lost`` and cancels the body at once. A
     renewal that fails or times out leaves the deadlines where they were. The lease is released
     only once the body is done; a cancelled body that does not finish within
     ``release_timeout`` keeps it until it lapses at its ttl, so no successor starts before
     then, and this replica starts no new term while that body runs.
 
-    A responsive leader whose body honours cancellation runs only while it holds the lease, as
-    long as the lock backend's clock does not jump forward by more than ``margin``. A paused
+    A responsive leader whose body finishes within ``release_timeout`` of being cancelled runs
+    only while it holds the lease, as long as the lock backend's clock does not jump forward by
+    more than ``margin``. A paused
     process, a blocked loop or a backend that lost its data is covered only by fencing: pass
     ``term.token`` with every write and have the store refuse a lower token.
 
