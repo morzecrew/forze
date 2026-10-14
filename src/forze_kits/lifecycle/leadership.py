@@ -73,7 +73,7 @@ _ASK_ATTEMPTS: Final[int] = 3
 """Consecutive campaigns an asker may miss before it releases the want-lock."""
 
 _STOP_SLACK: Final[timedelta] = timedelta(seconds=1)
-"""Room in the loop's stop grace for the release call after the body's grace and its unwind."""
+"""Room in the loop's stop budget beyond its bounded steps, for scheduling."""
 
 
 # ....................... #
@@ -271,12 +271,14 @@ class Term:
 
 @final
 @attrs.define(slots=True, kw_only=True, eq=False)
-class _LeadershipStats:
-    """What one step reports to the metrics: whether it holds its lease, and how terms ended."""
+class _StepState:
+    """What outlives one startup of a step: what it reports to the metrics, and a body it
+    abandoned, which no later startup in the process may lead beside."""
 
     key: str
     holding: bool = False
     terms_ended: dict[str, int] = attrs.field(factory=dict)
+    abandoned: asyncio.Future[TermEnd] | None = None
 
     # ....................... #
 
@@ -284,15 +286,15 @@ class _LeadershipStats:
         self.terms_ended[reason] = self.terms_ended.get(reason, 0) + 1
 
 
-_LIVE_STATS: Final[weakref.WeakSet[_LeadershipStats]] = weakref.WeakSet()
-"""Every live step's stats, read by :func:`instrument_leadership` at collection time."""
+_LIVE_STATES: Final[weakref.WeakSet[_StepState]] = weakref.WeakSet()
+"""Every live step's state, read by :func:`instrument_leadership` at collection time."""
 
 
-def _new_stats(startup: _LeadershipStartup) -> _LeadershipStats:
-    stats = _LeadershipStats(key=startup.spec.key)
-    _LIVE_STATS.add(stats)
+def _new_state(startup: _LeadershipStartup) -> _StepState:
+    state = _StepState(key=startup.spec.key)
+    _LIVE_STATES.add(state)
 
-    return stats
+    return state
 
 
 # ....................... #
@@ -318,8 +320,8 @@ def instrument_leadership(*, meter: Meter | None = None) -> None:
     def _held(_options: CallbackOptions) -> Iterable[Observation]:
         totals: dict[str, int] = {}
 
-        for stats in list(_LIVE_STATS):
-            totals[stats.key] = totals.get(stats.key, 0) + int(stats.holding)
+        for state in list(_LIVE_STATES):
+            totals[state.key] = totals.get(state.key, 0) + int(state.holding)
 
         for key, value in totals.items():
             yield Observation(value, {"forze.leadership.key": key})
@@ -327,10 +329,10 @@ def instrument_leadership(*, meter: Meter | None = None) -> None:
     def _ended(_options: CallbackOptions) -> Iterable[Observation]:
         totals: dict[tuple[str, str], int] = {}
 
-        for stats in list(_LIVE_STATS):
+        for state in list(_LIVE_STATES):
             # A copy: the step's loop may add a reason while a reader thread collects.
-            for reason, count in dict(stats.terms_ended).items():
-                totals[stats.key, reason] = totals.get((stats.key, reason), 0) + count
+            for reason, count in dict(state.terms_ended).items():
+                totals[state.key, reason] = totals.get((state.key, reason), 0) + count
 
         for (key, reason), value in totals.items():
             yield Observation(
@@ -371,7 +373,7 @@ class _Campaign:
     cmd: DistributedLockCommandPort
     query: DistributedLockQueryPort | None
     control: BackgroundLoopControl
-    stats: _LeadershipStats
+    state: _StepState
 
     # ....................... #
 
@@ -392,9 +394,6 @@ class _Campaign:
     free_since: float | None = None
     """When this replica first saw the lease free, over its latest run of ticks that deferred
     to an asker; any other tick starts the count again."""
-
-    abandoned: asyncio.Task[TermEnd] | None = None
-    """A body that did not finish after it was cancelled. No new term starts beside it."""
 
     stragglers: set[asyncio.Task[None]] = attrs.field(factory=set)
     """Acquires the step stopped waiting for, settling in the background."""
@@ -438,7 +437,7 @@ class _Campaign:
     # ....................... #
 
     async def _tick(self) -> Exception | None:
-        if self.abandoned is not None and not self.abandoned.done():
+        if self.state.abandoned is not None and not self.state.abandoned.done():
             return None
 
         try:
@@ -718,7 +717,7 @@ class _Campaign:
                 self.query.get_owner if self.spec.verify and self.query is not None else None
             ),
         )
-        self.stats.holding = True
+        self.state.holding = True
         logger.info(
             "Leadership term for %s started",
             self.spec.key,
@@ -739,54 +738,54 @@ class _Campaign:
                     watch_stop=False,
                 )
 
+            raised: BaseException | None = None
+            outcome: TermEnd = "returned"
+
+            if body.done() and not body.cancelled():
+                raised = body.exception()
+                outcome = "raised" if raised is not None else body.result()
+
+            term._end(outcome)
+
+            error = raised if term.reason == "raised" and isinstance(raised, Exception) else None
+
+            if raised is not None and error is None:
+                logger.error(
+                    "Leadership body for %s raised after its term ended",
+                    self.spec.key,
+                    exc_info=raised,
+                )
+
+            if body.done() and not lost:
+                await self._release(self.spec.key, term.owner)
+
+            return error
+
         except BaseException:
-            # Cancelled from outside, past the stop grace: the body cannot be confirmed done,
+            # Cancelled from outside, past the stop budget: the body cannot be confirmed done,
             # so the lease is left to lapse rather than released under it.
             body.cancel()
-            self.stats.holding = False
+            term._end("stopped")
             raise
 
-        raised: BaseException | None = None
-        outcome: TermEnd = "returned"
+        finally:
+            if not body.done():
+                self.state.abandoned = body
+                logger.error(
+                    "Leadership body for %s is still running after its cancellation; leaving "
+                    "the lease to lapse at its ttl",
+                    self.spec.key,
+                )
 
-        if body.done() and not body.cancelled():
-            raised = body.exception()
-            outcome = "raised" if raised is not None else body.result()
-
-        term._end(outcome)
-
-        error = raised if term.reason == "raised" and isinstance(raised, Exception) else None
-
-        if raised is not None and error is None:
-            logger.error(
-                "Leadership body for %s raised after its term ended",
+            self.state.holding = False
+            self.state.ended(term.reason or "stopped")
+            logger.info(
+                "Leadership term for %s ended",
                 self.spec.key,
-                exc_info=raised,
+                owner=term.owner,
+                fence=term.token,  # a key named *token* is scrubbed from logs
+                reason=term.reason,
             )
-
-        if not body.done():
-            self.abandoned = body
-            logger.error(
-                "Leadership body for %s did not finish within %.1fs of being cancelled; "
-                "leaving the lease to lapse at its ttl",
-                self.spec.key,
-                self.spec.release_timeout.total_seconds(),
-            )
-
-        elif not lost:
-            await self._release(self.spec.key, term.owner)
-
-        self.stats.holding = False
-        self.stats.ended(term.reason or "returned")
-        logger.info(
-            "Leadership term for %s ended",
-            self.spec.key,
-            owner=term.owner,
-            fence=term.token,  # a key named *token* is scrubbed from logs
-            reason=term.reason,
-        )
-
-        return error
 
     # ....................... #
 
@@ -984,16 +983,18 @@ class _LeadershipStartup(LifecycleHook):
         default=attrs.Factory(
             lambda self: BackgroundLoopControl(
                 name=f"leadership:{self.spec.key}",
-                stop_grace=self.spec.yield_grace + self.spec.release_timeout + _STOP_SLACK,
+                stop_grace=self.spec.yield_grace + 3 * self.spec.release_timeout + _STOP_SLACK,
             ),
             takes_self=True,
         ),
         init=False,
     )
-    """Stop signal and bounded teardown; the grace covers a term's grace and its release."""
+    """Stop signal and bounded teardown. The budget covers a term's grace and three steps
+    bounded by ``release_timeout``: the body's unwind, the release, and the release of a
+    want-lock or of an acquire that landed late."""
 
-    stats: _LeadershipStats = attrs.field(
-        default=attrs.Factory(_new_stats, takes_self=True),
+    state: _StepState = attrs.field(
+        default=attrs.Factory(_new_state, takes_self=True),
         init=False,
     )
 
@@ -1044,7 +1045,7 @@ class _LeadershipStartup(LifecycleHook):
             cmd=cmd,
             query=query,
             control=self.control,
-            stats=self.stats,
+            state=self.state,
         )
 
         self.control.task = asyncio.create_task(

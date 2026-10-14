@@ -720,12 +720,12 @@ class TestRelease:
             await a.ctx.drainables.stop_all(grace=60)
 
             (run,) = fleet.runs
-            stats = a.step.startup.stats  # type: ignore[attr-defined]
+            state = a.step.startup.state  # type: ignore[attr-defined]
             assert run.finished is not None
             assert a.lock.calls("release")[-1][0] == run.finished
             assert await a.lock.inner.get_owner(KEY) is None  # the release went through
-            assert not stats.holding
-            assert stats.terms_ended == {"stopped": 1}
+            assert not state.holding
+            assert state.terms_ended == {"stopped": 1}
 
         _simulate(scenario)
 

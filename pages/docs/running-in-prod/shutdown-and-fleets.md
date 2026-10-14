@@ -288,9 +288,10 @@ asks.
 
 ### Operating it
 
-- **Stopping.** The step stops within `yield_grace + release_timeout` plus a second.
-  Keep that under the runtime's `shutdown_step_timeout` (ten seconds by default), or the
-  loop is cancelled before it releases and the next leader waits out the TTL.
+- **Stopping.** The step stops within `yield_grace + 3 × release_timeout` plus a second:
+  the grace, then the body's unwind, the release, and a want-lock's or a late acquire's
+  release. Keep that under the runtime's `shutdown_step_timeout` (ten seconds by default),
+  or the loop is cancelled before it releases and the next leader waits out the TTL.
 - **Campaign calls.** `may_campaign`, `prefer` and the campaign's reads of the lock are
   each cut off after `release_timeout`; one that overruns or raises skips that campaign. An
   acquire is never cancelled: one that lands after the step stopped waiting, or that
