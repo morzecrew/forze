@@ -3,22 +3,32 @@ from typing import Final
 # ----------------------- #
 
 ACQUIRE_DLOCK: Final = """
-if redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
-    return redis.call("INCR", KEYS[2])
-else
+if tonumber(redis.call("GET", KEYS[2]) or "0") >= tonumber(ARGV[3]) then
+    return -1
+end
+if not redis.call("SET", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
     return 0
 end
+local token = redis.pcall("INCR", KEYS[2])
+if type(token) == "table" and token.err then
+    redis.call("DEL", KEYS[1])
+end
+return token
 """
 """Redis script to acquire a distributed lock and issue a fencing token atomically.
 
 KEYS[1] is the lock key, KEYS[2] the per-key fencing counter. ARGV[1] is the
-owner, ARGV[2] the TTL in milliseconds.
+owner, ARGV[2] the TTL in milliseconds, ARGV[3] the largest token to issue.
 
 On successful ``SET NX PX`` the per-key counter is ``INCR``-ed and its new value
-returned (always >= 1); on contention returns 0. The counter deliberately has
-**no TTL** so tokens stay monotonically increasing across lock generations even
-after the lock key expires — this is the fencing guarantee; the cost is one
-small permanent key per lock key. ``RELEASE_DLOCK`` must never delete it.
+returned (always >= 1); on contention returns 0. A counter already at ARGV[3]
+returns -1 before the lock is taken, so no token past it is issued: past 2^53 a
+Lua number cannot tell two tokens apart. If the ``INCR`` fails (a counter that is
+not an integer), the lock key is deleted again and the error returned, so a
+failed acquire never leaves the lock held. The counter deliberately has **no
+TTL** so tokens stay monotonically increasing across lock generations even after
+the lock key expires — this is the fencing guarantee; the cost is one small
+permanent key per lock key. ``RELEASE_DLOCK`` must never delete it.
 """
 
 ADVANCE_DLOCK_FENCE: Final = """

@@ -2,7 +2,7 @@ from collections.abc import Awaitable
 from datetime import timedelta
 from typing import Final, Protocol, runtime_checkable
 
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 
 from .specs import DistributedLockSpec
 from .value_objects import AcquiredLock, DistributedLockCapabilities
@@ -80,7 +80,9 @@ class DistributedLockCommandPort(Protocol):  # pragma: no cover
 
         Returns an :class:`~.AcquiredLock` carrying the fencing token for the new
         lock generation, or ``None`` when the lock is already held. Backends that
-        cannot issue monotonic tokens return ``AcquiredLock(token=None)``.
+        cannot issue monotonic tokens return ``AcquiredLock(token=None)``. Tokens stop at
+        :data:`FENCE_MAX_VALUE`: an acquire past it raises ``precondition``
+        (``dlock.fence_exhausted``) and leaves the lock free.
         """
 
         ...
@@ -124,13 +126,36 @@ class FencingAware(Protocol):
 # ....................... #
 
 FENCE_MAX_VALUE: Final[int] = 2**53 - 1
-"""Largest ``past`` :meth:`FenceAdvancing.advance_fence` accepts.
+"""Largest fencing token any backend issues, and largest ``past``
+:meth:`FenceAdvancing.advance_fence` accepts.
 
-A double holds every integer up to here exactly, and Redis scripts compare numbers as
-doubles, so a larger value could compare equal to its neighbour."""
+A double holds every integer up to here exactly, and Redis scripts handle numbers as
+doubles, so past it two tokens could round to one. Capping both sides keeps every issued
+token, and so every fence a store holds, a valid ``past``."""
 
 FENCE_OUT_OF_RANGE_CODE: Final[str] = "dlock.fence_out_of_range"
 """Error code for a ``past`` outside ``[0, FENCE_MAX_VALUE]``, raised by every backend."""
+
+FENCE_EXHAUSTED_CODE: Final[str] = "dlock.fence_exhausted"
+"""Error code for an acquire whose token would pass :data:`FENCE_MAX_VALUE`."""
+
+
+def fence_exhausted(key: str) -> CoreException:
+    """The refusal for an acquire whose token would pass the ceiling, worded once.
+
+    Permanent for the key, so a ``precondition``: retrying draws the same refusal. The
+    lock is left free.
+
+    :param key: Logical lock key whose counter is at the ceiling.
+    :returns: The exception to raise.
+    """
+
+    return exc.precondition(
+        f"Fencing tokens for lock key {key!r} have reached {FENCE_MAX_VALUE}; "
+        "no further token can be issued.",
+        code=FENCE_EXHAUSTED_CODE,
+        details={"key": key},
+    )
 
 
 def validate_fence_past(past: int) -> None:

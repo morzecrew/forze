@@ -6,12 +6,14 @@ from .deps import (
     DistributedLockQueryDepPort,
 )
 from .ports import (
+    FENCE_EXHAUSTED_CODE,
     FENCE_MAX_VALUE,
     FENCE_OUT_OF_RANGE_CODE,
     DistributedLockCommandPort,
     DistributedLockQueryPort,
     FenceAdvancing,
     FencingAware,
+    fence_exhausted,
     validate_fence_past,
 )
 from .specs import DistributedLockSpec
@@ -26,6 +28,8 @@ __all__ = [
     "FenceAdvancing",
     "FENCE_MAX_VALUE",
     "FENCE_OUT_OF_RANGE_CODE",
+    "FENCE_EXHAUSTED_CODE",
+    "fence_exhausted",
     "validate_fence_past",
     "DistributedLockSpec",
     "DistributedLockQueryPort",

@@ -39,7 +39,7 @@ async def test_acquire_runs_script_and_returns_fencing_token() -> None:
     assert "SET" in script and "NX" in script and "INCR" in script
     assert keys[0] == "dlock:ns:my-key"
     assert keys[1] == "dlock:ns:my-key:fence"
-    assert list(args) == ["owner-a", 10_000]
+    assert list(args) == ["owner-a", 10_000, str(2**53 - 1)]
 
 
 @pytest.mark.asyncio

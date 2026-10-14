@@ -268,6 +268,9 @@ async def advance_then_lock(ctx, repo, worker_id):
 - **It never lowers the counter** and needs no lock ownership; racing calls
   settle on the largest value. `past` must be a plain `int` from 0 to 2⁵³ − 1
   and is refused before anything is sent.
+- **Tokens stop at 2⁵³ − 1:** an acquire past it is refused with
+  `dlock.fence_exhausted` and leaves the lock free, so every token, and every
+  fence a store holds, is a valid `past`.
 - **Set `requires_fence_advance`** so resolving the port fails at wiring on a
   backend without it. Narrow the port with `cast`: `ctx.dlock.command` returns a
   guarded stand-in, and `isinstance(port, FenceAdvancing)` is always false on it.

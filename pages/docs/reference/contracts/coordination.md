@@ -46,7 +46,7 @@ The port lifecycle the wrap drives:
 
 | Port | Method | Notes |
 |------|--------|-------|
-| command | `acquire(key, owner)` | returns an `AcquiredLock` (with an optional fencing `token`), or `None` if already held |
+| command | `acquire(key, owner)` | returns an `AcquiredLock` (with an optional fencing `token`), or `None` if already held; refused with `dlock.fence_exhausted` once tokens reach 2⁵³ − 1 |
 | command | `release(key, owner)` | release if owned; returns whether it was |
 | command | `reset(key, owner)` | renew the lease — reset the TTL of a held lock (the fencing token doesn't change); returns whether it was held |
 | command | `advance_fence(key, *, past)` | `FenceAdvancing` only: move the key's fencing counter to at least `past` (0 to 2⁵³ − 1), so the next token is above it; never lowers it; returns the counter |

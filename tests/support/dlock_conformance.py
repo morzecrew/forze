@@ -14,6 +14,7 @@ mock is what unit tests and simulation resolve. So every promise below runs agai
 5. A ``past`` outside ``[0, 2**53 - 1]``, a bool, an ``int`` subclass or a non-integer is
    refused before anything is sent, and the counter is unchanged.
 6. Large counters round-trip exactly: no exponent formatting on the way in or out.
+   Tokens stop at ``2**53 - 1``: past it acquire is refused and leaves the lock free.
 7. A tenant-bound lock advances the counter its own ``acquire`` increments, and only that
    one.
 """
@@ -30,6 +31,7 @@ import attrs
 import pytest
 
 from forze.application.contracts.dlock import (
+    FENCE_EXHAUSTED_CODE,
     FENCE_MAX_VALUE,
     FENCE_OUT_OF_RANGE_CODE,
     DistributedLockCommandPort,
@@ -236,13 +238,38 @@ async def check_out_of_range_past_is_refused_before_sending(h: DlockHarness) -> 
 async def check_large_counters_round_trip_exactly(h: DlockHarness) -> None:
     """Values past Lua's ``%.14g`` range come back digit for digit, both ways."""
 
-    for big in (10**15 + 1, FENCE_MAX_VALUE):
+    for big in (10**15 + 1, FENCE_MAX_VALUE - 1):
         key = _key()
 
         assert await h.lock.advance_fence(key, past=big) == big
         # The no-change branch returns the stored value rather than the argument.
         assert await h.lock.advance_fence(key, past=big - 1) == big
         assert await _draw(h.lock, key) == big + 1
+
+
+async def check_tokens_stop_at_the_ceiling(h: DlockHarness) -> None:
+    """The last token is ``FENCE_MAX_VALUE``; past it acquire is refused and the lock stays free.
+
+    Every issued token is then a valid ``past``, so the advance-before-acquire loop never
+    feeds the store's fence back and gets it refused, and Redis never rounds two tokens past
+    2**53 into one.
+    """
+
+    key = _key()
+    assert await h.lock.advance_fence(key, past=FENCE_MAX_VALUE - 1) == FENCE_MAX_VALUE - 1
+    assert await _draw(h.lock, key) == FENCE_MAX_VALUE
+    assert await h.lock.advance_fence(key, past=FENCE_MAX_VALUE) == FENCE_MAX_VALUE
+
+    exhausted = _key()
+    assert await h.lock.advance_fence(exhausted, past=FENCE_MAX_VALUE) == FENCE_MAX_VALUE
+
+    for full in (key, exhausted):
+        with pytest.raises(CoreException) as caught:
+            await h.lock.acquire(full, "late")
+
+        assert caught.value.code == FENCE_EXHAUSTED_CODE
+        assert await h.lock.is_locked(full) is False
+        assert await h.lock.get_owner(full) is None
 
 
 async def check_tenant_advance_moves_its_own_counter(h: DlockHarness) -> None:
@@ -270,6 +297,7 @@ DLOCK_BATTERY: tuple[Check, ...] = (
     check_advance_needs_no_ownership,
     check_out_of_range_past_is_refused_before_sending,
     check_large_counters_round_trip_exactly,
+    check_tokens_stop_at_the_ceiling,
     check_tenant_advance_moves_its_own_counter,
 )
 """Every check, in the order a reader should meet them."""

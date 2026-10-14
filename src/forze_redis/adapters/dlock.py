@@ -11,6 +11,7 @@ require_redis()
 from typing import Final, final
 
 from forze.application.contracts.dlock import (
+    FENCE_MAX_VALUE,
     AcquiredLock,
     DistributedLockCapabilities,
     DistributedLockCommandPort,
@@ -18,6 +19,7 @@ from forze.application.contracts.dlock import (
     DistributedLockSpec,
     FenceAdvancing,
     FencingAware,
+    fence_exhausted,
     validate_fence_past,
 )
 
@@ -29,6 +31,9 @@ from .base import RedisBaseAdapter
 _DLOCK_SCOPE: Final[str] = "dlock"
 
 _FENCE_SUFFIX: Final[str] = "fence"
+
+_FENCE_EXHAUSTED: Final[int] = -1
+"""``ACQUIRE_DLOCK``'s reply for a counter already at :data:`FENCE_MAX_VALUE`."""
 
 # ....................... #
 
@@ -113,6 +118,8 @@ class RedisDistributedLockAdapter(
         ``INCR`` of the per-key fencing counter (``<lock key>:fence``). The
         counter has no TTL so tokens stay monotonic across lock generations —
         one small permanent key per lock key; :meth:`release` never deletes it.
+        Tokens stop at ``FENCE_MAX_VALUE``: past it the acquire raises
+        ``dlock.fence_exhausted`` without taking the lock.
         """
 
         await self._prepare_keys()
@@ -122,10 +129,13 @@ class RedisDistributedLockAdapter(
         res = await self.client.run_script(
             ACQUIRE_DLOCK,
             [_k, _fk],
-            [owner, self.__ttl_ms()],
+            [owner, self.__ttl_ms(), str(FENCE_MAX_VALUE)],
         )
 
         token = int(res) if res else 0
+
+        if token == _FENCE_EXHAUSTED:
+            raise fence_exhausted(key)
 
         if token <= 0:
             return None

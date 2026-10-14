@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A lock spec with `requires_fencing_token` no longer refuses a capable backend whose ports are wrapped** by OTel port spans, tracing, interceptors or a resilience port policy; resolving it failed with `dlock.fencing_unsupported`.
 
+- **A Redis lock acquire that fails after taking the lock no longer leaves it held**, as on a corrupt fence counter. Tokens stop at 2⁵³ − 1 on Redis and the mock: an acquire past it is refused with `dlock.fence_exhausted` rather than issuing a token Redis would round onto another.
+
 - **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now accepts an equal token on a holder's later writes, the same lock generation, as the contract does.
 
 ## [0.13.0] - 2026-10-14
