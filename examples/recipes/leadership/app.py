@@ -151,10 +151,14 @@ async def run_fleet(*, lead_for: float = 2.0, then: float = 2.0) -> FencedDigest
 
 
 # --8<-- [start:loss]
-async def recover_after_loss(*, run_for: float = 1.0) -> FencedDigests:
+async def recover_after_loss(
+    *,
+    store: FencedDigests | None = None,
+    run_for: float = 1.0,
+) -> FencedDigests:
     """A lock backend that lost its data, under a store that wrote up to token 50."""
 
-    store = FencedDigests(fence=50)
+    store = store if store is not None else FencedDigests(fence=50)
     ctx = ExecutionContext(
         deps=DepsRegistry.from_modules(MockDepsModule(state=MockState())).freeze().resolve()
     )

@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
-from examples.recipes.leadership.app import FencedDigests, recover_after_loss, run_fleet
+import asyncio
+
+from examples.recipes.leadership.app import (
+    FencedDigests,
+    publisher_step,
+    recover_after_loss,
+    run_fleet,
+)
+from forze.application.execution import DepsRegistry, ExecutionContext
 from forze_dst.runtime import run_simulation
+from forze_mock import MockDepsModule, MockState
 
 
 def test_the_publisher_hands_over_and_fences_the_old_term() -> None:
@@ -54,9 +63,20 @@ def test_a_repeated_token_is_acted_on_once() -> None:
 
 
 def test_a_refused_write_ends_the_term() -> None:
-    store = run_simulation(
-        lambda: recover_after_loss(store=FencedDigests(), run_for=3.0, newer_write_at=1.0)
-    )
+    async def scenario() -> FencedDigests:
+        store = FencedDigests()
+        ctx = ExecutionContext(
+            deps=DepsRegistry.from_modules(MockDepsModule(state=MockState())).freeze().resolve()
+        )
+        await publisher_step(store, owner="pod-a").startup(ctx)
+        await asyncio.sleep(1.2)
+        store.fence = 60  # a newer holder wrote with token 60
+        await asyncio.sleep(3.0)
+        await ctx.drainables.stop_all(grace=5)
+
+        return store
+
+    store = run_simulation(scenario)
 
     # A newer holder wrote 60 mid-term: the old term's next write was refused, it returned,
     # and the next term advanced past 60 and published again.
