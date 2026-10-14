@@ -1,6 +1,6 @@
 # RFC 0073 — Fleet membership
 
-- **Status:** 🚧 In progress
+- **Status:** ✅ Complete
 - **Scope:** A contract for knowing which replicas of a service are alive, what state each is
   in, and what each reports. It covers:
   - the contract, with a Redis adapter and a mock;
