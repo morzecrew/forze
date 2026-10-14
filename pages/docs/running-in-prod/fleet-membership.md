@@ -127,7 +127,8 @@ Anything that **assigns** work from a view inherits that: a replica that dies le
 units unowned until its entry expires, and a replica whose beat lands after another's read
 can make two replicas claim overlapping, or missing, units for a while. Make the work
 itself safe to claim twice — a lease, an idempotent consumer — and use the view to keep the
-overlap rare.
+overlap rare. [Tenant-sharded realtime](../recipes/tenant-sharded-realtime.md#assign-tenants-at-startup)
+assigns tenants at startup by rank, with the same caveat.
 
 ## Sizing
 
