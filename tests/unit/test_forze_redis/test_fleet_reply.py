@@ -43,6 +43,9 @@ class TestParseFleetReply:
             "a\t2\tserving|soon|{}",
             "a\t2\tserving|1|[1]",
             "a\t2\tserving|1|{not json",
+            'a\t2\tserving|1|{"x":[1]}',
+            'a\t2\tserving|1|{"x":NaN}',
+            'a\t2\tserving|1|{"x":true}',
             "a only",
         ],
     )

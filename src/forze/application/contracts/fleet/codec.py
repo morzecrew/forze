@@ -2,8 +2,8 @@
 
 A beat is refused before anything is sent, and every backend refuses the same beats: the
 checks live here, not in each adapter, so two backends cannot drift on them. Reports are
-encoded with the standard library's JSON, which writes integers of any size and floats in
-their shortest round-tripping form, so a number reads back exactly as it was reported.
+encoded with the standard library's JSON, which writes integers digit for digit and floats
+in their shortest round-tripping form, so a number reads back exactly as it was reported.
 """
 
 import json
@@ -30,18 +30,32 @@ _STATES: Final[frozenset[str]] = frozenset(get_args(MemberState))
 # ....................... #
 
 
+def _utf8_size(text: str) -> float:
+    """*text*'s size in UTF-8 bytes; infinite for text UTF-8 cannot hold (a lone surrogate)."""
+
+    try:
+        return len(text.encode())
+
+    except UnicodeEncodeError:
+        return math.inf
+
+
+# ....................... #
+
+
 def validate_member_id(member_id: str) -> None:
     """Refuse a member id a backend could not store and read back unambiguously.
 
     :param member_id: The id to check.
     :raises CoreException: ``validation`` (``fleet.member_id_invalid``) when the id is
-        empty, longer than :data:`MEMBER_ID_MAX_BYTES`, or holds a tab, a newline or a brace.
+        empty, longer than :data:`MEMBER_ID_MAX_BYTES`, not valid Unicode, or holds a tab, a
+        newline or a brace.
     """
 
     if (
         not isinstance(member_id, str)  # pyright: ignore[reportUnnecessaryIsInstance]
         or not member_id
-        or len(member_id.encode()) > MEMBER_ID_MAX_BYTES
+        or _utf8_size(member_id) > MEMBER_ID_MAX_BYTES
         or any(char in member_id for char in _MEMBER_ID_FORBIDDEN)
     ):
         raise exc.validation(
@@ -58,6 +72,25 @@ def _refuse_report(reason: str) -> CoreException:
     return exc.validation(f"Fleet report refused: {reason}", code="fleet.report_invalid")
 
 
+def _report_problem(report: object) -> str | None:
+    """Why *report* is not a flat map of string keys to int, float or str, if it is not."""
+
+    if not isinstance(report, Mapping):
+        return "a report is a mapping"
+
+    for key, value in report.items():  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(key, str):
+            return f"key {key!r} is not a string"
+
+        if isinstance(value, bool) or not isinstance(value, int | float | str):
+            return f"{key!r} is {type(value).__name__}, not int, float or str"  # pyright: ignore[reportUnknownArgumentType]
+
+        if isinstance(value, float) and not math.isfinite(value):
+            return f"{key!r} is {value}, not a finite number"
+
+    return None
+
+
 def encode_report(report: Report, *, max_bytes: int) -> str:
     """Encode *report* as compact JSON, refusing what a backend must not store.
 
@@ -69,18 +102,8 @@ def encode_report(report: Report, *, max_bytes: int) -> str:
         longer than *max_bytes*.
     """
 
-    if not isinstance(report, Mapping):  # pyright: ignore[reportUnnecessaryIsInstance]
-        raise _refuse_report("a report is a mapping")
-
-    for key, value in report.items():
-        if not isinstance(key, str):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise _refuse_report(f"key {key!r} is not a string")
-
-        if isinstance(value, bool) or not isinstance(value, int | float | str):
-            raise _refuse_report(f"{key!r} is {type(value).__name__}, not int, float or str")
-
-        if isinstance(value, float) and not math.isfinite(value):
-            raise _refuse_report(f"{key!r} is {value}, not a finite number")
+    if (problem := _report_problem(report)) is not None:
+        raise _refuse_report(problem)
 
     try:
         encoded = json.dumps(dict(report), ensure_ascii=False, separators=(",", ":"))
@@ -88,7 +111,10 @@ def encode_report(report: Report, *, max_bytes: int) -> str:
     except ValueError as error:  # an integer past Python's digit limit
         raise _refuse_report(str(error)) from error
 
-    size = len(encoded.encode())
+    size = _utf8_size(encoded)
+
+    if size == math.inf:
+        raise _refuse_report("a string is not valid Unicode")
 
     if size > max_bytes:
         raise _refuse_report(f"{size} bytes encoded, above the {max_bytes}-byte cap")
@@ -100,17 +126,17 @@ def encode_report(report: Report, *, max_bytes: int) -> str:
 
 
 def decode_report(raw: str) -> Report:
-    """Decode a report written by :func:`encode_report`.
+    """Decode a report written by :func:`encode_report`, refusing one that it would not write.
 
     :param raw: The encoded report.
     :returns: The report, with every number as it was encoded.
-    :raises ValueError: When *raw* is not an encoded report.
+    :raises ValueError: When *raw* is not a report :func:`encode_report` could have written.
     """
 
     decoded: Any = json.loads(raw)
 
-    if not isinstance(decoded, dict):
-        raise ValueError("an encoded report is a JSON object")
+    if (problem := _report_problem(decoded)) is not None:
+        raise ValueError(problem)
 
     return decoded  # pyright: ignore[reportUnknownVariableType]
 

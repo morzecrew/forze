@@ -13,7 +13,8 @@ from forze.base.primitives import instance as instance_module
 
 
 def _send_id(conn: object) -> None:
-    conn.send(instance_id())  # type: ignore[attr-defined]
+    inherited = sorted(instance_module._IDS)
+    conn.send((inherited, instance_id()))  # type: ignore[attr-defined]
 
 
 class TestInstanceId:
@@ -51,11 +52,13 @@ class TestInstanceId:
 
         try:
             assert receive.poll(30)
-            child_id = receive.recv()
+            inherited, child_id = receive.recv()
 
         finally:
             child.join(30)
 
+        # It forgot the parent's id, so a reused pid down the line still mints a new one.
+        assert inherited == []
         assert child_id != parent
         assert child_id.split(":")[1] == str(child.pid)
         assert instance_id() == parent

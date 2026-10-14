@@ -170,11 +170,11 @@ async def assign_shard(
 
     # Beat through one ttl, at a third of it, so replicas starting meanwhile see this one
     # and it sees them; rank over the last beat's view.
-    view = await fleet.beat(me, "starting", {})
+    view = await fleet.beat(me, "starting", {}, ttl=spec.ttl)
 
     for _ in range(3):
         await asyncio.sleep(spec.ttl.total_seconds() / 3)
-        view = await fleet.beat(me, "starting", {})
+        view = await fleet.beat(me, "starting", {}, ttl=spec.ttl)
 
     mine = [
         t for t in tenants if view.rank(str(t), states=("serving", "starting"))[0] == me

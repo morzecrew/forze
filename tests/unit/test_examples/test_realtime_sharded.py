@@ -40,7 +40,8 @@ async def test_replicas_started_together_split_the_tenants() -> None:
     ctx = _context()
     spec = FleetSpec(name="gateways", ttl=timedelta(milliseconds=300))
     tenants = [uuid4() for _ in range(40)]
-    fleet = ctx.fleet(spec)
+    # A port whose own spec is shorter: the recipe's entries must live as long as it waits.
+    fleet = ctx.fleet(FleetSpec(name="gateways", ttl=timedelta(milliseconds=60)))
 
     a, b = await asyncio.gather(
         assign_shard(fleet, "gw-a", tenants, spec=spec),

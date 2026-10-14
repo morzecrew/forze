@@ -68,14 +68,17 @@ assigned, keep the replica beating, `serving` once it takes traffic, at under ha
 `ttl`, so replicas started later rank it in. The first replica of a fresh fleet finds only
 itself and takes every tenant.
 
-The assignment is a snapshot, sound only while the fleet keeps the shape it had when each
-replica read it:
+The assignment is a snapshot, sound only when every replica starts within one `ttl` of
+the others — an all-at-once rollout — and only while the fleet keeps that shape:
 
+- a **rolling** deploy or restart leaves tenants with no owner: each new replica leaves
+  to an old one the tenants it ranks first for, and the old one is then stopped;
 - a replica that dies leaves its tenants unowned until the fleet restarts;
 - a replica that starts later, or whose beats land after another's read, can take tenants
   another replica also holds, or leave some that no replica holds.
 
-Moving tenants between running replicas is not covered; restart the fleet to reassign.
+Moving tenants between running replicas is not covered; to reassign, restart every
+replica at once.
 
 ## Notes
 

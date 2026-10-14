@@ -68,7 +68,12 @@ def _member(line: str) -> Member | None:
         # Ids are checked before they are written, so a line that does not parse came from
         # another writer — a newer release with a state this one does not know, say. It
         # reads as absent rather than failing every replica's beat.
-        logger.warning("Skipping a fleet entry this release cannot read (%s): %r", error, line)
+        # The member id only: the rest of the line is the member's report.
+        logger.warning(
+            "Skipping fleet entry %r, which this release cannot read: %s",
+            line.split("\t", 1)[0],
+            error,
+        )
 
         return None
 

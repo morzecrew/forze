@@ -219,6 +219,20 @@ class TestExcess:
         # True would have counted as 1, making the mean 2/3 and the excess 1.
         assert view.excess("c", load="load", settle=self._SETTLE, tolerance=0) == 1
 
+    def test_an_integer_past_any_float_is_not_a_load(self) -> None:
+        view = _view(_member("a", load=10**400), _member("b", load=1), _member("c", load=5))
+
+        assert view.excess("a", load="load", settle=self._SETTLE) == 0
+        assert view.excess("c", load="load", settle=self._SETTLE) == 2
+
+    def test_never_negative_whatever_smallest_and_movable_say(self) -> None:
+        view = _view(_member("a", load=0), _member("b", load=10, movable=-3))
+
+        assert (
+            view.excess("b", load="load", movable="movable", settle=self._SETTLE, smallest=-5)
+            == 0
+        )
+
     def test_a_member_without_the_load_gets_nothing(self) -> None:
         view = _view(_member("a", load=0), _member("b"))
 
@@ -255,7 +269,8 @@ class TestMemberId:
         validate_member_id(member_id)
 
     @pytest.mark.parametrize(
-        "member_id", ["", "a\tb", "a\nb", "a\rb", "{a}", "a}", "x" * 257, "é" * 129]
+        "member_id",
+        ["", "a\tb", "a\nb", "a\rb", "{a}", "a}", "x" * 257, "é" * 129, "a\ud800"],
     )
     def test_refuses(self, member_id: str) -> None:
         with pytest.raises(CoreException) as caught:
@@ -299,6 +314,7 @@ class TestReportCodec:
             {"list": [1]},
             {"none": None},
             {1: 1},
+            {"lone": "\ud800"},
         ],
     )
     def test_refuses(self, report: dict[object, object]) -> None:
@@ -306,6 +322,19 @@ class TestReportCodec:
             encode_report(report, max_bytes=1024)  # type: ignore[arg-type]
 
         assert caught.value.code == "fleet.report_invalid"
+
+    def test_refuses_an_integer_past_the_interpreters_digit_limit(self) -> None:
+        with pytest.raises(CoreException) as caught:
+            encode_report({"n": 10**5000}, max_bytes=10**6)
+
+        assert caught.value.code == "fleet.report_invalid"
+
+    @pytest.mark.parametrize(
+        "raw", ['{"x":[1]}', '{"x":NaN}', '{"x":Infinity}', '{"x":true}', "[1]", '"x"']
+    )
+    def test_decode_refuses_what_encode_would_not_write(self, raw: str) -> None:
+        with pytest.raises(ValueError):
+            decode_report(raw)
 
     def test_refuses_a_report_over_the_cap_in_bytes(self) -> None:
         report = {"k": "é" * 10}  # {"k":"…"} is 8 bytes plus 20 for the value

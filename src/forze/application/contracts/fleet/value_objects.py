@@ -56,12 +56,16 @@ def _sorted_by_id(members: Collection[Member]) -> tuple[Member, ...]:
     return tuple(sorted(members, key=lambda member: member.id))
 
 
-def _number(value: object) -> int | float | None:
+def _number(value: object) -> float | None:
     # ``bool`` is an ``int`` subclass; a report flag is not a quantity.
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
 
-    return value
+    try:
+        return float(value)
+
+    except OverflowError:  # an integer past any float: not a load to average
+        return None
 
 
 def _weight(key: str, member_id: str) -> int:
@@ -215,4 +219,4 @@ class FleetView:
             if cap is not None:
                 result = min(result, math.floor(cap))
 
-        return result if result >= smallest else 0
+        return result if result >= max(smallest, 1) else 0

@@ -84,9 +84,11 @@ class MockFleetAdapter(MockTenancyMixin, FleetPort):
         ttl: timedelta | None = None,
     ) -> FleetView:
         encoded, ttl_ms = prepare_beat(self.spec, member_id, state, report, ttl)
-        now_ms = self._now_ms()
 
         with self.state.lock:
+            # Read under the lock, as the server reads ``TIME`` inside its script: a view's
+            # ``at`` is never older than an entry another beat wrote into it.
+            now_ms = self._now_ms()
             members = self._members()
 
             for expired in [m for m, entry in members.items() if entry[0] <= now_ms]:
@@ -101,10 +103,8 @@ class MockFleetAdapter(MockTenancyMixin, FleetPort):
     # ....................... #
 
     async def view(self) -> FleetView:
-        now_ms = self._now_ms()
-
         with self.state.lock:
-            return self._view(self._members(), now_ms)
+            return self._view(self._members(), self._now_ms())
 
     # ....................... #
 
