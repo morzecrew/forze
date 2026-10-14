@@ -251,6 +251,103 @@ Operational hardening around the loop:
   before serving (the gateway reads but doesn't create it) and reclaims stranded pending
   entries so a durable signal whose consumer died is recovered, not lost.
 
+## Drain a replica
+
+When a replica leaves — a deploy, a scale-down — its sockets would otherwise close all at
+once when the process stops, and every client would reconnect to the replicas that are left
+in the same second. Instead, the replica closes its connections gently while it still
+serves: spread over a window, after readiness has failed, so the clients reconnect through
+the balancer to replicas that are still ready, a few at a time.
+
+```python
+from datetime import timedelta
+
+from forze.application.execution import build_runtime
+from forze_socketio import (
+    RealtimeConnectionStats,
+    attach_realtime_connection,
+    build_socketio_server,
+    connection_drain_lifecycle_step,
+    instrument_realtime_connections,
+)
+
+sio = build_socketio_server()
+stats = RealtimeConnectionStats()
+runtime = build_runtime(
+    lifecycle_steps=connection_drain_lifecycle_step(
+        sio,
+        window=timedelta(seconds=20),  # spread the closes over this
+        tail=timedelta(seconds=5),     # then wait this long for the slow ones
+        stats=stats,
+    ),
+    drain_budget=timedelta(seconds=30),
+)
+attach_realtime_connection(
+    sio,
+    resolve=resolve_connection,
+    draining=lambda: runtime.draining,  # refuse connects while leaving
+    stats=stats,
+)
+instrument_realtime_connections(stats)
+```
+
+The step registers a [drain phase](../running-in-prod/shutdown-and-fleets.md#drain-phases).
+When the runtime drains — on `SIGTERM` under
+[`serve_uvicorn`](fastapi.md#graceful-shutdown-under-uvicorn), before uvicorn's own
+shutdown closes every socket at once — the phase lists this node's connections and closes
+them at the Engine.IO level, close *i* of *n* starting at `i × window / n`. Each close runs
+on its own, so a slow one never holds up the next; after the last start the phase waits up
+to `tail`, then cancels what is still closing. The phase never takes more than
+`window + tail`.
+
+**Fit the window to the budget.** The phase measures what is left of its allowance after
+listing, gives the tail at most half of it and the window at most the rest. A budget
+smaller than `window + tail` shrinks both; a larger one never lengthens the window, so a
+generous budget does not slow the drain down. Under 100 ms the phase is skipped and the
+connections close when the server stops. The budget itself has to fit the orchestrator's
+grace period — see [Fit the budget to the grace period](../running-in-prod/shutdown-and-fleets.md#fit-the-budget-to-the-grace-period).
+
+**Choose what closes.** `namespaces` (default `("/",)`) names the namespaces the drain may
+close, and `select(namespace, sid) -> bool` can keep individual connections open. One
+Engine.IO connection carries every namespace a client opened, and closing it ends them
+all, so it closes only when every namespace on it is eligible. `close_spread(sio, targets,
+window, tail=...)` is the scheduler on its own, for closing connections at other times.
+
+### What clients see
+
+- **socket.io's JavaScript client** reports a transport close (`"transport close"`) and
+  reconnects with its usual backoff. A namespace-level `disconnect` would read as
+  `"io server disconnect"`, after which it does not reconnect on its own — which is why the
+  drain closes the transport instead.
+- **The Python client** (python-socketio) stops after either kind of close. Reconnect it
+  yourself.
+- **A connect refused while draining** fails with the message `Server is draining` and
+  `{"code": "realtime_draining"}` as its data (`err.data.code` on the JavaScript
+  `connect_error`). The check runs before authentication, and again as the connect's last
+  step, after which a refused connect has its presence, room and identity undone. Retry with
+  jittered backoff: behind sticky sessions an immediate retry lands on the same replica
+  until the balancer notices it is not ready. Other refusals keep their message-only shape.
+
+Spreading the closes spreads the reconnects, but a balancer that sends them all to one
+replica still overloads it. Route WebSocket traffic **least-connections**, not round-robin
+or by hash, so the reconnects fill the replicas with room.
+
+### Admit connects
+
+`attach_realtime_connection(..., admission=...)` takes an async callable that receives the
+`SocketIOConnect` (sid, namespace, environ, auth) before the protocol is negotiated or the
+connection authenticated. Return to admit it; awaiting delays the connect, so an app can
+pace admissions by its own rules — priority lanes, a per-tenant budget. Raise a
+`CoreException` to refuse it: a client-safe error's summary reaches the client, a
+server-side kind shows the generic detail and is logged.
+
+### Count connections
+
+`instrument_realtime_connections(stats)` exports `forze.realtime.connections` (open
+connections per namespace), `forze.realtime.connect_refused` (by reason: `protocol`,
+`auth`, `draining`, `admission`, `internal`) and `forze.realtime.drain_closed` (closes the
+drain started, by outcome). See the [metric catalog](../reference/metrics.md#realtime-connections).
+
 ## Settings
 
 `SocketIOSettings` carries the Redis backplane: the URL (as a `SecretStr` — it holds the
@@ -273,6 +370,8 @@ URL from a `RedisSettings.dsn`; this package cannot import `forze_redis` itself.
 | `DocumentRealtimeMailbox` + `DocumentMailboxCursors` | offline store-and-forward: per-principal mailbox + per-device cursor |
 | `RedisRealtimePresence` + `realtime_presence_heartbeat_lifecycle_step` | crash-safe multi-node presence (TTL + heartbeat) |
 | `realtime_identity_expiry_lifecycle_step` | drop connections whose credential (`expires_at`) has lapsed |
+| `connection_drain_lifecycle_step` + `close_spread` | close a leaving replica's connections spread over a window, before the server stops |
+| `RealtimeConnectionStats` + `instrument_realtime_connections` | open and refused connects, and the drain's closes |
 | `realtime.reauth` (built-in event) | refresh a rotating token in place — same principal, no reconnect |
 | `RealtimeGatewayStats` + `instrument_realtime_gateway` | delivery counters for the live path (emitted / failed / skipped / poisoned) |
 | `BackplaneHealth` + `realtime_backplane_heartbeat_lifecycle_step` + `instrument_realtime_backplane` | probe the Redis fan-out path; alarm on staleness |

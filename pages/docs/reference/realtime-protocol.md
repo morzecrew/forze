@@ -129,6 +129,12 @@ to the in-flight bound) — sequence-dependent commands must wait for their acks
   Socket.IO refuses the connection with a client-safe message; SSE responds with
   the standard error envelope and the `X-Error-Code` header; WebSocket accepts and
   immediately closes with code 1008, the client-safe summary in the close reason.
+- **Draining refusal** (the replica is leaving): Socket.IO refuses with the message
+  `Server is draining` and the data `{"code": "realtime_draining"}`; SSE responds 503 with
+  `X-Error-Code: realtime_draining`; WebSocket accepts and closes with code 1012. Retry on
+  another replica with jittered backoff. A connection the draining replica closes ends at
+  the transport — a Socket.IO transport close, an SSE stream that finishes, a WebSocket
+  1012 — and the client reconnects as from any other drop.
 - **Command errors** (Socket.IO ack callbacks, WebSocket `ack` frames): the error
   is `{ "detail", "code", "kind", "context" }` — the same envelope shape the HTTP
   routes render.

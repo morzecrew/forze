@@ -443,6 +443,46 @@ Four things to know before you wire it:
 Socket.IO handshake, so a deployment serving both transports authenticates by one set
 of rules.
 
+## Drain the realtime tails
+
+A replica that leaves with open SSE streams and WebSocket tails should end them while it
+still serves, a few at a time, so the clients reconnect to replicas that are still ready
+instead of all at once when the server stops. Both live legs subscribe to the same hub, so
+one drain step covers them. Register it beside the tail step:
+
+```python
+from datetime import timedelta
+
+from forze_fastapi.realtime import RealtimeSseHub, realtime_sse_drain_lifecycle_step
+
+hub = RealtimeSseHub()
+step = realtime_sse_drain_lifecycle_step(
+    hub,
+    window=timedelta(seconds=10),  # spread the ends over this
+    tail=timedelta(seconds=2),
+)
+```
+
+When the runtime drains — on `SIGTERM` under [`serve_uvicorn`](#graceful-shutdown-under-uvicorn)
+— its phase ends every subscription the hub holds, end *i* of *n* at `i × window / n`,
+with the window fitted to the phase's allowance like the
+[Socket.IO drain](socketio.md#drain-a-replica):
+
+- **An SSE stream** finishes its response, and the browser reconnects with its
+  `Last-Event-ID`.
+- **A WebSocket tail** closes with 1012 (service restart), and the client reconnects with
+  `last_event_id`.
+
+While the replica drains, the routes refuse new connections. They read the state from the
+context `ctx_dep` returns, so pass the runtime's — `runtime.get_context`:
+
+- **A new SSE request** gets 503 with `X-Error-Code: realtime_draining`. A browser
+  `EventSource` treats any answer but 200 as final and stops reconnecting: reopen it
+  yourself on an `error` with the source closed, with jittered backoff, or have the
+  balancer retry a 503 on another upstream.
+- **A new WebSocket upgrade** is accepted and then closed with 1012, as the route's other
+  refusals are, because a close before accept is an opaque 403.
+
 ## What it provides
 
 Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
@@ -460,6 +500,7 @@ runs them. The surface, at a glance:
 | `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
 | `realtime_sse_sharded_tail_lifecycle_step` | namespace-tier SSE: per-tenant tail loops, tenant trusted from the stream |
 | `realtime_sse_presence_heartbeat_lifecycle_step` | SSE streams report into the shared presence store (TTL heartbeat) |
+| `realtime_sse_drain_lifecycle_step` | end the SSE streams and WebSocket tails spread over a window when the replica drains |
 | `attach_realtime_ws_route` | duplex realtime over raw WebSocket: replay + live egress, inline ack/reauth, governed `cmd` dispatch |
 | `build_ws_connection_resolver` | the shipped connection resolver: reauth payload, then cookie, header and opt-in query; credential expiry |
 | `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |
