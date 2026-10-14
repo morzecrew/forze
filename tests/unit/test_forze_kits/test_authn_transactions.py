@@ -452,7 +452,11 @@ async def test_a_revocation_retries_a_stale_batch_only_so_often(
     qry = MagicMock()
     qry.find_many = AsyncMock(return_value=MagicMock(hits=[session]))
     cmd = MagicMock()
-    cmd.update_many = AsyncMock(side_effect=error)
+    # A bounded script: a retry with no cap fails here at once, rather than looping and
+    # recording calls until the process runs out of memory.
+    cmd.update_many = AsyncMock(
+        side_effect=[error] * 5 + [AssertionError("the revocation retried without a cap")]
+    )
 
     with pytest.raises(CoreException) as caught:
         await authn_utils.revoke_sessions_matching(qry, cmd, {"principal_id": uuid4()})
