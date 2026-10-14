@@ -42,6 +42,10 @@ _SHORT = timedelta(milliseconds=150)
 
 _PAST_SHORT = timedelta(milliseconds=400)
 
+_PAST_KEY_SLACK = timedelta(milliseconds=1500)
+"""Past ``_SHORT`` plus the one second Redis keeps a fleet's keys beyond their last expiry, so
+a backend that expired the keys from a short beat's own ttl has lost every member by then."""
+
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class FleetHarness:
@@ -143,7 +147,7 @@ async def check_a_linger_expires_without_shortening_other_lives(h: FleetHarness)
 
     await fleet.beat("stays", "serving", {})
     await fleet.beat("lingers", "draining", {}, ttl=_SHORT)
-    await h.wait(_PAST_SHORT)
+    await h.wait(_PAST_KEY_SLACK)
 
     view = await fleet.view()
 
