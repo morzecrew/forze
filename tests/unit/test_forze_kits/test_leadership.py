@@ -350,6 +350,9 @@ class TestElection:
             await asyncio.sleep(0)
 
             assert not a.lock.calls("release")  # a dead process releases nothing
+            (killed,) = fleet.by("a")
+            assert killed.term.reason == "stopped" and not killed.term.live()
+            assert a.step.startup.state.terms_ended == {"stopped": 1}  # type: ignore[attr-defined]
             last_renewal = max(at for at, _ in a.lock.calls("reset"))
 
             await asyncio.sleep(TTL + 2 * CAMPAIGN)
