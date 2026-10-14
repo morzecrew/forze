@@ -88,6 +88,14 @@ class _Unanswered(TimeoutError):
     """An acquire the step stopped waiting for; it may still land, and is settled apart."""
 
 
+def _retrieve(task: asyncio.Future[Any]) -> None:
+    """Collect a cancelled call's outcome, so one that raised on its way out is not reported
+    as never retrieved."""
+
+    if not task.cancelled():
+        task.exception()
+
+
 def _positive(name: str, value: timedelta) -> None:
     if value.total_seconds() <= 0:
         raise exc.configuration(f"Leadership {name} must be positive")
@@ -724,10 +732,18 @@ class _Campaign:
         a stop request; one that overruns is cancelled."""
 
         task = asyncio.ensure_future(call)
-        await self._until({task}, timeout=self.spec.campaign_every.total_seconds())
+
+        try:
+            await self._until({task}, timeout=self.spec.campaign_every.total_seconds())
+
+        finally:
+            # Overran, or the campaign itself is being cancelled: a read or a callback is safe
+            # to cancel, unlike an acquire, and must not run on past a forced stop.
+            if not task.done():
+                task.cancel()
+                task.add_done_callback(_retrieve)
 
         if not task.done():
-            task.cancel()
             raise TimeoutError(f"Leadership campaign call for {self.spec.key} overran")
 
         return task.result()
