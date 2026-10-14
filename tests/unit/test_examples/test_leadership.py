@@ -32,3 +32,32 @@ def test_after_a_lock_backend_loss_the_first_term_claims_at_once() -> None:
     store = run_simulation(lambda: recover_after_loss(run_for=1.0))
 
     assert store.published[0] == (51, "pod-a #1")
+
+
+class _Raced(FencedDigests):
+    """A store where a holder that drew token 51 before the loss claims it first."""
+
+    def claim(self, token: int) -> bool:
+        if token == 51 and self.fence == 50:
+            super().claim(51)  # the stale holder of the repeated token gets there first
+
+        return super().claim(token)
+
+
+def test_a_repeated_token_is_acted_on_once() -> None:
+    store = run_simulation(lambda: recover_after_loss(store=_Raced(fence=50), run_for=3.0))
+
+    # The new term drew 51 again; its claim was refused, so it wrote nothing under it and
+    # campaigned again, with the counter advanced past the store's fence.
+    assert store.published[0][0] == 52
+    assert all(token != 51 for token, _ in store.published)
+
+
+def test_a_refused_write_ends_the_term() -> None:
+    store = run_simulation(
+        lambda: recover_after_loss(store=FencedDigests(), run_for=3.0, newer_write_at=1.0)
+    )
+
+    # A newer holder wrote 60 mid-term: the old term's next write was refused, it returned,
+    # and the next term advanced past 60 and published again.
+    assert [token for token, _ in store.published][-1] == 61

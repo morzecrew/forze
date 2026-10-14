@@ -22,6 +22,7 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from forze.application.contracts.dlock import (
+    FENCE_MAX_VALUE,
     AcquiredLock,
     DistributedLockCapabilities,
     DistributedLockCommandDepKey,
@@ -87,6 +88,13 @@ class _Lock:
     release_delay: float = 0.0
     reads_fail: bool = False
     """Owner and ttl reads raise, as on a broken connection."""
+    read_delay: float = 0.0
+    """Seconds every read takes to answer."""
+    late_reply_raises: float = 0.0
+    """The next lease acquire takes the lock at once, and its reply fails this much later."""
+    acquire_fails_at: frozenset[int] = frozenset()
+    """Which lease acquires, counted from one, raise without taking the lock."""
+    lease_acquires: int = 0
     log: list[tuple[float, str, str, str]] = attrs.field(factory=list)
 
     @property
@@ -101,6 +109,18 @@ class _Lock:
 
         if key in self.acquire_fails_on:
             raise exc.infrastructure("acquire refused")
+
+        if key == KEY:
+            self.lease_acquires += 1
+
+            if self.lease_acquires in self.acquire_fails_at:
+                raise exc.infrastructure("acquire refused")
+
+        if key == KEY and self.late_reply_raises:
+            delay, self.late_reply_raises = self.late_reply_raises, 0.0
+            return await asyncio.shield(
+                asyncio.ensure_future(self._land_then_fail(delay, key, owner))
+            )
 
         delay = self.acquire_delay if key == KEY else self.want_delay
 
@@ -120,6 +140,12 @@ class _Lock:
         await asyncio.sleep(delay)
 
         return await self.inner.acquire(key, owner)
+
+    async def _land_then_fail(self, delay: float, key: str, owner: str) -> AcquiredLock | None:
+        await self.inner.acquire(key, owner)
+        await asyncio.sleep(delay)
+
+        raise exc.infrastructure("the reply was lost after the lock was taken")
 
     async def reset(self, key: str, owner: str) -> bool:
         self.log.append((monotonic(), "reset", key, owner))
@@ -142,15 +168,21 @@ class _Lock:
         return await self.inner.release(key, owner)
 
     async def is_locked(self, key: str) -> bool:
+        await asyncio.sleep(self.read_delay)
+
         return await self.inner.is_locked(key)
 
     async def get_owner(self, key: str) -> str | None:
+        await asyncio.sleep(self.read_delay)
+
         if self.reads_fail:
             raise exc.infrastructure("read refused")
 
         return await self.inner.get_owner(key)
 
     async def get_ttl(self, key: str) -> timedelta | None:
+        await asyncio.sleep(self.read_delay)
+
         return await self.inner.get_ttl(key)
 
     async def advance_fence(self, key: str, *, past: int) -> int:
@@ -512,6 +544,39 @@ class TestDeadlines:
 
         _simulate(scenario)
 
+    def test_a_body_that_sets_its_own_end_is_not_cut_short(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def lead(_ctx: Any, term: Term) -> None:
+                run = _Run(replica="a", term=term, started=monotonic())
+                fleet.runs.append(run)
+                await asyncio.sleep(1)
+                term.ended.set()  # tells the body's own workers to stop
+
+                try:
+                    await asyncio.sleep(15)  # drains them, past the next renewal
+
+                except asyncio.CancelledError:
+                    run.cancelled = monotonic()
+                    raise
+
+                run.finished = monotonic()
+
+            a = fleet.replica("a", lead=lead)
+            await a.start()
+            await asyncio.sleep(30)
+
+            (run,) = fleet.runs
+            assert run.cancelled is None
+            assert run.finished == 16.0
+            assert run.term.reason == "returned"
+            assert a.lock.calls("release")[0][0] == 16.0
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
     def test_a_slow_renewal_shortens_the_term(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
@@ -669,6 +734,51 @@ class TestRelease:
 
 # ....................... #
 
+
+    def test_a_late_reply_that_raises_is_still_released(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a")
+            a.lock.late_reply_raises = 25.0  # takes the lock at once; the reply fails at +25
+            await a.start()
+            await asyncio.sleep(1)
+            await fleet.replica("b").start()
+            await asyncio.sleep(TTL + 2 * CAMPAIGN)
+
+            sent, owner = a.lock.calls("acquire")[0]
+            assert (sent + 25.0, owner) in a.lock.calls("release")
+            (successor,) = fleet.by("b")
+            assert successor.started <= sent + 25.0 + CAMPAIGN
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_forced_stop_cancels_a_campaign_callback_in_flight(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            seen: list[str] = []
+
+            async def gate(_ctx: Any) -> bool:
+                try:
+                    await asyncio.sleep(0.5)
+
+                except asyncio.CancelledError:
+                    seen.append("cancelled")
+                    raise
+
+                seen.append("finished")
+                return True
+
+            a = fleet.replica("a", may_campaign=gate)
+            await a.start()
+            await asyncio.sleep(0.1)
+            a.kill()
+            await asyncio.sleep(5)
+
+            assert seen == ["cancelled"]
+
+        _simulate(scenario)
 
     def test_an_acquire_in_flight_at_a_stop_is_released_when_it_lands(self) -> None:
         async def scenario() -> None:
@@ -1093,6 +1203,89 @@ class TestHandoff:
 
         _simulate(scenario)
 
+    def test_the_deferral_count_restarts_after_a_held_lease(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            await fleet.replica("a", handoff="on_request", prefer=self._prefers(False)).start()
+            await asyncio.sleep(0.5)
+            await fleet.replica("n", handoff="on_request", prefer=self._prefers(False)).start()
+            await asyncio.sleep(8.5)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            await b.start()  # +9: asks; a yields at +10; b leads at +11 and prefers it
+            await asyncio.sleep(11)
+            await fleet.replica("c", handoff="on_request", prefer=self._prefers(True)).start()
+            await asyncio.sleep(10)
+            await b.stop()  # +30: b releases while c asks
+            await asyncio.sleep(20)
+
+            # n saw the lease free once at +10.5, then held for twenty seconds: it defers to c
+            # afresh instead of resuming its count from +10.5.
+            assert [run.replica for run in fleet.runs] == ["a", "b", "c"]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_slow_handoff_check_does_not_hold_back_a_renewal(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def slow_once_leading(_ctx: Any) -> bool:
+                if fleet.runs:  # a dependency degrades once a holds the lease
+                    await asyncio.sleep(100)
+
+                return False
+
+            a = fleet.replica("a", handoff="on_request", prefer=slow_once_leading)
+            await a.start()
+            await asyncio.sleep(5)
+            await fleet.replica("b", handoff="on_request", prefer=self._prefers(True)).start()
+            await asyncio.sleep(40)
+
+            first = fleet.runs[0]
+            assert first.term.live()  # renewed every ten seconds, check or no check
+            assert first.term.reason is None
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_late_yield_is_cut_short_of_the_hard_deadline(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            spec = attrs.evolve(SPEC, renew_every=timedelta(seconds=1))
+
+            async def slow_once_leading(_ctx: Any) -> bool:
+                if fleet.runs:
+                    await asyncio.sleep(1.0)
+
+                return False
+
+            a = fleet.replica(
+                "a",
+                spec=spec,
+                handoff="on_request",
+                prefer=slow_once_leading,
+                lead=fleet.body("a", listens=False, resists=0.5),
+            )
+            # The renewal sent at +1 answers at +23.5, moving the hard deadline to +30; the
+            # next ones hang. The handoff check then takes a second, so a yields at +24.5.
+            a.lock.reset_plan = [22.5] + [None] * 20
+            await a.start()
+            await asyncio.sleep(20)
+            await fleet.replica("b", spec=spec, handoff="on_request", prefer=self._prefers(True)).start()
+            await asyncio.sleep(20)
+
+            yielded = fleet.runs[0]
+            assert yielded.term.reason == "yielded"
+            hard = 1.0 + TTL - MARGIN
+            assert yielded.cancelled == hard - RELEASE  # not +29.5: the grace is cut
+            assert yielded.finished is not None and yielded.finished <= hard
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
     def test_a_dead_asker_takes_the_unit_at_most_once(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
@@ -1217,6 +1410,132 @@ class TestHandoff:
 # ....................... #
 
 
+class TestCampaignFailures:
+    """Handoff is a courtesy: a replica that cannot read or keep it campaigns without it."""
+
+    def _prefers(self, value: bool) -> Callable[[Any], Awaitable[bool]]:
+        async def prefer(_ctx: Any) -> bool:
+            return value
+
+        return prefer
+
+    def test_failing_want_lock_reads_do_not_leave_the_lease_unled(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            for name in ("a", "b", "c"):
+                r = fleet.replica(name, handoff="on_request", prefer=self._prefers(False))
+                r.lock.reads_fail = True
+                await r.start()
+
+            await asyncio.sleep(10)
+
+            assert len(fleet.runs) == 1
+            assert fleet.runs[0].started == 0.0
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_failing_prefer_does_not_leave_the_lease_unled(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def broken(_ctx: Any) -> bool:
+                raise exc.infrastructure("the preference service is down")
+
+            for name in ("a", "b"):
+                await fleet.replica(name, handoff="on_request", prefer=broken).start()
+
+            await asyncio.sleep(10)
+
+            assert len(fleet.runs) == 1
+            assert fleet.runs[0].started == 0.0
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_survivor_whose_reads_fail_still_takes_over(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a", handoff="on_request", prefer=self._prefers(False))
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(False))
+            await a.start()
+            await asyncio.sleep(1)
+            await b.start()
+            await asyncio.sleep(5)
+
+            b.lock.reads_fail = True
+            a.kill()
+            await asyncio.sleep(TTL + 2 * CAMPAIGN)
+
+            assert [run.replica for run in fleet.runs] == ["a", "b"]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_slow_campaign_reads_do_not_leave_the_lease_unled(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            for name in ("a", "b"):
+                r = fleet.replica(name, handoff="on_request", prefer=self._prefers(False))
+                r.lock.read_delay = 1.5  # past release_timeout, inside a campaign interval
+                await r.start()
+
+            await asyncio.sleep(10)
+
+            assert len(fleet.runs) == 1
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_an_asker_counts_only_consecutive_failed_acquires(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            await fleet.replica("a", handoff="on_request", prefer=self._prefers(True)).start()
+            await asyncio.sleep(1)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            b.lock.acquire_fails_at = frozenset({2, 10, 20})  # three, never in a row
+            await b.start()
+            await asyncio.sleep(60)
+
+            third = b.lock.calls("acquire")[19][0]
+            asks = [at for at, _ in b.lock.calls("acquire", f"{KEY}:want")]
+            # b keeps asking after the third: no cool-off, which three failures in a row cause.
+            assert [at for at in asks if third < at < third + 2 * CAMPAIGN + 0.5]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_an_asker_whose_acquires_hang_is_yielded_to_at_most_once_a_ttl(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            for name in ("a", "c"):
+                await fleet.replica(name, handoff="on_request", prefer=self._prefers(False)).start()
+
+            await asyncio.sleep(9)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            b.lock.acquire_delay = 100_000.0  # every lease acquire hangs past its wait
+            await b.start()
+            await asyncio.sleep(300)
+
+            yields = [run.saw_end for run in fleet.runs if run.term.reason == "yielded"]
+            assert yields
+            assert all(
+                later - earlier >= TTL for earlier, later in zip(yields, yields[1:])  # type: ignore[operator]
+            ), yields
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+
 class TestWiring:
     def test_a_second_startup_while_running_is_ignored(self) -> None:
         async def scenario() -> None:
@@ -1263,6 +1582,12 @@ class TestWiring:
     def test_the_spec_refuses_nonsense(self, kwargs: dict[str, Any]) -> None:
         with pytest.raises(CoreException) as ei:
             LeadershipSpec(lock=LOCK, **{"key": KEY, **kwargs})
+
+        assert ei.value.kind is ExceptionKind.CONFIGURATION
+
+    def test_a_lease_key_may_not_look_like_a_want_lock(self) -> None:
+        with pytest.raises(CoreException) as ei:
+            LeadershipSpec(lock=LOCK, key="relay:want")
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
 
@@ -1464,29 +1789,76 @@ class TestFenceFloor:
 
         _simulate(scenario)
 
-    def test_a_failing_floor_skips_the_campaign_and_is_retried(self) -> None:
+    def test_a_failing_floor_does_not_hold_up_the_campaign(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
-            calls: list[float] = []
 
             async def floor(_ctx: Any) -> int:
-                calls.append(monotonic())
-
-                if len(calls) <= 2:
-                    raise exc.infrastructure("the store is unreachable")
-
-                return 0
+                raise exc.infrastructure("the store is unreachable")
 
             a = fleet.replica("a", spec=self.ADVANCING, fence_floor=floor)
             await a.start()
             await asyncio.sleep(10)
 
-            assert calls[:3] == [0.0, CAMPAIGN, 2 * CAMPAIGN]
-            assert a.lock.calls("acquire")[0][0] == 2 * CAMPAIGN  # none before the floor read
+            # Without the floor the token may be low; the claim and the fenced writes refuse
+            # it then. A free lease left unled helps nobody.
             (run,) = fleet.runs
-            assert run.started == 2 * CAMPAIGN
+            assert run.started == 0.0
+            assert not a.lock.calls("advance", KEY)
 
             await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_slow_floor_read_does_not_hold_up_the_campaign(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def floor(_ctx: Any) -> int:
+                await asyncio.sleep(1.5)  # a store query under load, past release_timeout
+                return 7
+
+            for name in ("a", "b"):
+                await fleet.replica(name, spec=self.ADVANCING, fence_floor=floor).start()
+
+            await asyncio.sleep(30)
+
+            assert [run.term.token for run in fleet.runs] == [8]  # advanced, then acquired
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_an_exhausted_counter_stops_campaigning(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def floor(_ctx: Any) -> int:
+                return FENCE_MAX_VALUE
+
+            a = fleet.replica("a", spec=self.ADVANCING, fence_floor=floor)
+            await a.start()
+            await asyncio.sleep(20)
+
+            assert a.loop_task().done()
+            assert len(a.lock.calls("acquire")) == 1  # refused once, not every interval
+            assert not fleet.runs
+
+        _simulate(scenario)
+
+    def test_a_floor_the_lock_cannot_advance_past_stops_campaigning(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+
+            async def floor(_ctx: Any) -> Any:
+                return None  # no row in the store yet, returned as is
+
+            a = fleet.replica("a", spec=self.ADVANCING, fence_floor=floor)
+            await a.start()
+            await asyncio.sleep(20)
+
+            assert a.loop_task().done()
+            assert not a.lock.calls("acquire")
 
         _simulate(scenario)
 
