@@ -231,10 +231,11 @@ def durable_recovery_background_lifecycle_step(
     the runner re-binds each run's tenant to execute it.
 
     Concurrent scanners are safe (``FOR UPDATE SKIP LOCKED`` + a fence on the terminal
-    write), so run this on every replica. The ``forze_kits`` singleton lifecycle guard
-    does not elect a single scanner: it guards startup only, and startup here just launches
-    the loop, so every replica still scans. Production deployments often prefer an external
-    cron / workflow scheduler over in-process polling.
+    write), so run this unwrapped on every replica. Do not wrap it in the ``forze_kits``
+    singleton lifecycle guard to elect one scanner: the guard holds its lock only while
+    startup launches the loop, so replicas that start later scan too, and one that starts
+    while another holds the lock runs no scanner at all. Production deployments often
+    prefer an external cron / workflow scheduler over in-process polling.
     """
 
     startup = _DurableRecoveryBackgroundStartup(
@@ -465,10 +466,11 @@ def durable_scheduler_background_lifecycle_step(
     the shard is frozen at startup. Omit it for a tagged store (one unbound sweep).
 
     Concurrent schedulers are safe (idempotent run keys + compare-and-set advance), so run
-    this on every replica. The singleton lifecycle guard does not elect a single scheduler:
-    it guards startup only, and startup here just launches the loop, so every replica still
-    schedules. Production deployments often prefer an external scheduler over in-process
-    polling.
+    this unwrapped on every replica. Do not wrap it in the singleton lifecycle guard to
+    elect one scheduler: the guard holds its lock only while startup launches the loop, so
+    replicas that start later schedule too, and one that starts while another holds the
+    lock runs no scheduler at all. Production deployments often prefer an external
+    scheduler over in-process polling.
     """
 
     startup = _DurableSchedulerBackgroundStartup(
