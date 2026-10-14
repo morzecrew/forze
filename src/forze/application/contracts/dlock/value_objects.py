@@ -44,13 +44,14 @@ class AcquiredLock:
 
     Consumers protect downstream writes by sending the token along with the write.
     The token's **first** write claims it: the stored fence must be strictly lower
-    (``fence < :token``), and zero rows means another holder has it, so the term
-    ends. **Later** writes under the same token accept an equal fence
-    (``fence <= :token``). A **lower** token is always refused. The claim matters
-    because tokens can repeat after the backend loses its data; the store
-    serializes the claims and one holder wins. The framework cannot enforce these
-    checks; without them the lock remains best-effort mutual exclusion (a paused
-    holder can resume after expiry while a new holder runs).
+    (``fence < :token``). **Later** writes under the same token accept an equal
+    fence (``fence <= :token``). A **lower** token is always refused. **Zero rows**
+    on any fenced write, the claim or a later one, means the token is no longer
+    current, so the term ends. The claim matters because tokens can repeat after the
+    backend loses its data; the store serializes the claims and one holder wins. The
+    framework cannot enforce these checks; without them the lock remains best-effort
+    mutual exclusion (a paused holder can resume after expiry while a new holder
+    runs).
     """
 
     key: str

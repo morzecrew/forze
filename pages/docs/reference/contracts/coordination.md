@@ -58,8 +58,9 @@ For a long-held critical section, use the `DistributedLockScope` kit with an `ex
 to renew the lease rather than picking a large `ttl`.
 
 A fenced write claims its token first (`fence < :token`), then accepts an equal fence
-(`fence <= :token`); a lower token is always refused. The rule, and when to call
-`advance_fence`, are in [Fencing after data loss](../../integrations/redis.md#fencing-after-data-loss).
+(`fence <= :token`); a lower token is always refused, and zero rows on any fenced write ends
+the term. The rule, and when to call `advance_fence`, are in
+[Fencing after data loss](../../integrations/redis.md#fencing-after-data-loss).
 
 ## Implemented by
 

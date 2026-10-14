@@ -53,17 +53,21 @@ class DistributedLockCommandPort(Protocol):  # pragma: no cover
     store keeps the highest fence per resource:
 
     - a token's **first** write claims it: the stored fence must be strictly lower
-      (``fence < :token``). Zero rows means another holder has the token — end the
-      term without writing;
+      (``fence < :token``);
     - **later** writes under the same token accept an equal fence
       (``fence <= :token``), since the holder's own claim set it;
-    - a **lower** token is always refused.
+    - a **lower** token is always refused;
+    - **zero rows on any fenced write**, the claim or a later one, means the token is
+      no longer current: end the term and stop writing.
 
     The claim is what keeps a repeated token harmless. A backend that loses its data
     restarts its counter, and a holder may have drawn a token it never wrote, so after
     a loss two holders can draw the same token (see :class:`FenceAdvancing`); the store
-    serializes their claims and exactly one wins. The framework cannot enforce these
-    checks — they are the consumer's storage-side responsibility.
+    serializes their claims and exactly one wins. A pre-loss holder can also hold a
+    *higher* token it never wrote and claim it after the new holder has; the new
+    holder's next write then finds zero rows, which is why every write checks. The
+    framework cannot enforce these checks — they are the consumer's storage-side
+    responsibility.
     """
 
     spec: DistributedLockSpec

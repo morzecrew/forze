@@ -161,3 +161,42 @@ async def test_past_zero_after_a_total_loss_still_lets_one_holder_claim(
     )
     assert sorted(claims) == [0, 1]
     assert await _store_fence(first_conn, key) == 1
+
+
+async def test_a_higher_unwritten_token_claims_later_and_the_new_holder_stops(
+    redis_dlock: RedisDistributedLockAdapter,
+    redis_container: RedisContainer,
+    holders: tuple[Any, Any],
+) -> None:
+    old_conn, new_conn = holders
+    key = f"invoice:{uuid4().hex[:8]}"
+    await old_conn.execute(
+        "INSERT INTO guarded (key, fence, writer) VALUES (%s, 50, 'holder-50')", (key,)
+    )
+    assert await redis_dlock.advance_fence(key, past=50) == 50
+
+    # An idle term drew 51 and released; the current holder drew 52. Neither has written.
+    assert await _draw(redis_dlock, key, "idle") == 51
+    assert await redis_dlock.release(key, "idle") is True
+    assert await _draw(redis_dlock, key, "old") == 52
+
+    redis_container.get_client().flushall()
+
+    assert await redis_dlock.advance_fence(key, past=await _store_fence(new_conn, key)) == 50
+    assert await _draw(redis_dlock, key, "new") == 51
+
+    # Both claims succeed, in this order: the store cannot know 52 was drawn first.
+    assert await _rows(new_conn, _CLAIM, key=key, token=51, writer="new") == 1
+    assert await _rows(old_conn, _CLAIM, key=key, token=52, writer="old") == 1
+
+    # The new holder's next write finds zero rows, so it ends its term; one writer remains.
+    assert await _rows(new_conn, _WRITE, key=key, token=51, writer="new") == 0
+    assert await _rows(old_conn, _WRITE, key=key, token=52, writer="old") == 1
+    assert await redis_dlock.release(key, "new") is True
+
+    # The next term advances to the store's current fence, draws above it, and its claim
+    # stops the old holder.
+    assert await redis_dlock.advance_fence(key, past=await _store_fence(new_conn, key)) == 52
+    assert await _draw(redis_dlock, key, "next") == 53
+    assert await _rows(new_conn, _CLAIM, key=key, token=53, writer="next") == 1
+    assert await _rows(old_conn, _WRITE, key=key, token=52, writer="old") == 0

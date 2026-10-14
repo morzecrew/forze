@@ -192,22 +192,26 @@ Protect downstream writes by sending the token with the write. The store keeps
 the highest fence per resource, and a holder writes in two shapes:
 
 ```sql
--- The first write under a token claims it. 0 rows: another holder has it, end the term.
+-- The first write under a token claims it.
 UPDATE invoice SET ..., fence = :token WHERE id = 42 AND fence < :token;
 
 -- Every later write under the same token: an equal fence is the holder's own claim.
 UPDATE invoice SET ..., fence = :token WHERE id = 42 AND fence <= :token;
 ```
 
-A lower token is refused by both. In code, the claim is the first thing the
-holder writes:
+A lower token is refused by both. **Zero rows on any of these writes, the claim
+or a later one, means your token is no longer current: end the term and stop
+writing.** In code, the claim is the first thing the holder writes, and every
+write checks its result:
 
 ```python
 async with dlock_scope.scope("invoice:42") as lock:
     if not await repo.claim_invoice(invoice, fence_token=lock.token):
         return  # another holder has this token
 
-    await repo.update_invoice(invoice, fence_token=lock.token)
+    for change in changes:
+        if not await repo.update_invoice(change, fence_token=lock.token):
+            return  # a higher token has claimed the invoice since
 ```
 
 Keep whether you have claimed in memory for the term; a restarted process
@@ -269,10 +273,18 @@ and exactly one finds the fence lower. The other gets zero rows and ends its ter
 having written nothing. That holds after any number of losses, and for any
 `past`, zero included.
 
-**One window remains.** An older holder with a lower token that has already
-claimed it can keep writing until the new holder's claim raises the stored fence.
-The new holder's claim is what stops it, so claim as the term begins, before the
-first unit of work.
+**Two windows remain**, and in both the store keeps one writer at a time:
+
+- **An older holder with a lower token** that has already claimed it can keep
+  writing until the new holder's claim raises the stored fence. The new holder's
+  claim is what stops it, so claim as the term begins, before the first unit of
+  work.
+- **An older holder with a higher token** it drew before the loss and never
+  wrote can claim it after the new holder has, since the counter has no memory
+  of the tokens it issued. The new holder's next write then finds zero rows, and
+  it stops. The older holder keeps writing until its next lease renewal fails, or
+  until a later term's claim goes above it: calling `advance_fence` with the
+  store's current fence before each acquire puts the next term's token there.
 
 **AOF persistence complements this; it does not replace it.** `appendfsync
 everysec` narrows a loss to about a second of `INCR`s but does not close it, and
