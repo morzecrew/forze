@@ -38,12 +38,15 @@ _REPORTED: Report = {"connections": 0, "movable": 0}
 
 
 class _Socket:
-    """An Engine.IO socket stand-in: its close takes *delay*, then fires the disconnect."""
+    """An Engine.IO socket stand-in: its close fires the disconnect after *handlers* app
+    disconnect handlers that take *delay* each. A cancel ends the handler it interrupts and
+    the close goes on to the next, as python-socketio's does."""
 
-    def __init__(self, server: AsyncServer, eio_sid: str, delay: float) -> None:
+    def __init__(self, server: AsyncServer, eio_sid: str, delay: float, handlers: int) -> None:
         self.server = server
         self.sid = eio_sid
         self.delay = delay
+        self.handlers = handlers
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self.closed = False
         self.closes = 0
@@ -52,12 +55,12 @@ class _Socket:
     async def close(self, wait: bool = True, abort: bool = False, reason: Any = None) -> None:
         self.closes += 1
 
-        try:
-            await asyncio.sleep(self.delay)
+        for _handler in range(self.handlers):
+            try:
+                await asyncio.sleep(self.delay)
 
-        except asyncio.CancelledError:
-            self.cancelled = True
-            raise
+            except asyncio.CancelledError:
+                self.cancelled = True
 
         await self.server.eio._trigger_event("disconnect", self.sid, reason, run_async=False)
         self.closed = True
@@ -76,7 +79,7 @@ class _Node:
         eio_sids = [f"eio-{len(self.sockets) + index}" for index in range(count)]
 
         for eio_sid in eio_sids:
-            self.sockets[eio_sid] = _Socket(self.server, eio_sid, delay)
+            self.sockets[eio_sid] = _Socket(self.server, eio_sid, delay, len(namespaces))
             self.server.eio.sockets[eio_sid] = self.sockets[eio_sid]
             self.server.environ[eio_sid] = {}
 
@@ -458,35 +461,43 @@ class TestNoShedding:
 
 
 class TestStop:
-    def test_shutdown_cancels_a_shed_still_closing_before_teardown(self) -> None:
-        async def scenario() -> tuple[list[bool], bool, float]:
+    def test_shutdown_stops_a_shed_and_lets_its_started_close_finish_first(self) -> None:
+        async def scenario() -> tuple[list[tuple[bool, bool, int]], float]:
             state, node = MockState(), _Node()
-            (first,) = await node.connect(1, "/lobby", delay=8)
+            first, second = await node.connect(2, "/lobby", "/chat", delay=3)
             await _peers(state, 0, 0)
             await _beat(state, "me", _REPORTED)
-            socket = node.sockets[first]
-            seen_in_teardown: list[bool] = []
+            seen_in_teardown: list[tuple[bool, bool, int]] = []
 
             async def record(_ctx: object) -> None:
-                await asyncio.sleep(0)
-                seen_in_teardown.append(socket.cancelled)
+                started = node.sockets[first]
+                seen_in_teardown.append(
+                    (started.cancelled, started.closed, node.sockets[second].closes)
+                )
 
             # Started after the rebalance step, so torn down before it.
             later = LifecycleStep(
                 id="later", shutdown=record, depends_on=("realtime_connection_rebalance",)
             )
-            # At 10 s the allowance holds one; its close would take until 18 s.
-            rebalance = _step(node, every=timedelta(seconds=10), per_minute=6)
+            # At 10 s the allowance holds two: closes at 10 s and 15 s, each running two
+            # 3 s disconnect handlers. The scope ends at 12 s, inside the first close.
+            rebalance = _step(
+                node,
+                namespaces=("/lobby", "/chat"),
+                movable=lambda namespace, sid: True,
+                every=timedelta(seconds=10),
+                per_minute=12,
+            )
             await _serve(state, [rebalance, later], _sleep(12))
 
-            return seen_in_teardown, socket.closed, asyncio.get_running_loop().time()
+            return seen_in_teardown, asyncio.get_running_loop().time()
 
-        seen_in_teardown, closed, left_at = run_simulation(scenario)
+        seen_in_teardown, left_at = run_simulation(scenario)
 
-        # Stopped with the background loops, before any step's teardown.
-        assert seen_in_teardown == [True]
-        assert not closed
-        assert left_at < 18
+        # Stopped with the background loops, before any step's teardown: the first close was
+        # cancelled, absorbed it, and finished its second handler; the second never started.
+        assert seen_in_teardown == [(True, True, 0)]
+        assert left_at < 16
 
 
 # ....................... #

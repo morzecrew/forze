@@ -90,7 +90,8 @@ async def spread_closes(
     A slow close never delays the next one. After the last start the call waits up to *tail*
     for the started closes, never past ``window + tail`` from its start, then cancels any
     still running and returns, so the whole call takes at most ``window + tail``. A close
-    that raises is logged and counted, never propagated.
+    that raises is logged and counted, never propagated. Cancelled, the call starts no more
+    closes, cancels the started ones and waits for them within the same bound, then re-raises.
 
     :param closes: One callable per connection; deduplicate before calling.
     :param window: Over how long the starts are spread.
@@ -121,9 +122,14 @@ async def spread_closes(
         await asyncio.wait(tasks, timeout=max(0.0, min(tail_seconds, deadline - clock.time())))
 
     except asyncio.CancelledError:
-        # Cancelled from outside: don't leave the started closes running detached.
+        # Cancelled from outside: don't leave the started closes running detached. A close
+        # may absorb its cancel — python-socketio ends the disconnect handler it interrupts
+        # and runs the next — so wait for them, within this call's own bound.
         for task in tasks:
             task.cancel()
+
+        if tasks:
+            await asyncio.wait(tasks, timeout=max(0.0, deadline - clock.time()))
 
         raise
 
