@@ -1,6 +1,6 @@
 # RFC 0072 — Fence advance
 
-- **Status:** 📝 Draft
+- **Status:** 🚧 In progress
 - **Scope:** Two pieces that make fencing tokens safe after a lock backend loses its data:
   - an optional capability on the distributed-lock command port that moves a lock's fencing
     counter up to the highest fence a store holds, so new tokens are not refused for ever;
