@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import itertools
 import multiprocessing
 import os
 import socket
 import subprocess  # nosec B404 — fixed argv, runs this interpreter
 import sys
+
+import pytest
 
 from forze.base.primitives import (
     SeededEntropySource,
@@ -57,16 +60,28 @@ class TestInstanceId:
 
         assert after_minting == untouched
 
-    def test_a_reused_pid_gets_a_new_nonce(self) -> None:
+    def test_a_reused_pid_gets_a_new_nonce(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Two draws from a counter, not two random ones that could collide.
+        draws = itertools.count(1)
+
+        class _Counting:
+            def randbits(self, k: int) -> int:
+                return next(draws)
+
+        monkeypatch.setattr(instance_module, "SystemEntropySource", _Counting)
         first = instance_id()
-        instance_module._IDS.clear()  # what a restarted process starts with
 
         try:
-            assert instance_id() != first
+            instance_module._IDS.clear()  # what a restarted process starts with
+            minted = instance_id()
+            instance_module._IDS.clear()  # and again, reusing the same pid
+            again = instance_id()
 
         finally:
             instance_module._IDS.clear()
             instance_module._IDS[os.getpid()] = first
+
+        assert (minted.rsplit(":", 1)[1], again.rsplit(":", 1)[1]) == ("00000001", "00000002")
 
     def test_a_forked_child_gets_its_own(self) -> None:
         parent = instance_id()
