@@ -7,7 +7,7 @@ work.
 
 ## Allocating a number
 
-The next free number is **0071**. Before creating an RFC, glance at the table below
+The next free number is **0077**. Before creating an RFC, glance at the table below
 (or `ls rfcs/`) and take the next unused integer — numbers collide when minted in
 parallel. Update this table in the same change.
 
@@ -90,6 +90,12 @@ only in the code, which is the failure this log exists to prevent.
 | [0068](0068-cross-process-grants-cache-invalidation.md) | Cross-process grants cache invalidation | 📝 Draft | How an opt-in grants-cache invalidation in one process reaches every other process: a broadcast over the cache push-invalidation capability, with the TTL kept as the backstop. |
 | [0069](0069-session-revocation-fast-path.md) | Session revocation fast path | 🚧 In progress | Verifying an access token from Redis-cached revocation states (a principal epoch claim, family liveness) that expire within a TTL and are written through on revocation; misses read the rows. |
 | [0070](0070-outbox-consume-mode.md) | Outbox consume mode | 📝 Draft | An opt-in Postgres outbox mode where a relay pass locks its batch in one transaction and deletes each row once published, so a row published first time is written twice, never pruned. |
+| [0071](0071-lifetime-leadership.md) | Lifetime leadership | 📝 Draft | A lifecycle step that elects one replica to run a body for as long as it holds a renewing lease, with a term that tells the body when it ends, fencing tokens and handoff on request. |
+| [0072](0072-fence-advance.md) | Fence advance | 📝 Draft | An optional dlock capability that moves a fencing counter to at least a given value, so fenced writers draw tokens above the stored fence after the lock backend loses its data. |
+| [0073](0073-fleet-membership.md) | Fleet membership | 📝 Draft | Which replicas are alive, their state and a small report, from one beat on the server clock, with pure policies over the view: settled, even share, rendezvous rank and excess. |
+| [0074](0074-drain-announcement-and-readiness-checks.md) | Drain announcement and readiness checks | 📝 Draft | Announce a drain before refusing work: readiness fails first, registered drain phases run before teardown, embedded uvicorn routes SIGTERM into that order, and probes check dependencies. |
+| [0075](0075-realtime-connection-drain.md) | Realtime connection drain | 📝 Draft | Close a leaving replica's socket.io, WebSocket and SSE connections spread over a window, refuse connects while draining, count connections, and let apps admit connects. |
+| [0076](0076-connection-rebalancing-step.md) | Connection rebalancing step | 📝 Draft | A socket.io step that sheds movable connections from a replica well above the fleet's mean once the fleet has settled; demand-gated until a second realtime app needs it. |
 
 ## Status legend
 
