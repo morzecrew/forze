@@ -218,7 +218,9 @@ once, `announce_delay` passes, the drain phases run — and only then lets uvico
 exit: stop accepting, finish in-flight requests, run the lifespan shutdown where
 the runtime closes its gate and tears down. A drain that fails still lets the
 server exit. A second signal cancels the drain and exits without waiting for open
-connections; uvicorn then skips the lifespan shutdown.
+connections. Uvicorn then skips the lifespan shutdown, so the runtime tears down
+only when the event loop closes and cancels the lifespan — at the end of
+`asyncio.run`.
 
 - **Graceful timeout.** Unless `config` sets `timeout_graceful_shutdown`,
   `serve_uvicorn` sets it to `graceful_timeout` (10 seconds), so an open SSE

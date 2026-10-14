@@ -136,8 +136,11 @@ class TestServeUvicorn:
             elapsed = time.monotonic() - started
 
         assert code == 0
-        assert "phase-cancelled" in _events(record)
+        assert _events(record)[:2] == ["phase-started", "phase-cancelled"]
         assert "phase-done" not in _events(record)
+        # Uvicorn skips the lifespan shutdown on a forced exit; the scope still unwinds
+        # when asyncio.run cancels the lifespan task.
+        assert _events(record)[-2:] == ["served", "teardown"]
         assert elapsed < 3.0
 
     # ....................... #

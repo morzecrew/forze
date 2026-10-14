@@ -146,7 +146,8 @@ async def serve_uvicorn(
     in-flight requests within the graceful timeout, runs the lifespan shutdown, where the
     runtime closes its gate and tears down. A drain that fails still lets the server exit. A
     second signal cancels the drain and exits without waiting for open connections; uvicorn
-    then skips the lifespan shutdown.
+    then skips the lifespan shutdown, so the runtime tears down only when the event loop
+    closes and cancels the lifespan task (at the end of ``asyncio.run``).
 
     The app must hold *runtime*'s scope open — ``FastAPI(lifespan=runtime_lifespan(runtime))``.
     Run it from the main thread: elsewhere no signal handler can be installed, none is, and
