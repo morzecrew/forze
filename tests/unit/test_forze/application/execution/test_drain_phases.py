@@ -200,6 +200,71 @@ class TestDrainPhases:
     # ....................... #
 
     @pytest.mark.asyncio
+    async def test_phases_wait_out_the_announce_delay_with_readiness_failed(self) -> None:
+        seen: list[tuple[float, bool]] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            seen.append((asyncio.get_running_loop().time(), runtime.ready))
+
+        runtime = _runtime(_registering(("phase", phase, {})))
+
+        async with runtime.scope():
+            clock = asyncio.get_running_loop()
+            started = clock.time()
+            drain = asyncio.create_task(
+                runtime.drain(timedelta(seconds=1), announce_delay=timedelta(seconds=0.2))
+            )
+            await asyncio.sleep(0.05)
+
+            # Announced at once, phases not yet started.
+            assert runtime.ready is False
+            assert seen == []
+
+            await asyncio.wait_for(drain, timeout=5.0)
+
+        assert len(seen) == 1
+        assert seen[0][0] - started >= 0.2
+        assert seen[0][1] is False
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_cancelling_a_drain_cancels_the_running_phase(self) -> None:
+        """What a second signal does: the phase is cancelled, and never runs again."""
+
+        phase_cancelled = asyncio.Event()
+        runs = 0
+
+        async def slow(_allowed: timedelta) -> None:
+            nonlocal runs
+            runs += 1
+
+            try:
+                await asyncio.sleep(60)
+
+            except asyncio.CancelledError:
+                phase_cancelled.set()
+                raise
+
+        runtime = _runtime(_registering(("slow", slow, {})))
+
+        async with runtime.scope():
+            drain = asyncio.create_task(runtime.drain(timedelta(seconds=30)))
+            await asyncio.sleep(0.05)
+
+            drain.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(drain, timeout=5.0)
+
+            await asyncio.wait_for(phase_cancelled.wait(), timeout=5.0)
+
+        # The scope's shutdown found the drain claimed, and did not run the phase again.
+        assert runs == 1
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_a_phase_left_less_than_the_floor_is_skipped(self) -> None:
         ran: list[str] = []
 
@@ -264,6 +329,29 @@ class TestShutdownDrainsFirst:
 
         # Announced, gate still open during the phase; closed by the time teardown runs.
         assert seen == [("phase", True, False), ("teardown", True, True)]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_drain_that_raises_does_not_stop_the_teardown(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        torn_down: list[bool] = []
+
+        async def teardown(ctx: ExecutionContext) -> None:
+            torn_down.append(ctx.drain_gate.draining)
+
+        async def failing_drain(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("drain failed")
+
+        runtime = _runtime(LifecycleStep(id="step", shutdown=teardown))
+        monkeypatch.setattr(ExecutionRuntime, "drain", failing_drain)
+
+        async with runtime.scope():
+            pass
+
+        assert torn_down == [True]
 
     # ....................... #
 

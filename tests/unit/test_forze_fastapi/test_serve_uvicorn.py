@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+import uvicorn
+from fastapi import FastAPI
+
+from forze.application.execution import build_runtime
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze_fastapi import serve_uvicorn
+from forze_fastapi.serving import _DrainingServer  # pyright: ignore[reportPrivateUsage]
 
 # ----------------------- #
 
@@ -153,3 +163,86 @@ class TestServeUvicorn:
         assert code == 0
         assert _events(record)[0] == "drain-raised"
         assert _events(record)[-2:] == ["teardown", "served"]
+
+
+# ----------------------- #
+
+
+def _server() -> _DrainingServer:
+    return _DrainingServer(
+        uvicorn.Config(FastAPI()),
+        build_runtime(),
+        drain_budget=timedelta(seconds=1),
+        announce_delay=timedelta(0),
+    )
+
+
+class TestSignalCapture:
+    """The in-process half: which handlers are installed, and what is put back."""
+
+    @pytest.mark.asyncio
+    async def test_the_previous_handlers_are_restored_on_the_way_out(self) -> None:
+        before = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+        server = _server()
+
+        with server.capture_signals():
+            assert signal.getsignal(signal.SIGTERM) == server._on_signal  # pyright: ignore[reportPrivateUsage]
+
+        assert {sig: signal.getsignal(sig) for sig in before} == before
+
+    # ....................... #
+
+    def test_off_the_main_thread_no_handler_is_installed(self) -> None:
+        before = signal.getsignal(signal.SIGTERM)
+        seen: list[object] = []
+
+        async def inside() -> None:
+            with _server().capture_signals():
+                seen.append(signal.getsignal(signal.SIGTERM))
+
+        worker = threading.Thread(target=lambda: asyncio.run(inside()))
+        worker.start()
+        worker.join(timeout=10.0)
+
+        assert seen == [before]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_uvicorn_without_capture_signals_is_refused(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delattr(uvicorn.Server, "capture_signals")
+
+        with pytest.raises(CoreException) as caught:
+            await serve_uvicorn(
+                uvicorn.Config(FastAPI()), build_runtime(), drain_budget=timedelta(seconds=1)
+            )
+
+        assert caught.value.kind == ExceptionKind.CONFIGURATION
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("configured", "effective"), [(None, 3), (7, 7)])
+    async def test_a_graceful_timeout_is_set_only_when_unset(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        configured: int | None,
+        effective: int,
+    ) -> None:
+        async def no_serve(_self: object, sockets: object = None) -> None:
+            return None
+
+        monkeypatch.setattr(_DrainingServer, "serve", no_serve)
+        config = uvicorn.Config(FastAPI(), timeout_graceful_shutdown=configured)
+
+        await serve_uvicorn(
+            config,
+            build_runtime(),
+            drain_budget=timedelta(seconds=1),
+            graceful_timeout=timedelta(seconds=2.5),
+        )
+
+        assert config.timeout_graceful_shutdown == effective
