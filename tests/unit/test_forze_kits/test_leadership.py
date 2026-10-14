@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import math
+import threading
+import weakref
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
@@ -1943,6 +1945,51 @@ class TestFenceFloor:
 
 
 class TestMetrics:
+    def test_a_step_built_during_a_scrape_does_not_break_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import forze_kits.lifecycle.leadership as module
+
+        async def lead(_ctx: Any, _term: Term) -> None:
+            return None
+
+        built: list[LifecycleStep] = []
+        threads: list[threading.Thread] = []
+
+        def build() -> None:
+            built.append(
+                leadership_lifecycle_step(
+                    attrs.evolve(SPEC, key="scrape-other"), owner="pod", lead=lead
+                )
+            )
+
+        class _Interleaved(weakref.WeakSet):  # type: ignore[type-arg]
+            """Iterates the live set itself, as Python 3.13's ``WeakSet`` does, and builds a
+            step on another thread midway through."""
+
+            def __iter__(self) -> Any:
+                for itemref in self.data:
+                    item = itemref()
+
+                    if item is not None:
+                        yield item
+
+                    if not threads:
+                        threads.append(threading.Thread(target=build))
+                        threads[0].start()
+                        threads[0].join(0.2)  # blocked while the scrape holds the registry
+
+        registry: Any = _Interleaved()
+        monkeypatch.setattr(module, "_LIVE_STATES", registry)
+        kept = leadership_lifecycle_step(attrs.evolve(SPEC, key="scrape"), owner="pod", lead=lead)
+
+        states = module._live_states()  # unguarded: "Set changed size during iteration"
+
+        threads[0].join()
+        assert [state.key for state in states] == ["scrape"]
+        assert sorted(state.key for state in registry) == ["scrape", "scrape-other"]
+        assert kept and built
+
     def test_held_and_terms_ended(self) -> None:
         reader = InMemoryMetricReader()
         instrument_leadership(meter=MeterProvider(metric_readers=[reader]).get_meter("test"))
