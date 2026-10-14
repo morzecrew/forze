@@ -42,7 +42,7 @@ The port lifecycle the wrap drives:
 | `name` | `str \| StrEnum` | required | lock namespace |
 | `ttl` | `timedelta` | `30s` | lease lifetime — a held lock auto-expires after this |
 | `requires_fencing_token` | `bool` | `False` | fail closed at wiring unless the backend issues fencing tokens (`AcquiredLock.token`) |
-| `requires_fence_advance` | `bool` | `False` | fail closed at wiring unless the backend implements `FenceAdvancing` |
+| `requires_fence_advance` | `bool` | `False` | fail closed at wiring unless the backend issues fencing tokens and implements `FenceAdvancing` |
 
 | Port | Method | Notes |
 |------|--------|-------|

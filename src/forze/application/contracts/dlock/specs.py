@@ -35,12 +35,12 @@ class DistributedLockSpec(BaseSpec):
     """
 
     requires_fence_advance: bool = False
-    """Require the backend to implement ``FenceAdvancing``.
+    """Require the backend to issue fencing tokens and implement ``FenceAdvancing``.
 
     When ``True``, acquiring the command port fails closed (``exc.configuration``) against a
-    backend that cannot move its fencing counter (not ``FenceAdvancing``, or
-    ``fence_advance=False``), so a writer that advances the counter after a backend loss is
-    never wired onto one that cannot.
+    backend that cannot move a fencing counter (not ``FenceAdvancing``,
+    ``fence_advance=False``, or ``fencing_tokens=False``), so a writer that advances the
+    counter after a backend loss is never wired onto one that cannot.
     """
 
     # ....................... #

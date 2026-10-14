@@ -101,6 +101,13 @@ class _AdvanceFlagOffLock(_FencingLock):
         return past
 
 
+class _AdvanceWithoutTokensLock(_AdvanceFlagOffLock):
+    """Can move a counter but issues no fencing tokens — nothing to advance past."""
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        return DistributedLockCapabilities(fencing_tokens=False, fence_advance=True)
+
+
 def _ctx(port: object):
     return context_from_deps(
         Deps.plain({DistributedLockCommandDepKey: lambda _c, _s: port})
@@ -224,8 +231,15 @@ def test_requires_fence_advance_resolves_against_an_advancing_backend() -> None:
         _AdvanceFlagOffLock(),
         _BestEffortLock(),
         _ClaimsAdvanceWithoutMethodLock(),
+        _AdvanceWithoutTokensLock(),
     ],
-    ids=["flag-false", "flag-false-with-method", "not-fencing-aware", "flag-without-method"],
+    ids=[
+        "flag-false",
+        "flag-false-with-method",
+        "not-fencing-aware",
+        "flag-without-method",
+        "no-fencing-tokens",
+    ],
 )
 def test_requires_fence_advance_fails_closed(backend: object) -> None:
     ctx = _ctx(backend)
@@ -267,6 +281,7 @@ _REFUSED_WRAPPED = [
     ("requires_fence_advance", _FencingLock(), "dlock.fence_advance_unsupported"),
     ("requires_fence_advance", _AdvanceFlagOffLock(), "dlock.fence_advance_unsupported"),
     ("requires_fence_advance", _ClaimsAdvanceWithoutMethodLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _AdvanceWithoutTokensLock(), "dlock.fence_advance_unsupported"),
 ]
 
 

@@ -51,8 +51,8 @@ class DistributedLockDeps(ConvenientDeps):
         report monotonic fencing tokens (not :class:`FencingAware`, or ``fencing_tokens=False``)
         is rejected here at resolve, so a fencing-dependent consumer is never silently wired
         onto best-effort exclusion. ``spec.requires_fence_advance`` does the same for a
-        backend that cannot move its fencing counter (not :class:`FenceAdvancing`, or
-        ``fence_advance=False``).
+        backend that cannot move a fencing counter (not :class:`FenceAdvancing`,
+        ``fence_advance=False``, or no fencing tokens to advance).
         """
 
         port: DistributedLockCommandPort = self._resolve_command(
@@ -89,15 +89,17 @@ class DistributedLockDeps(ConvenientDeps):
                 code="dlock.fencing_unsupported",
             )
 
+        # Advancing a counter only means something on a backend that fences with it.
         if spec.requires_fence_advance and not (
             caps is not None
+            and caps.fencing_tokens
             and caps.fence_advance
             and callable(getattr(backend, "advance_fence", None))
         ):
             raise exc.configuration(
                 f"Distributed lock {spec.name!r} requires fence advance, but the wired "
-                "backend cannot move its fencing counter (not FenceAdvancing / "
-                "fence_advance=False).",
+                "backend cannot move a fencing counter (not FenceAdvancing / "
+                "fence_advance=False / fencing_tokens=False).",
                 code="dlock.fence_advance_unsupported",
             )
 

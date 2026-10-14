@@ -12,9 +12,10 @@ import attrs
 class DistributedLockCapabilities:
     """What a distributed-lock backend supports — its reported, fail-closed contract.
 
-    A spec that sets ``requires_fencing_token`` (or ``requires_fence_advance``) is rejected
-    at first resolve against a backend that reports the matching flag ``False`` or does not
-    report capabilities at all (not :class:`~forze.application.contracts.dlock.FencingAware`).
+    A spec that sets ``requires_fencing_token`` is rejected at first resolve against a backend
+    that reports ``fencing_tokens=False`` or does not report capabilities at all (not
+    :class:`~forze.application.contracts.dlock.FencingAware`); ``requires_fence_advance``
+    needs both flags ``True``.
     Mirrors transaction :class:`~forze.application.contracts.transaction.TxCapabilities`.
     """
 
