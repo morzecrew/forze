@@ -1221,13 +1221,14 @@ class TestHandoff:
             await b.start()  # +9: asks; a yields at +10; b leads at +11 and prefers it
             await asyncio.sleep(11)
             await fleet.replica("c", handoff="on_request", prefer=self._prefers(True)).start()
-            await asyncio.sleep(10)
-            await b.stop()  # +30: b releases while c asks
+            await asyncio.sleep(10.2)
+            await b.stop()  # +30.2: b releases while c asks; n ticks at +30.5, c at +32
             await asyncio.sleep(20)
 
             # n saw the lease free once at +10.5, then held for twenty seconds: it defers to c
-            # afresh instead of resuming its count from +10.5.
+            # afresh instead of resuming its count from +10.5 and taking the lease at +30.5.
             assert [run.replica for run in fleet.runs] == ["a", "b", "c"]
+            assert fleet.runs[2].started == 32.0
 
             await fleet.stop_all()
 
