@@ -1,6 +1,6 @@
 # RFC 0075 — Realtime connection drain
 
-- **Status:** 🚧 In progress
+- **Status:** ✅ Complete
 - **Scope:** Closing a replica's realtime connections gently when it leaves, and refusing new
   ones while it is leaving. It covers:
   - a socket.io drain step that closes the selected connections at the transport level,
