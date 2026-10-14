@@ -143,14 +143,14 @@ class TestDrainUnderServeUvicorn:
 
             await _wait_for("readiness to fail", not_ready, within=1.0)
 
-            # While the replica drains, a connect is refused with the draining code.
+            # While the replica drains, a connect is turned away by closing its transport —
+            # which the draining source, the serving runtime, decides from a handler task.
             late = await websockets.connect(
                 f"ws://127.0.0.1:{port}/socket.io/?EIO=4&transport=websocket"
             )
             await asyncio.wait_for(late.recv(), 2)
             await late.send("40")
-            refusal = str(await asyncio.wait_for(late.recv(), 2))
-            await late.close()
+            refusal, _at = await asyncio.wait_for(_closed_at(late), timeout=5)
 
             outcomes = await asyncio.wait_for(asyncio.gather(*closing), timeout=10)
             code = await asyncio.wait_for(process.wait(), timeout=15)
@@ -159,8 +159,7 @@ class TestDrainUnderServeUvicorn:
         closed = sorted(at for _frames, at in outcomes)
 
         assert code == 0
-        assert refusal.startswith("44")
-        assert '"code":"realtime_draining"' in refusal.replace(" ", "")
+        assert refusal == ["1"]  # a transport close: the client reconnects, elsewhere
         # Each socket saw the Engine.IO CLOSE, then the transport closing.
         assert all(frames == ["1"] for frames, _at in outcomes)
         # After the announce delay, spread over the window rather than all at once, and

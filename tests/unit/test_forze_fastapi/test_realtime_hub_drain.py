@@ -120,6 +120,19 @@ async def _until(check: Any, *, within: float = 2.0) -> None:
     raise AssertionError("condition not reached")
 
 
+def _assert_told_to_retry(response: httpx.Response) -> None:
+    """A 200 stream carrying only a jittered ``retry:``: EventSource reconnects after it,
+    where any other status would end it for good."""
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers[ERROR_CODE_HEADER] == "realtime_draining"
+    [field] = response.text.split("\n\n")[:-1]
+    name, _, value = field.partition(": ")
+    assert name == "retry"
+    assert 1000 <= int(value) <= 3000
+
+
 # ----------------------- #
 
 
@@ -150,7 +163,7 @@ class TestSseDrain:
 
     # ....................... #
 
-    async def test_a_new_stream_while_draining_gets_503_before_any_work(self) -> None:
+    async def test_a_new_stream_while_draining_is_told_to_retry_before_any_work(self) -> None:
         hub = RealtimeSseHub()
         runtime = _runtime(hub)
         authorized: list[frozenset[str]] = []
@@ -167,14 +180,13 @@ class TestSseDrain:
                 client.get("/realtime/sse", params={"topics": "lobby"}), timeout=5
             )
 
-        assert response.status_code == 503
-        assert response.headers[ERROR_CODE_HEADER] == "realtime_draining"
+        _assert_told_to_retry(response)
         assert authorized == []
         assert hub.subscribers == 0
 
     # ....................... #
 
-    async def test_a_stream_the_drain_overtook_mid_connect_gets_503(self) -> None:
+    async def test_a_stream_the_drain_overtook_mid_connect_is_told_to_retry(self) -> None:
         hub = RealtimeSseHub()
         runtime = _runtime(hub)
 
@@ -186,7 +198,7 @@ class TestSseDrain:
                 client.get("/realtime/sse", params={"topics": "lobby"}), timeout=5
             )
 
-        assert response.status_code == 503
+        _assert_told_to_retry(response)
         assert hub.subscribers == 0
 
 

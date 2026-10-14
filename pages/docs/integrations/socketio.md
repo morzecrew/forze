@@ -321,12 +321,18 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
   drain closes the transport instead.
 - **The Python client** (python-socketio) stops after either kind of close. Reconnect it
   yourself.
-- **A connect refused while draining** fails with the message `Server is draining` and
-  `{"code": "realtime_draining"}` as its data (`err.data.code` on the JavaScript
-  `connect_error`). The check runs before authentication, and again as the connect's last
-  step; a connect refused there has its presence, room and identity undone first. Retry with
-  jittered backoff: behind sticky sessions an immediate retry lands on the same replica
-  until the balancer notices it is not ready. Other refusals keep their message-only shape.
+- **A connect that arrives while the replica drains** is turned away the same way: its
+  Engine.IO connection is closed, every namespace on it included, and the JavaScript client
+  reconnects with its backoff — through the balancer, which by then sends it elsewhere. A
+  refused connect would not do: socket.io's JavaScript client treats a `connect_error` from
+  the server as final and stops. The check runs before authentication, again once admission
+  and authentication have run, and as the connect's last step; a connect turned away late
+  has its presence, room and identity undone first. Only if the close fails does the client
+  see a refusal: `Server is draining`, with `{"code": "realtime_draining"}` as its data.
+
+`draining=` takes the **serving** runtime's state, `lambda: runtime.draining`, and nothing
+defaults it. The `runtime` that offline replay is wired with is not the one: replay opens a
+scope of its own per connect, so it runs on a runtime that never drains with the replica.
 
 Spreading the closes spreads the reconnects, but a balancer that sends them all to one
 replica still overloads it. Route WebSocket traffic **least-connections**, not round-robin

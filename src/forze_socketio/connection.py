@@ -55,6 +55,7 @@ from forze.application.integrations.realtime import (
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, stable_payload_fingerprint, utcnow
 
+from .drain import close_transport
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
     build_core_exception_ack,
@@ -236,8 +237,8 @@ def _reusable(task: "asyncio.Task[RealtimeConnection | None] | None") -> bool:
 
 
 def _draining_refusal() -> SocketIOConnectionRefusedError:
-    """The refusal a draining replica answers with: its ``data`` names the code, so a client
-    can tell it from an authentication failure and retry elsewhere."""
+    """The refusal a draining replica raises once it has closed the connection: its
+    ``data`` names the code, and reaches the client only if that close failed."""
 
     return SocketIOConnectionRefusedError("Server is draining", {"code": REALTIME_DRAINING_CODE})
 
@@ -592,6 +593,29 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
+    async def _turn_away(
+        self, sid: str, connection: RealtimeConnection | None = None
+    ) -> SocketIOConnectionRefusedError:
+        """Turn a connect away while the replica drains; return the refusal to raise.
+
+        The Engine.IO connection is closed, as the drain closes its connections: socket.io's
+        JavaScript client then reconnects with its backoff, through the balancer, to a
+        replica still ready. A refused connect (CONNECT_ERROR) alone would make it give up
+        for good. Every namespace on that connection goes with it, and reconnects with it.
+        """
+
+        if connection is not None:
+            await self._undo_connect(sid, connection)
+
+        eio_sid = self.sio.manager.eio_sid_from_sid(sid, self.namespace)
+
+        if eio_sid is not None:
+            await _best_effort(close_transport(self.sio, eio_sid))
+
+        return self._refused("draining", _draining_refusal())
+
+    # ....................... #
+
     async def _undo_connect(self, sid: str, connection: RealtimeConnection) -> None:
         """Undo what an accepted connect did, before it is refused after all.
 
@@ -627,7 +651,7 @@ class _ConnectionLifecycle:
         """
 
         if self._draining():
-            raise self._refused("draining", _draining_refusal())
+            raise await self._turn_away(sid)
 
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
         stage: ConnectRefusal = "admission"
@@ -662,7 +686,7 @@ class _ConnectionLifecycle:
         if connection is None:
             # anonymous: no principal room, may still join topics later
             if self._draining():
-                raise self._refused("draining", _draining_refusal())
+                raise await self._turn_away(sid)
 
             self._accepted(sid)
             return
@@ -702,8 +726,7 @@ class _ConnectionLifecycle:
         # Last: a connect that waited in admission, authentication or replay while the
         # drain listed its connections may have missed the drain.
         if self._draining():
-            await self._undo_connect(sid, connection)
-            raise self._refused("draining", _draining_refusal())
+            raise await self._turn_away(sid, connection)
 
         self._accepted(sid)
 
@@ -776,11 +799,14 @@ def attach_realtime_connection(
     a namespace connecting just after the first no longer re-checks the session. Nothing
     else changes; ``realtime.reauth`` still resolves the fresh credential.
 
-    While *draining* returns true a connect is refused with the message ``Server is
-    draining`` and the data ``{"code": "realtime_draining"}``, so a client can tell it from
-    an authentication failure and retry, with jittered backoff, on another replica. It is
-    checked before any other work and again as the connect's last step; a connect refused
-    there first undoes its presence, its room and its stored identity. Pass the **serving**
+    While *draining* returns true a connect is turned away by closing its Engine.IO
+    connection — as the drain closes connections — so socket.io's JavaScript client
+    reconnects with its backoff, through the balancer, to another replica; a refused connect
+    alone would make it give up for good. It is checked before any other work and again as
+    the connect's last step; a connect turned away there first undoes its presence, its room
+    and its stored identity. The refusal ``Server is draining``, data
+    ``{"code": "realtime_draining"}``, is raised too and reaches the client only if the close
+    failed. Pass the **serving**
     runtime's, ``draining=lambda: runtime.draining``: nothing defaults it, and the replay
     *runtime* is not the one to read — replay opens a scope of its own per connect, so it
     runs on a runtime that never drains with the replica.

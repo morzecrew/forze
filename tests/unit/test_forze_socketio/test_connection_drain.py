@@ -304,7 +304,9 @@ def _replayed(server: AsyncServer, runtime: ExecutionRuntime, **options: Any) ->
 
 class TestDrainingRefusal:
     @pytest.mark.parametrize("wiring", ["replay", "explicit"])
-    async def test_a_draining_replica_refuses_before_authenticating(self, wiring: str) -> None:
+    async def test_a_draining_replica_closes_the_transport_before_authenticating(
+        self, wiring: str
+    ) -> None:
         server = _server()
         stats = RealtimeConnectionStats()
         runtime = _runtime()
@@ -336,6 +338,10 @@ class TestDrainingRefusal:
             with pytest.raises(SocketIOConnectionRefusedError) as caught:
                 await _connect(server, "eio-1")
 
+        # The Engine.IO connection is closed, so socket.io's JavaScript client reconnects
+        # with its backoff; a CONNECT_ERROR alone would make it give up for good. The
+        # refusal, raised too, reaches a client only if that close failed.
+        assert _open(server) == set()
         assert caught.value.error_args == {
             "message": "Server is draining",
             "data": {"code": "realtime_draining"},
@@ -443,6 +449,7 @@ class TestLateConnect:
             # The late client also holds a namespace the drain does not cover, so its
             # transport is not closed, and its connect outlives the drain's listing.
             await _connect(server, "eio-2", "/admin")
+            late_socket = _socket(server, "eio-2")
             late = asyncio.ensure_future(_connect(server, "eio-2", "/", {"token": "ok", "hold": 1}))
             await asyncio.wait_for(resolving.wait(), timeout=1.0)
 
@@ -455,10 +462,13 @@ class TestLateConnect:
                 await late
 
         assert caught.value.error_args["data"] == {"code": "realtime_draining"}
+        # Its Engine.IO connection is closed, /admin with it, so the client reconnects elsewhere.
+        assert late_socket.closed
+        assert _open(server) == set()
         # As before it arrived: not online, in no room, no identity in the session.
         assert await presence.count(_ROOM) == 0
         assert list(server.manager.get_participants("/", _ROOM)) == []
-        session = _socket(server, "eio-2").session.get("/", {})
+        session = late_socket.session.get("/", {})
         assert IDENTITY_SESSION_KEY not in session
         assert CONNECTION_SESSION_KEY not in session
         # eio-1 counted then uncounted by the drain; the late connect never counted.

@@ -15,9 +15,9 @@ because SSE's reconnect model — ``Last-Event-ID`` — *is* a cursor protocol:
   auto-reconnects with ``Last-Event-ID``, giving long-poll-style delivery).
 - **Ack**: SSE has no upstream channel, so the cumulative ack rides a small POST
   endpoint attached alongside, sharing the kernel's cursor machinery.
-- **Drain**: while the replica drains a new stream is refused with 503, and the hub's
-  drain step ends the open ones — the browser reconnects, through the balancer, to a
-  replica that is still ready.
+- **Drain**: while the replica drains a new stream is told to retry — a 200 carrying only
+  a jittered ``retry:`` — and the hub's drain step ends the open ones; either way the
+  browser reconnects, through the balancer, to a replica that is still ready.
 
 Every frame carries the same ``{id, data}`` envelope as the Socket.IO transport —
 one protocol (versioned via the ``protocol`` query parameter), two transports. The
@@ -40,7 +40,7 @@ from typing import Annotated, Any, final
 from uuid import UUID
 
 import attrs
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -65,7 +65,7 @@ from forze.application.integrations.realtime import (
 )
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
-from forze.base.primitives import HlcTimestamp, uuid7
+from forze.base.primitives import HlcTimestamp, current_entropy_source, uuid7
 
 from ..exceptions import ERROR_CODE_HEADER
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
@@ -140,11 +140,22 @@ def _draining(ctx: ExecutionContext) -> bool:
     return scope_readiness(ctx) == "draining"
 
 
-def _draining_refusal() -> HTTPException:
-    return HTTPException(
-        status_code=503,
-        detail="Server is draining",
-        headers={ERROR_CODE_HEADER: REALTIME_DRAINING_CODE},
+_DRAINING_RETRY_MS = (1_000, 3_000)
+"""The range a draining replica's ``retry:`` is drawn from: soon, and not in lockstep."""
+
+
+def _retry_elsewhere() -> StreamingResponse:
+    """What a draining replica answers a new stream with: a 200 carrying only a jittered
+    ``retry:``, then the end. ``EventSource`` reconnects after it, through the balancer;
+    any other status would end it for good."""
+
+    # Desynchronization jitter, not security randomness.
+    retry = int(current_entropy_source().as_random().uniform(*_DRAINING_RETRY_MS))
+
+    return StreamingResponse(
+        iter([f"retry: {retry}\n\n"]),
+        media_type="text/event-stream",
+        headers={**_SSE_HEADERS, ERROR_CODE_HEADER: REALTIME_DRAINING_CODE},
     )
 
 
@@ -402,8 +413,10 @@ def attach_realtime_sse_route(
     fact. Principal-addressed delivery needs no authorizer.
 
     While the replica drains (a drain announced, read from the request's context) a new
-    stream is refused with 503 and ``X-Error-Code: realtime_draining``.
-    :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` ends the open ones.
+    stream is answered 200 with only a jittered ``retry:`` (1–3 s) and
+    ``X-Error-Code: realtime_draining``, so ``EventSource`` reconnects — a non-200 would end
+    it for good. :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` ends the
+    open ones.
     """
 
     if keepalive_interval.total_seconds() <= 0:
@@ -425,7 +438,7 @@ def attach_realtime_sse_route(
         ctx = ctx_dep()
 
         if _draining(ctx):
-            raise _draining_refusal()
+            return _retry_elsewhere()
 
         principal = _authenticated_principal(ctx)
         negotiate_realtime_protocol(protocol)
@@ -457,7 +470,7 @@ def attach_realtime_sse_route(
         if subscription is not None and _draining(ctx):
             # The drain may have ended the hub's subscribers before this one joined.
             hub.unsubscribe(subscription)  # type: ignore[union-attr]
-            raise _draining_refusal()
+            return _retry_elsewhere()
 
         # Presence: an open SSE stream occupies the same rooms a Socket.IO connection
         # would, under a per-response member key (the sid analog) — one store, one

@@ -13,9 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An embedded uvicorn drains the runtime on `SIGTERM` before it stops.** `forze_fastapi.serve_uvicorn(config, runtime, drain_budget=)` runs `runtime.drain()` on the first `SIGTERM` or `SIGINT`; a `SIGINT` during it forces the exit. A finite graceful timeout is set when none is, so an open stream cannot hold the exit.
 
-- **A leaving replica closes its socket.io connections spread over a window, and refuses new ones.** `connection_drain_lifecycle_step(sio, window=, tail=)` closes them with `close_spread` in a drain phase, before the server stops; `attach_realtime_connection(draining=)` refuses connects with `realtime_draining`.
+- **A leaving replica closes its socket.io connections spread over a window, and turns new ones away.** `connection_drain_lifecycle_step(sio, window=, tail=)` closes them with `close_spread` in a drain phase, before the server stops; `attach_realtime_connection(draining=)` closes the transport of connects meanwhile.
 
-- **FastAPI's SSE and WebSocket live tails drain the same way.** `realtime_sse_drain_lifecycle_step(hub, window=, tail=)` ends them spread over a window; a new stream gets 503, a new upgrade a 1012 close. `spread_drain_lifecycle_step` is the phase for connections of your own.
+- **FastAPI's SSE and WebSocket live tails drain the same way.** `realtime_sse_drain_lifecycle_step(hub, window=, tail=)` ends them spread over a window; a new stream is told to retry, a new upgrade gets a 1012 close. `spread_drain_lifecycle_step` is the phase for connections of your own.
 
 - **Apps can admit or delay socket.io connects, and connections are counted.** `attach_realtime_connection(admission=)` runs before authentication; `instrument_realtime_connections(RealtimeConnectionStats)` exports open connections, refused connects by reason, and drain closes.
 

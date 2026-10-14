@@ -41,8 +41,12 @@ ConnectionSelector = Callable[[str, str], bool]
 """``(namespace, sid) -> may close?`` — whether a connection may be closed by the drain."""
 
 
-async def _close_transport(sio: AsyncServer, eio_sid: str) -> None:
-    """End one Engine.IO connection, whatever its transport."""
+async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
+    """End one Engine.IO connection, whatever its transport.
+
+    socket.io's JavaScript client reconnects after this, with its backoff; that is why both
+    the drain and a draining replica's refusal close connections this way.
+    """
 
     # Captured first: the disconnect forgets the socket.
     socket = sio.eio.sockets.get(eio_sid)
@@ -87,7 +91,7 @@ async def close_spread(
 
     eio_sids = list(dict.fromkeys(eio_sid for _namespace, eio_sid in targets))
     outcome = await spread_closes(
-        [partial(_close_transport, sio, eio_sid) for eio_sid in eio_sids],
+        [partial(close_transport, sio, eio_sid) for eio_sid in eio_sids],
         window,
         tail=tail,
     )
@@ -186,7 +190,7 @@ def connection_drain_lifecycle_step(
     tail to at most half of it, the window to at most the rest, never longer than
     configured. Below the drain floor (100 ms) the phase is skipped and the connections
     close when the server stops. The phase lists once: give ``attach_realtime_connection``
-    its ``draining`` source and connects arriving meanwhile are refused (``realtime_draining``).
+    its ``draining`` source and connects arriving meanwhile are turned away the same way.
 
     :param window: The longest the closes are spread over.
     :param tail: The longest the closes may take after the last start.

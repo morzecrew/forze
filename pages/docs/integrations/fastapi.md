@@ -476,10 +476,10 @@ with the window fitted to the phase's allowance like the
 While the replica drains, the routes refuse new connections. They read the state from the
 context `ctx_dep` returns, so pass the runtime's — `runtime.get_context`:
 
-- **A new SSE request** gets 503 with `X-Error-Code: realtime_draining`. A browser
-  `EventSource` treats any answer but 200 as final and stops reconnecting: reopen it
-  yourself on an `error` with the source closed, with jittered backoff, or have the
-  balancer retry a 503 on another upstream.
+- **A new SSE request** is answered 200 with a stream that carries only a `retry:` of
+  1–3 seconds, jittered, and ends at once, with `X-Error-Code: realtime_draining`. A
+  browser `EventSource` reconnects after it, through the balancer; any status but 200 would
+  end it for good.
 - **A new WebSocket upgrade** is accepted and then closed with 1012, as the route's other
   refusals are, because a close before accept is an opaque 403.
 
