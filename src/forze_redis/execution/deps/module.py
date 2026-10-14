@@ -38,6 +38,7 @@ from forze.application.contracts.tenancy import (
     validate_module_tenancy,
     warn_integration_routes,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
@@ -287,6 +288,15 @@ class RedisDepsModule(DepsModule):
                 str(name),
                 tenant_aware=fleet.tenant_aware,
                 per_tenant=not is_static_named_resource(fleet.namespace),
+            )
+
+        if self.fleets and isinstance(self.client, RoutedRedisClient):
+            # A routed client connects per tenant, and the fleet beats with none bound.
+            raise exc.configuration(
+                "Redis fleet routes need a plain client: this module's client is routed per "
+                "tenant, and a fleet beats from lifecycle hooks with no tenant bound. Register "
+                "FleetDepKey yourself over a RedisFleetAdapter on a plain RedisClient.",
+                code="fleet.routed_client",
             )
 
         idempotency_routes: Mapping[Any, Any] | None

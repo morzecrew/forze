@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from forze.application.contracts.secrets import SecretRef
 from forze.base.exceptions import CoreException
 from forze_redis import (
     RedisCacheConfig,
@@ -11,7 +12,7 @@ from forze_redis import (
     RedisFleetConfig,
     RedisUniversalConfig,
 )
-from forze_redis.kernel.client import RedisClient
+from forze_redis.kernel.client import RedisClient, RoutedRedisClient
 
 # ----------------------- #
 
@@ -43,3 +44,17 @@ class TestFleetRoutes:
             fleets={"gateways": RedisFleetConfig(namespace="app")},
             required_tenant_isolation="tagged",
         )
+
+    def test_fleets_on_a_routed_client_are_refused(self) -> None:
+        # A routed client needs a tenant for every call; the step beats with none.
+        routed = RoutedRedisClient(
+            secrets=object(),  # type: ignore[arg-type]
+            secret_ref_for_tenant=lambda tenant_id: SecretRef(path=f"tenants/{tenant_id}"),
+            tenant_provider=lambda: None,
+        )
+
+        with pytest.raises(CoreException) as caught:
+            RedisDepsModule(client=routed, fleets={"gateways": RedisFleetConfig(namespace="app")})
+
+        assert caught.value.code == "fleet.routed_client"
+        RedisDepsModule(client=routed)  # the client alone is fine

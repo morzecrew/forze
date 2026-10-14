@@ -147,7 +147,9 @@ A fleet is never tenant-scoped. One service's replicas form one fleet whatever t
 serve, and the step beats from lifecycle hooks, where no tenant is bound. A fleet route
 therefore takes neither `tenant_aware` nor a per-tenant namespace — either is refused when
 the route is configured — and stays outside `required_tenant_isolation`, so a floor on the
-rest of the module does not touch it.
+rest of the module does not touch it. For the same reason a `RedisDepsModule` whose client is
+routed per tenant refuses `fleets`: register `FleetDepKey` yourself, over a
+`RedisFleetAdapter` on a plain `RedisClient`.
 
 ## Choosing a member id
 
