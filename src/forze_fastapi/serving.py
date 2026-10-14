@@ -21,6 +21,7 @@ import signal
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
+from contextvars import Context, copy_context
 from datetime import timedelta
 from types import FrameType
 from typing import Final
@@ -58,6 +59,7 @@ class _DrainingServer(uvicorn.Server):
         self._drain_budget = drain_budget
         self._announce_delay = announce_delay
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._context: Context = copy_context()
         self._drain_task: asyncio.Task[None] | None = None
 
     # ....................... #
@@ -71,6 +73,7 @@ class _DrainingServer(uvicorn.Server):
             return
 
         self._loop = asyncio.get_running_loop()
+        self._context = copy_context()
         # ``signal.signal`` rather than the loop's handlers, as uvicorn does, so the
         # previous handlers can be put back.
         previous = {sig: signal.signal(sig, self._on_signal) for sig in _HANDLED_SIGNALS}
@@ -92,9 +95,13 @@ class _DrainingServer(uvicorn.Server):
 
     def _on_signal(self, sig: int, _frame: FrameType | None) -> None:
         # Runs on the main thread between two bytecodes, possibly while the loop sleeps in
-        # its selector: hand over to the loop, which ``call_soon_threadsafe`` wakes.
+        # its selector: hand over to the loop, which ``call_soon_threadsafe`` wakes. In the
+        # server's own context — by default the callback would copy the context of whatever
+        # the signal interrupted, a request handler's bindings included.
         if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._on_signal_in_loop, sig)
+            self._loop.call_soon_threadsafe(
+                self._on_signal_in_loop, sig, context=self._context.copy()
+            )
 
     # ....................... #
 

@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Coroutine, Sequence
+from contextvars import Context
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final
 
@@ -215,6 +216,7 @@ async def _run_bounded(
     *,
     timeout: float,
     cancel_grace: float = 0.0,
+    context: Context | None = None,
 ) -> tuple["asyncio.Task[None]", bool]:
     """Run *work* as a task for at most *timeout* seconds, then cancel and abandon it.
 
@@ -224,11 +226,16 @@ async def _run_bounded(
     cancellation would hold the caller forever, and the callers here are on their way to
     process exit.
 
+    :param context: Run *work* in a copy of this context rather than the caller's.
     :returns: The task, and whether it overran *timeout*. An overrun task that is not
         ``done()`` was abandoned.
     """
 
-    task = asyncio.ensure_future(work)
+    task = (
+        asyncio.ensure_future(work)
+        if context is None
+        else asyncio.get_running_loop().create_task(work, context=context.copy())
+    )
     overran = False
 
     try:
@@ -368,8 +375,17 @@ async def _run_drain_phase(phase: "DrainPhase", allowance: float) -> None:
 # ....................... #
 
 
-async def run_drain_phases(phases: Sequence["DrainPhase"], *, budget: float) -> None:
+async def run_drain_phases(
+    phases: Sequence["DrainPhase"],
+    *,
+    budget: float,
+    context: Context | None = None,
+) -> None:
     """Run *phases* in order, all of them within *budget* seconds.
+
+    Each phase runs in a copy of *context* when one is given — the scope's, so a phase never
+    inherits the bindings of whichever task asked for the drain (a request's tenant, a
+    deadline, an open transaction).
 
     Each phase may take ``min(max_duration, budget left)`` and is told that figure. A phase
     that overruns it is cancelled; one that ignores the cancellation is abandoned after
@@ -403,6 +419,7 @@ async def run_drain_phases(phases: Sequence["DrainPhase"], *, budget: float) -> 
             _run_drain_phase(phase, allowance),
             timeout=allowance,
             cancel_grace=DRAIN_PHASE_CANCEL_GRACE_SECONDS,
+            context=context,
         )
 
         if not task.done():

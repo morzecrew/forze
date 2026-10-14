@@ -9,6 +9,7 @@ so does the registry of drain phases a step contributes to.
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextvars import Context, copy_context
 from datetime import timedelta
 from typing import TYPE_CHECKING, Literal, final
 
@@ -38,6 +39,7 @@ class LifecycleState:
 
     _started: bool = attrs.field(default=False, init=False)
     _announced: bool = attrs.field(default=False, init=False)
+    _started_in: Context | None = attrs.field(default=None, init=False, repr=False)
 
     # ....................... #
 
@@ -50,6 +52,16 @@ class LifecycleState:
     # ....................... #
 
     @property
+    def started_in(self) -> Context | None:
+        """The context lifecycle startup finished in — the scope's own, with its bindings
+        and nobody else's. Drain phases run in a copy of it, whichever task asks for the
+        drain. ``None`` until :attr:`started`."""
+
+        return self._started_in
+
+    # ....................... #
+
+    @property
     def announced(self) -> bool:
         """A drain was announced: readiness is withdrawn, operations are still admitted."""
 
@@ -58,9 +70,11 @@ class LifecycleState:
     # ....................... #
 
     def mark_started(self) -> None:
-        """Record that lifecycle startup finished. Called by the runtime."""
+        """Record that lifecycle startup finished, and the context it finished in. Called by
+        the runtime, on the task that ran startup."""
 
         self._started = True
+        self._started_in = copy_context()
 
     # ....................... #
 

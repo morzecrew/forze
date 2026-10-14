@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
@@ -11,11 +13,13 @@ import attrs
 import pytest
 
 from forze.application.contracts.execution import Handler, LifecycleStep
+from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, build_runtime
 from forze.application.execution.lifecycle.run import DRAIN_PHASE_CANCEL_GRACE_SECONDS
 from forze.application.execution.operations.registry import OperationRegistry
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import cpu_executor_bound
 
 # ----------------------- #
 
@@ -261,6 +265,37 @@ class TestDrainPhases:
 
         # The scope's shutdown found the drain claimed, and did not run the phase again.
         assert runs == 1
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_phases_run_in_the_scopes_context_not_the_callers(self) -> None:
+        """A drain asked for by a request — or by a signal that interrupted one — must not
+        hand the request's bindings to the phases, and must give them the scope's."""
+
+        seen: list[tuple[TenantIdentity | None, bool]] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            seen.append((runtime.get_context().inv_ctx.get_tenant(), cpu_executor_bound()))
+
+        runtime = _runtime(_registering(("phase", phase, {})))
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            tenant = TenantIdentity(tenant_id=uuid.uuid4(), tenant_key="acme")
+
+            async def request() -> None:
+                assert cpu_executor_bound() is False  # none of the scope's bindings
+
+                with ctx.inv_ctx.bind_identity(tenant=tenant):
+                    await runtime.drain(timedelta(seconds=1))
+
+            # A fresh context, as a server's request task has: a tenant, no scope bindings.
+            await asyncio.get_running_loop().create_task(
+                request(), context=contextvars.Context()
+            )
+
+        assert seen == [(None, True)]
 
     # ....................... #
 

@@ -417,7 +417,8 @@ class ExecutionRuntime:
         ``min(max_duration, budget left)`` and is told that figure; one that overruns it is
         cancelled, one that ignores the cancellation is abandoned after a second, and one
         left under 100 ms is skipped — each logged. So this returns within
-        ``announce_delay + budget`` plus that second.
+        ``announce_delay + budget`` plus that second. Every phase runs in a copy of the
+        context lifecycle startup finished in, whichever task called this.
 
         Runs at most once per scope. A call while a drain is running waits for it; a call
         after it returns at once. Before lifecycle startup finished, or outside a scope,
@@ -447,7 +448,13 @@ class ExecutionRuntime:
             if announce_delay > timedelta(0):
                 await asyncio.sleep(announce_delay.total_seconds())
 
-            await run_drain_phases(phases.phases, budget=budget.total_seconds())
+            # In the scope's own context, not the caller's: a drain asked for from a request
+            # handler, or from a signal that interrupted one, must not hand its bindings on.
+            await run_drain_phases(
+                phases.phases,
+                budget=budget.total_seconds(),
+                context=ctx.lifecycle.started_in,
+            )
 
         finally:
             phases.finish()

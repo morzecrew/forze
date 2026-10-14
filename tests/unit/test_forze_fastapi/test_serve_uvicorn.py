@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import signal
 import socket
 import subprocess
@@ -13,6 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -20,6 +22,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from forze.application.execution import build_runtime
+from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze_fastapi import serve_uvicorn
 from forze_fastapi.serving import _DrainingServer  # pyright: ignore[reportPrivateUsage]
@@ -167,13 +170,49 @@ class TestServeUvicorn:
 # ----------------------- #
 
 
-def _server() -> _DrainingServer:
+_REQUEST: contextvars.ContextVar[str | None] = contextvars.ContextVar("request", default=None)
+"""Stands in for whatever a request handler binds: a tenant, an identity, a deadline."""
+
+
+class _FakeRuntime:
+    """Records the context its drain runs in; the drain lasts until released."""
+
+    drain_timeout = timedelta(0)
+    shutdown_step_timeout = timedelta(0)
+
+    def __init__(self) -> None:
+        self.seen: list[str | None] = []
+        self.release = asyncio.Event()
+        self.cancelled = False
+
+    async def drain(self, _budget: timedelta, *, announce_delay: timedelta) -> None:
+        self.seen.append(_REQUEST.get())
+
+        try:
+            await asyncio.wait_for(self.release.wait(), timeout=10.0)
+
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+def _server(runtime: object | None = None) -> _DrainingServer:
     return _DrainingServer(
         uvicorn.Config(FastAPI()),
-        build_runtime(),
+        build_runtime() if runtime is None else cast(ExecutionRuntime, runtime),
         drain_budget=timedelta(seconds=1),
         announce_delay=timedelta(0),
     )
+
+
+async def _settled(server: _DrainingServer) -> None:
+    """Let the loop run the scheduled signal callback, bounded."""
+
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+
+        if server._drain_task is not None:  # pyright: ignore[reportPrivateUsage]
+            return
 
 
 class TestSignalCapture:
@@ -245,3 +284,28 @@ class TestSignalCapture:
         )
 
         assert config.timeout_graceful_shutdown == effective
+
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_the_drain_runs_in_the_servers_context_not_the_interrupted_tasks(
+        self,
+    ) -> None:
+        """A signal handler runs inside whatever frame it interrupted — often a request's."""
+
+        runtime = _FakeRuntime()
+        runtime.release.set()
+        server = _server(runtime)
+
+        async def request() -> None:
+            _REQUEST.set("request-1")
+            # The signal lands here, mid-request: the handler runs in this frame.
+            server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+
+        with server.capture_signals():
+            await asyncio.create_task(request())
+            await _settled(server)
+            await asyncio.wait_for(server._drain_task, timeout=5.0)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+        assert runtime.seen == [None]
