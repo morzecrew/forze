@@ -1,6 +1,6 @@
 # RFC 0074 — Drain announcement and readiness checks
 
-- **Status:** 📝 Draft
+- **Status:** 🚧 In progress
 - **Scope:** Runtime additions for graceful deploys:
   - readiness that waits for lifecycle startup to finish;
   - `runtime.begin_draining()`, which turns readiness off without refusing operations;
