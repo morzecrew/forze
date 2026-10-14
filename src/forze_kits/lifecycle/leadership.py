@@ -390,7 +390,8 @@ class _Campaign:
     acquire would otherwise take the unit from each of them at every renewal."""
 
     free_since: float | None = None
-    """When this replica, deferring to an asker, first saw the lease free."""
+    """When this replica first saw the lease free, over its latest run of ticks that deferred
+    to an asker; any other tick starts the count again."""
 
     abandoned: asyncio.Task[TermEnd] | None = None
     """A body that did not finish after it was cancelled. No new term starts beside it."""
@@ -466,6 +467,8 @@ class _Campaign:
     # ....................... #
 
     async def _allowed(self) -> bool:
+        free_since, self.free_since = self.free_since, None
+
         if self.may_campaign is not None and not await self.may_campaign(self.ctx):
             await self._drop_want()
             return False
@@ -479,7 +482,7 @@ class _Campaign:
         else:
             await self._drop_want()
 
-        return self.want_owner is not None or not await self._deferring()
+        return self.want_owner is not None or not await self._deferring(free_since)
 
     # ....................... #
 
@@ -500,24 +503,22 @@ class _Campaign:
 
     # ....................... #
 
-    async def _deferring(self) -> bool:
+    async def _deferring(self, free_since: float | None) -> bool:
         if self.query is None:  # pragma: no cover - resolved whenever handoff is on
             return False
 
         if await self.query.get_owner(self.want_key) is None:
-            self.free_since = None
             return False
 
         if await self.query.is_locked(self.spec.key):
-            self.free_since = None
             return True
 
         now = monotonic()
+        self.free_since = now if free_since is None else free_since
 
-        if self.free_since is None:
-            self.free_since = now
-
-        return now - self.free_since <= _DEFER_INTERVALS * self.spec.campaign_every.total_seconds()
+        # Seen free for three intervals: stop deferring, so an asker that cannot take the lease
+        # never leaves the fleet unled for more than about four.
+        return now - self.free_since < _DEFER_INTERVALS * self.spec.campaign_every.total_seconds()
 
     # ....................... #
 
@@ -661,6 +662,7 @@ class _Campaign:
         """Run one term: the body in a task, renewed until it is done, then released."""
 
         self.candidate = None
+        self.free_since = None
 
         if self.want_owner is not None:
             await self._drop_want()

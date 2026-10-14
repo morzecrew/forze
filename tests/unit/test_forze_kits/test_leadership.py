@@ -49,6 +49,9 @@ SPEC = LeadershipSpec(lock=LOCK, key=KEY)
 
 TTL, RENEW, CAMPAIGN, MARGIN, GRACE, RELEASE = 30.0, 10.0, 2.0, 1.0, 5.0, 1.0
 
+_DEFER = 3
+"""Campaign intervals a replica defers to an asker while it sees the lease free."""
+
 FOREVER = 3600.0
 """A hang, bounded: an hour of virtual time, far past every scenario's end."""
 
@@ -1024,6 +1027,27 @@ class TestHandoff:
             # The others defer while b holds the want-lock, but only for three campaign
             # intervals of seeing the lease free, the first of them up to one interval late.
             assert second.started - yielded.finished <= (3 + 1) * CAMPAIGN
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_former_holder_counts_the_free_lease_afresh(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            await fleet.replica("a", handoff="on_request", prefer=self._prefers(False)).start()
+            await asyncio.sleep(9)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            b.lock.acquire_delay = 1000.0  # asks at +9 and +35, and never takes the lease
+            await b.start()
+            await asyncio.sleep(60)
+
+            first, second, third, *_ = fleet.by("a")
+            assert first.term.reason == second.term.reason == "yielded"
+            assert second.finished is not None
+            # a deferred, escaped and led before its second yield; seeing the lease free after
+            # it starts a new count rather than resuming the one from before that term.
+            assert third.started - second.finished >= _DEFER * CAMPAIGN
 
             await fleet.stop_all()
 
