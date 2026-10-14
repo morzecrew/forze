@@ -210,9 +210,13 @@ class _Rebalance:
         view = await port.view()
         mine = next((member for member in view.members if member.id == self.me), None)
 
+        # A replica that reports no load is outside every peer's mean, so it sheds nothing.
+        if mine is None or self.load not in mine.report:
+            return
+
         # Again after the read: a drain announced meanwhile has stopped the step's shed, and a
         # shed started now would close connections the drain is already closing.
-        if mine is None or scope_readiness(ctx) != "ready":
+        if scope_readiness(ctx) != "ready":
             return
 
         load, targets = _live_counts(self.sio, namespaces=self.namespaces, movable=self.movable)
@@ -317,8 +321,9 @@ def connection_rebalance_lifecycle_step(
     Counts are Engine.IO transports. A transport is movable when every namespace it carries
     is in *namespaces* and accepted by *movable*. Peers' counts come from their membership
     reports under *load* and *movable_report*, in the same unit:
-    :func:`connection_report` fills them. A peer that reports no *load* is left out of the
-    mean; a replica with no entry in the view, or not serving, sheds nothing.
+    :func:`connection_report` fills them. A replica that reports no *load* is left out of
+    the mean and sheds nothing itself, and so does one with no entry in the view or not
+    serving. This replica's own reported values are never used: its live counts replace them.
 
     :param fleet: The fleet the membership step beats into.
     :param every: How often to tick.

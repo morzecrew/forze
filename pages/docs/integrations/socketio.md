@@ -430,7 +430,8 @@ of namespace connections. A connection is movable when every namespace on it is 
 connection. The step reads its peers' counts from their membership reports, under `load`
 (`"connections"`) and `movable_report` (`"movable"`). `connection_report` returns the
 `report=` callable that fills both with the counting the step uses for its own: give the two
-the same `namespaces` and `movable`. A replica that reports no load is left out of the mean.
+the same `namespaces` and `movable`. A replica that reports no load is left out of the mean,
+and sheds nothing itself.
 
 **When it sheds.** Only while all of these hold:
 

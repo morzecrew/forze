@@ -33,6 +33,8 @@ from forze_socketio import connection_rebalance_lifecycle_step, connection_repor
 
 SPEC = FleetSpec(name="gateways", ttl=timedelta(hours=1))
 SECOND = timedelta(seconds=1)
+_REPORTED: Report = {"connections": 0, "movable": 0}
+"""This replica's own report: present, so it takes part, but never read — live counts win."""
 
 
 class _Socket:
@@ -173,7 +175,7 @@ class TestShedding:
             lobby = await node.connect(30, "/lobby")
             game = await node.connect(10, "/game")
             await _peers(state, 20, 20)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
             seen: list[int] = []
 
             async def probe(_runtime: ExecutionRuntime) -> None:
@@ -204,7 +206,7 @@ class TestNoDoubleShedding:
             # next tick at 2 s.
             await node.connect(100, "/lobby", delay=0.8)
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
             seen: list[int] = []
 
             async def probe(_runtime: ExecutionRuntime) -> None:
@@ -225,7 +227,7 @@ class TestNoDoubleShedding:
             state, node = MockState(), _Node()
             await node.connect(100, "/lobby")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
             seen: list[int] = []
 
             async def probe(_runtime: ExecutionRuntime) -> None:
@@ -262,7 +264,7 @@ class TestRate:
             state, node = MockState(), _Node()
             await node.connect(200, "/lobby")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
 
             # Ten minutes of ticks, then up to just before the next one, so the last
             # shed's closes have landed.
@@ -279,7 +281,7 @@ class TestRate:
             state, node = MockState(), _Node()
             await node.connect(200, "/lobby")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
 
             # Ticks start every 3 s; the one at 600 s reads until 602 s and sheds.
             await _serve(state, _step(node, per_minute=10), _sleep(602.5))
@@ -295,7 +297,7 @@ class TestRate:
             state, node = MockState(), _Node()
             await node.connect(200, "/lobby")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
             step = _step(node, per_minute=6)
 
             await _serve(state, step, _sleep(60.5))
@@ -313,7 +315,7 @@ class TestRate:
             state, node = MockState(), _Node()
             await node.connect(200, "/lobby")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
 
             # Ten minutes before the fleet counts as settled, then the first shed.
             settle = timedelta(minutes=10)
@@ -331,7 +333,7 @@ class TestSharedTransports:
             state, node = MockState(), _Node()
             await node.connect(40, "/lobby", "/game")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
 
             await _serve(state, _step(node), _sleep(10))
 
@@ -344,7 +346,7 @@ class TestSharedTransports:
             state, node = MockState(), _Node()
             await node.connect(40, "/lobby", "/chat")
             await _peers(state, 10, 10)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
 
             await _serve(
                 state,
@@ -373,6 +375,7 @@ class TestNoShedding:
             ("below the tolerance", timedelta(0)),
             ("peers without a report", timedelta(0)),
             ("no entry of its own", timedelta(0)),
+            ("no report of its own", timedelta(0)),
             ("not serving", timedelta(0)),
         ],
     )
@@ -392,10 +395,13 @@ class TestNoShedding:
                 await _peers(state, 0, 0)
 
             if case == "not serving":
-                await _beat(state, "me", {}, "starting")
+                await _beat(state, "me", _REPORTED, "starting")
+
+            elif case == "no report of its own":
+                await _beat(state, "me", {"movable": 34})
 
             elif case != "no entry of its own":
-                await _beat(state, "me", {})
+                await _beat(state, "me", _REPORTED)
 
             await _serve(state, _step(node, settle=settle), _sleep(60))
 
@@ -408,7 +414,7 @@ class TestNoShedding:
             state, node = MockState(), _Node()
             await node.connect(100, "/lobby")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
 
             async def probe(runtime: ExecutionRuntime) -> None:
                 # The tick at 3 s holds an allowance and reads the view until 5 s.
@@ -435,7 +441,7 @@ class TestNoShedding:
             state, node = MockState(), _Node()
             await node.connect(100, "/lobby")
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
 
             async def probe(runtime: ExecutionRuntime) -> None:
                 await asyncio.sleep(0.5)  # before the first tick that could shed
@@ -457,7 +463,7 @@ class TestStop:
             state, node = MockState(), _Node()
             (first,) = await node.connect(1, "/lobby", delay=8)
             await _peers(state, 0, 0)
-            await _beat(state, "me", {})
+            await _beat(state, "me", _REPORTED)
             socket = node.sockets[first]
             seen_in_teardown: list[bool] = []
 
