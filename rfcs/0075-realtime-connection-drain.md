@@ -207,6 +207,15 @@ def connection_drain_lifecycle_step(
 
 When it is true, it refuses with
 `SocketIOConnectionRefusedError("Server is draining", {"code": "realtime_draining"})`.
+
+**A late refusal undoes the connect's side effects first.** A refused connect never reaches
+`on_disconnect`. So before refusing at the last check, `on_connect` itself:
+- calls `presence.left`;
+- leaves the rooms it joined;
+- drops the stored session and the replay progress.
+
+Otherwise a refused client would stay counted as online in shared presence until its entry
+expired.
 - **What the client sees.** The data reaches the client as the connect error's `data`, so a
   client can tell this refusal from an authentication failure.
 - **Retrying.** The docs advise retrying with jittered backoff. Behind sticky sessions an
@@ -274,7 +283,8 @@ both.
     window;
   - below the floor the phase is skipped.
 - **A late connect.** A connect held in admission while the drain lists its targets is refused
-  at its last check.
+  at its last check, and the presence count, the rooms and the session store are as they were
+  before it arrived.
 - **Reconnects.** A real python-socketio server with an Engine.IO-level close. The client's
   disconnect reason is a transport close, not a server disconnect.
 - **Refusal.** While draining, a connect is refused with `{"code": "realtime_draining"}` before
@@ -331,7 +341,7 @@ both.
 | 1 | `LOCKED` | Connections close in a drain phase (RFC 0074), not a drainable, so under `serve_uvicorn` they close while the replica still serves and before uvicorn's own shutdown. |
 | 2 | `LOCKED` | `close_spread` closes at the Engine.IO level, starting each close on its own schedule over the window and never awaiting closes in turn. The whole call is bounded by `window + tail`. |
 | 3 | `ASSUMED` | The phase measures its allowance after listing, shortens its tail to at most half of it and its window to at most the rest, never lengthening the configured window, and is skipped below RFC 0074's floor. |
-| 4 | `ASSUMED` | `on_connect` refuses while `draining()` is true, checked before negotiation and again as its last step, with data `{"code": "realtime_draining"}`. `draining` defaults to `runtime.draining` when replay wires a runtime, and can be passed otherwise. Existing refusals are unchanged. |
+| 4 | `ASSUMED` | `on_connect` refuses while `draining()` is true, checked before negotiation and again as its last step, with data `{"code": "realtime_draining"}`. A refusal at the last step first undoes presence, room joins and the stored session. `draining` defaults to `runtime.draining` when replay wires a runtime, and can be passed otherwise. Existing refusals are unchanged. |
 | 5 | `ASSUMED` | `admission` runs after the draining check and before authentication, and refuses on a `CoreException`. Awaiting it delays the connect. |
 | 6 | `ASSUMED` | Metrics: a connection count per namespace, refused connects by reason, and drain closes by outcome. |
 | 7 | `ASSUMED` | FastAPI drains through the shared hub. Ended SSE streams and WebSocket tails close with 1012. While draining, new SSE requests get 503, and new upgrades are accepted then closed with 1012. |

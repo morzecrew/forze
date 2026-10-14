@@ -98,11 +98,17 @@ ship first, and this step waits for a second consumer.
      - less than `cooldown` has passed since the last shed. The default cooldown is `settle`.
   2. **Read the view** (RFC 0073), and replace this replica's own entry with its live local
      counts:
-     - the load is its connections in `namespaces`, minus those already scheduled to close;
-     - the movable count is how many Engine.IO transports are movable: every namespace the
-       transport carries accepted by `movable(namespace, sid)`. Closing a transport ends all
-       its namespaces (RFC 0075), so one non-movable namespace, such as a game, keeps the
-       whole transport.
+     - **everything is counted in Engine.IO transports,** because a transport is what a
+       close ends (RFC 0075);
+     - the load is its transports carrying any namespace in `namespaces`, minus those already
+       scheduled to close;
+     - the movable count is how many of those transports are movable: every namespace the
+       transport carries accepted by `movable(namespace, sid)`. One non-movable namespace,
+       such as a game, keeps the whole transport.
+
+     Counting namespace connections instead would overshoot. With two namespaces per
+     transport, an excess of 20 connections closed as 20 transports ends 40 connections. The
+     peers' reports must use the same unit, and the docs say so.
 
      The peers' figures are their last reports. A member survives one missed beat, so a
      report can be up to `ttl` old, and the tolerance has to absorb that drift. This replica's
@@ -143,7 +149,8 @@ ship first, and this step waits for a second consumer.
   - The live count, not the stale report, sets the next shed.
 - **Rate.** `per_minute=10` sheds about ten a minute with `every=1 s` and with `every=30 s`.
 - **Shared transports.** A transport carrying a movable and a non-movable namespace is never
-  shed.
+  shed. With two movable namespaces per transport, an excess of 20 transports closes 20
+  transports, not 40 connections' worth.
 - **No shedding:**
   - while the fleet is unsettled;
   - while this replica is draining;
@@ -188,7 +195,7 @@ A section on the socket.io page:
 | 1 | `LOCKED` | Rebalancing ships as a socket.io step only, composed from fleet membership, `excess` and `close_spread`. No framework-wide rebalancer. |
 | 2 | `LOCKED` | Demand-gated: built once a second realtime app needs it. The layers under it ship first. |
 | 3 | `ASSUMED` | The step sheds only transports whose every namespace the app marks movable, at a rate of `per_minute`, kept by a token bucket that carries fractions across ticks. It sheds only while the fleet is settled and this replica is serving, never while it is draining, never while an earlier shed is closing, and never inside the cooldown after a shed. |
-| 4 | `ASSUMED` | Peers' load and movable counts come from their membership reports. This replica uses its live local counts, minus connections already scheduled to close, so it never sheds twice on a stale report. |
+| 4 | `ASSUMED` | Load and movable counts are Engine.IO transports, everywhere, because a transport is what a close ends. Peers' counts come from their membership reports. This replica uses its live local counts, minus connections already scheduled to close, so it never sheds twice on a stale report. |
 
 ## 12. Phasing
 
