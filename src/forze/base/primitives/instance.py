@@ -4,7 +4,7 @@ import os
 import socket
 from typing import Final
 
-from .entropy_source import current_entropy_source
+from .entropy_source import SystemEntropySource
 
 # ----------------------- #
 
@@ -32,7 +32,9 @@ def instance_id() -> str:
     found = _IDS.get(pid)
 
     if found is None:
-        nonce = current_entropy_source().randbits(32)
+        # The system source, not the bound one: a seeded source would spend a draw on the
+        # first call only, and two runs with one seed would diverge after it.
+        nonce = SystemEntropySource().randbits(32)
         # ``setdefault`` keeps the first id two racing threads minted.
         found = _IDS.setdefault(pid, f"{socket.gethostname()}:{pid}:{nonce:08x}")
 

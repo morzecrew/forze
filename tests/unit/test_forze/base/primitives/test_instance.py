@@ -6,7 +6,12 @@ import multiprocessing
 import os
 import socket
 
-from forze.base.primitives import SeededEntropySource, bind_entropy_source, instance_id
+from forze.base.primitives import (
+    SeededEntropySource,
+    bind_entropy_source,
+    current_entropy_source,
+    instance_id,
+)
 from forze.base.primitives import instance as instance_module
 
 # ----------------------- #
@@ -31,6 +36,24 @@ class TestInstanceId:
         # A later read under another entropy source still sees the minted id.
         with bind_entropy_source(SeededEntropySource(seed=1)):
             assert instance_id() == first
+
+    def test_minting_draws_nothing_from_a_bound_seeded_source(self) -> None:
+        first = instance_id()
+        instance_module._IDS.clear()  # the next call mints
+
+        try:
+            with bind_entropy_source(SeededEntropySource(seed=7)):
+                instance_id()
+                after_minting = [current_entropy_source().randbits(32) for _ in range(3)]
+
+            with bind_entropy_source(SeededEntropySource(seed=7)):
+                untouched = [current_entropy_source().randbits(32) for _ in range(3)]
+
+        finally:
+            instance_module._IDS.clear()
+            instance_module._IDS[os.getpid()] = first
+
+        assert after_minting == untouched
 
     def test_a_reused_pid_gets_a_new_nonce(self) -> None:
         first = instance_id()
