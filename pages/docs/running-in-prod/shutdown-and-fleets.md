@@ -340,8 +340,11 @@ handoff. A replica that `may_campaign` refuses never asks.
   below. An acquire is never cancelled: one that lands after the step stopped waiting, or
   whose answer is lost after it landed, is released.
 - **A body that raises** is released and restarted after the supervisor's backoff. A
-  `configuration` error stops campaigning for good, with a critical log, while the
-  process stays up — wiring does not fix itself by retrying.
+  `configuration` error, from the body or from any campaign call, stops campaigning for
+  good, with a critical log, while the process stays up — wiring does not fix itself by
+  retrying. So do the two fencing refusals no retry can clear: a counter at its ceiling
+  (`dlock.fence_exhausted`) and a `fence_floor` the lock cannot advance past
+  (`dlock.fence_out_of_range`, such as `None` for a store with no row yet).
 - **Metrics.** `instrument_leadership()` exports `forze.leadership.held` and
   `forze.leadership.terms_ended`; see the [metric catalog](../reference/metrics.md#leadership).
   A sustained rate of `lost` or `expiring` means the lock backend is slow or unreachable

@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any, Final, Literal, cast, final
 import attrs
 
 from forze.application.contracts.dlock import (
+    FENCE_EXHAUSTED_CODE,
+    FENCE_OUT_OF_RANGE_CODE,
     AcquiredLock,
     DistributedLockCommandPort,
     DistributedLockQueryPort,
@@ -38,7 +40,7 @@ from forze.application.execution.background import (
     run_supervised,
 )
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey, current_entropy_source, monotonic
 from forze_kits.lifecycle._logger import logger
 
@@ -72,6 +74,9 @@ _DEFER_INTERVALS: Final[int] = 3
 
 _ASK_ATTEMPTS: Final[int] = 3
 """Consecutive campaigns an asker may miss before it releases the want-lock."""
+
+_PERMANENT_CODES: Final[frozenset[str]] = frozenset({FENCE_EXHAUSTED_CODE, FENCE_OUT_OF_RANGE_CODE})
+"""Refusals no retry can clear, which stop the campaign like a ``configuration`` error."""
 
 _STOP_SLACK: Final[timedelta] = timedelta(seconds=1)
 """Room in the loop's stop budget beyond its bounded steps, for scheduling."""
@@ -733,12 +738,37 @@ class _Campaign:
         if terminal is None:
             self._warn("Leadership campaign for %s failed; retrying at the next tick", error)
 
+        elif terminal is not error:
+            logger.critical(
+                "Leadership for %s stops campaigning: the lock refuses its fencing counter for "
+                "good (%s), and no retry can change that",
+                self.spec.key,
+                error,
+            )
+
         return terminal
 
     def _terminal(self, error: Exception) -> Exception | None:
-        """The error to stop campaigning on, or ``None`` for one worth retrying."""
+        """The error to stop campaigning on, or ``None`` for one worth retrying.
 
-        return error if is_terminal_crash(error) else None
+        A ``configuration`` error, and the two fencing refusals no retry can clear — a counter
+        at its ceiling, a floor the lock cannot advance past — which the supervisor is handed
+        as ``configuration`` so it stops instead of restarting.
+        """
+
+        if is_terminal_crash(error):
+            return error
+
+        if isinstance(error, CoreException) and error.code in _PERMANENT_CODES:
+            terminal = exc.configuration(
+                f"Leadership for {self.spec.key} cannot campaign: {error.summary}",
+                code=error.code,
+                details={"key": self.spec.key},
+            )
+            terminal.__cause__ = error
+            return terminal
+
+        return None
 
     def _warn(self, message: str, error: Exception) -> None:
         if not self.stop.is_set():
