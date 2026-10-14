@@ -391,6 +391,57 @@ class TestShutdownDrainsFirst:
     # ....................... #
 
     @pytest.mark.asyncio
+    async def test_a_second_cancel_during_the_phases_still_tears_down(self) -> None:
+        """Ctrl+C under ``asyncio.run`` cancels the main task; a second Ctrl+C cancels it
+        again, here while ``shutdown()`` runs a phase. Teardown must still run, and the
+        cancellation must still come out the other end."""
+
+        events: list[object] = []
+        entered = asyncio.Event()
+        phase_started = asyncio.Event()
+
+        async def slow(_allowed: timedelta) -> None:
+            events.append("phase-started")
+            phase_started.set()
+
+            try:
+                await asyncio.sleep(60)
+
+            except asyncio.CancelledError:
+                events.append("phase-cancelled")
+                raise
+
+        async def teardown(ctx: ExecutionContext) -> None:
+            events.append(("teardown", ctx.drain_gate.draining))
+
+        runtime = _runtime(
+            _registering(("slow", slow, {})),
+            LifecycleStep(id="teardown", shutdown=teardown),
+            budget=timedelta(seconds=30),
+        )
+
+        async def main() -> None:
+            async with runtime.scope():
+                entered.set()
+                await asyncio.sleep(60)
+
+        task = asyncio.create_task(main())
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
+
+        task.cancel()  # the first Ctrl+C: the scope exits, and shutdown drains
+        await asyncio.wait_for(phase_started.wait(), timeout=5.0)
+
+        task.cancel()  # the second, mid-phase
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10.0)
+
+        assert events == ["phase-started", "phase-cancelled", ("teardown", True)]
+        assert runtime.ready is False and runtime.draining is False  # the scope is gone
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_shutdown_after_an_explicit_drain_does_not_run_the_phases_again(
         self,
     ) -> None:

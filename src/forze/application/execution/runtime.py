@@ -541,44 +541,59 @@ class ExecutionRuntime:
         try:
             ctx = self.__ctx.get()
 
+            interrupted: asyncio.CancelledError | None = None
+
             if ctx.lifecycle.started:
                 try:
                     await self.drain(self.drain_budget)
+
+                except asyncio.CancelledError as error:
+                    # Interrupted mid-phase — a second Ctrl+C. The running phase is cancelled,
+                    # but the gate, the loops and every shutdown hook still get their turn, and
+                    # the cancellation is raised again once they have had it.
+                    interrupted = error
+                    logger.warning("Drain interrupted; tearing down before letting it through")
 
                 except Exception:
                     # Teardown must still run: a drain is best-effort, the shutdown is not.
                     logger.exception("Drain failed; shutting down without it")
 
-            if not await ctx.drain_gate.drain(self.drain_timeout.total_seconds()):
-                # Drain expired with work still running. Cancel the stragglers and let them
-                # unwind (rollback, release connections) *before* lifecycle teardown closes
-                # the clients they hold — otherwise they run on against closing resources.
-                cancelled = await ctx.drain_gate.cancel_in_flight(
-                    grace=self.shutdown_step_timeout.total_seconds()
+            try:
+                if not await ctx.drain_gate.drain(self.drain_timeout.total_seconds()):
+                    # Drain expired with work still running. Cancel the stragglers and let them
+                    # unwind (rollback, release connections) *before* lifecycle teardown closes
+                    # the clients they hold — otherwise they run on against closing resources.
+                    cancelled = await ctx.drain_gate.cancel_in_flight(
+                        grace=self.shutdown_step_timeout.total_seconds()
+                    )
+                    logger.warning(
+                        "Drain timeout (%.1fs) expired with %d operation(s) still in flight; "
+                        "cancelled them before lifecycle shutdown",
+                        self.drain_timeout.total_seconds(),
+                        cancelled,
+                    )
+
+                # Bring the background loops (relays, consumers, durable pollers) to a stop
+                # *between units of work*, before anything is torn down. Two reasons this is here
+                # and not left to each step's shutdown hook: cancelling a loop mid-unit costs an
+                # unacked message, an uncommitted offset or a stranded outbox row; and a loop whose
+                # graceful stop needs its database — the relay draining its outbox — still has an
+                # open pool at this point, which reverse-wave hook ordering cannot guarantee.
+                await ctx.drainables.stop_all(grace=self.shutdown_step_timeout.total_seconds())
+
+                # Cancel detached background work (e.g. document-cache early refreshes) before
+                # teardown closes the clients it uses — a straggler would otherwise run on
+                # against a closing cache/gateway. Always runs, drain-timeout or not.
+                await ctx.background_owners.close(grace=self.shutdown_step_timeout.total_seconds())
+
+                await self.lifecycle.shutdown(
+                    ctx, step_timeout=self.shutdown_step_timeout.total_seconds()
                 )
-                logger.warning(
-                    "Drain timeout (%.1fs) expired with %d operation(s) still in flight; "
-                    "cancelled them before lifecycle shutdown",
-                    self.drain_timeout.total_seconds(),
-                    cancelled,
-                )
 
-            # Bring the background loops (relays, consumers, durable pollers) to a stop
-            # *between units of work*, before anything is torn down. Two reasons this is here
-            # and not left to each step's shutdown hook: cancelling a loop mid-unit costs an
-            # unacked message, an uncommitted offset or a stranded outbox row; and a loop whose
-            # graceful stop needs its database — the relay draining its outbox — still has an
-            # open pool at this point, which reverse-wave hook ordering cannot guarantee.
-            await ctx.drainables.stop_all(grace=self.shutdown_step_timeout.total_seconds())
-
-            # Cancel detached background work (e.g. document-cache early refreshes) before
-            # teardown closes the clients it uses — a straggler would otherwise run on
-            # against a closing cache/gateway. Always runs, drain-timeout or not.
-            await ctx.background_owners.close(grace=self.shutdown_step_timeout.total_seconds())
-
-            await self.lifecycle.shutdown(
-                ctx, step_timeout=self.shutdown_step_timeout.total_seconds()
-            )
+            finally:
+                # Outranks anything teardown raised: the cancellation is the outcome.
+                if interrupted is not None:
+                    raise interrupted
 
         finally:
             self.__ctx.reset()
