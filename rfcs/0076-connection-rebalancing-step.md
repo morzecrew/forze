@@ -13,7 +13,7 @@
 - **Related:**
   - RFC 0073 (fleet membership, `FleetView.excess`);
   - RFC 0075 (`close_spread`);
-  - RFC 0074 (`runtime.draining`);
+  - RFC 0074 (the draining state on the context);
   - [`src/forze/application/contracts/realtime/shard.py`](../src/forze/application/contracts/realtime/shard.py),
     whose docstring puts rebalancing out of scope.
 - **Origin:** hh-backend-v2's fleet proposals (F6, 2026-10-14). The app's rebalancer
@@ -31,17 +31,17 @@
 
 ```python
 connection_rebalance_lifecycle_step(
-    sio, *, fleet: FleetSpec, runtime, every, load="connections", movable_report="movable",
+    sio, *, fleet: FleetSpec, every, member_id: str | None = None,
+    namespaces=("/",), load="connections", movable_report="movable",
     movable: Callable[[str, str], bool], per_minute: int, tolerance=0.15,
-    settle=timedelta(seconds=120),
+    settle=timedelta(seconds=120), cooldown: timedelta | None = None,
 )
 ```
 
-Every `every`, while this replica is serving and the fleet has settled, the step does three
-things:
-1. It reads the view.
-2. It asks `view.excess(me, load=…, movable=…, tolerance=…, settle=…)` how many connections to
-   shed, capped by `per_minute`.
+Every `every`, while this replica is serving, the fleet has settled, no earlier shed is still
+closing, and the cooldown since the last shed has passed, the step does three things:
+1. It reads the view, with this replica's own entry replaced by its live local counts.
+2. It asks `view.excess(me, …)` how many connections to shed, capped by `per_minute`.
 3. It closes that many of its movable connections with `close_spread` over the interval.
 
 The clients reconnect through the balancer, which places them on a less-loaded replica.
@@ -91,22 +91,34 @@ ship first, and this step waits for a second consumer.
 ### 5.1 The step
 
 - **Every `every`:**
-  1. If `runtime.draining` is true, do nothing. A draining replica closes everything through
-     RFC 0075 instead.
-  2. Read the fleet view (RFC 0073).
+  1. **Skip the tick** if any of these holds:
+     - this replica is draining (`ctx.lifecycle.announced`, RFC 0074), since a draining
+       replica closes everything through RFC 0075 instead;
+     - an earlier shed's `close_spread` is still running;
+     - less than `cooldown` has passed since the last shed. The default cooldown is `settle`.
+  2. **Read the view** (RFC 0073), and replace this replica's own entry with its live local
+     counts:
+     - the load is its connections in `namespaces`, minus those already scheduled to close;
+     - the movable count is how many of those `movable(namespace, sid)` accepts.
+
+     The peers' figures are their last reports, at most one beat old. This replica's own
+     report could be a beat behind its last shed, and shedding on it would shed twice.
   3. `n = view.excess(me, load=load, movable=movable_report, tolerance=tolerance,
      settle=settle)`. That is 0 unless the fleet has settled, this replica is serving, and its
-     load is more than `tolerance` above the mean.
-  4. Cap `n` at `per_minute * every / 60`.
-  5. Pick `n` of this replica's connections for which `movable(namespace, sid)` is true, and
-     close them with `close_spread` over `every`.
-- **The report.** The load and the movable counts come from this replica's own membership
-  report, which the app fills: its connection count, and how many are movable. A replica that
-  does not report them is never shed from.
-- **The settle gate keeps the fleet stable.** Nobody sheds while any replica is starting,
-  draining, or has been serving for less than `settle`, and that includes a replica that has
-  just shed. So two replicas cannot shed into each other in a loop, and a deploy never
-  triggers shedding.
+     load is more than `tolerance` above the mean, relative to it.
+  4. Cap `n` at `ceil(per_minute * every / 60)`, so a low rate with a short interval still
+     sheds one per tick rather than none.
+  5. Pick `n` movable connections not already scheduled, and close them with `close_spread`
+     over `every`.
+- **The report.** The peers' load and movable counts come from their membership reports,
+  which the app fills. A peer that does not report them is left out of the mean, and is never
+  shed from.
+- **What keeps the fleet stable** is the tolerance, the cooldown and the settle gate, not
+  shedding itself. Shedding does not change a replica's state, so it does not reset the settle
+  gate. The cooldown stops a replica shedding again before its last shed's clients have landed
+  elsewhere and been reported. The settle gate stops anyone shedding during a deploy.
+- **Ids.** `member_id` must match the membership step's id. It defaults to the same
+  `instance_id()`.
 
 ### 5.2 Alternatives considered
 
@@ -119,6 +131,11 @@ ship first, and this step waits for a second consumer.
 
 - **Shedding.** With a fake fleet view, a replica 30% above the mean sheds down toward it,
   bounded by `per_minute`, and only movable connections.
+- **No double shedding.**
+  - A tick during a running shed does nothing.
+  - A tick inside the cooldown does nothing.
+  - The live count, not the stale report, sets the next shed.
+- **Rounding.** `per_minute=10` with `every=5 s` sheds one per tick.
 - **No shedding:**
   - while the fleet is unsettled;
   - while this replica is draining;
@@ -159,8 +176,8 @@ A section on the socket.io page:
 | --- | --- | --- |
 | 1 | `LOCKED` | Rebalancing ships as a socket.io step only, composed from fleet membership, `excess` and `close_spread`. No framework-wide rebalancer. |
 | 2 | `LOCKED` | Demand-gated: built once a second realtime app needs it. The layers under it ship first. |
-| 3 | `ASSUMED` | The step sheds only connections the app marks movable, at most `per_minute`, only while the fleet is settled and this replica is serving, and never while it is draining. |
-| 4 | `ASSUMED` | The load and movable counts come from the replica's own membership report, so a replica that does not report is never shed from. |
+| 3 | `ASSUMED` | The step sheds only connections the app marks movable, at most `ceil(per_minute × every / 60)` per tick. It sheds only while the fleet is settled and this replica is serving, never while it is draining, never while an earlier shed is closing, and never inside the cooldown after a shed. |
+| 4 | `ASSUMED` | Peers' load and movable counts come from their membership reports. This replica uses its live local counts, minus connections already scheduled to close, so it never sheds twice on a stale report. |
 
 ## 12. Phasing
 
