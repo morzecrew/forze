@@ -70,6 +70,14 @@ class RedisDistributedLockConfig(RedisUniversalConfig):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisFleetConfig(RedisUniversalConfig):
+    """Configuration for Redis-backed fleet membership."""
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamConfig(TenantAwareIntegrationConfig):
     """Configuration for a Redis stream route (``StreamSpec``).
 

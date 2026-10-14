@@ -90,6 +90,7 @@ retried by `read_retry_attempts` waits again on each attempt.
 | Idempotency | `IdempotencySpec.name` (`idempotency`, plain or routed) |
 | Search-result snapshots | `SearchResultSnapshotSpec.name` (`search_snapshots`) |
 | Distributed locks | `DistributedLockSpec.name` (`dlocks`) |
+| [Fleet membership](../running-in-prod/fleet-membership.md) | `FleetSpec.name` (`fleets`) |
 | Stream (read/append) | `StreamSpec.name` (`streams`) |
 | Stream consumer group (read/ack/claim + provisioning) | `StreamSpec.name` (`stream_groups`) |
 | Pub-sub (publish/subscribe) | `PubSubSpec.name` (`pubsub`) |

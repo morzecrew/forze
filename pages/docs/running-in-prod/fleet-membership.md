@@ -89,6 +89,22 @@ tenants to hand back; moving them is your protocol, not the fleet's.
 Compare a member's `since` with the view's `at`, never with your own clock: the two come
 from the same backend clock, so skew between replicas does not enter.
 
+## Wiring
+
+Redis implements the port. Register each fleet by its spec name:
+
+```python
+from forze_redis import RedisDepsModule, RedisFleetConfig
+
+RedisDepsModule(client=redis, fleets={"gateways": RedisFleetConfig(namespace="app")})
+```
+
+A fleet is two keys under one hash tag, `{fleet:<namespace>:<name>}:z` and `:h`: a sorted
+set of member ids scored by their expiry, and a hash of their entries. Each call is one
+script, and expiry, `since` and `at` all come from the server's clock, so replicas whose
+own clocks disagree still see the same fleet. Both keys expire a second after the last
+member's entry. The mock implements the same model in memory, on a clock a test can move.
+
 ## Choosing a member id
 
 `instance_id()` returns `host:pid:nonce`. The nonce is random per process, so a restarted

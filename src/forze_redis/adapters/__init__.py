@@ -2,6 +2,7 @@ from .cache import RedisCacheAdapter
 from .codecs import RedisKeyCodec, RedisPubSubCodec, RedisStreamCodec
 from .counter import RedisCounterAdapter, RedisCounterAdminAdapter
 from .dlock import RedisDistributedLockAdapter
+from .fleet import RedisFleetAdapter
 from .idempotency import RedisIdempotencyAdapter
 from .pubsub import RedisPubSubAdapter
 from .realtime_presence import RedisRealtimePresence
@@ -29,4 +30,5 @@ __all__ = [
     "RedisStreamGroupAdminAdapter",
     "RedisKeyCodec",
     "RedisDistributedLockAdapter",
+    "RedisFleetAdapter",
 ]

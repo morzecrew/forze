@@ -18,6 +18,7 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
     DistributedLockQueryDepKey,
 )
+from forze.application.contracts.fleet import FleetDepKey
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.pubsub import (
     PubSubCommandDepKey,
@@ -44,6 +45,7 @@ from ._warnings import (
     REDIS_CACHE_WARNING,
     REDIS_COUNTER_WARNING,
     REDIS_DLOCK_WARNING,
+    REDIS_FLEET_WARNING,
     REDIS_IDEMPOTENCY_WARNING,
     REDIS_SEARCH_SNAPSHOT_WARNING,
 )
@@ -51,6 +53,7 @@ from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
     RedisDistributedLockConfig,
+    RedisFleetConfig,
     RedisIdempotencyConfig,
     RedisPubSubConfig,
     RedisSearchResultSnapshotConfig,
@@ -63,6 +66,7 @@ from .factories import (
     ConfigurableRedisCounter,
     ConfigurableRedisCounterAdmin,
     ConfigurableRedisDistributedLock,
+    ConfigurableRedisFleet,
     ConfigurableRedisIdempotency,
     ConfigurableRedisPubSubCommand,
     ConfigurableRedisPubSubQuery,
@@ -190,6 +194,14 @@ class RedisDepsModule(DepsModule):
     )
     """Mapping from distributed lock spec names to their Redis-specific configurations."""
 
+    fleets: StrKeyMapping[RedisFleetConfig] | StrKeyMapping[RedisUniversalConfig] | None = (
+        attrs.field(
+            default=None,
+            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+        )
+    )
+    """Mapping from fleet spec names to their Redis-specific configurations."""
+
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
@@ -269,6 +281,12 @@ class RedisDepsModule(DepsModule):
             warning=REDIS_DLOCK_WARNING,
             log_warning=logger.warning,
         )
+        warn_integration_routes(
+            integration="Redis",
+            routes=self.fleets,
+            warning=REDIS_FLEET_WARNING,
+            log_warning=logger.warning,
+        )
 
         idempotency_routes: Mapping[Any, Any] | None
         if self.idempotency is None:
@@ -294,6 +312,7 @@ class RedisDepsModule(DepsModule):
                     ("idempotency", idempotency_routes),
                     ("search_snapshot", self.search_snapshots),
                     ("dlock", self.dlocks),
+                    ("fleet", self.fleets),
                 )
             ]
             + [
@@ -364,6 +383,10 @@ class RedisDepsModule(DepsModule):
                     DistributedLockCommandDepKey,
                 ],
                 factory=ConfigurableRedisDistributedLock,
+            ),
+            routed_from_mapping(
+                self.fleets,
+                bindings=[(FleetDepKey, ConfigurableRedisFleet)],
             ),
             routed_from_mapping(
                 self.streams,

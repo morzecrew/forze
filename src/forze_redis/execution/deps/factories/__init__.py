@@ -3,6 +3,7 @@
 from .cache import ConfigurableRedisCache
 from .counter import ConfigurableRedisCounter, ConfigurableRedisCounterAdmin
 from .dlock import ConfigurableRedisDistributedLock
+from .fleet import ConfigurableRedisFleet
 from .idempotency import ConfigurableRedisIdempotency
 from .pubsub import ConfigurableRedisPubSubCommand, ConfigurableRedisPubSubQuery
 from .snapshot import ConfigurableRedisSearchResultSnapshot
@@ -20,6 +21,7 @@ __all__ = [
     "ConfigurableRedisCounter",
     "ConfigurableRedisCounterAdmin",
     "ConfigurableRedisDistributedLock",
+    "ConfigurableRedisFleet",
     "ConfigurableRedisIdempotency",
     "ConfigurableRedisPubSubCommand",
     "ConfigurableRedisPubSubQuery",
