@@ -150,16 +150,26 @@ class TestSseDrain:
 
     # ....................... #
 
-    async def test_a_new_stream_while_draining_gets_503(self) -> None:
+    async def test_a_new_stream_while_draining_gets_503_before_any_work(self) -> None:
         hub = RealtimeSseHub()
         runtime = _runtime(hub)
+        authorized: list[frozenset[str]] = []
 
-        async with runtime.scope(), _sse(hub, runtime) as client:
+        async def authorize(
+            _ctx: ExecutionContext, _principal: str, _tenant: UUID | None, topics: frozenset[str]
+        ) -> frozenset[str]:
+            authorized.append(topics)
+            return topics
+
+        async with runtime.scope(), _sse(hub, runtime, authorize_topics=authorize) as client:
             runtime.begin_draining()
-            response = await client.get("/realtime/sse")
+            response = await asyncio.wait_for(
+                client.get("/realtime/sse", params={"topics": "lobby"}), timeout=5
+            )
 
         assert response.status_code == 503
         assert response.headers[ERROR_CODE_HEADER] == "realtime_draining"
+        assert authorized == []
         assert hub.subscribers == 0
 
     # ....................... #
@@ -172,7 +182,9 @@ class TestSseDrain:
             runtime.scope(),
             _sse(hub, runtime, authorize_topics=_grant_and_announce(runtime)) as client,
         ):
-            response = await client.get("/realtime/sse", params={"topics": "lobby"})
+            response = await asyncio.wait_for(
+                client.get("/realtime/sse", params={"topics": "lobby"}), timeout=5
+            )
 
         assert response.status_code == 503
         assert hub.subscribers == 0
