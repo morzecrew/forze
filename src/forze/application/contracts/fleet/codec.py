@@ -144,6 +144,31 @@ def decode_report(raw: str) -> Report:
 # ....................... #
 
 
+def refuse_tenant_scoped_route(route: str, *, tenant_aware: bool, per_tenant: bool) -> None:
+    """Refuse a fleet route that would need a tenant to beat.
+
+    A fleet describes the deployment — one service's replicas, whatever tenants they serve —
+    and its beats run from lifecycle hooks, where no tenant is bound. A route that scopes the
+    fleet per tenant would refuse every beat, so it is refused when it is configured.
+
+    :param route: The route's name, for the error.
+    :param tenant_aware: Whether the route is tenant-aware.
+    :param per_tenant: Whether the route resolves its namespace per tenant.
+    :raises CoreException: ``configuration`` (``fleet.tenant_scoped_route``) for either.
+    """
+
+    if tenant_aware or per_tenant:
+        raise exc.configuration(
+            f"Fleet route {route!r} cannot be tenant-scoped: a fleet is one service's "
+            "replicas, beating from lifecycle hooks with no tenant bound. Wire it without "
+            "tenant_aware and with a static namespace.",
+            code="fleet.tenant_scoped_route",
+        )
+
+
+# ....................... #
+
+
 def prepare_beat(
     spec: FleetSpec,
     member_id: str,

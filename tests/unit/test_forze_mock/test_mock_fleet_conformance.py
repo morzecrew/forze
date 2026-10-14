@@ -8,8 +8,10 @@ import attrs
 import pytest
 
 from forze.application.contracts.fleet import FleetPort, FleetSpec
+from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockFleetAdapter
+from forze_mock.execution import MockRouteConfig
 from forze_mock.state import MockState
 from tests.support.execution_context import context_from_modules
 from tests.support.fleet_conformance import FLEET_BATTERY, Check, FleetHarness
@@ -56,3 +58,16 @@ async def test_the_module_wires_the_fleet_port() -> None:
     assert isinstance(ctx.fleet(spec), MockFleetAdapter)
     assert [m.id for m in (await ctx.fleet(spec).view()).members] == ["a"]
     assert view.members[0].since == view.at
+
+
+@pytest.mark.parametrize(
+    "route",
+    [MockRouteConfig(tenant_aware=True), MockRouteConfig(namespace=lambda tenant_id: "x")],
+)
+async def test_a_tenant_scoped_fleet_route_is_refused(route: MockRouteConfig) -> None:
+    ctx = context_from_modules(MockDepsModule(routes={"gateways": route}))
+
+    with pytest.raises(CoreException) as caught:
+        ctx.fleet(FleetSpec(name="gateways"))
+
+    assert caught.value.code == "fleet.tenant_scoped_route"

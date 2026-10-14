@@ -143,6 +143,12 @@ script, and expiry, `since` and `at` all come from the server's clock, so replic
 own clocks disagree still see the same fleet. Both keys expire a second after the last
 member's entry. The mock implements the same model in memory, on a clock a test can move.
 
+A fleet is never tenant-scoped. One service's replicas form one fleet whatever tenants they
+serve, and the step beats from lifecycle hooks, where no tenant is bound. A fleet route
+therefore takes neither `tenant_aware` nor a per-tenant namespace — either is refused when
+the route is configured — and stays outside `required_tenant_isolation`, so a floor on the
+rest of the module does not touch it.
+
 ## Choosing a member id
 
 The step beats as `instance_id()`, which returns `host:pid:nonce`. The nonce is random per

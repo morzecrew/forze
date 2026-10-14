@@ -5,6 +5,7 @@ from .codec import (
     decode_report,
     encode_report,
     prepare_beat,
+    refuse_tenant_scoped_route,
     validate_member_id,
 )
 from .deps import FleetDepKey, FleetDepPort, FleetDeps
@@ -28,5 +29,6 @@ __all__ = [
     "decode_report",
     "encode_report",
     "prepare_beat",
+    "refuse_tenant_scoped_route",
     "validate_member_id",
 ]

@@ -2,9 +2,11 @@
 
 import attrs
 
+from forze.application.contracts.fleet import refuse_tenant_scoped_route
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
     coerce_named_resource_spec,
+    is_static_named_resource,
 )
 from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 from forze.base.exceptions import exc
@@ -71,7 +73,18 @@ class RedisDistributedLockConfig(RedisUniversalConfig):
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisFleetConfig(RedisUniversalConfig):
-    """Configuration for Redis-backed fleet membership."""
+    """Configuration for Redis-backed fleet membership.
+
+    Never tenant-scoped: a fleet is one service's replicas, so it takes neither
+    ``tenant_aware`` nor a per-tenant namespace, and sits outside the tenant-isolation floor.
+    """
+
+    def __attrs_post_init__(self) -> None:
+        refuse_tenant_scoped_route(
+            "fleet",
+            tenant_aware=self.tenant_aware,
+            per_tenant=not is_static_named_resource(self.namespace),
+        )
 
 
 # ....................... #

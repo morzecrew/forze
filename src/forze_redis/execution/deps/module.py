@@ -18,12 +18,13 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
     DistributedLockQueryDepKey,
 )
-from forze.application.contracts.fleet import FleetDepKey
+from forze.application.contracts.fleet import FleetDepKey, refuse_tenant_scoped_route
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.pubsub import (
     PubSubCommandDepKey,
     PubSubQueryDepKey,
 )
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.search import SearchResultSnapshotDepKey
 from forze.application.contracts.stream import (
     AckStreamGroupAdminDepKey,
@@ -45,7 +46,6 @@ from ._warnings import (
     REDIS_CACHE_WARNING,
     REDIS_COUNTER_WARNING,
     REDIS_DLOCK_WARNING,
-    REDIS_FLEET_WARNING,
     REDIS_IDEMPOTENCY_WARNING,
     REDIS_SEARCH_SNAPSHOT_WARNING,
 )
@@ -281,12 +281,13 @@ class RedisDepsModule(DepsModule):
             warning=REDIS_DLOCK_WARNING,
             log_warning=logger.warning,
         )
-        warn_integration_routes(
-            integration="Redis",
-            routes=self.fleets,
-            warning=REDIS_FLEET_WARNING,
-            log_warning=logger.warning,
-        )
+        # A fleet is the deployment's, not a tenant's: no tenant-scoped route, and no floor.
+        for name, fleet in (self.fleets or {}).items():
+            refuse_tenant_scoped_route(
+                str(name),
+                tenant_aware=fleet.tenant_aware,
+                per_tenant=not is_static_named_resource(fleet.namespace),
+            )
 
         idempotency_routes: Mapping[Any, Any] | None
         if self.idempotency is None:
@@ -312,7 +313,6 @@ class RedisDepsModule(DepsModule):
                     ("idempotency", idempotency_routes),
                     ("search_snapshot", self.search_snapshots),
                     ("dlock", self.dlocks),
-                    ("fleet", self.fleets),
                 )
             ]
             + [

@@ -19,7 +19,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import build_runtime
 from forze.base.primitives import bind_time_source
 from forze_kits.integrations.fleet import fleet_membership_lifecycle_step
-from forze_redis import RedisDepsModule, RedisFleetConfig
+from forze_redis import RedisCacheConfig, RedisDepsModule, RedisFleetConfig
 from forze_redis.adapters import RedisFleetAdapter
 from forze_redis.kernel.client import RedisClient
 from tests.support.execution_context import context_from_deps
@@ -277,3 +277,25 @@ class TestWiring:
                 raise AssertionError(f"never saw the step serving: {view.members}")
 
         assert (await peer.view()).members == ()
+
+    async def test_the_step_beats_under_a_tenant_isolation_floor(
+        self, redis_client: RedisClient, namespace: str
+    ) -> None:
+        # The floor binds the tenant data; the fleet, beating with no tenant, sits outside it.
+        spec = _spec(ttl=timedelta(seconds=2))
+        peer = RedisFleetAdapter(client=redis_client, namespace=namespace, spec=spec)
+        runtime = build_runtime(
+            RedisDepsModule(
+                client=redis_client,
+                caches={"orders": RedisCacheConfig(namespace=namespace, tenant_aware=True)},
+                fleets={str(spec.name): RedisFleetConfig(namespace=namespace)},
+                required_tenant_isolation="tagged",
+            ),
+            lifecycle_steps=fleet_membership_lifecycle_step(
+                spec, every=timedelta(milliseconds=50), member_id="me"
+            ),
+            drain_timeout=timedelta(0),
+        )
+
+        async with runtime.scope():
+            assert [m.id for m in (await peer.view()).members] == ["me"]

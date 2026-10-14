@@ -34,7 +34,7 @@ from forze.application.contracts.durable.function import DurableFunctionEventSpe
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.application.contracts.dynamic_read import DynamicReadSpec
 from forze.application.contracts.embeddings import EmbeddingsSpec
-from forze.application.contracts.fleet import FleetSpec
+from forze.application.contracts.fleet import FleetSpec, refuse_tenant_scoped_route
 from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.http import HttpServiceSpec
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySpec
@@ -1121,12 +1121,19 @@ class ConfigurableMockFleet(_MockFactoryBase):
         spec: FleetSpec,
     ) -> MockFleetAdapter:
         cfg = self._route(spec.name)
+
+        if cfg is not None:
+            # As on Redis: a fleet is the deployment's, never a tenant's.
+            refuse_tenant_scoped_route(
+                str(spec.name),
+                tenant_aware=cfg.tenant_aware,
+                per_tenant=callable(cfg.namespace) or callable(cfg.relation),
+            )
+
         return MockFleetAdapter(
             spec=spec,
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
-            tenant_aware=cfg.tenant_aware if cfg else False,
-            tenant_provider=_tenant_provider(context),
         )
 
 

@@ -13,4 +13,3 @@ REDIS_SEARCH_SNAPSHOT_WARNING = namespace_route_warning(
     RedisUniversalConfig, kind="search_snapshot"
 )
 REDIS_DLOCK_WARNING = namespace_route_warning(RedisUniversalConfig, kind="dlock")
-REDIS_FLEET_WARNING = namespace_route_warning(RedisUniversalConfig, kind="fleet")
