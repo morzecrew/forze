@@ -309,7 +309,8 @@ def instrument_leadership(*, meter: Meter | None = None) -> None:
         totals: dict[tuple[str, str], int] = {}
 
         for stats in list(_LIVE_STATS):
-            for reason, count in stats.terms_ended.items():
+            # A copy: the step's loop may add a reason while a reader thread collects.
+            for reason, count in dict(stats.terms_ended).items():
                 totals[stats.key, reason] = totals.get((stats.key, reason), 0) + count
 
         for (key, reason), value in totals.items():
@@ -1029,7 +1030,8 @@ def leadership_lifecycle_step(
     A renewal answered ``False`` ends the term as ``lost`` and cancels the body at once. A
     renewal that fails or times out leaves the deadlines where they were. The lease is released
     only once the body is done; a cancelled body that does not finish within
-    ``release_timeout`` keeps it until it lapses at its ttl, so no successor overlaps it.
+    ``release_timeout`` keeps it until it lapses at its ttl, so no successor starts before
+    then, and this replica starts no new term while that body runs.
 
     A responsive leader whose body honours cancellation runs only while it holds the lease, as
     long as the lock backend's clock does not jump forward by more than ``margin``. A paused

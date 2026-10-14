@@ -233,9 +233,10 @@ rather than lengthening it.
 
 The lease is released only once the body is done, and the next replica leads within one
 `campaign_every`. A body that does not finish within `release_timeout` of being cancelled
-keeps the lease until its TTL runs out, so no successor starts beside it. Write the body
-to stop at unit boundaries: cancellation at an arbitrary await is what the grace exists
-to avoid.
+keeps the lease until its TTL runs out, so no successor starts before then; one that
+starts after it may run beside that body, which is what fencing is for. Write the body to
+stop at unit boundaries: cancellation at an arbitrary await is what the grace exists to
+avoid.
 
 ### What fencing is for
 
