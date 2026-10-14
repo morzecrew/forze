@@ -276,8 +276,10 @@ backend's renewal latency, or terms flap.
 ### Handoff on request
 
 With `handoff="on_request"`, a replica whose `prefer(ctx)` returns true asks for the unit
-by holding a second lock, `{key}:want`, and the holder yields at its next renewal unless
-it prefers the unit itself. Other replicas stand aside while someone asks, until they have
+by holding a second lock, `{key}:want`, and renewing it every campaign interval. The
+holder yields at its next renewal, unless it prefers the unit itself or the asker has not
+renewed its request within two campaign intervals — a dead asker's want-lock outlives it
+by a TTL, and yielding to it would only leave the unit unled. Other replicas stand aside while someone asks, until they have
 seen the lease free for three campaign intervals, so a fleet whose asker cannot take the
 lease is unled for about four at most. An asker whose acquires keep failing
 gives the want-lock up after three tries and does not ask again for one TTL, so it cannot

@@ -897,7 +897,15 @@ class _Campaign:
 
         asker = await self.query.get_owner(self.want_key)
 
-        return asker is not None and asker != term.owner and not await self.prefer(self.ctx)
+        if asker is None or asker == term.owner:
+            return False
+
+        # Only to an asker that renewed within its last two ticks: a dead one's want-lock lives
+        # on for its ttl, and a holder yielding to it would leave the unit unled at every renewal.
+        left = await self.query.get_ttl(self.want_key)
+        fresh = self.spec.lock.ttl - 2 * self.spec.campaign_every
+
+        return left is not None and left > fresh and not await self.prefer(self.ctx)
 
     # ....................... #
 
