@@ -127,7 +127,10 @@ message, because a driver's connection error routinely carries the DSN and this 
 is served to anything that can reach the probe. Nothing is auto-discovered: the
 integrations satisfy `health()` structurally, with no base port to enumerate, and a
 sweep of every registered dependency would probe things readiness does not depend on.
-A `probe_timeout` that is not positive is refused at attach time.
+A `probe_timeout` that is not positive is refused at attach time. A probe resolves
+its key plain: a key registered only per route names no single client and is
+reported as `registered per route only` — to probe such a client, register it under
+a plain key of its own too.
 
 Keep the endpoint internal, as you would `/metrics`. `detail` is the client's own
 summary, and a failing driver's is its exception text — which routinely names the

@@ -91,7 +91,9 @@ async def evaluate_readiness(
 
     :param ctx: The scope to answer for, or ``None`` when no scope is active.
     :param checks: Check name (the key in ``checks``) to the deps key its client is
-        registered under.
+        registered under, plain: a key registered only per route names no single client and
+        is reported as such. To check a client registered per route, register it under a
+        plain key of its own as well.
     :param check_timeout: Budget for **each** check, not for the sweep.
     :returns: ``(status code, body)``.
     """
@@ -135,7 +137,17 @@ async def _check_dependencies(
         # with it, in exactly the situation the breakdown exists for.
         try:
             if not deps.exists(key):
-                return name, {"ok": False, "detail": "not registered"}
+                # A check resolves its key plain. One registered only per route is not
+                # missing, it names no single client: the report says which it is.
+                routed = any(
+                    frame.key_name == key.name and frame.route is not None
+                    for frame in deps.registered_frames()
+                )
+
+                return name, {
+                    "ok": False,
+                    "detail": "registered per route only" if routed else "not registered",
+                }
 
             # Per check, deliberately, not one deadline around the sweep. The two look
             # equivalent — the checks run concurrently, so the wall clock is the same — but

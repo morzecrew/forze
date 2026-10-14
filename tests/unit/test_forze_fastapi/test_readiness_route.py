@@ -194,6 +194,30 @@ class TestReadinessProbes:
         assert response.json()["checks"]["redis"] == {"ok": False, "detail": "not registered"}
 
     @pytest.mark.asyncio
+    async def test_a_key_registered_only_per_route_says_so(self) -> None:
+        """Not "not registered": it is registered, but names no single client to probe."""
+
+        key = DepKey[Any]("routed_client")
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_deps(Deps.routed({key: {"a": _FakeClient()}})).freeze()
+        )
+        router = APIRouter()
+        attach_readiness_route(router, runtime, probes={"pg": key})
+        app = FastAPI()
+        app.include_router(router)
+
+        async with runtime.scope():
+            response = TestClient(app).get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["pg"] == {
+            "ok": False,
+            "detail": "registered per route only",
+        }
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_draining_answers_before_any_probe_runs(self) -> None:
         postgres = _FakeClient()
         runtime, client = _probed({"postgres": postgres})
