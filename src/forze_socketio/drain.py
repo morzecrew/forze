@@ -16,6 +16,7 @@ require_socketio()
 
 # ....................... #
 
+import asyncio
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from functools import partial
@@ -24,7 +25,11 @@ from typing import cast
 from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import LifecycleStep
-from forze.application.execution.background import spread_closes, spread_drain_lifecycle_step
+from forze.application.execution.background import (
+    SpreadOutcome,
+    spread_closes,
+    spread_drain_lifecycle_step,
+)
 from forze.base.primitives import StrKey
 
 from .exceptions import error_logger, log_server_error
@@ -63,6 +68,33 @@ async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
 
 # ....................... #
 
+_FINISHING: set["asyncio.Task[None]"] = set()
+"""Closes still running past the tail, held so they finish rather than being collected."""
+
+
+def _finished_late(eio_sid: str) -> Callable[["asyncio.Task[None]"], None]:
+    def report(task: "asyncio.Task[None]") -> None:
+        if task.cancelled():
+            error_logger.warning(
+                "Closing Engine.IO connection %s was cancelled before it finished", eio_sid
+            )
+
+        elif (error := task.exception()) is not None:
+            log_server_error(error)
+
+    return report
+
+
+def _outcome(closes: Sequence["asyncio.Task[None]"]) -> SpreadOutcome:
+    finished = [task for task in closes if task.done() and not task.cancelled()]
+    failed = sum(task.exception() is not None for task in finished)
+
+    return SpreadOutcome(
+        closed=len(finished) - failed,
+        failed=failed,
+        timed_out=len(closes) - len(finished),
+    )
+
 
 async def close_spread(
     sio: AsyncServer,
@@ -76,8 +108,12 @@ async def close_spread(
 
     Close *i* of *n* starts at ``i * window / n``, each as its own task, so a slow close
     never delays the next. After the last start the call waits up to *tail* for the started
-    closes, then cancels any still running: the whole call takes at most ``window + tail``.
-    A close that fails is logged and counted, never raised.
+    closes, then returns: the whole call takes at most ``window + tail``. A close still
+    running then is counted ``timed_out`` and left to finish — never cancelled, since it may
+    be inside the app's disconnect handlers, which python-socketio runs with cancellation
+    swallowed, so cancelling would cut them short. A close that fails is logged and counted,
+    never raised. Cancelled itself, the call starts no more closes, lets the started ones
+    finish, and still counts them.
 
     One Engine.IO connection carries several namespaces, and closing it ends them all, so
     targets are deduplicated by ``eio_sid``.
@@ -90,24 +126,41 @@ async def close_spread(
     """
 
     eio_sids = list(dict.fromkeys(eio_sid for _namespace, eio_sid in targets))
-    outcome = await spread_closes(
-        [partial(close_transport, sio, eio_sid) for eio_sid in eio_sids],
-        window,
-        tail=tail,
-    )
+    closes: list[asyncio.Task[None]] = []
 
-    if stats is not None:
-        stats.drained(outcome)
+    async def close(eio_sid: str) -> None:
+        task = asyncio.ensure_future(close_transport(sio, eio_sid))
+        closes.append(task)
+        _FINISHING.add(task)
+        task.add_done_callback(_FINISHING.discard)
 
-    if outcome.failed or outcome.timed_out:
-        error_logger.warning(
-            "Drain closed %d of %d connections: %d failed, %d still closing at the end of "
-            "the tail were cancelled",
-            outcome.closed,
-            len(eio_sids),
-            outcome.failed,
-            outcome.timed_out,
-        )
+        try:
+            await asyncio.shield(task)
+
+        except asyncio.CancelledError:
+            # The spread stopped waiting; the close goes on, and reports how it ended.
+            task.add_done_callback(_finished_late(eio_sid))
+            raise
+
+    try:
+        await spread_closes([partial(close, eio_sid) for eio_sid in eio_sids], window, tail=tail)
+
+    finally:
+        outcome = _outcome(closes)
+
+        if stats is not None:
+            stats.drained(outcome)
+
+        if outcome.failed or outcome.timed_out:
+            error_logger.warning(
+                "Drain started %d of %d closes: %d closed, %d failed, %d still closing "
+                "carry on in the background",
+                len(closes),
+                len(eio_sids),
+                outcome.closed,
+                outcome.failed,
+                outcome.timed_out,
+            )
 
     return outcome.closed
 

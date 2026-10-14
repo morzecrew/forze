@@ -69,6 +69,30 @@ class _Socket:
         self.closed = True
 
 
+class _SlowPresence(InMemoryRealtimePresence):
+    """A presence store slow to record a leave, as one may be in a drain's reconnect storm."""
+
+    def __init__(self, *, leaves_in: float) -> None:
+        super().__init__()
+        self.leaves_in = leaves_in
+        self.leaving = 0
+
+    async def left(self, room: str, sid: str) -> None:
+        self.leaving += 1
+        await asyncio.sleep(self.leaves_in)
+        await super().left(room, sid)
+
+
+async def _until(check: Any, *, within: float) -> None:
+    for _ in range(int(within / 0.01)):  # bounded
+        if check():
+            return
+
+        await asyncio.sleep(0.01)
+
+    raise AssertionError(f"not reached within {within}s")
+
+
 async def _resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
     token = (connect.auth or {}).get("token")
 
@@ -167,6 +191,68 @@ class TestCloseSpread:
 
         assert closed == 1
         assert stats.drain_closed == {"closed": 1, "failed": 1, "timed_out": 0}
+
+    # ....................... #
+
+    async def test_a_close_past_the_tail_finishes_its_handlers_rather_than_being_cut(
+        self,
+    ) -> None:
+        server = _server()
+        presence = _SlowPresence(leaves_in=0.4)
+        stats = RealtimeConnectionStats()
+        attach_realtime_connection(server, resolve=_resolve, presence=presence, stats=stats)
+        await _connect(server, "eio-1")
+        socket = _socket(server, "eio-1")
+
+        closed = await close_spread(
+            server,
+            [("/", "eio-1")],
+            timedelta(seconds=0.01),
+            tail=timedelta(seconds=0.1),
+            stats=stats,
+        )
+
+        assert closed == 0
+        assert stats.drain_closed == {"closed": 0, "failed": 0, "timed_out": 1}
+
+        # Not cancelled inside the app's disconnect handler, where python-socketio would
+        # swallow the cancellation and leave the presence entry behind: it finishes.
+        await _until(lambda: socket.closed, within=2.0)
+        assert await presence.count(_ROOM) == 0
+        assert socket.queue.get_nowait() is None  # and the writer is still ended
+
+    # ....................... #
+
+    async def test_cancelled_midway_it_lets_started_closes_finish_and_still_counts(
+        self,
+    ) -> None:
+        server = _server()
+        presence = _SlowPresence(leaves_in=0.3)
+        stats = RealtimeConnectionStats()
+        attach_realtime_connection(server, resolve=_resolve, presence=presence, stats=stats)
+
+        for index in range(3):
+            await _connect(server, f"eio-{index}")
+
+        sockets = [_socket(server, f"eio-{index}") for index in range(3)]
+        spreading = asyncio.ensure_future(
+            close_spread(
+                server,
+                [("/", f"eio-{index}") for index in range(3)],
+                timedelta(seconds=30),  # the second close would start 10 s in
+                tail=timedelta(seconds=1),
+                stats=stats,
+            )
+        )
+        await _until(lambda: presence.leaving > 0, within=2.0)
+        spreading.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await spreading
+
+        assert stats.drain_closed == {"closed": 0, "failed": 0, "timed_out": 1}
+        await _until(lambda: sockets[0].closed, within=2.0)
+        assert [socket.closed for socket in sockets] == [True, False, False]
 
 
 # ----------------------- #
