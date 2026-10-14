@@ -349,7 +349,7 @@ class TestReportCodec:
         assert caught.value.code == "fleet.report_invalid"
 
     @pytest.mark.parametrize(
-        "raw", ['{"x":[1]}', '{"x":NaN}', '{"x":Infinity}', '{"x":true}', "[1]", '"x"']
+        "raw", ['{"x":1,"x":2}', '{"x":[1]}', '{"x":NaN}', '{"x":Infinity}', '{"x":true}', "[1]", '"x"']
     )
     def test_decode_refuses_what_encode_would_not_write(self, raw: str) -> None:
         with pytest.raises(ValueError):
@@ -379,6 +379,7 @@ class TestPrepareBeat:
         [
             (("a\t", "serving", {}, None), "fleet.member_id_invalid"),
             (("a", "paused", {}, None), "fleet.state_invalid"),
+            (("a", ["serving"], {}, None), "fleet.state_invalid"),
             (("a", "serving", {}, timedelta(microseconds=999)), "fleet.ttl_invalid"),
             (("a", "serving", {}, timedelta(seconds=-1)), "fleet.ttl_invalid"),
             (("a", "serving", {"x": "y" * 64}, None), "fleet.report_invalid"),

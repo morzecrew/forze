@@ -125,6 +125,16 @@ def encode_report(report: Report, *, max_bytes: int) -> str:
 # ....................... #
 
 
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    # ``json`` keeps the last of two equal keys; :func:`encode_report` never writes two.
+    decoded = dict(pairs)
+
+    if len(decoded) != len(pairs):
+        raise ValueError("an encoded report repeats a key")
+
+    return decoded
+
+
 def decode_report(raw: str) -> Report:
     """Decode a report written by :func:`encode_report`, refusing one that it would not write.
 
@@ -133,7 +143,7 @@ def decode_report(raw: str) -> Report:
     :raises ValueError: When *raw* is not a report :func:`encode_report` could have written.
     """
 
-    decoded: Any = json.loads(raw)
+    decoded: Any = json.loads(raw, object_pairs_hook=_unique_keys)
 
     if (problem := _report_problem(decoded)) is not None:
         raise ValueError(problem)
@@ -189,7 +199,8 @@ def prepare_beat(
 
     validate_member_id(member_id)
 
-    if state not in _STATES:
+    # ``isinstance`` first: an unhashable value cannot be looked up in the set.
+    if not isinstance(state, str) or state not in _STATES:  # pyright: ignore[reportUnnecessaryIsInstance]
         raise exc.validation(
             f"Fleet member state {state!r} is not one of {sorted(_STATES)}",
             code="fleet.state_invalid",
