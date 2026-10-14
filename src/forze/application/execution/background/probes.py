@@ -22,7 +22,7 @@ import warnings
 from collections.abc import Mapping
 from contextlib import suppress
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Final, final
+from typing import TYPE_CHECKING, Any, Final, cast, final
 
 import attrs
 
@@ -91,7 +91,9 @@ async def evaluate_readiness(
 
     :param ctx: The scope to answer for, or ``None`` when no scope is active.
     :param checks: Check name (the key in ``checks``) to the deps key its client is
-        registered under.
+        registered under, plain: a key registered only per route names no single client and
+        is reported as such. To check a client registered per route, register it under a
+        plain key of its own as well.
     :param check_timeout: Budget for **each** check, not for the sweep.
     :returns: ``(status code, body)``.
     """
@@ -135,7 +137,17 @@ async def _check_dependencies(
         # with it, in exactly the situation the breakdown exists for.
         try:
             if not deps.exists(key):
-                return name, {"ok": False, "detail": "not registered"}
+                # A check resolves its key plain. One registered only per route is not
+                # missing, it names no single client: the report says which it is.
+                routed = any(
+                    frame.key_name == key.name and frame.route is not None
+                    for frame in deps.registered_frames()
+                )
+
+                return name, {
+                    "ok": False,
+                    "detail": "registered per route only" if routed else "not registered",
+                }
 
             # Per check, deliberately, not one deadline around the sweep. The two look
             # equivalent — the checks run concurrently, so the wall clock is the same — but
@@ -211,6 +223,11 @@ class _ProbeListenerStartup(LifecycleHook):
     drain budget and log a "did not close" warning about a listener that had no work left.
     """
 
+    handlers: set[asyncio.Task[Any]] = attrs.field(factory=set, init=False, repr=False)
+    """Request handlers still running, so shutdown can cancel them. Closing a connection
+    does not stop its handler: one waiting on a slow dependency check would otherwise run on
+    after the stop, against clients teardown is about to close."""
+
     # ....................... #
 
     @property
@@ -246,11 +263,24 @@ class _ProbeListenerStartup(LifecycleHook):
         for writer in tuple(self.connections):
             writer.close()
 
+        handlers = tuple(self.handlers)
+
+        for task in handlers:
+            task.cancel()
+
         clock = asyncio.get_running_loop()
         budget = max(0.0, deadline - clock.time())
 
         try:
             await asyncio.wait_for(asyncio.shield(server.wait_closed()), timeout=budget)
+
+            if handlers:
+                _done, pending = await asyncio.wait(
+                    handlers, timeout=max(0.0, deadline - clock.time())
+                )
+
+                if pending:
+                    raise TimeoutError
 
         except TimeoutError:
             logger.warning(
@@ -292,6 +322,9 @@ class _ProbeListenerStartup(LifecycleHook):
 
             return
 
+        # ``asyncio.start_server`` runs every handler as a task of its own.
+        handler = cast("asyncio.Task[Any]", asyncio.current_task())
+        self.handlers.add(handler)
         self.connections.add(writer)
 
         try:
@@ -310,6 +343,7 @@ class _ProbeListenerStartup(LifecycleHook):
 
         finally:
             self.connections.discard(writer)
+            self.handlers.discard(handler)
             writer.close()
 
             with suppress(ConnectionError, OSError):

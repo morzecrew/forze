@@ -28,8 +28,9 @@ It drains first:
    cancelled.
 5. Lifecycle shutdown runs as usual, in reverse wave order.
 
-Each of the last three steps is bounded by `shutdown_step_timeout` (10 seconds by
-default), per lifecycle step in the last.
+Step 3 waits up to `drain_timeout`; cancelling what outlives it, step 4's two
+parts, and each lifecycle step's shutdown in step 5 are each bounded by
+`shutdown_step_timeout` (10 seconds by default).
 
 ```python
 runtime = build_runtime(..., drain_timeout=timedelta(seconds=20))
@@ -127,7 +128,10 @@ message, because a driver's connection error routinely carries the DSN and this 
 is served to anything that can reach the probe. Nothing is auto-discovered: the
 integrations satisfy `health()` structurally, with no base port to enumerate, and a
 sweep of every registered dependency would probe things readiness does not depend on.
-A `probe_timeout` that is not positive is refused at attach time.
+A `probe_timeout` that is not positive is refused at attach time. A probe resolves
+its key plain: a key registered only per route names no single client and is
+reported as `registered per route only` — to probe such a client, register it under
+a plain key of its own too.
 
 Keep the endpoint internal, as you would `/metrics`. `detail` is the client's own
 summary, and a failing driver's is its exception text — which routinely names the
@@ -181,7 +185,11 @@ Nobody has to call `drain()`. When the scope exits without one, `shutdown()` run
 it first, with the runtime's `drain_budget` and no announce delay, so the phases
 run on every orderly exit. A drain runs at most once per scope, and only after
 startup finished: after a partial startup failure the rollback has already shut
-the steps down, so no phase runs against closed clients.
+the steps down, so no phase runs against closed clients. A drain cancelled before
+its first phase started — an admin request whose client hung up — leaves the
+phases to the next drain or to shutdown. If `shutdown()` is interrupted while it
+waits for a drain another task runs, it stops that drain, and gives its phase a
+second to unwind, before teardown closes anything.
 
 `runtime.begin_draining()` is the first stage alone: it withdraws readiness and
 returns. Call it from whatever tells the process it is leaving — a `preStop` hook,

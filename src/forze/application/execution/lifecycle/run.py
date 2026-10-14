@@ -247,9 +247,14 @@ async def _run_bounded(
 
     except asyncio.CancelledError:
         # Our wait was cancelled: don't leave the work running detached — cancel it,
-        # drain its result so it can't warn on GC, then propagate the cancellation.
+        # drain its result so it can't warn on GC, give it the same grace to unwind, then
+        # propagate the cancellation.
         task.cancel()
         _drop_pending_result(task)
+
+        if cancel_grace > 0:
+            await asyncio.wait({task}, timeout=cancel_grace)
+
         raise
 
     if overran:
@@ -433,5 +438,10 @@ async def run_drain_phases(
                 "Drain phase '%s' overran its %.2fs; cancelled it", phase.name, allowance
             )
 
-        elif not task.cancelled() and (error := task.exception()) is not None:
+        elif task.cancelled():
+            # Not by us — that path raises out of ``_run_bounded`` — so by the phase itself,
+            # or by whatever it awaited. Still a phase that did not finish its work.
+            logger.warning("Drain phase '%s' was cancelled before it finished", phase.name)
+
+        elif (error := task.exception()) is not None:
             logger.error("Drain phase '%s' failed", phase.name, exc_info=error)

@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A readiness check whose client is registered only per route says so**, as `registered per route only`, instead of reporting it `not registered`.
+
 - **A retry past its 1,024th attempt no longer fails with `OverflowError`.** Resilience retries and outbox redelivery keep their backoff at the cap however many attempts came before, and a zero-delay saga step or client read keeps retrying.
 
 - **Ensuring a Redis consumer group that already exists no longer fails**, so the realtime group-ensure step survives a restart. A `BUSYGROUP` reply now maps to a conflict coded `redis_busygroup` rather than a generic busy infrastructure error.

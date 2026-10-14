@@ -220,9 +220,11 @@ asyncio.run(
 )
 ```
 
-The worst case of that exit is 25 seconds plus 2 per lifecycle step — the
+Once startup has finished, the worst case of that exit is 25 seconds plus 2 per
+lifecycle step — the
 [sum](../running-in-prod/shutdown-and-fleets.md#fit-the-budget-to-the-grace-period)
-`serve_uvicorn` logs at startup. Past two steps it no longer fits Kubernetes'
+`serve_uvicorn` logs at startup. A signal that lands during startup waits for it
+first, and startup hooks have no timeout. Past two steps it no longer fits Kubernetes'
 default 30-second grace period: set `terminationGracePeriodSeconds` from the
 logged figure, with headroom.
 
@@ -233,9 +235,9 @@ the runtime closes its gate and tears down. A drain that fails still lets the
 server exit. A `SIGINT` during the drain cancels it and exits without waiting for
 open connections; a repeated `SIGTERM` is logged and ignored, so a signal delivered
 twice — to the process group and again by a wrapper — cannot cut a deploy short.
-After a forced exit uvicorn skips the lifespan shutdown, so the runtime tears down
-only when the event loop closes and cancels the lifespan — at the end of
-`asyncio.run`.
+A forced exit gives the drain phases up, even those that had not started yet.
+Uvicorn then skips the lifespan shutdown, so the runtime tears down only when the
+event loop closes and cancels the lifespan — at the end of `asyncio.run`.
 
 - **Graceful timeout.** Unless `config` sets `timeout_graceful_shutdown`,
   `serve_uvicorn` sets it to `graceful_timeout` (10 seconds), so an open SSE
