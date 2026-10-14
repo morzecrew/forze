@@ -134,18 +134,20 @@ FENCE_OUT_OF_RANGE_CODE: Final[str] = "dlock.fence_out_of_range"
 
 
 def validate_fence_past(past: int) -> None:
-    """Refuse a ``past`` that is not an integer in ``[0, FENCE_MAX_VALUE]``.
+    """Refuse a ``past`` that is not a plain ``int`` in ``[0, FENCE_MAX_VALUE]``.
 
     Backends call it before touching their store, so a bad value is refused the same way
-    everywhere and never reaches the counter. ``bool`` is refused though it is an ``int``.
+    everywhere and never reaches the counter. The type must be ``int`` exactly: ``bool``
+    and any other subclass are refused, since a subclass can print as something other
+    than its digits and a backend sends the printed form.
 
     :param past: The fence the caller wants the counter moved to.
     :raises CoreException: ``precondition`` with code :data:`FENCE_OUT_OF_RANGE_CODE`.
     """
 
-    if isinstance(past, bool) or not isinstance(past, int) or not 0 <= past <= FENCE_MAX_VALUE:
+    if type(past) is not int or not 0 <= past <= FENCE_MAX_VALUE:
         raise exc.precondition(
-            f"Fence advance needs an integer in [0, {FENCE_MAX_VALUE}], got {past!r}.",
+            f"Fence advance needs a plain int in [0, {FENCE_MAX_VALUE}], got {past!r}.",
             code=FENCE_OUT_OF_RANGE_CODE,
         )
 
@@ -180,7 +182,7 @@ class FenceAdvancing(Protocol):
         largest value, and needs no lock ownership.
 
         :param key: Logical lock key, as passed to ``acquire``.
-        :param past: The highest fence the store holds for this key; an integer in
+        :param past: The highest fence the store holds for this key; a plain ``int`` in
             ``[0, FENCE_MAX_VALUE]``, checked before anything is sent.
         :returns: The counter after the call.
         :raises CoreException: ``precondition`` (``dlock.fence_out_of_range``) for a bad

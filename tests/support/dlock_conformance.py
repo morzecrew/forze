@@ -11,8 +11,8 @@ mock is what unit tests and simulation resolve. So every promise below runs agai
    token at 1.
 3. It never lowers the counter, so racing advances settle on the largest.
 4. It needs no lock ownership and does not touch a held lock.
-5. A ``past`` outside ``[0, 2**53 - 1]``, a bool or a non-integer is refused before
-   anything is sent, and the counter is unchanged.
+5. A ``past`` outside ``[0, 2**53 - 1]``, a bool, an ``int`` subclass or a non-integer is
+   refused before anything is sent, and the counter is unchanged.
 6. Large counters round-trip exactly: no exponent formatting on the way in or out.
 7. A tenant-bound lock advances the counter its own ``acquire`` increments, and only that
    one.
@@ -193,7 +193,24 @@ async def check_advance_needs_no_ownership(h: DlockHarness) -> None:
     assert await _draw(h.lock, key) == 101
 
 
-_OUT_OF_RANGE: tuple[object, ...] = (-1, FENCE_MAX_VALUE + 1, 2**63, True, False, 1.5, "5", None)
+class _ExponentInt(int):
+    """An ``int`` that prints as ``1e20``: in range by value, garbage on the wire."""
+
+    def __str__(self) -> str:
+        return "1e20"
+
+
+_OUT_OF_RANGE: tuple[object, ...] = (
+    -1,
+    FENCE_MAX_VALUE + 1,
+    2**63,
+    True,
+    False,
+    _ExponentInt(7),
+    1.5,
+    "5",
+    None,
+)
 
 
 async def check_out_of_range_past_is_refused_before_sending(h: DlockHarness) -> None:
