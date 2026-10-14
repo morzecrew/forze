@@ -290,6 +290,24 @@ class TestRate:
         # follows the time that passed, not the ticks, and a minute still sheds ten.
         assert run_simulation(scenario, latency=_slow_views) == 100
 
+    def test_a_second_scope_starts_with_an_empty_allowance(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(200, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", {})
+            step = _step(node, per_minute=6)
+
+            await _serve(state, step, _sleep(60.5))
+            closed = node.closed()
+            # A minute later, the same step in a new scope: it waits for its allowance again.
+            await asyncio.sleep(60)
+            await _serve(state, step, _sleep(9.5))
+
+            return node.closed() - closed
+
+        assert run_simulation(scenario) == 0
+
     def test_a_long_wait_banks_at_most_a_minute(self) -> None:
         async def scenario() -> int:
             state, node = MockState(), _Node()

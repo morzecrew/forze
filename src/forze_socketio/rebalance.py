@@ -129,8 +129,8 @@ class _Rebalance:
     me: str = attrs.field(default="", init=False)
 
     credit: float = attrs.field(default=0.0, init=False)
-    """The allowance in sixtieths of a unit: ``per_minute`` per second, so a whole-second
-    interval adds a whole number and no tick's fraction is lost to rounding."""
+    """The allowance, in sixtieths of a connection: it grows by ``per_minute`` a second, so
+    whole-second intervals add exact whole numbers."""
 
     ticked_at: float | None = attrs.field(default=None, init=False)
     shed_ended_at: float | None = attrs.field(default=None, init=False)
@@ -147,12 +147,15 @@ class _Rebalance:
     # ....................... #
 
     def bind(self, ctx: ExecutionContext) -> None:
-        """Take this scope's fleet port and the member id, at every startup."""
+        """Take this scope's fleet port and the member id, and start afresh, at every startup."""
 
         self.ctx = ctx
         self.port = ctx.fleet(self.spec)
         # Resolved here, as the membership step does, so both name the same member.
         self.me = self.member_id if self.member_id is not None else instance_id()
+        # A new scope starts with an empty allowance and no cooldown, as the first one did.
+        self.credit = 0.0
+        self.ticked_at = self.shed_ended_at = None
 
     # ....................... #
 
@@ -237,12 +240,11 @@ class _Rebalance:
         self.credit -= count * 60.0
 
         error_logger.info(
-            "Rebalance: shedding %d of %d movable connection(s); %d open, %d above the "
-            "fleet's mean",
+            "Rebalance: shedding %d connection(s) of an excess of %d (%d open, %d movable)",
             count,
-            len(targets),
-            load,
             excess,
+            load,
+            len(targets),
         )
 
         self.shed = asyncio.create_task(
