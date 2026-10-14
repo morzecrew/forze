@@ -20,7 +20,7 @@ import math
 import signal
 import threading
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import Context, copy_context
 from datetime import timedelta
 from types import FrameType
@@ -30,7 +30,7 @@ import uvicorn
 
 from forze.application.execution import ExecutionRuntime
 from forze.application.execution.lifecycle.run import DRAIN_PHASE_CANCEL_GRACE_SECONDS
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze.base.logging import Logger
 
 # ----------------------- #
@@ -147,6 +147,14 @@ class _DrainingServer(uvicorn.Server):
     async def _drain(self) -> None:
         try:
             await self._runtime.drain(self._drain_budget, announce_delay=self._announce_delay)
+
+        except asyncio.CancelledError:
+            # A forced exit. A drain cut short before its phases started gives its claim
+            # back, and the scope's teardown would then run them at length: give them up.
+            with suppress(CoreException):
+                self._runtime.get_context().drain_phases.forgo()
+
+            raise
 
         except Exception:
             _logger.exception("Drain failed; stopping the server anyway")

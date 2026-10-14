@@ -300,6 +300,35 @@ class TestDrainPhases:
     # ....................... #
 
     @pytest.mark.asyncio
+    async def test_a_drain_cancelled_before_its_phases_leaves_them_to_shutdown(self) -> None:
+        """An admin request whose client hangs up mid-announcement must not use up the
+        scope's one drain: the phases have not had their turn."""
+
+        ran: list[str] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("phase")
+
+        runtime = _runtime(_registering(("phase", phase, {})))
+
+        async with runtime.scope():
+            drain = asyncio.create_task(
+                runtime.drain(timedelta(seconds=1), announce_delay=timedelta(seconds=30))
+            )
+            await asyncio.sleep(0.05)
+            drain.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(drain, timeout=5.0)
+
+            assert ran == []
+            assert runtime.draining is True  # the announcement stands
+
+        assert ran == ["phase"]
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_a_phase_left_less_than_the_floor_is_skipped(self) -> None:
         ran: list[str] = []
 
@@ -438,6 +467,68 @@ class TestShutdownDrainsFirst:
 
         assert events == ["phase-started", "phase-cancelled", ("teardown", True)]
         assert runtime.ready is False and runtime.draining is False  # the scope is gone
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_an_interrupted_shutdown_stops_another_tasks_drain_before_teardown(
+        self,
+    ) -> None:
+        """An admin endpoint drains; Ctrl+C makes shutdown wait for it; a second Ctrl+C.
+        The admin's phase must be stopped before teardown closes the client it uses."""
+
+        events: list[str] = []
+        closed = False
+        entered = asyncio.Event()
+        phase_started = asyncio.Event()
+
+        async def phase(_allowed: timedelta) -> None:
+            events.append("phase-started")
+            phase_started.set()
+
+            try:
+                await asyncio.sleep(0.5)
+                events.append("phase-used-a-closed-client" if closed else "phase-done")
+
+            except asyncio.CancelledError:
+                # Unwinding takes a moment too — a socket closed gently, say — and the
+                # client must still be open for it.
+                await asyncio.sleep(0.05)
+                events.append("phase-unwound-on-a-closed-client" if closed else "phase-unwound")
+                raise
+
+        async def teardown(_ctx: ExecutionContext) -> None:
+            nonlocal closed
+            closed = True
+            events.append("client-closed")
+
+        runtime = _runtime(
+            _registering(("phase", phase, {})),
+            LifecycleStep(id="client", shutdown=teardown),
+        )
+
+        async def main() -> None:
+            async with runtime.scope():
+                entered.set()
+                await asyncio.sleep(60)
+
+        task = asyncio.create_task(main())
+        await asyncio.wait_for(entered.wait(), timeout=5.0)
+
+        admin = asyncio.create_task(runtime.drain(timedelta(seconds=5)))
+        await asyncio.wait_for(phase_started.wait(), timeout=5.0)
+
+        task.cancel()  # shutdown now waits for the admin's drain
+        await asyncio.sleep(0.05)
+        task.cancel()  # and is interrupted while it waits
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10.0)
+
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(admin, timeout=5.0)
+
+        assert events == ["phase-started", "phase-unwound", "client-closed"]
 
     # ....................... #
 

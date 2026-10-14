@@ -24,7 +24,7 @@ from fastapi import FastAPI
 from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution import ExecutionContext, build_runtime
 from forze.application.execution.runtime import ExecutionRuntime
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_fastapi import runtime_lifespan, serve_uvicorn
 from forze_fastapi.serving import _DrainingServer  # pyright: ignore[reportPrivateUsage]
 
@@ -185,6 +185,9 @@ class _FakeRuntime:
         self.seen: list[str | None] = []
         self.release = asyncio.Event()
         self.cancelled = False
+
+    def get_context(self) -> object:
+        raise exc.internal("no scope")
 
     async def drain(self, _budget: timedelta, *, announce_delay: timedelta) -> None:
         self.seen.append(_REQUEST.get())
@@ -420,3 +423,45 @@ class TestSignalCapture:
         assert not thread.is_alive()
         assert failures == []
         assert events == ["phase", "teardown", "served"]
+
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_forced_exit_during_the_announcement_gives_the_phases_up(self) -> None:
+        """Cut short before its phases started, a drain gives its claim back — and the
+        teardown that follows a forced exit must not then run the phases at length."""
+
+        ran: list[str] = []
+
+        async def phase(_allowed: timedelta) -> None:
+            ran.append("phase")
+
+        async def startup(ctx: ExecutionContext) -> None:
+            ctx.drain_phases.register("phase", phase)
+
+        runtime = build_runtime(
+            lifecycle_steps=LifecycleStep(id="step", startup=startup),
+            drain_timeout=timedelta(0),
+        )
+
+        async with runtime.scope():
+            server = _DrainingServer(
+                uvicorn.Config(FastAPI()),
+                runtime,
+                drain_budget=timedelta(seconds=5),
+                announce_delay=timedelta(seconds=5),
+            )
+
+            with server.capture_signals():
+                server._on_signal(signal.SIGTERM, None)  # pyright: ignore[reportPrivateUsage]
+                await _settled(server)
+                server._on_signal(signal.SIGINT, None)  # pyright: ignore[reportPrivateUsage]
+
+                drain = server._drain_task  # pyright: ignore[reportPrivateUsage]
+                assert drain is not None
+                await asyncio.wait({drain}, timeout=5.0)
+
+            assert drain.cancelled()
+
+        assert ran == []

@@ -233,9 +233,9 @@ the runtime closes its gate and tears down. A drain that fails still lets the
 server exit. A `SIGINT` during the drain cancels it and exits without waiting for
 open connections; a repeated `SIGTERM` is logged and ignored, so a signal delivered
 twice — to the process group and again by a wrapper — cannot cut a deploy short.
-After a forced exit uvicorn skips the lifespan shutdown, so the runtime tears down
-only when the event loop closes and cancels the lifespan — at the end of
-`asyncio.run`.
+A forced exit gives the drain phases up, even those that had not started yet.
+Uvicorn then skips the lifespan shutdown, so the runtime tears down only when the
+event loop closes and cancels the lifespan — at the end of `asyncio.run`.
 
 - **Graceful timeout.** Unless `config` sets `timeout_graceful_shutdown`,
   `serve_uvicorn` sets it to `graceful_timeout` (10 seconds), so an open SSE

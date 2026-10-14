@@ -247,9 +247,14 @@ async def _run_bounded(
 
     except asyncio.CancelledError:
         # Our wait was cancelled: don't leave the work running detached — cancel it,
-        # drain its result so it can't warn on GC, then propagate the cancellation.
+        # drain its result so it can't warn on GC, give it the same grace to unwind, then
+        # propagate the cancellation.
         task.cancel()
         _drop_pending_result(task)
+
+        if cancel_grace > 0:
+            await asyncio.wait({task}, timeout=cancel_grace)
+
         raise
 
     if overran:

@@ -36,7 +36,7 @@ from .context.lifecycle import scope_readiness
 from .context.transaction import AfterCommitErrorHandler
 from .deps import FrozenDepsRegistry
 from .lifecycle import FrozenLifecyclePlan
-from .lifecycle.run import run_drain_phases
+from .lifecycle.run import DRAIN_PHASE_CANCEL_GRACE_SECONDS, run_drain_phases
 from .posture import ProductionPosture
 
 # ----------------------- #
@@ -421,10 +421,13 @@ class ExecutionRuntime:
         context lifecycle startup finished in, whichever task called this.
 
         Runs at most once per scope. A call while a drain is running waits for it; a call
-        after it returns at once. Before lifecycle startup finished, or outside a scope,
-        there is nothing to drain yet and nothing is claimed: the call logs and returns, and
-        :meth:`shutdown` still drains once startup completes. The drain gate is not touched —
-        operations are admitted until :meth:`shutdown` closes it.
+        after it returns at once. A drain cancelled before its first phase started — an
+        admin request whose client hung up — gives the claim back, so the next drain, or
+        :meth:`shutdown`, still runs the phases. Before lifecycle startup finished, or
+        outside a scope, there is nothing to drain yet and nothing is claimed: the call
+        logs and returns, and :meth:`shutdown` still drains once startup completes. The
+        drain gate is not touched — operations are admitted until :meth:`shutdown` closes
+        it.
 
         :param budget: Shared by every phase.
         :param announce_delay: How long readiness fails before the first phase starts.
@@ -438,9 +441,15 @@ class ExecutionRuntime:
 
         phases = ctx.drain_phases
 
-        if not phases.claim():
+        while not phases.claim():
+            if phases.done:
+                return
+
+            # Another task's drain is running: wait for it to end, then either its phases
+            # ran, or it was cancelled before they started and the claim is free again.
             await phases.wait()
-            return
+
+        ran = False
 
         try:
             self.begin_draining()
@@ -448,6 +457,7 @@ class ExecutionRuntime:
             if announce_delay > timedelta(0):
                 await asyncio.sleep(announce_delay.total_seconds())
 
+            ran = True
             # In the scope's own context, not the caller's: a drain asked for from a request
             # handler, or from a signal that interrupted one, must not hand its bindings on.
             await run_drain_phases(
@@ -457,7 +467,7 @@ class ExecutionRuntime:
             )
 
         finally:
-            phases.finish()
+            phases.finish(ran=ran)
 
     # ....................... #
 
@@ -553,6 +563,15 @@ class ExecutionRuntime:
                     # the cancellation is raised again once they have had it.
                     interrupted = error
                     logger.warning("Drain interrupted; tearing down before letting it through")
+
+                    owner = ctx.drain_phases.owner
+
+                    if owner is not None and owner is not asyncio.current_task():
+                        # The drain was another task's — an admin endpoint's — and this one
+                        # only waited for it. Stop it too, and let its phase unwind, before
+                        # teardown closes the clients that phase is using.
+                        owner.cancel()
+                        await asyncio.wait({owner}, timeout=DRAIN_PHASE_CANCEL_GRACE_SECONDS)
 
                 except Exception:
                     # Teardown must still run: a drain is best-effort, the shutdown is not.

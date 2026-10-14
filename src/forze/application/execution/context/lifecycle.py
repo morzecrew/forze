@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from contextvars import Context, copy_context
 from datetime import timedelta
-from typing import TYPE_CHECKING, Final, Literal, final
+from typing import TYPE_CHECKING, Any, Final, Literal, final
 
 import attrs
 
@@ -144,8 +144,14 @@ class DrainPhases:
 
     _phases: list[DrainPhase] = attrs.field(factory=list, init=False, repr=False)
 
-    _finished: asyncio.Event | None = attrs.field(default=None, init=False, repr=False)
-    """Created when the scope's one drain is claimed, set when it finishes."""
+    _done: bool = attrs.field(default=False, init=False, repr=False)
+    """The phases have had their turn — or were given up — so no drain runs them again."""
+
+    _owner: "asyncio.Task[Any] | None" = attrs.field(default=None, init=False, repr=False)
+    """The task running a drain, while one runs."""
+
+    _ended: asyncio.Event = attrs.field(factory=asyncio.Event, init=False, repr=False)
+    """Set when the running drain ends; a fresh one per claim."""
 
     # ....................... #
 
@@ -195,34 +201,65 @@ class DrainPhases:
 
     # ....................... #
 
-    def claim(self) -> bool:
-        """Claim the scope's one drain run. Called by the runtime.
+    @property
+    def done(self) -> bool:
+        """The phases have had their turn, or were given up: no drain runs them again."""
 
-        :returns: ``True`` for the caller that runs it; ``False`` once a drain was claimed.
+        return self._done
+
+    # ....................... #
+
+    @property
+    def owner(self) -> "asyncio.Task[Any] | None":
+        """The task running a drain, while one runs."""
+
+        return self._owner
+
+    # ....................... #
+
+    def claim(self) -> bool:
+        """Claim the scope's drain for the current task. Called by the runtime.
+
+        :returns: ``True`` for the caller that runs it; ``False`` while another drain runs
+            or once the phases are :attr:`done`.
         """
 
-        if self._finished is not None:
+        if self._done or self._owner is not None:
             return False
 
-        self._finished = asyncio.Event()
+        self._owner = asyncio.current_task()
+        self._ended = asyncio.Event()
 
         return True
 
     # ....................... #
 
-    def finish(self) -> None:
-        """Mark the claimed drain finished. Called by the runtime."""
+    def finish(self, *, ran: bool) -> None:
+        """End the claimed drain. Called by the runtime.
 
-        if self._finished is not None:
-            self._finished.set()
+        :param ran: Whether its phases started. A drain cancelled before they did gives its
+            claim back, so a later drain — or shutdown — still runs them.
+        """
+
+        self._done = self._done or ran
+        self._owner = None
+        self._ended.set()
+
+    # ....................... #
+
+    def forgo(self) -> None:
+        """Give the phases up: no later drain runs them. A forced exit calls this, so the
+        teardown that follows it does not run them at length."""
+
+        self._done = True
 
     # ....................... #
 
     async def wait(self) -> None:
-        """Wait until a claimed drain finished; returns at once when none was claimed."""
+        """Wait for the running drain to end. Call it only after :meth:`claim` refused while
+        the phases are not :attr:`done` — a drain is running then."""
 
-        if self._finished is not None:
-            await self._finished.wait()
+        await self._ended.wait()
 
 
 # ....................... #
