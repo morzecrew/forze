@@ -150,7 +150,7 @@ class TestDrainUnderServeUvicorn:
             )
             await asyncio.wait_for(late.recv(), 2)
             await late.send("40")
-            refusal, _at = await asyncio.wait_for(_closed_at(late), timeout=5)
+            refusal, refused_at = await asyncio.wait_for(_closed_at(late), timeout=5)
 
             outcomes = await asyncio.wait_for(asyncio.gather(*closing), timeout=10)
             code = await asyncio.wait_for(process.wait(), timeout=15)
@@ -160,6 +160,8 @@ class TestDrainUnderServeUvicorn:
 
         assert code == 0
         assert refusal == ["1"]  # a transport close: the client reconnects, elsewhere
+        # Turned away by the draining check itself, before the drain phase even started.
+        assert refused_at < closed[0]
         # Each socket saw the Engine.IO CLOSE, then the transport closing.
         assert all(frames == ["1"] for frames, _at in outcomes)
         # After the announce delay, spread over the window rather than all at once, and
