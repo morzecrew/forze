@@ -51,7 +51,7 @@ def attach_readiness_route(
     :func:`~forze.application.execution.background.evaluate_readiness`, which the stdlib
     probe listener uses too, so both answer the same from the same probes.
 
-    The drain gate answers "is this process *willing* to take traffic?". *probes* adds the
+    The scope's state answers "is this process *willing* to take traffic?". *probes* adds the
     other half — "can it *reach* what it needs?" — because an un-drained process whose
     database is gone still answers ``ready`` and still 500s every request the load balancer
     keeps sending it. Name the clients that matter and each is resolved from the deps
@@ -63,7 +63,7 @@ def attach_readiness_route(
                     "redis":    {"ok": false, "detail": "timed out after 2.0s"}}}
 
     Any failed check makes the whole probe ``503 degraded``. No *probes* (the default)
-    keeps the drain-gate-only behaviour, with no ``checks`` key at all.
+    answers from the scope's state alone, with no ``checks`` key at all.
 
     Not auto-discovered: there is no common base client port to enumerate — every
     integration satisfies ``health()`` structurally — and a sweep of every registered

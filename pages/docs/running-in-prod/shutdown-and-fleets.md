@@ -129,7 +129,7 @@ breakdown is for and exactly what should not reach the public internet. Every re
 also runs every probe, so the probe period is a real query rate against each
 dependency.
 
-No `probes` (the default) leaves the drain-gate-only behaviour untouched.
+No `probes` (the default) answers from the scope's state alone.
 
 The probe listener takes the same map as `checks`, with `check_timeout` per check,
 and gives the same answer and the same body as the route from the same probes.
