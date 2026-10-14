@@ -35,7 +35,8 @@ def harness() -> FleetHarness:
     clock = _Clock()
 
     def fleet(spec: FleetSpec) -> FleetPort:
-        return MockFleetAdapter(spec=spec, state=state, namespace=str(spec.name), clock=clock)
+        # One namespace for every fleet, as the Redis leg has: fleets are kept apart by name.
+        return MockFleetAdapter(spec=spec, state=state, namespace="battery", clock=clock)
 
     async def wait(delta: timedelta) -> None:
         clock.now += delta.total_seconds()
@@ -71,3 +72,11 @@ async def test_a_tenant_scoped_fleet_route_is_refused(route: MockRouteConfig) ->
         ctx.fleet(FleetSpec(name="gateways"))
 
     assert caught.value.code == "fleet.tenant_scoped_route"
+
+
+async def test_reading_an_unknown_fleet_stores_nothing() -> None:
+    state = MockState()
+
+    view = await MockFleetAdapter(spec=FleetSpec(name="g"), state=state, namespace="ns").view()
+
+    assert (view.members, state.fleets) == ((), {})

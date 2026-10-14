@@ -247,9 +247,11 @@ class MockState:
     dlocks: dict[str, dict[str, tuple[str, float]]] = attrs.field(factory=dict)
     """Route → lock key → (owner, expires_at monotonic)."""
 
-    fleets: dict[str, dict[str, tuple[int, "MemberState", int, str]]] = attrs.field(factory=dict)
-    """Route → member id → (expiry ms, state, since ms, encoded report), both instants on
-    the fleet adapter's clock."""
+    fleets: dict[tuple[str, str], dict[str, tuple[int, "MemberState", int, str]]] = attrs.field(
+        factory=dict
+    )
+    """(Namespace, fleet name) → member id → (expiry ms, state, since ms, encoded report),
+    both instants on the fleet adapter's clock."""
 
     dlock_fences: dict[str, dict[str, int]] = attrs.field(factory=dict)
     """Route → lock key → last issued fencing token.

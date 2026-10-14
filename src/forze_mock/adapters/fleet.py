@@ -49,10 +49,12 @@ class MockFleetAdapter(MockTenancyMixin, FleetPort):
 
     # ....................... #
 
-    def _members(self) -> dict[str, tuple[int, MemberState, int, str]]:
-        route = self._partitioned_namespace(self.namespace)
+    def _key(self) -> tuple[str, str]:
+        # Namespace and fleet name, as Redis keys it: two fleets in one namespace stay apart.
+        return self._partitioned_namespace(self.namespace), str(self.spec.name)
 
-        return self.state.fleets.setdefault(route, {})
+    def _members(self) -> dict[str, tuple[int, MemberState, int, str]]:
+        return self.state.fleets.setdefault(self._key(), {})
 
     def _now_ms(self) -> int:
         return int(self.clock() * 1000)
@@ -104,7 +106,8 @@ class MockFleetAdapter(MockTenancyMixin, FleetPort):
 
     async def view(self) -> FleetView:
         with self.state.lock:
-            return self._view(self._members(), self._now_ms())
+            # A read creates nothing: an unknown fleet reads as empty.
+            return self._view(self.state.fleets.get(self._key(), {}), self._now_ms())
 
     # ....................... #
 
