@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `SERVERLESS` runtime now refuses the durable recovery and scheduler steps** at assembly, as it already refused the realtime sweeps: each runs a background loop a function frozen between invocations cannot host. Run them as a separate long-running worker.
 
+- **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now fences with `fence <= :token`, accepting an equal token, the same lock generation, as the contract does; a write copied from the old `fence < :token` should change too.
+
 ## [0.13.0] - 2026-10-14
 
 ### Added

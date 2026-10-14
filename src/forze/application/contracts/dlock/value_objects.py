@@ -39,9 +39,10 @@ class AcquiredLock:
 
     Consumers protect downstream writes by sending the token along with the
     write and rejecting — storage-side — any token lower than the highest one
-    observed for that resource. The framework cannot enforce this check; without
-    it the lock remains best-effort mutual exclusion (a paused holder can resume
-    after expiry while a new holder runs).
+    observed for that resource; an equal token is the same generation and is
+    accepted. The framework cannot enforce this check; without it the lock
+    remains best-effort mutual exclusion (a paused holder can resume after
+    expiry while a new holder runs).
     """
 
     key: str

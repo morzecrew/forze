@@ -189,11 +189,12 @@ deleted on release, so tokens stay monotonic even after expiry — at the cost o
 one small permanent key per lock key).
 
 Protect downstream writes by sending the token with the write and rejecting,
-storage-side, any token lower than the highest one observed for that resource:
+storage-side, any token lower than the highest one observed for that resource; an
+equal token is the same generation and is accepted:
 
 ```python
 async with dlock_scope.scope("invoice:42") as lock:
-    # e.g. UPDATE ... SET fence = :token WHERE id = 42 AND fence < :token
+    # e.g. UPDATE ... SET fence = :token WHERE id = 42 AND fence <= :token
     await repo.update_invoice(invoice, fence_token=lock.token)
 ```
 
