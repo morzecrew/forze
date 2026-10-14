@@ -6820,9 +6820,10 @@ a per-key <code>&lt;lock key&gt;:fence</code> counter; the counter has no TTL an
 deleted on release, so tokens stay monotonic even after expiry — at the cost of
 one small permanent key per lock key).</p>
 <p>Protect downstream writes by sending the token with the write and rejecting,
-storage-side, any token lower than the highest one observed for that resource:</p>
+storage-side, any token lower than the highest one observed for that resource; an
+equal token is the same generation and is accepted:</p>
 <div class="highlight"><pre><span></span><code><span class="k">async</span> <span class="k">with</span> <span class="n">dlock_scope</span><span class="o">.</span><span class="n">scope</span><span class="p">(</span><span class="s2">"invoice:42"</span><span class="p">)</span> <span class="k">as</span> <span class="n">lock</span><span class="p">:</span>
-    <span class="c1"># e.g. UPDATE ... SET fence = :token WHERE id = 42 AND fence &lt; :token</span>
+    <span class="c1"># e.g. UPDATE ... SET fence = :token WHERE id = 42 AND fence &lt;= :token</span>
     <span class="k">await</span> <span class="n">repo</span><span class="o">.</span><span class="n">update_invoice</span><span class="p">(</span><span class="n">invoice</span><span class="p">,</span> <span class="n">fence_token</span><span class="o">=</span><span class="n">lock</span><span class="o">.</span><span class="n">token</span><span class="p">)</span>
 </code></pre></div>
 <p>Extending a live lease (<code>reset</code>, the scope's heartbeat) keeps the same token —

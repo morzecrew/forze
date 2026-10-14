@@ -6672,7 +6672,9 @@ so a body hung on a dead peer can't pin a recovery slot forever. <code>TIMED_OUT
 terminal rather than a flavour of <code>FAILED</code> because the two send you to different places —
 <code>FAILED</code> to the body's code, <code>TIMED_OUT</code> to the cap, the workload's size, or a hung peer. Set
 it above your longest body, or <code>None</code> to remove the cap; re-enqueue a timed-out run to retry
-it. Run the scanner on every replica, or pair it with the singleton lifecycle guard to elect one.
+it. Run the scanner unwrapped on every replica. The singleton lifecycle guard cannot elect one
+scanner: it holds its lock only while startup launches the loop, so later replicas scan too, and
+one that starts while another holds the lock runs none.
 <code>max_concurrency</code> bounds how many runs a sweep recovers at once. Enqueue with
 <code>run_at=&lt;when&gt;</code> for a <strong>delayed</strong> run — the scan skips it until it's due.</p>
 <p><strong>Multi-tenant.</strong> The stores resolve their table under the bound tenant. On a <strong>tagged</strong>
