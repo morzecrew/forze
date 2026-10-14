@@ -417,3 +417,15 @@ class TestConstruction:
                 lifecycle_steps=fleet_membership_lifecycle_step(SPEC, every=EVERY),
                 deployment=DeploymentProfile.SERVERLESS,
             )
+
+
+class TestBeforeStartup:
+    async def test_a_beat_before_startup_bound_a_scope_is_refused(self) -> None:
+        # Unreachable through a runtime, which binds at startup before the loop starts;
+        # pinned so the guard stays a refusal rather than an attribute error.
+        from forze_kits.integrations.fleet.lifecycle import _Membership
+
+        membership = _Membership(spec=SPEC, report=dict, member_id="me", bound=timedelta(seconds=1))
+
+        with pytest.raises(CoreException, match="before its startup"):
+            await membership.beat()
