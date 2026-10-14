@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **A fenced writer can recover after Redis loses its counters.** `FenceAdvancing.advance_fence(key, past=...)`, on Redis and the mock, lifts a fencing counter to the store's highest fence; `requires_fence_advance` fails closed without it. The documented rule now claims a token first, so a repeated one is acted on once.
 
 ### Changed
 
@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `SERVERLESS` runtime now refuses the durable recovery and scheduler steps** at assembly, as it does the realtime sweeps: each runs a background loop a frozen function cannot host. **Breaking** for serverless apps that assembled them.
 
-- **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now fences with `fence <= :token`, accepting an equal token, the same lock generation, as the contract does.
+- **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now accepts an equal token on a holder's later writes, the same lock generation, as the contract does.
 
 ## [0.13.0] - 2026-10-14
 
