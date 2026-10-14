@@ -4,7 +4,7 @@
   2026-10-14 from hh-backend-v2's specification: §13 replaces §5.1–5.5, and holds
   wherever §1–§12 conflict with it for phases 2 onward. Rows 14–28 replace the decisions they
   name.
-- **Scope:** An opt-in fast path for verifying an access token's session that replaces the
+- **Scope:** *(As first proposed; §13 redesigns phase 2 onward.)* An opt-in fast path for verifying an access token's session that replaces the
   session-row read with one Redis read while Redis answers. Once two preconditions hold, it
   replaces the policy-principal eligibility read too. A verification admits the token from two
   Redis keys:
@@ -45,6 +45,8 @@
 ---
 
 ## 1. Summary
+
+*As first proposed. For phase 2 onward, §13 holds where the two conflict.*
 
 A token verification with the fast path enabled replaces the session-row read with one Redis
 `MGET`. It admits the token when four things hold:
@@ -131,6 +133,8 @@ All verified against the tree at the time of writing.
   (`forze_mock/adapters/identity/authn.py:371-376`), unlike the real adapter.
 
 ## 4. Goals / Non-goals
+
+*As first proposed. For phase 2 onward, §13 holds where the two conflict.*
 
 **Goals**
 
@@ -372,6 +376,8 @@ AuthnKernelConfig(
 
 ## 6. Tests
 
+*As first proposed. For phase 2 onward, §13 holds where the two conflict.*
+
 - **Property: the fast path never admits what the authoritative path refuses, outside the
   set of invalidations still in the outbox.** It runs over every event in §5.3, interleaved
   with verifications, against the mock and against Redis plus Postgres.
@@ -426,6 +432,8 @@ The authn page gets a "Session check fast path" section:
 
 ## 9. Risks
 
+*As first proposed. For phase 2 onward, §13 holds where the two conflict.*
+
 - **The window.** An invalidation in the outbox is not yet enforced by the fast path. With
   a wake that is the relay latency; hh-backend-v2 measured about 10 ms p50 outbox lag with an
   app-side wake under load. Whatever the failure (a parked row, a stopped relay, Redis
@@ -447,6 +455,8 @@ The authn page gets a "Session check fast path" section:
   refresh re-admits it. That is bounded by the access-token lifetime.
 
 ## 10. Unresolved questions
+
+*As first proposed. For phase 2 onward, §13 holds where the two conflict.*
 
 - Whether every writer of `is_active=False` on a policy principal is covered by §5.3. A
   census is part of phase 2b's entry condition.
@@ -475,25 +485,27 @@ The authn page gets a "Session check fast path" section:
 | 12 | `LOCKED` | ~~The fast path admits only while a freshness fence exists, and only the relay refreshes it, after a pass that finds the admission route with no `failed` row and nothing pending or processing older than the tolerance. Processing age comes from an admin-port probe phase 2 adds, since `oldest_pending_age` misses a stranded claim. Delivery alone cannot bound the window, because the relay parks a row after its last attempt and nothing drains a parked row on its own.~~ — **superseded by row 16**: with an expiry on every state, `ttl` bounds the window without a fence |
 | 13 | `ASSUMED` | ~~The fence TTL defaults to 10 s and the tolerance to 5 s, and the admission route's relay polls inside the TTL. The defaults trade idle polling against the worst-case window.~~ — **superseded by row 16**: there is no fence |
 | 14 | `LOCKED` | Postgres is the only truth. Redis caches states a lookup read there, each with an expiry, and any missing or unreadable key means "read Postgres". |
-| 15 | `LOCKED` | A lookup writes what it read with `SET NX PXAT`, at Redis's time when its read script ran plus `ttl`. It writes nothing inside a transaction. A revocation's write overwrites it: `SET` for `revoked`, a max script for the epoch. Together they expire every stale state within `ttl` of the revocation's commit, in Redis's clock (§13.3). |
+| 15 | `LOCKED` | A lookup writes what it read with `SET NX PXAT`, at Redis's time when its read script ran plus `ttl`, and writes nothing inside a transaction. A revocation's write overwrites it: `SET` for `revoked`, and for the epoch a max-set of the value it reads from Postgres at write time, expiring at Redis's time before that read plus `ttl`. It never writes the value it raised to, which a newer raise may already have made stale. Together these expire every stale state within `ttl` of the revocation's commit, in Redis's clock (§13.3). |
 | 16 | `LOCKED` | A revocation writes its states through after commit (`run_or_defer`), retried `write_attempts` times. If every attempt fails it logs at error level, and the operation still succeeds. A revoked credential can be admitted for at most `ttl` after its commit. That happens only when the write never lands (failed, the process died before the drain, or the process lacked the configuration), or when the revocation's key is lost while an earlier lookup is still writing (§13.5). No outbox route, wake or fence. |
 | 17 | `ASSUMED` | Nothing is written to Redis when a session is issued; lookups populate. |
 | 18 | `ASSUMED` | The principal epoch is an integer in Postgres, raised in the transaction of every revocation that ends all of a principal's sessions, and carried as the `pep` claim. A token whose `pep` is behind it is refused, and one ahead of a cached epoch is a miss. The epoch's row is never deleted while a token might carry it. |
 | 19 | `OPEN` | Where the epoch lives and how each backend raises it atomically. The lean is a forze-owned epochs relation, which leaves the principal model alone. |
 | 20 | `ASSUMED` | Access tokens gain `fam` and `pep` only when the fast path is configured. A token without them takes the authoritative path until it lapses. |
-| 21 | `ASSUMED` | `session_binding` is `"session"` by default (a rotated session's tokens are refused, as today) or `"family"` (admitted while the family is live). On a Redis error, the verifier makes the same checks from Postgres through the same lookup routine, so an outage changes cost, never outcome. |
+| 21 | `ASSUMED` | `session_binding` is `"session"` by default (a rotated session's tokens are refused, as today) or `"family"` (admitted while the family is live). On a Redis error, the verifier makes the same checks from Postgres through the same lookup routine. An outage therefore never admits what the fast path would refuse, and within the window it can refuse sooner. |
 | 22 | `ASSUMED` | The fast path refuses with today's codes, because `revoked` and the epoch only move one way. States are keyed under the token's subject and carry the tenant, compared only when both sides name one. |
-| 23 | `ASSUMED` | The verifier and every revoking adapter read one configuration value, so one process cannot run readers without writers. The fast path is refused with `tx_route=None`, where the write-through would run inline and fail the operation. |
+| 23 | `ASSUMED` | The verifier and every revoking adapter read one configuration value, so one process cannot run readers without writers. The fast path is refused when either registry's `tx_route` is `None`: the authn write-through would run inline and fail the operation, and a tenant switch would read the epoch without its lock. |
 | 24 | `ASSUMED` | `ttl` is required and has no default: it is the window, and the operator picks it. |
 | 25 | `LOCKED` | The eligibility read stays until every write of `is_active=False` raises the epoch, enforced at the policy principal's write path rather than by a census. Then a decorator skips a read only for a non-locking call about the admitted token's own subject, in the request that admitted it; locking calls (issue) and actor checks always read. Postgres only. |
-| 26 | `ASSUMED` | API-key states (phase 2c) are keyed by digest and carry a MAC under a server key, over the prefix, the digest, the principal, the actor, the key's expiry, the state and an absolute not-after. The verifier refuses a state past its not-after, and treats one whose MAC fails as a miss. Keys keep the eligibility read. |
-| 27 | `LOCKED` | Every issue reads the epoch with `FOR SHARE`, upserting its row, and every raise updates that row first. So a principal-wide revocation and an issue serialize on Postgres, and a login, refresh or tenant switch cannot commit a session a concurrent logout misses. |
-| 28 | `ASSUMED` | Every revocation writes the state of each session it stamped and of its family, whatever the binding, so a family revocation refuses session-bound tokens and a change of binding is safe. |
+| 26 | `ASSUMED` | API-key states (phase 2c) are keyed by digest and carry a MAC under a server key, over the prefix, the digest, the principal, the actor, the key's expiry, the state and an absolute not-after. The not-after is the earlier of Redis's read time plus `ttl` and the key's expiry. The verifier refuses a state past its not-after, checks the key's expiry as today, and treats a state whose MAC fails as a miss. Keys keep the eligibility read. |
+| 27 | `LOCKED` | Every issue reads the epoch with `FOR SHARE` after upserting its row, and every raise is an atomic upsert (`INSERT … ON CONFLICT DO UPDATE`) as its first statement, which locks the row or claims its key. So a principal-wide revocation and an issue serialize on Postgres, even when no row existed, and a login, refresh or tenant switch cannot commit a session a concurrent logout misses. |
+| 28 | `ASSUMED` | A revocation of chosen sessions or a family writes the state of each session it stamped and of its family, whatever the binding, so a family revocation refuses session-bound tokens and a change of binding is safe. A revocation that ends every session of a principal raises the epoch instead. |
 
 Rows 14–28 were added on 2026-10-14, when hh-backend-v2's specification for request 4 was
 adopted for phase 2 (§13), and revised the same day after an adversarial review of §13.
 
 ## 12. Phasing
+
+*As first proposed. For phase 2 onward, §13 holds where the two conflict.*
 
 1. **Transactions on the revocation paths.** Logout, family revocation, refresh rotation,
    password change and reset, and principal deactivation each commit atomically, and the
@@ -563,7 +575,7 @@ principal's hash tag:
 k:<digest>                    ->  live|<principal>|<actor or ->|<expires or ->|<not-after>|<mac> | revoked   (phase 2c)
 ```
 
-- **The principal epoch** is an integer in Postgres (row 19 settles where).
+- **The principal epoch** is an integer in Postgres. Where it lives is still open (row 19).
   - It is raised in the transaction of every revocation that ends all of a principal's
     sessions: logout, a password change or reset, and deactivation. Every access token issued
     after carries it as the `pep` claim.
@@ -599,11 +611,19 @@ k:<digest>                    ->  live|<principal>|<actor or ->|<expires or ->|<
     `ttl` of that commit. `SET NX` means it can never replace a revocation's value that is
     still present.
 - **A revocation always wins.**
-  - It writes `revoked` with a plain `SET`, and the epoch with a small script that sets the
-    larger of the stored and the new value. Two racing revocations therefore never move the
-    epoch backwards.
-  - Both carry `PX ttl`. Once a key expires, the next lookup reads `revoked` from Postgres
-    again. A revocation's state is never stale, so its expiry needs no precision.
+  - It writes `revoked` with a plain `SET` and `PX ttl`. `revoked` is never stale, so its
+    expiry needs no precision. Once the key expires, the next lookup reads `revoked` from
+    Postgres again.
+  - **It writes the epoch the way a lookup does, but overwriting.**
+    1. It takes Redis's `TIME`.
+    2. It reads the current epoch from Postgres.
+    3. It sets the larger of the stored and the read value, expiring at that time plus `ttl`.
+
+    It never writes the value its own transaction raised to. An epoch is stale once a newer
+    raise commits, so a write-through delayed past that raise, with its key already expired
+    or lost, would otherwise bring the older epoch back with a fresh expiry. Reading at write
+    time means a delayed write sets the newer epoch, or a value that expires within `ttl` of
+    the newer commit. The max means two racing writes never move the epoch backwards.
 
 ### 13.4 Verification
 
@@ -624,8 +644,9 @@ With the fast path configured, `_require_active_session`:
 
 **On a Redis error or timeout** the verifier makes the same checks from Postgres, through the
 same lookup routine the miss path uses, without writing. That is the epoch plus the family's
-or the session's state, so a Redis outage changes cost, never outcome. It costs one read more
-than today's session-row read.
+or the session's state. A Redis outage therefore never admits what the fast path would
+refuse. Within the window it can refuse sooner, because it reads the truth rather than a
+stale state. It costs one read more than today's session-row read.
 
 **Session binding** (`session_binding`) chooses what a rotation does to the old session's
 access tokens:
@@ -635,9 +656,12 @@ access tokens:
 
 ### 13.5 Who writes, and the window
 
-Every revocation writes both the family's and the session's state for each session it
-stamped, whatever the binding. A family revocation must refuse a session-bound token whose
-session it stamped. Writing both also keeps a change of binding during a rolling deploy safe.
+A revocation of chosen sessions or a family writes both the family's and the session's
+state for each session it stamped, whatever the binding. A family revocation must refuse a
+session-bound token whose session it stamped, and writing both also keeps a change of binding
+during a rolling deploy safe. A revocation that ends every session of a principal raises the
+epoch instead. That refuses every token issued before it, so writing a state per stamped
+session would add nothing but writes.
 
 | Path | In the transaction | After commit |
 | --- | --- | --- |
@@ -650,7 +674,10 @@ session it stamped. Writing both also keeps a change of binding during a rolling
 **Issue serializes with the epoch.**
 - Every issue reads the epoch with `FOR SHARE`, upserting its row if absent, in its
   transaction. That covers login, refresh and the tenant switch.
-- Every raise updates the epoch row as its first statement.
+- Every raise is an atomic upsert of the epoch row as its first statement (`INSERT … ON
+  CONFLICT DO UPDATE SET epoch = epoch + 1`). That locks the row, or claims its unique key
+  when the row is absent, which a plain `UPDATE` of an absent row would not. An issue's
+  upsert-then-`FOR SHARE` then waits for it, whichever creates the row.
 - So a principal-wide revocation and an issue cannot interleave on Postgres. If the issue
   commits first, the revocation's scan finds its session and revokes it. If the revocation
   commits first, the issue reads the raised epoch.
@@ -666,8 +693,13 @@ session it stamped. Writing both also keeps a change of binding during a rolling
 - When every attempt fails, the operation still succeeds, since the revocation is in
   Postgres. The failure is logged at error level with the principal, family, session or key,
   and counted.
-- The fast path requires a transaction route. With `tx_route=None`, `run_or_defer` runs the
-  write inline and would propagate its failure, so the configuration is refused.
+- The fast path requires a transaction route on both registries, and the build refuses it
+  otherwise.
+  - With `build_authn_registry(tx_route=None)`, `run_or_defer` runs the write inline and
+    would propagate its failure.
+  - With `build_tenancy_registry(tx_route=None)`, a tenant switch would issue without a
+    transaction, read the epoch without its lock, and could commit a session after a
+    logout's scan.
 
 **The window.** A revoked credential can be admitted for at most `ttl` after its revocation
 commits, measured in Redis's clock. Any stale state was written by a lookup that read
@@ -721,7 +753,16 @@ otherwise mint a key, or copy a victim's state onto their own key's digest, or r
 `live` state over `revoked` with no expiry. So:
 - **The state carries a MAC under a server key.** The MAC covers the prefix, the digest, the
   principal, the actor, the key's expiry, the state and an absolute not-after.
-- **The verifier refuses a state past its not-after,** whatever Redis's expiry says.
+- **The not-after** is the earlier of two times: Redis's `TIME` when the lookup's read script
+  ran plus `ttl`, and the key's own expiry. A replayed state therefore expires no later than
+  any other state would.
+- **The verifier checks two things, whatever Redis's expiry says,** both against its own
+  clock:
+  - it refuses a state past its not-after;
+  - it checks the key's own expiry, as it does today.
+
+  Skew between Redis's clock and the verifier's adds to the bound, and NTP keeps it to
+  milliseconds.
 - **A state whose MAC fails is a miss.**
 - **The MAC key and its rotation** belong to the configuration.
 
@@ -748,7 +789,7 @@ The verifier and every revoking adapter read this one value.
   without writers, and then every revocation becomes one `ttl` late with nothing logged.
 - A process can still revoke without it, which is a cause in 13.5. The docs say to configure
   every process that revokes.
-- The build refuses it alongside `tx_route=None`.
+- The build refuses it alongside `tx_route=None` on either registry (13.5).
 
 The state port stays a dedicated port with Redis and mock adapters and one conformance
 battery (row 7), because it needs `SET NX PXAT`, the max script, `TIME` and exact reads.
@@ -765,25 +806,33 @@ hh-backend-v2's acceptance list, plus what the corrections need:
     session it stamped.
 - **Flush.** The next verification reads once and repopulates, and nothing revoked is
   admitted.
-- **Redis down.** Every verification returns what the fast path returns with Redis up, under
-  both bindings. Under session binding that is also what 0.13 returns.
+- **Redis down.** No verification admits what the fast path with Redis up would refuse, under
+  both bindings, and outside any window both agree. Under session binding that is also what
+  0.13 returns.
 - **Races.**
   - A lookup and a revocation interleaved in both orders: the revocation's state stands.
   - A lookup write delayed past `ttl` lands expired.
   - A lookup inside a transaction writes nothing.
   - A lookup racing an evicted revocation key leaves a state that expires within `ttl` of the
     commit.
-- **Issue against a logout.** A login, refresh or tenant switch committing while a logout
-  runs leaves no admitted session, on either path.
+- **Issue against a logout, in both commit orders,** for a login, a refresh and a tenant
+  switch, on both paths:
+  - an issue that commits first is revoked by the logout;
+  - an issue that commits after the logout carries the raised epoch and stays admitted.
+
+  Both orders also hold when the epoch row did not exist before.
+- **A delayed epoch write-through.** Hold an older raise's write-through past a newer raise
+  and past the newer key's expiry. It writes the newer epoch, never the older.
 - **Write-through failure.** A write-through that fails every attempt: the operation succeeds
   and logs, and the credential is refused within `ttl`.
 - **2b.** A locking eligibility call, and an actor check, always read.
 - **2c.**
   - A key state with a bad MAC, one copied from another digest, and one past its not-after
     are all misses.
+  - A state whose not-after outlives the key's own expiry is refused once the key expires.
   - A deactivated principal's key is refused through the eligibility read.
-- **Configuration.** Readers cannot be enabled without writers, and `tx_route=None` is
-  refused.
+- **Configuration.** Readers cannot be enabled without writers, and `tx_route=None` on either
+  registry is refused.
 - **Load.** 1,000 verifications a second for a minute, with no session-store reads after
   warm-up.
 
