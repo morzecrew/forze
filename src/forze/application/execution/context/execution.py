@@ -13,6 +13,7 @@ from forze.application.contracts.document import DocumentDeps
 from forze.application.contracts.domain import DomainDeps
 from forze.application.contracts.dynamic_read import DynamicReadDeps
 from forze.application.contracts.embeddings import EmbeddingsDeps
+from forze.application.contracts.fleet import FleetDeps
 from forze.application.contracts.graph import GraphDeps
 from forze.application.contracts.http import HttpServiceDeps
 from forze.application.contracts.idempotency import IdempotencyDeps
@@ -248,6 +249,9 @@ class ExecutionContext:
     dlock: DistributedLockDeps = attrs.field(factory=DistributedLockDeps, init=False)
     """Distributed lock dependencies."""
 
+    fleet: FleetDeps = attrs.field(factory=FleetDeps, init=False)
+    """Fleet membership dependencies."""
+
     stream: StreamDeps = attrs.field(factory=StreamDeps, init=False)
     """Offset-log (commit sub-model) stream dependencies."""
 
@@ -391,6 +395,7 @@ class ExecutionContext:
         self.inference.lock(self)
         self.sandbox.lock(self)
         self.dlock.lock(self)
+        self.fleet.lock(self)
         self.stream.lock(self)
         self.tenancy.lock(self)
         self.authz.lock(self)

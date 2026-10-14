@@ -56,6 +56,7 @@ the name a resolution error prints. Handlers should keep to the accessor.
 | [Idempotency](contracts/coordination.md#idempotency) | `IdempotencySpec` | `ctx.idempotency(spec)` | `IdempotencyDepKey` |
 | [Resilience](resilience-tuning.md) | `ResiliencePolicy` | `ctx.resilience().run(fn, policy=…)` | `ResilienceExecutorDepKey` (+ `ResiliencePortPoliciesDepKey` for per-port defaults, `ResilienceAdminDepKey` for breaker state) |
 | [Distributed lock](contracts/coordination.md#distributed-lock) | `DistributedLockSpec` | `ctx.dlock` | `DistributedLockCommandDepKey` / `DistributedLockQueryDepKey` |
+| [Fleet membership](../running-in-prod/fleet-membership.md) | `FleetSpec` | `ctx.fleet(spec)` | `FleetDepKey` |
 | Hybrid logical clock | — | by dep key | `HlcCheckpointDepKey` |
 | [Sandboxed execution](../data-events/sandbox.md) | `SandboxSpec` | `ctx.sandbox.run(spec)` | `SandboxDepKey` |
 

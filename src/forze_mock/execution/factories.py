@@ -34,6 +34,7 @@ from forze.application.contracts.durable.function import DurableFunctionEventSpe
 from forze.application.contracts.durable.workflow import DurableWorkflowSpec
 from forze.application.contracts.dynamic_read import DynamicReadSpec
 from forze.application.contracts.embeddings import EmbeddingsSpec
+from forze.application.contracts.fleet import FleetSpec
 from forze.application.contracts.graph import GraphModuleSpec
 from forze.application.contracts.http import HttpServiceSpec
 from forze.application.contracts.idempotency import IdempotencyPort, IdempotencySpec
@@ -113,6 +114,7 @@ from forze_mock.adapters import (
     MockDynamicReadAdapter,
     MockDynamicReadRegistry,
     MockFederatedSearchAdapter,
+    MockFleetAdapter,
     MockGraphAdapter,
     MockGraphManagementAdapter,
     MockHttpRegistry,
@@ -1102,6 +1104,24 @@ class ConfigurableMockDistributedLock(_MockFactoryBase):
     ) -> MockDistributedLockAdapter:
         cfg = self._route(spec.name)
         return MockDistributedLockAdapter(
+            spec=spec,
+            state=self._state(context),
+            namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
+            tenant_aware=cfg.tenant_aware if cfg else False,
+            tenant_provider=_tenant_provider(context),
+        )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockFleet(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: FleetSpec,
+    ) -> MockFleetAdapter:
+        cfg = self._route(spec.name)
+        return MockFleetAdapter(
             spec=spec,
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),

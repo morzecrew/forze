@@ -11,6 +11,7 @@ from forze.base.primitives import AsyncLockTable, PerOwnerAsyncLocks, StripedAsy
 
 if TYPE_CHECKING:
     from forze.application.contracts.authn import AuthnEvent
+    from forze.application.contracts.fleet import MemberState
 
 # ----------------------- #
 
@@ -130,7 +131,7 @@ class MockState:
     - ``streams`` / ``stream_ack`` — stream backends
     - ``storage`` / ``storage_bytes`` / ``storage_buckets`` — object storage (S3/GCS)
     - ``cache_kv`` / ``cache_pointers`` / ``cache_bodies`` — cache (Redis)
-    - ``counters``, ``dlocks`` / ``dlock_fences`` — Redis-backed
+    - ``counters``, ``dlocks`` / ``dlock_fences``, ``fleets`` — Redis-backed
     - ``search_snapshots`` / ``search_snapshot_chunks`` — search engine
       (Meilisearch); search reads in mock project off ``documents`` anyway
     - ``analytics_query_hits`` / ``analytics_ingest_log`` — warehouses
@@ -245,6 +246,10 @@ class MockState:
 
     dlocks: dict[str, dict[str, tuple[str, float]]] = attrs.field(factory=dict)
     """Route → lock key → (owner, expires_at monotonic)."""
+
+    fleets: dict[str, dict[str, tuple[int, "MemberState", int, str]]] = attrs.field(factory=dict)
+    """Route → member id → (expiry ms, state, since ms, encoded report), both instants on
+    the fleet adapter's clock."""
 
     dlock_fences: dict[str, dict[str, int]] = attrs.field(factory=dict)
     """Route → lock key → last issued fencing token.

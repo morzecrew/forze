@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The worker probe listener can check dependencies, and needs no runtime.** `probe_listener_step(checks=, check_timeout=)` answers through `evaluate_readiness`, the evaluator `attach_readiness_route` now uses, so both answer alike from the same probes. Steps read `ctx.lifecycle.started` and `.announced`.
 
+- **Replicas can see which peers are alive, and split work over them.** `ctx.fleet(FleetSpec(...))` gives a `FleetPort` whose `beat` writes the replica's state and report and returns the `FleetView`; its `settled`, `share`, `rank` and `excess` agree across replicas. `instance_id()` names a process.
+
 ### Changed
 
 - **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.
