@@ -28,7 +28,7 @@ from forze.application.integrations.realtime import (
     InMemoryRealtimeMailbox,
     InMemoryRealtimePresence,
 )
-from forze.base.exceptions import GENERIC_INTERNAL_DETAIL, exc
+from forze.base.exceptions import GENERIC_INTERNAL_DETAIL, CoreException, ExceptionKind, exc
 from forze_socketio import (
     CONNECTION_SESSION_KEY,
     IDENTITY_SESSION_KEY,
@@ -364,6 +364,31 @@ class TestDrainStep:
 
         for index, at in enumerate(sorted(closed_at)):
             assert at - began == pytest.approx(index * 0.1, abs=0.08)
+
+    # ....................... #
+
+    @pytest.mark.parametrize("missing", ["sockets", "disconnect", "create_queue"])
+    def test_an_engine_io_without_what_the_close_uses_is_refused_when_built(
+        self, missing: str
+    ) -> None:
+        server = _server()
+        eio = server.eio
+
+        class _Narrower:
+            def __getattr__(self, name: str) -> Any:
+                if name == missing:
+                    raise AttributeError(name)
+
+                return getattr(eio, name)
+
+        server.eio = _Narrower()  # type: ignore[assignment]
+
+        with pytest.raises(CoreException) as caught:
+            connection_drain_lifecycle_step(
+                server, window=timedelta(seconds=1), tail=timedelta(seconds=1)
+            )
+
+        assert caught.value.kind == ExceptionKind.CONFIGURATION
 
     # ....................... #
 

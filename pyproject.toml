@@ -148,6 +148,8 @@ kafka = ["aiokafka>=0.14.0"]
 socketio = [
     "python-socketio>=5.16.1,<6",
     "python-socketio-stubs>=5.16.1.0.20260211",
+    # The connection drain closes connections through python-engineio internals.
+    "python-engineio>=4.13.2,<5",
 ]
 neo4j = ["neo4j>=6.1.0"]
 authn = [
@@ -1150,6 +1152,7 @@ DEP002 = [
     "aiobotocore",
     "httpx",                 # required by starlette.testclient.TestClient
     "python-socketio-stubs",
+    "python-engineio",       # bounded for the drain's use of its internals, reached via sio.eio
     "python-multipart",
     "email-validator",       # required for pydantic.EmailStr
     #! Added temporarily

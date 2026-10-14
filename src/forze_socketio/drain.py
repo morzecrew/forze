@@ -30,6 +30,7 @@ from forze.application.execution.background import (
     spread_closes,
     spread_drain_lifecycle_step,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from .exceptions import error_logger, log_server_error
@@ -64,6 +65,35 @@ async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
         # end-of-stream sentinel ends the socket's writer, which closes the WebSocket. A
         # polling socket is unaffected: its CLOSE rides the next poll.
         socket.queue.put_nowait(None)
+
+
+def _require_close_internals(sio: AsyncServer) -> None:
+    """Refuse a server whose Engine.IO side lacks what :func:`close_transport` uses.
+
+    The close reads python-engineio internals — its socket table, its disconnect, and the
+    queue each socket's writer drains, which ends on a ``None`` — that a release could
+    change. A drain finding out at drain time would close nothing; this finds out at
+    assembly instead.
+    """
+
+    eio = sio.eio
+    missing = [
+        name
+        for name, present in (
+            ("sockets", isinstance(getattr(eio, "sockets", None), dict)),
+            ("disconnect", callable(getattr(eio, "disconnect", None))),
+            ("create_queue", callable(getattr(eio, "create_queue", None))),
+        )
+        if not present
+    ]
+
+    if missing:
+        raise exc.configuration(
+            "The connection drain closes Engine.IO connections through python-engineio's "
+            f"socket table and socket queues, and this server's Engine.IO side has no "
+            f"{', '.join(missing)}; install a python-engineio the socketio extra allows",
+            code="realtime_drain_engineio_unsupported",
+        )
 
 
 # ....................... #
@@ -254,9 +284,11 @@ def connection_drain_lifecycle_step(
     :param order: The phase's place among the scope's drain phases.
     :param step_id: The step's id, which also names its drain phase.
 
-    :raises CoreException: ``configuration`` — *window* or *tail* is not positive.
+    :raises CoreException: ``configuration`` — *window* or *tail* is not positive, or the
+        server's python-engineio lacks what the close uses.
     """
 
+    _require_close_internals(sio)
     covered = tuple(namespaces)
 
     async def close(targets: list[tuple[str, str]], window: timedelta, tail: timedelta) -> int:

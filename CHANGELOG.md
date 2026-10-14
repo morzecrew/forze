@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The `socketio` extra bounds `python-engineio` below 5.** The connection drain closes connections through its internals, and refuses at assembly a server that lacks them.
+
 - **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.
 
 - **The readiness route logs a failed dependency check under the application logger**, as "Readiness check … failed". Alerts keyed on the `fastapi.probes` logger no longer match.
