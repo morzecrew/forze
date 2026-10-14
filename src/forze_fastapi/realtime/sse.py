@@ -15,6 +15,9 @@ because SSE's reconnect model — ``Last-Event-ID`` — *is* a cursor protocol:
   auto-reconnects with ``Last-Event-ID``, giving long-poll-style delivery).
 - **Ack**: SSE has no upstream channel, so the cumulative ack rides a small POST
   endpoint attached alongside, sharing the kernel's cursor machinery.
+- **Drain**: while the replica drains a new stream is refused with 503, and the hub's
+  drain step ends the open ones — the browser reconnects, through the balancer, to a
+  replica that is still ready.
 
 Every frame carries the same ``{id, data}`` envelope as the Socket.IO transport —
 one protocol (versioned via the ``protocol`` query parameter), two transports. The
@@ -37,7 +40,7 @@ from typing import Annotated, Any, final
 from uuid import UUID
 
 import attrs
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -45,7 +48,9 @@ from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import MailboxEntry
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
+from forze.application.execution.context.lifecycle import scope_readiness
 from forze.application.integrations.realtime import (
+    REALTIME_DRAINING_CODE,
     BacklogDrain,
     MailboxCursors,
     RealtimeAck,
@@ -62,6 +67,7 @@ from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, uuid7
 
+from ..exceptions import ERROR_CODE_HEADER
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 
 # ----------------------- #
@@ -123,6 +129,23 @@ def _sse_frame(*, event: str, event_id: str | None, payload: dict[str, Any]) -> 
     lines.append(f"data: {encode_frame(envelope)}")
 
     return "\n".join(lines) + "\n\n"
+
+
+# ....................... #
+
+
+def _draining(ctx: ExecutionContext) -> bool:
+    """Whether the replica is on its way down: a drain was announced, or the gate closed."""
+
+    return scope_readiness(ctx) == "draining"
+
+
+def _draining_refusal() -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail="Server is draining",
+        headers={ERROR_CODE_HEADER: REALTIME_DRAINING_CODE},
+    )
 
 
 # ....................... #
@@ -305,30 +328,40 @@ async def _replay_frames(
 async def _live_frames(
     subscription: SseSubscription, *, keepalive_interval: timedelta
 ) -> AsyncIterator[str]:
-    """The live tail: matched hub signals as SSE frames, keepalive comments between."""
+    """The live tail: matched hub signals as SSE frames, keepalive comments between, until
+    the subscription is ended."""
 
     pending: asyncio.Task[Any] | None = None
+    ended = asyncio.ensure_future(subscription.ended.wait())
 
     try:
-        while True:
+        while not subscription.ended.is_set():
             if pending is None:
                 pending = asyncio.ensure_future(subscription.queue.get())
 
             # Never cancel the pending get on timeout — a cancelled Queue.get can
             # drop a wakeup; the same task just carries over the iteration.
-            done, _ = await asyncio.wait({pending}, timeout=keepalive_interval.total_seconds())
+            done, _ = await asyncio.wait(
+                {pending, ended},
+                timeout=keepalive_interval.total_seconds(),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-            if not done:
+            if pending in done:
+                signal, event_id = pending.result()
+                pending = None
+                yield _sse_frame(
+                    event=signal.event, event_id=event_id, payload=dict(signal.payload)
+                )
+
+            elif not done:
                 yield ": keepalive\n\n"
-                continue
-
-            signal, event_id = pending.result()
-            pending = None
-            yield _sse_frame(event=signal.event, event_id=event_id, payload=dict(signal.payload))
 
     finally:
         if pending is not None:
             pending.cancel()
+
+        ended.cancel()
 
 
 # ----------------------- #
@@ -367,6 +400,10 @@ def attach_realtime_sse_route(
     topic is granted — topic membership is the app's authorization decision (the
     Socket.IO analog is app code calling ``enter_room``), never a client-asserted
     fact. Principal-addressed delivery needs no authorizer.
+
+    While the replica drains (a drain announced, read from the request's context) a new
+    stream is refused with 503 and ``X-Error-Code: realtime_draining``.
+    :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` ends the open ones.
     """
 
     if keepalive_interval.total_seconds() <= 0:
@@ -386,6 +423,10 @@ def attach_realtime_sse_route(
         topics: Annotated[str | None, Query()] = None,
     ) -> StreamingResponse:
         ctx = ctx_dep()
+
+        if _draining(ctx):
+            raise _draining_refusal()
+
         principal = _authenticated_principal(ctx)
         negotiate_realtime_protocol(protocol)
 
@@ -412,6 +453,11 @@ def attach_realtime_sse_route(
             if hub is not None
             else None
         )
+
+        if subscription is not None and _draining(ctx):
+            # The drain may have ended the hub's subscribers before this one joined.
+            hub.unsubscribe(subscription)  # type: ignore[union-attr]
+            raise _draining_refusal()
 
         # Presence: an open SSE stream occupies the same rooms a Socket.IO connection
         # would, under a per-response member key (the sid analog) — one store, one

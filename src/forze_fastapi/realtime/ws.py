@@ -85,6 +85,7 @@ from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .sse import (
     TopicAuthorizer,
     _await_hub_ready,  # pyright: ignore[reportPrivateUsage]
+    _draining,  # pyright: ignore[reportPrivateUsage]
     _parse_topics,  # pyright: ignore[reportPrivateUsage]
     _require_topic_grant,  # pyright: ignore[reportPrivateUsage]
     _resolve_since,  # pyright: ignore[reportPrivateUsage]
@@ -108,10 +109,13 @@ WS_TOO_BIG_CLOSE = 1009
 """Close code for an oversized inbound frame."""
 
 WS_RECONNECT_CLOSE = 1012
-"""Close code ("service restart") when the replay could not confirmably drain the
-backlog: the client reconnects with ``last_event_id`` and continues from there —
-entering the live tail instead would skip the undelivered middle, and a later ack
-would let the all-device trim hard-delete it."""
+"""Close code ("service restart") asking the client to reconnect: when the replay could not
+confirmably drain the backlog — it reconnects with ``last_event_id`` and continues from
+there; entering the live tail instead would skip the undelivered middle, and a later ack
+would let the all-device trim hard-delete it — and when the replica is draining."""
+
+_DRAINING_REASON = "server draining - reconnect"
+"""The close reason a draining replica gives, with :data:`WS_RECONNECT_CLOSE`."""
 
 WS_UNSUPPORTED_DATA_CLOSE = 1003
 """Close code for a non-text (binary) inbound frame — the protocol is JSON text."""
@@ -393,6 +397,12 @@ def attach_realtime_ws_route(
     :attr:`WsConnection.expires_at`: the socket is closed once past it (a
     ``realtime.reauth`` swaps in a fresh ``expires_at`` without reconnecting), the
     same contract as the Socket.IO expiry sweep.
+
+    While the replica drains (a drain announced, read from the context) a new upgrade is
+    accepted and closed with 1012, as the route's other refusals are, because a close
+    before accept is an opaque 403. A live tail whose hub subscription the drain ends —
+    :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` — closes with 1012
+    too, and the client reconnects with ``last_event_id``.
     """
 
     if max_topics <= 0:
@@ -432,6 +442,11 @@ def attach_realtime_ws_route(
 
     async def ws_endpoint(websocket: WebSocket) -> None:
         ctx = ctx_dep()
+
+        if _draining(ctx):
+            await websocket.accept()
+            await websocket.close(code=WS_RECONNECT_CLOSE, reason=_DRAINING_REASON)
+            return
 
         async def _handshake() -> tuple[WsConnection, frozenset[str]]:
             _require_allowed_origin(websocket, origin_allowlist)
@@ -480,6 +495,12 @@ def attach_realtime_ws_route(
             if hub is not None
             else None
         )
+
+        if subscription is not None and _draining(ctx):
+            # The drain may have ended the hub's subscribers before this one joined.
+            hub.unsubscribe(subscription)  # type: ignore[union-attr]
+            await websocket.close(code=WS_RECONNECT_CLOSE, reason=_DRAINING_REASON)
+            return
         member_key = subscription.key if subscription is not None else f"ws:{uuid7()}"
         rooms = (
             presence_rooms(
@@ -619,11 +640,35 @@ def attach_realtime_ws_route(
                 )
                 return
 
-            while True:
-                signal, event_id = await subscription.queue.get()
-                await _send(
-                    _egress_frame(event=signal.event, event_id=event_id, payload=signal.payload)
-                )
+            ended = asyncio.ensure_future(subscription.ended.wait())
+            received: asyncio.Task[Any] | None = None
+
+            try:
+                while not subscription.ended.is_set():
+                    received = asyncio.ensure_future(subscription.queue.get())
+                    done, _ = await asyncio.wait(
+                        {received, ended}, return_when=asyncio.FIRST_COMPLETED
+                    )
+
+                    if received not in done:
+                        break
+
+                    signal, event_id = received.result()
+                    received = None
+                    await _send(
+                        _egress_frame(event=signal.event, event_id=event_id, payload=signal.payload)
+                    )
+
+            finally:
+                # Ending or cancelled: neither wait may outlive the tail.
+                ended.cancel()
+
+                if received is not None:
+                    received.cancel()
+
+            # Ended by the drain: close so the client reconnects to a replica still ready.
+            await _close_socket(WS_RECONNECT_CLOSE, _DRAINING_REASON)
+            raise WebSocketDisconnect(WS_RECONNECT_CLOSE)
 
         # ....................... #
 

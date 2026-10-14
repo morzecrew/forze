@@ -73,11 +73,24 @@ class SseSubscription:
     key: str = attrs.field(init=False)
     """This connection's presence member key (the SSE analog of the Socket.IO sid)."""
 
+    ended: asyncio.Event = attrs.field(init=False)
+    """Set by :meth:`end`: the stream should finish, so its client reconnects elsewhere.
+
+    State rather than a sentinel in :attr:`queue`, which is bounded and drops when full."""
+
     maxsize: int = 256
 
     def __attrs_post_init__(self) -> None:
         self.queue = asyncio.Queue(maxsize=self.maxsize)
         self.key = f"sse:{uuid7()}"
+        self.ended = asyncio.Event()
+
+    # ....................... #
+
+    def end(self) -> None:
+        """Ask the stream to finish: an SSE response ends, a WebSocket closes with 1012."""
+
+        self.ended.set()
 
     # ....................... #
 

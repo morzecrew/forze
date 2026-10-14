@@ -37,6 +37,7 @@ from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.integrations.realtime import (
     REALTIME_ACK_EVENT,
+    REALTIME_DRAINING_CODE,
     REALTIME_REAUTH_EVENT,
     BacklogDrain,
     acknowledge_up_to,
@@ -70,9 +71,6 @@ from .routing import IDENTITY_SESSION_KEY, SocketIOConnect
 
 CONNECTION_SESSION_KEY = "forze.realtime_connection"
 """Session key holding the :class:`RealtimeConnection` for disconnect presence."""
-
-_DRAINING_CODE = "realtime_draining"
-"""The code a connect refused because the replica is draining carries in its ``data``."""
 
 # ....................... #
 
@@ -240,7 +238,7 @@ def _draining_refusal() -> SocketIOConnectionRefusedError:
     """The refusal a draining replica answers with: its ``data`` names the code, so a client
     can tell it from an authentication failure and retry elsewhere."""
 
-    return SocketIOConnectionRefusedError("Server is draining", {"code": _DRAINING_CODE})
+    return SocketIOConnectionRefusedError("Server is draining", {"code": REALTIME_DRAINING_CODE})
 
 
 def _core_refusal(error: CoreException) -> SocketIOConnectionRefusedError:
