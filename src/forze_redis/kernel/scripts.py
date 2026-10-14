@@ -541,8 +541,9 @@ if previous then
     local cut = string.find(previous, '|', 1, true)
     if cut and string.sub(previous, 1, cut - 1) == state then
         local cut2 = string.find(previous, '|', cut + 1, true)
-        if cut2 then
-            since = string.sub(previous, cut + 1, cut2 - 1)
+        local kept = cut2 and string.sub(previous, cut + 1, cut2 - 1)
+        if kept and #kept <= 14 and string.find(kept, '^%d+$') then
+            since = kept
         end
     end
 end
@@ -562,7 +563,8 @@ redis.call('PEXPIREAT', KEYS[2], keep)
 Removes every expired member from both keys first, in chunks of 1000 (``unpack`` of
 thousands of values exceeds Lua's stack), then writes the entry. ``since`` is kept when the
 stored entry's state prefix equals the new state, compared as strings, so the report is
-never decoded. Both keys expire one second past the **largest** member expiry — never from
+never decoded; a stored ``since`` that is not 1 to 14 digits restarts at now. Both keys expire
+one second past the **largest** member expiry — never from
 this beat's own TTL, so a short final beat cannot expire the fleet under its other members.
 
 KEYS[1]: expiry ZSET, KEYS[2]: entry HASH. ARGV: member id, state, report JSON, ttl ms.

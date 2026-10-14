@@ -64,7 +64,7 @@ def _member(line: str) -> Member | None:
             report=decode_report(report),
         )
 
-    except ValueError as error:
+    except (ValueError, OverflowError, RecursionError) as error:
         # Ids are checked before they are written, so a line that does not parse came from
         # another writer — a newer release with a state this one does not know, say. It
         # reads as absent rather than failing every replica's beat.

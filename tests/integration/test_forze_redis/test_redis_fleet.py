@@ -231,6 +231,22 @@ class TestForeignEntries:
         assert [m.id for m in view.members] == ["known"]
 
 
+    @pytest.mark.parametrize("since", ["not-a-time", "1e12", "123456789012345"])
+    async def test_a_garbled_since_restarts_at_the_next_beat(
+        self, redis_client: RedisClient, raw: Redis, namespace: str, since: str
+    ) -> None:
+        spec = _spec()
+        z, h = _keys(namespace, spec)
+        far = int((await _server_now(raw) + timedelta(minutes=5)).timestamp() * 1000)
+        await raw.zadd(z, {"me": far})
+        await raw.hset(h, "me", f"serving|{since}|{{}}")
+
+        fleet = RedisFleetAdapter(client=redis_client, namespace=namespace, spec=spec)
+        view = await fleet.beat("me", "serving", {})
+
+        assert [(m.id, m.since) for m in view.members] == [("me", view.at)]
+
+
 class TestWiring:
     async def test_the_module_resolves_the_fleet_port(
         self, redis_client: RedisClient, namespace: str

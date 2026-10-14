@@ -46,6 +46,8 @@ class TestParseFleetReply:
             'a\t2\tserving|1|{"x":[1]}',
             'a\t2\tserving|1|{"x":NaN}',
             'a\t2\tserving|1|{"x":true}',
+            "a\t2\tserving|99999999999999999999|{}",
+            'a\t2\tserving|1|{"x":' + "[" * 100_000 + "]" * 100_000 + "}",
             "a only",
         ],
     )
