@@ -245,9 +245,77 @@ def _flaky_runtime(port: _FlakyFleet, spec: FleetSpec = SPEC) -> ExecutionRuntim
     )
 
 
+@attrs.define
+class _SlowFleet:
+    """The mock's fleet, with the first loop beat's reply and the next beat's write delayed."""
+
+    inner: MockFleetAdapter
+    reply_delay: float
+    write_delay: float
+    calls: int = 0
+
+    async def beat(
+        self,
+        member_id: str,
+        state: MemberState,
+        report: Report,
+        *,
+        ttl: timedelta | None = None,
+    ) -> FleetView:
+        self.calls += 1
+
+        if self.calls == 3:
+            await asyncio.sleep(self.write_delay)
+
+        view = await self.inner.beat(member_id, state, report, ttl=ttl)
+
+        if self.calls == 2:
+            await asyncio.sleep(self.reply_delay)
+
+        return view
+
+    async def view(self) -> FleetView:
+        return await self.inner.view()
+
+    async def leave(self, member_id: str) -> None:
+        await self.inner.leave(member_id)
+
+
 class TestSupervision:
+    async def test_a_late_reply_then_a_late_write_never_drop_a_live_replica(self) -> None:
+        # ttl 2 s, every 600 ms. Beat 2 writes at once and replies 1.2 s later; beat 3 writes
+        # 400 ms after it is sent. Waiting for the reply would put beat 3's write at 2.2 s,
+        # after beat 2's entry expired at 2 s; abandoning beat 2 at the 467 ms bound puts it
+        # near 1.47 s, plus the time the loop takes to log the abandoned beat.
+        spec = FleetSpec(name="gateways", ttl=timedelta(seconds=2))
+        state = MockState()
+        peer = MockFleetAdapter(spec=spec, state=state, namespace=str(spec.name))
+        port = _SlowFleet(inner=peer, reply_delay=1.2, write_delay=0.4)
+        absent_at: list[float] = []
+        loop = asyncio.get_running_loop()
+
+        runtime = build_runtime(
+            deps=Deps.plain({FleetDepKey: lambda _ctx, _spec: port}),
+            lifecycle_steps=fleet_membership_lifecycle_step(
+                spec, every=timedelta(milliseconds=600), member_id="me"
+            ),
+            drain_timeout=timedelta(0),
+        )
+
+        async with runtime.scope():
+            start = loop.time()
+
+            while loop.time() - start < 2.6:  # bounded: past beat 3's write and beat 4
+                if await _state_of(peer, "me") is None:
+                    absent_at.append(loop.time() - start)
+
+                await asyncio.sleep(0.01)
+
+        assert port.calls >= 4
+        assert absent_at == []
+
     async def test_a_hung_beat_is_abandoned_and_the_loop_beats_on(self) -> None:
-        # ttl 300 ms, every 20 ms: a beat may take 280 ms before it is abandoned.
+        # ttl 300 ms, every 20 ms: a beat may take 93 ms before it is abandoned.
         port = _FlakyFleet(hang_on=frozenset({2}))
         spec = FleetSpec(name="gateways", ttl=timedelta(milliseconds=300))
 

@@ -51,8 +51,14 @@ class _Membership:
     report: Callable[[], Report]
     member_id: str | None
     bound: timedelta
-    """The longest a beat may take: ``ttl - every``. A beat that finishes within it renews
-    the entry before it expires, since the next one starts ``every`` later."""
+    """The longest a beat may take: ``(ttl - every) / 3``.
+
+    The loop sleeps ``every`` after a beat's reply, while the entry's ttl runs from the
+    moment the backend writes it. Two writes can therefore sit one beat's reply delay, the
+    interval and the next beat's write delay apart. With both delays under this bound, that
+    stays a third of the slack under the ttl, which leaves room for the loop's own time —
+    logging a failed beat, scheduling. A beat abandoned here counts as failed, and the loop
+    moves on from the abandonment rather than the late reply."""
 
     ctx: ExecutionContext | None = attrs.field(default=None, init=False)
     port: FleetPort | None = attrs.field(default=None, init=False)
@@ -90,7 +96,8 @@ class _Membership:
 
         except TimeoutError as error:
             raise exc.timeout(
-                f"Fleet beat took longer than {self.bound}, the fleet's ttl less the interval",
+                f"Fleet beat took longer than {self.bound}, a third of the fleet's ttl less "
+                "the interval",
                 code="fleet.beat_timeout",
             ) from error
 
@@ -168,7 +175,7 @@ def fleet_membership_lifecycle_step(
 
     At startup the step beats once as ``starting``, then beats every *every* from a supervised
     loop: a failed beat is logged and the next one tries again, and a beat that takes longer
-    than ``ttl - every`` is abandoned as failed. The state follows the scope:
+    than ``(ttl - every) / 3`` is abandoned as failed. The state follows the scope:
     ``starting`` until lifecycle startup finished, ``serving`` after, ``draining`` once a
     drain is announced or the drain gate closes. On stop it leaves the fleet, or lingers.
 
@@ -210,7 +217,9 @@ def fleet_membership_lifecycle_step(
     if member_id is not None:
         validate_member_id(member_id)
 
-    membership = _Membership(spec=spec, report=report, member_id=member_id, bound=spec.ttl - every)
+    membership = _Membership(
+        spec=spec, report=report, member_id=member_id, bound=(spec.ttl - every) / 3
+    )
     loop = periodic_lifecycle_step(
         tick=membership.beat,
         interval=every,
