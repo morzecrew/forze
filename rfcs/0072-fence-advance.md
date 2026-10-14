@@ -1,6 +1,6 @@
 # RFC 0072 — Fence advance
 
-- **Status:** 🚧 In progress
+- **Status:** ✅ Complete — executed 2026-10-14 on `feat/fence-advance`: `FenceAdvancing` with its capability and spec flags, the Redis and mock implementations, the `dlock` conformance plane, and the claim rule in the contract text, the scope's example and the docs. Departures are in [`logs/T-0072.md`](../logs/T-0072.md).
 - **Scope:** Two pieces that make fencing tokens safe after a lock backend loses its data:
   - an optional capability on the distributed-lock command port that moves a lock's fencing
     counter up to the highest fence a store holds, so new tokens are not refused for ever;
