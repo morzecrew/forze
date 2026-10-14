@@ -66,9 +66,15 @@ class _Lock:
     reset_plan: list[float | None] = attrs.field(factory=list)
     """Per reset call, in order: answer after this many seconds, or ``None`` to hang."""
     acquire_delay: float = 0.0
-    """Seconds an acquire of the lease (not the want-lock) takes to land."""
+    """Seconds an acquire of the lease takes to land; a request on the wire lands even when
+    its caller is cancelled."""
+    want_delay: float = 0.0
+    """The same, for an acquire of the want-lock."""
+    lands_then_raises: int = 0
+    """How many lease acquires land and then raise, as a reset connection does."""
     acquire_fails_on: frozenset[str] = frozenset()
     release_fails: bool = False
+    release_delay: float = 0.0
     log: list[tuple[float, str, str, str]] = attrs.field(factory=list)
 
     @property
@@ -84,8 +90,22 @@ class _Lock:
         if key in self.acquire_fails_on:
             raise exc.infrastructure("acquire refused")
 
-        if key == KEY and self.acquire_delay:
-            await asyncio.sleep(self.acquire_delay)
+        delay = self.acquire_delay if key == KEY else self.want_delay
+
+        if delay:
+            # Shielded: cancelling the caller does not stop a request already sent.
+            return await asyncio.shield(asyncio.ensure_future(self._land(delay, key, owner)))
+
+        acquired = await self.inner.acquire(key, owner)
+
+        if key == KEY and self.lands_then_raises:
+            self.lands_then_raises -= 1
+            raise exc.infrastructure("connection reset after the lock was taken")
+
+        return acquired
+
+    async def _land(self, delay: float, key: str, owner: str) -> AcquiredLock | None:
+        await asyncio.sleep(delay)
 
         return await self.inner.acquire(key, owner)
 
@@ -103,6 +123,9 @@ class _Lock:
 
         if self.release_fails:
             raise exc.infrastructure("release refused")
+
+        if self.release_delay:
+            await asyncio.sleep(self.release_delay)
 
         return await self.inner.release(key, owner)
 
@@ -387,6 +410,84 @@ class TestDeadlines:
 
         _simulate(scenario)
 
+    def test_a_slow_acquire_shortens_the_term(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a")
+            a.lock.acquire_delay = 3.0  # lands three seconds after it was sent
+            a.lock.reset_plan = [None] * 10
+            await a.start()
+            await asyncio.sleep(60)
+
+            sent = _first_acquire(a)
+            (leader, *_) = fleet.runs
+            assert leader.started == sent + 3.0
+            assert leader.term.reason == "expiring"
+            # Measured from the send, not from the answer three seconds later.
+            assert leader.saw_end == sent + TTL - MARGIN - GRACE
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_cancelled_body_unwinds_inside_the_lease_with_no_margin(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            spec = attrs.evolve(SPEC, margin=timedelta(0))
+            a = fleet.replica("a", spec=spec, lead=fleet.body("a", listens=False, resists=0.5))
+            a.lock.reset_plan = [None] * 10
+            await a.start()
+            await fleet.replica("b", spec=spec).start()
+            await asyncio.sleep(60)
+
+            hard = _first_acquire(a) + TTL  # no margin: the lease itself
+            leader = fleet.by("a")[0]
+            assert leader.cancelled == hard - RELEASE
+            assert leader.finished is not None and leader.finished <= hard
+            fleet.assert_one_at_a_time()
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_an_unwind_of_the_whole_release_timeout_leaves_the_margin_intact(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a", lead=fleet.body("a", listens=False, resists=RELEASE))
+            a.lock.reset_plan = [None] * 10
+            await a.start()
+            await fleet.replica("b").start()
+            await asyncio.sleep(60)
+
+            hard = _first_acquire(a) + TTL - MARGIN
+            leader = fleet.by("a")[0]
+            assert leader.finished == hard  # done by the hard deadline, the margin untouched
+            assert a.lock.calls("release")[0][0] == leader.finished
+            fleet.assert_one_at_a_time()
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_stop_near_the_soft_deadline_is_cut_short_of_the_hard_one(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a", lead=fleet.body("a", listens=False, resists=0.9))
+            a.lock.reset_plan = [None] * 10
+            await a.start()
+            await asyncio.sleep(23.5)  # the renewal at +10 hangs; the soft deadline is +24
+            sent = _first_acquire(a)
+
+            await a.stop()
+
+            (run,) = fleet.runs
+            assert run.term.reason == "stopped"
+            # Not +28.5: the grace is cut where a cancelled body still finishes in the lease.
+            assert run.cancelled == sent + TTL - MARGIN - RELEASE
+            assert run.finished is not None and run.finished <= sent + TTL - MARGIN
+
+        _simulate(scenario)
+
     def test_a_slow_renewal_shortens_the_term(self) -> None:
         async def scenario() -> None:
             fleet = _Fleet()
@@ -577,6 +678,71 @@ class TestRelease:
             sent, owner = a.lock.calls("acquire")[0]
             assert (sent + 5.0, owner) in a.lock.calls("release")
             assert await a.lock.inner.is_locked(KEY) is False
+
+        _simulate(scenario)
+
+    def test_an_acquire_that_lands_then_raises_is_released_at_once(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a")
+            a.lock.lands_then_raises = 1
+            await a.start()
+            await asyncio.sleep(0.5)
+            await fleet.replica("b").start()
+            await asyncio.sleep(TTL + 3 * CAMPAIGN)
+
+            raised_at, owner = a.lock.calls("acquire")[0]
+            assert (raised_at, owner) in a.lock.calls("release")
+            first = fleet.runs[0]
+            assert first.started <= 2 * CAMPAIGN + 0.5  # not a whole ttl later
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_stop_finishes_the_unwind_and_the_release(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            spec = attrs.evolve(
+                SPEC,
+                release_timeout=timedelta(seconds=3),
+                renew_every=timedelta(seconds=5),
+            )
+            a = fleet.replica("a", spec=spec, lead=fleet.body("a", listens=False, resists=2.9))
+            a.lock.release_delay = 2.0
+            await a.start()
+            await asyncio.sleep(1)
+
+            await a.ctx.drainables.stop_all(grace=60)
+
+            (run,) = fleet.runs
+            stats = a.step.startup.stats  # type: ignore[attr-defined]
+            assert run.finished is not None
+            assert a.lock.calls("release")[-1][0] == run.finished
+            assert await a.lock.inner.get_owner(KEY) is None  # the release went through
+            assert not stats.holding
+            assert stats.terms_ended == {"stopped": 1}
+
+        _simulate(scenario)
+
+    def test_a_body_abandoned_by_one_startup_holds_off_the_next(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            a = fleet.replica("a", lead=fleet.body("a", listens=False, resists=100))
+            await a.start()
+            await asyncio.sleep(1)
+
+            a.kill()  # the body swallows its cancellation and runs on
+            await asyncio.sleep(0)
+            a.ctx = _Ctx(dlock=_Dlock(lock=a.lock))
+            await a.start()  # the step starts again in the same process
+            await asyncio.sleep(150)
+
+            first, second = fleet.runs
+            assert first.finished is not None
+            assert second.started >= first.finished
+
+            await fleet.stop_all()
 
         _simulate(scenario)
 
@@ -836,6 +1002,66 @@ class TestHandoff:
             assert len(set(wants)) >= 2
             assert wants == leases[: len(wants)]  # each ask under the string it acquires with
             assert (b.lock.calls("release", f"{KEY}:want")[0][1]) == wants[0]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_hanging_asker_does_not_leave_the_fleet_unled(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            await fleet.replica("a", handoff="on_request", prefer=self._prefers(False)).start()
+            await asyncio.sleep(9)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            b.lock.acquire_delay = 1000.0  # asks, then hangs on every lease acquire
+            await b.start()
+            await asyncio.sleep(40)
+
+            yielded, second, *_ = fleet.runs
+            assert yielded.term.reason == "yielded"
+            assert yielded.finished is not None
+            # The others defer while b holds the want-lock, but only for three campaign
+            # intervals of seeing the lease free, the first of them up to one interval late.
+            assert second.started - yielded.finished <= (3 + 1) * CAMPAIGN
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_dead_asker_takes_the_unit_at_most_once(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            await fleet.replica("a", handoff="on_request", prefer=self._prefers(False)).start()
+            await asyncio.sleep(5)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            await b.start()
+            await asyncio.sleep(4.5)
+            b.kill()  # dies holding the want-lock
+            await asyncio.sleep(60)
+
+            yields = [run for run in fleet.runs if run.term.reason == "yielded"]
+            assert len(yields) <= 1, [(r.started, r.term.reason) for r in fleet.runs]
+
+            await fleet.stop_all()
+
+        _simulate(scenario)
+
+    def test_a_want_lock_landing_after_its_asker_stopped_is_released(self) -> None:
+        async def scenario() -> None:
+            fleet = _Fleet()
+            await fleet.replica("a", handoff="on_request", prefer=self._prefers(False)).start()
+            await asyncio.sleep(1)
+            b = fleet.replica("b", handoff="on_request", prefer=self._prefers(True))
+            b.lock.want_delay = 5.0
+            await b.start()
+            await asyncio.sleep(0.5)
+            b.kill()  # the want-lock request is on the wire
+            await asyncio.sleep(40)
+
+            sent, owner = b.lock.calls("acquire", f"{KEY}:want")[0]
+            assert (sent + 5.0, owner) in b.lock.calls("release", f"{KEY}:want")
+            assert [run.replica for run in fleet.runs] == ["a"]  # a never yields to it
+            assert fleet.runs[0].term.live()
 
             await fleet.stop_all()
 
