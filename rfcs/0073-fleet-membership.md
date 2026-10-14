@@ -151,9 +151,9 @@ class FleetView:
     members: tuple[Member, ...]          # sorted by id
     at: datetime                         # the server's clock when read
 
-    def settled(self, for_: timedelta, *, exclude: str | None = None) -> bool: ...
+    def settled(self, for_: timedelta) -> bool: ...
     def share(self, total: int, me: str) -> int: ...
-    def rank(self, key: str) -> tuple[str, ...]: ...
+    def rank(self, key: str, *, states: Collection[MemberState] = ("serving",)) -> tuple[str, ...]: ...
     def excess(self, me: str, *, load: str, movable: str | None = None,
                tolerance: float = 0.15, settle: timedelta, smallest: int = 1) -> int: ...
 
@@ -173,18 +173,17 @@ class FleetPort(Protocol):
 
 ### 5.2 The policies
 
-Each policy is a pure function of the view, over its `serving` members.
-- **`settled(for_, exclude=None)`** is true when:
-  - every member other than `exclude` is serving;
-  - each has been serving for at least `for_` by the view's own clock;
-  - at least one such member exists.
-
-  `exclude` lets a replica ask about its peers before it is serving itself, which startup
-  assignment needs (5.7).
+Each policy is a pure function of the view. `settled`, `share` and `excess` use its
+`serving` members; `rank` uses the states it is given.
+- **`settled(for_)`** is true when the view has at least one member, every member is serving,
+  and each has been serving for at least `for_` by the view's own clock. It is for live
+  decisions such as `excess`. Startup assignment does not use it (5.7).
 - **`share(total, me)`** splits `total` evenly over the serving members sorted by id. The
   first `total % n` members get one extra. A replica that is not serving gets 0.
-- **`rank(key)`** orders the serving members by `blake2b(key + "\0" + member_id)`,
-  descending. That is rendezvous hashing: removing a member moves only the keys it owned.
+- **`rank(key, states=("serving",))`** orders the members in `states` by
+  `blake2b(key + "\0" + member_id)`, descending. That is rendezvous hashing: removing a member
+  moves only the keys it owned. Startup assignment passes `("serving", "starting")`, so a
+  replica that is still joining is a candidate.
   - The hash is stable across processes and interpreters. It is never Python's `hash()`,
     which is salted per process.
   - A unit's owner is `rank(key)[0]`, and the rest are its successors in order.
@@ -192,8 +191,9 @@ Each policy is a pure function of the view, over its `serving` members.
   1. The **mean** is over the serving members that report a numeric `load`.
   2. The result is 0 unless the fleet is `settled(settle)`, `me` is serving and reports
      `load`, and its load exceeds `mean × (1 + tolerance)`. `tolerance` is relative.
-  3. In that case, the result is `ceil(load − mean)`, capped by the member's `movable`
-     report when one is named.
+  3. In that case, the result is `ceil(load − mean)`, capped by `floor` of the member's
+     `movable` report when one is named. The result is always a whole number, and a
+     non-numeric `movable` counts as absent.
   4. A result below `smallest` is 0.
 
   This is the rule hh-backend-v2's socket shedding uses, and tables or tenants can use the
@@ -288,13 +288,17 @@ default is the safe one.
 ### 5.7 What it gives forze, and what it does not
 
 - **Startup assignment for `RealtimeShard`.** The shard is consumed when the steps are built,
-  so the view is read before this runtime exists. A replica then waits until
-  `view.settled(settle, exclude=me)`, and takes the tenants it ranks first for:
-  `[t for t in tenants if view.rank(str(t))[0] == me]`.
-  - That is sound only while the fleet keeps that shape. A replica that dies leaves its
-    tenants unowned until a restart.
-  - Replicas that start against different views can briefly own overlapping or missing
-    shards.
+  so the replica works with the port before its runtime exists:
+  1. It beats once as `starting`, so replicas starting at the same time can see it.
+  2. It waits one `ttl`, so their beats are visible too.
+  3. It reads the view, and takes the tenants it ranks first for among serving and starting
+     members:
+     `[t for t in tenants if view.rank(str(t), states=("serving", "starting"))[0] == me]`.
+
+  The first replica of a fresh fleet finds only itself, and takes every tenant. This is a
+  snapshot, sound only while the fleet keeps that shape:
+  - a replica that dies leaves its tenants unowned until a restart;
+  - a replica whose beat lands after another's read can own overlapping or missing tenants.
 
   The docs say so. Live re-sharding needs RFC 0071's handoff and is a later RFC.
 - **A fleet-wide quiesce check** becomes possible: every other member absent or draining. It
@@ -337,7 +341,10 @@ default is the safe one.
   - Removing a member moves only its keys.
   - `excess` is 0 while unsettled, below tolerance, or below `smallest`, and is capped by
     `movable`.
-  - `settled` is false with any `starting` or `draining` member, unless `exclude` names it.
+  - `settled` is false with any `starting` or `draining` member.
+  - `rank` with `("serving", "starting")` includes a joining replica, and a one-member fleet
+    ranks itself first for every key.
+  - `excess` returns a whole number with a fractional `movable` report.
 - **The step.**
   - Placed in its own runtime's plan through `build_runtime`, it reports `starting` until
     startup finishes, then `serving`, then `draining` on `begin_draining()`.
@@ -393,7 +400,7 @@ default is the safe one.
 | 9 | `ASSUMED` | `instance_id()` is `host:pid:nonce`, cached per pid, and the default member id. A stable platform name is an option, with its trade-off documented. `forze_socketio`'s consumer default is not changed here. |
 | 10 | `LOCKED` | No framework rebalancer: membership and the policies are shared, and moving units stays each owner's protocol. |
 | 11 | `OPEN` | Where `instance_id()` lives, and whether the step exposes its last view. |
-| 12 | `ASSUMED` | `settled` takes `exclude`, so a replica can ask about its peers before it is serving. `excess` takes its mean over serving members that report the load, with a relative tolerance. |
+| 12 | `ASSUMED` | `rank` takes the member states to rank, so startup assignment can include joining replicas, and startup assignment does not wait for `settled`. `excess` takes its mean over serving members that report the load, with a relative tolerance, and returns a whole number. |
 
 ## 12. Phasing
 

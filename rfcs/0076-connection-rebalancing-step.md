@@ -99,16 +99,22 @@ ship first, and this step waits for a second consumer.
   2. **Read the view** (RFC 0073), and replace this replica's own entry with its live local
      counts:
      - the load is its connections in `namespaces`, minus those already scheduled to close;
-     - the movable count is how many of those `movable(namespace, sid)` accepts.
+     - the movable count is how many Engine.IO transports are movable: every namespace the
+       transport carries accepted by `movable(namespace, sid)`. Closing a transport ends all
+       its namespaces (RFC 0075), so one non-movable namespace, such as a game, keeps the
+       whole transport.
 
-     The peers' figures are their last reports, at most one beat old. This replica's own
-     report could be a beat behind its last shed, and shedding on it would shed twice.
+     The peers' figures are their last reports. A member survives one missed beat, so a
+     report can be up to `ttl` old, and the tolerance has to absorb that drift. This replica's
+     own report could be a beat behind its last shed, and shedding on it would shed twice.
   3. `n = view.excess(me, load=load, movable=movable_report, tolerance=tolerance,
      settle=settle)`. That is 0 unless the fleet has settled, this replica is serving, and its
      load is more than `tolerance` above the mean, relative to it.
-  4. Cap `n` at `ceil(per_minute * every / 60)`, so a low rate with a short interval still
-     sheds one per tick rather than none.
-  5. Pick `n` movable connections not already scheduled, and close them with `close_spread`
+  4. Cap `n` with a token bucket: each tick adds `per_minute * every / 60` to an allowance,
+     carried across ticks with its fraction, capped at `per_minute`. A shed spends whole
+     units. `per_minute` is therefore a true rate however short `every` is: a low rate with
+     a short interval sheds one every few ticks, rather than none or one every tick.
+  5. Pick `n` movable transports not already scheduled, and close them with `close_spread`
      over `every`.
 - **The report.** The peers' load and movable counts come from their membership reports,
   which the app fills. A peer that does not report them is left out of the mean, and is never
@@ -135,7 +141,9 @@ ship first, and this step waits for a second consumer.
   - A tick during a running shed does nothing.
   - A tick inside the cooldown does nothing.
   - The live count, not the stale report, sets the next shed.
-- **Rounding.** `per_minute=10` with `every=5 s` sheds one per tick.
+- **Rate.** `per_minute=10` sheds about ten a minute with `every=1 s` and with `every=30 s`.
+- **Shared transports.** A transport carrying a movable and a non-movable namespace is never
+  shed.
 - **No shedding:**
   - while the fleet is unsettled;
   - while this replica is draining;
@@ -167,7 +175,10 @@ A section on the socket.io page:
 ## 10. Unresolved questions
 
 - The trigger for building it: a second socket.io or WebSocket app with long-lived
-  connections behind a balancer that is not least-connections. Until then the design stays a
+  connections that stay unbalanced even behind a least-connections balancer. A
+  least-connections balancer places new connections well, but long-lived ones that never
+  reconnect keep a deploy's imbalance. The balancer is still a prerequisite, because shed
+  clients have to land on the emptiest replica. Until such an app exists, the design stays a
   draft.
 
 ## 11. Decisions
@@ -176,7 +187,7 @@ A section on the socket.io page:
 | --- | --- | --- |
 | 1 | `LOCKED` | Rebalancing ships as a socket.io step only, composed from fleet membership, `excess` and `close_spread`. No framework-wide rebalancer. |
 | 2 | `LOCKED` | Demand-gated: built once a second realtime app needs it. The layers under it ship first. |
-| 3 | `ASSUMED` | The step sheds only connections the app marks movable, at most `ceil(per_minute × every / 60)` per tick. It sheds only while the fleet is settled and this replica is serving, never while it is draining, never while an earlier shed is closing, and never inside the cooldown after a shed. |
+| 3 | `ASSUMED` | The step sheds only transports whose every namespace the app marks movable, at a rate of `per_minute`, kept by a token bucket that carries fractions across ticks. It sheds only while the fleet is settled and this replica is serving, never while it is draining, never while an earlier shed is closing, and never inside the cooldown after a shed. |
 | 4 | `ASSUMED` | Peers' load and movable counts come from their membership reports. This replica uses its live local counts, minus connections already scheduled to close, so it never sheds twice on a stale report. |
 
 ## 12. Phasing

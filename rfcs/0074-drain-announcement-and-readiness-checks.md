@@ -181,9 +181,10 @@ the drain gate, so operations are still admitted until `shutdown()` closes it.
 ```python
 ctx.drain_phases.register(
     name: str,
-    phase: Callable[[timedelta], Awaitable[None]],   # receives the budget left
+    phase: Callable[[timedelta], Awaitable[None]],   # receives the time it may take
     *,
     order: int = 0,
+    max_duration: timedelta | None = None,           # this phase's own cap
 )
 
 async def drain(self, budget: timedelta, *, announce_delay: timedelta = timedelta(0)) -> None
@@ -195,9 +196,16 @@ async def drain(self, budget: timedelta, *, announce_delay: timedelta = timedelt
 3. It runs the registered phases in ascending `order`, each given the budget left.
 
 **Budgets.**
-- A phase that overruns the budget is cancelled and logged.
-- A phase whose budget left is below a small floor (100 ms) is skipped, and the skip is
-  logged. The phases are told the budget so they can shrink their own windows (RFC 0075).
+- **Each phase may take `min(max_duration, budget left)`**, and is told that figure so it can
+  shrink its own window (RFC 0075). A phase without `max_duration` may take whatever is left,
+  so a deployment with several phases gives the early ones a cap. Otherwise a slow early
+  phase leaves the later ones nothing.
+- **A phase that overruns its allowance** is cancelled and logged.
+- **A phase that resists cancellation** (it swallows `CancelledError` and keeps running) is
+  abandoned after a short bounded wait and logged, as `run_lifecycle_shutdown` already does
+  with step hooks. `drain()` therefore always returns within its budget plus that wait.
+- **A phase whose allowance is below a small floor** (100 ms) is skipped, and the skip is
+  logged.
 
 **Where `shutdown()` comes in.**
 - `shutdown()` calls `drain()` first, with `drain_budget` from the runtime's settings, if
@@ -250,9 +258,11 @@ async def serve_uvicorn(
 ) -> None: ...
 ```
 
-1. **Setup.** The helper sets `config.timeout_graceful_shutdown` to `graceful_timeout` when it
-   is unset, so an open SSE stream cannot block the exit forever. It builds a `uvicorn.Server`
-   and replaces that instance's `capture_signals`.
+1. **Setup.**
+   - The helper sets `config.timeout_graceful_shutdown` to `graceful_timeout` when it is
+     unset, so an open SSE stream cannot block the exit forever. A value the app set itself is
+     kept, and that effective value is the one the budget below must use.
+   - It builds a `uvicorn.Server` and replaces that instance's `capture_signals`.
 2. **Signals.** The replacement installs handlers with `signal.signal`, as uvicorn does, and
    restores the previous handlers on exit. Off the main thread it installs none, as uvicorn
    does, and the app drives `runtime.drain()` itself.
@@ -277,7 +287,9 @@ without `--timeout-graceful-shutdown` an open SSE stream blocks the exit. The do
 point such apps at the helper, or at least at a finite graceful timeout.
 
 **The time budget** must fit inside the orchestrator's grace period:
-`announce_delay + drain_budget + graceful_timeout + drain_timeout + the step timeouts`.
+`announce_delay + drain_budget + effective graceful timeout + drain_timeout + the step timeouts`.
+The helper logs the effective graceful timeout at startup, so the arithmetic can be checked
+against the deployment.
 
 ### 5.6 Alternatives considered
 
@@ -298,7 +310,10 @@ point such apps at the helper, or at least at a finite graceful timeout.
   while a new operation still runs. `shutdown()` afterwards still drains the gate.
 - **Phases.**
   - They run once, in order, within the budget.
-  - An overrunning phase is cancelled, and the next still runs.
+  - An overrunning phase is cancelled at its `max_duration`, and the next still gets its
+    allowance.
+  - A phase that swallows `CancelledError` is abandoned, and `drain()` returns within its
+    bound.
   - A phase with less than the floor left is skipped.
   - `shutdown()` without an earlier `drain()` runs them.
   - `shutdown()` after `drain()` does not run them again.
@@ -365,7 +380,7 @@ point such apps at the helper, or at least at a finite graceful timeout.
 | --- | --- | --- |
 | 1 | `LOCKED` | `begin_draining()` only announces: `runtime.draining` turns true and `ready` false, while the drain gate stays open until `shutdown()`. |
 | 2 | `LOCKED` | Drain phases are registered on the context and run by `runtime.drain()` once per scope, after the announcement and `announce_delay`, in ascending order within one budget. `shutdown()` runs `drain()` first if it has not run and startup finished. |
-| 3 | `ASSUMED` | A phase that overruns its budget is cancelled and logged. A phase left with less than the floor is skipped. Later phases still run. |
+| 3 | `ASSUMED` | Each phase may take `min(max_duration, budget left)`. An overrunning phase is cancelled, and one that resists cancellation is abandoned after a bounded wait, both logged. A phase whose allowance is below the floor is skipped. Later phases run with what is left. |
 | 4 | `ASSUMED` | `probe_listener_step` takes `checks` and `check_timeout`, reads its state from the hook's `ctx`, and shares one probe evaluator with `attach_readiness_route`. |
 | 5 | `ASSUMED` | `serve_uvicorn` overrides `capture_signals` on its own server instance, with `signal.signal` on the main thread and no handlers elsewhere. The first signal drains, then sets `should_exit` in a `finally`; a second cancels the drain and sets both exit flags. It sets a finite graceful timeout when none is set. |
 | 6 | `ASSUMED` | Apps running `uvicorn app:app` keep uvicorn's signal handling. The docs say what that costs: WebSockets closed at once, and an unbounded wait without a graceful timeout. |

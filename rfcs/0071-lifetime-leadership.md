@@ -121,8 +121,10 @@ All verified against the tree at the time of writing.
   Redis's clock does not jump forward by more than `margin` (5.4). Fencing covers leaders that
   are not responsive, and backends that lost their data.
 - The body learns that its term is ending, without polling the backend.
-- A stopping leader hands over within one campaign interval, and a dead one within the lease
-  TTL plus one campaign interval.
+- A stopping leader hands over within `yield_grace + release_timeout + campaign_every` of
+  the stop. If its body cannot be confirmed done, it hands over within the lease TTL plus one
+  campaign interval. A dead leader hands over within the lease TTL plus one campaign
+  interval.
 - An opt-in handoff, so a preferred replica can take a unit back without a restart, and that
   cannot leave the fleet without a leader.
 - No new port, and the step works over any dlock backend, the mock included.
@@ -163,6 +165,7 @@ def leadership_lifecycle_step(
     handoff: Literal["none", "on_request"] = "none",
     prefer: Callable[[ExecutionContext], Awaitable[bool]] | None = None,
     fence_floor: Callable[[ExecutionContext], Awaitable[int]] | None = None,
+    claim: Callable[[ExecutionContext, Term], Awaitable[bool]] | None = None,
     step_id: StrKey | None = None,            # default f"leadership:{spec.key}"
 ) -> LifecycleStep: ...
 ```
@@ -192,7 +195,7 @@ def leadership_lifecycle_step(
 class Term(Protocol):
     token: int | None                   # the lock's fencing token, stable for the term
     ended: asyncio.Event                # set once, by the step
-    reason: TermEnd | None              # "lost" | "expiring" | "stopped" | "yielded" | "returned" | "raised"
+    reason: TermEnd | None              # "lost" | "expiring" | "stopped" | "yielded" | "returned" | "raised" | "unclaimed"
     def live(self) -> bool: ...         # not ended; no I/O
     async def held(self) -> bool: ...   # live(), and with verify, the backend still names this term
 ```
@@ -236,11 +239,16 @@ the term, and never lengthens it.
   1. With `fence_floor` set and the lease free (`is_locked` is false), it advances the fence
      first (RFC 0072). It does not read the store's fence on every tick.
   2. It tries `acquire` with a fresh per-term owner.
-  3. On success, it starts a term and runs `lead` in a task.
-- **A late acquire.** After an acquire that failed or timed out, the replica checks the
-  owner. If it names the owner it just tried, the acquire landed late and Redis now holds a
-  lease nobody uses, so the replica releases it. Without this, a late acquire leaves the fleet
-  without a leader for up to a TTL.
+  3. On success, it starts a term.
+  4. With `claim` set, it calls `claim(ctx, term)` before `lead`. This is the store's claim of
+     the term's fencing token (RFC 0072 §5.4). `False` means another holder already claimed
+     an equal token: the term ends as `unclaimed`, the step releases, and it campaigns again.
+  5. It runs `lead` in a task.
+- **A late acquire.** An acquire that has not answered in time is not cancelled, because a
+  cancelled request may still land. The step stops waiting for it and lets it run to
+  completion in the background. If it then returns a lock the step no longer wants, the step
+  releases it with that term's owner. A request that lands after the step stopped waiting can
+  therefore never strand a lease for a TTL.
 - **Renewal.** Every `renew_every`, it calls `reset` with the term's owner.
   - `True` moves both deadlines.
   - `False` ends the term as `lost`.
@@ -253,11 +261,15 @@ the term, and never lengthens it.
 
 ### 5.4 What it guarantees, and what fencing is for
 
-- **A responsive leader runs its body only while it holds the lease.**
+- **A responsive leader whose body honours cancellation runs it only while it holds the
+  lease.**
   - A `lost` term cancels the body at once.
   - Every other end leaves the body's grace inside the hard deadline. The validation in 5.1
     makes that possible.
   - The step releases only after the body is done.
+- **A body that resists cancellation** past the hard deadline is not stopped by the lease. The
+  step does not release it, but the lease expires at its TTL, and a successor can then run
+  alongside it. Fencing covers that case, as it covers a paused process.
 
   This assumes Redis's clock does not jump forward by more than `margin` while the lease runs.
   Redis stores the expiry as an absolute wall-clock time, so an NTP step or a failover to a
@@ -343,8 +355,12 @@ Redis.
 - **Per-term owners.**
   - Two replicas given the same `owner` never both lead.
   - An old term's late release does not delete the new holder's lease.
-- **A late acquire.** An acquire that times out but lands is released, and the fleet elects a
-  leader within one campaign interval.
+- **A late acquire.** An acquire that answers after the step stopped waiting is released, and
+  the fleet elects a leader within one campaign interval.
+- **Claims.** Two terms holding an equal token (after a backend loss) both claim. One runs
+  `lead`, and the other ends as `unclaimed`.
+- **A body that resists cancellation** keeps the lease until its TTL, and no successor starts
+  before then.
 - **Fencing.** Tokens grow strictly across terms, and `term.token` is stable within one.
 - **Handoff.**
   - A preferring replica takes the unit from a non-preferring holder at the holder's next
@@ -412,7 +428,8 @@ Redis.
 | 9 | `ASSUMED` | The step is marked only `requires_long_running`. Its startup writes nothing shared and runs on every replica; the body's exclusivity is the step's guarantee. |
 | 10 | `OPEN` | Whether `Term` is a Protocol or a concrete class, and where its metrics live. |
 | 11 | `LOCKED` | Every term uses its own owner string (`owner` plus a nonce) for acquire, reset, release and the want-lock, because Redis compares only the owner string. |
-| 12 | `ASSUMED` | After an acquire that failed or timed out, the replica releases the lease if the owner names the owner it just tried, so a late acquire cannot leave the fleet without a leader. |
+| 12 | `ASSUMED` | An acquire that has not answered in time runs to completion in the background instead of being cancelled. A lock it returns after the step stopped waiting is released with that term's owner, so a late acquire cannot strand a lease. |
+| 13 | `ASSUMED` | With `claim` set, the step claims the term's fencing token in the store before running `lead` (RFC 0072 §5.4), and ends the term as `unclaimed` when another holder already has it. |
 
 ## 12. Phasing
 

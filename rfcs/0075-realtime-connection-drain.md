@@ -115,7 +115,8 @@ All verified against the tree at the time of writing.
 - A replica that is leaving closes its realtime connections spread over a window, finished
   inside the deploy's budget, before the server tears down. That holds under RFC 0074's
   `serve_uvicorn`.
-- Clients reconnect on their own after the close, to a replica that is still ready.
+- Socket.IO's JavaScript clients reconnect on their own after the close, to a replica that is
+  still ready. Other clients, the Python one included, need their own reconnect (5.1).
 - A connect that arrives while the replica is leaving is refused at once, with a code the
   client can act on.
 - Connection counts are visible, and so are refused connects, by reason.
@@ -166,7 +167,7 @@ def connection_drain_lifecycle_step(
     window: timedelta,
     tail: timedelta,
     namespaces: Sequence[str] = ("/",),
-    select: Callable[[str, str], bool] | None = None,   # (namespace, sid) -> close it?
+    select: Callable[[str, str], bool] | None = None,   # (namespace, sid) -> may close?
     order: int = 0,
     step_id: StrKey = "realtime_connection_drain",
 ) -> LifecycleStep: ...
@@ -174,14 +175,21 @@ def connection_drain_lifecycle_step(
 
 - **The phase.** At startup the step registers a drain phase with RFC 0074's `drain_phases`,
   from its hook's `ctx`. It needs no handle on the runtime.
-- **When it runs,** the phase lists this node's connections in the given namespaces, keeps
-  those `select` accepts (all by default), and calls `close_spread`.
-- **Fitting the budget.** The phase gets the budget left, `b`.
-  - The tail is shortened to `min(tail, b / 2)`, and the window to `b` minus that tail.
-  - Below RFC 0074's floor the phase is skipped. The connections then close when the server
+- **When it runs,** the phase lists this node's connections and groups them by Engine.IO
+  transport.
+  - A transport is closed only if every namespace it carries is in `namespaces` and accepted
+    by `select` (all by default).
+  - One Engine.IO connection can carry a movable namespace and a non-movable one, and closing
+    the transport ends both. So a single refusal keeps the whole transport open.
+- **Fitting the allowance.** The phase measures what it may still take after listing and
+  selecting, `b`, from a deadline, not from the figure it was handed.
+  - The tail becomes `min(tail, b / 2)`, and the window `min(window, b − that tail)`.
+  - Fitting only ever shortens the configured window, never lengthens it, so a generous
+    budget does not slow a drain down.
+  - Below RFC 0074's floor the phase is skipped, and the connections close when the server
     stops.
 
-  So a late phase never overruns, and is never cancelled mid-close.
+  So a phase never overruns its allowance, and is never cancelled mid-close.
 - **Connects keep arriving** until the balancer has noticed that readiness failed. The
   refusal in 5.3 covers them, so the phase does not loop.
 
@@ -191,7 +199,13 @@ def connection_drain_lifecycle_step(
 `runtime.draining` when `runtime` is wired for replay, and an app without replay passes
 `draining=lambda: runtime.draining` itself.
 
-`on_connect` checks it before negotiating the protocol. When it is true, it refuses with
+`on_connect` checks it twice:
+1. Before negotiating the protocol, so a draining replica does no authentication work.
+2. As its last step, after admission, authentication and replay. A connect that waited in
+   admission or authentication while the drain listed its targets would otherwise finish
+   after the snapshot and escape the drain.
+
+When it is true, it refuses with
 `SocketIOConnectionRefusedError("Server is draining", {"code": "realtime_draining"})`.
 - **What the client sees.** The data reaches the client as the connect error's `data`, so a
   client can tell this refusal from an authentication failure.
@@ -205,7 +219,9 @@ def connection_drain_lifecycle_step(
 `attach_realtime_connection(…, admission=…)` takes an optional
 `Callable[[SocketIOConnect], Awaitable[None]]`.
 - It runs after the draining check and before protocol negotiation and authentication.
-- Raising a `CoreException` refuses the connect, with its summary and the reason `admission`.
+- Raising a `CoreException` refuses the connect with the reason `admission`. The same rule
+  `on_connect` applies to other errors decides what the client sees: a client-safe error's
+  summary, or, for a server-kind error, the generic internal detail, with the error logged.
 - Awaiting delays the connect, so an app can pace admissions by its own rules: for example,
   hh-backend-v2's priority lanes.
 
@@ -253,8 +269,12 @@ both.
   - Targets sharing an `eio_sid` close once.
 - **The drain step**, with RFC 0074's phases, placed in its own runtime's plan:
   - selected connections close and others stay;
-  - the window and the tail shrink to the budget;
+  - a transport carrying a refused namespace stays open;
+  - the window and the tail shrink to a small budget, and a large budget keeps the configured
+    window;
   - below the floor the phase is skipped.
+- **A late connect.** A connect held in admission while the drain lists its targets is refused
+  at its last check.
 - **Reconnects.** A real python-socketio server with an Engine.IO-level close. The client's
   disconnect reason is a transport close, not a server disconnect.
 - **Refusal.** While draining, a connect is refused with `{"code": "realtime_draining"}` before
@@ -310,12 +330,13 @@ both.
 | --- | --- | --- |
 | 1 | `LOCKED` | Connections close in a drain phase (RFC 0074), not a drainable, so under `serve_uvicorn` they close while the replica still serves and before uvicorn's own shutdown. |
 | 2 | `LOCKED` | `close_spread` closes at the Engine.IO level, starting each close on its own schedule over the window and never awaiting closes in turn. The whole call is bounded by `window + tail`. |
-| 3 | `ASSUMED` | The phase shortens its tail to half the budget left and its window to the rest, and is skipped below RFC 0074's floor. |
-| 4 | `ASSUMED` | `on_connect` refuses while `draining()` is true, before negotiation and authentication, with data `{"code": "realtime_draining"}`. `draining` defaults to `runtime.draining` when replay wires a runtime, and can be passed otherwise. Existing refusals are unchanged. |
+| 3 | `ASSUMED` | The phase measures its allowance after listing, shortens its tail to at most half of it and its window to at most the rest, never lengthening the configured window, and is skipped below RFC 0074's floor. |
+| 4 | `ASSUMED` | `on_connect` refuses while `draining()` is true, checked before negotiation and again as its last step, with data `{"code": "realtime_draining"}`. `draining` defaults to `runtime.draining` when replay wires a runtime, and can be passed otherwise. Existing refusals are unchanged. |
 | 5 | `ASSUMED` | `admission` runs after the draining check and before authentication, and refuses on a `CoreException`. Awaiting it delays the connect. |
 | 6 | `ASSUMED` | Metrics: a connection count per namespace, refused connects by reason, and drain closes by outcome. |
 | 7 | `ASSUMED` | FastAPI drains through the shared hub. Ended SSE streams and WebSocket tails close with 1012. While draining, new SSE requests get 503, and new upgrades are accepted then closed with 1012. |
 | 8 | `ASSUMED` | The step reads its state from its hook's `ctx`, and takes no `runtime`. |
+| 9 | `LOCKED` | Selection is per Engine.IO transport: a transport is closed only when every namespace it carries is eligible, because closing it ends them all. |
 
 ## 12. Phasing
 
