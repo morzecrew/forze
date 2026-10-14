@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
+from contextlib import AsyncExitStack
 from typing import Any
 from uuid import uuid4
 
@@ -50,19 +51,17 @@ def postgres_url(docker_available: None) -> Iterator[str]:
 async def holders(postgres_url: str) -> AsyncIterator[tuple[Any, Any]]:
     """Two autocommit connections, one per holder, so their claims race in the server."""
 
-    first = await psycopg.AsyncConnection.connect(postgres_url, autocommit=True)
-    second = await psycopg.AsyncConnection.connect(postgres_url, autocommit=True)
+    async with AsyncExitStack() as stack:
+        first = await psycopg.AsyncConnection.connect(postgres_url, autocommit=True)
+        stack.push_async_callback(first.close)
+        second = await psycopg.AsyncConnection.connect(postgres_url, autocommit=True)
+        stack.push_async_callback(second.close)
 
-    try:
         await first.execute(
             "CREATE TABLE IF NOT EXISTS guarded "
             "(key text PRIMARY KEY, fence bigint NOT NULL, writer text NOT NULL)"
         )
         yield first, second
-
-    finally:
-        await first.close()
-        await second.close()
 
 
 async def _rows(conn: Any, sql: str, *, key: str, token: int, writer: str) -> int:
