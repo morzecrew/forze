@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.13.0] - 2026-10-14
+
+### Added
+
 - **A socket.io client opening several namespaces can authenticate once.** `attach_realtime_connection(share_identity=True)` reuses the identity one Engine.IO connection resolved for its other namespaces with the same credential and resolver, until it expires or the connection closes; another credential is checked again.
 
 - **An outbox relay can deliver a row as soon as it commits.** `OutboxSpec(wake=OutboxWake(route=...))` publishes a wake on a pub/sub route after each flush's transaction commits, and the background relay runs a pass when it hears one; its poll stays the fallback for a lost wake.
@@ -2150,7 +2164,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.12.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/morzecrew/forze/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/morzecrew/forze/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/morzecrew/forze/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/morzecrew/forze/compare/v0.10.0...v0.11.0
