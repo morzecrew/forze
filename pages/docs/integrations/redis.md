@@ -233,12 +233,15 @@ counter at 1. Two things then go wrong:
 
 `advance_fence` fixes the first, and the claim makes the second harmless. Before
 acquiring, read the highest fence the store holds **for that key** and move the
-counter up to it:
+counter up to it. Lock through the same port you advanced: counters live under
+the lock route's namespace, so a scope built from another spec can draw from
+another counter.
 
 ```python
 from typing import cast
 
 from forze.application.contracts.dlock import DistributedLockSpec, FenceAdvancing
+from forze_kits.scopes import DistributedLockScope
 
 spec = DistributedLockSpec(
     name="invoices",
@@ -247,13 +250,15 @@ spec = DistributedLockSpec(
 )
 
 
-async def advance_then_lock(ctx, repo, dlock_scope):
-    lock = cast(FenceAdvancing, ctx.dlock.command(spec))
+async def advance_then_lock(ctx, repo, worker_id):
+    port = ctx.dlock.command(spec)
     stored = await repo.highest_fence("invoice:42")  # SELECT fence ... WHERE id = 42
-    await lock.advance_fence("invoice:42", past=stored)
+    await cast(FenceAdvancing, port).advance_fence("invoice:42", past=stored)
 
-    async with dlock_scope.scope("invoice:42") as held:
-        ...  # claim with held.token, then write
+    scope = DistributedLockScope(cmd=port, owner_provider=lambda: worker_id)
+
+    async with scope.scope("invoice:42") as held:
+        ...  # claim with held.token, then write, checking every write's rows
 ```
 
 - **With the counter intact,** the call changes nothing, so call it on every
