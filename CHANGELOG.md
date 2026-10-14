@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ...
+
+### Changed
+
+- ...
+
+### Fixed
+
+- ...
+
+## [0.13.0] - 2026-10-14
+
+### Added
+
 - **A socket.io client opening several namespaces can authenticate once.** `attach_realtime_connection(share_identity=True)` reuses the identity one Engine.IO connection resolved for its other namespaces with the same credential and resolver, until it expires or the connection closes; another credential is checked again.
 
 - **An outbox relay can deliver a row as soon as it commits.** `OutboxSpec(wake=OutboxWake(route=...))` publishes a wake on a pub/sub route after each flush's transaction commits, and the background relay runs a pass when it hears one; its poll stays the fallback for a lost wake.
@@ -21,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An emit to a large socket.io room takes far less of the event loop.** The manager `build_socketio_server` builds no longer schedules a task for every socket in the room, only for a send that has to wait. Pass `client_manager=AsyncManager()` to keep python-socketio's manager.
 
-- **A reused refresh token raises `RefreshTokenReuseError`**, rendered as the uniform refusal, and the refresh operation commits the family's revocation after its rollback. **Breaking** for token lifecycle implementers: raise it on reuse, or the revocation rolls back, and implement `revoke_chain_of_tokens`.
+- **A reused refresh token raises `RefreshTokenReuseError`**, still the uniform refusal; refresh commits the family's revocation after rolling back, so it refuses a transaction its caller opened. **Breaking** for those callers and for token lifecycles, which must raise it on reuse and implement `revoke_chain_of_tokens`.
 
 ### Fixed
 
@@ -31,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Logout, deactivation and a password change or reset revoke every live session, however many.** Revocation stopped at the store's implicit 10,000-row cap, or failed when a refresh rotated a session mid-way; it now revokes in batches, rereading a stale one.
 
-- **The mock's principal deactivation revokes the principal's sessions**, as the real one does.
+- **The mock's principal deactivation revokes the principal's sessions**, emitting `LOGOUT` before `PRINCIPAL_DEACTIVATED`, as the real one does.
 
 ## [0.12.0] - 2026-10-13
 
@@ -2150,7 +2164,8 @@ Execution and mapping refactor, middleware-first usecases, split search/cache/do
 
 - Packaging metadata for PyOCI classifiers.
 
-[unreleased]: https://github.com/morzecrew/forze/compare/v0.12.0...HEAD
+[unreleased]: https://github.com/morzecrew/forze/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/morzecrew/forze/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/morzecrew/forze/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/morzecrew/forze/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/morzecrew/forze/compare/v0.10.0...v0.11.0
