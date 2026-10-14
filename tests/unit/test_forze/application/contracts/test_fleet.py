@@ -128,6 +128,19 @@ class TestRank:
         # Its keys go to their next successor, not anywhere.
         assert all(after.rank(k)[0] == before.rank(k)[1] for k in moved)
 
+    def test_rank_matches_golden_vectors(self) -> None:
+        # Computed apart from the code, with hashlib, from the formula: blake2b (8-byte
+        # digest, big-endian) over ``key + "\0" + member_id``, highest first.
+        view = _view(*(_member(f"gw-{s}") for s in "abcde"))
+
+        assert view.rank("t0") == ("gw-a", "gw-e", "gw-b", "gw-d", "gw-c")
+        assert view.rank("t1") == ("gw-c", "gw-d", "gw-a", "gw-e", "gw-b")
+
+    def test_the_weight_matches_a_golden_value(self) -> None:
+        from forze.application.contracts.fleet.value_objects import _weight
+
+        assert _weight("t0", "gw-a") == 12989977397389005085
+
     def test_rank_is_the_same_in_every_process(self) -> None:
         script = (
             "import json\n"
