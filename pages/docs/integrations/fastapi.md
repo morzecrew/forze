@@ -220,9 +220,11 @@ asyncio.run(
 )
 ```
 
-The worst case of that exit is 25 seconds plus 2 per lifecycle step — the
+Once startup has finished, the worst case of that exit is 25 seconds plus 2 per
+lifecycle step — the
 [sum](../running-in-prod/shutdown-and-fleets.md#fit-the-budget-to-the-grace-period)
-`serve_uvicorn` logs at startup. Past two steps it no longer fits Kubernetes'
+`serve_uvicorn` logs at startup. A signal that lands during startup waits for it
+first, and startup hooks have no timeout. Past two steps it no longer fits Kubernetes'
 default 30-second grace period: set `terminationGracePeriodSeconds` from the
 logged figure, with headroom.
 

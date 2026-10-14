@@ -438,5 +438,10 @@ async def run_drain_phases(
                 "Drain phase '%s' overran its %.2fs; cancelled it", phase.name, allowance
             )
 
-        elif not task.cancelled() and (error := task.exception()) is not None:
+        elif task.cancelled():
+            # Not by us — that path raises out of ``_run_bounded`` — so by the phase itself,
+            # or by whatever it awaited. Still a phase that did not finish its work.
+            logger.warning("Drain phase '%s' was cancelled before it finished", phase.name)
+
+        elif (error := task.exception()) is not None:
             logger.error("Drain phase '%s' failed", phase.name, exc_info=error)

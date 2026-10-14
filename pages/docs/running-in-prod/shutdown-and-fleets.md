@@ -28,8 +28,9 @@ It drains first:
    cancelled.
 5. Lifecycle shutdown runs as usual, in reverse wave order.
 
-Each of the last three steps is bounded by `shutdown_step_timeout` (10 seconds by
-default), per lifecycle step in the last.
+Step 3 waits up to `drain_timeout`; cancelling what outlives it, step 4's two
+parts, and each lifecycle step's shutdown in step 5 are each bounded by
+`shutdown_step_timeout` (10 seconds by default).
 
 ```python
 runtime = build_runtime(..., drain_timeout=timedelta(seconds=20))
