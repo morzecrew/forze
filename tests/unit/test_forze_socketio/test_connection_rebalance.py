@@ -413,10 +413,11 @@ class TestRate:
     @pytest.mark.parametrize(
         ("cooldown", "banked"),
         [
-            # A minute's worth, not ten.
-            (timedelta(0), 10),
-            # The cooldown plus three intervals: 303 s of ten a minute.
-            (timedelta(minutes=5), 50),
+            # A minute's worth of sixty a minute, not ten minutes', then the one the next
+            # second refills.
+            (timedelta(0), 61),
+            # The cooldown plus three one-second intervals: 303 s.
+            (timedelta(minutes=5), 303),
         ],
     )
     def test_a_long_wait_banks_at_most_one_shed_cycle(
@@ -424,12 +425,12 @@ class TestRate:
     ) -> None:
         async def scenario() -> int:
             state, node = MockState(), _Node()
-            await node.connect(200, "/lobby")
+            await node.connect(1000, "/lobby")
             await _peers(state, 0, 0)
             await _beat(state, "me", _REPORTED)
 
             # Ten minutes before the fleet counts as settled, then the first shed.
-            step = _step(node, per_minute=10, settle=timedelta(minutes=10), cooldown=cooldown)
+            step = _step(node, per_minute=60, settle=timedelta(minutes=10), cooldown=cooldown)
             await _serve(state, step, _sleep(601.5))
 
             return node.closed()
@@ -538,9 +539,22 @@ class TestNoShedding:
 
         assert run_simulation(scenario, latency=_slow_views) == 0
 
-    @pytest.mark.parametrize("own", [None, {"movable": 34}], ids=["no entry", "no load"])
+    @pytest.mark.parametrize(
+        ("own", "settle", "warnings"),
+        [
+            (None, timedelta(0), ["warning"]),
+            ({"movable": 34}, timedelta(0), ["warning"]),
+            # Before the fleet settles a missing entry may be a replica still joining.
+            (None, timedelta(hours=1), []),
+        ],
+        ids=["no entry", "no load", "unsettled"],
+    )
     def test_a_replica_left_out_says_so_once(
-        self, own: Report | None, error_log_buf: io.StringIO
+        self,
+        own: Report | None,
+        settle: timedelta,
+        warnings: list[str],
+        error_log_buf: io.StringIO,
     ) -> None:
         async def scenario() -> int:
             state, node = MockState(), _Node()
@@ -550,7 +564,7 @@ class TestNoShedding:
             if own is not None:
                 await _beat(state, "me", own)
 
-            await _serve(state, _step(node), _sleep(60))
+            await _serve(state, _step(node, settle=settle), _sleep(60))
 
             return node.closed()
 
@@ -563,8 +577,8 @@ class TestNoShedding:
         ]
         # Sixty ticks, one warning: a member id that is not the membership step's, or a
         # membership step without the report, would otherwise do nothing, silently.
-        assert [row["level"] for row in rows] == ["warning"]
-        assert "'me'" in rows[0]["event"]
+        assert [row["level"] for row in rows] == warnings
+        assert all("'me'" in row["event"] for row in rows)
 
     def test_nothing_sheds_or_is_read_while_draining(self) -> None:
         reads: list[float] = []
