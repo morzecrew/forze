@@ -2,6 +2,7 @@
 
 import pytest
 
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.guarantees import (
     FULL_STORAGE_GUARANTEES,
     GUARANTEE_UNSUPPORTED,
@@ -136,6 +137,11 @@ class TestReadingBothHalves:
 
     def test_a_port_that_declares_is_read(self) -> None:
         assert capabilities_of(_Full()) is FULL_STORAGE_GUARANTEES
+
+    def test_a_wrapped_port_is_read_for_its_backend(self) -> None:
+        # Tracing, OTel spans, interceptors and a resilience policy all wrap a port the same
+        # way; a protocol check of the wrapper never sees the declaration it forwards.
+        assert capabilities_of(PortProxy(inner=PortProxy(inner=_Full()))) is FULL_STORAGE_GUARANTEES
 
     def test_a_spec_that_declares_nothing_requires_nothing(self) -> None:
         assert guarantees_of(_SpecWithout()) == ()

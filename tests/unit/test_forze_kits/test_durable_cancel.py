@@ -30,6 +30,7 @@ from datetime import timedelta
 
 import pytest
 
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.durable.function import (
     DurableRunAdminDepKey,
     DurableRunPage,
@@ -531,6 +532,13 @@ class TestCapabilityGate:
         admin = resolve_durable_run_admin(ctx)
 
         assert durable_run_control_capabilities(admin).supports_cancel is True
+
+    async def test_a_wrapped_admin_still_advertises_cancel_support(self) -> None:
+        # A port wrapped for tracing, spans or a resilience policy forwards the report; a
+        # protocol check of the wrapper does not see it.
+        admin = resolve_durable_run_admin(context_from_modules(MockDepsModule()))
+
+        assert durable_run_control_capabilities(PortProxy(inner=admin)).supports_cancel is True
 
     async def test_the_gate_lets_a_capable_backend_through(self) -> None:
         ctx = context_from_modules(MockDepsModule())
