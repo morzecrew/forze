@@ -85,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Temporal schedule bootstrap, the S3 bucket step and Mongo index validation refuse a tenant-scoped client or schedule at startup**, as `tenant_global_required`, instead of failing with `tenant_required`: they run with no tenant bound.
 
+- **`permission_providers_lifecycle_step` without `tenant=` refuses a tenant-scoped permission catalog at startup**, as `tenant_global_required`, instead of failing with `tenant_required`.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.

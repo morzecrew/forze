@@ -29,7 +29,12 @@ from forze_identity.authz import (
     build_authz_shared_services,
     permission_providers_lifecycle_step,
 )
-from forze_identity.authz.application.specs import permission_definition_spec
+from forze_identity.authz.application.specs import (
+    group_permission_binding_spec,
+    permission_definition_spec,
+    principal_permission_binding_spec,
+    role_permission_binding_spec,
+)
 from forze_identity.authz.domain.models.bindings import (
     ReadGroupPermissionBinding,
     ReadGroupPrincipalBinding,
@@ -479,6 +484,52 @@ class TestTheBootCheck:
             await permission_providers_lifecycle_step([member], tenant=tenant).startup(ctx)
 
         assert seen == [tenant]
+
+    async def _boot_unbound(self, providers: list[Any], *tenant_aware_specs: Any) -> None:
+        from forze.application.contracts.tenancy import TenantIdentity
+        from forze_mock import MockRouteConfig
+
+        routes = {str(spec.name): MockRouteConfig(tenant_aware=True) for spec in tenant_aware_specs}
+        ctx = context_from_modules(MockDepsModule(routes=routes))
+        tenant = TenantIdentity(tenant_id=uuid4())
+
+        with ctx.inv_ctx.bind_identity(tenant=tenant):
+            await ctx.doc.command(permission_definition_spec).create(
+                CreatePermissionDefinitionCmd(permission_key="ledger.write")
+            )
+
+        await permission_providers_lifecycle_step(providers).startup(ctx)
+
+    async def test_a_tenant_scoped_catalog_without_a_tenant_is_refused(self) -> None:
+        # Startup binds no tenant: a tenant-aware catalog would refuse the read.
+        member = _Provider(name="members", keys=frozenset({"ledger.write"}))
+
+        with pytest.raises(CoreException) as caught:
+            await self._boot_unbound([member], permission_definition_spec)
+
+        assert caught.value.code == "tenant_global_required"
+
+    async def test_bindings_the_check_does_not_read_are_not_held_to_it(self) -> None:
+        # Only a config provider makes the check read the bindings, so tenant-aware
+        # bindings beside a tenant-global catalog boot with any other provider.
+        member = _Provider(name="members", keys=frozenset({"ledger.write"}))
+
+        await self._boot_unbound(
+            [member],
+            role_permission_binding_spec,
+            principal_permission_binding_spec,
+            group_permission_binding_spec,
+        )
+
+    async def test_bindings_a_config_provider_reads_are_held_to_it(self) -> None:
+        from forze.application.integrations.authz import ConfigGrantsProvider
+
+        config = ConfigGrantsProvider(keys=frozenset({"ledger.write"}))
+
+        with pytest.raises(CoreException) as caught:
+            await self._boot_unbound([config], role_permission_binding_spec)
+
+        assert caught.value.code == "tenant_global_required"
 
     async def test_no_providers_boot_without_reading_the_catalog(
         self, monkeypatch: pytest.MonkeyPatch
