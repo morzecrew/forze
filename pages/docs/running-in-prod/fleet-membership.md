@@ -125,7 +125,8 @@ comes from a stable hash, so it is the same in every process. Pass
 until the fleet is `settled(settle)` and the load is above `mean × (1 + tolerance)`, then
 returns `ceil(load − mean)`, capped by the floor of the member's `movable` report when one
 is named. A result below `smallest` is 0. Use it to decide how many connections, tables or
-tenants to hand back; moving them is your protocol, not the fleet's.
+tenants to hand back; moving them is your protocol, not the fleet's. For socket.io
+connections, the [rebalance step](../integrations/socketio.md#rebalance-a-fleet) does it.
 
 Compare a member's `since` with the view's `at`, never with your own clock: the two come
 from the same backend clock, so skew between replicas does not enter.

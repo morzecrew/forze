@@ -159,15 +159,16 @@ class _ClosesFinishing:
     # ....................... #
 
     async def stop(self, *, deadline: float) -> bool:
-        pending = [task for task in _FINISHING.get(self.sio, ()) if not task.done()]
-
-        if not pending:
-            return True
-
         clock = asyncio.get_running_loop()
-        _, still = await asyncio.wait(pending, timeout=max(0.0, deadline - clock.time()))
 
-        return not still
+        # Looked at again after each wait: a close can join while the earlier ones finish.
+        while pending := [task for task in _FINISHING.get(self.sio, ()) if not task.done()]:
+            _, still = await asyncio.wait(pending, timeout=max(0.0, deadline - clock.time()))
+
+            if still:
+                return False
+
+        return True
 
 
 def _finished_late(eio_sid: str) -> Callable[["asyncio.Task[None]"], None]:
@@ -291,22 +292,11 @@ def _selected(
     *,
     namespaces: Sequence[str],
     select: ConnectionSelector | None,
-    failures: list[Exception],
 ) -> bool:
     if namespace not in namespaces:
         return False
 
-    if select is None:
-        return True
-
-    try:
-        return select(namespace, sid)
-
-    except Exception as error:
-        # Per-connection isolation: a selector that fails keeps that connection open.
-        failures.append(error)
-
-        return False
+    return True if select is None else select(namespace, sid)
 
 
 def _transports(sio: AsyncServer) -> dict[str, list[tuple[str, str]]]:
@@ -330,22 +320,30 @@ def _closable(
 ) -> list[tuple[str, str]]:
     """The *transports* whose every namespace may be closed, as ``(namespace, eio_sid)``."""
 
-    failures: list[Exception] = []
-    closable = [
-        (members[0][0], eio_sid)
-        for eio_sid, members in transports.items()
-        if all(
-            _selected(namespace, sid, namespaces=namespaces, select=select, failures=failures)
-            for namespace, sid in members
-        )
-    ]
+    closable: list[tuple[str, str]] = []
+    failed = 0
+    first: Exception | None = None
 
-    if failures:
+    for eio_sid, members in transports.items():
+        try:
+            if all(
+                _selected(namespace, sid, namespaces=namespaces, select=select)
+                for namespace, sid in members
+            ):
+                closable.append((members[0][0], eio_sid))
+
+        except Exception as error:
+            # Per-connection isolation: a selector that fails keeps that connection open.
+            failed += 1
+            first = first or error
+
+    if first is not None:
         # Once per listing, not per connection: the rebalance lists on every tick and beat.
         error_logger.warning(
-            "A connection selector raised for %d connection(s); they stay open", len(failures)
+            "A connection selector raised for %d Engine.IO connection(s); they stay open",
+            failed,
         )
-        log_server_error(failures[0])
+        log_server_error(first)
 
     return closable
 
@@ -359,6 +357,14 @@ def _drain_targets(
     """This node's Engine.IO connections whose every namespace the drain may close."""
 
     return _closable(_transports(sio), namespaces=namespaces, select=select)
+
+
+def _open(sio: AsyncServer, eio_sid: str) -> bool:
+    """Whether the Engine.IO connection is still there and nothing is closing it."""
+
+    socket = sio.eio.sockets.get(eio_sid)
+
+    return socket is not None and not socket.closing and not socket.closed
 
 
 def _still_closable(
@@ -382,13 +388,10 @@ def _still_closable(
         for namespace in cast("list[str]", list(manager.get_namespaces()))
         if (sid := cast("str | None", manager.sid_from_eio_sid(eio_sid, namespace)))
     ]
-    socket = sio.eio.sockets.get(eio_sid)
 
     return (
         bool(members)
-        and socket is not None
-        and not socket.closing
-        and not socket.closed
+        and _open(sio, eio_sid)
         and bool(_closable({eio_sid: members}, namespaces=namespaces, select=select))
     )
 

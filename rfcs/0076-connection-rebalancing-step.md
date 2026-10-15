@@ -1,6 +1,6 @@
 # RFC 0076 — Connection rebalancing step
 
-- **Status:** 📝 Draft — demand-gated: built when a second realtime app needs it.
+- **Status:** ✅ Complete
 - **Scope:** A socket.io lifecycle step that sheds a replica's movable connections while it is
   well above the fleet's mean, so a fleet that drifted out of balance recovers without a
   restart. It composes three earlier RFCs:
@@ -193,9 +193,10 @@ A section on the socket.io page:
 | # | Grade | Decision |
 | --- | --- | --- |
 | 1 | `LOCKED` | Rebalancing ships as a socket.io step only, composed from fleet membership, `excess` and `close_spread`. No framework-wide rebalancer. |
-| 2 | `LOCKED` | Demand-gated: built once a second realtime app needs it. The layers under it ship first. |
+| 2 | `LOCKED` | ~~Demand-gated: built once a second realtime app needs it. The layers under it ship first.~~ — **superseded by row 5**: the author lifted the gate, and the step was built |
 | 3 | `ASSUMED` | The step sheds only transports whose every namespace the app marks movable, at a rate of `per_minute`, kept by a token bucket that carries fractions across ticks. It sheds only while the fleet is settled and this replica is serving, never while it is draining, never while an earlier shed is closing, and never inside the cooldown after a shed. |
 | 4 | `ASSUMED` | Load and movable counts are Engine.IO transports, everywhere, because a transport is what a close ends. Peers' counts come from their membership reports. This replica uses its live local counts, minus connections already scheduled to close, so it never sheds twice on a stale report. |
+| 5 | `LOCKED` | The author lifted the demand gate on 2026-10-14, instructing that every fleet primitives RFC be executed, and the step was built then, ahead of §10's trigger. Recorded in [`logs/T-0076.md`](../logs/T-0076.md), the D-2 entry. |
 
 ## 12. Phasing
 

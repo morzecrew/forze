@@ -130,6 +130,7 @@ from .observability import (
     instrument_realtime_connections,
     instrument_realtime_gateway,
 )
+from .rebalance import connection_rebalance_lifecycle_step, connection_report
 from .routing import (
     IDENTITY_SESSION_KEY,
     ExecutionContextFactoryPort,
@@ -192,6 +193,8 @@ __all__ = [
     "realtime_presence_heartbeat_lifecycle_step",
     "close_spread",
     "connection_drain_lifecycle_step",
+    "connection_rebalance_lifecycle_step",
+    "connection_report",
     "RealtimeConnection",
     "build_socketio_connection_resolver",
     "socketio_handshake",
