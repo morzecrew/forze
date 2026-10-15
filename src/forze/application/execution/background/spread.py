@@ -58,7 +58,8 @@ class SpreadOutcome:
     """Raised; each is logged."""
 
     timed_out: int = 0
-    """Still running at the end of the tail, and cancelled."""
+    """Still running at the end of the tail. :func:`spread_closes` cancels it; a close that
+    shields itself from that cancellation, as ``forze_socketio.close_spread``'s do, goes on."""
 
 
 # ....................... #

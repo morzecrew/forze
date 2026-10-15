@@ -477,6 +477,43 @@ class TestDrainStep:
 
     # ....................... #
 
+    async def test_teardown_waits_for_closes_still_running_past_the_tail(self) -> None:
+        server = _server()
+        store = {"open": True}
+        order: list[object] = []
+
+        class _StorePresence(InMemoryRealtimePresence):
+            async def left(self, room: str, sid: str) -> None:
+                await asyncio.sleep(0.4)  # slower than the tail
+                order.append(("left", store["open"]))
+                await super().left(room, sid)
+
+        async def close_store(_ctx: Any) -> None:
+            store["open"] = False
+            order.append("teardown")
+
+        presence = _StorePresence()
+        runtime = build_runtime(
+            lifecycle_steps=(
+                LifecycleStep(id="presence_store", shutdown=close_store),
+                connection_drain_lifecycle_step(
+                    server, window=timedelta(seconds=0.05), tail=timedelta(seconds=0.1)
+                ),
+            ),
+            drain_timeout=timedelta(0),
+            drain_budget=timedelta(seconds=2),
+        )
+        attach_realtime_connection(server, resolve=_resolve, presence=presence)
+
+        async with runtime.scope():
+            await _connect(server, "eio-1")
+
+        # The close's disconnect handler finished against an open store, then teardown ran.
+        assert order == [("left", True), "teardown"]
+        assert await presence.count(_ROOM) == 0
+
+    # ....................... #
+
     async def test_the_drain_counts_its_closes(self) -> None:
         server = _server()
         stats = RealtimeConnectionStats()

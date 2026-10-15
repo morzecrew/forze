@@ -297,9 +297,12 @@ When the runtime drains — on `SIGTERM` under
 shutdown closes every socket at once — the phase lists this node's connections and closes
 them at the Engine.IO level, close *i* of *n* starting at `i × window / n`. Each close runs
 on its own, so a slow one never holds up the next; after the last start the phase waits up
-to `tail`, then stops waiting. A close still running carries on in the background and
-finishes — it may be inside your disconnect handler, which is never cut short — and is
-counted `timed_out`. The phase never takes more than `window + tail`.
+to `tail`, then stops waiting. A close still running carries on in the background — it
+may be inside your disconnect handler — and is counted `timed_out`. The phase never takes
+more than `window + tail`, but teardown waits for those closes, up to the runtime's
+`shutdown_step_timeout`, before it closes any client: a disconnect handler writing to your
+presence store finds it open. Past that the closes are no longer waited for, and process
+exit can still cut one short.
 
 **Fit the window to the budget.** The phase measures what is left of its allowance after
 listing, gives the tail at most half of it and the window at most the rest. A budget
