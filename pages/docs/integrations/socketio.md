@@ -427,6 +427,8 @@ runtime = build_runtime(
             GATEWAYS,
             every=timedelta(seconds=3),
             report=connection_report(sio, namespaces=NAMESPACES, movable=movable),
+            on_stop="linger",  # hold the settle gate shut until a replacement joins
+            linger_for=timedelta(seconds=90),  # longer than a replacement takes to boot
             depends_on=("redis_lifecycle",),
         ),
         connection_rebalance_lifecycle_step(
@@ -450,7 +452,14 @@ joined a game since the tick picked it stays.
 
 **Route least-connections.** It is a prerequisite, not a tuning choice: a balancer that
 round-robins, hashes, or pins a client to its replica with a sticky cookie can send the shed
-clients straight back, and the step then moves load in circles.
+clients straight back, and the step then moves load in circles. Long-polling across several
+replicas needs every request of one Engine.IO session on one replica: pin by the session
+(its `sid` query parameter, which a reconnect replaces), not by a cookie that outlives it,
+or let clients use the WebSocket transport only.
+
+**Shed only clients that reconnect.** socket.io's JavaScript client reconnects after the
+close, as it does after the drain's (see [What clients see](#what-clients-see)). The Python
+client stops: give it reconnect logic of its own, or leave its connections out of `movable`.
 
 **The report counts transports.** One Engine.IO connection carries every namespace its
 client opened, and closing it ends them all, so every count is of Engine.IO connections, not
@@ -461,12 +470,20 @@ connection. The step reads its peers' loads from their membership reports, under
 (`"movable"`) is there for you to watch. `connection_report` returns the `report=` callable
 that fills both with the counting the step uses for its own: give the two the same
 `namespaces` and `movable`. A replica that reports no load is left out of the mean,
-and sheds nothing itself.
+and sheds nothing itself. List every namespace your clients open in `namespaces`, so the
+counts match what the balancer counts, and let `movable` decide what may move: a namespace
+left out is not counted, and the step and the balancer then disagree about which replica is
+full.
 
 **When it sheds.** Only while all of these hold:
 
 - Every replica in the view has been serving for `settle` (120 s by default), so nobody sheds
-  during a deploy. Shedding does not change a replica's state, so it does not restart this
+  while replicas start. A replica that leaves with the membership step's default
+  `on_stop="leave"` drops out of the view at once, though, so midway through a rolling deploy
+  the replicas left can count as settled and shed. Give the membership step
+  `on_stop="linger"` with a `linger_for` longer than a replacement takes to boot, as above:
+  the leaving replica's `draining` entry then holds the gate shut until its replacement beats
+  as `starting`. Shedding does not change a replica's state, so it does not restart this
   clock.
 - This replica has an entry in the view, is serving, and is not draining. A draining replica
   closes everything through its [drain](#drain-a-replica) instead. A shed already running

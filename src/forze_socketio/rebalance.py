@@ -433,7 +433,9 @@ def connection_rebalance_lifecycle_step(
         shed can spend all of it, spread over *every*.
     :param member_id: This replica's id in the fleet; the membership step's, which is
         :func:`~forze.base.primitives.instance_id` when ``None``.
-    :param namespaces: The namespaces counted and shed.
+    :param namespaces: The namespaces counted and shed. List every namespace clients open,
+        so the counts match what the balancer counts, and let *movable* decide what may move:
+        a namespace left out is not counted, and the step and the balancer then disagree.
     :param load: The report key holding each replica's transport count.
     :param movable_report: The report key holding each replica's movable transport count.
     :param tolerance: How far above the mean, relative to it, is still balanced.
