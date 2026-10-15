@@ -6881,6 +6881,11 @@ per-message spans belong in the consumer.</p>
 <code>op</code>, and <code>duration_ms</code> under <code>forze.integrations.&lt;domain&gt;</code> — at <code>trace</code> on success
 (so it costs nothing in production unless you turn trace on), <code>debug</code> on an expected
 domain failure, and <code>warning</code> with a traceback on an unexpected one.</p>
+<p>Both wrap the port a context resolves, so a <code>@runtime_checkable</code> protocol check of it
+is false even when the backend implements the protocol. Ask
+<code>implements(port, SomeAware)</code>, from <code>forze.application.contracts.deps</code>, instead: it
+answers for the backend behind the wrappers. Keep calling the port itself, so the span
+and the log line still happen.</p>
 <h2 id="follow-the-trace-across-boundaries">Follow the trace across boundaries<a class="headerlink" href="#follow-the-trace-across-boundaries" title="Permanent link">&para;</a></h2>
 <p>Spans and port spans cover one operation inside one process. When the work crosses a
 boundary the trace would normally break — so Forze carries the W3C <code>traceparent</code>

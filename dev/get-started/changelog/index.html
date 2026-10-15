@@ -769,6 +769,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -887,7 +898,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -948,7 +959,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -1009,7 +1020,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_2" class="md-nav__link">
+  <a href="#security_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -1120,7 +1131,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_3" class="md-nav__link">
+  <a href="#security_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -1192,7 +1203,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_4" class="md-nav__link">
+  <a href="#security_5" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -1536,7 +1547,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_5" class="md-nav__link">
+  <a href="#security_6" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -7956,6 +7967,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8074,7 +8096,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#security" class="md-nav__link">
+  <a href="#security_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8135,7 +8157,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_1" class="md-nav__link">
+  <a href="#security_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8196,7 +8218,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_2" class="md-nav__link">
+  <a href="#security_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8307,7 +8329,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_3" class="md-nav__link">
+  <a href="#security_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8379,7 +8401,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_4" class="md-nav__link">
+  <a href="#security_5" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -8723,7 +8745,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#security_5" class="md-nav__link">
+  <a href="#security_6" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Security
@@ -9569,6 +9591,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>The readiness route logs a failed dependency check under the application logger</strong>, as "Readiness check … failed". Alerts keyed on the <code>fastapi.probes</code> logger no longer match.</p>
 </li>
+<li>
+<p><strong>The tenant-isolation floor leaves out routes that belong to the deployment.</strong> Redis fleets, and lock and pub/sub routes marked <code>tenant_global=True</code> (a lifecycle lock, an outbox wake), no longer count toward <code>required_tenant_isolation</code>, so a module of only those meets it. Every other route is still held to it.</p>
+</li>
 </ul>
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9595,10 +9620,64 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A lock spec with <code>requires_fencing_token</code> no longer refuses a capable backend whose ports are wrapped</strong> by <abbr title="OpenTelemetry">OTel</abbr> port spans, tracing, interceptors or a resilience port policy; resolving it failed with <code>dlock.fencing_unsupported</code>.</p>
 </li>
 <li>
+<p><strong>A lock spec's fencing requirements are judged against the backend it hands out.</strong> With the port cache off, the check resolved a second backend and judged that one instead. <code>implements(port, Protocol)</code> in <code>forze.application.contracts.deps</code> asks a protocol check of the backend behind a port's guard and wrappers.</p>
+</li>
+<li>
+<p><strong>An inbox on another pool than its transaction is refused under port logging or <abbr title="OpenTelemetry">OTel</abbr> port spans too.</strong> The exactly-once check passed any wrapped inbox, so its dedup mark could commit apart from the handler's writes.</p>
+</li>
+<li>
+<p><strong>A stream spec with <code>requires_transactions</code> no longer refuses an exactly-once backend whose port is wrapped</strong> by <abbr title="OpenTelemetry">OTel</abbr> port spans, port logging, tracing or a resilience port policy; resolving it failed with <code>stream.transactions_unsupported</code>.</p>
+</li>
+<li>
+<p><strong>Exporting or migrating a graph no longer refuses a backend whose query port is wrapped</strong> by <abbr title="OpenTelemetry">OTel</abbr> port spans, port logging, tracing or a resilience port policy, as one that cannot surface edge endpoints.</p>
+</li>
+<li>
+<p><strong>A document's L1 cache subscribes to invalidation push when its cache port is wrapped</strong> by <abbr title="OpenTelemetry">OTel</abbr> port spans, port logging, tracing or a resilience port policy, instead of falling back silently to TTL-only staleness.</p>
+</li>
+<li>
+<p><strong><code>graph_read_capabilities</code> reports the streams of a wrapped graph port.</strong> Under <abbr title="OpenTelemetry">OTel</abbr> port spans, port logging, tracing or a resilience port policy it reported none, and a stream guarded by it was refused.</p>
+</li>
+<li>
+<p><strong><code>capabilities_of</code> and <code>durable_run_control_capabilities</code> read the backend behind a wrapped port</strong>, as the other capability checks now do, instead of reporting no storage guarantees and no run control.</p>
+</li>
+<li>
 <p><strong>A Redis lock acquire that fails after taking the lock no longer leaves it held</strong>, as on a corrupt fence counter. Tokens stop at 2⁵³ − 1 on Redis and the mock: an acquire past it is refused with <code>dlock.fence_exhausted</code> rather than issuing a token Redis would round onto another.</p>
 </li>
 <li>
+<p><strong>Socket.io connects replaying at the same time all get their offline replay.</strong> Replay and <code>realtime.ack</code> run on the live context of <code>attach_realtime_connection(runtime=)</code> rather than opening a scope per connect. <strong>Breaking:</strong> pass the serving runtime, with its scope open.</p>
+</li>
+<li>
 <p><strong>The documented fenced write no longer refuses the lock holder's own second write.</strong> The Redis lock example now accepts an equal token on a holder's later writes, the same lock generation, as the contract does.</p>
+</li>
+<li>
+<p><strong>The singleton guard and leadership refuse, at startup, a lock no tenant-less call can use</strong>: tenant-aware, or on a routed client with no tenant to route by. It failed startup with <code>tenant_required</code> or never led; now <code>tenant_global_required</code> (new <code>require_tenant_global</code>). <strong>Breaking</strong> for such a leadership step.</p>
+</li>
+<li>
+<p><strong>Background steps run without <code>tenants</code> refuse a tenant-scoped port at startup:</strong> the outbox and realtime relays, durable recovery and scheduler, <code>job_staleness</code>, stream trim and mailbox retention, which failed every tick, and group ensure. So does a relay whose wake is on a routed client. <strong>Breaking</strong> for such apps.</p>
+</li>
+<li>
+<p><strong>The outbox relay and the durable recovery and scheduler loops stop on a wiring error, logged once,</strong> such as no keyring wired, instead of logging it every tick. One tenant's own configuration error, such as its key's state, still leaves the rest of the shard running.</p>
+</li>
+<li>
+<p><strong>The Temporal schedule bootstrap, the S3 bucket step and Mongo index validation refuse a tenant-scoped client or schedule at startup</strong>, as <code>tenant_global_required</code>, instead of failing with <code>tenant_required</code>: they run with no tenant bound.</p>
+</li>
+<li>
+<p><strong><code>permission_providers_lifecycle_step</code> without <code>tenant=</code> refuses a tenant-scoped permission catalog at startup</strong>, as <code>tenant_global_required</code>, instead of failing with <code>tenant_required</code>.</p>
+</li>
+<li>
+<p><strong>A tenant-aware Kafka route refuses a call with no tenant bound</strong>, with <code>tenant_required</code> as other tenant-aware adapters do, instead of resolving its namespace for no tenant. The commit-stream consumer refuses such a group at startup. <strong>Breaking</strong> for apps that used one unbound.</p>
+</li>
+<li>
+<p><strong>The queue and notification consumer steps refuse a tenant-scoped queue at startup</strong>, as <code>tenant_global_required</code>: they receive with no tenant bound, so they failed every poll. <strong>Breaking</strong> for apps that ran one so.</p>
+</li>
+</ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong>A socket.io connection acts only under the identity it authenticated.</strong> Upgrade if <code>attach_realtime_connection</code> or <code>ForzeSocketIOAdapter(identity_resolver=)</code> authenticates your socket.io connections.</p>
+</li>
+<li>
+<p><strong>A tenant-aware Kafka route with a fixed namespace no longer counts as tenant-isolated</strong>; a declared isolation floor now refuses it. Kafka resolves a per-tenant namespace as the other backends do. <strong>Breaking</strong> for such a floored module, and a per-tenant route that is not tenant-aware may name new topics.</p>
 </li>
 </ul>
 <h2 id="0130-2026-10-14"><a href="https://github.com/morzecrew/forze/compare/v0.12.0...v0.13.0">0.13.0</a> - 2026-10-14<a class="headerlink" href="#0130-2026-10-14" title="Permanent link">&para;</a></h2>
@@ -9778,7 +9857,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 </ul>
 <h2 id="0111-2026-10-07"><a href="https://github.com/morzecrew/forze/compare/v0.11.0...v0.11.1">0.11.1</a> - 2026-10-07<a class="headerlink" href="#0111-2026-10-07" title="Permanent link">&para;</a></h2>
-<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Tenant-aware Postgres search returns only the current tenant's rows in every configuration.</strong> Upgrade if a Postgres search route is configured with <code>tenant_aware=True</code>.</li>
 </ul>
@@ -9963,7 +10042,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The in-memory search orders a ranked page by relevance before the sort</strong>, as Postgres, Mongo and Meilisearch do, instead of sorting first.</p>
 </li>
 </ul>
-<h3 id="security_1">Security<a class="headerlink" href="#security_1" title="Permanent link">&para;</a></h3>
+<h3 id="security_2">Security<a class="headerlink" href="#security_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Firestore reads and deletes by id check the tenant first.</strong> A tenant-aware <code>get</code>, <code>get_many</code> or <code>kill</code> without a bound tenant is refused before it reads the store, as the filtered reads already were.</p>
@@ -10034,7 +10113,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>The temporal and versioned kits' reads are marked as reads.</strong> <code>effective_on</code>, <code>timeline</code>, <code>history</code> and <code>as_of</code> now run under the read-only guard and are listed as read-only in the operation catalog, so an <abbr title="Model Context Protocol">MCP</abbr> projection that includes only reads now includes them.</p>
 </li>
 </ul>
-<h3 id="security_2">Security<a class="headerlink" href="#security_2" title="Permanent link">&para;</a></h3>
+<h3 id="security_3">Security<a class="headerlink" href="#security_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Audit rows and versioned corrections record every principal of a delegation.</strong> <code>actor_id</code> stays the nearest actor; <code>actor_ids</code> holds the whole chain, and a correction gains <code>subject_id</code>; its spec must store and read back all three. <strong>Required migration</strong> on Postgres (see docs); until then those writes fail closed.</p>
@@ -10178,7 +10257,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>HttpAuthConfig</code> with no token sent <code>Authorization: Bearer None</code>.</strong> A config declaring no token still sent the header; it no longer does, and the same fix covers <code>HttpClientLifecycleStep.auth_token</code> and Meilisearch's <code>api_key</code>.</p>
 </li>
 </ul>
-<h3 id="security_3">Security<a class="headerlink" href="#security_3" title="Permanent link">&para;</a></h3>
+<h3 id="security_4">Security<a class="headerlink" href="#security_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Two principals using one idempotency key no longer share its claim.</strong> A claim is scoped to the tenant and the acting principal, so a caller reusing another's key runs its own operation instead of being served that caller's stored result. A custom store inherits <code>ClaimPrincipalMixin</code>.</li>
 </ul>
@@ -10300,7 +10379,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>A durable run or schedule registered for a tenant nothing is bound to now lands where that tenant looks for it.</strong> The relation came from the binding while the tag and the scoped id came from the argument, so on a per-tenant relation the row was written somewhere nobody reads and the schedule never fired.</p>
 </li>
 </ul>
-<h3 id="security_4">Security<a class="headerlink" href="#security_4" title="Permanent link">&para;</a></h3>
+<h3 id="security_5">Security<a class="headerlink" href="#security_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>A bound tenant can no longer reach another tenant's durable run.</strong> <code>begin</code>, <code>renew</code>, <code>load</code> and the terminal writes enforced no tenant; they now reach the bound tenant's runs and untagged ones. Postgres, Mongo and the mock.</p>
@@ -11708,7 +11787,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong><code>forze_temporal</code> and <code>forze[mcp]</code> workflow sandbox</strong> — the sandbox runner passes <code>beartype</code> and <code>coverage</code> through, fixing circular-import failures and a coverage-induced test hang.</p>
 </li>
 </ul>
-<h3 id="security_5">Security<a class="headerlink" href="#security_5" title="Permanent link">&para;</a></h3>
+<h3 id="security_6">Security<a class="headerlink" href="#security_6" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Password change revokes existing sessions (breaking by default)</strong> — <code>change_password</code> revokes all sessions (refresh families plus session-bound access JWTs); opt out explicitly, and missing session ports fail at startup.</p>

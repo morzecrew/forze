@@ -7022,9 +7022,13 @@ for every messaging resource are in the
 <p>A durable, principal-addressed signal is also stored in a per-recipient <strong>mailbox</strong>, so
 a device offline at emit time receives it on reconnect: give the gateway a
 <code>mailbox_factory</code>, and pass <code>attach_realtime_connection</code> a <code>mailbox_factory</code>, a
-<code>cursors_factory</code>, <strong>and</strong> a <code>runtime</code>. Replay opens a scope, so all three are required —
-the two factories alone won't enable it (each device has its own cursor, so it never
-re-receives what it acked). For multi-node, use
+<code>cursors_factory</code>, <strong>and</strong> the serving <code>runtime</code>. All three are required — the two
+factories alone won't enable it (each device has its own cursor, so it never re-receives
+what it acked). Replay and <code>realtime.ack</code> run on that runtime's live context, under the
+connection's identity and tenant, so its scope must be open while the server serves, as
+the app's lifespan holds it. With it closed, each connect's replay logs a configuration
+error coded <code>realtime_replay_scope_closed</code> and delivers nothing, so that connection's acks
+are ignored. For multi-node, use
 <code>RedisRealtimePresence</code> (TTL-backed, so a crashed node's rooms lapse) with
 <code>realtime_presence_heartbeat_lifecycle_step</code>, and drop connections whose credential has
 lapsed with <code>realtime_identity_expiry_lifecycle_step</code>. The full store-and-forward flow —
@@ -7183,9 +7187,8 @@ window, tail=...)</code> is the scheduler on its own, for closing connections at
   close fails is the connect undone directly and does the client see a refusal: <code>Server is
   draining</code>, with <code>{"code": "realtime_draining"}</code> as its data.</li>
 </ul>
-<p><code>draining=</code> takes the <strong>serving</strong> runtime's state, <code>lambda: runtime.draining</code>, and nothing
-defaults it. The <code>runtime</code> that offline replay is wired with is not the one: replay opens a
-scope of its own per connect, so it runs on a runtime that never drains with the replica.</p>
+<p><code>draining=</code> takes the serving runtime's state, <code>lambda: runtime.draining</code>, and nothing
+defaults it, not even the <code>runtime</code> offline replay is wired with.</p>
 <p>Spreading the closes spreads the reconnects, but a balancer that sends them all to one
 replica still overloads it. Route WebSocket traffic <strong>least-connections</strong>, not round-robin
 or by hash, so the reconnects fill the replicas with room.</p>

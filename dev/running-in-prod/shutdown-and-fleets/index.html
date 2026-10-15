@@ -7137,6 +7137,12 @@ one replica runs it and the rest skip —</p>
 <p>You pass the lock <em>spec</em>, not a live port: the guard resolves the command port
 from the execution context (<code>ctx.dlock.command(spec)</code>) at startup, so it slots
 into a lifecycle plan that's assembled before any scope exists.</p>
+<p>Startup runs with no tenant bound, so the lock's route must be tenant-global: not
+<code>tenant_aware</code>, and not on a client routed per tenant that has no tenant to route by.
+Either one fails startup
+with a <code>configuration</code> error coded <code>tenant_global_required</code>, here and in
+<code>leadership_lifecycle_step</code> below. Under a declared tenant-isolation floor, mark the route
+<code>RedisDistributedLockConfig(tenant_global=True)</code> so the floor leaves it out.</p>
 <p>The first replica to acquire the lock runs the startup and releases it;
 replicas that find the lock held <strong>skip</strong> — the holder is doing the work.
 Shutdown later runs only on the replica whose startup actually executed. The
