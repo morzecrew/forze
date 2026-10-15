@@ -713,11 +713,10 @@ class TestDrainingRefusal:
             return await _resolve(connect)
 
         if wiring == "replay":
-            # Replay opens a scope per connect, so it runs on a runtime of its own; the
-            # draining source is the serving runtime, whatever replay is wired with.
+            # Replay runs on the serving runtime, the same one the draining source reads.
             _replayed(
                 server,
-                _runtime(),
+                runtime,
                 resolve=resolve,
                 draining=lambda: runtime.draining,
                 stats=stats,
@@ -745,32 +744,6 @@ class TestDrainingRefusal:
         assert resolved == []
         assert stats.connect_refused == {("/", "draining"): 1}
         assert stats.connections == {}
-
-    # ....................... #
-
-    async def test_the_replay_runtime_draining_its_own_scope_refuses_nothing(self) -> None:
-        server = _server()
-        tearing_down = asyncio.Event()
-
-        async def slow_shutdown(_ctx: Any) -> None:
-            tearing_down.set()
-            await asyncio.sleep(0.2)
-
-        # A replay scope's own teardown announces a drain on the replay runtime.
-        replay = build_runtime(
-            lifecycle_steps=LifecycleStep(id="client", shutdown=slow_shutdown),
-            drain_timeout=timedelta(0),
-        )
-        _replayed(server, replay, resolve=_resolve)
-
-        first = asyncio.ensure_future(_connect(server, "eio-1"))
-        await asyncio.wait_for(tearing_down.wait(), timeout=1.0)
-
-        assert replay.draining is True
-        await _connect(server, "eio-2")  # accepted: the replica is not draining
-        await first
-
-        assert _open(server) == {"eio-1", "eio-2"}
 
     # ....................... #
 
@@ -1319,7 +1292,7 @@ class TestConnectUnderWay:
         presence = _Announcing()
         _replayed(
             server,
-            _runtime(),
+            runtime,
             resolve=_resolve,
             presence=presence,
             draining=lambda: runtime.draining,

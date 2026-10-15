@@ -14,19 +14,16 @@ and clamps acks to that floor until the drain completes.
 from __future__ import annotations
 
 import asyncio
-import contextvars
-from collections.abc import AsyncIterator
-from contextlib import aclosing, asynccontextmanager
+from contextlib import aclosing
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience, MailboxEntry, RealtimeSignal
-from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
+from forze.application.execution import ExecutionRuntime
 from forze.application.integrations.realtime.replay import _MAX_BACKLOG_ROUNDS
 from forze.base.primitives import HlcTimestamp
-from forze_mock import MockDepsModule
 from forze_socketio import (
     InMemoryMailboxCursors,
     InMemoryRealtimeMailbox,
@@ -39,43 +36,6 @@ from forze_socketio.routing import SocketIOConnect
 
 _PRINCIPAL = UUID("22222222-2222-2222-2222-222222222222")
 _PRINCIPAL_STR = str(_PRINCIPAL)
-
-
-class _ConcurrentRuntime:
-    """A runtime facade whose scopes may overlap — one fresh ``ExecutionRuntime`` per
-    unit of work, so an ack can run while the connect-time replay still holds its
-    scope (an ``ExecutionRuntime`` allows a single open scope at a time). The mailbox
-    and cursors are injected in-memory objects, so state is shared regardless."""
-
-    draining = False
-    """Never draining: the connection reads it as its default draining source."""
-
-    def __init__(self) -> None:
-        self._current: contextvars.ContextVar[ExecutionRuntime | None] = contextvars.ContextVar(
-            "ack_clamp_runtime", default=None
-        )
-
-    @asynccontextmanager
-    async def scope(self) -> AsyncIterator[None]:
-        runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
-        token = self._current.set(runtime)
-
-        try:
-            async with runtime.scope():
-                yield
-
-        finally:
-            self._current.reset(token)
-
-    def get_context(self) -> ExecutionContext:
-        runtime = self._current.get()
-        assert runtime is not None
-
-        return runtime.get_context()
-
-
-def _runtime() -> Any:
-    return _ConcurrentRuntime()
 
 
 def _hlc(physical_ms: int) -> HlcTimestamp:
@@ -188,7 +148,7 @@ def _connection() -> RealtimeConnection:
 # ----------------------- #
 
 
-async def test_mid_replay_ack_of_a_live_frame_is_clamped_to_the_delivered_floor() -> None:
+async def test_mid_replay_ack_of_a_live_frame_is_clamped_to_the_delivered_floor(serving_runtime: ExecutionRuntime) -> None:
     sio, cursors = _StubSio(), InMemoryMailboxCursors()
     inner = InMemoryRealtimeMailbox()
     # Held after e2: e1's position is then RUN-PROVEN delivered (an entry with a
@@ -207,11 +167,11 @@ async def test_mid_replay_ack_of_a_live_frame_is_clamped_to_the_delivered_floor(
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     connect = asyncio.create_task(sio.handlers["connect"]("sid-1", {}, None))
-    await mailbox.held.wait()  # replay delivered e1+e2 and is now held mid-drain
+    await asyncio.wait_for(mailbox.held.wait(), timeout=5)  # replay delivered e1+e2 and is now held mid-drain
 
     # the client acks e3 — a frame it received LIVE while e3 is still undrained; the
     # cumulative claim must be clamped to the proven floor (e1), or the undrained
@@ -229,7 +189,7 @@ async def test_mid_replay_ack_of_a_live_frame_is_clamped_to_the_delivered_floor(
     assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(3)
 
 
-async def test_mid_drain_ack_cannot_claim_a_partially_delivered_run() -> None:
+async def test_mid_drain_ack_cannot_claim_a_partially_delivered_run(serving_runtime: ExecutionRuntime) -> None:
     # The replay is held right after s1 — the first entry of an equal-HLC run whose
     # sibling s2 is still in flight. Acking s1 claims its WHOLE run cumulatively
     # (the trim deletes ``<= floor``), so the mid-drain floor must hold at the last
@@ -250,11 +210,11 @@ async def test_mid_drain_ack_cannot_claim_a_partially_delivered_run() -> None:
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     connect = asyncio.create_task(sio.handlers["connect"]("sid-1", {}, None))
-    await mailbox.held.wait()  # e1 and s1 delivered; s2 (same HLC as s1) in flight
+    await asyncio.wait_for(mailbox.held.wait(), timeout=5)  # e1 and s1 delivered; s2 (same HLC as s1) in flight
 
     await sio.handlers["realtime.ack"]("sid-1", {"up_to": "s1"})
 
@@ -296,7 +256,7 @@ class _CapTruncatedMailbox:
         return getattr(self.inner, name)
 
 
-async def test_truncated_replay_keeps_the_ack_clamp() -> None:
+async def test_truncated_replay_keeps_the_ack_clamp(serving_runtime: ExecutionRuntime) -> None:
     # A backlog so deep the round budget cannot drain it: entries stay retained past
     # the delivered prefix, so lifting the clamp would let a live-frame ack advance
     # the cursor over the undelivered middle, which the all-device trim then
@@ -320,7 +280,7 @@ async def test_truncated_replay_keeps_the_ack_clamp() -> None:
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)  # rounds exhaust before the tail
@@ -336,7 +296,7 @@ async def test_truncated_replay_keeps_the_ack_clamp() -> None:
     assert retained == [f"e{n}" for n in range(_MAX_BACKLOG_ROUNDS + 1, total + 1)]
 
 
-async def test_split_equal_hlc_run_keeps_the_clamp_and_its_siblings() -> None:
+async def test_split_equal_hlc_run_keeps_the_clamp_and_its_siblings(serving_runtime: ExecutionRuntime) -> None:
     # The replay window cuts INSIDE an equal-HLC run whose length reaches the cap:
     # a strict-greater re-fetch can never see the remaining sibling, so the drain
     # stays unconfirmed and the floor retreats BELOW the run — were the run claimed,
@@ -357,7 +317,7 @@ async def test_split_equal_hlc_run_keeps_the_clamp_and_its_siblings() -> None:
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)
@@ -394,7 +354,7 @@ class _LiveArrivalMailbox(_CapTruncatedMailbox):
             )
 
 
-async def test_live_arrival_after_a_drained_cap_replay_does_not_keep_the_clamp() -> None:
+async def test_live_arrival_after_a_drained_cap_replay_does_not_keep_the_clamp(serving_runtime: ExecutionRuntime) -> None:
     # An entry stored between a cap-filled-but-drained replay and the probe is a
     # LIVE arrival, not evidence of truncation. The follow-up round drains it, so
     # the clamp lifts — read as truncation instead, acks would stay pinned to the
@@ -413,7 +373,7 @@ async def test_live_arrival_after_a_drained_cap_replay_does_not_keep_the_clamp()
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)
@@ -425,7 +385,7 @@ async def test_live_arrival_after_a_drained_cap_replay_does_not_keep_the_clamp()
     assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(99)  # unclamped
 
 
-async def test_exactly_drained_cap_replay_lifts_the_clamp() -> None:
+async def test_exactly_drained_cap_replay_lifts_the_clamp(serving_runtime: ExecutionRuntime) -> None:
     # A backlog of exactly ``cap`` entries fills the count but IS fully drained: the
     # one-entry probe finds nothing past the last delivered position, so the clamp
     # lifts like any complete replay — a later live-frame ack advances normally.
@@ -442,7 +402,7 @@ async def test_exactly_drained_cap_replay_lifts_the_clamp() -> None:
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)  # exactly cap entries, all drained
@@ -454,7 +414,7 @@ async def test_exactly_drained_cap_replay_lifts_the_clamp() -> None:
     assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(3)  # unclamped
 
 
-async def test_ack_before_anything_is_delivered_is_ignored() -> None:
+async def test_ack_before_anything_is_delivered_is_ignored(serving_runtime: ExecutionRuntime) -> None:
     # a fresh device (no cursor row) acking a live frame before the replay has
     # delivered anything has no delivered prefix to stand on — the cursor must not
     # move at all (moving it would freeze a bogus trim floor AND skip the backlog)
@@ -472,11 +432,11 @@ async def test_ack_before_anything_is_delivered_is_ignored() -> None:
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     connect = asyncio.create_task(sio.handlers["connect"]("sid-1", {}, None))
-    await mailbox.held.wait()  # the replay is registered but has delivered nothing
+    await asyncio.wait_for(mailbox.held.wait(), timeout=5)  # the replay is registered but has delivered nothing
 
     await sio.handlers["realtime.ack"]("sid-1", {"up_to": "e2"})  # a live-frame ack
 
@@ -489,7 +449,7 @@ async def test_ack_before_anything_is_delivered_is_ignored() -> None:
     assert await cursors.get(principal=_PRINCIPAL_STR, client_key="d1") == _hlc(2)
 
 
-async def test_failed_room_join_does_not_leak_replay_progress() -> None:
+async def test_failed_room_join_does_not_leak_replay_progress(serving_runtime: ExecutionRuntime) -> None:
     # a raise between progress registration and connect completion refuses the
     # connect, and a refused connect never reaches on_disconnect — the entry must
     # be dropped on the failure path or every failed join leaks one forever
@@ -506,7 +466,7 @@ async def test_failed_room_join_does_not_leak_replay_progress() -> None:
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     import pytest
@@ -519,7 +479,7 @@ async def test_failed_room_join_does_not_leak_replay_progress() -> None:
     assert lifecycle._replay_progress == {}
 
 
-async def test_failed_replay_keeps_the_connection_and_the_ack_clamp() -> None:
+async def test_failed_replay_keeps_the_connection_and_the_ack_clamp(serving_runtime: ExecutionRuntime) -> None:
     # replay is best-effort: a drain error must not refuse the live connection — but
     # the progress stays incomplete, so acks remain refused (nothing was delivered)
     # until a reconnect replays successfully
@@ -539,7 +499,7 @@ async def test_failed_replay_keeps_the_connection_and_the_ack_clamp() -> None:
         resolve=_resolver(_connection()),
         mailbox_factory=lambda _ctx: mailbox,  # pyright: ignore[reportArgumentType]
         cursors_factory=lambda _ctx: cursors,
-        runtime=_runtime(),
+        runtime=serving_runtime,
     )
 
     await sio.handlers["connect"]("sid-1", {}, None)  # no raise — replay failure is logged

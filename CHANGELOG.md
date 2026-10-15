@@ -59,6 +59,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A Redis lock acquire that fails after taking the lock no longer leaves it held**, as on a corrupt fence counter. Tokens stop at 2⁵³ − 1 on Redis and the mock: an acquire past it is refused with `dlock.fence_exhausted` rather than issuing a token Redis would round onto another.
 
+- **Socket.io connects replaying at the same time all get their offline replay.** Replay and `realtime.ack` run on the live context of `attach_realtime_connection(runtime=)` rather than opening a scope per connect. **Breaking:** pass the serving runtime, with its scope open.
+
 - **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now accepts an equal token on a holder's later writes, the same lock generation, as the contract does.
 
 ### Security

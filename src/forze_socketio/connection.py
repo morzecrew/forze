@@ -280,16 +280,35 @@ async def _best_effort(work: Awaitable[object]) -> None:
 # ....................... #
 
 
+def _serving_context(runtime: ExecutionRuntime) -> ExecutionContext:
+    """The serving runtime's live context, which replay and ack run on."""
+
+    try:
+        return runtime.get_context()
+
+    except CoreException as error:
+        raise exc.configuration(
+            "Offline replay and acks run on the serving runtime's context, and its scope is "
+            "not open: pass attach_realtime_connection the runtime that serves the app, with "
+            "its scope held open while the server serves",
+            code="realtime_replay_scope_closed",
+        ) from error
+
+
+# ....................... #
+
+
 def _bind_connection(
     ctx: ExecutionContext,
     connection: RealtimeConnection,
 ) -> AbstractContextManager[None]:
-    """Bind the connection's authenticated identity **and** tenant for a fresh scope.
+    """Bind the connection's authenticated identity **and** tenant on the serving context.
 
-    Replay and ack open a *new* execution scope, which has neither the authn nor the tenant
-    bound — so the connection's own identity (captured at connect time) must be re-established,
-    or the mailbox/cursor operations run unauthenticated (and a tenant-aware store fails
-    closed). Both come from the connection, never from the empty fresh ``ctx``.
+    Replay and ack run in a socket.io handler's task, where nothing is bound — so the
+    connection's own identity (captured at connect time) must be re-established, or the
+    mailbox/cursor operations run unauthenticated (and a tenant-aware store fails closed).
+    The binding is the task's own, so connections replaying at once on one context each see
+    their own.
     """
 
     tenant = TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
@@ -370,49 +389,44 @@ class _ConnectionLifecycle:
         client_key = connection.client_key(sid)
         progress = self._replay_progress.get(sid)
 
-        # Stream the backlog page-by-page inside the scope and emit as we go, so peak
-        # memory is one page rather than the whole (up to ``cap``) backlog per
-        # reconnecting device. The scope stays open during the emits, but the document
-        # query ports do not pin a connection between paged reads.
-        async with self.runtime.scope():
-            ctx = self.runtime.get_context()
+        # Stream the backlog page-by-page and emit as we go, so peak memory is one page
+        # rather than the whole (up to ``cap``) backlog per reconnecting device. The
+        # document query ports do not pin a connection between paged reads.
+        ctx = _serving_context(self.runtime)
 
-            with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
-                mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
-                cursors = self.cursors_factory(ctx)
-                since = await cursors.get(principal=connection.principal, client_key=client_key)
+        with _bind_connection(ctx, connection):  # nothing is bound in a handler's task
+            mailbox = self.mailbox_factory(ctx)
+            cursors = self.cursors_factory(ctx)
+            since = await cursors.get(principal=connection.principal, client_key=client_key)
 
-                if progress is not None and since is not None:
-                    progress.floor = since  # the already-acked prefix counts as delivered
+            if progress is not None and since is not None:
+                progress.floor = since  # the already-acked prefix counts as delivered
 
-                outcome = BacklogDrain(claim_floor=since)
+            outcome = BacklogDrain(claim_floor=since)
 
-                # ``iter_backlog`` drains past a bounded replay window in rounds
-                # (a cap-filled pass is ambiguous: drained, a live arrival, or a
-                # truncated remainder) and reports whether the drain confirmably
-                # completed. ``aclosing``: a raise mid-drain (an emit failure, a
-                # cancel) must close the paged stream deterministically.
-                async with aclosing(
-                    iter_backlog(
-                        mailbox, principal=connection.principal, since=since, outcome=outcome
+            # ``iter_backlog`` drains past a bounded replay window in rounds (a cap-filled
+            # pass is ambiguous: drained, a live arrival, or a truncated remainder) and
+            # reports whether the drain confirmably completed. ``aclosing``: a raise
+            # mid-drain (an emit failure, a cancel) must close the paged stream
+            # deterministically.
+            async with aclosing(
+                iter_backlog(mailbox, principal=connection.principal, since=since, outcome=outcome)
+            ) as entries:
+                async for entry in entries:
+                    await self.sio.emit(
+                        entry.event,
+                        {"id": entry.event_id, "data": entry.payload},
+                        to=sid,
+                        namespace=self.namespace,
                     )
-                ) as entries:
-                    async for entry in entries:
-                        await self.sio.emit(
-                            entry.event,
-                            {"id": entry.event_id, "data": entry.payload},
-                            to=sid,
-                            namespace=self.namespace,
-                        )
 
-                        if progress is not None:
-                            # The floor an ack may claim mid-drain is the drain's
-                            # RUN-PROVEN position, not this entry's own: a claim
-                            # trims the whole equal-HLC run, and this entry's run
-                            # may still have undelivered siblings in flight — an
-                            # ack claiming it would delete them from the store
-                            # before the replay reaches them.
-                            progress.floor = outcome.claim_floor
+                    if progress is not None:
+                        # The floor an ack may claim mid-drain is the drain's RUN-PROVEN
+                        # position, not this entry's own: a claim trims the whole
+                        # equal-HLC run, and this entry's run may still have undelivered
+                        # siblings in flight — an ack claiming it would delete them from
+                        # the store before the replay reaches them.
+                        progress.floor = outcome.claim_floor
 
         if progress is not None:
             # The claim floor lands on the final run only once the drain confirmed
@@ -536,17 +550,17 @@ class _ConnectionLifecycle:
 
             delivered_floor = progress.floor
 
-        async with self.runtime.scope():
-            ctx = self.runtime.get_context()
-            with _bind_connection(ctx, connection):
-                await acknowledge_up_to(
-                    self.mailbox_factory(ctx),
-                    self.cursors_factory(ctx),
-                    principal=connection.principal,
-                    client_key=connection.client_key(sid),
-                    event_id=event_id,
-                    delivered_floor=delivered_floor,
-                )
+        ctx = _serving_context(self.runtime)
+
+        with _bind_connection(ctx, connection):
+            await acknowledge_up_to(
+                self.mailbox_factory(ctx),
+                self.cursors_factory(ctx),
+                principal=connection.principal,
+                client_key=connection.client_key(sid),
+                event_id=event_id,
+                delivered_floor=delivered_floor,
+            )
 
     # ....................... #
 
@@ -938,10 +952,14 @@ def attach_realtime_connection(
     When *mailbox_factory*, *cursors_factory* and *runtime* are all supplied, offline
     replay is enabled: on connect the connection's device is replayed
     everything past its cursor, and a ``realtime.ack {up_to}`` event advances that cursor
-    so a device never re-receives what it acked. The factories build their store with
-    ports resolved against each unit-of-work ctx (e.g. ``build_realtime_mailbox``); the
-    device is keyed by
-    :meth:`RealtimeConnection.client_key` (its ``device_id``/``session_id``, else
+    so a device never re-receives what it acked. *runtime* is the **serving** runtime:
+    replay and ack run on its live context, under the connection's identity and tenant, so
+    its scope must be open while the server serves (as the app's lifespan holds it). With
+    it closed, each connect's replay logs a configuration error coded
+    ``realtime_replay_scope_closed`` and delivers nothing, so that connection's acks are
+    ignored: there is nothing for them to claim. The factories build their store
+    with ports resolved against that ctx (e.g. ``build_realtime_mailbox``); the device is
+    keyed by :meth:`RealtimeConnection.client_key` (its ``device_id``/``session_id``, else
     the per-connection sid).
 
     A ``realtime.reauth`` event is always registered: a client whose token rotates sends
@@ -972,10 +990,8 @@ def attach_realtime_connection(
     transport closed meanwhile stops quietly at the same checks, and a *draining* that raises
     refuses the connect as an internal error. The refusal ``Server is draining``, data
     ``{"code": "realtime_draining"}``, is raised too and reaches the client only if the close
-    failed. Pass the **serving**
-    runtime's, ``draining=lambda: runtime.draining``: nothing defaults it, and the replay
-    *runtime* is not the one to read — replay opens a scope of its own per connect, so it
-    runs on a runtime that never drains with the replica.
+    failed. Pass the serving runtime's, ``draining=lambda: runtime.draining``: nothing
+    defaults it, not even when replay is wired with that runtime.
 
     *admission* runs after the first draining check and before the protocol is negotiated or
     the connection authenticated: it returns to admit the connect, and awaiting it delays the
@@ -1012,8 +1028,7 @@ def attach_realtime_connection(
     if runtime is not None and draining is None:
         error_logger.warning(
             "attach_realtime_connection on %s: replay is wired without draining=, so connects "
-            "are not refused while the replica drains; the replay runtime is not the serving "
-            "runtime — pass draining=lambda: <serving runtime>.draining",
+            "are not refused while the replica drains — pass draining=lambda: runtime.draining",
             namespace,
         )
 
