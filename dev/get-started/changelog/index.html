@@ -9554,6 +9554,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>A replica keeps its fleet entry current from startup to shutdown.</strong> <code>fleet_membership_lifecycle_step(spec, every=)</code> beats <code>starting</code>, then <code>serving</code> once startup finishes, then <code>draining</code> once a drain is announced, and leaves the fleet or lingers on stop.</p>
 </li>
+<li>
+<p><strong>An overloaded socket.io replica sheds connections toward the fleet's mean.</strong> <code>connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)</code> closes movable connections at a bounded rate once the fleet has settled; <code>connection_report(sio, movable=)</code> fills the membership report it reads.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

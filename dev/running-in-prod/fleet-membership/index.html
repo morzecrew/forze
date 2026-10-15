@@ -6848,7 +6848,8 @@ comes from a stable hash, so it is the same in every process. Pass
 until the fleet is <code>settled(settle)</code> and the load is above <code>mean × (1 + tolerance)</code>, then
 returns <code>ceil(load − mean)</code>, capped by the floor of the member's <code>movable</code> report when one
 is named. A result below <code>smallest</code> is 0. Use it to decide how many connections, tables or
-tenants to hand back; moving them is your protocol, not the fleet's.</p>
+tenants to hand back; moving them is your protocol, not the fleet's. For socket.io
+connections, the <a href="../../integrations/socketio/#rebalance-a-fleet">rebalance step</a> does it.</p>
 <p>Compare a member's <code>since</code> with the view's <code>at</code>, never with your own clock: the two come
 from the same backend clock, so skew between replicas does not enter.</p>
 <h2 id="wiring">Wiring<a class="headerlink" href="#wiring" title="Permanent link">&para;</a></h2>

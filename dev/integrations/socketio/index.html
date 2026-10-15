@@ -3942,6 +3942,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rebalance-a-fleet" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rebalance a fleet
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6715,6 +6726,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rebalance-a-fleet" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Rebalance a fleet
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7179,6 +7201,114 @@ server-side kind shows the generic detail and is logged.</p>
 connections per namespace), <code>forze.realtime.connect_refused</code> (by reason: <code>protocol</code>,
 <code>auth</code>, <code>draining</code>, <code>admission</code>, <code>internal</code>) and <code>forze.realtime.drain_closed</code> (closes the
 drain started, by outcome). See the <a href="../../reference/metrics/#realtime-connections">metric catalog</a>.</p>
+<h2 id="rebalance-a-fleet">Rebalance a fleet<a class="headerlink" href="#rebalance-a-fleet" title="Permanent link">&para;</a></h2>
+<p>A least-connections balancer places every new connection on the emptiest replica, but a
+socket that stays open never moves. After a deploy the replica that restarted last holds few
+connections and the others hold the rest, and when clients stay connected for hours, so does
+the imbalance. If your clients reconnect often anyway — page loads, short sessions — the
+balancer evens the fleet out on its own, and you do not need this.</p>
+<p>The rebalance step lets a replica well above the fleet's mean close a few of its connections
+at a time, only those you mark movable. Their clients reconnect through the balancer to
+replicas with room. Each replica learns the others' counts from
+<a href="../../running-in-prod/fleet-membership/">fleet membership</a>, so every replica runs both steps:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.fleet</span><span class="w"> </span><span class="kn">import</span> <span class="n">FleetSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.fleet</span><span class="w"> </span><span class="kn">import</span> <span class="n">fleet_membership_lifecycle_step</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_socketio</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">build_socketio_server</span><span class="p">,</span>
+    <span class="n">connection_rebalance_lifecycle_step</span><span class="p">,</span>
+    <span class="n">connection_report</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">GATEWAYS</span> <span class="o">=</span> <span class="n">FleetSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"gateways"</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">10</span><span class="p">))</span>
+<span class="n">NAMESPACES</span> <span class="o">=</span> <span class="p">(</span><span class="s2">"/lobby"</span><span class="p">,</span> <span class="s2">"/game"</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">movable</span><span class="p">(</span><span class="n">namespace</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">sid</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">namespace</span> <span class="o">==</span> <span class="s2">"/lobby"</span>  <span class="c1"># a game connection never moves</span>
+
+
+<span class="n">sio</span> <span class="o">=</span> <span class="n">build_socketio_server</span><span class="p">()</span>
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span>
+    <span class="n">deps_module</span><span class="p">,</span>  <span class="c1"># wires the fleet, e.g. RedisDepsModule(fleets=...)</span>
+    <span class="n">lifecycle_steps</span><span class="o">=</span><span class="p">[</span>
+        <span class="n">fleet_membership_lifecycle_step</span><span class="p">(</span>
+            <span class="n">GATEWAYS</span><span class="p">,</span>
+            <span class="n">every</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">3</span><span class="p">),</span>
+            <span class="n">report</span><span class="o">=</span><span class="n">connection_report</span><span class="p">(</span><span class="n">sio</span><span class="p">,</span> <span class="n">namespaces</span><span class="o">=</span><span class="n">NAMESPACES</span><span class="p">,</span> <span class="n">movable</span><span class="o">=</span><span class="n">movable</span><span class="p">),</span>
+            <span class="n">on_stop</span><span class="o">=</span><span class="s2">"linger"</span><span class="p">,</span>  <span class="c1"># hold the settle gate shut until a replacement joins</span>
+            <span class="n">linger_for</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">90</span><span class="p">),</span>  <span class="c1"># longer than a replacement takes to boot</span>
+            <span class="n">depends_on</span><span class="o">=</span><span class="p">(</span><span class="s2">"redis_lifecycle"</span><span class="p">,),</span>
+        <span class="p">),</span>
+        <span class="n">connection_rebalance_lifecycle_step</span><span class="p">(</span>
+            <span class="n">sio</span><span class="p">,</span>
+            <span class="n">fleet</span><span class="o">=</span><span class="n">GATEWAYS</span><span class="p">,</span>
+            <span class="n">every</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>
+            <span class="n">namespaces</span><span class="o">=</span><span class="n">NAMESPACES</span><span class="p">,</span>
+            <span class="n">movable</span><span class="o">=</span><span class="n">movable</span><span class="p">,</span>
+            <span class="n">per_minute</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>
+        <span class="p">),</span>
+    <span class="p">],</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Every <code>every</code>, the step reads the fleet's view, puts its own live counts in its own entry,
+and asks <a href="../../running-in-prod/fleet-membership/#the-policies"><code>FleetView.excess</code></a> how far
+above the mean it is. It closes that many movable connections, no more than its rate allows,
+the way the drain does: at the Engine.IO level, spread over <code>every</code>, each given up to another
+<code>every</code> to finish. Each is checked again right before its close starts, so a client that
+joined a game since the tick picked it stays.</p>
+<p><strong>Route least-connections.</strong> It is a prerequisite, not a tuning choice: a balancer that
+round-robins, hashes, or pins a client to its replica with a sticky cookie can send the shed
+clients straight back, and the step then moves load in circles. Long-polling across several
+replicas needs every request of one Engine.IO session on one replica: pin by the session
+(its <code>sid</code> query parameter, which a reconnect replaces), not by a cookie that outlives it,
+or let clients use the WebSocket transport only.</p>
+<p><strong>Shed only clients that reconnect.</strong> socket.io's JavaScript client reconnects after the
+close, as it does after the drain's (see <a href="#what-clients-see">What clients see</a>). The Python
+client stops: give it reconnect logic of its own, or leave its connections out of <code>movable</code>.</p>
+<p><strong>The report counts transports.</strong> One Engine.IO connection carries every namespace its
+client opened, and closing it ends them all, so every count is of Engine.IO connections, not
+of namespace connections. A connection is movable when every namespace on it is in
+<code>namespaces</code> and passes <code>movable(namespace, sid)</code>; one game namespace keeps the whole
+connection. The step reads its peers' loads from their membership reports, under <code>load</code>
+(<code>"connections"</code>); only its own movable count limits its shed, so a peer's <code>movable_report</code>
+(<code>"movable"</code>) is there for you to watch. <code>connection_report</code> returns the <code>report=</code> callable
+that fills both with the counting the step uses for its own: give the two the same
+<code>namespaces</code> and <code>movable</code>. A replica that reports no load is left out of the mean,
+and sheds nothing itself. List every namespace your clients open in <code>namespaces</code>, so the
+counts match what the balancer counts, and let <code>movable</code> decide what may move: a namespace
+left out is not counted, and the step and the balancer then disagree about which replica is
+full.</p>
+<p><strong>When it sheds.</strong> Only while all of these hold:</p>
+<ul>
+<li>Every replica in the view has been serving for <code>settle</code> (120 s by default), so nobody sheds
+  while replicas start. A replica that leaves with the membership step's default
+  <code>on_stop="leave"</code> drops out of the view at once, though, so midway through a rolling deploy
+  the replicas left can count as settled and shed. Give the membership step
+  <code>on_stop="linger"</code> with a <code>linger_for</code> longer than a replacement takes to boot, as above:
+  the leaving replica's <code>draining</code> entry then holds the gate shut until its replacement beats
+  as <code>starting</code>. Shedding does not change a replica's state, so it does not restart this
+  clock.</li>
+<li>This replica has an entry in the view, is serving, and is not draining. A draining replica
+  closes everything through its <a href="#drain-a-replica">drain</a> instead. A shed already running
+  when the drain begins goes on; one still running at shutdown starts no more closes, and
+  teardown waits for the closes it started, as it does for the drain's.</li>
+<li>Its count is more than <code>tolerance</code> (15%) above the mean. Peers' reports can be a beat old;
+  the tolerance absorbs that.</li>
+<li>No earlier shed is still closing, and <code>cooldown</code> (default: <code>settle</code>) has passed since the
+  last one ended, long enough for its clients to land elsewhere and be reported.</li>
+</ul>
+<p><strong>The rate.</strong> <code>per_minute</code> is a long-run rate. Each tick adds <code>per_minute</code> for each minute
+that passed to an allowance, keeping the fraction, and a shed spends whole connections, so the
+rate holds however short <code>every</code> is: a low rate sheds one connection every few ticks, not one
+every tick. The allowance banks what refills over one shed cycle — the longer of a minute and
+<code>cooldown</code> plus three <code>every</code> — so the cooldown does not lower the rate, and one shed can
+spend all of it at once, spread over <code>every</code>. With the default 120 s cooldown and
+<code>every=10s</code>, a shed every two minutes or so closes about two minutes' worth. The step's
+<code>member_id</code> must be the membership step's; both default to <code>instance_id()</code>. It needs a
+long-running process, so a <code>SERVERLESS</code> runtime refuses it.</p>
 <h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
 <p><code>SocketIOSettings</code> carries the Redis backplane: the URL (as a <code>SecretStr</code> — it holds the
 password), the channel, and whether this process publishes without subscribing. Build the
@@ -7240,6 +7370,10 @@ URL from a <code>RedisSettings.dsn</code>; this package cannot import <code>forz
 <tr>
 <td><code>connection_drain_lifecycle_step</code> + <code>close_spread</code></td>
 <td>close a leaving replica's connections spread over a window, before the server stops</td>
+</tr>
+<tr>
+<td><code>connection_rebalance_lifecycle_step</code> + <code>connection_report</code></td>
+<td>shed an overloaded replica's movable connections toward the fleet's mean, at a bounded rate</td>
 </tr>
 <tr>
 <td><code>RealtimeConnectionStats</code> + <code>instrument_realtime_connections</code></td>
