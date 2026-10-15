@@ -8,12 +8,16 @@ from typing import final
 import attrs
 
 from forze.application.contracts.dlock import (
+    FENCE_MAX_VALUE,
     AcquiredLock,
     DistributedLockCapabilities,
     DistributedLockCommandPort,
     DistributedLockQueryPort,
     DistributedLockSpec,
+    FenceAdvancing,
     FencingAware,
+    fence_exhausted,
+    validate_fence_past,
 )
 from forze.base.primitives import monotonic
 from forze_mock.state import MockState
@@ -29,6 +33,7 @@ class MockDistributedLockAdapter(
     DistributedLockQueryPort,
     DistributedLockCommandPort,
     FencingAware,
+    FenceAdvancing,
 ):
     """Process-local lock simulation with TTL semantics."""
 
@@ -39,8 +44,8 @@ class MockDistributedLockAdapter(
     # ....................... #
 
     def capabilities(self) -> DistributedLockCapabilities:
-        # The mock issues monotonic fencing tokens via a per-key in-memory counter.
-        return DistributedLockCapabilities(fencing_tokens=True)
+        # The mock issues monotonic fencing tokens via a per-key in-memory counter, and can move it.
+        return DistributedLockCapabilities(fencing_tokens=True, fence_advance=True)
 
     # ....................... #
 
@@ -99,21 +104,34 @@ class MockDistributedLockAdapter(
 
         The per-key counter is bumped on every fresh acquisition and survives
         release and expiry within the :class:`MockState` lifetime — tokens are
-        monotonic across lock generations, mirroring the Redis adapter.
+        monotonic across lock generations, mirroring the Redis adapter, and stop at
+        ``FENCE_MAX_VALUE``, past which the acquire raises without taking the lock.
         """
 
         ttl = self.spec.ttl.total_seconds()
         expires = self._now() + ttl
         with self.state.lock:
+            fences = self._fences()
+            if fences.get(key, 0) >= FENCE_MAX_VALUE:
+                raise fence_exhausted(key)
             store = self._store()
             entry = store.get(key)
             if entry is not None and not self._is_expired(entry[1]):
                 return None
             store[key] = (owner, expires)
-            fences = self._fences()
             token = fences.get(key, 0) + 1
             fences[key] = token
             return AcquiredLock(key=key, owner=owner, token=token)
+
+    async def advance_fence(self, key: str, *, past: int) -> int:
+        """Move the key's fencing counter to at least ``past``; never lower it."""
+
+        validate_fence_past(past)
+
+        with self.state.lock:
+            fences = self._fences()
+            fences[key] = max(fences.get(key, 0), past)
+            return fences[key]
 
     async def release(self, key: str, owner: str) -> bool:
         with self.state.lock:

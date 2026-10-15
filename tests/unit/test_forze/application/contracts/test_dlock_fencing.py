@@ -1,8 +1,12 @@
-"""Distributed-lock fencing capability: spec.requires_fencing_token fails closed at resolve."""
+"""Distributed-lock fencing capabilities: the spec's requirements fail closed at resolve."""
 
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
+
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
 
 from forze.application.contracts.dlock import (
     AcquiredLock,
@@ -10,8 +14,19 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
     DistributedLockSpec,
 )
-from forze.application.execution import Deps
+from forze.application.contracts.resilience import (
+    PortPolicy,
+    RateLimitStrategy,
+    ResilienceExecutorDepKey,
+    ResiliencePolicy,
+    ResiliencePortPoliciesDepKey,
+)
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext
+from forze.application.execution.port_proxy_base import PortProxy
+from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.base.exceptions import CoreException
+from forze.testing import unguarded
+from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -62,10 +77,87 @@ class _FencingDisabledLock:
         return True
 
 
+class _AdvancingLock(_FencingLock):
+    """Reports fence advance and implements it."""
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        return DistributedLockCapabilities(fencing_tokens=True, fence_advance=True)
+
+    async def advance_fence(self, key: str, *, past: int) -> int:
+        return past
+
+
+class _ClaimsAdvanceWithoutMethodLock(_FencingLock):
+    """Reports fence advance but has no ``advance_fence`` — a backend that lies."""
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        return DistributedLockCapabilities(fencing_tokens=True, fence_advance=True)
+
+
+class _AdvanceFlagOffLock(_FencingLock):
+    """Has ``advance_fence`` but reports ``fence_advance=False`` — the flag must decide."""
+
+    async def advance_fence(self, key: str, *, past: int) -> int:
+        return past
+
+
+class _AdvanceWithoutTokensLock(_AdvanceFlagOffLock):
+    """Can move a counter but issues no fencing tokens — nothing to advance past."""
+
+    def capabilities(self) -> DistributedLockCapabilities:
+        return DistributedLockCapabilities(fencing_tokens=False, fence_advance=True)
+
+
 def _ctx(port: object):
     return context_from_deps(
         Deps.plain({DistributedLockCommandDepKey: lambda _c, _s: port})
     )
+
+
+async def _no_sleep(_delay: float) -> None:
+    return None
+
+
+class _PassThroughInterceptor:
+    async def around(self, call: Any, nxt: Any) -> Any:
+        return await nxt(call)
+
+
+def _wrapped_ctx(backend: Deps) -> ExecutionContext:
+    """Resolve *backend* under every proxy the runtime can put around a port.
+
+    A resilience port policy, OTel port spans, runtime tracing and an interceptor, stacked:
+    each forwards methods through ``__getattr__``, which a protocol check never consults.
+    """
+
+    policy = ResiliencePolicy(
+        name="lock",
+        strategies=(RateLimitStrategy(permits=1000, per=timedelta(seconds=1)),),
+    )
+    resilience = Deps.plain(
+        {
+            ResilienceExecutorDepKey: InProcessResilienceExecutor(
+                policies={"lock": policy}, sleep=_no_sleep
+            ),
+            ResiliencePortPoliciesDepKey: {
+                DistributedLockCommandDepKey: PortPolicy(
+                    key=DistributedLockCommandDepKey, policy="lock"
+                )
+            },
+        }
+    )
+    registry = (
+        DepsRegistry.from_deps(resilience)
+        .with_deps(backend)
+        .with_tracing(runtime=True)
+        .with_otel_port_spans(tracer=TracerProvider().get_tracer("test"))
+        .with_interceptors(_PassThroughInterceptor())
+    )
+    return ExecutionContext(deps=registry.freeze().resolve())
+
+
+def _plain(port: object) -> Deps:
+    return Deps.plain({DistributedLockCommandDepKey: lambda _c, _s: port})
 
 
 def test_requires_fencing_resolves_against_a_fencing_backend() -> None:
@@ -124,3 +216,87 @@ def test_a_read_only_operation_is_refused_a_lock_that_cannot_fence() -> None:
         ctx.dlock.command(spec)
 
     assert ei.value.code == "dlock.fencing_unsupported"
+
+
+def test_requires_fence_advance_resolves_against_an_advancing_backend() -> None:
+    ctx = _ctx(_AdvancingLock())
+    spec = DistributedLockSpec(name="lock", requires_fence_advance=True)
+    assert ctx.dlock.command(spec) is not None
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        _FencingLock(),
+        _AdvanceFlagOffLock(),
+        _BestEffortLock(),
+        _ClaimsAdvanceWithoutMethodLock(),
+        _AdvanceWithoutTokensLock(),
+    ],
+    ids=[
+        "flag-false",
+        "flag-false-with-method",
+        "not-fencing-aware",
+        "flag-without-method",
+        "no-fencing-tokens",
+    ],
+)
+def test_requires_fence_advance_fails_closed(backend: object) -> None:
+    ctx = _ctx(backend)
+    spec = DistributedLockSpec(name="lock", requires_fence_advance=True)
+
+    with pytest.raises(CoreException, match="fence advance") as ei:
+        ctx.dlock.command(spec)
+    assert ei.value.code == "dlock.fence_advance_unsupported"
+
+
+def test_a_read_only_operation_is_refused_a_lock_that_cannot_advance() -> None:
+    ctx = _ctx(_FencingLock())
+    spec = DistributedLockSpec(name="lock", requires_fence_advance=True)
+
+    with ctx.inv_ctx.bind_read_only(), pytest.raises(CoreException, match="fence advance") as ei:
+        ctx.dlock.command(spec)
+
+    assert ei.value.code == "dlock.fence_advance_unsupported"
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [{"requires_fencing_token": True}, {"requires_fence_advance": True}],
+    ids=["fencing", "fence-advance"],
+)
+def test_a_wrapped_backend_still_meets_its_requirements(flags: dict[str, bool]) -> None:
+    # The capability check must see through the proxies, not refuse a capable backend.
+    spec = DistributedLockSpec(name="lock", **flags)
+
+    for backend in (MockDepsModule()(), _plain(_AdvancingLock())):
+        port = _wrapped_ctx(backend).dlock.command(spec)
+        assert isinstance(unguarded(port), PortProxy)  # the stack is really there
+
+
+_REFUSED_WRAPPED = [
+    ("requires_fencing_token", _BestEffortLock(), "dlock.fencing_unsupported"),
+    ("requires_fencing_token", _FencingDisabledLock(), "dlock.fencing_unsupported"),
+    ("requires_fence_advance", _BestEffortLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _FencingLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _AdvanceFlagOffLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _ClaimsAdvanceWithoutMethodLock(), "dlock.fence_advance_unsupported"),
+    ("requires_fence_advance", _AdvanceWithoutTokensLock(), "dlock.fence_advance_unsupported"),
+]
+
+
+@pytest.mark.parametrize(
+    ("flag", "backend", "code"),
+    _REFUSED_WRAPPED,
+    ids=[f"{flag}-{type(backend).__name__}" for flag, backend, _ in _REFUSED_WRAPPED],
+)
+def test_a_wrapped_backend_that_cannot_is_still_refused(
+    flag: str, backend: object, code: str
+) -> None:
+    # Seeing through the proxies must not turn into waving them through.
+    ctx = _wrapped_ctx(_plain(backend))
+
+    with pytest.raises(CoreException) as ei:
+        ctx.dlock.command(DistributedLockSpec(name="lock", **{flag: True}))
+
+    assert ei.value.code == code
