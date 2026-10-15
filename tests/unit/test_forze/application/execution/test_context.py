@@ -8,14 +8,16 @@ import pytest
 
 from forze.application.contracts.cache import CacheSpec
 from forze.application.contracts.counter import CounterDepKey, CounterPort, CounterSpec
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.document import DocumentSpec
+from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.search import SearchSpec
 from forze.application.contracts.storage import (
     StorageCommandDepKey,
     StorageQueryDepKey,
     StorageSpec,
 )
-from forze.application.execution import Deps, ExecutionContext
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext
 from forze.application.execution.context.transaction import (
     AfterCommitError,
     AfterCommitErrorHandler,
@@ -24,8 +26,10 @@ from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters import MockCounterAdapter, MockStorageAdapter
+from forze_mock.adapters.inbox import MockInboxAdapter
 from forze_mock.execution import MockStateDepKey
 from tests.support.execution_context import context_from_deps, frozen_deps_from_deps
+from tests.support.port_wrappers import with_port_wrappers
 
 # ----------------------- #
 
@@ -305,6 +309,25 @@ class TestAssertEnlisted:
                 ctx.tx_ctx.assert_enlisted(_NotEnlisted(), what="Inbox route 'x'")
 
         assert ei.value.kind is ExceptionKind.CONFIGURATION
+        assert ei.value.code == "core.tx.not_enlisted"
+
+    @pytest.mark.asyncio
+    async def test_a_wrapped_unenlisted_inbox_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Port logging and OTel port spans wrap the inbox a context resolves; the check must
+        # ask the store behind the wrappers, or it waves an unenlisted one through.
+        monkeypatch.setattr(MockInboxAdapter, "is_transactionally_enlisted", lambda _self: False)
+        registry = with_port_wrappers(DepsRegistry(modules=[MockDepsModule(state=MockState())]))
+        ctx = ExecutionContext(deps=registry.freeze().resolve())
+
+        async with ctx.tx_ctx.scope("mock"):
+            inbox = ctx.inbox(InboxSpec(name="ib"))
+            assert isinstance(inbox, PortProxy)  # the wrapper is really there
+
+            with pytest.raises(CoreException) as ei:
+                ctx.tx_ctx.assert_enlisted(inbox, what="Inbox route 'ib'")
+
         assert ei.value.code == "core.tx.not_enlisted"
 
     @pytest.mark.asyncio
