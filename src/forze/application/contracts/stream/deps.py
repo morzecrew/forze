@@ -2,7 +2,7 @@ from typing import Any
 
 from forze.base.exceptions import exc
 
-from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey, backend_of
 from .capabilities import CommitStreamGroupAware
 from .ports import (
     AckStreamGroupAdminPort,
@@ -78,8 +78,13 @@ class StreamDeps(ConvenientDeps):
             route=spec.name,
         )
 
+        # Asked of the backend itself: the wrappers resolution adds (tracing, OTel spans,
+        # interceptors, a resilience policy) never match a protocol check.
+        backend = backend_of(port)
+
         if spec.requires_transactions and not (
-            isinstance(port, CommitStreamGroupAware) and port.capabilities().supports_transactions
+            isinstance(backend, CommitStreamGroupAware)
+            and backend.capabilities().supports_transactions
         ):
             raise exc.configuration(
                 f"Stream {spec.name!r} requires transactional exactly-once, but the "

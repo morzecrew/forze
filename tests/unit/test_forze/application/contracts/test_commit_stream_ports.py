@@ -8,18 +8,24 @@ from datetime import datetime, timedelta
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.stream import (
     CommitStreamGroupAdminPort,
     CommitStreamGroupAware,
     CommitStreamGroupCapabilities,
+    CommitStreamGroupQueryDepKey,
     CommitStreamGroupQueryPort,
     ConsumerLag,
     OffsetReset,
     OffsetResetKind,
     StreamMessage,
     StreamPosition,
+    StreamSpec,
 )
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext
 from forze.base.exceptions import CoreException
+from forze.base.serialization import PydanticModelCodec
+from tests.support.port_wrappers import with_port_wrappers
 
 
 class _Msg(BaseModel):
@@ -185,3 +191,44 @@ class TestCommitPorts:
         positions = [StreamPosition.from_message(m) for m in batch]
         assert positions == [StreamPosition(stream="orders", partition=0, offset=0)]
         assert await stub.commit("g", positions) is None
+
+
+# ----------------------- #
+
+
+class _ExactlyOnceQuery(_StubCommitQuery):
+    """A backend that reports native exactly-once."""
+
+    def __init__(self, *, transactions: bool) -> None:
+        self.transactions = transactions
+
+    def capabilities(self) -> CommitStreamGroupCapabilities:
+        return CommitStreamGroupCapabilities(
+            supports_replay=True, supports_transactions=self.transactions
+        )
+
+
+def _wrapped_ctx(port: object) -> ExecutionContext:
+    """Resolve *port* under port logging and OTel port spans, as production can."""
+
+    registry = with_port_wrappers(
+        DepsRegistry.from_deps(Deps.plain({CommitStreamGroupQueryDepKey: lambda _c, _s: port}))
+    )
+    return ExecutionContext(deps=registry.freeze().resolve())
+
+
+class TestRequiresTransactions:
+    _SPEC = StreamSpec(name="orders", codec=PydanticModelCodec(_Msg), requires_transactions=True)
+
+    def test_a_wrapped_exactly_once_backend_is_accepted(self) -> None:
+        port = _wrapped_ctx(_ExactlyOnceQuery(transactions=True)).stream.commit_query(self._SPEC)
+
+        assert isinstance(port, PortProxy)  # the wrappers are really there
+
+    def test_a_wrapped_backend_without_transactions_is_still_refused(self) -> None:
+        ctx = _wrapped_ctx(_ExactlyOnceQuery(transactions=False))
+
+        with pytest.raises(CoreException) as ei:
+            ctx.stream.commit_query(self._SPEC)
+
+        assert ei.value.code == "stream.transactions_unsupported"
