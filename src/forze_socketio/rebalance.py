@@ -40,6 +40,7 @@ from .drain import (
     ConnectionSelector,
     _closable,
     _close_spread,
+    _ClosesFinishing,
     _transports,
     require_close_internals,
 )
@@ -316,7 +317,7 @@ class _Rebalance:
         """Stop a shed still running: it starts no more closes. Idempotent.
 
         A close it already started is never cut short — it may be inside the app's disconnect
-        handlers — and finishes in the background, as the drain's do.
+        handlers. The step's other drainable waits for it, as the drain's does.
 
         :returns: ``True`` when no shed was running.
         """
@@ -443,6 +444,9 @@ def connection_rebalance_lifecycle_step(
     async def startup(ctx: ExecutionContext) -> None:
         rebalance.bind(ctx)
         ctx.drainables.register(rebalance)
+        # Teardown then waits for the closes a stopped shed had started; a second one for
+        # the same server, the drain step's, waits on the same closes.
+        ctx.drainables.register(_ClosesFinishing(sio=sio, loop_name=f"{step_id}:closes"))
         await loop.startup(ctx)
 
     async def shutdown(ctx: ExecutionContext) -> None:

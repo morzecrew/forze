@@ -471,7 +471,7 @@ and sheds nothing itself.
 - This replica has an entry in the view, is serving, and is not draining. A draining replica
   closes everything through its [drain](#drain-a-replica) instead. A shed already running
   when the drain begins goes on; one still running at shutdown starts no more closes, and
-  the closes it started finish in the background, as the drain's do.
+  teardown waits for the closes it started, as it does for the drain's.
 - Its count is more than `tolerance` (15%) above the mean. Peers' reports can be a beat old;
   the tolerance absorbs that.
 - No earlier shed is still closing, and `cooldown` (default: `settle`) has passed since the

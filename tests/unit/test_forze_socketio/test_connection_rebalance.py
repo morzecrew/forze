@@ -517,18 +517,19 @@ class TestNoShedding:
 
 
 class TestStop:
-    def test_shutdown_stops_a_shed_before_teardown_and_never_cuts_a_close_short(self) -> None:
-        async def scenario() -> tuple[list[int], tuple[bool, bool]]:
+    def test_shutdown_stops_a_shed_and_teardown_waits_for_its_started_close(self) -> None:
+        async def scenario() -> tuple[list[tuple[bool, bool, int]], float]:
             state, node = MockState(), _Node()
             first, second = await node.connect(2, "/lobby", "/chat", delay=3)
             await _peers(state, 0, 0)
             await _beat(state, "me", _REPORTED)
-            seen_in_teardown: list[int] = []
+            seen_in_teardown: list[tuple[bool, bool, int]] = []
 
             async def record(_ctx: object) -> None:
-                # Past 15 s, when a shed still running would start its second close.
-                await asyncio.sleep(4)
-                seen_in_teardown.append(node.sockets[second].closes)
+                started = node.sockets[first]
+                seen_in_teardown.append(
+                    (started.cancelled, started.closed, node.sockets[second].closes)
+                )
 
             # Started after the rebalance step, so torn down before it.
             later = LifecycleStep(
@@ -544,17 +545,15 @@ class TestStop:
                 per_minute=12,
             )
             await _serve(state, [rebalance, later], _sleep(12))
-            await asyncio.sleep(10)  # long after: has the first close finished?
-            started = node.sockets[first]
 
-            return seen_in_teardown, (started.cancelled, started.closed)
+            return seen_in_teardown, asyncio.get_running_loop().time()
 
-        seen_in_teardown, first = run_simulation(scenario)
+        seen_in_teardown, left_at = run_simulation(scenario)
 
-        # Stopped with the background loops, before any step's teardown: no second close.
-        assert seen_in_teardown == [0]
-        # The close it had started was never cancelled, and finished.
-        assert first == (False, True)
+        # Before any step's teardown, with the background loops: the shed was stopped, so
+        # its second close never started, and the first ran to its end, never cancelled.
+        assert seen_in_teardown == [(False, True, 0)]
+        assert left_at < 17
 
 
 # ....................... #
