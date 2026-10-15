@@ -79,7 +79,8 @@ def attach_readiness_route(
     every probe, so the probe period is a real query rate against each dependency.
 
     :param probes: Probe name (the key in ``checks``) to the deps key its client is
-        registered under, plain; a key registered only per route is reported as such.
+        registered under, plain; a key registered only per route, or a client routed per
+        tenant, is reported as such.
     :param probe_timeout: Budget for **each** probe, not for the sweep.
 
     :raises CoreException: ``configuration`` — *probes* is set and *probe_timeout* is

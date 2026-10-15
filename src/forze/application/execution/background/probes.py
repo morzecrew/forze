@@ -29,6 +29,10 @@ import attrs
 from forze.application._logger import logger
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.tenancy import (
+    TENANT_GLOBAL_REQUIRED_CODE,
+    require_tenant_global,
+)
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
@@ -94,6 +98,8 @@ async def evaluate_readiness(
         registered under, plain: a key registered only per route names no single client and
         is reported as such. To check a client registered per route, register it under a
         plain key of its own as well.
+        A check runs with no tenant bound, so a client routed per tenant is reported as
+        ``routed per tenant``.
     :param check_timeout: Budget for **each** check, not for the sweep.
     :returns: ``(status code, body)``.
     """
@@ -161,11 +167,24 @@ async def _check_dependencies(
             # a sweep-wide timeout cancels *every* check when one dependency's driver
             # retries past the deadline, and answers 503 with `checks: {}`. Per check, a
             # hanging dependency is one failed check with a name on it.
+            client = deps.provide(key)
+
+            try:
+                require_tenant_global(client, what=f"Readiness check {name!r}")
+
+            except CoreException as error:
+                if error.code != TENANT_GLOBAL_REQUIRED_CODE:
+                    raise
+
+                # A probe runs with no tenant bound, so a client routed per tenant names no
+                # client to probe either, just as a key registered only per route does.
+                return name, {"ok": False, "detail": "routed per tenant"}
+
             budget = asyncio.timeout(seconds)
 
             try:
                 async with budget:
-                    detail, ok = await deps.provide(key).health()
+                    detail, ok = await client.health()
 
             except TimeoutError:
                 # Only *our* budget is reported as ours. A driver with its own deadline

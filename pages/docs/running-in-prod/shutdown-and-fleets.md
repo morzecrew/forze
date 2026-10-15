@@ -131,7 +131,8 @@ sweep of every registered dependency would probe things readiness does not depen
 A `probe_timeout` that is not positive is refused at attach time. A probe resolves
 its key plain: a key registered only per route names no single client and is
 reported as `registered per route only` — to probe such a client, register it under
-a plain key of its own too.
+a plain key of its own too. A probe has no tenant bound, so a client routed per tenant
+is reported as `routed per tenant`; probe one that reaches a fixed backend instead.
 
 Keep the endpoint internal, as you would `/metrics`. `detail` is the client's own
 summary, and a failing driver's is its exception text — which routinely names the
