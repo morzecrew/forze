@@ -71,9 +71,13 @@ def _live_counts(
 
     A transport is movable when every namespace it carries is in *namespaces* and accepted
     by *movable* — the drain's own rule — so one game namespace keeps the whole transport.
+    One being closed is left out of both: it stays listed while its disconnect handlers run,
+    which can outlast a shed.
     """
 
-    transports = _transports(sio)
+    transports = {
+        eio_sid: members for eio_sid, members in _transports(sio).items() if _open(sio, eio_sid)
+    }
     load = sum(
         1
         for members in transports.values()

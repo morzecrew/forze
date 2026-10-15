@@ -265,6 +265,22 @@ class TestNoDoubleShedding:
         # them; the 3 s tick sheds again once they are done.
         assert run_simulation(scenario) == [6, 10, 11]
 
+    def test_a_transport_still_closing_is_not_counted_or_picked_again(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            # Each close takes 5 s: the 1 s shed's ten outlive its tail, which ends at 2.9 s.
+            await node.connect(100, "/lobby", delay=5)
+            await _peers(state, 0, 0)
+            await _beat(state, "me", _REPORTED)
+
+            await _serve(state, _step(node, per_minute=600), _sleep(3.52))
+
+            return sum(1 for socket in node.sockets.values() if socket.closes)
+
+        # The 3 s tick sheds twenty, starting one every 0.05 s, from the eleventh transport
+        # on: the first ten are still closing, so they are neither counted nor picked.
+        assert run_simulation(scenario) == 21
+
     def test_a_tick_inside_the_cooldown_does_nothing(self) -> None:
         async def scenario() -> list[int]:
             state, node = MockState(), _Node()
