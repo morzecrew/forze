@@ -474,8 +474,11 @@ with the window fitted to the phase's allowance like the
   `last_event_id`.
 
 An SSE stream still replaying the mailbox when the phase reaches it ends once its replay
-has; a WebSocket closes at once, mid-replay or mid-write to a slow client — the close is
-bounded — and resumes from `last_event_id` elsewhere. A WebSocket route attached without a
+has. One not finished 5 s after its end — blocked writing to a client that stopped reading,
+say — is cut off: its connection closes, the server logs the response as incomplete, and the
+browser resumes from its `Last-Event-ID` all the same. A WebSocket
+closes at once, mid-replay or mid-write to a slow client — the close is bounded — and
+resumes from `last_event_id` elsewhere. A WebSocket route attached without a
 hub has no live tail, and the drain does not reach it.
 
 While the replica drains, from the drain's announcement on, the routes turn new connections

@@ -33,16 +33,18 @@ require_fastapi()
 # ....................... #
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from datetime import timedelta
 from typing import Annotated, Any, final
 from uuid import UUID
 
+import anyio
 import attrs
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.types import Send
 
 from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import MailboxEntry
@@ -99,6 +101,52 @@ _SSE_HEADERS = {
     "Cache-Control": "no-store",
     "X-Accel-Buffering": "no",  # proxies must not buffer an event stream
 }
+
+
+_END_GRACE_SECONDS = 5.0
+"""How long a live stream may take to finish once its subscription has ended before it is cut
+off: the time a write to a client still reading needs, not one that stopped reading."""
+
+
+class _LiveSseResponse(StreamingResponse):
+    """A live SSE response that ends when its subscription does, even mid-write.
+
+    Its stream ends on its own once the subscription has, but it only runs between writes,
+    and a client that stopped reading blocks the write under way. So the end is watched here
+    as well, apart from the stream: one still running :data:`_END_GRACE_SECONDS` after the end
+    is cut off, which closes the connection. The browser reconnects with its
+    ``Last-Event-ID`` either way.
+    """
+
+    def __init__(self, stream: AsyncGenerator[str], *, ended: asyncio.Event) -> None:
+        super().__init__(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
+        self._stream = stream
+        self._ended = ended
+
+    async def stream_response(self, send: Send) -> None:
+        # A cancel scope, not a task group, around the stream: a task group would wrap what
+        # the stream raises — Starlette reads a bare OSError as the client disconnecting.
+        with anyio.CancelScope() as scope:
+            guard = asyncio.ensure_future(self._end_guard(scope))
+
+            try:
+                await super().stream_response(send)
+
+            finally:
+                guard.cancel()
+
+        if scope.cancelled_caught:
+            _logger.warning(
+                "SSE stream cut off %ss after its subscription ended: its client stopped reading",
+                _END_GRACE_SECONDS,
+            )
+            # Stopped mid-write: run the stream's cleanup now rather than when it is collected.
+            await self._stream.aclose()
+
+    async def _end_guard(self, scope: anyio.CancelScope) -> None:
+        await self._ended.wait()
+        await asyncio.sleep(_END_GRACE_SECONDS)
+        scope.cancel()
 
 
 class RealtimeAckBody(RealtimeAck):
@@ -342,7 +390,7 @@ async def _replay_frames(
 
 async def _live_frames(
     subscription: SseSubscription, *, keepalive_interval: timedelta
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str]:
     """The live tail: matched hub signals as SSE frames, keepalive comments between, until
     the subscription is ended."""
 
@@ -487,7 +535,7 @@ def attach_realtime_sse_route(
             else ()
         )
 
-        async def stream() -> AsyncIterator[str]:
+        async def stream() -> AsyncGenerator[str]:
             # Subscribed before the replay drains, so a signal landing mid-replay is
             # queued rather than lost; a durable one may then arrive twice (mailbox +
             # live), which the client's id-dedup collapses.
@@ -529,10 +577,11 @@ def attach_realtime_sse_route(
                 if not outcome.complete:
                     return
 
-                async for frame in _live_frames(
-                    subscription, keepalive_interval=keepalive_interval
-                ):
-                    yield frame
+                async with aclosing(
+                    _live_frames(subscription, keepalive_interval=keepalive_interval)
+                ) as frames:
+                    async for frame in frames:
+                        yield frame
 
             finally:
                 if subscription is not None:
@@ -547,7 +596,10 @@ def attach_realtime_sse_route(
                     except Exception:
                         _logger.exception("SSE presence leave failed", room=room)
 
-        return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
+        if subscription is None:
+            return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+        return _LiveSseResponse(stream(), ended=subscription.ended)
 
     # ....................... #
 
