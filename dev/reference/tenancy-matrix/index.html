@@ -2156,6 +2156,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/fleet-membership/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Fleet membership
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/credential-rotation/" class="md-nav__link">
         
   
@@ -6636,6 +6665,14 @@ routed client reaches <code>dedicated</code>.</p>
 <td><code>dedicated</code></td>
 </tr>
 <tr>
+<td>Redis</td>
+<td><a href="../../running-in-prod/fleet-membership/">fleet membership</a></td>
+<td><strong>refused</strong> §</td>
+<td><strong>refused</strong> §</td>
+<td>—</td>
+<td>outside the floor §</td>
+</tr>
+<tr>
 <td>S3 / GCS</td>
 <td>object storage</td>
 <td><code>namespace</code> (path prefix)</td>
@@ -6675,6 +6712,10 @@ statements are written at runtime, so an isolating predicate cannot be reviewed,
 cannot be checked at wiring, and when it is missing the read <em>succeeds</em> with another
 tenant's rows. A per-tenant schema is the weakest container that does the scoping the
 statement cannot be trusted to do.</p>
+<p>§ A fleet is one service's replicas, whatever tenants they serve, and it beats from lifecycle
+hooks with no tenant bound. A fleet route that is <code>tenant_aware</code> or resolves its namespace per
+tenant is refused when configured (<code>fleet.tenant_scoped_route</code>), and fleet routes are left
+out of the module's isolation floor.</p>
 <p>† Neo4j reaches <code>namespace</code> with a per-tenant database on one driver (the usual
 multi-tenant Neo4j shape); <code>dedicated</code> needs a genuinely per-tenant driver/instance,
 which routing supports but is the less common deployment.</p>

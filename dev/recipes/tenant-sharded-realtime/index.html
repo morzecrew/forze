@@ -2158,6 +2158,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/fleet-membership/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Fleet membership
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/credential-rotation/" class="md-nav__link">
         
   
@@ -5211,6 +5240,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#assign-tenants-at-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Assign tenants at startup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6435,6 +6475,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#assign-tenants-at-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Assign tenants at startup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6645,6 +6696,55 @@ check. This is what <code>TenantShardedSignalSource</code> runs once per assigne
 
     <span class="k">return</span> <span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">payload</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">messages</span><span class="p">]</span>
 </code></pre></div>
+<h2 id="assign-tenants-at-startup">Assign tenants at startup<a class="headerlink" href="#assign-tenants-at-startup" title="Permanent link">&para;</a></h2>
+<p>The shard is a fixed snapshot, so something has to pick each replica's tenants before its
+gateway starts. <a href="../../running-in-prod/fleet-membership/">Fleet membership</a> can: each
+replica beats as <code>starting</code> through one <code>ttl</code>, so replicas starting together see each
+other, then takes the tenants it ranks first for among the serving and starting members:</p>
+<div class="highlight"><pre><span></span><code><span class="n">GATEWAYS</span> <span class="o">=</span> <span class="n">FleetSpec</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">"realtime-gateways"</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">10</span><span class="p">))</span>
+
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">assign_shard</span><span class="p">(</span>
+    <span class="n">fleet</span><span class="p">:</span> <span class="n">FleetPort</span><span class="p">,</span>
+    <span class="n">me</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">tenants</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">UUID</span><span class="p">],</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">spec</span><span class="p">:</span> <span class="n">FleetSpec</span> <span class="o">=</span> <span class="n">GATEWAYS</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RealtimeShard</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Take the tenants this replica ranks first for, among replicas serving or starting."""</span>
+
+    <span class="c1"># Beat through one ttl, at a third of it, so replicas starting meanwhile see this one</span>
+    <span class="c1"># and it sees them; rank over the last beat's view.</span>
+    <span class="n">view</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fleet</span><span class="o">.</span><span class="n">beat</span><span class="p">(</span><span class="n">me</span><span class="p">,</span> <span class="s2">"starting"</span><span class="p">,</span> <span class="p">{},</span> <span class="n">ttl</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">ttl</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">ttl</span><span class="o">.</span><span class="n">total_seconds</span><span class="p">()</span> <span class="o">/</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">view</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fleet</span><span class="o">.</span><span class="n">beat</span><span class="p">(</span><span class="n">me</span><span class="p">,</span> <span class="s2">"starting"</span><span class="p">,</span> <span class="p">{},</span> <span class="n">ttl</span><span class="o">=</span><span class="n">spec</span><span class="o">.</span><span class="n">ttl</span><span class="p">)</span>
+
+    <span class="n">mine</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="n">t</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">tenants</span> <span class="k">if</span> <span class="n">view</span><span class="o">.</span><span class="n">rank</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">t</span><span class="p">),</span> <span class="n">states</span><span class="o">=</span><span class="p">(</span><span class="s2">"serving"</span><span class="p">,</span> <span class="s2">"starting"</span><span class="p">))[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="n">me</span>
+    <span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">RealtimeShard</span><span class="p">(</span><span class="n">stream_spec</span><span class="o">=</span><span class="n">STREAM</span><span class="p">,</span> <span class="n">tenants</span><span class="o">=</span><span class="n">mine</span><span class="p">)</span>
+</code></pre></div>
+<p>The shard is consumed when the steps are built, before the runtime exists, so build the
+port directly — a <code>RedisFleetAdapter</code> over a <code>RedisClient</code> you initialize for it. Once
+assigned, keep the replica in the fleet with the
+<a href="../../running-in-prod/fleet-membership/#join-the-fleet">membership step</a> on the same
+<code>FleetSpec</code> and member id, so replicas started later rank it in; it beats <code>serving</code> once
+startup finishes. The first replica of a fresh fleet finds only itself and takes every
+tenant.</p>
+<p>The assignment is a snapshot, sound only when every replica starts within one <code>ttl</code> of
+the others — an all-at-once rollout — and only while the fleet keeps that shape:</p>
+<ul>
+<li>a <strong>rolling</strong> deploy or restart leaves tenants with no owner: each new replica leaves
+  to an old one the tenants it ranks first for, and the old one is then stopped;</li>
+<li>a replica that dies leaves its tenants unowned until the fleet restarts;</li>
+<li>a replica that starts later, or whose beats land after another's read, can take tenants
+  another replica also holds, or leave some that no replica holds.</li>
+</ul>
+<p>Moving tenants between running replicas is not covered; to reassign, restart every
+replica at once.</p>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>The outbox stays tenant-global by design.</strong> Only the stream is <code>tenant_aware</code>; the
@@ -6655,8 +6755,9 @@ check. This is what <code>TenantShardedSignalSource</code> runs once per assigne
   per-tenant read: one consume loop per assigned tenant, bound to it. Hand the same
   <code>RealtimeShard</code> to the source, the group-ensure step, and (for a partitioned outbox) the
   relay so they can't drift.</li>
-<li><strong>Assignment, not discovery</strong> — the shard is a fixed snapshot resolved at startup, so
-  onboarding a new tenant (or rebalancing) needs a restart. Broker-level enforcement (so a
+<li><strong>Assignment, not discovery</strong> — the shard is a fixed snapshot resolved at startup (by
+  rank, as above, or by your own assignment), so onboarding a new tenant (or rebalancing)
+  needs a restart. Broker-level enforcement (so a
   rogue producer can't write another tenant's key) is the operator's job (Redis ACLs).</li>
 </ul>
 

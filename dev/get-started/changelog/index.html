@@ -3754,6 +3754,35 @@
   
   
     <li class="md-nav__item">
+      <a href="../../running-in-prod/fleet-membership/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M16 3.128a4 4 0 0 1 0 7.744M22 21v-2a4 4 0 0 0-3-3.87"/><circle cx="9" cy="7" r="4"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  Fleet membership
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../running-in-prod/credential-rotation/" class="md-nav__link">
         
   
@@ -9509,6 +9538,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>Work can run on one replica at a time for the life of the process.</strong> <code>leadership_lifecycle_step</code> elects a leader on a renewing lease, ends its term inside the lease, hands it over on stop or on request, and fences it: a token, a claim, and <code>fence_floor</code> to recover after Redis loses its counters.</p>
+</li>
+<li>
+<p><strong>Replicas can see which peers are alive, and split work over them.</strong> <code>ctx.fleet(FleetSpec(...))</code>, on Redis via <code>RedisDepsModule(fleets=...)</code>, gives a <code>FleetPort</code> whose <code>beat</code> writes a replica's state and report and returns the <code>FleetView</code>; its policies agree for all who hold it. <code>instance_id()</code> names a process.</p>
+</li>
+<li>
+<p><strong>A replica keeps its fleet entry current from startup to shutdown.</strong> <code>fleet_membership_lifecycle_step(spec, every=)</code> beats <code>starting</code>, then <code>serving</code> once startup finishes, then <code>draining</code> once a drain is announced, and leaves the fleet or lingers on stop.</p>
 </li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
