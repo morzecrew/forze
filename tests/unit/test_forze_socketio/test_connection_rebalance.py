@@ -712,6 +712,24 @@ class TestStop:
 
         assert run_simulation(scenario) == pytest.approx(2)
 
+    def test_the_closes_wait_gives_up_at_its_deadline_and_cancels_nothing(self) -> None:
+        async def scenario() -> tuple[bool, float, bool]:
+            server = _Node().server
+            finishing = _FINISHING.setdefault(server, set())
+            loop = asyncio.get_running_loop()
+            slow = asyncio.ensure_future(asyncio.sleep(5))
+            finishing.add(slow)
+            slow.add_done_callback(finishing.discard)
+
+            waiter = _ClosesFinishing(sio=server, loop_name="closes")
+            stopped = await waiter.stop(deadline=loop.time() + 1)
+            gave_up_at = loop.time()
+            await slow
+
+            return stopped, gave_up_at, slow.cancelled()
+
+        assert run_simulation(scenario) == (False, pytest.approx(1), False)
+
 
 # ....................... #
 
