@@ -922,7 +922,8 @@ def attach_realtime_connection(
     While *draining* returns true a connect is turned away by closing its Engine.IO
     connection — as the drain closes connections — so socket.io's JavaScript client
     reconnects with its backoff, through the balancer, to another replica; a refused connect
-    alone would make it give up for good. A connect on a connection that already carries
+    alone would make it give up for good. The connect is held for a random 1–5 s first: the
+    client's backoff starts over whenever a connection opens, so the hold is the backoff. A connect on a connection that already carries
     another namespace this layer accepted is admitted instead, since closing the connection
     would end that one too. It is checked before any other work, again after
     admission and after authentication, and as the connect's last step; a connect turned
