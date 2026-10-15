@@ -31,6 +31,7 @@ from forze_mock import MockDepsModule
 from forze_mock.adapters import MockFleetAdapter
 from forze_mock.state import MockState
 from forze_socketio import connection_rebalance_lifecycle_step, connection_report
+from forze_socketio.drain import _FINISHING, _ClosesFinishing
 from forze_socketio.rebalance import _Rebalance
 
 # ----------------------- #
@@ -647,6 +648,69 @@ class TestStop:
         # its second close never started, and the first ran to its end, never cancelled.
         assert seen_in_teardown == [(False, True, 0)]
         assert left_at < 17
+
+    def test_stopping_as_a_close_is_queued_waits_for_that_close(self) -> None:
+        async def scenario() -> tuple[float, int, bool]:
+            state, node = MockState(), _Node()
+            _first, second = await node.connect(2, "/lobby", "/chat", delay=3)
+            await _peers(state, 0, 0)
+            await _beat(state, "me", _REPORTED)
+            seen: list[tuple[float, int, bool]] = []
+
+            async def probe(runtime: ExecutionRuntime) -> None:
+                # The shed's second close is due at 15 s. Half a nanosecond earlier, inside
+                # the clock's resolution, falls in the same turn of the loop and runs first:
+                # the runtime stops its background loops just after the shed has queued that
+                # close, and before the close has started and joined those teardown waits for.
+                await asyncio.sleep(15 - 5e-10)
+                await runtime.get_context().drainables.stop_all(grace=10)
+                late = node.sockets[second]
+                seen.append((asyncio.get_running_loop().time(), late.closes, late.closed))
+
+            rebalance = _step(
+                node,
+                namespaces=("/lobby", "/chat"),
+                movable=lambda namespace, sid: True,
+                every=timedelta(seconds=10),
+                per_minute=12,
+            )
+            await _serve(state, rebalance, probe)
+
+            return seen[0]
+
+        stopped_at, closes, closed = run_simulation(scenario)
+
+        # The queued close went ahead, and stopping waited for its two 3 s handlers, well
+        # within the grace, rather than returning with them still running.
+        assert (closes, closed) == (1, True)
+        assert stopped_at == pytest.approx(21)
+
+    def test_the_closes_wait_looks_again_for_a_close_that_joins_meanwhile(self) -> None:
+        async def scenario() -> float:
+            server = _Node().server
+            finishing = _FINISHING.setdefault(server, set())
+            loop = asyncio.get_running_loop()
+
+            async def close_for(seconds: float) -> None:
+                await asyncio.sleep(seconds)
+
+            first = asyncio.ensure_future(close_for(1))
+            finishing.add(first)
+            first.add_done_callback(finishing.discard)
+
+            def join() -> None:
+                late = asyncio.ensure_future(close_for(1.5))
+                finishing.add(late)
+                late.add_done_callback(finishing.discard)
+
+            # A second close joins half a second in, while the first is being waited for.
+            loop.call_later(0.5, join)
+            waiter = _ClosesFinishing(sio=server, loop_name="closes")
+            assert await waiter.stop(deadline=loop.time() + 10)
+
+            return loop.time()
+
+        assert run_simulation(scenario) == pytest.approx(2)
 
 
 # ....................... #

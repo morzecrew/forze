@@ -345,24 +345,29 @@ class _Rebalance:
     # ....................... #
 
     async def stop(self, *, deadline: float) -> bool:
-        """Stop a shed still running: it starts no more closes. Idempotent.
+        """Stop a shed still running, then wait for the server's closes. Idempotent.
 
-        A close it already started is never cut short — it may be inside the app's disconnect
-        handlers. The step's other drainable waits for it, as the drain's does.
+        In that order: a close the shed has queued can still start after the cancel, and
+        joins the server's closes only once it starts, so the shed is waited for first. A
+        close already started is never cut short — it may be inside the app's disconnect
+        handlers — and is waited for until *deadline*, as the drain's are.
 
-        :returns: ``True`` when no shed was running.
+        :returns: ``True`` when no shed was running and no close is left unfinished.
         """
 
         shed = self.shed
+        idle = shed is None or shed.done()
 
-        if shed is None or shed.done():
-            return True
+        if shed is not None and not idle:
+            shed.cancel()
+            clock = asyncio.get_running_loop()
+            await asyncio.wait([shed], timeout=max(0.0, deadline - clock.time()))
 
-        shed.cancel()
-        clock = asyncio.get_running_loop()
-        await asyncio.wait([shed], timeout=max(0.0, deadline - clock.time()))
+        finished = await _ClosesFinishing(sio=self.sio, loop_name=self.loop_name).stop(
+            deadline=deadline
+        )
 
-        return False
+        return idle and finished
 
 
 # ----------------------- #
@@ -478,10 +483,8 @@ def connection_rebalance_lifecycle_step(
 
     async def startup(ctx: ExecutionContext) -> None:
         rebalance.bind(ctx)
+        # Stops the shed, then waits for its closes, before teardown.
         ctx.drainables.register(rebalance)
-        # Teardown then waits for the closes a stopped shed had started; a second one for
-        # the same server, the drain step's, waits on the same closes.
-        ctx.drainables.register(_ClosesFinishing(sio=sio, loop_name=f"{step_id}:closes"))
         await loop.startup(ctx)
 
     async def shutdown(ctx: ExecutionContext) -> None:

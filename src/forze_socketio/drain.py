@@ -159,15 +159,16 @@ class _ClosesFinishing:
     # ....................... #
 
     async def stop(self, *, deadline: float) -> bool:
-        pending = [task for task in _FINISHING.get(self.sio, ()) if not task.done()]
-
-        if not pending:
-            return True
-
         clock = asyncio.get_running_loop()
-        _, still = await asyncio.wait(pending, timeout=max(0.0, deadline - clock.time()))
 
-        return not still
+        # Looked at again after each wait: a close can join while the earlier ones finish.
+        while pending := [task for task in _FINISHING.get(self.sio, ()) if not task.done()]:
+            _, still = await asyncio.wait(pending, timeout=max(0.0, deadline - clock.time()))
+
+            if still:
+                return False
+
+        return True
 
 
 def _finished_late(eio_sid: str) -> Callable[["asyncio.Task[None]"], None]:
