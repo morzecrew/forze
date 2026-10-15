@@ -17,10 +17,11 @@ require_socketio()
 # ....................... #
 
 import asyncio
+import weakref
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from functools import partial
-from typing import cast
+from typing import Any, cast
 
 from socketio.async_server import AsyncServer
 
@@ -47,18 +48,11 @@ ConnectionSelector = Callable[[str, str], bool]
 """``(namespace, sid) -> may close?`` — whether a connection may be closed by the drain."""
 
 
-async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
-    """End one Engine.IO connection, whatever its transport.
+_CLOSES: "weakref.WeakKeyDictionary[Any, asyncio.Task[None]]" = weakref.WeakKeyDictionary()
+"""The one close running for each Engine.IO socket, so a second caller waits for it."""
 
-    socket.io's JavaScript client reconnects after this, with its backoff; that is why both
-    the drain and a draining replica's refusal close connections this way.
-    """
 
-    socket = sio.eio.sockets.get(eio_sid)
-
-    if socket is None:
-        return  # already gone
-
+async def _close(sio: AsyncServer, eio_sid: str, socket: Any) -> None:
     # What python-engineio's own disconnect does, less its wait for the client to fetch the
     # CLOSE packet: a polling client with no poll pending never does — its next poll is
     # refused once the socket is closed — and the wait would hold this close for good.
@@ -72,6 +66,34 @@ async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
     # has its next poll refused; either way its transport ends, and it reconnects.
     socket.queue.put_nowait(None)
     sio.eio.sockets.pop(eio_sid, None)
+
+
+async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
+    """End one Engine.IO connection, whatever its transport.
+
+    socket.io's JavaScript client reconnects after this, with its backoff; that is why both
+    the drain and a draining replica's refusal close connections this way. One close runs
+    per connection: a second call waits for the one under way, and a connection
+    python-engineio is already closing on its own — the client's close, a ping timeout — is
+    left to that close, which runs every namespace's disconnect handlers to the end.
+    """
+
+    socket = sio.eio.sockets.get(eio_sid)
+
+    if socket is None:
+        return  # already gone
+
+    task = _CLOSES.get(socket)
+
+    if task is None:
+        if socket.closing or socket.closed:
+            return
+
+        task = asyncio.ensure_future(_close(sio, eio_sid, socket))
+        _CLOSES[socket] = task
+
+    # Shielded: one caller giving up must not cut short a close another is waiting on.
+    await asyncio.shield(task)
 
 
 def _require_close_internals(sio: AsyncServer) -> None:

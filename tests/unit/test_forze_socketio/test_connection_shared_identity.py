@@ -68,7 +68,7 @@ async def _connect(server: AsyncServer, eio_sid: str, namespace: str, token: str
     """Connect *namespace* over Engine.IO connection *eio_sid*, as python-socketio would."""
 
     if eio_sid not in server.eio.sockets:
-        server.eio.sockets[eio_sid] = SimpleNamespace(session={}, closed=False)
+        server.eio.sockets[eio_sid] = SimpleNamespace(session={}, closed=False, closing=False)
 
     sid = await server.manager.connect(eio_sid, namespace)
     handler = server.handlers[namespace]["connect"]
@@ -210,7 +210,7 @@ async def test_an_uncomparable_credential_is_authenticated_on_its_own() -> None:
             server, namespace=namespace, resolve=_resolve, share_identity=True
         )
 
-    server.eio.sockets["eio-1"] = SimpleNamespace(session={}, closed=False)
+    server.eio.sockets["eio-1"] = SimpleNamespace(session={}, closed=False, closing=False)
 
     for namespace in ("/lobby", "/chat"):
         sid = await server.manager.connect("eio-1", namespace)

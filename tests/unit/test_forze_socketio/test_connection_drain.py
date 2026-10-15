@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from engineio.async_socket import AsyncSocket
 from socketio.async_server import AsyncServer
 from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
@@ -39,6 +40,7 @@ from forze_socketio import (
     close_spread,
     connection_drain_lifecycle_step,
 )
+from forze_socketio.drain import close_transport
 
 # ----------------------- #
 
@@ -55,11 +57,13 @@ class _Socket:
         self.session: dict[str, Any] = {}
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self.closed = False
+        self.closing = False
         self.closes = 0
         self.fails = fails
 
     async def close(self, wait: bool = True, abort: bool = False, reason: Any = None) -> None:
         self.closes += 1
+        self.closing = True
 
         if self.fails:
             raise ConnectionResetError("transport already gone")
@@ -80,6 +84,32 @@ class _SlowPresence(InMemoryRealtimePresence):
         self.leaving += 1
         await asyncio.sleep(self.leaves_in)
         await super().left(room, sid)
+
+
+class _GatedPresence(InMemoryRealtimePresence):
+    """Holds the first leave until released, so a close can be caught mid-handler."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.leaving = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def left(self, room: str, sid: str) -> None:
+        if not self.leaving.is_set():
+            self.leaving.set()
+            await self.release.wait()
+
+        await super().left(room, sid)
+
+
+def _engine_socket(server: AsyncServer, eio_sid: str) -> AsyncSocket:
+    """python-engineio's own socket, registered as its server would."""
+
+    socket = AsyncSocket(server.eio, eio_sid)
+    server.eio.sockets[eio_sid] = socket
+    server.environ[eio_sid] = {}
+
+    return socket
 
 
 async def _until(check: Any, *, within: float) -> None:
@@ -252,6 +282,59 @@ class TestCloseSpread:
         assert stats.drain_closed == {"closed": 0, "failed": 0, "timed_out": 1}
         await _until(lambda: sockets[0].closed, within=2.0)
         assert [socket.closed for socket in sockets] == [True, False, False]
+
+    # ....................... #
+
+    async def test_a_close_overlapping_another_leaves_every_namespace_to_that_one(self) -> None:
+        server = _server()
+        presence = _GatedPresence()
+        stats = RealtimeConnectionStats()
+
+        for namespace in ("/", "/game"):
+            attach_realtime_connection(
+                server, namespace=namespace, resolve=_resolve, presence=presence, stats=stats
+            )
+
+        socket = _engine_socket(server, "eio-1")
+
+        for namespace in ("/", "/game"):
+            await _connect(server, "eio-1", namespace)
+
+        # The client's own close (or a ping timeout) is mid-way through its handlers...
+        own = asyncio.ensure_future(socket.close(wait=False, abort=True))
+        await asyncio.wait_for(presence.leaving.wait(), timeout=1.0)
+        # ...when the drain's close of the same connection lands.
+        await asyncio.wait_for(close_transport(server, "eio-1"), timeout=1.0)
+        presence.release.set()
+        await asyncio.wait_for(own, timeout=1.0)
+
+        # The first close ran every namespace's cleanup: nothing left behind.
+        assert await presence.count(_ROOM) == 0
+        assert list(server.manager.get_participants("/game", None)) == []
+        assert stats.connections == {"/": 0, "/game": 0}
+
+    # ....................... #
+
+    async def test_two_closes_of_one_connection_share_one_close(self) -> None:
+        server = _server()
+        presence = _GatedPresence()
+        attach_realtime_connection(server, resolve=_resolve, presence=presence)
+        socket = _engine_socket(server, "eio-1")
+        await _connect(server, "eio-1")
+
+        first = asyncio.ensure_future(close_transport(server, "eio-1"))
+        await asyncio.wait_for(presence.leaving.wait(), timeout=1.0)
+        second = asyncio.ensure_future(close_transport(server, "eio-1"))
+        await asyncio.sleep(0.05)
+
+        assert not second.done()  # it waits for the close under way, rather than racing it
+
+        presence.release.set()
+        await asyncio.wait_for(asyncio.gather(first, second), timeout=1.0)
+
+        assert socket.closed
+        assert "eio-1" not in server.eio.sockets
+        assert await presence.count(_ROOM) == 0
 
 
 # ----------------------- #
