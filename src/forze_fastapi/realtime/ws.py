@@ -496,9 +496,12 @@ def attach_realtime_ws_route(
             else None
         )
 
-        if subscription is not None and _draining(ctx, hub):
-            # The drain may have ended the hub's subscribers before this one joined.
-            hub.unsubscribe(subscription)  # type: ignore[union-attr]
+        if _draining(ctx, hub):
+            # The drain was announced while the handshake ran, and may have ended the hub's
+            # subscribers before this one joined.
+            if subscription is not None:
+                hub.unsubscribe(subscription)  # type: ignore[union-attr]
+
             await websocket.close(code=WS_RECONNECT_CLOSE, reason=_DRAINING_REASON)
             return
         member_key = subscription.key if subscription is not None else f"ws:{uuid7()}"
