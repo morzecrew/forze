@@ -32,7 +32,12 @@ from forze_kits.lifecycle import (
     leadership_lifecycle_step,
     singleton_lifecycle_step,
 )
-from forze_redis import RedisDepsModule, RedisDistributedLockConfig, RedisStreamGroupConfig
+from forze_redis import (
+    RedisCacheConfig,
+    RedisDepsModule,
+    RedisDistributedLockConfig,
+    RedisStreamGroupConfig,
+)
 from forze_redis.kernel.client import RedisClient, RedisClientPort, RoutedRedisClient
 
 pytestmark = pytest.mark.asyncio
@@ -171,3 +176,33 @@ async def test_group_ensure_refuses_a_tenant_aware_stream_group(redis_client: Re
     )
 
     await _refused_at_startup(module, realtime_group_ensure_lifecycle_step(stream_spec=spec))
+
+
+async def test_a_tenant_global_lock_runs_both_under_a_tenancy_floor(
+    redis_client: RedisClient,
+) -> None:
+    # The floor holds the cache to tagged isolation; the lifecycle lock, used where no
+    # tenant is bound, is marked the deployment's and left out of it.
+    ran: list[str] = []
+    led = asyncio.Event()
+    module = RedisDepsModule(
+        client=redis_client,
+        dlocks={
+            str(LOCK.name): RedisDistributedLockConfig(
+                namespace=f"it-{uuid4()}", tenant_global=True
+            )
+        },
+        caches={"orders": RedisCacheConfig(namespace=f"it-{uuid4()}", tenant_aware=True)},
+        required_tenant_isolation="tagged",
+    )
+    runtime = build_runtime(
+        module,
+        lifecycle_steps=[_singleton(ran), _leadership(led)],
+        drain_timeout=timedelta(0),
+    )
+
+    async with runtime.scope():
+        async with asyncio.timeout(5):
+            await led.wait()
+
+    assert ran == ["startup"]

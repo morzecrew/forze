@@ -111,6 +111,7 @@ def test_the_converter_forwards_every_contract_field() -> None:
         tenant_aware=True,
         has_namespace_routing=True,
         origin="raw",
+        tenant_global=True,
     )
     contract = probe.to_contract()
 

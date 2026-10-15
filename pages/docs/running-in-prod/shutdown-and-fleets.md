@@ -327,7 +327,8 @@ Startup runs with no tenant bound, so the lock's route must be tenant-global: no
 `tenant_aware`, and not on a client routed per tenant that has no tenant to route by.
 Either one fails startup
 with a `configuration` error coded `tenant_global_required`, here and in
-`leadership_lifecycle_step` below.
+`leadership_lifecycle_step` below. Under a declared tenant-isolation floor, mark the route
+`RedisDistributedLockConfig(tenant_global=True)` so the floor leaves it out.
 
 The first replica to acquire the lock runs the startup and releases it;
 replicas that find the lock held **skip** — the holder is doing the work.

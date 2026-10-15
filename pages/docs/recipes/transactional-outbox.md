@@ -83,7 +83,9 @@ publishes nothing, and a wake is never published before its rows are visible. A 
 wake, a broken pub/sub connection, or a publish that outlasts `publish_timeout` (one
 second by default) leaves the row to the next poll, so keep the `interval` as the
 fallback. Wire the wake's pub/sub route in every process that flushes the route and in
-the one that relays it. The route must be tenant-global: a tenant-aware one is refused.
+the one that relays it. The route must be tenant-global: a tenant-aware one, or one on a
+client routed per tenant, is refused. Under a declared tenant-isolation floor, mark it
+`RedisPubSubConfig(tenant_global=True)` so the floor leaves it out.
 
 With wakes, passes follow commits, so the stale-claim reclaim would run on each of them.
 It runs at most once per `reclaim_every`, which defaults to once per poll tick.

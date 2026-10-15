@@ -312,6 +312,11 @@ class TenancyRouteSpec:
     has to say so; only a route that generates or passes through text declares otherwise.
     See :data:`StatementOrigin`."""
 
+    tenant_global: bool = False
+    """Whether the route is the deployment's rather than a tenant's — a fleet, a lifecycle
+    lock, an outbox wake — used where no tenant is bound. It stays out of the declared
+    floor, and may not be scoped per tenant."""
+
 
 # ....................... #
 
@@ -511,6 +516,38 @@ def warn_dynamic_relation_with_tenant_aware(
 # ....................... #
 
 
+def _refuse_tenant_scoped_global(
+    route: TenancyRouteSpec,
+    *,
+    integration: str,
+    client_is_routed: bool,
+    code: str,
+) -> None:
+    if client_is_routed:
+        reason = "its client is routed per tenant"
+
+    elif route.tenant_aware:
+        reason = "it is tenant-aware"
+
+    elif route.has_namespace_routing:
+        reason = "it resolves its namespace per tenant"
+
+    else:
+        return
+
+    raise exc.configuration(
+        f"{integration} {route.kind} route {route.name!r} is tenant-global, but {reason}. "
+        "A tenant-global route is used where no tenant is bound, so scoped per tenant it "
+        "would refuse every call. Wire it with tenant_aware=False and a static namespace "
+        "on a client that is not routed per tenant.",
+        code=code,
+        details={"route": str(route.name), "kind": route.kind},
+    )
+
+
+# ....................... #
+
+
 def validate_routed_client_tenancy_wiring(
     *,
     integration: str,
@@ -534,8 +571,11 @@ def validate_routed_client_tenancy_wiring(
       weakest route is the module's real isolation and an unscoped sibling must not slip
       through under a stronger one. The capability ceiling
       (``max_supported_isolation``) is enforced with it — see
-      :func:`validate_required_isolation`. Put intentionally tenant-agnostic routes in a
-      module without a declared floor.
+      :func:`validate_required_isolation`. A ``tenant_global`` route is left out of it: it
+      holds no tenant's data and is used where no tenant is bound, so a module whose only
+      routes are tenant-global meets any floor within its ceiling. Such a route is refused
+      when it is tenant-aware, resolves its namespace per tenant, or sits on a routed
+      client — each would refuse every call it exists for.
 
     Either way a route's tier comes from :func:`_route_isolation_mode`. The origin floor
     runs first: it is the one a deployment cannot resolve by revising its own declaration,
@@ -559,6 +599,16 @@ def validate_routed_client_tenancy_wiring(
             integration=f"{integration} {route.kind} route",
         )
 
+        if route.tenant_global:
+            _refuse_tenant_scoped_global(
+                route,
+                integration=integration,
+                client_is_routed=client_is_routed,
+                code=validation_failed_code,
+            )
+
+    floored = [route for route in routes if not route.tenant_global]
+
     if required_isolation is not None:
         if client_is_routed:
             # Routed client → every route (and a module with no routes) is dedicated; only
@@ -571,18 +621,19 @@ def validate_routed_client_tenancy_wiring(
                 max_supported=max_supported_isolation,
             )
 
-        elif not routes:
-            # No routed client and no routes → no tenant isolation at all.
+        elif not floored:
+            # No routes → no tenant isolation at all. Only tenant-global routes → nothing
+            # falls short of the floor; the capability ceiling still applies.
             validate_required_isolation(
                 integration=integration,
-                derived="none",
+                derived=required_isolation if routes else "none",
                 required=required_isolation,
                 code=validation_failed_code,
                 max_supported=max_supported_isolation,
             )
 
         else:
-            for route in routes:
+            for route in floored:
                 validate_required_isolation(
                     integration=f"{integration} {route.kind} route {route.name!r}",
                     derived=_route_isolation_mode(route, client_is_routed=False),
@@ -674,6 +725,10 @@ class TenancyRouteGroup[ConfigT]:
     today. A group overrides it only when its routes generate or pass through text; see
     :data:`StatementOrigin`."""
 
+    tenant_global: Callable[[ConfigT], bool] = lambda _config: False
+    """Return whether a route is the deployment's, outside the declared floor; see
+    :attr:`TenancyRouteSpec.tenant_global`."""
+
 
 # ....................... #
 
@@ -725,6 +780,7 @@ def validate_module_tenancy(
                     kind=group.kind,
                     has_namespace_routing=callable(namespace),
                     origin=group.origin(config),
+                    tenant_global=group.tenant_global(config),
                 )
             )
 

@@ -67,6 +67,12 @@ class RedisSearchResultSnapshotConfig(RedisUniversalConfig):
 class RedisDistributedLockConfig(RedisUniversalConfig):
     """Configuration for Redis-backed distributed locks."""
 
+    tenant_global: bool = False
+    """The lock is the deployment's, not a tenant's — a singleton or leadership lock, taken
+    from lifecycle hooks with no tenant bound. It sits outside the module's tenant-isolation
+    floor, and must be neither ``tenant_aware`` nor resolve its namespace per tenant, nor sit
+    on a client routed per tenant."""
+
 
 # ....................... #
 
@@ -134,3 +140,8 @@ class RedisPubSubConfig(TenantAwareIntegrationConfig):
 
     No namespace: the topic is supplied per ``publish`` / ``subscribe`` and, when
     ``tenant_aware``, isolated by the ``tenant:{id}:`` key prefix."""
+
+    tenant_global: bool = False
+    """The route carries no tenant's data — an outbox wake, heard by a relay outside any
+    tenant. It sits outside the module's tenant-isolation floor, and must be neither
+    ``tenant_aware`` nor sit on a client routed per tenant."""

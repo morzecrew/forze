@@ -54,7 +54,14 @@ statement cannot be trusted to do.
 § A fleet is one service's replicas, whatever tenants they serve, and it beats from lifecycle
 hooks with no tenant bound. A fleet route that is `tenant_aware` or resolves its namespace per
 tenant is refused when configured (`fleet.tenant_scoped_route`), and fleet routes are left
-out of the module's isolation floor.
+out of the module's isolation floor. So are lock and pub/sub routes marked
+`tenant_global=True`, for a singleton or leadership lock and an outbox wake; such a route is
+refused at wiring when it is `tenant_aware`, resolves its namespace per tenant, or sits on a
+routed client. The flag is the deployment's own word, not checked against what the route
+holds: put only deployment-wide state on it, such as a lock or a wake, never a tenant's
+data. A deployment whose Redis client is routed per tenant registers the lock or pub/sub
+dep keys itself, over a `RedisDistributedLockAdapter` or `RedisPubSubAdapter` on a plain
+`RedisClient`, as it does for a fleet.
 
 † Neo4j reaches `namespace` with a per-tenant database on one driver (the usual
 multi-tenant Neo4j shape); `dedicated` needs a genuinely per-tenant driver/instance,
@@ -97,7 +104,9 @@ to start, with a `configuration` error coded `tenant_global_required`.
 `required_tenant_isolation` on a deps module refuses to wire anything weaker than the
 declared tier — checked once at startup, never per request. Each module derives the tier
 it reaches from its config (routed client → `dedicated`, resolver → `namespace`,
-`tenant_aware` → `tagged`/`namespace` by backend). A floor a backend can **never** reach
+`tenant_aware` → `tagged`/`namespace` by backend). Routes that belong to the deployment
+rather than a tenant (Redis fleets, and the tenant-global routes in § above) are left out,
+so a module of only those meets the floor. A floor a backend can **never** reach
 fails as a **capability mismatch**, not a silent misconfiguration:
 
 | Backend | Ceiling | A floor above it… |

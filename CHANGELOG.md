@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The readiness route logs a failed dependency check under the application logger**, as "Readiness check … failed". Alerts keyed on the `fastapi.probes` logger no longer match.
 
+- **The tenant-isolation floor leaves out routes that belong to the deployment.** Redis fleets, and lock and pub/sub routes marked `tenant_global=True` (a lifecycle lock, an outbox wake), no longer count toward `required_tenant_isolation`, so a module of only those meets it. Every other route is still held to it.
+
 ### Deprecated
 
 - **`probe_listener_step(runtime=...)`.** The step reads its scope from its hook's `ctx`, so it can sit in its own runtime's plan; a runtime passed in is still watched, with a `DeprecationWarning`.
