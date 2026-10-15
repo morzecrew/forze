@@ -326,8 +326,11 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
 - **The Python client** (python-socketio) stops after either kind of close. Reconnect it
   yourself.
 - **A connect that arrives while the replica drains** is turned away the same way: its
-  Engine.IO connection is closed, every namespace on it included, and the JavaScript client
-  reconnects — through the balancer, which by then sends it elsewhere. Its transport did
+  Engine.IO connection is closed, and the JavaScript client reconnects — through the
+  balancer, which by then sends it elsewhere. A connect on a connection that already
+  carries another accepted namespace — one the drain kept open — is admitted instead:
+  closing the connection would end that namespace too, and the connect goes with the
+  connection when the drain or the process closes it. Its transport did
   open, so the client starts its backoff over each time and retries at its base
   `reconnectionDelay` until it lands on another replica. A refused connect would not do:
   socket.io's JavaScript client treats a `connect_error` from the server as final and
