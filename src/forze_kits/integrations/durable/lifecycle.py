@@ -21,6 +21,7 @@ from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
+from forze_kits.integrations._wiring import is_wiring_error
 
 from ._resolve import resolve_durable_run_store, resolve_durable_schedule_store
 from .runner import DurableFunctionRunner
@@ -141,7 +142,12 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as error:
+                # Wiring is every tenant's; any other error, a configuration one such as
+                # this tenant's key state included, must not skip the rest of the shard.
+                if is_wiring_error(error):
+                    raise
+
                 logger.exception("Durable recovery failed for tenant", tenant=str(tenant))
 
     # ....................... #
@@ -161,7 +167,14 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
                     await self._recover_tick(ctx, tenants)
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as error:
+                    if is_wiring_error(error):
+                        logger.exception(
+                            "Durable recovery hit a wiring error; loop stopped — "
+                            "fix the wiring and restart"
+                        )
+                        return
+
                     logger.exception("Durable recovery sweep failed")
 
                 # Multiplicative jitter desynchronizes N replicas' scanners so they don't
@@ -228,6 +241,9 @@ def durable_recovery_background_lifecycle_step(
     journal rather than re-running (exactly-once for the recorded result; a body may re-run if
     a worker is reclaimed / crashes before it journals, so keep step bodies idempotent).
     *max_concurrency* bounds how many runs a batch recovers at once (``None`` = sequential).
+    A failing sweep is logged and retried next tick. A wiring error, such as no keyring
+    wired, stops the loop; one tenant's own configuration error, such as its key's state,
+    leaves the rest of the shard running.
 
     When *tenants* is set the store is **namespace-tier** (per-tenant tables): each sweep
     binds every assigned tenant in turn and recovers its table (shard frozen at startup;
@@ -365,7 +381,12 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as error:
+                # Wiring is every tenant's; any other error, a configuration one such as
+                # this tenant's key state included, must not skip the rest of the shard.
+                if is_wiring_error(error):
+                    raise
+
                 logger.exception("Durable scheduler failed for tenant", tenant=str(tenant))
 
     # ....................... #
@@ -406,7 +427,14 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
                     await self._fire_tick(ctx, tenants)
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as error:
+                    if is_wiring_error(error):
+                        logger.exception(
+                            "Durable scheduler hit a wiring error; loop stopped — "
+                            "fix the wiring and restart"
+                        )
+                        return
+
                     logger.exception("Durable scheduler sweep failed")
 
                 if await self.control.sleep_or_stop(
@@ -466,7 +494,9 @@ def durable_scheduler_background_lifecycle_step(
 
     Each sweep claims due schedules, enqueues one run per schedule, and advances each to its
     next occurrence (fire-once / skip-missed), draining until a sweep is short of *limit*,
-    then sleeps *interval* with multiplicative *jitter*. The enqueued runs are executed by
+    then sleeps *interval* with multiplicative *jitter*; a wiring error stops the loop, while
+    one tenant's own configuration error leaves the rest of the shard firing. The enqueued
+    runs are executed by
     the recovery scanner / runner — run this alongside
     :func:`durable_recovery_background_lifecycle_step`.
 

@@ -23,11 +23,12 @@ from forze.application.contracts.pubsub import PubSubQueryDepKey, PubSubQueryPor
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
-from forze.application.execution.background import BackgroundLoopControl
+from forze.application.execution.background import BackgroundLoopControl, is_terminal_crash
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
+from forze_kits.integrations._wiring import is_wiring_error
 
 from ._relay_core import validate_retry_options
 from .relay import OutboxRelay
@@ -354,8 +355,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         starve the loop). Stale-processing *reclaim* runs only with the first batch.
 
         The steady tick is **tolerant**: a failing batch is logged and the tick carries
-        on, because the next tick retries in ``interval``. The shutdown drain passes
-        *strict*, which changes two things — it has no next tick to recover on:
+        on, because the next tick retries in ``interval``. A ``configuration`` error is
+        raised instead, ending the pass, since retrying it cannot clear it. The shutdown drain
+        passes *strict*, which changes two things — it has no next tick to recover on:
 
         - a failing batch **ends the pass** instead of hammering a dead destination
           ``max_batches_per_tick`` times with no backoff;
@@ -399,7 +401,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as error:
+                # No retry clears a configuration error: end this pass rather than repeat
+                # it for every batch. The tenant or tick level decides what happens next.
+                if is_terminal_crash(error):
+                    raise
+
                 logger.exception("Outbox background relay batch failed")
 
                 if strict:
@@ -486,7 +493,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as error:
+                # Wiring is every tenant's; any other error, a configuration one such as
+                # this tenant's key state included, must not skip the rest of the shard.
+                if is_wiring_error(error):
+                    raise
+
                 logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
                 reclaimed_all = False
 
@@ -669,7 +681,14 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
+            except Exception as error:
+                if is_wiring_error(error):
+                    logger.exception(
+                        "Outbox background relay hit a wiring error; loop stopped — "
+                        "fix the wiring and restart"
+                    )
+                    return
+
                 logger.exception("Outbox background relay failed")
 
             if await self._sleep_or_stop():
@@ -909,7 +928,10 @@ def outbox_relay_background_lifecycle_step(
     then the task sleeps *interval* with multiplicative *jitter* (default
     ±20%) so N replicas' relay loops do not synchronize into a thundering
     herd against the claim query. A failing batch is logged and does not
-    abort the tick.
+    abort the tick; a ``configuration`` error ends that tenant's pass. A wiring
+    error — a tenant-scoped outbox read unbound, no keyring wired — stops the
+    loop, logged; one tenant's own configuration error, such as its key's
+    state, leaves the rest of the shard relaying.
 
     When *outbox_spec* declares a :class:`~forze.application.contracts.outbox.OutboxWake`, the
     relay also listens for wakes and runs a pass as soon as a flush's rows commit, so

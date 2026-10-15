@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Background steps run without `tenants` refuse a tenant-scoped port at startup:** the outbox and realtime relays, durable recovery and scheduler, `job_staleness`, stream trim and mailbox retention, which failed every tick, and group ensure. So does a relay whose wake is on a routed client. **Breaking** for such apps.
 
+- **The outbox relay and the durable recovery and scheduler loops stop on a wiring error, logged once,** such as no keyring wired, instead of logging it every tick. One tenant's own configuration error, such as its key's state, still leaves the rest of the shard running.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.
