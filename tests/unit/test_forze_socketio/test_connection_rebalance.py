@@ -210,6 +210,20 @@ class TestShedding:
         assert still_open == 24
 
 
+    def test_the_oldest_movable_transports_go_first(self) -> None:
+        async def scenario() -> list[str]:
+            state, node = MockState(), _Node()
+            await node.connect(100, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", _REPORTED)
+
+            await _serve(state, _step(node), _sleep(1.95))
+
+            return [eio_sid for eio_sid, socket in node.sockets.items() if socket.closed]
+
+        # The 1 s tick sheds ten: the first ten to connect.
+        assert run_simulation(scenario) == [f"eio-{index}" for index in range(10)]
+
     def test_a_transport_no_longer_movable_when_its_close_comes_is_kept(self) -> None:
         async def scenario() -> tuple[int, int]:
             state, node = MockState(), _Node()

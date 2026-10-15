@@ -148,8 +148,8 @@ async def test_an_unbalanced_fleet_converges_without_moving_game_sockets(
     servers = [AsyncServer() for _ in range(3)]
     balancer = _Balancer(servers)
 
-    # One replica restarted last: the first holds 50 lobby sockets and, among them, 10 in a
-    # game (each also in the lobby); the others 5 each. 70 over three is a mean of 23.3.
+    # The others restarted last: the first replica holds 60 sockets, 50 in the lobby only and
+    # every sixth also in a game; the others 5 each. 70 over three is a mean of 23.3.
     for index in range(60):
         await balancer.connect(servers[0], NAMESPACES if index % 6 == 0 else ("/lobby",))
 
