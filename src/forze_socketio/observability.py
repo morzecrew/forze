@@ -22,6 +22,7 @@ require_socketio()
 
 # ....................... #
 
+import threading
 from collections.abc import Callable, Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, final
@@ -160,9 +161,13 @@ class RealtimeConnectionStats:
     """This node's connection counts, for :func:`instrument_realtime_connections`.
 
     Hand one instance to ``attach_realtime_connection`` for every namespace and to
-    ``connection_drain_lifecycle_step``. Plain ints mutated on the event loop; the
-    instruments read them at scrape time.
+    ``connection_drain_lifecycle_step``. Counted on the event loop and read at scrape time,
+    which may be another thread — the Prometheus route collects in a worker — so the counts
+    change only under :attr:`lock`, and :meth:`snapshot` reads them under it too.
     """
+
+    lock: threading.Lock = attrs.field(factory=threading.Lock, init=False, repr=False, eq=False)
+    """Guards the three dictionaries against a scrape iterating them mid-change."""
 
     connections: dict[str, int] = attrs.field(factory=dict)
     """Accepted connections open on this node, by namespace."""
@@ -178,14 +183,16 @@ class RealtimeConnectionStats:
     def connected(self, namespace: str) -> None:
         """Count an accepted connection."""
 
-        self.connections[namespace] = self.connections.get(namespace, 0) + 1
+        with self.lock:
+            self.connections[namespace] = self.connections.get(namespace, 0) + 1
 
     # ....................... #
 
     def disconnected(self, namespace: str) -> None:
         """Uncount a connection that was counted."""
 
-        self.connections[namespace] = self.connections.get(namespace, 0) - 1
+        with self.lock:
+            self.connections[namespace] = self.connections.get(namespace, 0) - 1
 
     # ....................... #
 
@@ -193,19 +200,33 @@ class RealtimeConnectionStats:
         """Count a refused connect."""
 
         key = (namespace, reason)
-        self.connect_refused[key] = self.connect_refused.get(key, 0) + 1
+
+        with self.lock:
+            self.connect_refused[key] = self.connect_refused.get(key, 0) + 1
 
     # ....................... #
 
     def drained(self, outcome: "SpreadOutcome") -> None:
         """Count how the drain's closes ended."""
 
-        for name, count in (
-            ("closed", outcome.closed),
-            ("failed", outcome.failed),
-            ("timed_out", outcome.timed_out),
-        ):
-            self.drain_closed[name] = self.drain_closed.get(name, 0) + count
+        with self.lock:
+            for name, count in (
+                ("closed", outcome.closed),
+                ("failed", outcome.failed),
+                ("timed_out", outcome.timed_out),
+            ):
+                self.drain_closed[name] = self.drain_closed.get(name, 0) + count
+
+    # ....................... #
+
+    def snapshot(
+        self,
+    ) -> tuple[dict[str, int], dict[tuple[str, ConnectRefusal], int], dict[str, int]]:
+        """Copies of the connections, refused connects and drain closes, taken under
+        :attr:`lock`, safe to read from any thread."""
+
+        with self.lock:
+            return dict(self.connections), dict(self.connect_refused), dict(self.drain_closed)
 
 
 # ----------------------- #
@@ -362,7 +383,7 @@ def instrument_realtime_connections(
             metrics.Observation(
                 count, {"forze.realtime.channel": channel, "forze.realtime.namespace": namespace}
             )
-            for namespace, count in stats.connections.items()
+            for namespace, count in stats.snapshot()[0].items()
         ]
 
     def refused(_options: "CallbackOptions") -> "Iterable[Observation]":
@@ -375,7 +396,7 @@ def instrument_realtime_connections(
                     "forze.realtime.reason": reason,
                 },
             )
-            for (namespace, reason), count in stats.connect_refused.items()
+            for (namespace, reason), count in stats.snapshot()[1].items()
         ]
 
     def drain_closed(_options: "CallbackOptions") -> "Iterable[Observation]":
@@ -383,7 +404,7 @@ def instrument_realtime_connections(
             metrics.Observation(
                 count, {"forze.realtime.channel": channel, "forze.realtime.outcome": outcome}
             )
-            for outcome, count in stats.drain_closed.items()
+            for outcome, count in stats.snapshot()[2].items()
         ]
 
     meter.create_observable_up_down_counter(

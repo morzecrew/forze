@@ -9,6 +9,7 @@ the same scrape path OTel takes, minus the SDK.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from forze.application.execution.background import SpreadOutcome
@@ -147,3 +148,44 @@ def test_connection_instruments_reflect_the_stats_by_label() -> None:
         ("failed",): 1,
         ("timed_out",): 0,
     }
+
+
+def test_a_scrape_from_another_thread_never_sees_a_dictionary_change_under_it() -> None:
+    """The Prometheus route collects in a worker thread while connects mutate the stats."""
+
+    stats = RealtimeConnectionStats()
+    meter = _StubMeter()
+    instrument_realtime_connections(stats, meter=meter)  # pyright: ignore[reportArgumentType]
+
+    for index in range(20_000):
+        stats.connected(f"/ns-{index}")
+
+    errors: list[BaseException] = []
+    stop = threading.Event()
+
+    def scrape() -> None:
+        while not stop.is_set():
+            for name in (
+                "forze.realtime.connections",
+                "forze.realtime.connect_refused",
+                "forze.realtime.drain_closed",
+            ):
+                try:
+                    list(meter.callbacks[name](None))
+
+                except RuntimeError as error:  # "dictionary changed size during iteration"
+                    errors.append(error)
+
+    scraper = threading.Thread(target=scrape)
+    scraper.start()
+
+    try:
+        for index in range(20_000, 120_000):
+            stats.connected(f"/ns-{index}")
+            stats.refused(f"/ns-{index}", "draining")
+
+    finally:
+        stop.set()
+        scraper.join(timeout=10)
+
+    assert errors == []
