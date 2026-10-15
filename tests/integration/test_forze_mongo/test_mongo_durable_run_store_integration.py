@@ -313,7 +313,9 @@ async def test_run_payloads_are_sealed_at_rest_and_load_in_the_clear(
     assert stored is not None
     assert is_encrypted_payload(stored["input"])
     assert is_encrypted_payload(stored["output"])
-    assert "4111" not in str(stored) and "r-1" not in str(stored)
+    # The payload fields only: the run id is random hex, and once in a few thousand runs
+    # it contains "4111" itself.
+    assert "4111" not in str(stored["input"]) and "r-1" not in str(stored["output"])
 
 
 async def test_a_run_whose_key_is_gone_costs_only_that_run(
