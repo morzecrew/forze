@@ -1,6 +1,6 @@
 # RFC 0071 — Lifetime leadership
 
-- **Status:** 📝 Draft
+- **Status:** ✅ Complete
 - **Scope:** A lifecycle step that elects one replica to run a body for as long as it holds a
   renewing lease. It covers:
   - campaigning, renewal and release;

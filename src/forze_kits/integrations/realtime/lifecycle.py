@@ -620,7 +620,8 @@ def realtime_mailbox_retention_lifecycle_step(
     sweepers are safe, so run the sweep unwrapped on every replica. A singleton step does
     not make it one sweeper: the guard holds its lock only while startup launches the loop,
     so later replicas sweep too, and one that starts while another holds the lock never
-    sweeps.
+    sweeps. Work that must run on one replica at a time belongs behind
+    :func:`~forze_kits.lifecycle.leadership_lifecycle_step`.
     *tenants* mirrors the sharded gateway: on ``tenant_aware``
     mailbox/cursor routes, pass ``lambda: shard.tenants`` to sweep each assigned
     tenant's collections; ``None`` sweeps the tenant-global collections once.
@@ -694,7 +695,8 @@ def realtime_stream_trim_lifecycle_step(
     trims are wasted round trips, not hazards), so run it unwrapped on every node. A
     singleton lifecycle step does not make it one sweeper: the guard holds its lock only
     while startup launches the loop, so later nodes trim too, and one that starts while
-    another holds the lock never trims.
+    another holds the lock never trims. Work that must run on one node at a time belongs
+    behind :func:`~forze_kits.lifecycle.leadership_lifecycle_step`.
 
     *tenants* mirrors the sharded gateway/relay: on a ``tenant_aware`` (namespace-tier)
     stream route, each sweep binds every assigned tenant in turn and trims its per-tenant

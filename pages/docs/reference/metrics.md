@@ -116,6 +116,19 @@ justifies W-TinyLFU (`L1Spec(store_factory=tiny_lfu_l1_store)`) or a bigger capa
 A `recovered` spike means runs are being reclaimed from processes that died holding them —
 normal in small numbers after a deploy, a signal when it is sustained.
 
+## Leadership
+
+`instrument_leadership()` — reads every `leadership_lifecycle_step` in the process.
+
+| Metric | Instrument | Unit | Labels | Notes |
+|---|---|---|---|---|
+| `forze.leadership.held` | observable gauge | 1 | `forze.leadership.key` | `1` while this process holds the lease, through its term's grace and until the release |
+| `forze.leadership.terms_ended` | observable counter | 1 | `forze.leadership.key`, `forze.leadership.reason` | reason is `lost` / `expiring` / `stopped` / `yielded` / `returned` / `raised` / `unclaimed` |
+
+Summed across processes, `held` should be `1` per key. A sustained rate of `lost` or
+`expiring` means the lock backend is slow or unreachable from the leader; `raised` is the
+body's own failure.
+
 ## Job progress
 
 `instrument_job_staleness(monitor)` — see [Operation

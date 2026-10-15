@@ -110,6 +110,13 @@ async def evaluate_readiness(
         return 200, {"status": "ready"}
 
     results = await _check_dependencies(ctx, checks, check_timeout)
+
+    # The checks took time: a drain announced meanwhile wins over their answer.
+    status = scope_readiness(ctx)
+
+    if status != "ready":
+        return 503, {"status": status}
+
     healthy = all(result["ok"] for result in results.values())
 
     return (200 if healthy else 503), {
