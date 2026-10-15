@@ -95,9 +95,13 @@ The rule across all of these: **the reader binds the tenant.** A handler-read st
 binds it from the request; a background consumer binds it from the resource it was
 assigned (a sharded stream key) or from each item it processes (the relay per row).
 That's why the **default** for relay/worker-drained resources is tenant-global, and
-isolating them is opt-in — it costs a sharded reader. A lifecycle step or background loop
-left unbound over a `tenant_aware` resource, or one on a client routed per tenant, refuses
-to start, with a `configuration` error coded `tenant_global_required`.
+isolating them is opt-in — it costs a sharded reader. The shipped relays, sweeps and
+consumers check this when they start: run unbound over a `tenant_aware` resource, or over
+a client routed per tenant with no tenant to route by, they refuse to start with a
+`configuration` error coded `tenant_global_required`. Those are the outbox and realtime
+relays, durable recovery and the scheduler, stream trim, mailbox retention,
+`job_staleness`, and the queue, notification and commit-stream consumers. A step of your
+own, or one not named here, is not checked.
 
 ## Declaring and enforcing a floor
 

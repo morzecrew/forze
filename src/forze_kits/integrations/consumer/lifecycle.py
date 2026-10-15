@@ -11,7 +11,8 @@ import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.inbox import InboxSpec
-from forze.application.contracts.queue import QueueMessage, QueueSpec
+from forze.application.contracts.queue import QueueMessage, QueueQueryDepKey, QueueSpec
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
     BackgroundLoopControl,
@@ -96,6 +97,13 @@ class _QueueConsumerBackgroundStartup(LifecycleHook):
         # Built eagerly at startup (not inside the detached task), so a broken
         # factory fails startup loudly instead of spawning a task that dies.
         consumer = self.consumer_factory(ctx)
+        # The consumer receives with no tenant bound (a tenant from the headers is bound per
+        # message, after the receive), so a tenant-scoped queue would refuse every poll.
+        spec = consumer.queue_spec
+        require_tenant_global(
+            ctx.deps.resolve_configurable(ctx, QueueQueryDepKey, spec, route=spec.name),
+            what=f"Queue consumer for {self.queue}",
+        )
 
         if self.control.running:
             # The runtime invokes startup once per scope; a direct double call
@@ -217,6 +225,12 @@ def queue_consumer_background_lifecycle_step(
     per-queue steps unique). There is deliberately no in-process concurrency
     knob in v1: a single sequential consumer per step keeps ordering and
     failure semantics simple; scale out with more steps/processes.
+
+    The consumer receives with no tenant bound, so a queue route that is
+    tenant-aware, or on a client routed per tenant with no tenant to route by,
+    fails startup with a ``configuration`` error coded
+    ``tenant_global_required``. Keep the queue tenant-global and bind the tenant
+    from the message (*bind_tenant_from_headers*).
 
     Opt-in for long-running processes; all runner parameters
     (*max_deliveries*, *retry_policy*, *bind_tenant_from_headers*, ...)
