@@ -358,9 +358,12 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
   socket.io's JavaScript client treats a `connect_error` from the server as final and
   stops. Over long-polling the client sees its next poll fail rather than a close, and
   reconnects the same way. The check runs before authentication, again once admission
-  and authentication have run, and as the connect's last step; a connect turned away late
-  has its presence, room and identity undone first. Only if the close fails does the client
-  see a refusal: `Server is draining`, with `{"code": "realtime_draining"}` as its data.
+  and authentication have run, and as the connect's last step. After the hold the
+  connection is looked at again: one the client already closed is left alone, and one that
+  meanwhile carries another accepted namespace admits the connect after all. The close runs
+  a late connect's own disconnect handlers, which undo its presence and room. Only if the
+  close fails is the connect undone directly and does the client see a refusal: `Server is
+  draining`, with `{"code": "realtime_draining"}` as its data.
 
 `draining=` takes the **serving** runtime's state, `lambda: runtime.draining`, and nothing
 defaults it. The `runtime` that offline replay is wired with is not the one: replay opens a
