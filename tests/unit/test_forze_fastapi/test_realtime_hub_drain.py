@@ -17,6 +17,7 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
+import anyio
 import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
@@ -150,6 +151,43 @@ def _assert_told_to_retry(response: httpx.Response) -> None:
     name, _, value = field.partition(": ")
     assert name == "retry"
     assert 1000 <= int(value) <= 3000
+
+
+class _RoundTripPresence:
+    """Presence whose leave takes a round trip, as a shared store's does — so a leave made
+    while its task is being cancelled is cancelled too. An in-memory leave never suspends."""
+
+    cluster_wide = False
+
+    def __init__(self) -> None:
+        self.members: set[tuple[str, str]] = set()
+
+    async def joined(self, room: str, sid: str) -> None:
+        self.members.add((room, sid))
+
+    async def left(self, room: str, sid: str) -> None:
+        await asyncio.sleep(0.01)
+        self.members.discard((room, sid))
+
+    async def count(self, room: str) -> int:
+        return sum(1 for member_room, _sid in self.members if member_room == room)
+
+
+def _http_scope() -> dict[str, Any]:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/realtime/sse",
+        "raw_path": b"/realtime/sse",
+        "root_path": "",
+        "query_string": b"",
+        "headers": [],
+        "scheme": "http",
+        "server": ("test", 80),
+        "client": ("test", 1),
+    }
 
 
 # ----------------------- #
@@ -286,23 +324,8 @@ class TestSseDrain:
                 stalled.set()
                 await gone.wait()  # a client that stopped reading: the write never completes
 
-        scope = {
-            "type": "http",
-            "asgi": {"version": "3.0", "spec_version": "2.3"},
-            "http_version": "1.1",
-            "method": "GET",
-            "path": "/realtime/sse",
-            "raw_path": b"/realtime/sse",
-            "root_path": "",
-            "query_string": b"",
-            "headers": [],
-            "scheme": "http",
-            "server": ("test", 80),
-            "client": ("test", 1),
-        }
-
         async with runtime.scope():
-            serving = asyncio.ensure_future(app(scope, receive, send))
+            serving = asyncio.ensure_future(app(_http_scope(), receive, send))
             await _until(lambda: hub.subscribers == 1)
             hub.publish(
                 RealtimeSignal.of(Audience.principal(str(_PRINCIPAL)), "e", {}), None, event_id="x"
@@ -323,8 +346,103 @@ class TestSseDrain:
         # Cut off, not finished: the client sees the connection drop and reconnects.
         assert not any(one.get("more_body") is False for one in sent)
 
+    # ....................... #
+
+    async def test_a_stream_cut_off_mid_wait_still_leaves_its_presence_rooms(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_fastapi.realtime import sse as sse_module
+
+        monkeypatch.setattr(sse_module, "_END_GRACE_SECONDS", 0.1)
+        hub = RealtimeSseHub()
+        hub.ready.clear()  # the stream waits for the hub, and the cut-off lands mid-wait
+        runtime = _runtime(hub)
+        presence = _RoundTripPresence()
+        app = _sse_app(hub, runtime, presence=presence)
+        gone = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(_message: dict[str, Any]) -> None:
+            pass
+
+        async with runtime.scope():
+            serving = asyncio.ensure_future(app(_http_scope(), receive, send))
+
+            try:
+                await _until(lambda: hub.subscribers == 1 and bool(presence.members))
+                await runtime.drain(timedelta(seconds=5))
+                await asyncio.wait_for(asyncio.shield(serving), timeout=2)
+
+            finally:
+                gone.set()
+                await asyncio.wait_for(serving, timeout=5)
+
+        assert presence.members == set()
+
+    # ....................... #
+
+    async def test_a_stream_whose_client_leaves_mid_wait_still_leaves_its_presence_rooms(
+        self,
+    ) -> None:
+        hub = RealtimeSseHub()
+        runtime = _runtime(hub)
+        presence = _RoundTripPresence()
+        app = _sse_app(hub, runtime, presence=presence)
+        gone = asyncio.Event()
+
+        async def receive() -> dict[str, Any]:
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(_message: dict[str, Any]) -> None:
+            pass
+
+        async with runtime.scope():
+            serving = asyncio.ensure_future(app(_http_scope(), receive, send))
+            await _until(lambda: hub.subscribers == 1 and bool(presence.members))
+
+            # The live tail waits for a signal; the client goes, and Starlette cancels it.
+            gone.set()
+            await asyncio.wait_for(serving, timeout=2)
+
+        assert presence.members == set()
+
 
 # ----------------------- #
+
+
+def _ws_app(hub: RealtimeSseHub, runtime: ExecutionRuntime, *, presence: Any) -> FastAPI:
+    router = APIRouter()
+    attach_realtime_ws_route(
+        router,
+        ctx_dep=runtime.get_context,
+        resolve=lambda _connect: WsConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL)),
+        mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+        cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+        hub=hub,
+        presence=presence,
+    )
+    app = FastAPI()
+    app.include_router(router)
+
+    return app
+
+
+def _ws_scope() -> dict[str, Any]:
+    return {
+        "type": "websocket",
+        "path": "/realtime/ws",
+        "raw_path": b"/realtime/ws",
+        "query_string": b"",
+        "headers": [],
+        "scheme": "ws",
+        "server": ("test", 80),
+        "client": ("test", 1),
+        "subprotocols": [],
+    }
 
 
 def _ws(
@@ -484,17 +602,8 @@ class TestWebSocketDrain:
         monkeypatch.setattr(ws_module, "_CLOSE_LOCK_TIMEOUT_SECONDS", 0.1)
         hub = RealtimeSseHub()
         runtime = _runtime(hub)
-        router = APIRouter()
-        attach_realtime_ws_route(
-            router,
-            ctx_dep=runtime.get_context,
-            resolve=lambda _connect: WsConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL)),
-            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
-            cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
-            hub=hub,
-        )
-        app = FastAPI()
-        app.include_router(router)
+        presence = _RoundTripPresence()
+        app = _ws_app(hub, runtime, presence=presence)
 
         gone = asyncio.Event()
         stalled = asyncio.Event()
@@ -514,20 +623,8 @@ class TestWebSocketDrain:
                 stalled.set()
                 await gone.wait()  # a client that stopped reading: the write never completes
 
-        scope = {
-            "type": "websocket",
-            "path": "/realtime/ws",
-            "raw_path": b"/realtime/ws",
-            "query_string": b"",
-            "headers": [],
-            "scheme": "ws",
-            "server": ("test", 80),
-            "client": ("test", 1),
-            "subprotocols": [],
-        }
-
         async with runtime.scope():
-            serving = asyncio.ensure_future(app(scope, receive, send))
+            serving = asyncio.ensure_future(app(_ws_scope(), receive, send))
             await _until(lambda: hub.subscribers == 1)
             hub.publish(
                 RealtimeSignal.of(Audience.principal(str(_PRINCIPAL)), "e", {}), None, event_id="x"
@@ -540,6 +637,8 @@ class TestWebSocketDrain:
                 await _until(
                     lambda: any(one["type"] == "websocket.close" for one in sent), within=2.0
                 )
+                # Left while the write is still blocked: the end guard's own close.
+                await _until(lambda: not presence.members, within=2.0)
 
             finally:
                 gone.set()
@@ -547,3 +646,38 @@ class TestWebSocketDrain:
 
         [close] = [one for one in sent if one["type"] == "websocket.close"]
         assert close["code"] == WS_RECONNECT_CLOSE
+
+    # ....................... #
+
+    async def test_a_tail_cancelled_from_outside_still_leaves_its_presence_rooms(self) -> None:
+        hub = RealtimeSseHub()
+        runtime = _runtime(hub)
+        presence = _RoundTripPresence()
+        app = _ws_app(hub, runtime, presence=presence)
+        connected: list[bool] = []
+        cancels: list[anyio.CancelScope] = []
+
+        async def receive() -> dict[str, Any]:
+            if not connected:
+                connected.append(True)
+                return {"type": "websocket.connect"}
+
+            await asyncio.Event().wait()  # a client that stays
+            raise AssertionError("unreachable")
+
+        async def send(_message: dict[str, Any]) -> None:
+            pass
+
+        async def serve() -> None:
+            # How an ASGI server or a test client cancels an endpoint: through a cancel scope.
+            with anyio.CancelScope() as cancel:
+                cancels.append(cancel)
+                await app(_ws_scope(), receive, send)
+
+        async with runtime.scope():
+            serving = asyncio.ensure_future(serve())
+            await _until(lambda: hub.subscribers == 1 and bool(presence.members))
+            cancels[0].cancel()
+            await asyncio.wait_for(serving, timeout=2)
+
+        assert presence.members == set()

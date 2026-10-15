@@ -374,7 +374,9 @@ principal/topic rooms for the connection's lifetime — so "is this user online"
 counts an SSE stream and a socket identically. With a TTL-backed store (e.g.
 `RedisRealtimePresence`) also register
 `realtime_sse_presence_heartbeat_lifecycle_step(hub, presence)` so live streams
-re-assert within the TTL.
+re-assert within the TTL. A closing stream leaves its rooms even when it closes cancelled —
+its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
+rest expire with the store's TTL.
 
 ## Realtime over raw WebSocket
 

@@ -45,6 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A realtime stream whose client disconnects mid-wait now leaves its presence rooms.** An SSE stream or WebSocket tail cancelled while waiting kept its member counted in a shared presence store such as Redis until the TTL; the leave now runs shielded, bounded by 2 s.
+
 - **A readiness check whose client is registered only per route says so**, as `registered per route only`, instead of reporting it `not registered`.
 
 - **A retry past its 1,024th attempt no longer fails with `OverflowError`.** Resilience retries and outbox redelivery keep their backoff at the cap however many attempts came before, and a zero-delay saga step or client read keeps retrying.

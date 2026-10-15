@@ -18,15 +18,17 @@ require_fastapi()
 # ....................... #
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import final
 from uuid import UUID
 
+import anyio
 import attrs
 
 from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeSignal
-from forze.application.integrations.realtime import room_for
+from forze.application.integrations.realtime import RealtimePresence, room_for
 from forze.base.exceptions import exc
+from forze.base.logging import Logger
 from forze.base.primitives import uuid7
 
 # ----------------------- #
@@ -52,6 +54,45 @@ def presence_rooms(
         room_for(Audience.principal(principal), tenant),
         *(room_for(Audience.topic(topic), tenant) for topic in sorted(topics)),
     )
+
+
+_logger = Logger("fastapi.errors")
+
+_PRESENCE_LEAVE_SECONDS = 2.0
+"""The longest a closing connection spends leaving its presence rooms: far above a store's
+round trips for a connection's few rooms, and short enough that a hung store cannot hold a
+closing response — and with it a server's shutdown — for long. A member left behind
+expires with the store's TTL."""
+
+
+async def leave_presence_rooms(
+    presence: RealtimePresence, rooms: Sequence[str], member: str, *, transport: str
+) -> None:
+    """Take *member* out of *rooms*, shielded from cancellation and bounded.
+
+    A connection often closes cancelled — cut off by the drain, or its client gone — and
+    a leave cancelled at its first round trip would keep the member counted until the
+    store's TTL expires it. The shield holds against the cancel scopes Starlette and ASGI
+    servers cancel through; a bare ``Task.cancel()`` still interrupts it. Best-effort: a
+    failed leave is logged, and never masks the connection's own exit.
+
+    :param transport: Names the connection in the logs, ``"SSE"`` or ``"WS"``.
+    """
+
+    with anyio.move_on_after(_PRESENCE_LEAVE_SECONDS, shield=True) as bound:
+        for room in rooms:
+            try:
+                await presence.left(room, member)
+
+            except Exception:
+                _logger.exception("%s presence leave failed", transport, room=room)
+
+    if bound.cancelled_caught:
+        _logger.warning(
+            "%s presence leave took over %ss; the rest of its rooms expire with the store's TTL",
+            transport,
+            _PRESENCE_LEAVE_SECONDS,
+        )
 
 
 @final
