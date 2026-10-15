@@ -6559,6 +6559,12 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <td><code>False</code></td>
 <td>fail closed at wiring unless the backend issues fencing tokens (<code>AcquiredLock.token</code>)</td>
 </tr>
+<tr>
+<td><code>requires_fence_advance</code></td>
+<td><code>bool</code></td>
+<td><code>False</code></td>
+<td>fail closed at wiring unless the backend issues fencing tokens and implements <code>FenceAdvancing</code></td>
+</tr>
 </tbody>
 </table>
 <table>
@@ -6573,7 +6579,7 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <tr>
 <td>command</td>
 <td><code>acquire(key, owner)</code></td>
-<td>returns an <code>AcquiredLock</code> (with an optional fencing <code>token</code>), or <code>None</code> if already held</td>
+<td>returns an <code>AcquiredLock</code> (with an optional fencing <code>token</code>), or <code>None</code> if already held; refused with <code>dlock.fence_exhausted</code> once tokens reach 2⁵³ − 1</td>
 </tr>
 <tr>
 <td>command</td>
@@ -6584,6 +6590,11 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 <td>command</td>
 <td><code>reset(key, owner)</code></td>
 <td>renew the lease — reset the TTL of a held lock (the fencing token doesn't change); returns whether it was held</td>
+</tr>
+<tr>
+<td>command</td>
+<td><code>advance_fence(key, *, past)</code></td>
+<td><code>FenceAdvancing</code> only: move the key's fencing counter to at least <code>past</code> (0 to 2⁵³ − 1), so the next token is above it; never lowers it; returns the counter</td>
 </tr>
 <tr>
 <td>query</td>
@@ -6604,6 +6615,10 @@ the outermost wrap on a keyed operation — you rarely call the port directly; s
 </table>
 <p>For a long-held critical section, use the <code>DistributedLockScope</code> kit with an <code>extend_interval</code>
 to renew the lease rather than picking a large <code>ttl</code>.</p>
+<p>A fenced write claims its token first (<code>fence &lt; :token</code>), then accepts an equal fence
+(<code>fence &lt;= :token</code>); a lower token is always refused, and zero rows on any fenced write ends
+the term. The rule, and when to call <code>advance_fence</code>, are in
+<a href="../../../integrations/redis/#fencing-after-data-loss">Fencing after data loss</a>.</p>
 <h2 id="implemented-by">Implemented by<a class="headerlink" href="#implemented-by" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
