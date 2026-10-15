@@ -24,12 +24,14 @@ from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.fleet import FleetSpec, MemberState, Report
 from forze.application.execution import DeploymentProfile, build_runtime
 from forze.application.execution.runtime import ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, ExceptionKind
+from forze.base.primitives import instance_id
 from forze_dst.runtime import run_simulation
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockFleetAdapter
 from forze_mock.state import MockState
 from forze_socketio import connection_rebalance_lifecycle_step, connection_report
+from forze_socketio.rebalance import _Rebalance
 
 # ----------------------- #
 
@@ -208,7 +210,6 @@ class TestShedding:
         assert lobby_closed == 16
         assert game_closed == 0
         assert still_open == 24
-
 
     def test_the_oldest_movable_transports_go_first(self) -> None:
         async def scenario() -> list[str]:
@@ -556,7 +557,9 @@ class TestNoShedding:
         assert run_simulation(scenario) == 0
 
         rows = [
-            json.loads(line) for line in error_log_buf.getvalue().splitlines() if line.startswith("{")
+            json.loads(line)
+            for line in error_log_buf.getvalue().splitlines()
+            if line.startswith("{")
         ]
         # Sixty ticks, one warning: a member id that is not the membership step's, or a
         # membership step without the report, would otherwise do nothing, silently.
@@ -717,6 +720,41 @@ class TestWiring:
             _step(node)
 
         assert caught.value.code == "realtime_drain_engineio_unsupported"
+
+    def test_the_default_member_id_is_the_instance_id(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(100, "/lobby")
+            await _peers(state, 0, 0)
+            # The membership step's default id.
+            await _beat(state, instance_id(), _REPORTED)
+
+            await _serve(state, _step(node, member_id=None), _sleep(1.95))
+
+            return node.closed()
+
+        assert run_simulation(scenario) == 10
+
+    def test_a_tick_before_startup_is_an_internal_error(self) -> None:
+        rebalance = _Rebalance(
+            sio=_Node().server,
+            spec=SPEC,
+            every=SECOND,
+            member_id=None,
+            namespaces=("/",),
+            load="connections",
+            movable_report="movable",
+            movable=_lobby,
+            per_minute=1,
+            tolerance=0.15,
+            settle=timedelta(0),
+            cooldown=timedelta(0),
+        )
+
+        with pytest.raises(CoreException) as caught:
+            asyncio.run(rebalance.tick())
+
+        assert caught.value.kind == ExceptionKind.INTERNAL
 
     def test_a_serverless_runtime_refuses_it(self) -> None:
         with pytest.raises(CoreException, match="SERVERLESS"):
