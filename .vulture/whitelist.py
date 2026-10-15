@@ -131,6 +131,8 @@ factor  # unused variable (src/forze_dst/stats.py:793)
 reachable  # unused variable (src/forze_dst/stats.py:799)
 _.__signature__  # unused attribute (src/forze_fastapi/routes/_attach.py:387)
 _.__annotations__  # unused attribute (src/forze_fastapi/routes/_attach.py:396)
+_.should_exit  # unused attribute (src/forze_fastapi/serving.py:114) — read by uvicorn.Server
+_.force_exit  # unused attribute (src/forze_fastapi/serving.py:115) — read by uvicorn.Server
 _.__signature__  # unused attribute (src/forze_fastapi/routes/_attach.py:467)
 _.__annotations__  # unused attribute (src/forze_fastapi/routes/_attach.py:474)
 _.is_allowed_origin  # unused method (src/forze_fastapi/middlewares/cors.py:54)

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from datetime import timedelta
 from typing import Any, cast
 
 import attrs
+import httpx
 import pytest
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from forze.application.contracts.deps import DepKey, Deps
-from forze.application.execution import DepsRegistry
+from forze.application.execution import DepsRegistry, build_runtime
+from forze.application.execution.background import probe_listener_step
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze_fastapi.routes import attach_readiness_route
@@ -191,6 +194,30 @@ class TestReadinessProbes:
         assert response.json()["checks"]["redis"] == {"ok": False, "detail": "not registered"}
 
     @pytest.mark.asyncio
+    async def test_a_key_registered_only_per_route_says_so(self) -> None:
+        """Not "not registered": it is registered, but names no single client to probe."""
+
+        key = DepKey[Any]("routed_client")
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_deps(Deps.routed({key: {"a": _FakeClient()}})).freeze()
+        )
+        router = APIRouter()
+        attach_readiness_route(router, runtime, probes={"pg": key})
+        app = FastAPI()
+        app.include_router(router)
+
+        async with runtime.scope():
+            response = TestClient(app).get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["pg"] == {
+            "ok": False,
+            "detail": "registered per route only",
+        }
+
+    # ....................... #
+
+    @pytest.mark.asyncio
     async def test_draining_answers_before_any_probe_runs(self) -> None:
         postgres = _FakeClient()
         runtime, client = _probed({"postgres": postgres})
@@ -286,3 +313,82 @@ class TestReadinessProbes:
             "ok": False,
             "detail": "TimeoutError",
         }
+
+
+# ----------------------- #
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+
+        return probe.getsockname()[1]
+
+
+_PARITY_CASES: dict[
+    str, tuple[dict[str, _FakeClient], dict[str, DepKey[Any]], str | None, str]
+] = {
+    "healthy": ({"postgres": _FakeClient()}, {}, None, "ready"),
+    "one unhealthy": (
+        {"postgres": _FakeClient(), "redis": _FakeClient(detail="refused", ok=False)},
+        {},
+        None,
+        "degraded",
+    ),
+    "one hanging": (
+        {"postgres": _FakeClient(), "redis": _FakeClient(hang=True)},
+        {},
+        None,
+        "degraded",
+    ),
+    "one raising": ({"postgres": _FakeClient(raises=ValueError("dsn"))}, {}, None, "degraded"),
+    "one unregistered": (
+        {"postgres": _FakeClient()},
+        {"redis": DepKey[Any]("nope")},
+        None,
+        "degraded",
+    ),
+    "drain announced": ({"postgres": _FakeClient()}, {}, "announce", "draining"),
+    "gate closed": ({"postgres": _FakeClient()}, {}, "close", "draining"),
+}
+
+
+class TestListenerAndRouteAgree:
+    """The stdlib listener and the FastAPI route share one evaluator: same probes, same answer."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", list(_PARITY_CASES))
+    async def test_the_same_probes_give_the_same_answer(self, case: str) -> None:
+        clients, extra, action, expected = _PARITY_CASES[case]
+        keys: dict[str, DepKey[Any]] = {name: DepKey[Any](name) for name in clients}
+        probes = {**keys, **extra}
+        timeout = timedelta(seconds=0.05)
+        port = _free_port()
+
+        runtime = build_runtime(
+            deps=Deps.plain({keys[name]: client for name, client in clients.items()}),
+            lifecycle_steps=probe_listener_step(
+                host="127.0.0.1", port=port, checks=probes, check_timeout=timeout
+            ),
+            drain_timeout=timedelta(0),
+        )
+        router = APIRouter()
+        attach_readiness_route(router, runtime, probes=probes, probe_timeout=timeout)
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+
+        async with runtime.scope():
+            if action == "announce":
+                runtime.begin_draining()
+
+            elif action == "close":
+                await runtime.get_context().drain_gate.drain(0.0)
+
+            route = client.get("/readyz")
+
+            async with httpx.AsyncClient(timeout=5.0) as http:
+                listener = await http.get(f"http://127.0.0.1:{port}/readyz")
+
+        assert route.json()["status"] == expected
+        assert (listener.status_code, listener.json()) == (route.status_code, route.json())

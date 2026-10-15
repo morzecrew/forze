@@ -1,7 +1,7 @@
 ---
 title: Shutdown & fleets
 icon: lucide/server
-summary: Graceful drain, readiness probes, and what changes when you run N replicas
+summary: Graceful drain and deploys, readiness probes, and what changes when you run N replicas
 ---
 
 Processes get told to stop — deploys, autoscaling, a node going away. And in
@@ -16,13 +16,21 @@ mistakes that only N replicas can make.
 `runtime_lifespan` — does not tear infrastructure down under in-flight work.
 It drains first:
 
-1. The scope stops admitting new top-level invocations. They fail with a
+1. If nothing drained the scope yet, its drain phases run, while operations are
+   still admitted — see [Graceful deploys](#graceful-deploys).
+2. The scope stops admitting new top-level invocations. They fail with a
    **retryable** `throttled` (`code="draining"`) — a **429** at the FastAPI
    edge, a requeue-worthy nack for a queue consumer.
-2. In-flight operations get a bounded window — `drain_timeout`, default 10
+3. In-flight operations get a bounded window — `drain_timeout`, default 10
    seconds — to finish before lifecycle teardown closes the clients they
-   depend on.
-3. Lifecycle shutdown runs as usual, in reverse wave order.
+   depend on. Whatever is still running after it is cancelled.
+4. Background loops stop between units of work, and detached background work is
+   cancelled.
+5. Lifecycle shutdown runs as usual, in reverse wave order.
+
+Step 3 waits up to `drain_timeout`; cancelling what outlives it, step 4's two
+parts, and each lifecycle step's shutdown in step 5 are each bounded by
+`shutdown_step_timeout` (10 seconds by default).
 
 ```python
 runtime = build_runtime(..., drain_timeout=timedelta(seconds=20))
@@ -46,10 +54,13 @@ from forze_fastapi.routes import attach_readiness_route
 attach_readiness_route(router, runtime)   # GET /readyz
 ```
 
-`200` while a scope is active and not draining; `503 draining` once shutdown
-flips the gate, `503 unavailable` before the scope exists. Point your
-orchestrator's readiness check here and the rollout sequence takes care of
-itself: routing stops, in-flight work drains, teardown runs.
+`200` once lifecycle startup has finished, until the scope starts draining.
+`503 unavailable` before that — before the scope exists, and while later startup
+steps are still running, so a pod is never routed to with half its clients open.
+`503 draining` from the moment the scope starts draining: when a drain is
+announced (see [Graceful deploys](#graceful-deploys)), or when shutdown closes the
+gate. Point your orchestrator's readiness check here and the rollout sequence
+takes care of itself: routing stops, in-flight work drains, teardown runs.
 
 Point *liveness* somewhere else — at `attach_liveness_route(router)`, which answers
 `200` unconditionally. A draining pod is alive but not ready; one endpoint answering
@@ -62,11 +73,13 @@ lifecycle step:
 ```python
 from forze.application.execution.background import probe_listener_step
 
-lifecycle_steps.append(probe_listener_step(runtime, port=8079))
+lifecycle_steps.append(probe_listener_step(port=8079))
 ```
 
-Stdlib `asyncio`, no HTTP framework, same runtime state, same drain semantics: it
-reports `draining` for the whole window and closes only after. See
+Stdlib `asyncio`, no HTTP framework. The step reads the scope's state from the
+`ctx` its startup hook receives, so it takes no runtime and sits in the plan of the
+runtime it reports on. It answers through the same evaluator as the FastAPI route,
+reports `draining` for the whole window, and closes only after. See
 [The Grafana stack](grafana-stack.md#probes) for the Kubernetes mapping.
 
 ### Are the dependencies reachable?
@@ -115,7 +128,10 @@ message, because a driver's connection error routinely carries the DSN and this 
 is served to anything that can reach the probe. Nothing is auto-discovered: the
 integrations satisfy `health()` structurally, with no base port to enumerate, and a
 sweep of every registered dependency would probe things readiness does not depend on.
-A `probe_timeout` that is not positive is refused at attach time.
+A `probe_timeout` that is not positive is refused at attach time. A probe resolves
+its key plain: a key registered only per route names no single client and is
+reported as `registered per route only` — to probe such a client, register it under
+a plain key of its own too.
 
 Keep the endpoint internal, as you would `/metrics`. `detail` is the client's own
 summary, and a failing driver's is its exception text — which routinely names the
@@ -124,7 +140,142 @@ breakdown is for and exactly what should not reach the public internet. Every re
 also runs every probe, so the probe period is a real query rate against each
 dependency.
 
-No `probes` (the default) leaves the drain-gate-only behaviour untouched.
+No `probes` (the default) answers from the scope's state alone.
+
+The probe listener takes the same map as `checks`, with `check_timeout` per check,
+and gives the same answer and the same body as the route from the same probes.
+Liveness, on either, runs no check:
+
+```python
+probe_listener_step(
+    port=8079,
+    checks={"postgres": PostgresClientDepKey},
+    check_timeout=timedelta(seconds=2),
+)
+```
+
+## Graceful deploys
+
+A rolling deploy replaces every replica, and a replica on its way out should cost
+nobody a request. That takes three stages, in this order:
+
+1. **Announce.** Readiness fails, so the load balancer stops routing new work
+   here. Operations are still admitted: whatever the balancer already sent, or
+   sends before it notices, is served normally.
+2. **Drain phases.** Work that has to happen while the replica still serves runs
+   now — a courier handing its routes to another replica, sockets closing gently
+   over a window.
+3. **Teardown.** The gate closes, in-flight operations get `drain_timeout`, and
+   lifecycle shutdown runs, as in [Graceful drain](#graceful-drain).
+
+`runtime.drain()` runs the first two stages; leaving the scope runs the third:
+
+```python
+from datetime import timedelta
+
+await runtime.drain(timedelta(seconds=15), announce_delay=timedelta(seconds=5))
+```
+
+`announce_delay` is how long readiness fails before the first phase starts. Make it
+at least as long as your balancer takes to act on a failed probe — for Kubernetes,
+the readiness probe's `periodSeconds × failureThreshold`, plus however long the
+balancer behind the Service takes to drop the endpoint.
+
+Nobody has to call `drain()`. When the scope exits without one, `shutdown()` runs
+it first, with the runtime's `drain_budget` and no announce delay, so the phases
+run on every orderly exit. A drain runs at most once per scope, and only after
+startup finished: after a partial startup failure the rollback has already shut
+the steps down, so no phase runs against closed clients. A drain cancelled before
+its first phase started — an admin request whose client hung up — leaves the
+phases to the next drain or to shutdown. If `shutdown()` is interrupted while it
+waits for a drain another task runs, it stops that drain, and gives its phase a
+second to unwind, before teardown closes anything.
+
+`runtime.begin_draining()` is the first stage alone: it withdraws readiness and
+returns. Call it from whatever tells the process it is leaving — a `preStop` hook,
+an internal admin endpoint — to take the replica out of rotation well before it
+receives `SIGTERM`. Withdrawing readiness never refuses an operation:
+`runtime.draining` turns true at once, while `ctx.drain_gate.draining`, which
+means operations are refused, stays false until shutdown closes the gate.
+
+An HTTP server needs its signal handling to call `drain()` before it stops
+accepting. For uvicorn that is `serve_uvicorn` — see
+[Graceful shutdown under uvicorn](../integrations/fastapi.md#graceful-shutdown-under-uvicorn).
+
+### Drain phases
+
+A lifecycle step registers its phase at startup, on the `ctx` its hook receives:
+
+```python
+from datetime import timedelta
+
+from forze.application.execution import ExecutionContext
+
+
+async def startup(ctx: ExecutionContext) -> None:
+    async def hand_over(allowed: timedelta) -> None:
+        ...  # hand the routes back, within `allowed`
+
+    ctx.drain_phases.register(
+        "hand-over",
+        hand_over,
+        order=10,
+        max_duration=timedelta(seconds=5),
+    )
+```
+
+Phases run in ascending `order` and share one budget:
+
+- Each phase may take `min(max_duration, budget left)`, and is called with that
+  figure so it can shrink its own window to fit.
+- A phase without `max_duration` may take everything that is left. Give the early
+  phases a cap, or one slow phase leaves the later ones nothing.
+- A phase that overruns is cancelled. One that ignores the cancellation is
+  abandoned a second later. A phase left less than 100 ms is skipped, and a phase
+  that fails does not stop the next. Each of these is logged.
+
+So `drain()` returns within `announce_delay + budget`, plus a second when a phase
+ignores its cancellation.
+
+Phases are not the background loops registered in `ctx.drainables` — relays,
+consumers, pollers. Those stop after the gate has closed, between units of work.
+A phase runs before that, while the replica still serves, which is the point of it.
+
+### What a step can read
+
+A step cannot hold the runtime that runs it: the runtime is built around its
+lifecycle plan, so it does not exist yet when its steps are built. A step reads
+the scope's state from the `ctx` its hooks receive instead:
+
+| Attribute | True once |
+|---|---|
+| `ctx.lifecycle.started` | every lifecycle startup hook has returned |
+| `ctx.lifecycle.announced` | a drain was announced — readiness is withdrawn |
+| `ctx.drain_gate.draining` | the gate closed — new operations are refused |
+
+### Fit the budget to the grace period
+
+The orchestrator kills the process when its grace period runs out — on
+Kubernetes, `terminationGracePeriodSeconds`, 30 seconds by default. The worst
+case of an orderly exit has to fit inside it:
+
+```text
+announce_delay
++ drain budget                  (drain_budget when shutdown() drains)
++ 1 s                           (a phase that ignores its cancellation)
++ the HTTP graceful timeout     (uvicorn's timeout_graceful_shutdown)
++ drain_timeout                 (in-flight operations)
++ shutdown_step_timeout × 3     (cancelling what drain_timeout left running,
+                                 stopping background loops, closing background work)
++ shutdown_step_timeout × steps (lifecycle shutdown, one per step)
+```
+
+With every default and no HTTP server that is already 51 seconds before the first
+lifecycle step: 10 for the drain, 1, 10 for `drain_timeout` and 3 × 10. Most exits
+take a fraction of it, but the grace period has to cover the one that does not. A budget that does not fit gets the process killed
+in the middle of a phase or of teardown — exactly the exit this ordering exists
+to avoid. Shrink the timeouts, raise the grace period, or both, with headroom.
+`serve_uvicorn` logs this sum, figure by figure, when the server starts.
 
 ## Declare the fleet posture
 

@@ -30,7 +30,20 @@ attach_readiness_route(
 
 Any failed check makes the response `503 {"status": "degraded", "checks": {...}}`, with `{"ok": bool, "detail": str}` per dependency. `probe_timeout` is per probe deliberately: a sweep-wide deadline cancels every probe when one dependency's driver retries past it, and answers with an empty breakdown.
 
+Readiness answers `503 unavailable` until every lifecycle startup step has returned. A worker that is not an HTTP server gets the same answer, from the same evaluator, by putting `probe_listener_step(port=8079, checks={"postgres": PostgresClientDepKey})` (from `forze.application.execution.background`) in its runtime's own lifecycle steps: the step reads its scope from the `ctx` its hook receives.
+
 Background loops the runtime owns stop **between units of work** rather than being cancelled mid-flight, and register as drainable. A custom loop or consumer must accept the stop signal to take part.
+
+## Graceful deploys
+
+The exit order is: withdraw readiness, run the drain phases while still serving, then close the gate and tear down.
+
+- `runtime.begin_draining()` withdraws readiness with operations still admitted; `runtime.draining` turns true, `ctx.drain_gate.draining` (operations refused) stays false until shutdown.
+- `await runtime.drain(budget, announce_delay=...)` announces, waits `announce_delay` for the balancer, then runs every phase steps registered with `ctx.drain_phases.register(name, phase, order=..., max_duration=...)`. A phase is awaited with `min(max_duration, budget left)` as a `timedelta`, cancelled past it, and skipped under 100 ms. It runs once per scope; `shutdown()` runs it first if nobody did, with `build_runtime(drain_budget=...)`.
+- A step reads `ctx.lifecycle.started` and `ctx.lifecycle.announced` from its hook's `ctx` — it cannot hold the runtime whose plan contains it.
+- Under FastAPI, serve with `await serve_uvicorn(uvicorn.Config(app), runtime, drain_budget=...)` from `forze_fastapi`, so `SIGTERM` drains before uvicorn stops accepting. `uvicorn app:app` closes WebSockets at once (1012) and, without `--timeout-graceful-shutdown`, waits for open streams without limit.
+
+Fit the worst case — `announce_delay + drain budget + 1 s + uvicorn graceful timeout + drain_timeout + shutdown_step_timeout × (3 + lifecycle steps)` — inside the orchestrator's grace period, or the process is killed mid-phase; `serve_uvicorn` logs the sum at startup. Off the main thread, pass `serve_uvicorn(..., stop=asyncio.Event())` and set it to drain and stop.
 
 ## Quiesce: bring the planes to rest
 
@@ -62,6 +75,8 @@ Fleet-wide resilience state (`forze[redis]`): `ResilienceDepsModule(breaker_stor
 ## Anti-patterns
 
 - Running schema migrations as a `singleton_lifecycle_step` — skip-if-held gives at-most-one-runner *per startup wave*, not run-exactly-once; use a deploy step.
+- Passing `runtime` to `probe_listener_step` (deprecated) or to any step meant for that runtime's own plan — the runtime does not exist yet when its steps are built; read state from the hook's `ctx`.
+- Giving every drain phase no `max_duration` — the first slow phase spends the whole budget and the later ones are skipped.
 
 ## Reference
 

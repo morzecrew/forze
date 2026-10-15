@@ -177,14 +177,92 @@ register_exception_handlers(app)
 ## Readiness probe
 
 `attach_readiness_route(router, runtime)` adds a `GET /readyz` that reflects
-the runtime's scope state: `200` while serving, `503 draining` once shutdown
-flips the [drain gate](../running-in-prod/shutdown-and-fleets.md), `503 unavailable`
-before the scope exists. Point your load balancer's readiness check at it so
-routing stops before the drain window starts.
+the runtime's scope state: `200` once lifecycle startup finished, `503 draining`
+from the moment a [drain](../running-in-prod/shutdown-and-fleets.md#graceful-deploys)
+is announced or shutdown closes the gate, `503 unavailable` before that. Point
+your load balancer's readiness check at it so routing stops before any work is
+refused.
 
 That answers whether the process is *willing* to take traffic. Pass `probes` to
 also ask whether it can *reach* what it needs — see
 [Readiness](../running-in-prod/shutdown-and-fleets.md#readiness).
+
+## Graceful shutdown under uvicorn
+
+When the orchestrator sends `SIGTERM`, the replica should withdraw readiness and
+run its drain phases while it still serves, and stop accepting only after that.
+Uvicorn's own signal handling stops the server at once, so serve the app with
+`serve_uvicorn` instead:
+
+```python
+import asyncio
+from datetime import timedelta
+
+import uvicorn
+from forze.application.execution import build_runtime
+from forze_fastapi import serve_uvicorn
+
+runtime = build_runtime(
+    ...,
+    drain_timeout=timedelta(seconds=5),
+    shutdown_step_timeout=timedelta(seconds=2),
+)
+config = uvicorn.Config(app, host="0.0.0.0", port=8000)
+
+asyncio.run(
+    serve_uvicorn(
+        config,
+        runtime,
+        drain_budget=timedelta(seconds=5),
+        announce_delay=timedelta(seconds=3),
+        graceful_timeout=timedelta(seconds=5),
+    )
+)
+```
+
+Once startup has finished, the worst case of that exit is 25 seconds plus 2 per
+lifecycle step — the
+[sum](../running-in-prod/shutdown-and-fleets.md#fit-the-budget-to-the-grace-period)
+`serve_uvicorn` logs at startup. A signal that lands during startup waits for it
+first, and startup hooks have no timeout. Past two steps it no longer fits Kubernetes'
+default 30-second grace period: set `terminationGracePeriodSeconds` from the
+logged figure, with headroom.
+
+On the first `SIGTERM` or `SIGINT` it runs `runtime.drain()` — readiness fails at
+once, `announce_delay` passes, the drain phases run — and only then lets uvicorn
+exit: stop accepting, finish in-flight requests, run the lifespan shutdown where
+the runtime closes its gate and tears down. A drain that fails still lets the
+server exit. A `SIGINT` during the drain cancels it and exits without waiting for
+open connections; a repeated `SIGTERM` is logged and ignored, so a signal delivered
+twice — to the process group and again by a wrapper — cannot cut a deploy short.
+A forced exit gives the drain phases up, even those that had not started yet.
+Uvicorn then skips the lifespan shutdown, so the runtime tears down only when the
+event loop closes and cancels the lifespan — at the end of `asyncio.run`.
+
+- **Graceful timeout.** Unless `config` sets `timeout_graceful_shutdown`,
+  `serve_uvicorn` sets it to `graceful_timeout` (10 seconds), so an open SSE
+  stream or long poll cannot hold the exit forever. The figures of the
+  [exit budget](../running-in-prod/shutdown-and-fleets.md#fit-the-budget-to-the-grace-period)
+  are logged when the server starts.
+- **Off the main thread, pass `stop`.** Signal handlers can be installed only on
+  the main thread, so elsewhere `serve_uvicorn` installs none. Pass
+  `stop=asyncio.Event()` and set it on the server's loop — from another thread,
+  `loop.call_soon_threadsafe(stop.set)` — to drain and stop as a first signal
+  would. Setting it works on the main thread too.
+- **A signal during startup drains later.** Until the lifespan startup finishes
+  there is nothing to drain: the server exits once it does, and the drain phases
+  run in the lifespan shutdown, after the server stopped accepting. A later
+  signal cannot cut them short there.
+- **No re-raised signal.** Uvicorn raises the signal again once its server
+  returns; `serve_uvicorn` does not, so your process decides how it exits.
+
+An app run as `uvicorn app:app` keeps uvicorn's handling, and pays for it:
+
+- **WebSockets close at once** with code 1012 when the server stops, before the
+  lifespan shutdown runs the drain phases that would have closed them gently.
+- **The wait for open connections is unbounded** without
+  `--timeout-graceful-shutdown`: one SSE client turns every restart into a kill
+  at the grace period. Set it at the very least.
 
 ## Routes
 
@@ -373,6 +451,7 @@ runs them. The surface, at a glance:
 | Piece | What it does |
 |-------|--------------|
 | `runtime_lifespan` | run the runtime's lifecycle from the app lifespan |
+| `serve_uvicorn` | an embedded uvicorn whose `SIGTERM` drains the runtime before the server stops |
 | `InvocationMetadataMiddleware` / `SecurityContextMiddleware` | bind per-request context, identity, and tenant |
 | `CustomHeadersMiddleware` / `LoggingMiddleware` | inject response headers; sampled, probe-excluded access logs |
 | `register_exception_handlers` | map a `CoreException` to an HTTP response by kind |

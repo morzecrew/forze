@@ -17,9 +17,9 @@ from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 
 from forze.application.contracts.deps import DepKey
-from forze.application.execution import ExecutionRuntime
+from forze.application.execution import ExecutionContext, ExecutionRuntime
+from forze.application.execution.background import evaluate_readiness
 from forze.base.exceptions import CoreException, exc
-from forze.base.logging import Logger
 
 if TYPE_CHECKING:
     from opentelemetry.sdk.metrics.export import MetricReader
@@ -28,8 +28,6 @@ if TYPE_CHECKING:
 # ----------------------- #
 
 PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
-
-_logger = Logger("fastapi.probes")
 
 # ....................... #
 
@@ -44,12 +42,16 @@ def attach_readiness_route(
 ) -> APIRouter:
     """Attach a readiness probe reflecting the runtime's scope state, and optionally its deps.
 
-    ``200`` while a scope is active and not draining; ``503`` otherwise —
-    ``draining`` once shutdown flipped the drain gate (point your load
-    balancer's readiness check here so routing stops before the drain window),
-    ``unavailable`` before the scope exists. Excluded from the OpenAPI schema.
+    ``200`` once the scope's lifecycle startup finished and while it is not draining;
+    ``503`` otherwise — ``draining`` from the moment a drain is announced
+    (:meth:`ExecutionRuntime.begin_draining`, or shutdown closing the drain gate: point your
+    load balancer's readiness check here so routing stops before work is refused),
+    ``unavailable`` before the scope exists or while its startup is still running. Excluded
+    from the OpenAPI schema. The answer comes from
+    :func:`~forze.application.execution.background.evaluate_readiness`, which the stdlib
+    probe listener uses too, so both answer the same from the same probes.
 
-    The drain gate answers "is this process *willing* to take traffic?". *probes* adds the
+    The scope's state answers "is this process *willing* to take traffic?". *probes* adds the
     other half — "can it *reach* what it needs?" — because an un-drained process whose
     database is gone still answers ``ready`` and still 500s every request the load balancer
     keeps sending it. Name the clients that matter and each is resolved from the deps
@@ -61,7 +63,7 @@ def attach_readiness_route(
                     "redis":    {"ok": false, "detail": "timed out after 2.0s"}}}
 
     Any failed check makes the whole probe ``503 degraded``. No *probes* (the default)
-    keeps the drain-gate-only behaviour, with no ``checks`` key at all.
+    answers from the scope's state alone, with no ``checks`` key at all.
 
     Not auto-discovered: there is no common base client port to enumerate — every
     integration satisfies ``health()`` structurally — and a sweep of every registered
@@ -77,7 +79,7 @@ def attach_readiness_route(
     every probe, so the probe period is a real query rate against each dependency.
 
     :param probes: Probe name (the key in ``checks``) to the deps key its client is
-        registered under.
+        registered under, plain; a key registered only per route is reported as such.
     :param probe_timeout: Budget for **each** probe, not for the sweep.
 
     :raises CoreException: ``configuration`` — *probes* is set and *probe_timeout* is
@@ -93,84 +95,19 @@ def attach_readiness_route(
 
     @router.get(path, include_in_schema=False)
     async def readyz() -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
-        if not runtime.ready:
-            status = "draining" if runtime.draining else "unavailable"
-
-            return JSONResponse({"status": status}, status_code=503)
-
-        if not probes:
-            return JSONResponse({"status": "ready"})
+        ctx: ExecutionContext | None
 
         try:
-            checks = await _probe_dependencies(runtime, probes, probe_timeout)
+            ctx = runtime.get_context()
 
         except CoreException:
-            # The scope was reset between the readiness check above and the deps read.
-            # Narrow, but a probe must answer rather than 500 on the way down.
-            return JSONResponse({"status": "unavailable"}, status_code=503)
+            ctx = None
 
-        healthy = all(check["ok"] for check in checks.values())
+        status, body = await evaluate_readiness(ctx, probes, check_timeout=probe_timeout)
 
-        return JSONResponse(
-            {"status": "ready" if healthy else "degraded", "checks": checks},
-            status_code=200 if healthy else 503,
-        )
+        return JSONResponse(body, status_code=status)
 
     return router
-
-
-# ....................... #
-
-
-async def _probe_dependencies(
-    runtime: ExecutionRuntime,
-    probes: Mapping[str, DepKey[Any]],
-    timeout: timedelta,
-) -> dict[str, dict[str, Any]]:
-    """Ask every named client ``health()`` concurrently, one timeout each."""
-
-    seconds = timeout.total_seconds()
-    deps = runtime.get_context().deps
-
-    async def probe(name: str, key: DepKey[Any]) -> tuple[str, dict[str, Any]]:
-        # Every failure below becomes a *reported* one. A probe that raises turns readiness
-        # into a 500 — indistinguishable from an unrelated bug — and takes the breakdown
-        # with it, in exactly the situation the breakdown exists for.
-        try:
-            if not deps.exists(key):
-                return name, {"ok": False, "detail": "not registered"}
-
-            # Per probe, deliberately, not one deadline around the sweep. The two look
-            # equivalent — the probes run concurrently, so the wall clock is the same — but
-            # a sweep-wide timeout cancels *every* probe when one dependency's driver
-            # retries past the deadline, and answers 503 with `checks: {}`. Per probe, a
-            # hanging dependency is one failed check with a name on it.
-            budget = asyncio.timeout(seconds)
-
-            try:
-                async with budget:
-                    detail, ok = await deps.provide(key).health()
-
-            except TimeoutError:
-                # Only *our* budget is reported as ours. A driver with its own deadline
-                # raises `TimeoutError` too, and calling that "timed out after 2.0s" names
-                # a deadline that never elapsed — it goes to the handler below instead,
-                # which reports it by type like any other client failure.
-                if not budget.expired():
-                    raise
-
-                return name, {"ok": False, "detail": f"timed out after {seconds}s"}
-
-            return name, {"ok": bool(ok), "detail": str(detail)}
-
-        except Exception as error:
-            _logger.warning("Readiness probe %s failed", name, exc_info=True)
-
-            # The type, not the message: a driver's connection error routinely carries the
-            # DSN, and this body is served to anything that can reach the probe.
-            return name, {"ok": False, "detail": type(error).__name__}
-
-    return dict(await asyncio.gather(*(probe(name, key) for name, key in probes.items())))
 
 
 # ....................... #

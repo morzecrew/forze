@@ -40,6 +40,7 @@ from .background import BackgroundOwners
 from .drain import OperationDrainGate
 from .drainable import Drainables
 from .invocation import InvocationContext
+from .lifecycle import DrainPhases, LifecycleState
 from .transaction import AfterCommitErrorHandler, TransactionContext
 
 # ----------------------- #
@@ -143,7 +144,9 @@ class ExecutionContext:
     """Lifecycle step ids that completed startup and were not yet shut down.
 
     Managed by the lifecycle runner so each step's shutdown runs at most once per
-    successful startup and never without one (e.g. after a partial startup failure)."""
+    successful startup and never without one (e.g. after a partial startup failure). Per
+    step; whether startup as a whole finished is ``lifecycle.started`` (see
+    :attr:`lifecycle`)."""
 
     # ....................... #
 
@@ -160,6 +163,15 @@ class ExecutionContext:
     )
     """In-flight operation accounting for graceful shutdown (see
     :mod:`~forze.application.execution.context.drain`)."""
+
+    lifecycle: LifecycleState = attrs.field(factory=LifecycleState, init=False, repr=False)
+    """Whether lifecycle startup finished and whether a drain was announced, for lifecycle
+    steps to read from their hook's ``ctx`` (see
+    :mod:`~forze.application.execution.context.lifecycle`)."""
+
+    drain_phases: DrainPhases = attrs.field(factory=DrainPhases, init=False, repr=False)
+    """Work steps register to run between a drain's announcement and teardown, while the
+    replica still serves (see :class:`~forze.application.execution.context.lifecycle.DrainPhases`)."""
 
     background_owners: BackgroundOwners = attrs.field(
         factory=BackgroundOwners,

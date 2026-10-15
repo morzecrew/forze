@@ -9,15 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A replica can withdraw readiness before refusing work, and drain while it still serves.** `runtime.begin_draining()` fails readiness, operations still admitted; `runtime.drain(budget, announce_delay=)` runs the phases steps put on `ctx.drain_phases`. `shutdown()` drains first if nobody did, within `drain_budget`.
+
+- **An embedded uvicorn drains the runtime on `SIGTERM` before it stops.** `forze_fastapi.serve_uvicorn(config, runtime, drain_budget=)` runs `runtime.drain()` on the first `SIGTERM` or `SIGINT`; a `SIGINT` during it forces the exit. A finite graceful timeout is set when none is, so an open stream cannot hold the exit.
+
+- **The worker probe listener can check dependencies, and needs no runtime.** `probe_listener_step(checks=, check_timeout=)` answers through `evaluate_readiness`, the evaluator `attach_readiness_route` now uses, so both answer alike from the same probes. Steps read `ctx.lifecycle.started` and `.announced`.
+
 - **A fenced writer can recover after Redis loses its counters.** `FenceAdvancing.advance_fence(key, past=...)`, on Redis and the mock, lifts a fencing counter to the store's highest fence; `requires_fence_advance` fails closed without it. The documented rule now claims a token first, so a repeated one is acted on once.
 
 - **Work can run on one replica at a time for the life of the process.** `leadership_lifecycle_step` elects a leader on a renewing lease, ends its term inside the lease, hands it over on stop or on request, and fences it: a token, a claim, and `fence_floor` to recover after Redis loses its counters.
 
 ### Changed
 
-- ...
+- **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.
+
+- **The readiness route logs a failed dependency check under the application logger**, as "Readiness check … failed". Alerts keyed on the `fastapi.probes` logger no longer match.
+
+### Deprecated
+
+- **`probe_listener_step(runtime=...)`.** The step reads its scope from its hook's `ctx`, so it can sit in its own runtime's plan; a runtime passed in is still watched, with a `DeprecationWarning`.
 
 ### Fixed
+
+- **A readiness check whose client is registered only per route says so**, as `registered per route only`, instead of reporting it `not registered`.
 
 - **A retry past its 1,024th attempt no longer fails with `OverflowError`.** Resilience retries and outbox redelivery keep their backoff at the cap however many attempts came before, and a zero-delay saga step or client read keeps retrying.
 

@@ -7,10 +7,12 @@ kernel and infrastructure.
 
 from .lifespan import runtime_lifespan
 from .openapi import apply_openapi_conventions
+from .serving import serve_uvicorn
 
 # ----------------------- #
 
 __all__ = [
     "apply_openapi_conventions",
     "runtime_lifespan",
+    "serve_uvicorn",
 ]

@@ -80,6 +80,7 @@ def build_runtime(
     cache_resolved_operations: bool = True,
     cache_resolved_ports: bool = True,
     drain_timeout: timedelta | None = None,
+    drain_budget: timedelta | None = None,
     shutdown_step_timeout: timedelta | None = None,
     deployment: DeploymentProfile = DeploymentProfile.SINGLE_PROCESS,
     cpu_executor: CpuExecutor | None = None,
@@ -135,6 +136,10 @@ def build_runtime(
         operations before lifecycle shutdown). ``None`` (default) resolves to
         ``0`` under a ``SERVERLESS`` deployment — a frozen function has no drain
         window — and ``10s`` otherwise; an explicit value is always honored.
+    :param drain_budget: Passed through to :attr:`ExecutionRuntime.drain_budget` — what
+        shutdown gives the registered drain phases when nothing drained the scope first.
+        ``None`` (default) resolves like *drain_timeout*: ``0`` under ``SERVERLESS``, where
+        every phase is then skipped, and ``10s`` otherwise.
     :param shutdown_step_timeout: Passed through to
         :attr:`ExecutionRuntime.shutdown_step_timeout` — the per-step ceiling on lifecycle
         shutdown, shared by every loop a step still has running. A component with its own
@@ -187,6 +192,11 @@ def build_runtime(
             timedelta(0) if deployment is DeploymentProfile.SERVERLESS else timedelta(seconds=10)
         )
 
+    if drain_budget is None:
+        drain_budget = (
+            timedelta(0) if deployment is DeploymentProfile.SERVERLESS else timedelta(seconds=10)
+        )
+
     registry = DepsRegistry(modules=_many(deps_modules), deps=_many(deps))
     plan = LifecyclePlan(
         modules=_many(lifecycle_modules),
@@ -209,6 +219,7 @@ def build_runtime(
         cache_resolved_operations=cache_resolved_operations,
         cache_resolved_ports=cache_resolved_ports,
         drain_timeout=drain_timeout,
+        drain_budget=drain_budget,
         deployment=deployment,
         cpu_executor=cpu_executor,
         cpu_workers=cpu_workers,
