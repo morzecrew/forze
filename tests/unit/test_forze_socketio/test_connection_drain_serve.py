@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import signal
-import socket
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -22,6 +21,8 @@ import httpx
 import pytest
 import websockets
 
+from tests.support.ports import free_port
+
 # ----------------------- #
 
 _APP = Path(__file__).with_name("_serve_drain_app.py")
@@ -29,13 +30,6 @@ _APP = Path(__file__).with_name("_serve_drain_app.py")
 WINDOW = 1.0
 ANNOUNCE_DELAY = 0.5
 SOCKETS = 5
-
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-
-        return probe.getsockname()[1]
 
 
 def _events(record: Path) -> dict[str, float]:
@@ -72,7 +66,7 @@ async def _wait_for(condition: str, check: object, *, within: float) -> None:
 async def _serving(
     tmp_path: Path,
 ) -> AsyncIterator[tuple[asyncio.subprocess.Process, int, Path]]:
-    port = _free_port()
+    port = free_port()
     record = tmp_path / "events"
 
     with (tmp_path / "stderr").open("wb") as stderr:

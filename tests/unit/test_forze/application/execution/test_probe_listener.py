@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
@@ -22,18 +21,9 @@ from forze.application.execution.background import (
 )
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind
+from tests.support.ports import free_port
 
 # ----------------------- #
-
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-
-        return probe.getsockname()[1]
-
-
-# ....................... #
 
 
 async def _request(port: int, path: str, *, method: str = "GET") -> tuple[int, str]:
@@ -94,7 +84,7 @@ async def _answered(port: int, path: str = "/readyz") -> tuple[int, str]:
 class TestProbeListener:
     @pytest.mark.asyncio
     async def test_serves_liveness_and_readiness_inside_a_scope(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port):
             assert await _request(port, "/livez") == (200, '{"status":"alive"}')
@@ -104,7 +94,7 @@ class TestProbeListener:
 
     @pytest.mark.asyncio
     async def test_readiness_reports_draining_for_the_whole_drain_window(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port) as runtime:
             await runtime.get_context().drain_gate.drain(0.0)
@@ -118,7 +108,7 @@ class TestProbeListener:
 
     @pytest.mark.asyncio
     async def test_the_socket_is_gone_once_the_scope_ends(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port):
             assert await _request(port, "/livez") == (200, '{"status":"alive"}')
@@ -130,7 +120,7 @@ class TestProbeListener:
 
     @pytest.mark.asyncio
     async def test_unknown_paths_and_methods_are_refused(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port):
             status, _ = await _request(port, "/admin")
@@ -143,7 +133,7 @@ class TestProbeListener:
 
     @pytest.mark.asyncio
     async def test_head_answers_with_the_headers_and_no_body(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port):
             status, body = await _request(port, "/livez", method="HEAD")
@@ -161,7 +151,7 @@ class TestProbeListener:
         trace in a worker's output.
         """
 
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port):
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
@@ -187,7 +177,7 @@ class TestProbeListener:
 
     @pytest.mark.asyncio
     async def test_query_strings_are_ignored(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port):
             assert await _request(port, "/readyz?probe=kubelet") == (200, '{"status":"ready"}')
@@ -196,7 +186,7 @@ class TestProbeListener:
 
     @pytest.mark.asyncio
     async def test_paths_are_configurable(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port, path_live="/healthz", path_ready="/ready"):
             assert await _request(port, "/healthz") == (200, '{"status":"alive"}')
@@ -211,7 +201,7 @@ class TestProbeListener:
     async def test_a_silent_connection_does_not_block_the_listener(self) -> None:
         """Without the read timeout, idle sockets would pin handler tasks indefinitely."""
 
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port):
             _, idle = await asyncio.open_connection("127.0.0.1", port)
@@ -238,7 +228,7 @@ class TestProbeListener:
         wide and racing it would only test the scheduler.
         """
 
-        port = _free_port()
+        port = free_port()
         runtime = ExecutionRuntime(drain_timeout=timedelta(0))
         step = probe_listener_step(host="127.0.0.1", port=port)
 
@@ -273,7 +263,7 @@ class TestProbeListener:
         nothing left to do.
         """
 
-        port = _free_port()
+        port = free_port()
         runtime = ExecutionRuntime(drain_timeout=timedelta(0))
         step = probe_listener_step(host="127.0.0.1", port=port)
 
@@ -314,7 +304,7 @@ class TestProbeListener:
         — 503 ``unavailable``, not the hosting scope's ``ready``.
         """
 
-        port = _free_port()
+        port = free_port()
         watched = ExecutionRuntime(drain_timeout=timedelta(0))
         host_runtime = ExecutionRuntime(drain_timeout=timedelta(0))
 
@@ -347,7 +337,7 @@ class TestProbeListenerLifecycle:
         for the whole window.
         """
 
-        port = _free_port()
+        port = free_port()
 
         async with _listening(port) as runtime:
             names = [loop.loop_name for loop in runtime.get_context().drainables.loops]
@@ -360,7 +350,7 @@ class TestProbeListenerLifecycle:
     async def test_starting_twice_keeps_the_first_listener(self) -> None:
         """Startup is idempotent — a second call must not bind the port again."""
 
-        port = _free_port()
+        port = free_port()
         runtime = ExecutionRuntime(drain_timeout=timedelta(0))
         step = probe_listener_step(host="127.0.0.1", port=port)
 
@@ -384,7 +374,7 @@ class TestProbeListenerLifecycle:
     ) -> None:
         """Normally a no-op — the runtime stops drainables first — but it has to work."""
 
-        port = _free_port()
+        port = free_port()
         runtime = ExecutionRuntime(drain_timeout=timedelta(0))
         step = probe_listener_step(host="127.0.0.1", port=port)
 
@@ -413,7 +403,7 @@ class TestProbeListenerLifecycle:
         and a listener silently reporting success would hide a socket that is still open.
         """
 
-        port = _free_port()
+        port = free_port()
         runtime = ExecutionRuntime(drain_timeout=timedelta(0))
         step = probe_listener_step(host="127.0.0.1", port=port)
 
@@ -441,7 +431,7 @@ class TestProbeListenerLifecycle:
         so a fault while answering one probe must not stop it answering the next.
         """
 
-        port = _free_port()
+        port = free_port()
         runtime = ExecutionRuntime(drain_timeout=timedelta(0))
         step = probe_listener_step(host="127.0.0.1", port=port)
 
@@ -557,7 +547,7 @@ class TestReadinessFollowsTheScope:
     async def test_readiness_waits_for_the_rest_of_startup(self) -> None:
         """A step after the listener is still starting: the pod is up but not ready yet."""
 
-        port = _free_port()
+        port = free_port()
         release = asyncio.Event()
         entered = asyncio.Event()
         leave = asyncio.Event()
@@ -681,7 +671,7 @@ class TestProbeListenerChecks:
 
     @pytest.mark.asyncio
     async def test_every_check_passing_answers_ready_with_the_breakdown(self) -> None:
-        port = _free_port()
+        port = free_port()
 
         async with self._runtime(port, {"postgres": _Client()}).scope():
             status, body = await _request(port, "/readyz")
@@ -696,7 +686,7 @@ class TestProbeListenerChecks:
 
     @pytest.mark.asyncio
     async def test_a_failing_and_a_hanging_check_each_name_themselves(self) -> None:
-        port = _free_port()
+        port = free_port()
         runtime = self._runtime(
             port,
             {
@@ -727,7 +717,7 @@ class TestProbeListenerChecks:
 
     @pytest.mark.asyncio
     async def test_a_drain_announced_during_a_slow_check_answers_draining(self) -> None:
-        port = _free_port()
+        port = free_port()
         client = _GatedClient()
         runtime = self._runtime(port, {"postgres": client})
 
@@ -751,7 +741,7 @@ class TestProbeListenerChecks:
         """Hanging up does not stop a handler waiting on a slow check: without a cancel it
         finishes after the stop, against clients teardown is about to close."""
 
-        port = _free_port()
+        port = free_port()
         events: list[str] = []
         started = asyncio.Event()
 
@@ -805,7 +795,7 @@ class TestProbeListenerChecks:
     async def test_a_check_that_outlives_the_stop_is_reported(self) -> None:
         """A check that ignores its cancellation past the deadline: the stop says so."""
 
-        port = _free_port()
+        port = free_port()
         started = asyncio.Event()
 
         class _Stubborn:

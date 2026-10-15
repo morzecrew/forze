@@ -507,13 +507,16 @@ class TestRetentionIsPaired:
         step = realtime_mailbox_retention_lifecycle_step(tenants=lambda: [_T1], max_age=window)
         runtime = _runtime()
 
+        def _refuse(coro, **_kwargs):  # type: ignore[no-untyped-def]
+            # Nothing will ever run or await the loop it was handed; left open, it warns
+            # "never awaited" whenever it is collected, under whichever test is running then.
+            coro.close()
+            raise RuntimeError("no loop")
+
         async with runtime.scope():
             ctx = runtime.get_context()
 
-            with (
-                patch("asyncio.create_task", side_effect=RuntimeError("no loop")),
-                pytest.raises(RuntimeError),
-            ):
+            with patch("asyncio.create_task", _refuse), pytest.raises(RuntimeError):
                 await step.startup(ctx)
 
             with _bind(ctx), pytest.raises(CoreException) as ei:

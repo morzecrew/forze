@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import socket
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
@@ -17,6 +16,7 @@ pytest.importorskip("temporalio")
 pytest.importorskip("testcontainers")
 
 from forze_temporal.kernel.client import TemporalClient, TemporalConfig
+from tests.support.ports import free_port
 
 from .temporal_dev_server import (
     TemporalDevTarget,
@@ -99,11 +99,7 @@ async def workflow_env_with_host_target():
 
     from temporalio.testing import WorkflowEnvironment
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-
+    port = free_port()
     env = await WorkflowEnvironment.start_time_skipping(
         port=port, data_converter=pydantic_data_converter
     )

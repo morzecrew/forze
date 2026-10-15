@@ -10,7 +10,6 @@ a partitioned IdP cannot let a token through.
 
 from __future__ import annotations
 
-import socket
 from datetime import timedelta
 from uuid import uuid4
 
@@ -26,23 +25,12 @@ from forze_identity.authn.services import (
 )
 from forze_identity.oidc import OidcTokenVerifier, StaticKeyProvider
 from forze_identity.oidc.keys import JwksKeyProvider
+from tests.support.ports import free_port
 
 # ----------------------- #
 
 _ISS = "https://issuer.example"
 _AUD = "my-app"
-
-
-def _closed_port() -> int:
-    """Bind a socket to an ephemeral port, then close it — nothing listens there, so a connect
-    attempt is refused immediately (a deterministic stand-in for an unreachable JWKS host)."""
-
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = int(sock.getsockname()[1])
-    sock.close()
-
-    return port
 
 
 async def _rs256_token() -> tuple[str, rsa.RSAPrivateKey]:
@@ -82,7 +70,8 @@ class TestJwksPartitionFailsClosed:
         # Fault: the real JwksKeyProvider fetches from an unreachable endpoint. Key resolution fails,
         # and the verifier rejects (fail closed) — it does NOT fall open and admit the token.
         token, _ = await _rs256_token()
-        dead_uri = f"http://127.0.0.1:{_closed_port()}/.well-known/jwks.json"
+        # Nothing listens on a free port, so a connect is refused at once.
+        dead_uri = f"http://127.0.0.1:{free_port()}/.well-known/jwks.json"
         verifier = _verifier(
             JwksKeyProvider(
                 jwks_uri=dead_uri,

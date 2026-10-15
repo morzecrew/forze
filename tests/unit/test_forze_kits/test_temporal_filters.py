@@ -25,8 +25,6 @@ from forze_kits.domain.temporal import DocWithTemporal
 from forze_mock import MockDepsModule
 from tests.support.execution_context import context_from_modules
 
-pytestmark = [pytest.mark.asyncio]
-
 # ----------------------- #
 
 BOUNDS: tuple[Bounds, ...] = ("[)", "[]", "(]", "()")
