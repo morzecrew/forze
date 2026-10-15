@@ -31,7 +31,7 @@ from forze.application.contracts.envelope import HEADER_EVENT_ID, HEADER_TENANT_
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.realtime import RealtimeShard, RealtimeSignal
 from forze.application.contracts.stream import StreamQueryDepKey, StreamSpec
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -265,6 +265,8 @@ class _SseTailStartup(LifecycleHook):
     name: str
     restart_backoff: timedelta
     max_consecutive_crashes: int | None
+    preflight: Callable[[ExecutionContext], None] | None = None
+    """Run at startup, before the loop: refuses what the loop could never run on."""
 
     control: BackgroundLoopControl = attrs.field(
         default=attrs.Factory(lambda self: BackgroundLoopControl(name=self.name), takes_self=True),
@@ -311,6 +313,9 @@ class _SseTailStartup(LifecycleHook):
     async def __call__(self, ctx: ExecutionContext) -> None:
         if self.control.running:
             return  # the runtime invokes startup once per scope; ignore a direct double call
+
+        if self.preflight is not None:
+            self.preflight(ctx)
 
         stop = self.control.arm()
 
@@ -388,8 +393,16 @@ def realtime_sse_tail_lifecycle_step(
         finally:
             hub.ready.set()
 
+    def _preflight(ctx: ExecutionContext) -> None:
+        # The plain tail reads with no tenant bound; the sharded tail binds each tenant.
+        port = ctx.deps.resolve_configurable(
+            ctx, StreamQueryDepKey, stream_spec, route=stream_spec.name
+        )
+        require_tenant_global(port, what="Realtime SSE tail")
+
     startup = _SseTailStartup(
         runner=_run,
+        preflight=_preflight,
         name="realtime_sse_tail",
         restart_backoff=restart_backoff,
         max_consecutive_crashes=max_consecutive_crashes,

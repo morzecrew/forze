@@ -95,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The queue and notification consumer steps refuse a tenant-scoped queue at startup**, as `tenant_global_required`: they receive with no tenant bound, so they failed every poll. **Breaking** for apps that ran one so.
 
+- **The plain SSE tail and the socket.io gateway's stream-group and pub/sub sources refuse a tenant-scoped port at startup**, as `tenant_global_required`: they read with no tenant bound, so every read failed. The sharded tail and source bind their tenants. **Breaking** for apps that ran one so.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.
