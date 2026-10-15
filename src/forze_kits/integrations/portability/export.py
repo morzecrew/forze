@@ -11,6 +11,7 @@ import orjson
 
 from forze._version import __version__
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.deps import implements
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.graph import GraphEdgeExportAware, GraphModuleSpec
 from forze.application.contracts.inventory import (
@@ -484,7 +485,7 @@ class ArchiveExporter:
         module = entry.name
         query = ctx.graph.query(spec)
 
-        if spec.edges and not isinstance(query, GraphEdgeExportAware):
+        if spec.edges and not implements(query, GraphEdgeExportAware):
             raise exc.precondition(
                 f"Cannot export graph {module!r}: its query backend streams edges for reading but "
                 f"cannot surface their endpoints (no GraphEdgeExportAware), so the edges could not "
