@@ -643,35 +643,11 @@ def attach_realtime_ws_route(
                 )
                 return
 
-            ended = asyncio.ensure_future(subscription.ended.wait())
-            received: asyncio.Task[Any] | None = None
-
-            try:
-                while not subscription.ended.is_set():
-                    received = asyncio.ensure_future(subscription.queue.get())
-                    done, _ = await asyncio.wait(
-                        {received, ended}, return_when=asyncio.FIRST_COMPLETED
-                    )
-
-                    if received not in done:
-                        break
-
-                    signal, event_id = received.result()
-                    received = None
-                    await _send(
-                        _egress_frame(event=signal.event, event_id=event_id, payload=signal.payload)
-                    )
-
-            finally:
-                # Ending or cancelled: neither wait may outlive the tail.
-                ended.cancel()
-
-                if received is not None:
-                    received.cancel()
-
-            # Ended by the drain: close so the client reconnects to a replica still ready.
-            await _close_socket(WS_RECONNECT_CLOSE, _DRAINING_REASON)
-            raise WebSocketDisconnect(WS_RECONNECT_CLOSE)
+            while True:  # until the drain ends the subscription: see _end_guard
+                signal, event_id = await subscription.queue.get()
+                await _send(
+                    _egress_frame(event=signal.event, event_id=event_id, payload=signal.payload)
+                )
 
         # ....................... #
 
@@ -855,6 +831,32 @@ def attach_realtime_ws_route(
 
         # ....................... #
 
+        async def _end_guard() -> None:
+            # Watches for the drain ending the subscription apart from the sender, which may
+            # be blocked writing to a client that stopped reading — the close below is bounded
+            # either way. Like the expiry guard, it finishes on its own once the receiver ends.
+            if subscription is None:
+                return
+
+            ended = asyncio.ensure_future(subscription.ended.wait())
+            done = asyncio.ensure_future(receiver_done.wait())
+
+            try:
+                await asyncio.wait({ended, done}, return_when=asyncio.FIRST_COMPLETED)
+
+            finally:
+                ended.cancel()
+                done.cancel()
+
+            if not subscription.ended.is_set():
+                return  # the receiver ended: the socket is tearing down anyway
+
+            # Ended by the drain: close so the client reconnects to a replica still ready.
+            await _close_socket(WS_RECONNECT_CLOSE, _DRAINING_REASON)
+            raise WebSocketDisconnect(WS_RECONNECT_CLOSE)
+
+        # ....................... #
+
         async def _receiver(tasks: TaskGroup) -> None:
             inflight = asyncio.Semaphore(max_inflight_commands)
 
@@ -961,6 +963,7 @@ def attach_realtime_ws_route(
                 tasks.start_soon(_sender)
                 tasks.start_soon(_receive_then_signal)
                 tasks.start_soon(_expiry_guard)
+                tasks.start_soon(_end_guard)
 
         except* WebSocketDisconnect:
             pass  # client went away — normal teardown

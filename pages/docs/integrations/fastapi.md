@@ -473,8 +473,10 @@ with the window fitted to the phase's allowance like the
 - **A WebSocket tail** closes with 1012 (service restart), and the client reconnects with
   `last_event_id`.
 
-A stream still replaying the mailbox when the phase reaches it ends once its replay has. A
-WebSocket route attached without a hub has no live tail, and the drain does not reach it.
+An SSE stream still replaying the mailbox when the phase reaches it ends once its replay
+has; a WebSocket closes at once, mid-replay or mid-write to a slow client — the close is
+bounded — and resumes from `last_event_id` elsewhere. A WebSocket route attached without a
+hub has no live tail, and the drain does not reach it.
 
 While the replica drains, from the drain's announcement on, the routes turn new connections
 away. The drain step tells them through the hub, so it does not matter what `ctx_dep`

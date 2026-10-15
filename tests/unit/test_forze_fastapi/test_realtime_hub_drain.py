@@ -388,3 +388,77 @@ class TestWebSocketDrain:
                 ws.receive_json()
 
         assert caught.value.code == WS_RECONNECT_CLOSE
+
+    # ....................... #
+
+    async def test_a_tail_blocked_writing_to_a_slow_client_still_closes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_fastapi.realtime import ws as ws_module
+
+        monkeypatch.setattr(ws_module, "_CLOSE_LOCK_TIMEOUT_SECONDS", 0.1)
+        hub = RealtimeSseHub()
+        runtime = _runtime(hub)
+        router = APIRouter()
+        attach_realtime_ws_route(
+            router,
+            ctx_dep=runtime.get_context,
+            resolve=lambda _connect: WsConnection(authn=AuthnIdentity(principal_id=_PRINCIPAL)),
+            mailbox_factory=lambda _ctx: InMemoryRealtimeMailbox(),
+            cursors_factory=lambda _ctx: InMemoryMailboxCursors(),
+            hub=hub,
+        )
+        app = FastAPI()
+        app.include_router(router)
+
+        gone = asyncio.Event()
+        stalled = asyncio.Event()
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            if not sent:
+                return {"type": "websocket.connect"}
+
+            await gone.wait()
+            return {"type": "websocket.disconnect", "code": 1006}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+            if message["type"] == "websocket.send":
+                stalled.set()
+                await gone.wait()  # a client that stopped reading: the write never completes
+
+        scope = {
+            "type": "websocket",
+            "path": "/realtime/ws",
+            "raw_path": b"/realtime/ws",
+            "query_string": b"",
+            "headers": [],
+            "scheme": "ws",
+            "server": ("test", 80),
+            "client": ("test", 1),
+            "subprotocols": [],
+        }
+
+        async with runtime.scope():
+            serving = asyncio.ensure_future(app(scope, receive, send))
+            await _until(lambda: hub.subscribers == 1)
+            hub.publish(
+                RealtimeSignal.of(Audience.principal(str(_PRINCIPAL)), "e", {}), None, event_id="x"
+            )
+            await asyncio.wait_for(stalled.wait(), timeout=2)
+
+            await runtime.drain(timedelta(seconds=5))
+
+            try:
+                await _until(
+                    lambda: any(one["type"] == "websocket.close" for one in sent), within=2.0
+                )
+
+            finally:
+                gone.set()
+                await asyncio.wait_for(serving, timeout=5)
+
+        [close] = [one for one in sent if one["type"] == "websocket.close"]
+        assert close["code"] == WS_RECONNECT_CLOSE

@@ -552,8 +552,9 @@ def realtime_sse_drain_lifecycle_step(
     phase; when the runtime drains it ends every subscription the hub holds, spread over
     *window* so the clients' reconnects are spread too: an SSE response finishes, and the
     browser reconnects with its ``Last-Event-ID``; a WebSocket closes with 1012, and the
-    client reconnects with ``last_event_id``. A stream still replaying ends once its replay
-    has. The window and tail are fitted to the phase's allowance, and below the drain floor
+    client reconnects with ``last_event_id``. An SSE stream still replaying ends once its
+    replay has; a WebSocket closes at once, a blocked write to a slow client included. The
+    window and tail are fitted to the phase's allowance, and below the drain floor
     (100 ms) the phase is skipped.
 
     At startup the step also has *hub* follow its scope's readiness, so the routes turn new
