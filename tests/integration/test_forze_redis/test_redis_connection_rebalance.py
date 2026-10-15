@@ -54,9 +54,14 @@ class _Socket:
         self.sid = eio_sid
         self.namespaces = namespaces
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
+        self.closing = False
         self.closed = False
 
     async def close(self, wait: bool = True, abort: bool = False, reason: Any = None) -> None:
+        if self.closing or self.closed:
+            return
+
+        self.closing = True
         await self.server.eio._trigger_event("disconnect", self.sid, reason, run_async=False)
         self.closed = True
         self.balancer.reconnect(self.namespaces)

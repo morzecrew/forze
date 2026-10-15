@@ -42,7 +42,8 @@ _REPORTED: Report = {"connections": 0, "movable": 0}
 class _Socket:
     """An Engine.IO socket stand-in: its close fires the disconnect after *handlers* app
     disconnect handlers that take *delay* each. A cancel ends the handler it interrupts and
-    the close goes on to the next, as python-socketio's does."""
+    the close goes on to the next, as python-socketio's does; a second close while one is
+    under way does nothing, as python-engineio's does."""
 
     def __init__(self, server: AsyncServer, eio_sid: str, delay: float, handlers: int) -> None:
         self.server = server
@@ -50,12 +51,18 @@ class _Socket:
         self.delay = delay
         self.handlers = handlers
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
+        self.closing = False
         self.closed = False
         self.closes = 0
         self.cancelled = False
 
     async def close(self, wait: bool = True, abort: bool = False, reason: Any = None) -> None:
         self.closes += 1
+
+        if self.closing or self.closed:
+            return
+
+        self.closing = True
 
         for _handler in range(self.handlers):
             try:

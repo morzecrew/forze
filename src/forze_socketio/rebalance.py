@@ -39,9 +39,9 @@ from forze.base.primitives import StrKey, instance_id, monotonic
 from .drain import (
     ConnectionSelector,
     _closable,
-    _require_close_internals,
     _transports,
     close_spread,
+    require_close_internals,
 )
 from .exceptions import error_logger
 
@@ -359,7 +359,7 @@ def connection_rebalance_lifecycle_step(
         an invalid *member_id*.
     """
 
-    _require_close_internals(sio)
+    require_close_internals(sio)
     covered = tuple(namespaces)
 
     if per_minute < 1:
