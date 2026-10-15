@@ -44,7 +44,13 @@ from forze_socketio import (
 @asynccontextmanager
 async def _serving(sio: socketio.AsyncServer) -> AsyncIterator[int]:
     server = uvicorn.Server(
-        uvicorn.Config(build_socketio_asgi_app(sio), host="127.0.0.1", port=0, log_level="error")
+        uvicorn.Config(
+            build_socketio_asgi_app(sio),
+            host="127.0.0.1",
+            port=0,
+            log_level="error",
+            timeout_graceful_shutdown=1,  # a long poll left pending must not hold the exit
+        )
     )
     serving = asyncio.ensure_future(server.serve())
 
@@ -228,6 +234,16 @@ class _Balancer:
 
     def __init__(self, upstream: int) -> None:
         self.upstream = upstream
+        self._clients: set[asyncio.StreamWriter] = set()
+
+    def notice(self, upstream: int) -> None:
+        """Route to *upstream* from now on, dropping the connections it held to the old one
+        — a polling client's keep-alive connection would otherwise carry it back there."""
+
+        self.upstream = upstream
+
+        for writer in self._clients:
+            writer.close()
 
     async def _pipe(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -242,8 +258,14 @@ class _Balancer:
             writer.close()
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        self._clients.add(writer)
         up_reader, up_writer = await asyncio.open_connection("127.0.0.1", self.upstream)
-        await asyncio.gather(self._pipe(reader, up_writer), self._pipe(up_reader, writer))
+
+        try:
+            await asyncio.gather(self._pipe(reader, up_writer), self._pipe(up_reader, writer))
+
+        finally:
+            self._clients.discard(writer)
 
     @asynccontextmanager
     async def serving(self) -> AsyncIterator[int]:
@@ -279,6 +301,8 @@ async def _until(check: Callable[[], bool], *, within: float) -> None:
 
 async def _drain_into_the_other_replica(
     client: Callable[[int], Awaitable[None]],
+    *,
+    landed: Callable[[], bool],
 ) -> tuple[RealtimeConnectionStats, RealtimeConnectionStats]:
     """Connect through the balancer to A, drain A while the balancer still sends reconnects
     there, then let the balancer notice; return A's and B's counts."""
@@ -305,8 +329,9 @@ async def _drain_into_the_other_replica(
                     within=5,
                 )
                 # ...and once the balancer notices, the client's own backoff carries it over.
-                balancer.upstream = port_b
+                balancer.notice(port_b)
                 await _until(lambda: staying_stats.connections.get("/") == 1, within=5)
+                await _until(landed, within=5)  # and the client heard it was accepted
 
             finally:
                 connecting.cancel()
@@ -347,9 +372,61 @@ class TestReconnectAfterDrain:
                 outcomes.append("transport close")
                 await asyncio.sleep(0.2)
 
-        leaving, staying = await _drain_into_the_other_replica(client)
+        leaving, staying = await _drain_into_the_other_replica(
+            client, landed=lambda: outcomes.count("connect") == 2
+        )
 
         # Connected to A, turned away there by transport closes, then connected to B.
+        assert "gave up" not in outcomes
+        assert outcomes.count("connect") == 2
+        assert leaving.connect_refused[("/", "draining")] >= 1
+        assert staying.connect_refused == {}
+
+    # ....................... #
+
+    async def test_a_polling_client_following_the_javascript_rules_lands_on_the_other_replica(
+        self,
+    ) -> None:
+        outcomes: list[str] = []
+
+        async def client(port: int) -> None:
+            """engine.io-client's long-polling rules: reconnect with backoff after a CLOSE or
+            a failed poll; give up for good on CONNECT_ERROR or a namespace DISCONNECT."""
+
+            async with httpx.AsyncClient(timeout=5) as http:
+                while True:
+                    polling = _Polling(http, port)
+
+                    try:
+                        await polling.open()
+                        await polling.post("40")
+
+                        while (reply := await polling.poll()).status_code == 200:
+                            packets = reply.text.split("\x1e")
+
+                            if any(packet.startswith(("44", "41")) for packet in packets):
+                                outcomes.append("gave up")
+                                return
+
+                            if any(packet.startswith("40") for packet in packets):
+                                outcomes.append("connect")
+
+                            if "1" in packets:
+                                break
+
+                            if "2" in packets:
+                                await polling.post("3")
+
+                    except (httpx.HTTPError, ValueError):
+                        pass
+
+                    outcomes.append("transport close")
+                    await asyncio.sleep(0.2)
+
+        leaving, staying = await _drain_into_the_other_replica(
+            client, landed=lambda: outcomes.count("connect") == 2
+        )
+
         assert "gave up" not in outcomes
         assert outcomes.count("connect") == 2
         assert leaving.connect_refused[("/", "draining")] >= 1
@@ -361,7 +438,10 @@ class TestReconnectAfterDrain:
         shutil.which("node") is None or not os.environ.get("FORZE_SOCKETIO_CLIENT_NODE_PATH"),
         reason="needs node and FORZE_SOCKETIO_CLIENT_NODE_PATH (a node_modules with socket.io-client)",
     )
-    async def test_the_real_javascript_client_lands_on_the_other_replica(self) -> None:
+    @pytest.mark.parametrize("transports", ["websocket", "polling", "default"])
+    async def test_the_real_javascript_client_lands_on_the_other_replica(
+        self, transports: str
+    ) -> None:
         events: list[str] = []
         script = Path(__file__).with_name("_socketio_client.js")
 
@@ -370,6 +450,7 @@ class TestReconnectAfterDrain:
                 "node",
                 str(script),
                 f"http://127.0.0.1:{port}",
+                transports,
                 env={**os.environ, "NODE_PATH": os.environ["FORZE_SOCKETIO_CLIENT_NODE_PATH"]},
                 stdout=asyncio.subprocess.PIPE,
             )
@@ -383,7 +464,9 @@ class TestReconnectAfterDrain:
                     node.kill()
                     await node.wait()
 
-        leaving, _staying = await _drain_into_the_other_replica(client)
+        leaving, _staying = await _drain_into_the_other_replica(
+            client, landed=lambda: events.count("connect") == 2
+        )
 
         assert "connect_error active=false" not in events
         assert events.count("connect") == 2

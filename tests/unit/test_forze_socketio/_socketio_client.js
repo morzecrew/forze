@@ -1,9 +1,11 @@
 // A real socket.io-client, for test_connection_drain_wire's env-gated reconnect test.
-// Usage: node _socketio_client.js URL — logs each event on stdout, one per line, until killed.
+// Usage: node _socketio_client.js URL TRANSPORTS — TRANSPORTS is websocket, polling, or
+// default (polling, then the upgrade). Logs each event on stdout, one per line, until killed.
 const { io } = require("socket.io-client");
 
+const transports = process.argv[3] || "websocket";
 const socket = io(process.argv[2], {
-  transports: ["websocket"],
+  ...(transports === "default" ? {} : { transports: [transports] }),
   reconnectionDelay: 200,
   reconnectionDelayMax: 400,
 });

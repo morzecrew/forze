@@ -17,14 +17,19 @@ require_socketio()
 # ....................... #
 
 import asyncio
+import inspect
+import weakref
 from collections.abc import Callable, Sequence
 from datetime import timedelta
 from functools import partial
-from typing import cast
+from typing import Any, cast, final
 
+import attrs
+from engineio.async_socket import AsyncSocket  # type: ignore[import-untyped]  # ships no types
 from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import LifecycleStep
+from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     SpreadOutcome,
     spread_closes,
@@ -47,18 +52,11 @@ ConnectionSelector = Callable[[str, str], bool]
 """``(namespace, sid) -> may close?`` — whether a connection may be closed by the drain."""
 
 
-async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
-    """End one Engine.IO connection, whatever its transport.
+_CLOSES: "weakref.WeakKeyDictionary[Any, asyncio.Task[None]]" = weakref.WeakKeyDictionary()
+"""The one close running for each Engine.IO socket, so a second caller waits for it."""
 
-    socket.io's JavaScript client reconnects after this, with its backoff; that is why both
-    the drain and a draining replica's refusal close connections this way.
-    """
 
-    socket = sio.eio.sockets.get(eio_sid)
-
-    if socket is None:
-        return  # already gone
-
+async def _close(sio: AsyncServer, eio_sid: str, socket: Any) -> None:
     # What python-engineio's own disconnect does, less its wait for the client to fetch the
     # CLOSE packet: a polling client with no poll pending never does — its next poll is
     # refused once the socket is closed — and the wait would hold this close for good.
@@ -74,38 +72,102 @@ async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
     sio.eio.sockets.pop(eio_sid, None)
 
 
-def _require_close_internals(sio: AsyncServer) -> None:
+async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
+    """End one Engine.IO connection, whatever its transport.
+
+    socket.io's JavaScript client reconnects after this, with its backoff; that is why both
+    the drain and a draining replica's refusal close connections this way. One close runs
+    per connection: a second call waits for the one under way, and a connection
+    python-engineio is already closing on its own — the client's close, a ping timeout — is
+    left to that close, which runs every namespace's disconnect handlers to the end.
+    """
+
+    socket = sio.eio.sockets.get(eio_sid)
+
+    if socket is None:
+        return  # already gone
+
+    task = _CLOSES.get(socket)
+
+    if task is None:
+        if socket.closing or socket.closed:
+            return
+
+        task = asyncio.ensure_future(_close(sio, eio_sid, socket))
+        _CLOSES[socket] = task
+
+    # Shielded: one caller giving up must not cut short a close another is waiting on.
+    await asyncio.shield(task)
+
+
+def require_close_internals(sio: AsyncServer) -> None:
     """Refuse a server whose Engine.IO side lacks what :func:`close_transport` uses.
 
-    The close reads python-engineio internals — its socket table, a socket's ``close``, and
-    the queue each socket's writer drains, which ends on a ``None`` — that a release could
-    change. A drain finding out at drain time would close nothing; this finds out at
-    assembly instead.
+    The close reads python-engineio internals that a release could change: the server's
+    socket table and queue factory, a socket's ``close(wait=...)``, and the ``poll`` its
+    writer drains the queue through, which ends on a ``None``. A close finding out when it
+    runs would close nothing; this finds out at assembly instead. Called by the drain step
+    and by ``attach_realtime_connection`` when given ``draining``.
     """
 
     eio = sio.eio
+    close = getattr(AsyncSocket, "close", None)
     missing = [
         name
         for name, present in (
             ("sockets", isinstance(getattr(eio, "sockets", None), dict)),
             ("create_queue", callable(getattr(eio, "create_queue", None))),
+            ("close(wait=)", callable(close) and "wait" in inspect.signature(close).parameters),
+            ("poll", callable(getattr(AsyncSocket, "poll", None))),
         )
         if not present
     ]
 
     if missing:
         raise exc.configuration(
-            "The connection drain closes Engine.IO connections through python-engineio's "
-            f"socket table and socket queues, and this server's Engine.IO side has no "
-            f"{', '.join(missing)}; install a python-engineio the socketio extra allows",
+            "Closing Engine.IO connections — the connection drain, a draining replica's "
+            "turn-away — goes through python-engineio internals, and this server's Engine.IO "
+            f"side has no {', '.join(missing)}; install a python-engineio the socketio extra "
+            "allows",
             code="realtime_drain_engineio_unsupported",
         )
 
 
 # ....................... #
 
-_FINISHING: set["asyncio.Task[None]"] = set()
-"""Closes still running past the tail, held so they finish rather than being collected."""
+_FINISHING: "weakref.WeakKeyDictionary[AsyncServer, set[asyncio.Task[None]]]" = (
+    weakref.WeakKeyDictionary()
+)
+"""Each server's closes still running — held so they finish rather than being collected, and
+so teardown can wait for them (:class:`_ClosesFinishing`)."""
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class _ClosesFinishing:
+    """Lets teardown wait for the server's closes still running past the drain's tail.
+
+    A close past the tail is left to finish, and may be inside the app's disconnect
+    handlers, which use clients lifecycle teardown closes. Registered in ``ctx.drainables``,
+    whose stops the runtime awaits before teardown, bounded by ``shutdown_step_timeout``; past
+    that the closes are not cancelled, only no longer waited for.
+    """
+
+    sio: AsyncServer
+    loop_name: str
+
+    # ....................... #
+
+    async def stop(self, *, deadline: float) -> bool:
+        pending = [task for task in _FINISHING.get(self.sio, ()) if not task.done()]
+
+        if not pending:
+            return True
+
+        clock = asyncio.get_running_loop()
+        _, still = await asyncio.wait(pending, timeout=max(0.0, deadline - clock.time()))
+
+        return not still
 
 
 def _finished_late(eio_sid: str) -> Callable[["asyncio.Task[None]"], None]:
@@ -167,8 +229,9 @@ async def close_spread(
     async def close(eio_sid: str) -> None:
         task = asyncio.ensure_future(close_transport(sio, eio_sid))
         closes.append(task)
-        _FINISHING.add(task)
-        task.add_done_callback(_FINISHING.discard)
+        finishing = _FINISHING.setdefault(sio, set())
+        finishing.add(task)
+        task.add_done_callback(finishing.discard)
 
         try:
             await asyncio.shield(task)
@@ -322,13 +385,13 @@ def connection_drain_lifecycle_step(
         server's python-engineio lacks what the close uses.
     """
 
-    _require_close_internals(sio)
+    require_close_internals(sio)
     covered = tuple(namespaces)
 
     async def close(targets: list[tuple[str, str]], window: timedelta, tail: timedelta) -> int:
         return await close_spread(sio, targets, window, tail=tail, stats=stats)
 
-    return spread_drain_lifecycle_step(
+    step = spread_drain_lifecycle_step(
         collect=lambda: _drain_targets(sio, namespaces=covered, select=select),
         close=close,
         window=window,
@@ -336,3 +399,9 @@ def connection_drain_lifecycle_step(
         order=order,
         step_id=step_id,
     )
+
+    async def startup(ctx: ExecutionContext) -> None:
+        ctx.drainables.register(_ClosesFinishing(sio=sio, loop_name=str(step_id)))
+        await step.startup(ctx)
+
+    return attrs.evolve(step, startup=startup)

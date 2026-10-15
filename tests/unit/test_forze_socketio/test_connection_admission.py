@@ -53,7 +53,7 @@ def _attach(
 
 
 async def _connect(server: AsyncServer, auth: Any = None) -> str:
-    server.eio.sockets["eio-1"] = SimpleNamespace(session={}, closed=False)
+    server.eio.sockets["eio-1"] = SimpleNamespace(session={}, closed=False, closing=False)
     sid = await server.manager.connect("eio-1", "/")
     await server.handlers["/"]["connect"](sid, {"REMOTE_ADDR": "10.0.0.7"}, auth)
 

@@ -260,12 +260,17 @@ serves: spread over a window, after readiness has failed, so the clients reconne
 the balancer to replicas that are still ready, a few at a time.
 
 ```python
+import asyncio
 from datetime import timedelta
 
+import uvicorn
+
 from forze.application.execution import build_runtime
+from forze_fastapi import serve_uvicorn
 from forze_socketio import (
     RealtimeConnectionStats,
     attach_realtime_connection,
+    build_socketio_asgi_app,
     build_socketio_server,
     connection_drain_lifecycle_step,
     instrument_realtime_connections,
@@ -285,11 +290,27 @@ runtime = build_runtime(
 attach_realtime_connection(
     sio,
     resolve=resolve_connection,
-    draining=lambda: runtime.draining,  # refuse connects while leaving
+    draining=lambda: runtime.draining,  # turn connects away while leaving
     stats=stats,
 )
 instrument_realtime_connections(stats)
+
+asyncio.run(
+    serve_uvicorn(
+        uvicorn.Config(build_socketio_asgi_app(sio, other_asgi_app=api)),
+        runtime,
+        drain_budget=timedelta(seconds=30),
+        announce_delay=timedelta(seconds=5),  # at least the balancer's notice time
+    )
+)
 ```
+
+**Set `announce_delay`.** Readiness fails at once, but a balancer takes a while to notice —
+for Kubernetes, the readiness probe's `periodSeconds × failureThreshold`, plus the time to
+drop the endpoint. Until it does, it keeps sending reconnects here. With no delay — the
+default — the drain closes connections at once and every client is turned away again on
+its first reconnect; with `announce_delay` at least that long, the closes start once the
+balancer sends reconnects elsewhere.
 
 The step registers a [drain phase](../running-in-prod/shutdown-and-fleets.md#drain-phases).
 When the runtime drains — on `SIGTERM` under
@@ -297,9 +318,12 @@ When the runtime drains — on `SIGTERM` under
 shutdown closes every socket at once — the phase lists this node's connections and closes
 them at the Engine.IO level, close *i* of *n* starting at `i × window / n`. Each close runs
 on its own, so a slow one never holds up the next; after the last start the phase waits up
-to `tail`, then stops waiting. A close still running carries on in the background and
-finishes — it may be inside your disconnect handler, which is never cut short — and is
-counted `timed_out`. The phase never takes more than `window + tail`.
+to `tail`, then stops waiting. A close still running carries on in the background — it
+may be inside your disconnect handler — and is counted `timed_out`. The phase never takes
+more than `window + tail`, but teardown waits for those closes, up to the runtime's
+`shutdown_step_timeout`, before it closes any client: a disconnect handler writing to your
+presence store finds it open. Past that the closes are no longer waited for, and process
+exit can still cut one short.
 
 **Fit the window to the budget.** The phase measures what is left of its allowance after
 listing, gives the tail at most half of it and the window at most the rest. A budget
@@ -323,10 +347,14 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
 - **The Python client** (python-socketio) stops after either kind of close. Reconnect it
   yourself.
 - **A connect that arrives while the replica drains** is turned away the same way: its
-  Engine.IO connection is closed, every namespace on it included, and the JavaScript client
-  reconnects — through the balancer, which by then sends it elsewhere. Its transport did
-  open, so the client starts its backoff over each time and retries at its base
-  `reconnectionDelay` until it lands on another replica. A refused connect would not do:
+  Engine.IO connection is closed, and the JavaScript client reconnects — through the
+  balancer, which by then sends it elsewhere. A connect on a connection that already
+  carries another accepted namespace — one the drain kept open — is admitted instead:
+  closing the connection would end that namespace too, and the connect goes with the
+  connection when the drain or the process closes it. The client's backoff starts over
+  whenever a connection opens, so a turned-away connect is held for a random 1–5 seconds
+  before its connection closes: the hold is the backoff, and spreads the retries. A
+  refused connect would not do:
   socket.io's JavaScript client treats a `connect_error` from the server as final and
   stops. Over long-polling the client sees its next poll fail rather than a close, and
   reconnects the same way. The check runs before authentication, again once admission

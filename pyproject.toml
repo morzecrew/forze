@@ -1152,7 +1152,6 @@ DEP002 = [
     "aiobotocore",
     "httpx",                 # required by starlette.testclient.TestClient
     "python-socketio-stubs",
-    "python-engineio",       # bounded for the drain's use of its internals, reached via sio.eio
     "python-multipart",
     "email-validator",       # required for pydantic.EmailStr
     #! Added temporarily

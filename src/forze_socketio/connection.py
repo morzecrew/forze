@@ -53,9 +53,14 @@ from forze.application.integrations.realtime import (
     RealtimePresence as RealtimePresence,  # re-export: established home
 )
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, stable_payload_fingerprint, utcnow
+from forze.base.primitives import (
+    HlcTimestamp,
+    current_entropy_source,
+    stable_payload_fingerprint,
+    utcnow,
+)
 
-from .drain import close_transport
+from .drain import close_transport, require_close_internals
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
     build_core_exception_ack,
@@ -194,6 +199,16 @@ _SHARED_IDENTITY_KEY = "forze.shared_identity"
 Socket.IO keeps each namespace's session in the Engine.IO session under the namespace's own
 name, which always starts with ``/``; this key cannot collide with one, and it is freed with
 the connection."""
+
+_TURN_AWAY_HOLD_SECONDS = (1.0, 5.0)
+"""How long a connect turned away while draining is held before its connection closes, drawn
+at random from this range. socket.io's JavaScript client starts its backoff over whenever a
+connection opens, so it would come straight back at its base delay; it sets no timeout on a
+namespace connect, so holding it is the backoff, and the jitter keeps clients apart."""
+
+_ACCEPTED_KEY = "forze.accepted_namespaces"
+"""Engine.IO session key holding the namespaces whose connect this layer accepted on the
+connection — not one still connecting — so a turn-away can tell what closing it would end."""
 
 _SharedIdentities = dict[tuple[int, str], "asyncio.Task[RealtimeConnection | None]"]
 """Keyed by the resolver's identity, so any callable can be one, and the credential's
@@ -575,10 +590,50 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
-    def _accepted(self, sid: str) -> None:
+    async def _engine_session(self, sid: str) -> dict[str, Any] | None:
+        """The Engine.IO session of *sid*'s connection, or ``None`` once it is gone."""
+
+        eio_sid = self.sio.manager.eio_sid_from_sid(sid, self.namespace)
+
+        if eio_sid is None:
+            return None
+
+        try:
+            session: dict[str, Any] = await self.sio.eio.get_session(eio_sid)
+
+        except KeyError:
+            return None
+
+        return session
+
+    # ....................... #
+
+    async def _accepted(self, sid: str) -> None:
+        session = await self._engine_session(sid)
+
+        if session is not None:
+            session.setdefault(_ACCEPTED_KEY, set()).add(self.namespace)
+
         if self.stats is not None:
             self._counted.add(sid)
             self.stats.connected(self.namespace)
+
+    # ....................... #
+
+    async def _beside_an_accepted_namespace(self, sid: str) -> bool:
+        """Whether *sid*'s connection already carries another namespace this layer accepted.
+
+        Turning the connect away closes the connection, and with it every namespace it carries
+        — including one the drain was told to keep, which is why the drain keeps a connection
+        whose every namespace it may not close. Such a connect is admitted instead: it adds no
+        connection, and goes when the drain or the process closes this one. A sibling still
+        connecting does not count; it is turned away in its turn.
+        """
+
+        session = await self._engine_session(sid)
+        accepted: set[str] = session.get(_ACCEPTED_KEY, set()) if session is not None else set()
+
+        return any(namespace != self.namespace for namespace in accepted)
 
     # ....................... #
 
@@ -595,7 +650,7 @@ class _ConnectionLifecycle:
 
         if not self.sio.manager.is_connected(sid, self.namespace):
             if connection is not None:
-                await self._undo_connect(sid, connection)
+                await self._undo_connect(sid, connection, gone=True)
 
             return False
 
@@ -612,8 +667,13 @@ class _ConnectionLifecycle:
                 "internal", SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL)
             ) from error
 
-        if draining:
-            raise await self._turn_away(sid, connection)
+        if draining and not await self._beside_an_accepted_namespace(sid):
+            refusal = await self._turn_away(sid, connection)
+
+            if refusal is None:
+                return False  # its connection closed while it was held
+
+            raise refusal
 
         return True
 
@@ -644,34 +704,52 @@ class _ConnectionLifecycle:
 
     async def _turn_away(
         self, sid: str, connection: RealtimeConnection | None = None
-    ) -> SocketIOConnectionRefusedError:
-        """Turn a connect away while the replica drains; return the refusal to raise.
+    ) -> SocketIOConnectionRefusedError | None:
+        """Turn a connect away while the replica drains; return the refusal to raise, or
+        ``None`` when its connection closed while it was held.
 
         The Engine.IO connection is closed, as the drain closes its connections: socket.io's
         JavaScript client then reconnects with its backoff, through the balancer, to a
         replica still ready. A refused connect (CONNECT_ERROR) alone would make it give up
-        for good. Every namespace on that connection goes with it, and reconnects with it.
+        for good. Only a connect that would be its connection's first accepted namespace
+        gets here (see :meth:`_beside_an_accepted_namespace`).
+
+        Before the close the connect is held for :data:`_TURN_AWAY_HOLD_SECONDS`, in its own
+        task — never the drain's — so a client does not come straight back. A connection that
+        closes during the hold, the drain's own close of it included, is left alone.
         """
+
+        refusal = self._refused("draining", _draining_refusal())
 
         if connection is not None:
             await self._undo_connect(sid, connection)
 
+        # Desynchronization jitter, not security randomness.
+        await asyncio.sleep(current_entropy_source().as_random().uniform(*_TURN_AWAY_HOLD_SECONDS))
+
         eio_sid = self.sio.manager.eio_sid_from_sid(sid, self.namespace)
 
-        if eio_sid is not None:
-            await _best_effort(close_transport(self.sio, eio_sid))
+        if eio_sid is None or not self.sio.manager.is_connected(sid, self.namespace):
+            return None
 
-        return self._refused("draining", _draining_refusal())
+        await _best_effort(close_transport(self.sio, eio_sid))
+
+        return refusal
 
     # ....................... #
 
-    async def _undo_connect(self, sid: str, connection: RealtimeConnection) -> None:
+    async def _undo_connect(
+        self, sid: str, connection: RealtimeConnection, *, gone: bool = False
+    ) -> None:
         """Undo what an accepted connect did, before it is refused after all.
 
         A refused connect never reaches :meth:`on_disconnect`, so without this a refused
         client would stay online in shared presence until its entry expired, and its
         identity would stay in the namespace's session. Each step is best-effort: a failure
-        is logged and must not replace the refusal.
+        is logged and must not replace the refusal. When the connect's transport is *gone*,
+        its rooms and session went with its sid, and only presence and the replay progress
+        are left to undo — presence because the connect may have joined after its
+        :meth:`on_disconnect` ran.
         """
 
         self._replay_progress.pop(sid, None)
@@ -679,6 +757,9 @@ class _ConnectionLifecycle:
 
         if self.presence is not None:
             await _best_effort(self.presence.left(room, sid))
+
+        if gone:
+            return
 
         await _best_effort(self.sio.leave_room(sid, room, namespace=self.namespace))
 
@@ -724,7 +805,7 @@ class _ConnectionLifecycle:
             return
 
         if connection is None:
-            self._accepted(sid)
+            await self._accepted(sid)
             return  # anonymous: no principal room, may still join topics later
 
         session = await self.sio.get_session(sid, namespace=self.namespace)
@@ -762,7 +843,7 @@ class _ConnectionLifecycle:
         # Last: a connect that waited in replay while the drain listed its connections may
         # have missed the drain, and its transport may have closed meanwhile.
         if await self._goes_on(sid, connection):
-            self._accepted(sid)
+            await self._accepted(sid)
 
     # ....................... #
 
@@ -774,6 +855,11 @@ class _ConnectionLifecycle:
         if self.stats is not None and sid in self._counted:
             self._counted.discard(sid)
             self.stats.disconnected(self.namespace)
+
+        engine_session = await self._engine_session(sid)
+
+        if engine_session is not None:
+            engine_session.get(_ACCEPTED_KEY, set()).discard(self.namespace)
 
         if self.presence is None:
             return
@@ -836,7 +922,10 @@ def attach_realtime_connection(
     While *draining* returns true a connect is turned away by closing its Engine.IO
     connection — as the drain closes connections — so socket.io's JavaScript client
     reconnects with its backoff, through the balancer, to another replica; a refused connect
-    alone would make it give up for good. It is checked before any other work, again after
+    alone would make it give up for good. The connect is held for a random 1–5 s first: the
+    client's backoff starts over whenever a connection opens, so the hold is the backoff. A connect on a connection that already carries
+    another namespace this layer accepted is admitted instead, since closing the connection
+    would end that one too. It is checked before any other work, again after
     admission and after authentication, and as the connect's last step; a connect turned
     away there first undoes its presence, its room and its stored identity. A connect whose
     transport closed meanwhile stops quietly at the same checks, and a *draining* that raises
@@ -874,6 +963,10 @@ def attach_realtime_connection(
             "Offline replay needs all of mailbox_factory, cursors_factory, and runtime "
             "(or none) — partial wiring would silently disable replay"
         )
+
+    if draining is not None:
+        # A turn-away closes connections the way the drain does.
+        require_close_internals(sio)
 
     if runtime is not None and draining is None:
         error_logger.warning(
