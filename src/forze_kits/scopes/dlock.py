@@ -41,18 +41,26 @@ class DistributedLockScope:
     handle (``key`` / ``owner`` / ``token``). Tokens are monotonically increasing
     per key across lock generations; the extend heartbeat (``reset``) keeps the
     same generation, so the token never changes mid-scope. Thread the token into
-    downstream writes and reject, storage-side, any token lower than the highest one
-    observed; an equal token is the same generation, so the holder's own repeated
-    writes are accepted::
+    downstream writes. The first write claims it: the stored fence must be strictly
+    lower. Later writes accept an equal fence, the holder's own. A lower token is
+    always refused. Zero rows on any of these writes means the token is no longer
+    current, so stop::
 
         async with dlock_scope.scope("invoice:42") as lock:
-            # e.g. UPDATE invoice SET ..., fence = :token
-            #      WHERE id = 42 AND fence <= :token
-            await repo.update_invoice(invoice, fence_token=lock.token)
+            # UPDATE invoice SET ..., fence = :token WHERE id = 42 AND fence < :token
+            if not await repo.claim_invoice(invoice, fence_token=lock.token):
+                return  # another holder has this token
 
-    Without that consumer-side check the scope remains best-effort exclusion
-    (a GC- or network-paused holder can resume after expiry while a new holder
-    runs); the token check is what upgrades it to fenced exclusion. A ``token``
+            for change in changes:
+                # UPDATE invoice SET ..., fence = :token WHERE id = 42 AND fence <= :token
+                if not await repo.update_invoice(change, fence_token=lock.token):
+                    return  # a higher token has claimed the invoice since
+
+    Tokens can repeat after the lock backend loses its data, and the claim is what
+    keeps two holders of one token from both writing. Without these consumer-side
+    checks the scope remains best-effort exclusion (a GC- or network-paused holder
+    can resume after expiry while a new holder runs); the token checks are what
+    upgrade it to fenced exclusion. A ``token``
     of ``None`` means the backend cannot issue fencing tokens at all.
     """
 
