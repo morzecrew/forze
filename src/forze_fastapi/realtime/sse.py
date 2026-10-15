@@ -70,7 +70,7 @@ from forze.base.logging import Logger
 from forze.base.primitives import HlcTimestamp, current_entropy_source, uuid7
 
 from ..exceptions import ERROR_CODE_HEADER
-from .hub import RealtimeSseHub, SseSubscription, presence_rooms
+from .hub import RealtimeSseHub, SseSubscription, leave_presence_rooms, presence_rooms
 
 # ----------------------- #
 
@@ -587,14 +587,8 @@ def attach_realtime_sse_route(
                 if subscription is not None:
                     hub.unsubscribe(subscription)  # type: ignore[union-attr]
 
-                for room in rooms:
-                    # best-effort: a failed leave must not mask the stream's own exit
-                    # (the TTL store expires the row; the in-memory one leaks one key)
-                    try:
-                        await presence.left(room, member_key)  # type: ignore[union-attr]
-
-                    except Exception:
-                        _logger.exception("SSE presence leave failed", room=room)
+                if presence is not None:
+                    await leave_presence_rooms(presence, rooms, member_key, transport="SSE")
 
         if subscription is None:
             return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)

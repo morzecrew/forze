@@ -81,7 +81,7 @@ from forze.base.scrubbing import sanitize_pydantic_errors
 
 from ..middlewares.raw_websocket import GOVERNED_WEBSOCKET_ATTR
 from ..security.value_objects import OriginAllowlist, origin_authority
-from .hub import RealtimeSseHub, SseSubscription, presence_rooms
+from .hub import RealtimeSseHub, SseSubscription, leave_presence_rooms, presence_rooms
 from .sse import (
     TopicAuthorizer,
     _await_hub_ready,  # pyright: ignore[reportPrivateUsage]
@@ -979,12 +979,8 @@ def attach_realtime_ws_route(
             if subscription is not None:
                 hub.unsubscribe(subscription)  # type: ignore[union-attr]
 
-            for room in rooms:
-                try:
-                    await presence.left(room, member_key)  # type: ignore[union-attr]
-
-                except Exception:
-                    _logger.exception("WS presence leave failed", room=room)
+            if presence is not None:
+                await leave_presence_rooms(presence, rooms, member_key, transport="WS")
 
     # The governed marker check_websocket_allowlist verifies at startup: an
     # allowlisted path must serve exactly this kind of endpoint, nothing else.

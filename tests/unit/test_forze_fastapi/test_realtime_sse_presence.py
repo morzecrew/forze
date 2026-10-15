@@ -11,10 +11,12 @@ the Socket.IO side, and a failed leave must never mask the stream's own exit.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
+import structlog
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
@@ -41,6 +43,7 @@ from forze_fastapi.realtime import (
     realtime_sse_presence_heartbeat_lifecycle_step,
     refresh_sse_presence,
 )
+from forze_fastapi.realtime import hub as hub_module
 from forze_mock import MockDepsModule, MockState
 from tests.support.execution_context import context_from_deps
 
@@ -182,6 +185,28 @@ class TestRoutePresence:
 
         assert TestClient(app).get("/realtime/sse").status_code == 200
         assert not presence.joins
+
+
+class _HungPresence(_RecordingPresence):
+    async def left(self, room: str, sid: str) -> None:
+        await asyncio.Event().wait()  # a store that never answers
+
+
+class TestLeave:
+    async def test_a_hung_store_holds_the_leave_only_for_its_bound(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(hub_module, "_PRESENCE_LEAVE_SECONDS", 0.1)
+
+        with structlog.testing.capture_logs() as logs:
+            await asyncio.wait_for(
+                hub_module.leave_presence_rooms(
+                    _HungPresence(), ("a", "b"), "sse:1", transport="SSE"
+                ),
+                timeout=2,
+            )
+
+        assert any("presence leave took over" in str(one.get("event")) for one in logs)
 
 
 # ----------------------- #
