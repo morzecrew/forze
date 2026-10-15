@@ -654,6 +654,15 @@ class TestWiring:
         with pytest.raises(CoreException, match=match):
             _step(_Node(), **overrides)
 
+    def test_one_report_key_for_both_counts_is_refused(self) -> None:
+        node = _Node()
+
+        with pytest.raises(CoreException, match="different report keys"):
+            _step(node, load="count", movable_report="count")
+
+        with pytest.raises(CoreException, match="different report keys"):
+            connection_report(node.server, movable=_lobby, load="count", movable_report="count")
+
     def test_an_invalid_member_id_is_refused_at_construction(self) -> None:
         with pytest.raises(CoreException) as caught:
             _step(_Node(), member_id="a\tb")

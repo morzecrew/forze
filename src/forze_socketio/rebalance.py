@@ -62,6 +62,14 @@ def _open(sio: AsyncServer, eio_sid: str) -> bool:
     return socket is not None and not socket.closing and not socket.closed
 
 
+def _require_two_keys(load: str, movable_report: str) -> None:
+    if load == movable_report:
+        # One key would hold the movable count over the load, and the mean would be wrong.
+        raise exc.configuration(
+            f"The load and movable counts need different report keys, both are {load!r}"
+        )
+
+
 def _live_counts(
     sio: AsyncServer,
     *,
@@ -110,8 +118,10 @@ def connection_report(
     :param load: The report key for the transports carrying any of *namespaces*.
     :param movable_report: The report key for the movable transports among them.
     :returns: A callable returning ``{load: ..., movable_report: ...}``.
+    :raises CoreException: ``configuration`` for one key given as both.
     """
 
+    _require_two_keys(load, movable_report)
     covered = tuple(namespaces)
 
     def report() -> Report:
@@ -408,8 +418,8 @@ def connection_rebalance_lifecycle_step(
     :returns: The lifecycle step.
     :raises CoreException: ``configuration`` for a non-positive *every*, a *per_minute*
         below 1, a negative or non-finite *tolerance*, a negative *settle* or *cooldown*, no
-        *namespaces*, or a python-engineio that lacks what the close uses; ``validation`` for
-        an invalid *member_id*.
+        *namespaces*, one key as both *load* and *movable_report*, or a python-engineio that
+        lacks what the close uses; ``validation`` for an invalid *member_id*.
     """
 
     require_close_internals(sio)
@@ -428,6 +438,8 @@ def connection_rebalance_lifecycle_step(
 
     if not covered:
         raise exc.configuration("Connection rebalance needs at least one namespace")
+
+    _require_two_keys(load, movable_report)
 
     if member_id is not None:
         validate_member_id(member_id)
