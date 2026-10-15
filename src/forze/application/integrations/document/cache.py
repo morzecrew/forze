@@ -17,6 +17,7 @@ from forze.application.contracts.cache import (
     SupportsInvalidationPush,
 )
 from forze.application.contracts.crypto import BytesCipherPort
+from forze.application.contracts.deps import implements
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.contracts.transaction import AfterCommitPort
 from forze.base.exceptions import exc
@@ -186,11 +187,15 @@ class DocumentCache[R: BaseModel]:
 
         self._l1_push["started"] = True
 
-        if not isinstance(self.cache, SupportsInvalidationPush):
+        # Asked of the backend: resolution may hand the cache port over wrapped, and the
+        # subscription still goes through the wrapper.
+        if not implements(self.cache, SupportsInvalidationPush):
             return
 
+        push = cast(SupportsInvalidationPush, self.cache)
+
         try:
-            unsubscribe = await self.cache.subscribe_invalidations(self._on_invalidation)
+            unsubscribe = await push.subscribe_invalidations(self._on_invalidation)
 
         except Exception:
             logger.warning(
