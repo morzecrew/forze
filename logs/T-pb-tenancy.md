@@ -349,3 +349,11 @@ Verification:
 - `just quality -s`: every gate green.
 
 **Drift count: 4.**
+
+## PR review round 1 — 2026-10-15
+
+| # | Reviewer | Claim | Verdict | Fix |
+|---|---|---|---|---|
+| 1 | Greptile | After a wiring error stops the relay loop, the wake listener keeps its subscription open and consumes wakes no pass acts on until shutdown | Confirmed: a wake-relay test that stops the loop on a wiring error found the listener still pending (red); the loop now stops the listener before it returns | `test_a_wiring_error_stops_the_wake_listener_with_the_loop` |
+
+**Drift count: 4.**

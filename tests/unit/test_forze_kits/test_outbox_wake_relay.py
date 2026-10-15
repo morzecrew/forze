@@ -22,7 +22,7 @@ from forze.application.contracts.outbox import (
 from forze.application.contracts.pubsub import PubSubCommandDepKey
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import (
     OutboxRelay,
@@ -247,6 +247,23 @@ async def test_a_broken_wake_subscription_leaves_the_relay_polling_and_retrying(
             await _until(lambda: len(attempts) >= 3)
             assert startup.listener is not None
             assert not startup.listener.done()
+
+
+async def test_a_wiring_error_stops_the_wake_listener_with_the_loop() -> None:
+    # The loop stops on a wiring error; a listener left behind would keep the subscription
+    # open and consume wakes no relay acts on until shutdown.
+    state = MockState()
+
+    async def _unwired(*_: Any, **__: Any) -> bool:
+        raise exc.configuration("unbound", code="outbox_relay_tenant_unbound")
+
+    with patch.object(_OutboxRelayBackgroundStartup, "_drain_tick", _unwired):
+        async with _running(state) as (_ctx, startup):
+            loop = startup.control.task
+            assert loop is not None
+            await _until(loop.done)
+
+            assert startup.listener is None
 
 
 async def test_a_failed_wake_subscription_is_retried_after_a_jittered_interval() -> None:

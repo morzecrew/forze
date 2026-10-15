@@ -687,6 +687,8 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                         "Outbox background relay hit a wiring error; loop stopped — "
                         "fix the wiring and restart"
                     )
+                    # No pass will run again, so no wake should be consumed for one.
+                    await self._stop_listener()
                     return
 
                 logger.exception("Outbox background relay failed")
