@@ -96,7 +96,7 @@ async def evaluate_readiness(
         is reported as such. To check a client registered per route, register it under a
         plain key of its own as well.
         A check runs with no tenant bound, so a client routed per tenant is reported as
-        ``routed per tenant``.
+        ``routed per tenant``, and a tenant-aware one as ``tenant-aware``.
     :param check_timeout: Budget for **each** check, not for the sweep.
     :returns: ``(status code, body)``.
     """
@@ -171,9 +171,14 @@ async def _check_dependencies(
 
             except CoreException:
                 # The one refusal it raises. A probe runs with no tenant bound, so a client
-                # routed per tenant names no client to probe either, just as a key
+                # scoped per tenant names no client to probe either, just as a key
                 # registered only per route does.
-                return name, {"ok": False, "detail": "routed per tenant"}
+                scoped = getattr(client, "tenant_aware", False) is True
+
+                return name, {
+                    "ok": False,
+                    "detail": "tenant-aware" if scoped else "routed per tenant",
+                }
 
             budget = asyncio.timeout(seconds)
 

@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The plain SSE tail and the socket.io gateway's stream-group and pub/sub sources refuse a tenant-scoped port at startup**, as `tenant_global_required`: they read with no tenant bound, so every read failed. The sharded tail and source bind their tenants. **Breaking** for apps that ran one so.
 
-- **A readiness check on a client routed per tenant says so**, as `routed per tenant`, instead of a bare `CoreException`: a probe has no tenant to route by.
+- **A readiness check on a client scoped per tenant says so**, as `routed per tenant` or `tenant-aware`, instead of a bare `CoreException`: a probe has no tenant bound.
 
 ### Security
 

@@ -72,6 +72,16 @@ class _RoutedClient(RoutedTenantClientBase[Any]):
 
 
 @attrs.define(slots=True)
+class _TenantAwareClient:
+    """Refuses every call made with no tenant bound."""
+
+    tenant_aware: bool = True
+
+    async def health(self) -> tuple[str, bool]:  # pragma: no cover - refused before
+        raise AssertionError("probed with no tenant bound")
+
+
+@attrs.define(slots=True)
 class _FakeClient:
     """Minimal stand-in for the ``health()`` every forze client port declares."""
 
@@ -247,6 +257,25 @@ class TestReadinessProbes:
 
         assert response.status_code == 503
         assert response.json()["checks"]["redis"] == {"ok": False, "detail": "routed per tenant"}
+
+    @pytest.mark.asyncio
+    async def test_a_tenant_aware_client_says_so(self) -> None:
+        """Not "routed per tenant": it needs a tenant bound, not one to route by."""
+
+        key = DepKey[Any]("tenant_aware_client")
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_deps(Deps.plain({key: _TenantAwareClient()})).freeze()
+        )
+        router = APIRouter()
+        attach_readiness_route(router, runtime, probes={"store": key})
+        app = FastAPI()
+        app.include_router(router)
+
+        async with runtime.scope():
+            response = TestClient(app).get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["store"] == {"ok": False, "detail": "tenant-aware"}
 
     # ....................... #
 
