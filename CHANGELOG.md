@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now accepts an equal token on a holder's later writes, the same lock generation, as the contract does.
 
+- **The singleton guard and leadership refuse, at startup, a lock no tenant-less call can use**: tenant-aware, or on a routed client with no tenant to route by. It failed startup with `tenant_required` or never led; now `tenant_global_required` (new `require_tenant_global`). **Breaking** for such a leadership step.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.

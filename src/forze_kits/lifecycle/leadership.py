@@ -35,6 +35,7 @@ from forze.application.contracts.dlock import (
     FenceAdvancing,
 )
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution.background import (
     BackgroundLoopControl,
     is_terminal_crash,
@@ -1219,6 +1220,9 @@ class _LeadershipStartup(LifecycleHook):
         # Resolved from the live context, so a spec that requires fencing fails startup on a
         # backend without tokens instead of failing inside the loop.
         cmd = ctx.dlock.command(self.spec.lock)
+        # Every replica campaigns from startup with no tenant bound; a tenant-scoped lock
+        # would refuse every campaign.
+        require_tenant_global(cmd, what=f"Leadership for {self.spec.key!r}")
         query = (
             ctx.dlock.query(self.spec.lock)
             if self.spec.verify or self.handoff == "on_request" or self.fence_floor is not None
@@ -1335,7 +1339,9 @@ def leadership_lifecycle_step(
     :param step_id: The lifecycle step id; defaults to ``leadership:<key>``.
     :raises CoreException: ``configuration``, for handoff without *prefer*, *fence_floor* on
         a lock that does not require the advance, or *claim* on one that does not require
-        fencing tokens. A backend without a required capability fails at startup.
+        fencing tokens. A backend without a required capability fails at startup, and so
+        does a lock route that is not tenant-global (``tenant_global_required``): every
+        replica campaigns with no tenant bound.
     """
 
     if not owner:

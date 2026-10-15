@@ -323,6 +323,12 @@ You pass the lock *spec*, not a live port: the guard resolves the command port
 from the execution context (`ctx.dlock.command(spec)`) at startup, so it slots
 into a lifecycle plan that's assembled before any scope exists.
 
+Startup runs with no tenant bound, so the lock's route must be tenant-global: not
+`tenant_aware`, and not on a client routed per tenant that has no tenant to route by.
+Either one fails startup
+with a `configuration` error coded `tenant_global_required`, here and in
+`leadership_lifecycle_step` below.
+
 The first replica to acquire the lock runs the startup and releases it;
 replicas that find the lock held **skip** — the holder is doing the work.
 Shutdown later runs only on the replica whose startup actually executed. The

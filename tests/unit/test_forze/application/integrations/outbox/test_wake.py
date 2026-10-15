@@ -182,6 +182,29 @@ async def test_a_tenant_aware_wake_route_is_refused() -> None:
         ctx.outbox.command(SPEC)
 
 
+def test_a_flush_does_not_check_the_wake_routes_client() -> None:
+    # A flush runs bound, so a client routed per tenant has a tenant to publish under. The
+    # relay listens unbound: it refuses such a route when it starts, not every flush.
+    from unittest.mock import MagicMock
+
+    import attrs
+
+    from forze.application.contracts.tenancy.routed_client_base import RoutedTenantClientBase
+
+    @attrs.define(slots=True, kw_only=True)
+    class _Routed(RoutedTenantClientBase[Any]):
+        async def resolve_credentials(self, tenant_id: Any) -> Any:  # pragma: no cover
+            raise NotImplementedError
+
+        async def initialize_client(self, tenant_id: Any, creds: Any) -> Any:  # pragma: no cover
+            raise NotImplementedError
+
+    routed = _Routed(secrets=MagicMock(), secret_ref_for_tenant={}, tenant_provider=lambda: None)
+    port = MagicMock(tenant_aware=False, client=routed)
+
+    OutboxWake(route="outbox-wake").require_tenant_global(port)
+
+
 def test_a_wake_that_cannot_wait_to_publish_is_refused() -> None:
     with pytest.raises(CoreException, match="publish_timeout must be positive"):
         OutboxWake(route="outbox-wake", publish_timeout=timedelta(0))

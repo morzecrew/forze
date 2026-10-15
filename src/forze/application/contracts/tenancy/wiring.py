@@ -16,6 +16,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, StrKeyMapping
 
 from ..tiers import TierLattice
+from .routed_client_base import RoutedTenantClientBase
 
 # ----------------------- #
 
@@ -738,3 +739,59 @@ def validate_module_tenancy(
         max_supported_isolation=max_supported_isolation,
         log_warning=log_warning,
     )
+
+
+# ----------------------- #
+# Ports used where no tenant is bound
+
+TENANT_GLOBAL_REQUIRED_CODE: Final[str] = "tenant_global_required"
+"""Error code for a tenant-scoped port used where no tenant is bound."""
+
+_GATEWAYS: Final[tuple[str, ...]] = ("read_gw", "write_gw")
+"""Where a document adapter keeps the parts that reach its backend."""
+
+
+def _tenant_scope(part: object) -> str | None:
+    if getattr(part, "tenant_aware", False) is True:
+        return "is tenant-aware"
+
+    client = part if isinstance(part, RoutedTenantClientBase) else getattr(part, "client", None)
+
+    # A routed client asks its own provider, which a deployment may point at a default
+    # tenant; only one with no tenant to route by fails here.
+    if isinstance(client, RoutedTenantClientBase) and client.tenant_provider() is None:
+        return "reaches its backend through a client routed per tenant, with no tenant to route by"
+
+    return None
+
+
+def require_tenant_global(port: object, *, what: str) -> None:
+    """Refuse a port that cannot serve a call made with no tenant bound.
+
+    Lifecycle steps and background loops run outside any request, so no tenant is bound
+    there. A port that is tenant-aware, or that reaches its backend through a client routed
+    per tenant whose provider has no tenant here, refuses each such call with
+    ``tenant_required``, an authentication error that no retry clears. This refuses it once,
+    where the step starts, as the wiring error it is.
+
+    Reads ``tenant_aware`` and ``client`` on *port*, and on a document adapter's gateways. A
+    per-tenant namespace resolver is not refused: it is called with ``None``, and what that
+    means is the resolver's.
+
+    :param port: A resolved port, or a client.
+    :param what: What uses the port, for the error.
+    :raises CoreException: ``configuration`` (``tenant_global_required``).
+    """
+
+    for part in (port, *(getattr(port, name, None) for name in _GATEWAYS)):
+        if part is None or (reason := _tenant_scope(part)) is None:
+            continue
+
+        raise exc.configuration(
+            f"{what} runs with no tenant bound, but its port {reason}, so every call it "
+            "makes would be refused. Wire the route tenant-global: tenant_aware=False on a "
+            "client that is not routed per tenant. A step that takes tenants= can bind them "
+            "instead.",
+            code=TENANT_GLOBAL_REQUIRED_CODE,
+            details={"what": what, "reason": reason},
+        )
