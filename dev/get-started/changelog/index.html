@@ -748,6 +748,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#deprecated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deprecated
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1492,7 +1503,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#deprecated" class="md-nav__link">
+  <a href="#deprecated_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Deprecated
@@ -7895,6 +7906,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#deprecated" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Deprecated
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -8639,7 +8661,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#deprecated" class="md-nav__link">
+  <a href="#deprecated_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Deprecated
@@ -9474,6 +9496,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A replica can withdraw readiness before refusing work, and drain while it still serves.</strong> <code>runtime.begin_draining()</code> fails readiness, operations still admitted; <code>runtime.drain(budget, announce_delay=)</code> runs the phases steps put on <code>ctx.drain_phases</code>. <code>shutdown()</code> drains first if nobody did, within <code>drain_budget</code>.</p>
+</li>
+<li>
+<p><strong>An embedded uvicorn drains the runtime on <code>SIGTERM</code> before it stops.</strong> <code>forze_fastapi.serve_uvicorn(config, runtime, drain_budget=)</code> runs <code>runtime.drain()</code> on the first <code>SIGTERM</code> or <code>SIGINT</code>; a <code>SIGINT</code> during it forces the exit. A finite graceful timeout is set when none is, so an open stream cannot hold the exit.</p>
+</li>
+<li>
+<p><strong>The worker probe listener can check dependencies, and needs no runtime.</strong> <code>probe_listener_step(checks=, check_timeout=)</code> answers through <code>evaluate_readiness</code>, the evaluator <code>attach_readiness_route</code> now uses, so both answer alike from the same probes. Steps read <code>ctx.lifecycle.started</code> and <code>.announced</code>.</p>
+</li>
+<li>
 <p><strong>A fenced writer can recover after Redis loses its counters.</strong> <code>FenceAdvancing.advance_fence(key, past=...)</code>, on Redis and the mock, lifts a fencing counter to the store's highest fence; <code>requires_fence_advance</code> fails closed without it. The documented rule now claims a token first, so a repeated one is acted on once.</p>
 </li>
 <li>
@@ -9482,10 +9513,22 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>...</li>
+<li>
+<p><strong>Readiness waits for startup, and <code>runtime.draining</code> turns true when a drain is announced.</strong> <code>runtime.ready</code>, the readiness route and the probe listener answer <code>503</code> until startup finishes; <code>ctx.drain_gate.draining</code> alone means refused. <strong>Breaking</strong> for a startup probe on <code>/readyz</code> sized for the earlier <code>200</code>.</p>
+</li>
+<li>
+<p><strong>The readiness route logs a failed dependency check under the application logger</strong>, as "Readiness check … failed". Alerts keyed on the <code>fastapi.probes</code> logger no longer match.</p>
+</li>
+</ul>
+<h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>probe_listener_step(runtime=...)</code>.</strong> The step reads its scope from its hook's <code>ctx</code>, so it can sit in its own runtime's plan; a runtime passed in is still watched, with a <code>DeprecationWarning</code>.</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A readiness check whose client is registered only per route says so</strong>, as <code>registered per route only</code>, instead of reporting it <code>not registered</code>.</p>
+</li>
 <li>
 <p><strong>A retry past its 1,024th attempt no longer fails with <code>OverflowError</code>.</strong> Resilience retries and outbox redelivery keep their backoff at the cap however many attempts came before, and a zero-delay saga step or client read keeps retrying.</p>
 </li>
@@ -11494,7 +11537,7 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>Misc</strong> — Postgres streaming uses a server-side named cursor; outbox uses bulk insert on conflict plus stale-processing reclaim (default 5 min) and <code>requeue_failed</code>; <code>forze[oidc]</code> now bundles <code>httpx</code>.</p>
 </li>
 </ul>
-<h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>
+<h3 id="deprecated_1">Deprecated<a class="headerlink" href="#deprecated_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>forze_identity.oidc</code></strong> — <code>OidcTokenVerifier.enforce_issuer_and_audience</code> now defaults to <code>True</code>, so construction requires both an issuer and an audience unless explicitly opted out.</li>
 </ul>

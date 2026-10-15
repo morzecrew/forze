@@ -6596,11 +6596,13 @@ infrastructure; leaving it tears everything down in reverse.</p>
 </code></pre></div>
 <ol>
 <li><strong>Create context</strong> — resolve the frozen deps into live ports.</li>
-<li><strong>Startup</strong> — run lifecycle startup steps in dependency order.</li>
+<li><strong>Startup</strong> — run lifecycle startup steps in dependency order. The scope
+   reports ready once every step has started.</li>
 <li><strong>Serve</strong> — the application handles requests.</li>
-<li><strong>Drain</strong> — stop admitting new invocations; give in-flight operations a
-   bounded window to finish (see
-   <a href="../../running-in-prod/shutdown-and-fleets/">Shutdown &amp; fleets</a>).</li>
+<li><strong>Drain</strong> — announce the drain so readiness fails, run the drain phases steps
+   registered, then stop admitting new invocations and give in-flight operations
+   a bounded window to finish (see
+   <a href="../../running-in-prod/shutdown-and-fleets/#graceful-deploys">Graceful deploys</a>).</li>
 <li><strong>Shutdown</strong> — run shutdown steps in reverse.</li>
 <li><strong>Reset</strong> — clear the context.</li>
 </ol>

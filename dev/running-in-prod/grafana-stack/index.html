@@ -6991,10 +6991,10 @@ property of one socket in front of N independent processes.</p>
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution.background</span><span class="w"> </span><span class="kn">import</span> <span class="n">probe_listener_step</span>
 
-<span class="n">lifecycle_steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">probe_listener_step</span><span class="p">(</span><span class="n">runtime</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8079</span><span class="p">))</span>
+<span class="n">lifecycle_steps</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">probe_listener_step</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">8079</span><span class="p">))</span>
 </code></pre></div>
 <p>Stdlib <code>asyncio</code> only — an outbox relay does not grow an HTTP framework to answer two
-endpoints. Serves the same paths, from the same runtime state.</p>
+endpoints. Serves the same paths, and answers through the same evaluator.</p>
 </div>
 </div>
 </div>
@@ -7016,7 +7016,7 @@ endpoints. Serves the same paths, from the same runtime state.</p>
 <tr>
 <td><code>readinessProbe</code></td>
 <td><code>/readyz</code></td>
-<td><code>ready</code> / <code>draining</code> / <code>unavailable</code>, from the runtime's drain gate</td>
+<td><code>ready</code> / <code>draining</code> / <code>unavailable</code>: ready only once startup finished and until a drain begins</td>
 </tr>
 <tr>
 <td><code>startupProbe</code></td>

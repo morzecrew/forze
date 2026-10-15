@@ -3784,6 +3784,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#graceful-shutdown-under-uvicorn" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Graceful shutdown under uvicorn
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#routes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6536,6 +6547,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#graceful-shutdown-under-uvicorn" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Graceful shutdown under uvicorn
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#routes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6852,13 +6874,86 @@ exposed only when the kind's <a href="../../writing-operation/errors/">egress po
 </code></pre></div>
 <h2 id="readiness-probe">Readiness probe<a class="headerlink" href="#readiness-probe" title="Permanent link">&para;</a></h2>
 <p><code>attach_readiness_route(router, runtime)</code> adds a <code>GET /readyz</code> that reflects
-the runtime's scope state: <code>200</code> while serving, <code>503 draining</code> once shutdown
-flips the <a href="../../running-in-prod/shutdown-and-fleets/">drain gate</a>, <code>503 unavailable</code>
-before the scope exists. Point your load balancer's readiness check at it so
-routing stops before the drain window starts.</p>
+the runtime's scope state: <code>200</code> once lifecycle startup finished, <code>503 draining</code>
+from the moment a <a href="../../running-in-prod/shutdown-and-fleets/#graceful-deploys">drain</a>
+is announced or shutdown closes the gate, <code>503 unavailable</code> before that. Point
+your load balancer's readiness check at it so routing stops before any work is
+refused.</p>
 <p>That answers whether the process is <em>willing</em> to take traffic. Pass <code>probes</code> to
 also ask whether it can <em>reach</em> what it needs — see
 <a href="../../running-in-prod/shutdown-and-fleets/#readiness">Readiness</a>.</p>
+<h2 id="graceful-shutdown-under-uvicorn">Graceful shutdown under uvicorn<a class="headerlink" href="#graceful-shutdown-under-uvicorn" title="Permanent link">&para;</a></h2>
+<p>When the orchestrator sends <code>SIGTERM</code>, the replica should withdraw readiness and
+run its drain phases while it still serves, and stop accepting only after that.
+Uvicorn's own signal handling stops the server at once, so serve the app with
+<code>serve_uvicorn</code> instead:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">uvicorn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">serve_uvicorn</span>
+
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span>
+    <span class="o">...</span><span class="p">,</span>
+    <span class="n">drain_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+    <span class="n">shutdown_step_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">config</span> <span class="o">=</span> <span class="n">uvicorn</span><span class="o">.</span><span class="n">Config</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">host</span><span class="o">=</span><span class="s2">"0.0.0.0"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8000</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="n">serve_uvicorn</span><span class="p">(</span>
+        <span class="n">config</span><span class="p">,</span>
+        <span class="n">runtime</span><span class="p">,</span>
+        <span class="n">drain_budget</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+        <span class="n">announce_delay</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">3</span><span class="p">),</span>
+        <span class="n">graceful_timeout</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>Once startup has finished, the worst case of that exit is 25 seconds plus 2 per
+lifecycle step — the
+<a href="../../running-in-prod/shutdown-and-fleets/#fit-the-budget-to-the-grace-period">sum</a>
+<code>serve_uvicorn</code> logs at startup. A signal that lands during startup waits for it
+first, and startup hooks have no timeout. Past two steps it no longer fits Kubernetes'
+default 30-second grace period: set <code>terminationGracePeriodSeconds</code> from the
+logged figure, with headroom.</p>
+<p>On the first <code>SIGTERM</code> or <code>SIGINT</code> it runs <code>runtime.drain()</code> — readiness fails at
+once, <code>announce_delay</code> passes, the drain phases run — and only then lets uvicorn
+exit: stop accepting, finish in-flight requests, run the lifespan shutdown where
+the runtime closes its gate and tears down. A drain that fails still lets the
+server exit. A <code>SIGINT</code> during the drain cancels it and exits without waiting for
+open connections; a repeated <code>SIGTERM</code> is logged and ignored, so a signal delivered
+twice — to the process group and again by a wrapper — cannot cut a deploy short.
+A forced exit gives the drain phases up, even those that had not started yet.
+Uvicorn then skips the lifespan shutdown, so the runtime tears down only when the
+event loop closes and cancels the lifespan — at the end of <code>asyncio.run</code>.</p>
+<ul>
+<li><strong>Graceful timeout.</strong> Unless <code>config</code> sets <code>timeout_graceful_shutdown</code>,
+  <code>serve_uvicorn</code> sets it to <code>graceful_timeout</code> (10 seconds), so an open <abbr title="Server-Side Encryption">SSE</abbr>
+  stream or long poll cannot hold the exit forever. The figures of the
+  <a href="../../running-in-prod/shutdown-and-fleets/#fit-the-budget-to-the-grace-period">exit budget</a>
+  are logged when the server starts.</li>
+<li><strong>Off the main thread, pass <code>stop</code>.</strong> Signal handlers can be installed only on
+  the main thread, so elsewhere <code>serve_uvicorn</code> installs none. Pass
+  <code>stop=asyncio.Event()</code> and set it on the server's loop — from another thread,
+  <code>loop.call_soon_threadsafe(stop.set)</code> — to drain and stop as a first signal
+  would. Setting it works on the main thread too.</li>
+<li><strong>A signal during startup drains later.</strong> Until the lifespan startup finishes
+  there is nothing to drain: the server exits once it does, and the drain phases
+  run in the lifespan shutdown, after the server stopped accepting. A later
+  signal cannot cut them short there.</li>
+<li><strong>No re-raised signal.</strong> Uvicorn raises the signal again once its server
+  returns; <code>serve_uvicorn</code> does not, so your process decides how it exits.</li>
+</ul>
+<p>An app run as <code>uvicorn app:app</code> keeps uvicorn's handling, and pays for it:</p>
+<ul>
+<li><strong>WebSockets close at once</strong> with code 1012 when the server stops, before the
+  lifespan shutdown runs the drain phases that would have closed them gently.</li>
+<li><strong>The wait for open connections is unbounded</strong> without
+  <code>--timeout-graceful-shutdown</code>: one <abbr title="Server-Side Encryption">SSE</abbr> client turns every restart into a kill
+  at the grace period. Set it at the very least.</li>
+</ul>
 <h2 id="routes">Routes<a class="headerlink" href="#routes" title="Permanent link">&para;</a></h2>
 <p>Routes are ordinary FastAPI handlers. A route resolves the context and runs an
 operation through the frozen registry (or a facade) — the domain code stays
@@ -7029,6 +7124,10 @@ runs them. The surface, at a glance:</p>
 <tr>
 <td><code>runtime_lifespan</code></td>
 <td>run the runtime's lifecycle from the app lifespan</td>
+</tr>
+<tr>
+<td><code>serve_uvicorn</code></td>
+<td>an embedded uvicorn whose <code>SIGTERM</code> drains the runtime before the server stops</td>
 </tr>
 <tr>
 <td><code>InvocationMetadataMiddleware</code> / <code>SecurityContextMiddleware</code></td>
