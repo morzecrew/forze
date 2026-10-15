@@ -684,6 +684,22 @@ class TestDrainStep:
 
         assert stats.drain_closed == {"closed": 1, "failed": 0, "timed_out": 0}
 
+    # ....................... #
+
+    async def test_a_connection_something_else_is_closing_is_skipped_and_not_counted(
+        self,
+    ) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+        await _connect(server, "eio-1")
+        await _connect(server, "eio-2")
+        _socket(server, "eio-2").closing = True  # its own close is under way: a ping timeout
+
+        await self._drained(server, stats=stats)
+
+        assert stats.drain_closed == {"closed": 1, "failed": 0, "timed_out": 0}
+        assert _socket(server, "eio-2").closes == 0  # left to the close under way
+
 
 # ----------------------- #
 
