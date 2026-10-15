@@ -289,26 +289,42 @@ def _replica() -> tuple[socketio.AsyncServer, RealtimeConnectionStats, dict[str,
     return sio, stats, state
 
 
-async def _until(check: Callable[[], bool], *, within: float) -> None:
+async def _until(
+    check: Callable[[], bool], *, within: float, state: Callable[[], str] = lambda: ""
+) -> None:
     for _ in range(int(within / 0.02)):  # bounded
         if check():
             return
 
         await asyncio.sleep(0.02)
 
-    raise AssertionError(f"not reached within {within}s")
+    raise AssertionError(f"not reached within {within}s; {state()}")
 
 
 async def _drain_into_the_other_replica(
     client: Callable[[int], Awaitable[None]],
     *,
-    landed: Callable[[], bool],
+    connects: Callable[[], int],
+    seen: Callable[[], object],
 ) -> tuple[RealtimeConnectionStats, RealtimeConnectionStats]:
     """Connect through the balancer to A, drain A while the balancer still sends reconnects
-    there, then let the balancer notice; return A's and B's counts."""
+    there, then let the balancer notice; return A's and B's counts.
+
+    *connects* counts the accepts the client has heard of, and *seen* is what it saw, for the
+    failure message. The drain waits for the client to hear its first accept, not only for A
+    to count it: over long-polling the accept reaches the client on its next poll, and a
+    drain closing the connection before that poll leaves the client a failed poll instead —
+    a reconnect, but not the connect a count of two would need.
+    """
 
     leaving, leaving_stats, leaving_state = _replica()
     staying, staying_stats, _ = _replica()
+
+    def state() -> str:
+        return (
+            f"client saw {seen()!r}; A: connections {leaving_stats.connections}, refused "
+            f"{leaving_stats.connect_refused}; B: connections {staying_stats.connections}"
+        )
 
     async with _serving(leaving) as port_a, _serving(staying) as port_b:
         balancer = _Balancer(port_a)
@@ -317,7 +333,11 @@ async def _drain_into_the_other_replica(
             connecting = asyncio.ensure_future(client(port))
 
             try:
-                await _until(lambda: leaving_stats.connections.get("/") == 1, within=5)
+                await _until(
+                    lambda: leaving_stats.connections.get("/") == 1 and connects() >= 1,
+                    within=10,
+                    state=state,
+                )
 
                 leaving_state["draining"] = True
                 await close_spread(
@@ -326,12 +346,16 @@ async def _drain_into_the_other_replica(
                 # The reconnect lands back on the draining replica, which turns it away...
                 await _until(
                     lambda: leaving_stats.connect_refused.get(("/", "draining"), 0) >= 1,
-                    within=5,
+                    within=10,
+                    state=state,
                 )
                 # ...and once the balancer notices, the client's own backoff carries it over.
                 balancer.notice(port_b)
-                await _until(lambda: staying_stats.connections.get("/") == 1, within=5)
-                await _until(landed, within=5)  # and the client heard it was accepted
+                await _until(
+                    lambda: staying_stats.connections.get("/") == 1 and connects() >= 2,
+                    within=10,
+                    state=state,
+                )
 
             finally:
                 connecting.cancel()
@@ -373,7 +397,7 @@ class TestReconnectAfterDrain:
                 await asyncio.sleep(0.2)
 
         leaving, staying = await _drain_into_the_other_replica(
-            client, landed=lambda: outcomes.count("connect") == 2
+            client, connects=lambda: outcomes.count("connect"), seen=lambda: outcomes
         )
 
         # Connected to A, turned away there by transport closes, then connected to B.
@@ -424,7 +448,7 @@ class TestReconnectAfterDrain:
                     await asyncio.sleep(0.2)
 
         leaving, staying = await _drain_into_the_other_replica(
-            client, landed=lambda: outcomes.count("connect") == 2
+            client, connects=lambda: outcomes.count("connect"), seen=lambda: outcomes
         )
 
         assert "gave up" not in outcomes
@@ -465,7 +489,7 @@ class TestReconnectAfterDrain:
                     await node.wait()
 
         leaving, _staying = await _drain_into_the_other_replica(
-            client, landed=lambda: events.count("connect") == 2
+            client, connects=lambda: events.count("connect"), seen=lambda: events
         )
 
         assert "connect_error active=false" not in events
