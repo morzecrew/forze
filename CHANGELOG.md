@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Work can run on one replica at a time for the life of the process.** `leadership_lifecycle_step` elects a leader on a renewing lease, ends its term inside the lease, hands it over on stop or on request, and fences it: a token, a claim, and `fence_floor` to recover after Redis loses its counters.
 
+- **Replicas can see which peers are alive, and split work over them.** `ctx.fleet(FleetSpec(...))`, on Redis via `RedisDepsModule(fleets=...)`, gives a `FleetPort` whose `beat` writes a replica's state and report and returns the `FleetView`; its policies agree for all who hold it. `instance_id()` names a process.
+
+- **A replica keeps its fleet entry current from startup to shutdown.** `fleet_membership_lifecycle_step(spec, every=)` beats `starting`, then `serving` once startup finishes, then `draining` once a drain is announced, and leaves the fleet or lingers on stop.
+
 ### Changed
 
 - **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.

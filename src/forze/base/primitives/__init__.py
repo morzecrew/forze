@@ -67,6 +67,7 @@ from .fingerprint import (
 )
 from .graph import DirectedAcyclicGraph
 from .hlc import HlcTimestamp, HybridLogicalClock
+from .instance import instance_id
 from .lanes import CachedInflightLane, CacheLane, InflightLane, LeaderFollowerLane
 from .lifecycle_guard import GuardedLifecycle
 from .lru_registry import GuardedLruRegistry, SimpleLruRegistry
@@ -108,6 +109,7 @@ __all__ = [
     "advisory_lock_key",
     "utcnow",
     "monotonic",
+    "instance_id",
     "DEFAULT_DRIVER_DEADLINE_GRACE",
     "current_deadline",
     "driver_deadline_budget",

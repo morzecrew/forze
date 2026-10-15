@@ -523,3 +523,102 @@ return redis.call('ZCARD', KEYS[1])
 
 KEYS[1]: room set. ARGV: sid. Returns the remaining member count.
 """
+
+
+# ....................... #
+
+_FLEET_NOW: Final = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local now_s = string.format('%d', now)
+"""
+
+_FLEET_REPLY: Final = """
+local entries = {}
+local flat = redis.call('HGETALL', KEYS[2])
+for i = 1, #flat, 2 do
+    entries[flat[i]] = flat[i + 1]
+end
+local live = redis.call('ZRANGEBYSCORE', KEYS[1], '(' .. now_s, '+inf', 'WITHSCORES')
+local out = {now_s}
+for i = 1, #live, 2 do
+    local entry = entries[live[i]]
+    if entry then
+        out[#out + 1] = live[i] .. '\\t' .. live[i + 1] .. '\\t' .. entry
+    end
+end
+return table.concat(out, '\\n')
+"""
+
+FLEET_BEAT: Final = (
+    _FLEET_NOW
+    + """
+local id, state, report = ARGV[1], ARGV[2], ARGV[3]
+
+local expired = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', now_s)
+for i = 1, #expired, 1000 do
+    local last = math.min(i + 999, #expired)
+    redis.call('ZREM', KEYS[1], unpack(expired, i, last))
+    redis.call('HDEL', KEYS[2], unpack(expired, i, last))
+end
+
+local since = now_s
+local previous = redis.call('HGET', KEYS[2], id)
+if previous then
+    local cut = string.find(previous, '|', 1, true)
+    if cut and string.sub(previous, 1, cut - 1) == state then
+        local cut2 = string.find(previous, '|', cut + 1, true)
+        local kept = cut2 and string.sub(previous, cut + 1, cut2 - 1)
+        if kept and #kept <= 14 and string.find(kept, '^%d+$') then
+            since = kept
+        end
+    end
+end
+
+redis.call('HSET', KEYS[2], id, state .. '|' .. since .. '|' .. report)
+redis.call('ZADD', KEYS[1], string.format('%d', now + tonumber(ARGV[4])), id)
+
+local top = redis.call('ZRANGE', KEYS[1], -1, -1, 'WITHSCORES')
+local keep = string.format('%d', tonumber(top[2]) + 1000)
+redis.call('PEXPIREAT', KEYS[1], keep)
+redis.call('PEXPIREAT', KEYS[2], keep)
+"""
+    + _FLEET_REPLY
+)
+"""Write one member's entry and return the fleet's view, on the server clock.
+
+Removes every expired member from both keys first, in chunks of 1000 (``unpack`` of
+thousands of values exceeds Lua's stack), then writes the entry. ``since`` is kept when the
+stored entry's state prefix equals the new state, compared as strings, so the report is
+never decoded; a stored ``since`` that is not 1 to 14 digits restarts at now. Both keys expire
+one second past the **largest** member expiry — never from
+this beat's own TTL, so a short final beat cannot expire the fleet under its other members.
+
+KEYS[1]: expiry ZSET, KEYS[2]: entry HASH. ARGV: member id, state, report JSON, ttl ms.
+Returns the server time in ms on the first line, then ``id\\texpiry_ms\\tstate|since_ms|report``
+per live member.
+"""
+
+
+# ....................... #
+
+
+FLEET_VIEW: Final = _FLEET_NOW + _FLEET_REPLY
+"""Read the fleet's live members without writing, in the same reply shape as ``FLEET_BEAT``.
+
+KEYS[1]: expiry ZSET, KEYS[2]: entry HASH.
+"""
+
+
+# ....................... #
+
+
+FLEET_LEAVE: Final = """
+redis.call('ZREM', KEYS[1], ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[1])
+return 1
+"""
+"""Remove one member from both fleet keys at once.
+
+KEYS[1]: expiry ZSET, KEYS[2]: entry HASH. ARGV: member id. Returns 1.
+"""

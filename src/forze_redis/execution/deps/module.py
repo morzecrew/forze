@@ -18,11 +18,13 @@ from forze.application.contracts.dlock import (
     DistributedLockCommandDepKey,
     DistributedLockQueryDepKey,
 )
+from forze.application.contracts.fleet import FleetDepKey, refuse_tenant_scoped_route
 from forze.application.contracts.idempotency import IdempotencyDepKey
 from forze.application.contracts.pubsub import (
     PubSubCommandDepKey,
     PubSubQueryDepKey,
 )
+from forze.application.contracts.resolution import is_static_named_resource
 from forze.application.contracts.search import SearchResultSnapshotDepKey
 from forze.application.contracts.stream import (
     AckStreamGroupAdminDepKey,
@@ -36,6 +38,7 @@ from forze.application.contracts.tenancy import (
     validate_module_tenancy,
     warn_integration_routes,
 )
+from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
 
 from ...kernel._logger import logger
@@ -51,6 +54,7 @@ from .configs import (
     RedisCacheConfig,
     RedisCounterConfig,
     RedisDistributedLockConfig,
+    RedisFleetConfig,
     RedisIdempotencyConfig,
     RedisPubSubConfig,
     RedisSearchResultSnapshotConfig,
@@ -63,6 +67,7 @@ from .factories import (
     ConfigurableRedisCounter,
     ConfigurableRedisCounterAdmin,
     ConfigurableRedisDistributedLock,
+    ConfigurableRedisFleet,
     ConfigurableRedisIdempotency,
     ConfigurableRedisPubSubCommand,
     ConfigurableRedisPubSubQuery,
@@ -190,6 +195,14 @@ class RedisDepsModule(DepsModule):
     )
     """Mapping from distributed lock spec names to their Redis-specific configurations."""
 
+    fleets: StrKeyMapping[RedisFleetConfig] | StrKeyMapping[RedisUniversalConfig] | None = (
+        attrs.field(
+            default=None,
+            converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+        )
+    )
+    """Mapping from fleet spec names to their Redis-specific configurations."""
+
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
@@ -269,6 +282,22 @@ class RedisDepsModule(DepsModule):
             warning=REDIS_DLOCK_WARNING,
             log_warning=logger.warning,
         )
+        # A fleet is the deployment's, not a tenant's: no tenant-scoped route, and no floor.
+        for name, fleet in (self.fleets or {}).items():
+            refuse_tenant_scoped_route(
+                str(name),
+                tenant_aware=fleet.tenant_aware,
+                per_tenant=not is_static_named_resource(fleet.namespace),
+            )
+
+        if self.fleets and isinstance(self.client, RoutedRedisClient):
+            # A routed client connects per tenant, and the fleet beats with none bound.
+            raise exc.configuration(
+                "Redis fleet routes need a plain client: this module's client is routed per "
+                "tenant, and a fleet beats from lifecycle hooks with no tenant bound. Register "
+                "FleetDepKey yourself over a RedisFleetAdapter on a plain RedisClient.",
+                code="fleet.routed_client",
+            )
 
         idempotency_routes: Mapping[Any, Any] | None
         if self.idempotency is None:
@@ -364,6 +393,10 @@ class RedisDepsModule(DepsModule):
                     DistributedLockCommandDepKey,
                 ],
                 factory=ConfigurableRedisDistributedLock,
+            ),
+            routed_from_mapping(
+                self.fleets,
+                bindings=[(FleetDepKey, ConfigurableRedisFleet)],
             ),
             routed_from_mapping(
                 self.streams,

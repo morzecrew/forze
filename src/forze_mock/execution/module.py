@@ -75,6 +75,7 @@ from forze.application.contracts.dynamic_read import DynamicReadDepKey
 from forze.application.contracts.embeddings import (
     EmbeddingsProviderDepKey,
 )
+from forze.application.contracts.fleet import FleetDepKey
 from forze.application.contracts.graph import (
     GraphCommandDepKey,
     GraphManagementDepKey,
@@ -218,6 +219,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockDynamicRead,
     ConfigurableMockEmbeddings,
     ConfigurableMockFederatedSearch,
+    ConfigurableMockFleet,
     ConfigurableMockGraph,
     ConfigurableMockGraphManagement,
     ConfigurableMockHttpService,
@@ -496,6 +498,7 @@ class MockDepsModule(DepsModule):
             OutboxAdminDepKey: ConfigurableMockOutboxQuery(module=self),
             DistributedLockQueryDepKey: dlock,
             DistributedLockCommandDepKey: dlock,
+            FleetDepKey: ConfigurableMockFleet(module=self),
             EmbeddingsProviderDepKey: ConfigurableMockEmbeddings(
                 module=self,
                 dimensions=self.embeddings_dimensions,

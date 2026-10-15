@@ -16,6 +16,9 @@ shown as ``read_tenant_stream``) sees only its own tenant's signals. The **outbo
 tenant-global** (tagged: rows carry their ``tenant_id``); only the **stream** is tenant-aware.
 Mock-runnable, no sockets.
 
+It also shows startup assignment: each gateway replica takes the tenants it ranks first for
+in the fleet's membership view, so replicas started together split the tenants between them.
+
 Run it:  uv run python -m examples.recipes.realtime_sharded.app
 Exercised by tests/unit/test_examples/test_realtime_sharded.py.
 """
@@ -23,12 +26,20 @@ Exercised by tests/unit/test_examples/test_realtime_sharded.py.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
+from datetime import timedelta
 from uuid import UUID
 
 import structlog
 from pydantic import BaseModel
 
-from forze.application.contracts.realtime import Audience, RealtimeEvent, RealtimeSignal
+from forze.application.contracts.fleet import FleetPort, FleetSpec
+from forze.application.contracts.realtime import (
+    Audience,
+    RealtimeEvent,
+    RealtimeShard,
+    RealtimeSignal,
+)
 from forze.application.contracts.stream import StreamQueryDepKey
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.execution import DepsRegistry, ExecutionContext
@@ -142,6 +153,37 @@ async def read_tenant_stream(
 
 
 # --8<-- [end:consume]
+
+
+# --8<-- [start:assign]
+GATEWAYS = FleetSpec(name="realtime-gateways", ttl=timedelta(seconds=10))
+
+
+async def assign_shard(
+    fleet: FleetPort,
+    me: str,
+    tenants: Sequence[UUID],
+    *,
+    spec: FleetSpec = GATEWAYS,
+) -> RealtimeShard:
+    """Take the tenants this replica ranks first for, among replicas serving or starting."""
+
+    # Beat through one ttl, at a third of it, so replicas starting meanwhile see this one
+    # and it sees them; rank over the last beat's view.
+    view = await fleet.beat(me, "starting", {}, ttl=spec.ttl)
+
+    for _ in range(3):
+        await asyncio.sleep(spec.ttl.total_seconds() / 3)
+        view = await fleet.beat(me, "starting", {}, ttl=spec.ttl)
+
+    mine = [
+        t for t in tenants if view.rank(str(t), states=("serving", "starting"))[0] == me
+    ]
+
+    return RealtimeShard(stream_spec=STREAM, tenants=mine)
+
+
+# --8<-- [end:assign]
 
 
 async def main() -> None:

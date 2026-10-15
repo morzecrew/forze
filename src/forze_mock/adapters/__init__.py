@@ -29,6 +29,7 @@ from forze_mock.adapters.dynamic_read import (
 )
 from forze_mock.adapters.embeddings import MockHashEmbeddingsProvider
 from forze_mock.adapters.events import RecordingAuthnEventSink
+from forze_mock.adapters.fleet import MockFleetAdapter
 from forze_mock.adapters.graph import MockGraphAdapter, MockGraphManagementAdapter
 from forze_mock.adapters.http import MockHttpRegistry, MockHttpServiceAdapter
 from forze_mock.adapters.idempotency import MockIdempotencyAdapter
@@ -130,6 +131,7 @@ __all__ = [
     "MockQueryParamsRegistry",
     "MockQueryParamsSource",
     "MockDistributedLockAdapter",
+    "MockFleetAdapter",
     "MockDurableWorkflowCommandAdapter",
     "MockDurableWorkflowQueryAdapter",
     "MockDurableWorkflowScheduleCommandAdapter",

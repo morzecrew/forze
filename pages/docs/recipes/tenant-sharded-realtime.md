@@ -51,6 +51,37 @@ check. This is what `TenantShardedSignalSource` runs once per assigned tenant:
 --8<-- "recipes/realtime_sharded/app.py:consume"
 ```
 
+## Assign tenants at startup
+
+The shard is a fixed snapshot, so something has to pick each replica's tenants before its
+gateway starts. [Fleet membership](../running-in-prod/fleet-membership.md) can: each
+replica beats as `starting` through one `ttl`, so replicas starting together see each
+other, then takes the tenants it ranks first for among the serving and starting members:
+
+```python
+--8<-- "recipes/realtime_sharded/app.py:assign"
+```
+
+The shard is consumed when the steps are built, before the runtime exists, so build the
+port directly — a `RedisFleetAdapter` over a `RedisClient` you initialize for it. Once
+assigned, keep the replica in the fleet with the
+[membership step](../running-in-prod/fleet-membership.md#join-the-fleet) on the same
+`FleetSpec` and member id, so replicas started later rank it in; it beats `serving` once
+startup finishes. The first replica of a fresh fleet finds only itself and takes every
+tenant.
+
+The assignment is a snapshot, sound only when every replica starts within one `ttl` of
+the others — an all-at-once rollout — and only while the fleet keeps that shape:
+
+- a **rolling** deploy or restart leaves tenants with no owner: each new replica leaves
+  to an old one the tenants it ranks first for, and the old one is then stopped;
+- a replica that dies leaves its tenants unowned until the fleet restarts;
+- a replica that starts later, or whose beats land after another's read, can take tenants
+  another replica also holds, or leave some that no replica holds.
+
+Moving tenants between running replicas is not covered; to reassign, restart every
+replica at once.
+
 ## Notes
 
 - **The outbox stays tenant-global by design.** Only the stream is `tenant_aware`; the
@@ -61,6 +92,7 @@ check. This is what `TenantShardedSignalSource` runs once per assigned tenant:
   per-tenant read: one consume loop per assigned tenant, bound to it. Hand the same
   `RealtimeShard` to the source, the group-ensure step, and (for a partitioned outbox) the
   relay so they can't drift.
-- **Assignment, not discovery** — the shard is a fixed snapshot resolved at startup, so
-  onboarding a new tenant (or rebalancing) needs a restart. Broker-level enforcement (so a
+- **Assignment, not discovery** — the shard is a fixed snapshot resolved at startup (by
+  rank, as above, or by your own assignment), so onboarding a new tenant (or rebalancing)
+  needs a restart. Broker-level enforcement (so a
   rogue producer can't write another tenant's key) is the operator's job (Redis ACLs).

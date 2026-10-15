@@ -38,6 +38,7 @@ A store read under the bound tenant scopes itself — adapters call
 | Meilisearch | search | `tagged` (tenant filter) | per-tenant index | `RoutedMeilisearchClient` | `dedicated` |
 | Neo4j | graph | `tagged` (tenant property) | per-tenant database | `RoutedNeo4jClient` † | `dedicated` † |
 | Redis | cache, counter, idempotency, lock | `namespace` (key prefix) | per-tenant namespace | `RoutedRedisClient` | `dedicated` |
+| Redis | [fleet membership](../running-in-prod/fleet-membership.md) | **refused** § | **refused** § | — | outside the floor § |
 | S3 / GCS | object storage | `namespace` (path prefix) | per-tenant bucket | routed client | `dedicated` |
 | HTTP outbound | http service | — | — | per-tenant credentials (routed) | `dedicated` |
 | Served models (HTTP) | inference | `tagged` (bound tenant required) | per-tenant `model_name` | `RoutedInferenceHttpClient` | `dedicated` |
@@ -49,6 +50,11 @@ statements are written at runtime, so an isolating predicate cannot be reviewed,
 cannot be checked at wiring, and when it is missing the read *succeeds* with another
 tenant's rows. A per-tenant schema is the weakest container that does the scoping the
 statement cannot be trusted to do.
+
+§ A fleet is one service's replicas, whatever tenants they serve, and it beats from lifecycle
+hooks with no tenant bound. A fleet route that is `tenant_aware` or resolves its namespace per
+tenant is refused when configured (`fleet.tenant_scoped_route`), and fleet routes are left
+out of the module's isolation floor.
 
 † Neo4j reaches `namespace` with a per-tenant database on one driver (the usual
 multi-tenant Neo4j shape); `dedicated` needs a genuinely per-tenant driver/instance,
