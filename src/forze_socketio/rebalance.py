@@ -20,7 +20,7 @@ import asyncio
 import math
 from collections.abc import Callable, Sequence
 from datetime import timedelta
-from typing import cast, final
+from typing import final
 
 import attrs
 from socketio.async_server import AsyncServer
@@ -47,6 +47,8 @@ from .drain import (
     _closable,
     _close_spread,
     _ClosesFinishing,
+    _open,
+    _still_closable,
     _transports,
     require_close_internals,
 )
@@ -58,14 +60,6 @@ __all__ = [
     "connection_rebalance_lifecycle_step",
     "connection_report",
 ]
-
-
-def _open(sio: AsyncServer, eio_sid: str) -> bool:
-    """Whether the Engine.IO connection is still there and nothing is closing it."""
-
-    socket = sio.eio.sockets.get(eio_sid)
-
-    return socket is not None and not socket.closing and not socket.closed
 
 
 def _require_two_keys(load: str, movable_report: str) -> None:
@@ -326,21 +320,10 @@ class _Rebalance:
     # ....................... #
 
     def _still_movable(self, eio_sid: str) -> bool:
-        """Whether *eio_sid* may still be closed, asked right before its close starts: its
-        client may have joined a namespace that may not move since the tick picked it."""
+        """The drain's re-check, with *movable* as its selector: its client may have joined a
+        namespace that may not move since the tick picked it."""
 
-        manager = self.sio.manager
-        members = [
-            (namespace, sid)
-            for namespace in cast("list[str]", list(manager.get_namespaces()))
-            if (sid := cast("str | None", manager.sid_from_eio_sid(eio_sid, namespace)))
-        ]
-
-        return (
-            bool(members)
-            and _open(self.sio, eio_sid)
-            and bool(_closable({eio_sid: members}, namespaces=self.namespaces, select=self.movable))
-        )
+        return _still_closable(self.sio, eio_sid, namespaces=self.namespaces, select=self.movable)
 
     # ....................... #
 

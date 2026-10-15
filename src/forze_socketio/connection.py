@@ -643,9 +643,10 @@ class _ConnectionLifecycle:
         ``False`` when its transport is gone — closed by the drain or by the client while the
         connect waited: it stops quietly, having been through :meth:`on_disconnect` already,
         and would otherwise fail on the session it no longer has. Raises the refusal to raise
-        when the replica is draining, or when the draining source fails. What *connection*
-        stored is undone first, since a connect that stops never reaches
-        :meth:`on_disconnect`.
+        when the replica is draining, or when the draining source fails; a draining connect is
+        held first, and admitted after all if its connection meanwhile carries another
+        accepted namespace. What *connection* stored is undone when the connect stops without
+        its connection closing, since such a connect never reaches :meth:`on_disconnect`.
         """
 
         if not self.sio.manager.is_connected(sid, self.namespace):
@@ -667,15 +668,28 @@ class _ConnectionLifecycle:
                 "internal", SocketIOConnectionRefusedError(GENERIC_INTERNAL_DETAIL)
             ) from error
 
-        if draining and not await self._beside_an_accepted_namespace(sid):
-            refusal = await self._turn_away(sid, connection)
+        if not draining or await self._beside_an_accepted_namespace(sid):
+            return True
 
-            if refusal is None:
-                return False  # its connection closed while it was held
+        # Held first, in its own task and never the drain's: the client's backoff starts over
+        # whenever a connection opens, so the hold is the backoff. Desynchronization jitter,
+        # not security randomness.
+        await asyncio.sleep(current_entropy_source().as_random().uniform(*_TURN_AWAY_HOLD_SECONDS))
 
-            raise refusal
+        if not self.sio.manager.is_connected(sid, self.namespace):
+            # Closed while it was held — by the drain, or by the client.
+            if self.stats is not None:
+                self.stats.refused(self.namespace, "draining")
 
-        return True
+            if connection is not None:
+                await self._undo_connect(sid, connection, gone=True)
+
+            return False
+
+        if await self._beside_an_accepted_namespace(sid):
+            return True  # a sibling was accepted while it was held: closing would end it too
+
+        raise await self._turn_away(sid, connection)
 
     # ....................... #
 
@@ -704,35 +718,30 @@ class _ConnectionLifecycle:
 
     async def _turn_away(
         self, sid: str, connection: RealtimeConnection | None = None
-    ) -> SocketIOConnectionRefusedError | None:
-        """Turn a connect away while the replica drains; return the refusal to raise, or
-        ``None`` when its connection closed while it was held.
+    ) -> SocketIOConnectionRefusedError:
+        """Turn a held connect away while the replica drains; return the refusal to raise.
 
         The Engine.IO connection is closed, as the drain closes its connections: socket.io's
         JavaScript client then reconnects with its backoff, through the balancer, to a
         replica still ready. A refused connect (CONNECT_ERROR) alone would make it give up
         for good. Only a connect that would be its connection's first accepted namespace
-        gets here (see :meth:`_beside_an_accepted_namespace`).
-
-        Before the close the connect is held for :data:`_TURN_AWAY_HOLD_SECONDS`, in its own
-        task — never the drain's — so a client does not come straight back. A connection that
-        closes during the hold, the drain's own close of it included, is left alone.
+        gets here (see :meth:`_beside_an_accepted_namespace`). The close runs the connect's
+        own disconnect handlers, which undo what it stored; only if the close fails is the
+        connect undone here, and the refusal then reaches the client.
         """
 
         refusal = self._refused("draining", _draining_refusal())
-
-        if connection is not None:
-            await self._undo_connect(sid, connection)
-
-        # Desynchronization jitter, not security randomness.
-        await asyncio.sleep(current_entropy_source().as_random().uniform(*_TURN_AWAY_HOLD_SECONDS))
-
         eio_sid = self.sio.manager.eio_sid_from_sid(sid, self.namespace)
 
-        if eio_sid is None or not self.sio.manager.is_connected(sid, self.namespace):
-            return None
+        try:
+            if eio_sid is not None:
+                await close_transport(self.sio, eio_sid)
 
-        await _best_effort(close_transport(self.sio, eio_sid))
+        except Exception as error:
+            log_server_error(error)
+
+            if connection is not None:
+                await self._undo_connect(sid, connection)
 
         return refusal
 
@@ -926,8 +935,9 @@ def attach_realtime_connection(
     client's backoff starts over whenever a connection opens, so the hold is the backoff. A connect on a connection that already carries
     another namespace this layer accepted is admitted instead, since closing the connection
     would end that one too. It is checked before any other work, again after
-    admission and after authentication, and as the connect's last step; a connect turned
-    away there first undoes its presence, its room and its stored identity. A connect whose
+    admission and after authentication, and as the connect's last step; after the hold it is
+    admitted after all if its connection meanwhile carries another accepted namespace, and
+    a connect turned away late is undone by its own disconnect handlers. A connect whose
     transport closed meanwhile stops quietly at the same checks, and a *draining* that raises
     refuses the connect as an internal error. The refusal ``Server is draining``, data
     ``{"code": "realtime_draining"}``, is raised too and reaches the client only if the close

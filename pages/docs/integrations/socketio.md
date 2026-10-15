@@ -335,7 +335,9 @@ grace period — see [Fit the budget to the grace period](../running-in-prod/shu
 **Choose what closes.** `namespaces` (default `("/",)`) names the namespaces the drain may
 close, and `select(namespace, sid) -> bool` can keep individual connections open. One
 Engine.IO connection carries every namespace a client opened, and closing it ends them
-all, so it closes only when every namespace on it is eligible. `close_spread(sio, targets,
+all, so it closes only when every namespace on it is eligible — checked again right
+before its close, so one that has opened a namespace the drain keeps since it was listed
+stays open. `close_spread(sio, targets,
 window, tail=...)` is the scheduler on its own, for closing connections at other times.
 
 ### What clients see
@@ -358,9 +360,12 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
   socket.io's JavaScript client treats a `connect_error` from the server as final and
   stops. Over long-polling the client sees its next poll fail rather than a close, and
   reconnects the same way. The check runs before authentication, again once admission
-  and authentication have run, and as the connect's last step; a connect turned away late
-  has its presence, room and identity undone first. Only if the close fails does the client
-  see a refusal: `Server is draining`, with `{"code": "realtime_draining"}` as its data.
+  and authentication have run, and as the connect's last step. After the hold the
+  connection is looked at again: one the client already closed is left alone, and one that
+  meanwhile carries another accepted namespace admits the connect after all. The close runs
+  a late connect's own disconnect handlers, which undo its presence and room. Only if the
+  close fails is the connect undone directly and does the client see a refusal: `Server is
+  draining`, with `{"code": "realtime_draining"}` as its data.
 
 `draining=` takes the **serving** runtime's state, `lambda: runtime.draining`, and nothing
 defaults it. The `runtime` that offline replay is wired with is not the one: replay opens a

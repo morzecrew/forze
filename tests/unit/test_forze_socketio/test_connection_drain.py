@@ -474,6 +474,75 @@ class TestDrainStep:
 
     # ....................... #
 
+    async def test_a_connection_that_opened_a_kept_namespace_before_its_close_stays_open(
+        self,
+    ) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+        runtime = _runtime(
+            connection_drain_lifecycle_step(
+                server, window=timedelta(seconds=0.6), tail=timedelta(seconds=0.5), stats=stats
+            )
+        )
+
+        for namespace in ("/", "/game"):
+            attach_realtime_connection(
+                server, namespace=namespace, resolve=_resolve, draining=lambda: runtime.draining
+            )
+
+        first = _engine_socket(server, "eio-0")
+        joining = _engine_socket(server, "eio-1")
+
+        async with runtime.scope():
+            await _connect(server, "eio-0")
+            await _connect(server, "eio-1")
+            draining = asyncio.ensure_future(runtime.drain(timedelta(seconds=5)))
+            await _until(lambda: first.closed, within=1.0)  # the drain is under way
+
+            # Before its own slot, the client opens /game, which the drain keeps; admitted,
+            # since its connection carries an accepted namespace.
+            game = await _connect(server, "eio-1", "/game")
+            await asyncio.wait_for(draining, timeout=5)
+
+        assert not joining.closed  # every namespace re-checked right before the close
+        assert server.manager.is_connected(game, "/game")
+        assert stats.drain_closed == {"closed": 1, "failed": 0, "timed_out": 0}
+
+    # ....................... #
+
+    async def test_a_connection_the_selector_keeps_after_listing_stays_open(self) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+        kept: set[str] = set()
+        runtime = _runtime(
+            connection_drain_lifecycle_step(
+                server,
+                window=timedelta(seconds=0.6),
+                tail=timedelta(seconds=0.5),
+                select=lambda _namespace, sid: sid not in kept,
+                stats=stats,
+            )
+        )
+        attach_realtime_connection(
+            server, namespace="/", resolve=_resolve, draining=lambda: runtime.draining
+        )
+        first = _engine_socket(server, "eio-0")
+        second = _engine_socket(server, "eio-1")
+
+        async with runtime.scope():
+            await _connect(server, "eio-0")
+            sid = await _connect(server, "eio-1")
+            draining = asyncio.ensure_future(runtime.drain(timedelta(seconds=5)))
+            await _until(lambda: first.closed, within=1.0)
+
+            kept.add(sid)  # the selector changes its mind after the listing
+            await asyncio.wait_for(draining, timeout=5)
+
+        assert not second.closed
+        assert stats.drain_closed == {"closed": 1, "failed": 0, "timed_out": 0}
+
+    # ....................... #
+
     async def test_closes_are_spread_over_the_window(self) -> None:
         server = _server()
         clock = asyncio.get_running_loop()
@@ -766,12 +835,12 @@ class TestTurnAwayHold:
     async def test_one_whose_connection_the_drain_closes_while_held_stops_quietly(
         self, monkeypatch: pytest.MonkeyPatch, error_log_buf: Any
     ) -> None:
-        monkeypatch.setattr(connection_module, "_TURN_AWAY_HOLD_SECONDS", (5.0, 5.0))
+        monkeypatch.setattr(connection_module, "_TURN_AWAY_HOLD_SECONDS", (1.0, 1.0))
         server = _server()
         stats = RealtimeConnectionStats()
         runtime = _runtime(
             connection_drain_lifecycle_step(
-                server, window=timedelta(seconds=0.05), tail=timedelta(seconds=1)
+                server, window=timedelta(seconds=0.05), tail=timedelta(seconds=0.5)
             )
         )
         attach_realtime_connection(
@@ -788,14 +857,44 @@ class TestTurnAwayHold:
             began = clock.time()
             await runtime.drain(timedelta(seconds=5))
 
-            assert clock.time() - began < 1.5  # the drain did not wait out the hold
+            assert clock.time() - began < 0.9  # the drain did not wait out the hold
             assert socket.closed  # it closed the held connect's connection at its slot
 
-            held.cancel()  # rather than wait out the 5 s
-            await asyncio.gather(held, return_exceptions=True)
+            await asyncio.wait_for(held, timeout=2.0)  # stops quietly at the end of the hold
 
         assert stats.connect_refused == {("/", "draining"): 1}
         assert error_log_buf.getvalue() == ""
+
+    # ....................... #
+
+    async def test_a_sibling_accepted_during_the_hold_keeps_the_connection_and_admits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(connection_module, "_TURN_AWAY_HOLD_SECONDS", (0.3, 0.3))
+        server = _server()
+        stats = RealtimeConnectionStats()
+        runtime = _runtime()
+        attach_realtime_connection(
+            server, resolve=_resolve, draining=lambda: runtime.draining, stats=stats
+        )
+        # A namespace the app never turns away: it has no draining source.
+        attach_realtime_connection(server, namespace="/game", resolve=_resolve, stats=stats)
+        socket = _engine_socket(server, "eio-1")
+
+        async with runtime.scope():
+            runtime.begin_draining()
+            lobby = asyncio.ensure_future(_connect(server, "eio-1", "/"))
+            await asyncio.sleep(0.05)  # held
+            game = await _connect(server, "eio-1", "/game")  # accepted meanwhile
+
+            lobby_sid = await asyncio.wait_for(lobby, timeout=2.0)
+
+        # Closing the connection now would end /game; the held connect is admitted beside it.
+        assert not socket.closed
+        assert server.manager.is_connected(game, "/game")
+        assert server.manager.is_connected(lobby_sid, "/")
+        assert stats.connections == {"/": 1, "/game": 1}
+        assert stats.connect_refused == {}
 
     # ....................... #
 
@@ -909,15 +1008,13 @@ class TestLateConnect:
                 await late
 
         assert caught.value.error_args["data"] == {"code": "realtime_draining"}
-        # Its Engine.IO connection is closed, so the client reconnects elsewhere.
+        # Its Engine.IO connection is closed, so the client reconnects elsewhere, and its
+        # session went with it; its own disconnect handlers undid the rest.
         assert late_socket.closed
+        assert "eio-2" not in server.eio.sockets
         assert _open(server) == set()
-        # As before it arrived: not online, in no room, no identity in the session.
         assert await presence.count(_ROOM) == 0
         assert list(server.manager.get_participants("/", _ROOM)) == []
-        session = late_socket.session["/"]
-        assert IDENTITY_SESSION_KEY not in session
-        assert CONNECTION_SESSION_KEY not in session
         # eio-1 counted then uncounted by the drain; the late connect never counted.
         assert stats.connections == {"/": 0}
         assert stats.connect_refused == {("/", "draining"): 1}
@@ -1212,27 +1309,35 @@ class TestConnectUnderWay:
     ) -> None:
         server = _server()
         runtime = _runtime()
-        _socket(server, "eio-1", fails=True)  # the transport close raises
+        socket = _socket(server, "eio-1", fails=True)  # the transport close raises
 
         class _Announcing(InMemoryRealtimePresence):
             async def joined(self, room: str, sid: str) -> None:
                 runtime.begin_draining()  # lands after the replay progress was registered
                 await super().joined(room, sid)
 
+        presence = _Announcing()
         _replayed(
             server,
             _runtime(),
             resolve=_resolve,
-            presence=_Announcing(),
+            presence=presence,
             draining=lambda: runtime.draining,
         )
         lifecycle = server.handlers["/"]["connect"].__self__
 
         async with runtime.scope():
-            with pytest.raises(SocketIOConnectionRefusedError):
+            with pytest.raises(SocketIOConnectionRefusedError) as caught:
                 await _connect(server, "eio-1")
 
+        # The close failed, so the refusal is what reaches the client, and the connect was
+        # undone here: as before it arrived.
+        assert caught.value.error_args["data"] == {"code": "realtime_draining"}
         assert lifecycle._replay_progress == {}  # pyright: ignore[reportPrivateUsage]
+        assert await presence.count(_ROOM) == 0
+        assert list(server.manager.get_participants("/", _ROOM)) == []
+        assert IDENTITY_SESSION_KEY not in socket.session["/"]
+        assert CONNECTION_SESSION_KEY not in socket.session["/"]
 
 
 # ----------------------- #

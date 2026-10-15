@@ -88,14 +88,13 @@ def _grant_and_announce(runtime: ExecutionRuntime) -> Any:
     return authorize
 
 
-@asynccontextmanager
-async def _sse(
+def _sse_app(
     hub: RealtimeSseHub | None,
     runtime: ExecutionRuntime,
     *,
     ctx_dep: Callable[[], ExecutionContext] | None = None,
     **attach: Any,
-) -> AsyncIterator[httpx.AsyncClient]:
+) -> FastAPI:
     ctx_dep = ctx_dep or runtime.get_context
     router = APIRouter()
     attach_realtime_sse_route(
@@ -110,6 +109,19 @@ async def _sse(
     app.include_router(router)
     register_exception_handlers(app)
     app.add_middleware(_BindIdentity, ctx_dep=ctx_dep)  # type: ignore[arg-type]
+
+    return app
+
+
+@asynccontextmanager
+async def _sse(
+    hub: RealtimeSseHub | None,
+    runtime: ExecutionRuntime,
+    *,
+    ctx_dep: Callable[[], ExecutionContext] | None = None,
+    **attach: Any,
+) -> AsyncIterator[httpx.AsyncClient]:
+    app = _sse_app(hub, runtime, ctx_dep=ctx_dep, **attach)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -237,6 +249,79 @@ class TestSseDrain:
 
         _assert_told_to_retry(response)
         assert hub.subscribers == 0
+
+    # ....................... #
+
+    async def test_a_stream_blocked_writing_to_a_slow_client_is_cut_off(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from forze_fastapi.realtime import sse as sse_module
+
+        monkeypatch.setattr(sse_module, "_END_GRACE_SECONDS", 0.1)
+        # Held, so its stream is not closed by being collected: only the cut-off closes it.
+        responses: list[Any] = []
+        init = sse_module._LiveSseResponse.__init__
+
+        def held(response: Any, *args: Any, **kwargs: Any) -> None:
+            init(response, *args, **kwargs)
+            responses.append(response)
+
+        monkeypatch.setattr(sse_module._LiveSseResponse, "__init__", held)
+        hub = RealtimeSseHub()
+        runtime = _runtime(hub)
+        app = _sse_app(hub, runtime)
+
+        gone = asyncio.Event()
+        stalled = asyncio.Event()
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+            if message["type"] == "http.response.body" and message["body"]:
+                stalled.set()
+                await gone.wait()  # a client that stopped reading: the write never completes
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "path": "/realtime/sse",
+            "raw_path": b"/realtime/sse",
+            "root_path": "",
+            "query_string": b"",
+            "headers": [],
+            "scheme": "http",
+            "server": ("test", 80),
+            "client": ("test", 1),
+        }
+
+        async with runtime.scope():
+            serving = asyncio.ensure_future(app(scope, receive, send))
+            await _until(lambda: hub.subscribers == 1)
+            hub.publish(
+                RealtimeSignal.of(Audience.principal(str(_PRINCIPAL)), "e", {}), None, event_id="x"
+            )
+            await asyncio.wait_for(stalled.wait(), timeout=2)
+
+            await runtime.drain(timedelta(seconds=5))
+
+            try:
+                done, _ = await asyncio.wait({serving}, timeout=2)
+                assert serving in done, "the stream was not cut off while its write was blocked"
+
+            finally:
+                gone.set()
+                await asyncio.wait_for(serving, timeout=5)
+
+        assert hub.subscribers == 0  # its stream's cleanup ran at the cut-off
+        # Cut off, not finished: the client sees the connection drop and reconnects.
+        assert not any(one.get("more_body") is False for one in sent)
 
 
 # ----------------------- #

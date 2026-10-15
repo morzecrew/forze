@@ -358,6 +358,43 @@ def _drain_targets(
     return _closable(_transports(sio), namespaces=namespaces, select=select)
 
 
+def _open(sio: AsyncServer, eio_sid: str) -> bool:
+    """Whether the Engine.IO connection is still there and nothing is closing it."""
+
+    socket = sio.eio.sockets.get(eio_sid)
+
+    return socket is not None and not socket.closing and not socket.closed
+
+
+def _still_closable(
+    sio: AsyncServer,
+    eio_sid: str,
+    *,
+    namespaces: Sequence[str],
+    select: ConnectionSelector | None,
+) -> bool:
+    """Whether *eio_sid* may still be closed, asked right before its close starts.
+
+    Its client may have opened a namespace that must stay open since the connection was
+    listed — admitted beside the namespace it already had — and closing the connection would
+    end that one too. A connection that is gone, or that something else is closing, is left
+    alone as well.
+    """
+
+    manager = sio.manager
+    members = [
+        (namespace, sid)
+        for namespace in cast("list[str]", list(manager.get_namespaces()))
+        if (sid := cast("str | None", manager.sid_from_eio_sid(eio_sid, namespace)))
+    ]
+
+    return (
+        bool(members)
+        and _open(sio, eio_sid)
+        and bool(_closable({eio_sid: members}, namespaces=namespaces, select=select))
+    )
+
+
 # ....................... #
 
 
@@ -379,7 +416,9 @@ def connection_drain_lifecycle_step(
     keeps the Engine.IO connections whose **every** namespace is in *namespaces* and passes
     *select*, and closes them with :func:`close_spread`. One Engine.IO connection can carry a
     namespace the drain may close and one it may not, and closing it ends both, so a single
-    refusal keeps the whole connection open.
+    refusal keeps the whole connection open. Each connection is checked again right before
+    its close starts, so one whose client has opened a namespace the drain keeps since the
+    listing stays open too.
 
     The window and the tail are fitted to what the phase may still take after listing: the
     tail to at most half of it, the window to at most the rest, never longer than
@@ -404,7 +443,14 @@ def connection_drain_lifecycle_step(
     covered = tuple(namespaces)
 
     async def close(targets: list[tuple[str, str]], window: timedelta, tail: timedelta) -> int:
-        return await close_spread(sio, targets, window, tail=tail, stats=stats)
+        return await _close_spread(
+            sio,
+            targets,
+            window,
+            tail=tail,
+            stats=stats,
+            still=lambda eio_sid: _still_closable(sio, eio_sid, namespaces=covered, select=select),
+        )
 
     step = spread_drain_lifecycle_step(
         collect=lambda: _drain_targets(sio, namespaces=covered, select=select),
