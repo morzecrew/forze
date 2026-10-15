@@ -7,7 +7,12 @@ import pytest
 
 pytest.importorskip("redis")
 
-from forze.application.contracts.dlock import AcquiredLock, DistributedLockSpec
+from forze.application.contracts.dlock import (
+    FENCE_OUT_OF_RANGE_CODE,
+    AcquiredLock,
+    DistributedLockSpec,
+)
+from forze.base.exceptions import CoreException
 from forze_redis.adapters import RedisDistributedLockAdapter
 
 
@@ -34,7 +39,7 @@ async def test_acquire_runs_script_and_returns_fencing_token() -> None:
     assert "SET" in script and "NX" in script and "INCR" in script
     assert keys[0] == "dlock:ns:my-key"
     assert keys[1] == "dlock:ns:my-key:fence"
-    assert list(args) == ["owner-a", 10_000]
+    assert list(args) == ["owner-a", 10_000, str(2**53 - 1)]
 
 
 @pytest.mark.asyncio
@@ -91,3 +96,30 @@ async def test_reset_invokes_script() -> None:
     _script, _keys, argv = client.run_script.call_args[0]
     assert argv[0] == "owner-a"
     assert argv[1] == 10_000
+
+
+@pytest.mark.asyncio
+async def test_advance_fence_sends_strings_on_the_acquire_fence_key() -> None:
+    client = AsyncMock()
+    client.run_script = AsyncMock(return_value="1000000000000001")
+    adapter = _adapter(client)
+
+    assert await adapter.advance_fence("my-key", past=1_000_000_000_000_001) == 10**15 + 1
+
+    script, keys, args = client.run_script.call_args[0]
+    assert "GET" in script and "SET" in script and "INCR" not in script
+    assert list(keys) == ["dlock:ns:my-key:fence"]
+    assert list(args) == ["1000000000000001"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("past", [-1, 2**53, True, 2.0])
+async def test_advance_fence_refuses_before_sending(past: object) -> None:
+    client = AsyncMock()
+    adapter = _adapter(client)
+
+    with pytest.raises(CoreException) as ei:
+        await adapter.advance_fence("my-key", past=past)  # type: ignore[arg-type]
+
+    assert ei.value.code == FENCE_OUT_OF_RANGE_CODE
+    client.run_script.assert_not_awaited()

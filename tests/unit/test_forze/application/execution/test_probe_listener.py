@@ -652,6 +652,20 @@ class _Client:
         return self.detail, self.ok
 
 
+@attrs.define(slots=True)
+class _GatedClient:
+    """A healthy client whose ``health()`` waits until the test releases it."""
+
+    started: asyncio.Event = attrs.field(factory=asyncio.Event)
+    release: asyncio.Event = attrs.field(factory=asyncio.Event)
+
+    async def health(self) -> tuple[str, bool]:
+        self.started.set()
+        await self.release.wait()
+
+        return "ok", True
+
+
 class TestProbeListenerChecks:
     @staticmethod
     def _runtime(port: int, clients: dict[str, _Client], **kwargs: Any) -> ExecutionRuntime:
@@ -708,6 +722,27 @@ class TestProbeListenerChecks:
         }
         # Liveness runs no check: a pod whose database is down is not to be restarted.
         assert live == (200, '{"status":"alive"}')
+
+    # ....................... #
+
+    @pytest.mark.asyncio
+    async def test_a_drain_announced_during_a_slow_check_answers_draining(self) -> None:
+        port = _free_port()
+        client = _GatedClient()
+        runtime = self._runtime(port, {"postgres": client})
+
+        async with runtime.scope():
+            request = asyncio.create_task(_request(port, "/readyz"))
+            await asyncio.wait_for(client.started.wait(), timeout=5)
+
+            runtime.begin_draining()
+            client.release.set()
+            status, body = await asyncio.wait_for(request, timeout=5)
+
+        # The check passed, but the replica announced its drain while it ran: answering
+        # ``ready`` would tell the balancer to keep routing to a leaving replica.
+        assert status == 503
+        assert json.loads(body) == {"status": "draining"}
 
     # ....................... #
 

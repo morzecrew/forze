@@ -190,6 +190,7 @@ nav = [
             "recipes/background-workflow.md",
             "recipes/temporal-worker.md",
             "recipes/scheduled-queue-jobs.md",
+            "recipes/run-on-one-replica.md",
         ] },
     ] },
     { "Reference" = [
