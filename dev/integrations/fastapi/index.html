@@ -3885,6 +3885,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#drain-the-realtime-tails" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Drain the realtime tails
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6648,6 +6659,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#drain-the-realtime-tails" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Drain the realtime tails
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-it-provides" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -7078,7 +7100,9 @@ principal/topic rooms for the connection's lifetime — so "is this user online"
 counts an <abbr title="Server-Side Encryption">SSE</abbr> stream and a socket identically. With a TTL-backed store (e.g.
 <code>RedisRealtimePresence</code>) also register
 <code>realtime_sse_presence_heartbeat_lifecycle_step(hub, presence)</code> so live streams
-re-assert within the TTL.</p>
+re-assert within the TTL. A closing stream leaves its rooms even when it closes cancelled —
+its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
+rest expire with the store's TTL.</p>
 <h2 id="realtime-over-raw-websocket">Realtime over raw WebSocket<a class="headerlink" href="#realtime-over-raw-websocket" title="Permanent link">&para;</a></h2>
 <p><code>attach_realtime_ws_route</code> is the duplex sibling for clients that cannot run
 Socket.IO (strict-protocol peers, non-JS embedded clients): the same replay + live
@@ -7139,6 +7163,50 @@ the connection rather than falling through to the next.</p>
 <p><code>forze_socketio.build_socketio_connection_resolver</code> is the same ladder over a
 Socket.IO handshake, so a deployment serving both transports authenticates by one set
 of rules.</p>
+<h2 id="drain-the-realtime-tails">Drain the realtime tails<a class="headerlink" href="#drain-the-realtime-tails" title="Permanent link">&para;</a></h2>
+<p>A replica that leaves with open <abbr title="Server-Side Encryption">SSE</abbr> streams and WebSocket tails should end them while it
+still serves, a few at a time, so the clients reconnect to replicas that are still ready
+instead of all at once when the server stops. Both live legs subscribe to the same hub, so
+one drain step covers them. Register it beside the tail step:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi.realtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">RealtimeSseHub</span><span class="p">,</span> <span class="n">realtime_sse_drain_lifecycle_step</span>
+
+<span class="n">hub</span> <span class="o">=</span> <span class="n">RealtimeSseHub</span><span class="p">()</span>
+<span class="n">step</span> <span class="o">=</span> <span class="n">realtime_sse_drain_lifecycle_step</span><span class="p">(</span>
+    <span class="n">hub</span><span class="p">,</span>
+    <span class="n">window</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">10</span><span class="p">),</span>  <span class="c1"># spread the ends over this</span>
+    <span class="n">tail</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
+<span class="p">)</span>
+</code></pre></div>
+<p>When the runtime drains — on <code>SIGTERM</code> under <a href="#graceful-shutdown-under-uvicorn"><code>serve_uvicorn</code></a>
+— its phase ends every subscription the hub holds, end <em>i</em> of <em>n</em> at <code>i × window / n</code>,
+with the window fitted to the phase's allowance like the
+<a href="../socketio/#drain-a-replica">Socket.IO drain</a>:</p>
+<ul>
+<li><strong>An <abbr title="Server-Side Encryption">SSE</abbr> stream</strong> finishes its response, and the browser reconnects with its
+  <code>Last-Event-ID</code>.</li>
+<li><strong>A WebSocket tail</strong> closes with 1012 (service restart), and the client reconnects with
+  <code>last_event_id</code>.</li>
+</ul>
+<p>An <abbr title="Server-Side Encryption">SSE</abbr> stream still replaying the mailbox when the phase reaches it ends once its replay
+has. One not finished 5 s after its end — blocked writing to a client that stopped reading,
+say — is cut off: its connection closes, the server logs the response as incomplete, and the
+browser resumes from its <code>Last-Event-ID</code> all the same. A WebSocket
+closes at once, mid-replay or mid-write to a slow client — the close is bounded — and
+resumes from <code>last_event_id</code> elsewhere. A WebSocket route attached without a
+hub has no live tail, and the drain does not reach it.</p>
+<p>While the replica drains, from the drain's announcement on, the routes turn new connections
+away. The drain step tells them through the hub, so it does not matter what <code>ctx_dep</code>
+returns; a route without a hub reads the state from that context instead:</p>
+<ul>
+<li><strong>A new <abbr title="Server-Side Encryption">SSE</abbr> request</strong> is answered 200 with a stream that carries only a <code>retry:</code> of
+  1–3 seconds, jittered, and ends at once, with <code>X-Error-Code: realtime_draining</code>. A
+  browser <code>EventSource</code> reconnects after it, through the balancer; any status but 200 would
+  end it for good.</li>
+<li><strong>A new WebSocket upgrade</strong> is accepted and then closed with 1012, as the route's other
+  refusals are, because a close before accept is an opaque 403.</li>
+</ul>
 <h2 id="what-it-provides">What it provides<a class="headerlink" href="#what-it-provides" title="Permanent link">&para;</a></h2>
 <p>Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
 runs them. The surface, at a glance:</p>
@@ -7189,6 +7257,10 @@ runs them. The surface, at a glance:</p>
 <tr>
 <td><code>realtime_sse_presence_heartbeat_lifecycle_step</code></td>
 <td><abbr title="Server-Side Encryption">SSE</abbr> streams report into the shared presence store (TTL heartbeat)</td>
+</tr>
+<tr>
+<td><code>realtime_sse_drain_lifecycle_step</code></td>
+<td>end the <abbr title="Server-Side Encryption">SSE</abbr> streams and WebSocket tails spread over a window when the replica drains</td>
 </tr>
 <tr>
 <td><code>attach_realtime_ws_route</code></td>

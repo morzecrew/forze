@@ -6799,6 +6799,12 @@ to the in-flight bound) — sequence-dependent commands must wait for their acks
   Socket.IO refuses the connection with a client-safe message; <abbr title="Server-Side Encryption">SSE</abbr> responds with
   the standard error envelope and the <code>X-Error-Code</code> header; WebSocket accepts and
   immediately closes with code 1008, the client-safe summary in the close reason.</li>
+<li><strong>Draining</strong> (the replica is leaving): a connection it closes, and a connect it turns
+  away, end at the transport — Socket.IO closes the Engine.IO connection, <abbr title="Server-Side Encryption">SSE</abbr> answers 200
+  with only a jittered <code>retry:</code> and <code>X-Error-Code: realtime_draining</code>, WebSocket accepts and
+  closes with code 1012 — and the client reconnects as from any other drop, with backoff.
+  Socket.IO raises the refusal <code>Server is draining</code>, data <code>{"code": "realtime_draining"}</code>,
+  only when that close failed.</li>
 <li><strong>Command errors</strong> (Socket.IO ack callbacks, WebSocket <code>ack</code> frames): the error
   is <code>{ "detail", "code", "kind", "context" }</code> — the same envelope shape the HTTP
   routes render.</li>

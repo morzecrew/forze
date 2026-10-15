@@ -3892,6 +3892,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#drain-a-replica" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Drain a replica
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Drain a replica">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-clients-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What clients see
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admit-connects" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Admit connects
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#count-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Count connections
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6615,6 +6665,56 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#drain-a-replica" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Drain a replica
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Drain a replica">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-clients-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What clients see
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admit-connects" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Admit connects
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#count-connections" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Count connections
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#settings" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6953,6 +7053,132 @@ per-device cursors, trimming, and opting an event out (<code>offline_delivery=Fa
   before serving (the gateway reads but doesn't create it) and reclaims stranded pending
   entries so a durable signal whose consumer died is recovered, not lost.</li>
 </ul>
+<h2 id="drain-a-replica">Drain a replica<a class="headerlink" href="#drain-a-replica" title="Permanent link">&para;</a></h2>
+<p>When a replica leaves — a deploy, a scale-down — its sockets would otherwise close all at
+once when the process stops, and every client would reconnect to the replicas that are left
+in the same second. Instead, the replica closes its connections gently while it still
+serves: spread over a window, after readiness has failed, so the clients reconnect through
+the balancer to replicas that are still ready, a few at a time.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">uvicorn</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.execution</span><span class="w"> </span><span class="kn">import</span> <span class="n">build_runtime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_fastapi</span><span class="w"> </span><span class="kn">import</span> <span class="n">serve_uvicorn</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_socketio</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">RealtimeConnectionStats</span><span class="p">,</span>
+    <span class="n">attach_realtime_connection</span><span class="p">,</span>
+    <span class="n">build_socketio_asgi_app</span><span class="p">,</span>
+    <span class="n">build_socketio_server</span><span class="p">,</span>
+    <span class="n">connection_drain_lifecycle_step</span><span class="p">,</span>
+    <span class="n">instrument_realtime_connections</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">sio</span> <span class="o">=</span> <span class="n">build_socketio_server</span><span class="p">()</span>
+<span class="n">stats</span> <span class="o">=</span> <span class="n">RealtimeConnectionStats</span><span class="p">()</span>
+<span class="n">runtime</span> <span class="o">=</span> <span class="n">build_runtime</span><span class="p">(</span>
+    <span class="n">lifecycle_steps</span><span class="o">=</span><span class="n">connection_drain_lifecycle_step</span><span class="p">(</span>
+        <span class="n">sio</span><span class="p">,</span>
+        <span class="n">window</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">20</span><span class="p">),</span>  <span class="c1"># spread the closes over this</span>
+        <span class="n">tail</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>     <span class="c1"># then wait this long for the slow ones</span>
+        <span class="n">stats</span><span class="o">=</span><span class="n">stats</span><span class="p">,</span>
+    <span class="p">),</span>
+    <span class="n">drain_budget</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
+<span class="p">)</span>
+<span class="n">attach_realtime_connection</span><span class="p">(</span>
+    <span class="n">sio</span><span class="p">,</span>
+    <span class="n">resolve</span><span class="o">=</span><span class="n">resolve_connection</span><span class="p">,</span>
+    <span class="n">draining</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">runtime</span><span class="o">.</span><span class="n">draining</span><span class="p">,</span>  <span class="c1"># turn connects away while leaving</span>
+    <span class="n">stats</span><span class="o">=</span><span class="n">stats</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">instrument_realtime_connections</span><span class="p">(</span><span class="n">stats</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+    <span class="n">serve_uvicorn</span><span class="p">(</span>
+        <span class="n">uvicorn</span><span class="o">.</span><span class="n">Config</span><span class="p">(</span><span class="n">build_socketio_asgi_app</span><span class="p">(</span><span class="n">sio</span><span class="p">,</span> <span class="n">other_asgi_app</span><span class="o">=</span><span class="n">api</span><span class="p">)),</span>
+        <span class="n">runtime</span><span class="p">,</span>
+        <span class="n">drain_budget</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">),</span>
+        <span class="n">announce_delay</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">),</span>  <span class="c1"># at least the balancer's notice time</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>Set <code>announce_delay</code>.</strong> Readiness fails at once, but a balancer takes a while to notice —
+for Kubernetes, the readiness probe's <code>periodSeconds × failureThreshold</code>, plus the time to
+drop the endpoint. Until it does, it keeps sending reconnects here. With no delay — the
+default — the drain closes connections at once and every client is turned away again on
+its first reconnect; with <code>announce_delay</code> at least that long, the closes start once the
+balancer sends reconnects elsewhere.</p>
+<p>The step registers a <a href="../../running-in-prod/shutdown-and-fleets/#drain-phases">drain phase</a>.
+When the runtime drains — on <code>SIGTERM</code> under
+<a href="../fastapi/#graceful-shutdown-under-uvicorn"><code>serve_uvicorn</code></a>, before uvicorn's own
+shutdown closes every socket at once — the phase lists this node's connections and closes
+them at the Engine.IO level, close <em>i</em> of <em>n</em> starting at <code>i × window / n</code>. Each close runs
+on its own, so a slow one never holds up the next; after the last start the phase waits up
+to <code>tail</code>, then stops waiting. A close still running carries on in the background — it
+may be inside your disconnect handler — and is counted <code>timed_out</code>. The phase never takes
+more than <code>window + tail</code>, but teardown waits for those closes, up to the runtime's
+<code>shutdown_step_timeout</code>, before it closes any client: a disconnect handler writing to your
+presence store finds it open. Past that the closes are no longer waited for, and process
+exit can still cut one short.</p>
+<p><strong>Fit the window to the budget.</strong> The phase measures what is left of its allowance after
+listing, gives the tail at most half of it and the window at most the rest. A budget
+smaller than <code>window + tail</code> shrinks both; a larger one never lengthens the window, so a
+generous budget does not slow the drain down. Under 100 ms the phase is skipped and the
+connections close when the server stops. The budget itself has to fit the orchestrator's
+grace period — see <a href="../../running-in-prod/shutdown-and-fleets/#fit-the-budget-to-the-grace-period">Fit the budget to the grace period</a>.</p>
+<p><strong>Choose what closes.</strong> <code>namespaces</code> (default <code>("/",)</code>) names the namespaces the drain may
+close, and <code>select(namespace, sid) -&gt; bool</code> can keep individual connections open. One
+Engine.IO connection carries every namespace a client opened, and closing it ends them
+all, so it closes only when every namespace on it is eligible — checked again right
+before its close, so one that has opened a namespace the drain keeps since it was listed
+stays open. <code>close_spread(sio, targets,
+window, tail=...)</code> is the scheduler on its own, for closing connections at other times.</p>
+<h3 id="what-clients-see">What clients see<a class="headerlink" href="#what-clients-see" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>socket.io's JavaScript client</strong> reports a transport close (<code>"transport close"</code>) and
+  reconnects with its usual backoff. A namespace-level <code>disconnect</code> would read as
+  <code>"io server disconnect"</code>, after which it does not reconnect on its own — which is why the
+  drain closes the transport instead.</li>
+<li><strong>The Python client</strong> (python-socketio) stops after either kind of close. Reconnect it
+  yourself.</li>
+<li><strong>A connect that arrives while the replica drains</strong> is turned away the same way: its
+  Engine.IO connection is closed, and the JavaScript client reconnects — through the
+  balancer, which by then sends it elsewhere. A connect on a connection that already
+  carries another accepted namespace — one the drain kept open — is admitted instead:
+  closing the connection would end that namespace too, and the connect goes with the
+  connection when the drain or the process closes it. The client's backoff starts over
+  whenever a connection opens, so a turned-away connect is held for a random 1–5 seconds
+  before its connection closes: the hold is the backoff, and spreads the retries. A
+  refused connect would not do:
+  socket.io's JavaScript client treats a <code>connect_error</code> from the server as final and
+  stops. Over long-polling the client sees its next poll fail rather than a close, and
+  reconnects the same way. The check runs before authentication, again once admission
+  and authentication have run, and as the connect's last step. After the hold the
+  connection is looked at again: one the client already closed is left alone, and one that
+  meanwhile carries another accepted namespace admits the connect after all. The close runs
+  a late connect's own disconnect handlers, which undo its presence and room. Only if the
+  close fails is the connect undone directly and does the client see a refusal: <code>Server is
+  draining</code>, with <code>{"code": "realtime_draining"}</code> as its data.</li>
+</ul>
+<p><code>draining=</code> takes the <strong>serving</strong> runtime's state, <code>lambda: runtime.draining</code>, and nothing
+defaults it. The <code>runtime</code> that offline replay is wired with is not the one: replay opens a
+scope of its own per connect, so it runs on a runtime that never drains with the replica.</p>
+<p>Spreading the closes spreads the reconnects, but a balancer that sends them all to one
+replica still overloads it. Route WebSocket traffic <strong>least-connections</strong>, not round-robin
+or by hash, so the reconnects fill the replicas with room.</p>
+<h3 id="admit-connects">Admit connects<a class="headerlink" href="#admit-connects" title="Permanent link">&para;</a></h3>
+<p><code>attach_realtime_connection(..., admission=...)</code> takes an async callable that receives the
+<code>SocketIOConnect</code> (sid, namespace, environ, auth) before the protocol is negotiated or the
+connection authenticated. Return to admit it; awaiting delays the connect, so an app can
+pace admissions by its own rules — priority lanes, a per-tenant budget. Raise a
+<code>CoreException</code> to refuse it: a client-safe error's summary reaches the client, a
+server-side kind shows the generic detail and is logged.</p>
+<h3 id="count-connections">Count connections<a class="headerlink" href="#count-connections" title="Permanent link">&para;</a></h3>
+<p><code>instrument_realtime_connections(stats)</code> exports <code>forze.realtime.connections</code> (open
+connections per namespace), <code>forze.realtime.connect_refused</code> (by reason: <code>protocol</code>,
+<code>auth</code>, <code>draining</code>, <code>admission</code>, <code>internal</code>) and <code>forze.realtime.drain_closed</code> (closes the
+drain started, by outcome). See the <a href="../../reference/metrics/#realtime-connections">metric catalog</a>.</p>
 <h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
 <p><code>SocketIOSettings</code> carries the Redis backplane: the URL (as a <code>SecretStr</code> — it holds the
 password), the channel, and whether this process publishes without subscribing. Build the
@@ -7010,6 +7236,14 @@ URL from a <code>RedisSettings.dsn</code>; this package cannot import <code>forz
 <tr>
 <td><code>realtime_identity_expiry_lifecycle_step</code></td>
 <td>drop connections whose credential (<code>expires_at</code>) has lapsed</td>
+</tr>
+<tr>
+<td><code>connection_drain_lifecycle_step</code> + <code>close_spread</code></td>
+<td>close a leaving replica's connections spread over a window, before the server stops</td>
+</tr>
+<tr>
+<td><code>RealtimeConnectionStats</code> + <code>instrument_realtime_connections</code></td>
+<td>open and refused connects, and the drain's closes</td>
 </tr>
 <tr>
 <td><code>realtime.reauth</code> (built-in event)</td>

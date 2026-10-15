@@ -7057,6 +7057,13 @@ ignores its cancellation.</p>
 <p>Phases are not the background loops registered in <code>ctx.drainables</code> — relays,
 consumers, pollers. Those stop after the gate has closed, between units of work.
 A phase runs before that, while the replica still serves, which is the point of it.</p>
+<p>Two phases ship with forze, both closing realtime connections spread over a window so
+their clients reconnect elsewhere a few at a time: <code>connection_drain_lifecycle_step</code> for
+<a href="../../integrations/socketio/#drain-a-replica">Socket.IO</a>, and
+<code>realtime_sse_drain_lifecycle_step</code> for the
+<a href="../../integrations/fastapi/#drain-the-realtime-tails">FastAPI <abbr title="Server-Side Encryption">SSE</abbr> and WebSocket tails</a>.
+<code>spread_drain_lifecycle_step</code> in <code>forze.application.execution.background</code> is the same
+phase for connections of your own.</p>
 <h3 id="what-a-step-can-read">What a step can read<a class="headerlink" href="#what-a-step-can-read" title="Permanent link">&para;</a></h3>
 <p>A step cannot hold the runtime that runs it: the runtime is built around its
 lifecycle plan, so it does not exist yet when its steps are built. A step reads

@@ -9531,6 +9531,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <p><strong>An embedded uvicorn drains the runtime on <code>SIGTERM</code> before it stops.</strong> <code>forze_fastapi.serve_uvicorn(config, runtime, drain_budget=)</code> runs <code>runtime.drain()</code> on the first <code>SIGTERM</code> or <code>SIGINT</code>; a <code>SIGINT</code> during it forces the exit. A finite graceful timeout is set when none is, so an open stream cannot hold the exit.</p>
 </li>
 <li>
+<p><strong>A leaving replica closes its socket.io connections spread over a window, and turns new ones away.</strong> <code>connection_drain_lifecycle_step(sio, window=, tail=)</code> closes them with <code>close_spread</code> in a drain phase, before the server stops; <code>attach_realtime_connection(draining=)</code> closes the transport of connects meanwhile.</p>
+</li>
+<li>
+<p><strong>FastAPI's <abbr title="Server-Side Encryption">SSE</abbr> and WebSocket live tails drain the same way.</strong> <code>realtime_sse_drain_lifecycle_step(hub, window=, tail=)</code> ends them spread over a window; a new stream is told to retry, a new upgrade gets a 1012 close. <code>spread_drain_lifecycle_step</code> is the phase for connections of your own.</p>
+</li>
+<li>
+<p><strong>Apps can admit or delay socket.io connects, and connections are counted.</strong> <code>attach_realtime_connection(admission=)</code> runs before authentication; <code>instrument_realtime_connections(RealtimeConnectionStats)</code> exports open connections, refused connects by reason, and drain closes.</p>
+</li>
+<li>
 <p><strong>The worker probe listener can check dependencies, and needs no runtime.</strong> <code>probe_listener_step(checks=, check_timeout=)</code> answers through <code>evaluate_readiness</code>, the evaluator <code>attach_readiness_route</code> now uses, so both answer alike from the same probes. Steps read <code>ctx.lifecycle.started</code> and <code>.announced</code>.</p>
 </li>
 <li>
@@ -9549,6 +9558,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The <code>socketio</code> extra bounds <code>python-engineio</code> below 5.</strong> The connection drain and a draining replica's turn-away close connections through its internals, and refuse at assembly a server that lacks them.</p>
+</li>
+<li>
 <p><strong>Readiness waits for startup, and <code>runtime.draining</code> turns true when a drain is announced.</strong> <code>runtime.ready</code>, the readiness route and the probe listener answer <code>503</code> until startup finishes; <code>ctx.drain_gate.draining</code> alone means refused. <strong>Breaking</strong> for a startup probe on <code>/readyz</code> sized for the earlier <code>200</code>.</p>
 </li>
 <li>
@@ -9561,6 +9573,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A realtime stream whose client disconnects mid-wait now leaves its presence rooms.</strong> An <abbr title="Server-Side Encryption">SSE</abbr> stream or WebSocket tail cancelled while waiting kept its member counted in a shared presence store such as Redis until the TTL; the leave now runs shielded, bounded by 2 s.</p>
+</li>
 <li>
 <p><strong>A readiness check whose client is registered only per route says so</strong>, as <code>registered per route only</code>, instead of reporting it <code>not registered</code>.</p>
 </li>
