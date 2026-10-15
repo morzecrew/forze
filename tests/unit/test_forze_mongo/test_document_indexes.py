@@ -8,6 +8,7 @@ import pytest
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.execution import Deps
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument
 from forze_mongo.execution.deps import (
     MongoClientDepKey,
@@ -19,6 +20,7 @@ from forze_mongo.execution.document_indexes import (
     mongo_document_index_spec_for_binding,
     mongo_document_index_validation_lifecycle_step,
 )
+from forze_mongo.kernel.client import RoutedMongoClient
 from forze_mongo.kernel.introspect import MongoIntrospector
 from forze_mongo.kernel.validate_indexes import MongoDocumentIndexSpec
 from tests.support.execution_context import context_from_deps
@@ -119,6 +121,26 @@ class TestMongoDocumentIndexValidationHook:
 
         validate.assert_awaited_once()
         assert validate.await_args.args[0] is introspector
+
+    @pytest.mark.asyncio
+    async def test_a_client_routed_per_tenant_is_refused(self) -> None:
+        # Startup binds no tenant, so a routed client has nothing to route by.
+        routed = RoutedMongoClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant={},
+            tenant_provider=lambda: None,
+            database_name_for_tenant=str,
+        )
+        ctx = context_from_deps(Deps.plain({MongoClientDepKey: routed}))
+        hook = MongoDocumentIndexValidationHook(
+            specs=[MongoDocumentIndexSpec(name="items", write_relation=("db", "col"))],
+        )
+
+        with pytest.raises(CoreException) as caught:
+            await hook(ctx)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "tenant_global_required"
 
 
 def test_lifecycle_step_wraps_hook() -> None:

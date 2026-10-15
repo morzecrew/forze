@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The outbox relay and the durable recovery and scheduler loops stop on a wiring error, logged once,** such as no keyring wired, instead of logging it every tick. One tenant's own configuration error, such as its key's state, still leaves the rest of the shard running.
 
+- **The Temporal schedule bootstrap, the S3 bucket step and Mongo index validation refuse a tenant-scoped client or schedule at startup**, as `tenant_global_required`, instead of failing with `tenant_required`: they run with no tenant bound.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.

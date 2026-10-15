@@ -12,6 +12,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowSpec,
 )
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
@@ -102,7 +103,12 @@ async def _bootstrap_schedules(
     *,
     workflow_configs: Mapping[str, TemporalWorkflowConfig] | None,
 ) -> None:
-    """Upsert declarative schedules registered on the deps container."""
+    """Upsert declarative schedules registered on the deps container.
+
+    Runs at startup, with no tenant bound, so a schedule whose workflow config is
+    ``tenant_aware``, or whose client is routed per tenant, is refused as a
+    ``configuration`` error (``tenant_global_required``).
+    """
 
     if not ctx.deps.exists(TemporalScheduleBootstrapDepKey):
         return
@@ -141,6 +147,10 @@ async def _bootstrap_schedules(
             spec=spec,
             tenant_aware=config.tenant_aware,
             tenant_provider=ctx.inv_ctx.get_tenant,
+        )
+        # Bootstrapped at startup, with no tenant bound.
+        require_tenant_global(
+            adapter, what=f"Temporal schedule bootstrap {bootstrap.schedule_id!r}"
         )
 
         await adapter.upsert(

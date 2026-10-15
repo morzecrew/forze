@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution.context import ExecutionContext
 from forze.application.execution.lifecycle.builtin import (
     ClientShutdownHook,
@@ -133,6 +134,8 @@ class S3BucketStartupHook(LifecycleHook):
 
     async def __call__(self, ctx: ExecutionContext) -> None:
         s3_client = ctx.deps.provide(S3ClientDepKey)
+        # Startup binds no tenant, so a client routed per tenant has nothing to route by.
+        require_tenant_global(s3_client, what="The S3 bucket step")
 
         async with s3_client.client():
             for bucket in self.buckets:
@@ -154,7 +157,8 @@ def s3_bucket_lifecycle_step(
     startup, since nothing could be stored in it. It creates shared infrastructure, so under a
     ``FLEET`` profile wrap it with a singleton lifecycle step. It needs a plain
     :class:`S3Client`: a tenant-routed client has no tenant at startup, so its buckets are
-    created on first write.
+    created on first write, and the step fails startup over one with a ``configuration``
+    error (``tenant_global_required``).
 
     :param name: Step name for collision detection.
     :param buckets: Bucket names to ensure.
