@@ -9,7 +9,8 @@ from typing import Any, cast
 
 import attrs
 
-from ..port_proxy_base import PortProxy
+from forze.application.contracts.deps.proxy import PortProxy
+
 from .protocol import (
     PortCall,
     PortInterceptor,

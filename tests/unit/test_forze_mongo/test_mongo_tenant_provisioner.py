@@ -37,6 +37,10 @@ def _healthy_client() -> AsyncMock:
 
     client = AsyncMock(name="client")
     client.find_one.side_effect = [None, {"_id": str(_TENANT.tenant_id)}]
+    # The driver's ``with_options`` is synchronous; an AsyncMock's returns a coroutine that
+    # nothing awaits.
+    collection = client.collection.return_value
+    collection.with_options = MagicMock(return_value=collection)
 
     return client
 

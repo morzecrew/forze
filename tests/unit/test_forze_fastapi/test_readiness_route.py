@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import socket
 from datetime import timedelta
 from typing import Any, cast
 
@@ -19,6 +18,7 @@ from forze.application.execution.background import probe_listener_step
 from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, exc
 from forze_fastapi.routes import attach_readiness_route
+from tests.support.ports import free_port
 
 # ----------------------- #
 
@@ -318,13 +318,6 @@ class TestReadinessProbes:
 # ----------------------- #
 
 
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-
-        return probe.getsockname()[1]
-
-
 _PARITY_CASES: dict[
     str, tuple[dict[str, _FakeClient], dict[str, DepKey[Any]], str | None, str]
 ] = {
@@ -363,7 +356,7 @@ class TestListenerAndRouteAgree:
         keys: dict[str, DepKey[Any]] = {name: DepKey[Any](name) for name in clients}
         probes = {**keys, **extra}
         timeout = timedelta(seconds=0.05)
-        port = _free_port()
+        port = free_port()
 
         runtime = build_runtime(
             deps=Deps.plain({keys[name]: client for name, client in clients.items()}),

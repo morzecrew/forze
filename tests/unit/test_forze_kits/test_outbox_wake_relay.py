@@ -22,7 +22,7 @@ from forze.application.contracts.outbox import (
 from forze.application.contracts.pubsub import PubSubCommandDepKey
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionContext, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import (
     OutboxRelay,
@@ -202,6 +202,33 @@ async def test_a_tenant_aware_wake_route_fails_the_relay_startup() -> None:
             await step.startup(runtime.get_context())
 
 
+async def test_a_wake_route_on_a_routed_client_fails_the_relay_startup() -> None:
+    # The relay listens with no tenant bound, so a client routed per tenant has nothing to
+    # route its subscription by.
+    from forze.application.contracts.secrets import SecretRef
+    from forze_redis import RedisDepsModule, RedisPubSubConfig
+    from forze_redis.kernel.client import RoutedRedisClient
+
+    routed = RoutedRedisClient(
+        secrets=object(),  # type: ignore[arg-type]
+        secret_ref_for_tenant=lambda tenant_id: SecretRef(path=f"tenants/{tenant_id}"),
+        tenant_provider=lambda: None,
+    )
+    runtime = ExecutionRuntime(
+        deps=DepsRegistry.from_modules(
+            MockDepsModule(),
+            RedisDepsModule(client=routed, pubsub={"outbox-wake": RedisPubSubConfig()}),
+        ).freeze()
+    )
+    step = outbox_relay_background_lifecycle_step(outbox_spec=SPEC, queue_spec=QUEUE, interval=POLL)
+
+    async with runtime.scope():
+        with pytest.raises(CoreException) as caught:
+            await step.startup(runtime.get_context())
+
+    assert caught.value.code == "tenant_global_required"
+
+
 async def test_a_broken_wake_subscription_leaves_the_relay_polling_and_retrying() -> None:
     state = MockState()
     attempts: list[None] = []
@@ -220,6 +247,23 @@ async def test_a_broken_wake_subscription_leaves_the_relay_polling_and_retrying(
             await _until(lambda: len(attempts) >= 3)
             assert startup.listener is not None
             assert not startup.listener.done()
+
+
+async def test_a_wiring_error_stops_the_wake_listener_with_the_loop() -> None:
+    # The loop stops on a wiring error; a listener left behind would keep the subscription
+    # open and consume wakes no relay acts on until shutdown.
+    state = MockState()
+
+    async def _unwired(*_: Any, **__: Any) -> bool:
+        raise exc.configuration("unbound", code="outbox_relay_tenant_unbound")
+
+    with patch.object(_OutboxRelayBackgroundStartup, "_drain_tick", _unwired):
+        async with _running(state) as (_ctx, startup):
+            loop = startup.control.task
+            assert loop is not None
+            await _until(loop.done)
+
+            assert startup.listener is None
 
 
 async def test_a_failed_wake_subscription_is_retried_after_a_jittered_interval() -> None:

@@ -249,3 +249,91 @@ def test_routed_wiring_floor_met_by_routed_client() -> None:
         validation_failed_code="postgres_tenancy_validation_failed",
         required_isolation="dedicated",
     )
+
+
+# ----------------------- #
+# Tenant-global routes: the deployment's, not a tenant's
+
+
+def _validate_redis(
+    *groups: object, routed: bool = False, required: str = "tagged", ceiling: str = "dedicated"
+) -> None:
+    from forze.application.contracts.tenancy import validate_module_tenancy
+
+    validate_module_tenancy(
+        integration="Redis",
+        client_is_routed=routed,
+        groups=groups,  # type: ignore[arg-type]
+        required_isolation=required,  # type: ignore[arg-type]
+        max_supported_isolation=ceiling,  # type: ignore[arg-type]
+        validation_failed_code="redis_tenancy_validation_failed",
+    )
+
+
+def _lock_group(*, tenant_aware: bool = False, per_tenant: bool = False) -> object:
+    from forze.application.contracts.tenancy import TenancyRouteGroup
+
+    return TenancyRouteGroup(
+        kind="dlock",
+        configs={"lifecycle": object()},
+        tenant_aware=lambda _c: tenant_aware,
+        namespace_resolver=lambda _c: (lambda tid: f"app:{tid}") if per_tenant else "app",
+        tenant_global=lambda _c: True,
+    )
+
+
+def _cache_group(*, tenant_aware: bool) -> object:
+    from forze.application.contracts.tenancy import TenancyRouteGroup
+
+    return TenancyRouteGroup(
+        kind="cache", configs={"orders": object()}, tenant_aware=lambda _c: tenant_aware
+    )
+
+
+def test_a_module_whose_only_routes_are_tenant_global_meets_the_floor() -> None:
+    _validate_redis(_lock_group())
+
+
+def test_a_tenant_global_route_sits_beside_scoped_routes() -> None:
+    _validate_redis(_lock_group(), _cache_group(tenant_aware=True))
+
+
+def test_a_tenant_global_route_does_not_cover_an_unscoped_sibling() -> None:
+    with pytest.raises(CoreException) as caught:
+        _validate_redis(_lock_group(), _cache_group(tenant_aware=False))
+
+    assert caught.value.code == "redis_tenancy_validation_failed"
+    assert "cache route 'orders'" in caught.value.summary
+
+
+def test_a_module_with_no_routes_still_derives_none() -> None:
+    with pytest.raises(CoreException) as caught:
+        _validate_redis()
+
+    assert caught.value.details["derived_isolation"] == "none"
+
+
+def test_tenant_global_routes_keep_the_capability_ceiling() -> None:
+    with pytest.raises(CoreException) as caught:
+        _validate_redis(_lock_group(), required="dedicated", ceiling="tagged")
+
+    assert caught.value.details["max_supported_isolation"] == "tagged"
+
+
+@pytest.mark.parametrize(
+    ("group", "routed"),
+    [
+        pytest.param({"tenant_aware": True}, False, id="tenant-aware"),
+        pytest.param({"per_tenant": True}, False, id="per-tenant-namespace"),
+        pytest.param({}, True, id="routed-client"),
+    ],
+)
+def test_a_tenant_scoped_route_cannot_be_tenant_global(
+    group: dict[str, bool], routed: bool
+) -> None:
+    # Used where no tenant is bound: scoped per tenant, it would refuse every call.
+    with pytest.raises(CoreException) as caught:
+        _validate_redis(_lock_group(**group), routed=routed, required=None)  # type: ignore[arg-type]
+
+    assert caught.value.code == "redis_tenancy_validation_failed"
+    assert "dlock route 'lifecycle' is tenant-global" in caught.value.summary

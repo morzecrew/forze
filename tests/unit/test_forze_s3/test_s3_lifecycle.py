@@ -18,7 +18,7 @@ from forze_s3.execution.lifecycle import (
     s3_bucket_lifecycle_step,
     s3_lifecycle_step,
 )
-from forze_s3.kernel.client import S3Client, S3Config
+from forze_s3.kernel.client import RoutedS3Client, S3Client, S3Config
 from tests.support.execution_context import context_from_deps
 
 
@@ -85,7 +85,9 @@ class _MockRoutedS3:
 async def test_routed_client_lifecycle_step_invokes_client() -> None:
     client = _MockRoutedS3()
     ctx = context_from_deps(Deps.plain({S3ClientDepKey: client}))
-    plan = LifecyclePlan.from_steps(routed_client_lifecycle_step("routed_s3_lifecycle", client=client))
+    plan = LifecyclePlan.from_steps(
+        routed_client_lifecycle_step("routed_s3_lifecycle", client=client)
+    )
     frozen = plan.freeze()
 
     await frozen.startup(ctx)
@@ -192,3 +194,17 @@ class TestTheBucketStep:
         step = s3_bucket_lifecycle_step(buckets=(name for name in ("assets", "exports")))
 
         assert step.startup.buckets == ("assets", "exports")  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_a_client_routed_per_tenant_is_refused(self) -> None:
+        # Startup binds no tenant, so a routed client has nothing to route by.
+        routed = RoutedS3Client(
+            secrets=Mock(), secret_ref_for_tenant={}, tenant_provider=lambda: None
+        )
+        ctx = context_from_deps(Deps.plain({S3ClientDepKey: routed}))
+
+        with pytest.raises(CoreException) as caught:
+            await s3_bucket_lifecycle_step(buckets=["assets"]).startup(ctx)
+
+        assert caught.value.kind is ExceptionKind.CONFIGURATION
+        assert caught.value.code == "tenant_global_required"

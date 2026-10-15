@@ -20,7 +20,7 @@ from forze.application.contracts.outbox import (
 from forze.application.contracts.pubsub import PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import (
     OutboxRelay,
@@ -256,15 +256,95 @@ async def test_drain_tick_isolates_a_failing_tenant() -> None:
     logger_mock = MagicMock()
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
-    with patch.object(
-        _OutboxRelayBackgroundStartup, "_relay_once", autospec=True, side_effect=_once
+    with (
+        patch.object(
+            _OutboxRelayBackgroundStartup, "_relay_once", autospec=True, side_effect=_once
+        ),
+        patch("forze_kits.integrations.outbox.lifecycle.logger", logger_mock),
     ):
-        with patch("forze_kits.integrations.outbox.lifecycle.logger", logger_mock):
-            async with runtime.scope():
-                await startup._drain_tick(runtime.get_context(), [_T1, _T2])
+        async with runtime.scope():
+            await startup._drain_tick(runtime.get_context(), [_T1, _T2])
 
     assert seen == [_T1, _T2]  # T1 failed but T2 still drained this tick
     logger_mock.exception.assert_called_once()  # the failing tenant was logged
+
+
+async def _run_relay(startup: _OutboxRelayBackgroundStartup, relay: Any, *, settle: float) -> bool:
+    """Start the relay with *relay* as its queue publish, wait up to *settle*; whether it ended."""
+
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    with (
+        patch.object(OutboxRelay, "to_queue", autospec=True, side_effect=relay),
+        patch("forze_kits.integrations.outbox.lifecycle.logger", MagicMock()),
+    ):
+        async with runtime.scope():
+            await startup(runtime.get_context())
+            assert startup.task is not None
+
+            try:
+                await asyncio.wait({startup.task}, timeout=settle)
+                return startup.task.done()
+
+            finally:
+                await startup.stop(deadline=asyncio.get_running_loop().time() + 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shard", [None, [_T1, _T2]], ids=["unbound", "sharded"])
+async def test_a_wiring_error_stops_the_relay_loop(shard: list[UUID] | None) -> None:
+    # Wiring does not fix itself: the loop stops at the first one instead of logging it for
+    # every batch of every tick.
+    calls: list[object] = []
+
+    async def _relay(self: Any, ctx: Any, *args: Any, **kwargs: Any) -> OutboxRelayResult:
+        calls.append(ctx.inv_ctx.get_tenant())
+        raise exc.configuration("unbound", code="outbox_relay_tenant_unbound")
+
+    startup = _startup(
+        tenants=(lambda: shard) if shard is not None else None,
+        interval=timedelta(milliseconds=10),
+        max_batches_per_tick=3,
+    )
+
+    assert await _run_relay(startup, _relay, settle=0.5)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_one_tenants_configuration_error_leaves_the_rest_of_the_shard_running() -> None:
+    # A tenant's own key, disabled or pending deletion, is a configuration error too. It is
+    # that tenant's, so the shard goes on, and the tenant is tried again next tick.
+    seen: list[UUID] = []
+
+    async def _relay(self: Any, ctx: Any, *args: Any, **kwargs: Any) -> OutboxRelayResult:
+        tenant = ctx.inv_ctx.get_tenant().tenant_id
+        seen.append(tenant)
+
+        if tenant == _T1:
+            raise exc.configuration("AWS KMS key is disabled.")
+
+        return _result(0)
+
+    startup = _startup(tenants=lambda: [_T1, _T2], interval=timedelta(milliseconds=10))
+
+    assert not await _run_relay(startup, _relay, settle=0.3)
+    assert seen.count(_T1) >= 2 and seen.count(_T2) >= 2
+
+
+@pytest.mark.asyncio
+async def test_an_unbound_pass_retries_a_configuration_error_that_is_not_wiring() -> None:
+    calls = 0
+
+    async def _relay(self: Any, ctx: Any, *args: Any, **kwargs: Any) -> OutboxRelayResult:
+        nonlocal calls
+        calls += 1
+        raise exc.configuration("AWS KMS key is disabled.")
+
+    startup = _startup(interval=timedelta(milliseconds=10), max_batches_per_tick=3)
+
+    assert not await _run_relay(startup, _relay, settle=0.3)
+    assert calls >= 2
 
 
 # ----------------------- #

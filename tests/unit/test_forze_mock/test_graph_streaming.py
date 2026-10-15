@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.crypto import FieldEncryption
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.graph import (
     EdgeRef,
     GraphEdgeDirectionality,
@@ -25,6 +26,7 @@ from forze.application.contracts.graph import (
     GraphStreamingAware,
     VertexRef,
 )
+from forze.application.execution import DepsRegistry, ExecutionContext
 from forze.application.integrations.graph import (
     assert_edge_streamable,
     assert_vertex_streamable,
@@ -32,8 +34,9 @@ from forze.application.integrations.graph import (
     stream_keyset_pages,
 )
 from forze.base.exceptions import CoreException, ExceptionKind
-from forze_mock import MockState
+from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters.graph import MockGraphAdapter
+from tests.support.port_wrappers import with_port_wrappers
 
 # ----------------------- #
 
@@ -372,6 +375,18 @@ class TestRefusals:
 
         assert isinstance(graph, GraphStreamingAware)
         assert graph_read_capabilities(graph) == GraphReadCapabilities(
+            supports_vertex_streaming=True,
+            supports_edge_streaming=True,
+        )
+
+    def test_a_wrapped_query_port_reports_its_backend(self) -> None:
+        # ``ctx.graph.query`` comes back wrapped under OTel port spans or port logging; what the
+        # wrapper forwards is the backend's to report.
+        registry = with_port_wrappers(DepsRegistry(modules=[MockDepsModule(state=MockState())]))
+        port = ExecutionContext(deps=registry.freeze().resolve()).graph.query(_spec())
+        assert isinstance(port, PortProxy)  # the wrappers are really there
+
+        assert graph_read_capabilities(port) == GraphReadCapabilities(
             supports_vertex_streaming=True,
             supports_edge_streaming=True,
         )

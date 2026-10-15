@@ -197,9 +197,13 @@ for every messaging resource are in the
 A durable, principal-addressed signal is also stored in a per-recipient **mailbox**, so
 a device offline at emit time receives it on reconnect: give the gateway a
 `mailbox_factory`, and pass `attach_realtime_connection` a `mailbox_factory`, a
-`cursors_factory`, **and** a `runtime`. Replay opens a scope, so all three are required —
-the two factories alone won't enable it (each device has its own cursor, so it never
-re-receives what it acked). For multi-node, use
+`cursors_factory`, **and** the serving `runtime`. All three are required — the two
+factories alone won't enable it (each device has its own cursor, so it never re-receives
+what it acked). Replay and `realtime.ack` run on that runtime's live context, under the
+connection's identity and tenant, so its scope must be open while the server serves, as
+the app's lifespan holds it. With it closed, each connect's replay logs a configuration
+error coded `realtime_replay_scope_closed` and delivers nothing, so that connection's acks
+are ignored. For multi-node, use
 `RedisRealtimePresence` (TTL-backed, so a crashed node's rooms lapse) with
 `realtime_presence_heartbeat_lifecycle_step`, and drop connections whose credential has
 lapsed with `realtime_identity_expiry_lifecycle_step`. The full store-and-forward flow —
@@ -367,9 +371,8 @@ window, tail=...)` is the scheduler on its own, for closing connections at other
   close fails is the connect undone directly and does the client see a refusal: `Server is
   draining`, with `{"code": "realtime_draining"}` as its data.
 
-`draining=` takes the **serving** runtime's state, `lambda: runtime.draining`, and nothing
-defaults it. The `runtime` that offline replay is wired with is not the one: replay opens a
-scope of its own per connect, so it runs on a runtime that never drains with the replica.
+`draining=` takes the serving runtime's state, `lambda: runtime.draining`, and nothing
+defaults it, not even the `runtime` offline replay is wired with.
 
 Spreading the closes spreads the reconnects, but a balancer that sends them all to one
 replica still overloads it. Route WebSocket traffic **least-connections**, not round-robin

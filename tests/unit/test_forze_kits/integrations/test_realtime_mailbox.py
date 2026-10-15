@@ -470,7 +470,9 @@ class TestRetentionIsPaired:
     async def test_a_running_sweeper_satisfies_the_declaration(self) -> None:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
-        step = realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7))
+        step = realtime_mailbox_retention_lifecycle_step(
+            tenants=lambda: [_T1], max_age=timedelta(days=7)
+        )
         runtime = _runtime()
 
         async with runtime.scope():
@@ -502,16 +504,19 @@ class TestRetentionIsPaired:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
         window = timedelta(days=7)
-        step = realtime_mailbox_retention_lifecycle_step(max_age=window)
+        step = realtime_mailbox_retention_lifecycle_step(tenants=lambda: [_T1], max_age=window)
         runtime = _runtime()
+
+        def _refuse(coro, **_kwargs):  # type: ignore[no-untyped-def]
+            # Nothing will ever run or await the loop it was handed; left open, it warns
+            # "never awaited" whenever it is collected, under whichever test is running then.
+            coro.close()
+            raise RuntimeError("no loop")
 
         async with runtime.scope():
             ctx = runtime.get_context()
 
-            with (
-                patch("asyncio.create_task", side_effect=RuntimeError("no loop")),
-                pytest.raises(RuntimeError),
-            ):
+            with patch("asyncio.create_task", _refuse), pytest.raises(RuntimeError):
                 await step.startup(ctx)
 
             with _bind(ctx), pytest.raises(CoreException) as ei:
@@ -527,7 +532,7 @@ class TestRetentionIsPaired:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
         window = timedelta(days=7)
-        step = realtime_mailbox_retention_lifecycle_step(max_age=window)
+        step = realtime_mailbox_retention_lifecycle_step(tenants=lambda: [_T1], max_age=window)
         runtime = _runtime()
         created: list[asyncio.Task[None]] = []
         real_create_task = asyncio.create_task
@@ -572,7 +577,9 @@ class TestRetentionIsPaired:
         # unwired case tells, one level quieter.
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
-        step = realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7))
+        step = realtime_mailbox_retention_lifecycle_step(
+            tenants=lambda: [_T1], max_age=timedelta(days=7)
+        )
         runtime = _runtime()
 
         async with runtime.scope():
@@ -596,7 +603,9 @@ class TestRetentionIsPaired:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
         window = timedelta(days=3)
-        step = realtime_mailbox_retention_lifecycle_step(max_age=window, cursor_max_age=window)
+        step = realtime_mailbox_retention_lifecycle_step(
+            tenants=lambda: [_T1], max_age=window, cursor_max_age=window
+        )
         runtime = _runtime()
 
         async with runtime.scope():
@@ -626,7 +635,7 @@ class TestRetentionIsPaired:
         # window is only evidence if the comparison keeps the value it compares.
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
-        step = realtime_mailbox_retention_lifecycle_step(max_age=swept)
+        step = realtime_mailbox_retention_lifecycle_step(tenants=lambda: [_T1], max_age=swept)
         runtime = _runtime()
 
         async with runtime.scope():
@@ -650,7 +659,7 @@ class TestRetentionIsPaired:
         swept = realtime_mailbox_spec("swept")
         other = realtime_mailbox_spec("other")
         step = realtime_mailbox_retention_lifecycle_step(
-            max_age=timedelta(days=7), mailbox_spec=swept
+            tenants=lambda: [_T1], max_age=timedelta(days=7), mailbox_spec=swept
         )
         runtime = _runtime()
 

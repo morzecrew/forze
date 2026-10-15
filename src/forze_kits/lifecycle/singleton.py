@@ -6,6 +6,7 @@ import attrs
 
 from forze.application.contracts.dlock import DistributedLockSpec
 from forze.application.contracts.execution import LifecycleStep
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution.context import ExecutionContext
 from forze_kits.lifecycle._logger import logger
 
@@ -30,6 +31,7 @@ class _SingletonGuard:
         # Resolve the lock port from the live context, not at wiring time —
         # the adapter only exists once the scope's deps are bound.
         cmd = ctx.dlock.command(self.spec)
+        require_tenant_global(cmd, what=f"Singleton lifecycle step {self.inner.id!r}")
         acquired = await cmd.acquire(self.key, self.owner)
 
         if acquired is None:
@@ -87,7 +89,11 @@ def singleton_lifecycle_step(
 
     The lock command port is resolved from the execution context at startup
     time (``ctx.dlock.command(spec)``) — you pass the *spec*, not a live port,
-    so the guard composes into a lifecycle plan before any scope exists.
+    so the guard composes into a lifecycle plan before any scope exists. Startup
+    runs with no tenant bound, so the lock route must be tenant-global: a
+    tenant-aware route, or one on a client routed per tenant with no tenant to
+    route by, fails startup with a ``configuration`` error
+    (``tenant_global_required``).
 
     Size the lock's ``spec.ttl`` to comfortably exceed the step's duration —
     no extend heartbeat runs here. Shutdown runs only on the replica whose

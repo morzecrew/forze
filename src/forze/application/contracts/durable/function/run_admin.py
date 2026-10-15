@@ -21,6 +21,7 @@ import attrs
 from forze.base.codecs import B64UrlJsonCodec
 from forze.base.exceptions import CoreException, exc
 
+from ...deps import backend_of
 from .run_store import DurableRunRecord, DurableRunStatus
 
 # ----------------------- #
@@ -151,8 +152,12 @@ class DurableRunControlAware(Protocol):
 def durable_run_control_capabilities(port: object) -> DurableRunControlCapabilities:
     """Report *port*'s run-control capabilities, treating a silent port as having none."""
 
-    if isinstance(port, DurableRunControlAware):
-        return port.control_capabilities()
+    # The backend's report: a wrapped port forwards it, but a protocol check of the wrapper
+    # never sees it.
+    backend = backend_of(port)
+
+    if isinstance(backend, DurableRunControlAware):
+        return backend.control_capabilities()
 
     return DurableRunControlCapabilities()
 

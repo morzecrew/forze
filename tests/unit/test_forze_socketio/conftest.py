@@ -1,10 +1,13 @@
 """Shared fixtures for forze_socketio unit tests."""
 
 import io
+from collections.abc import AsyncIterator
 
 import pytest
 
+from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.logging import configure_logging
+from forze_mock import MockDepsModule
 
 # ----------------------- #
 
@@ -31,3 +34,14 @@ def no_turn_away_hold(monkeypatch: pytest.MonkeyPatch) -> None:
     from forze_socketio import connection
 
     monkeypatch.setattr(connection, "_TURN_AWAY_HOLD_SECONDS", (0.0, 0.0), raising=False)
+
+
+@pytest.fixture
+async def serving_runtime() -> AsyncIterator[ExecutionRuntime]:
+    """The serving runtime, its scope held open as an app's lifespan holds it: offline replay
+    and acks run on its live context."""
+
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        yield runtime

@@ -7,6 +7,7 @@ from typing import cast
 import attrs
 
 from forze.application._logger import logger
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.transaction import (
     COMMIT_AMBIGUOUS_CODE,
     IsolationAware,
@@ -202,9 +203,11 @@ class TransactionContext:
         if self.depth() == 0:
             raise exc.internal(f"assert_enlisted({what}) requires an active transaction scope")
 
-        if isinstance(resource, TransactionallyEnlistable) and (
-            not resource.is_transactionally_enlisted()
-        ):
+        # Asked of the store itself: a protocol check of the wrapper a resolved port comes in
+        # (port logging, OTel spans, tracing, a resilience policy) is always false.
+        store = backend_of(resource)
+
+        if isinstance(store, TransactionallyEnlistable) and not store.is_transactionally_enlisted():
             raise exc.configuration(
                 f"{what} is not enlisted in the active transaction: its writes commit on a "
                 "different connection/pool than the transaction was opened on, silently "

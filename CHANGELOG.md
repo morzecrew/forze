@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The readiness route logs a failed dependency check under the application logger**, as "Readiness check … failed". Alerts keyed on the `fastapi.probes` logger no longer match.
 
+- **The tenant-isolation floor leaves out routes that belong to the deployment.** Redis fleets, and lock and pub/sub routes marked `tenant_global=True` (a lifecycle lock, an outbox wake), no longer count toward `required_tenant_isolation`, so a module of only those meets it. Every other route is still held to it.
+
 ### Deprecated
 
 - **`probe_listener_step(runtime=...)`.** The step reads its scope from its hook's `ctx`, so it can sit in its own runtime's plan; a runtime passed in is still watched, with a `DeprecationWarning`.
@@ -57,9 +59,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A lock spec with `requires_fencing_token` no longer refuses a capable backend whose ports are wrapped** by OTel port spans, tracing, interceptors or a resilience port policy; resolving it failed with `dlock.fencing_unsupported`.
 
+- **A lock spec's fencing requirements are judged against the backend it hands out.** With the port cache off, the check resolved a second backend and judged that one instead. `implements(port, Protocol)` in `forze.application.contracts.deps` asks a protocol check of the backend behind a port's guard and wrappers.
+
+- **An inbox on another pool than its transaction is refused under port logging or OTel port spans too.** The exactly-once check passed any wrapped inbox, so its dedup mark could commit apart from the handler's writes.
+
+- **A stream spec with `requires_transactions` no longer refuses an exactly-once backend whose port is wrapped** by OTel port spans, port logging, tracing or a resilience port policy; resolving it failed with `stream.transactions_unsupported`.
+
+- **Exporting or migrating a graph no longer refuses a backend whose query port is wrapped** by OTel port spans, port logging, tracing or a resilience port policy, as one that cannot surface edge endpoints.
+
+- **A document's L1 cache subscribes to invalidation push when its cache port is wrapped** by OTel port spans, port logging, tracing or a resilience port policy, instead of falling back silently to TTL-only staleness.
+
+- **`graph_read_capabilities` reports the streams of a wrapped graph port.** Under OTel port spans, port logging, tracing or a resilience port policy it reported none, and a stream guarded by it was refused.
+
+- **`capabilities_of` and `durable_run_control_capabilities` read the backend behind a wrapped port**, as the other capability checks now do, instead of reporting no storage guarantees and no run control.
+
 - **A Redis lock acquire that fails after taking the lock no longer leaves it held**, as on a corrupt fence counter. Tokens stop at 2⁵³ − 1 on Redis and the mock: an acquire past it is refused with `dlock.fence_exhausted` rather than issuing a token Redis would round onto another.
 
+- **Socket.io connects replaying at the same time all get their offline replay.** Replay and `realtime.ack` run on the live context of `attach_realtime_connection(runtime=)` rather than opening a scope per connect. **Breaking:** pass the serving runtime, with its scope open.
+
 - **The documented fenced write no longer refuses the lock holder's own second write.** The Redis lock example now accepts an equal token on a holder's later writes, the same lock generation, as the contract does.
+
+- **The singleton guard and leadership refuse, at startup, a lock no tenant-less call can use**: tenant-aware, or on a routed client with no tenant to route by. It failed startup with `tenant_required` or never led; now `tenant_global_required` (new `require_tenant_global`). **Breaking** for such a leadership step.
+
+- **Background steps run without `tenants` refuse a tenant-scoped port at startup:** the outbox and realtime relays, durable recovery and scheduler, `job_staleness`, stream trim and mailbox retention, which failed every tick, and group ensure. So does a relay whose wake is on a routed client. **Breaking** for such apps.
+
+- **The outbox relay and the durable recovery and scheduler loops stop on a wiring error, logged once,** such as no keyring wired, instead of logging it every tick. One tenant's own configuration error, such as its key's state, still leaves the rest of the shard running.
+
+- **The Temporal schedule bootstrap, the S3 bucket step and Mongo index validation refuse a tenant-scoped client or schedule at startup**, as `tenant_global_required`, instead of failing with `tenant_required`: they run with no tenant bound.
+
+- **`permission_providers_lifecycle_step` without `tenant=` refuses a tenant-scoped permission catalog at startup**, as `tenant_global_required`, instead of failing with `tenant_required`.
+
+- **A tenant-aware Kafka route refuses a call with no tenant bound**, with `tenant_required` as other tenant-aware adapters do, instead of resolving its namespace for no tenant. The commit-stream consumer refuses such a group at startup. **Breaking** for apps that used one unbound.
+
+- **The queue and notification consumer steps refuse a tenant-scoped queue at startup**, as `tenant_global_required`: they receive with no tenant bound, so they failed every poll. **Breaking** for apps that ran one so.
+
+### Security
+
+- **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.
+
+- **A tenant-aware Kafka route with a fixed namespace no longer counts as tenant-isolated**; a declared isolation floor now refuses it. Kafka resolves a per-tenant namespace as the other backends do. **Breaking** for such a floored module, and a per-tenant route that is not tenant-aware may name new topics.
 
 ## [0.13.0] - 2026-10-14
 

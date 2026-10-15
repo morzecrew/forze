@@ -453,6 +453,12 @@ def _build_connect_handler(
             auth=auth,
         )
 
+        # python-socketio keeps the namespace's session across a namespace disconnect, and
+        # runs the client's events while this resolves: an earlier connect's identity goes.
+        session = await sio.get_session(sid, namespace=namespace)
+        session.pop(IDENTITY_SESSION_KEY, None)
+        await sio.save_session(sid, session, namespace=namespace)
+
         try:
             identity = await _resolve_identity(identity_resolver, connect)
 

@@ -11,6 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.graph import (
     GraphEdgeSpec,
     GraphModuleSpec,
@@ -37,8 +38,11 @@ def graph_read_capabilities(port: object) -> GraphReadCapabilities:
     the call is refused instead of falling through to something that resembles it.
     """
 
-    if isinstance(port, GraphStreamingAware):
-        return port.read_capabilities()
+    # Asked of the backend: resolution may hand the port over wrapped.
+    backend = backend_of(port)
+
+    if isinstance(backend, GraphStreamingAware):
+        return backend.read_capabilities()
 
     return GraphReadCapabilities()
 

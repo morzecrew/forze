@@ -58,6 +58,10 @@ class PostgresTenancyRouteSpec:
     floor is ``none``, and the origin check would pass over a plane it was written for.
     """
 
+    tenant_global: bool = False
+    """Whether the route is the deployment's rather than a tenant's, outside the declared
+    floor; see :attr:`~forze.application.contracts.tenancy.TenancyRouteSpec.tenant_global`."""
+
     def to_contract(self) -> TenancyRouteSpec:
         """Convert to the contract route spec.
 
@@ -73,6 +77,7 @@ class PostgresTenancyRouteSpec:
             kind=self.kind,
             has_namespace_routing=self.has_namespace_routing,
             origin=self.origin,
+            tenant_global=self.tenant_global,
         )
 
 

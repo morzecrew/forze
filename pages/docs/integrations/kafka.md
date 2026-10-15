@@ -206,7 +206,12 @@ server-side row filter):
 
 - **`namespace`** — set a per-tenant `namespace` on the route config; the topic
   is prefixed per tenant (`{namespace}.{topic}`), resolved from the bound tenant
-  on every produce, read, and admin call.
+  on every produce, read, and admin call. A route with a fixed namespace counts
+  as no isolation, so a declared floor refuses it. A `tenant_aware` route refuses
+  a call with no tenant bound (`tenant_required`). The commit-stream consumer reads with
+  no tenant bound, so it refuses a `tenant_aware` group at startup
+  (`tenant_global_required`): keep its topic tenant-global and bind the tenant
+  from the message headers.
 - **`dedicated`** — a `RoutedKafkaClient` resolves a per-tenant cluster; topic
   names stay shared.
 

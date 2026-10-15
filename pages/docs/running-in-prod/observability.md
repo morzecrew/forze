@@ -85,6 +85,12 @@ For a **log line** per outbound call instead of (or alongside) a span, add
 (so it costs nothing in production unless you turn trace on), `debug` on an expected
 domain failure, and `warning` with a traceback on an unexpected one.
 
+Both wrap the port a context resolves, so a `@runtime_checkable` protocol check of it
+is false even when the backend implements the protocol. Ask
+`implements(port, SomeAware)`, from `forze.application.contracts.deps`, instead: it
+answers for the backend behind the wrappers. Keep calling the port itself, so the span
+and the log line still happen.
+
 ## Follow the trace across boundaries
 
 Spans and port spans cover one operation inside one process. When the work crosses a

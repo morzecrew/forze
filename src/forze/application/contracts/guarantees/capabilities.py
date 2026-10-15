@@ -26,6 +26,7 @@ import attrs
 
 from forze.base.exceptions import exc
 
+from ..deps import backend_of
 from .value_objects import (
     GuaranteeKind,
     GuaranteeMoment,
@@ -230,8 +231,12 @@ def guarantees_of(spec: object) -> StorageGuarantees:
 def capabilities_of(port: object) -> StorageGuaranteeCapabilities:
     """*port*'s declaration, or the empty one when it makes none."""
 
-    if isinstance(port, GuaranteeEnforcing):
-        return port.storage_guarantees
+    # The backend's declaration: a port resolution wrapped forwards it, but a protocol check
+    # of the wrapper never sees it.
+    backend = backend_of(port)
+
+    if isinstance(backend, GuaranteeEnforcing):
+        return backend.storage_guarantees
 
     return StorageGuaranteeCapabilities()
 

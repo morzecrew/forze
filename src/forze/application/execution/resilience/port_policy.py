@@ -16,10 +16,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import attrs
 
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.resilience import PortPolicy
 from forze.base.primitives import StrKey
-
-from ..port_proxy_base import PortProxy
 
 if TYPE_CHECKING:
     from ..context import ExecutionContext

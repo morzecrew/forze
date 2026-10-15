@@ -15,6 +15,7 @@ from forze.application.contracts.durable.workflow import (
     DurableWorkflowScheduleTiming,
 )
 from forze.application.execution import ExecutionContext
+from forze.base.exceptions import CoreException, ExceptionKind
 from forze_temporal.execution.deps.configs import TemporalWorkflowConfig
 from forze_temporal.execution.deps.keys import (
     TemporalClientDepKey,
@@ -25,7 +26,7 @@ from forze_temporal.execution.lifecycle.pool import (
     _bootstrap_schedules,
     routed_temporal_lifecycle_step,
 )
-from forze_temporal.kernel.client import TemporalClient
+from forze_temporal.kernel.client import RoutedTemporalClient, TemporalClient
 
 
 class _Args(BaseModel):
@@ -136,3 +137,55 @@ async def test_routed_temporal_lifecycle_with_bootstrap_runs_startup() -> None:
 
     client.startup.assert_awaited_once()
     bootstrap.assert_awaited_once()
+
+
+# ----------------------- #
+# The bootstrap runs at startup, with no tenant bound
+
+
+def _bootstrap_ctx(client: object) -> ExecutionContext:
+    bootstrap = DurableWorkflowScheduleBootstrap(
+        workflow_name="MyWorkflow",
+        schedule_id="sched-1",
+        default_args=_Args(),
+        timing=DurableWorkflowScheduleTiming(interval=timedelta(minutes=5)),
+    )
+    ctx = MagicMock(spec=ExecutionContext)
+    ctx.deps.exists = MagicMock(return_value=True)
+    ctx.deps.provide = MagicMock(
+        side_effect=lambda key: {
+            TemporalScheduleBootstrapDepKey: [bootstrap],
+            TemporalClientDepKey: client,
+        }[key],
+    )
+    ctx.inv_ctx.get_tenant = MagicMock(return_value=None)
+
+    return ctx
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("client", "tenant_aware"),
+    [
+        pytest.param(MagicMock(spec=TemporalClient), True, id="tenant-aware-workflow"),
+        pytest.param(
+            MagicMock(spec=RoutedTemporalClient, tenant_provider=lambda: None),
+            False,
+            id="routed-client",
+        ),
+    ],
+)
+async def test_bootstrap_refuses_a_tenant_scoped_schedule(
+    client: MagicMock, tenant_aware: bool
+) -> None:
+    with pytest.raises(CoreException) as caught:
+        await _bootstrap_schedules(
+            _bootstrap_ctx(client),
+            workflow_configs={
+                "MyWorkflow": TemporalWorkflowConfig(queue="task-q", tenant_aware=tenant_aware)
+            },
+        )
+
+    assert caught.value.kind is ExceptionKind.CONFIGURATION
+    assert caught.value.code == "tenant_global_required"
+    client.create_schedule.assert_not_called()

@@ -817,7 +817,8 @@ def build_realtime_mailbox(
 ) -> DocumentRealtimeMailbox:
     """Resolve the mailbox's document ports once and build it — the publisher pattern.
 
-    Call from the gateway's ``run(ctx)`` or the connection layer's per-unit-of-work scope.
+    Call from the gateway's ``run(ctx)``, or from the connection layer's
+    ``mailbox_factory``, which receives the serving runtime's context.
     Refuses a build in a read-only (QUERY) operation, since the mailbox writes.
 
     *retention* is required and has no default — see :class:`MailboxRetention`. A bounded

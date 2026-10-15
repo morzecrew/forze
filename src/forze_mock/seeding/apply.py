@@ -7,9 +7,9 @@ from random import Random
 from typing import TYPE_CHECKING, Any, get_args
 from uuid import UUID
 
+from forze.application.contracts.deps import backend_of
 from forze.application.contracts.queue import QueueCommandDepKey
 from forze.application.contracts.storage import UploadedObject
-from forze.application.execution.port_proxy_base import PortProxy
 from forze.base.exceptions import exc
 from forze.base.primitives import (
     FrozenTimeSource,
@@ -91,8 +91,7 @@ def _mock_adapter(port: object, spec_name: str) -> MockDocumentAdapter[Any, Any,
     type this needs is right; looking for it at the top of the chain was not.
     """
 
-    while isinstance(port, PortProxy):
-        port = port.inner
+    port = backend_of(port)
 
     if not isinstance(port, MockDocumentAdapter):
         raise exc.configuration(

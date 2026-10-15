@@ -82,6 +82,25 @@ from .keys import RedisBlockingClientDepKey, RedisClientDepKey
 # ----------------------- #
 
 
+def _never(_config: Any) -> bool:
+    return False
+
+
+def _always(_config: Any) -> bool:
+    return True
+
+
+def _marked_tenant_global(config: Any) -> bool:
+    """Whether a lock or pub/sub route is marked the deployment's, outside the floor."""
+
+    return isinstance(config, (RedisDistributedLockConfig, RedisPubSubConfig)) and (
+        config.tenant_global
+    )
+
+
+# ....................... #
+
+
 def _is_idem_route_value(value: Any) -> bool:
     return isinstance(value, (RedisIdempotencyConfig, RedisUniversalConfig))
 
@@ -207,7 +226,8 @@ class RedisDepsModule(DepsModule):
     """Declared minimum tenant isolation (``None`` = no floor).
 
     Redis spans: ``tagged`` (per-tenant key prefix via ``tenant_aware``), ``namespace`` (a
-    per-tenant ``namespace`` resolver), ``dedicated`` (a routed per-tenant client).
+    per-tenant ``namespace`` resolver), ``dedicated`` (a routed per-tenant client). Fleet
+    routes, and lock and pub/sub routes marked ``tenant_global``, sit outside it.
     """
 
     streams: StrKeyMapping[RedisStreamConfig] | None = attrs.field(
@@ -282,7 +302,8 @@ class RedisDepsModule(DepsModule):
             warning=REDIS_DLOCK_WARNING,
             log_warning=logger.warning,
         )
-        # A fleet is the deployment's, not a tenant's: no tenant-scoped route, and no floor.
+        # A fleet is the deployment's, not a tenant's: no tenant-scoped route, and outside
+        # the floor (a tenant-global group below).
         for name, fleet in (self.fleets or {}).items():
             refuse_tenant_scoped_route(
                 str(name),
@@ -316,13 +337,16 @@ class RedisDepsModule(DepsModule):
                     configs=configs,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.namespace,
+                    tenant_global=tenant_global,
                 )
-                for kind, configs in (
-                    ("cache", self.caches),
-                    ("counter", self.counters),
-                    ("idempotency", idempotency_routes),
-                    ("search_snapshot", self.search_snapshots),
-                    ("dlock", self.dlocks),
+                for kind, configs, tenant_global in (
+                    ("cache", self.caches, _never),
+                    ("counter", self.counters, _never),
+                    ("idempotency", idempotency_routes, _never),
+                    ("search_snapshot", self.search_snapshots, _never),
+                    ("dlock", self.dlocks, _marked_tenant_global),
+                    # A fleet is the deployment's, whatever tenants its replicas serve.
+                    ("fleet", self.fleets, _always),
                 )
             ]
             + [
@@ -333,11 +357,12 @@ class RedisDepsModule(DepsModule):
                     configs=configs,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda _cfg: None,
+                    tenant_global=tenant_global,
                 )
-                for kind, configs in (
-                    ("stream", self.streams),
-                    ("stream_group", self.stream_groups),
-                    ("pubsub", self.pubsub),
+                for kind, configs, tenant_global in (
+                    ("stream", self.streams, _never),
+                    ("stream_group", self.stream_groups, _never),
+                    ("pubsub", self.pubsub, _marked_tenant_global),
                 )
             ],
             required_isolation=self.required_tenant_isolation,

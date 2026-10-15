@@ -3,12 +3,11 @@
 from collections.abc import Mapping
 from datetime import datetime
 from typing import final
-from uuid import UUID
 
 import attrs
 
 from forze.application.contracts.stream import StreamCommandPort
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenancyMixin
 
 from ..kernel.client import KafkaClientPort
 from ..kernel.relation import NamedResourceSpec, resolve_kafka_topic
@@ -19,7 +18,7 @@ from .codecs import KafkaStreamCodec
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class KafkaStreamCommandAdapter[M](StreamCommandPort[M]):
+class KafkaStreamCommandAdapter[M](StreamCommandPort[M], TenancyMixin):
     """Appends to a Kafka topic via ``send_and_wait``, returning the position id.
 
     ``key`` becomes the native Kafka message key (default murmur2 partitioner →
@@ -32,18 +31,6 @@ class KafkaStreamCommandAdapter[M](StreamCommandPort[M]):
     client: KafkaClientPort
     codec: KafkaStreamCodec[M]
     namespace: NamedResourceSpec
-    tenant_aware: bool
-    tenant_provider: TenantProviderPort
-
-    # ....................... #
-
-    def _tenant_id(self) -> UUID | None:
-        if not self.tenant_aware:
-            return None
-
-        tenant = self.tenant_provider()
-
-        return None if tenant is None else tenant.tenant_id
 
     # ....................... #
 
@@ -57,7 +44,7 @@ class KafkaStreamCommandAdapter[M](StreamCommandPort[M]):
         timestamp: datetime | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> str:
-        topic = await resolve_kafka_topic(self.namespace, self._tenant_id(), stream)
+        topic = await resolve_kafka_topic(self.namespace, self._tenant_id_for_resolve(), stream)
 
         metadata = await self.client.send(
             topic,

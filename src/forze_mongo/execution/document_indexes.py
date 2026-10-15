@@ -7,6 +7,7 @@ import attrs
 
 from forze.application.contracts.document import DocumentSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution import ExecutionContext
 
 from ..kernel.introspect import MongoIntrospector
@@ -59,6 +60,8 @@ class MongoDocumentIndexValidationHook(LifecycleHook):
             return
 
         client = ctx.deps.provide(MongoClientDepKey)
+        # Startup binds no tenant, so a client routed per tenant has nothing to route by.
+        require_tenant_global(client, what="Mongo document index validation")
         introspector = MongoIntrospector(client=client)
 
         await validate_mongo_document_indexes(introspector, self.specs)
@@ -76,7 +79,9 @@ def mongo_document_index_validation_lifecycle_step(
 
     Run after :func:`~forze_mongo.execution.lifecycle.mongo_lifecycle_step`.
     Applications opt in by registering specs built with
-    :func:`mongo_document_index_spec_for_binding`.
+    :func:`mongo_document_index_spec_for_binding`. It runs with no tenant bound, so it
+    needs a plain client: over a routed one it fails startup with a ``configuration``
+    error (``tenant_global_required``).
 
     :param name: Unique step name.
     :param specs: One spec per writable document route.

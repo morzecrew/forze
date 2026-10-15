@@ -21,9 +21,9 @@ import pytest
 from pydantic import BaseModel
 
 from forze.application.contracts.conformity import DerivedReadField
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.document import DocumentSpec, DocumentWriteTypes
 from forze.application.execution import DepsRegistry, ExecutionRuntime
-from forze.application.execution.port_proxy_base import PortProxy
 from forze.base.exceptions import CoreException
 from forze.base.primitives import JsonDict
 from forze.domain.models import CreateDocumentCmd, Document, ReadDocument

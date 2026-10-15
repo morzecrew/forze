@@ -3,7 +3,7 @@
 On **connect**, a connection is auto-joined to its tenant-scoped *principal* room
 (derived from the authenticated identity), so a later emit to that principal
 reaches it. On **disconnect**, Socket.IO drops the room membership automatically;
-the handler here only updates presence.
+the handler here drops the stored identity and updates presence.
 
 Presence is optional and pluggable (:class:`RealtimePresence`): the in-memory
 tracker is fine for a single node; a cross-node deployment wants a TTL-backed
@@ -280,16 +280,35 @@ async def _best_effort(work: Awaitable[object]) -> None:
 # ....................... #
 
 
+def _serving_context(runtime: ExecutionRuntime) -> ExecutionContext:
+    """The serving runtime's live context, which replay and ack run on."""
+
+    try:
+        return runtime.get_context()
+
+    except CoreException as error:
+        raise exc.configuration(
+            "Offline replay and acks run on the serving runtime's context, and its scope is "
+            "not open: pass attach_realtime_connection the runtime that serves the app, with "
+            "its scope held open while the server serves",
+            code="realtime_replay_scope_closed",
+        ) from error
+
+
+# ....................... #
+
+
 def _bind_connection(
     ctx: ExecutionContext,
     connection: RealtimeConnection,
 ) -> AbstractContextManager[None]:
-    """Bind the connection's authenticated identity **and** tenant for a fresh scope.
+    """Bind the connection's authenticated identity **and** tenant on the serving context.
 
-    Replay and ack open a *new* execution scope, which has neither the authn nor the tenant
-    bound — so the connection's own identity (captured at connect time) must be re-established,
-    or the mailbox/cursor operations run unauthenticated (and a tenant-aware store fails
-    closed). Both come from the connection, never from the empty fresh ``ctx``.
+    Replay and ack run in a socket.io handler's task, where nothing is bound — so the
+    connection's own identity (captured at connect time) must be re-established, or the
+    mailbox/cursor operations run unauthenticated (and a tenant-aware store fails closed).
+    The binding is the task's own, so connections replaying at once on one context each see
+    their own.
     """
 
     tenant = TenantIdentity(tenant_id=connection.tenant) if connection.tenant is not None else None
@@ -370,49 +389,44 @@ class _ConnectionLifecycle:
         client_key = connection.client_key(sid)
         progress = self._replay_progress.get(sid)
 
-        # Stream the backlog page-by-page inside the scope and emit as we go, so peak
-        # memory is one page rather than the whole (up to ``cap``) backlog per
-        # reconnecting device. The scope stays open during the emits, but the document
-        # query ports do not pin a connection between paged reads.
-        async with self.runtime.scope():
-            ctx = self.runtime.get_context()
+        # Stream the backlog page-by-page and emit as we go, so peak memory is one page
+        # rather than the whole (up to ``cap``) backlog per reconnecting device. The
+        # document query ports do not pin a connection between paged reads.
+        ctx = _serving_context(self.runtime)
 
-            with _bind_connection(ctx, connection):  # connection identity — fresh scope is empty
-                mailbox = self.mailbox_factory(ctx)  # ports resolved for this unit of work
-                cursors = self.cursors_factory(ctx)
-                since = await cursors.get(principal=connection.principal, client_key=client_key)
+        with _bind_connection(ctx, connection):  # nothing is bound in a handler's task
+            mailbox = self.mailbox_factory(ctx)
+            cursors = self.cursors_factory(ctx)
+            since = await cursors.get(principal=connection.principal, client_key=client_key)
 
-                if progress is not None and since is not None:
-                    progress.floor = since  # the already-acked prefix counts as delivered
+            if progress is not None and since is not None:
+                progress.floor = since  # the already-acked prefix counts as delivered
 
-                outcome = BacklogDrain(claim_floor=since)
+            outcome = BacklogDrain(claim_floor=since)
 
-                # ``iter_backlog`` drains past a bounded replay window in rounds
-                # (a cap-filled pass is ambiguous: drained, a live arrival, or a
-                # truncated remainder) and reports whether the drain confirmably
-                # completed. ``aclosing``: a raise mid-drain (an emit failure, a
-                # cancel) must close the paged stream deterministically.
-                async with aclosing(
-                    iter_backlog(
-                        mailbox, principal=connection.principal, since=since, outcome=outcome
+            # ``iter_backlog`` drains past a bounded replay window in rounds (a cap-filled
+            # pass is ambiguous: drained, a live arrival, or a truncated remainder) and
+            # reports whether the drain confirmably completed. ``aclosing``: a raise
+            # mid-drain (an emit failure, a cancel) must close the paged stream
+            # deterministically.
+            async with aclosing(
+                iter_backlog(mailbox, principal=connection.principal, since=since, outcome=outcome)
+            ) as entries:
+                async for entry in entries:
+                    await self.sio.emit(
+                        entry.event,
+                        {"id": entry.event_id, "data": entry.payload},
+                        to=sid,
+                        namespace=self.namespace,
                     )
-                ) as entries:
-                    async for entry in entries:
-                        await self.sio.emit(
-                            entry.event,
-                            {"id": entry.event_id, "data": entry.payload},
-                            to=sid,
-                            namespace=self.namespace,
-                        )
 
-                        if progress is not None:
-                            # The floor an ack may claim mid-drain is the drain's
-                            # RUN-PROVEN position, not this entry's own: a claim
-                            # trims the whole equal-HLC run, and this entry's run
-                            # may still have undelivered siblings in flight — an
-                            # ack claiming it would delete them from the store
-                            # before the replay reaches them.
-                            progress.floor = outcome.claim_floor
+                    if progress is not None:
+                        # The floor an ack may claim mid-drain is the drain's RUN-PROVEN
+                        # position, not this entry's own: a claim trims the whole
+                        # equal-HLC run, and this entry's run may still have undelivered
+                        # siblings in flight — an ack claiming it would delete them from
+                        # the store before the replay reaches them.
+                        progress.floor = outcome.claim_floor
 
         if progress is not None:
             # The claim floor lands on the final run only once the drain confirmed
@@ -479,6 +493,21 @@ class _ConnectionLifecycle:
                 )
             )
 
+        # The resolve awaited: the connection may have ended since — a later connect of the
+        # namespace on the same transport shares its session — or another reauth refreshed
+        # it. The identity is checked and written with no await between.
+        if not self.sio.manager.is_connected(sid, self.namespace):
+            return build_core_exception_ack(
+                exc.authentication("The connection ended during reauth — reconnect")
+            )
+
+        session = await self.sio.get_session(sid, namespace=self.namespace)
+
+        if session.get(CONNECTION_SESSION_KEY) is not current:
+            return build_core_exception_ack(
+                exc.conflict("The connection's identity changed during this reauth; not applied")
+            )
+
         session[IDENTITY_SESSION_KEY] = refreshed.authn
         session[CONNECTION_SESSION_KEY] = refreshed
         await self.sio.save_session(sid, session, namespace=self.namespace)
@@ -521,17 +550,17 @@ class _ConnectionLifecycle:
 
             delivered_floor = progress.floor
 
-        async with self.runtime.scope():
-            ctx = self.runtime.get_context()
-            with _bind_connection(ctx, connection):
-                await acknowledge_up_to(
-                    self.mailbox_factory(ctx),
-                    self.cursors_factory(ctx),
-                    principal=connection.principal,
-                    client_key=connection.client_key(sid),
-                    event_id=event_id,
-                    delivered_floor=delivered_floor,
-                )
+        ctx = _serving_context(self.runtime)
+
+        with _bind_connection(ctx, connection):
+            await acknowledge_up_to(
+                self.mailbox_factory(ctx),
+                self.cursors_factory(ctx),
+                principal=connection.principal,
+                client_key=connection.client_key(sid),
+                event_id=event_id,
+                delivered_floor=delivered_floor,
+            )
 
     # ....................... #
 
@@ -771,14 +800,29 @@ class _ConnectionLifecycle:
             return
 
         await _best_effort(self.sio.leave_room(sid, room, namespace=self.namespace))
+        await _best_effort(self._drop_identity(sid))
 
-        async def _drop_session() -> None:
+    # ....................... #
+
+    async def _drop_identity(self, sid: str) -> RealtimeConnection | None:
+        """Remove the identity stored in *sid*'s namespace session; return the connection.
+
+        python-socketio keeps a namespace's session inside its Engine.IO connection's session,
+        so it outlives the namespace's disconnect: a client may connect the namespace again
+        over the same connection, and that connect must not find this one's identity.
+        """
+
+        try:
             session = await self.sio.get_session(sid, namespace=self.namespace)
-            session.pop(IDENTITY_SESSION_KEY, None)
-            session.pop(CONNECTION_SESSION_KEY, None)
-            await self.sio.save_session(sid, session, namespace=self.namespace)
 
-        await _best_effort(_drop_session())
+        except KeyError:
+            return None  # the Engine.IO connection is gone, and its sessions with it
+
+        session.pop(IDENTITY_SESSION_KEY, None)
+        connection: RealtimeConnection | None = session.pop(CONNECTION_SESSION_KEY, None)
+        await self.sio.save_session(sid, session, namespace=self.namespace)
+
+        return connection
 
     # ....................... #
 
@@ -792,6 +836,8 @@ class _ConnectionLifecycle:
 
         if not await self._goes_on(sid):
             return
+
+        await self._drop_identity(sid)  # an earlier connect's, should one be left
 
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
 
@@ -827,12 +873,15 @@ class _ConnectionLifecycle:
             # must be clamped to what the (not yet started) replay has delivered.
             self._replay_progress[sid] = _ReplayProgress()
 
-        try:
+        async def join() -> None:
             room = connection.principal_room
             await self.sio.enter_room(sid, room, namespace=self.namespace)
 
             if self.presence is not None:
                 await self.presence.joined(room, sid)
+
+        try:
+            await self._staged("internal", join)
 
             if self.replay_enabled:
                 # replay is best-effort: a drain error must not refuse the live connection
@@ -844,9 +893,8 @@ class _ConnectionLifecycle:
 
         except BaseException:
             # A raise here refuses the connect, and a refused connect never reaches
-            # on_disconnect — without this pop, every failed room join or presence
-            # write would leak its progress entry forever (sids are never reused).
-            self._replay_progress.pop(sid, None)
+            # on_disconnect: undo its room, presence, replay progress and stored identity.
+            await self._undo_connect(sid, connection)
             raise
 
         # Last: a connect that waited in replay while the drain listed its connections may
@@ -857,7 +905,7 @@ class _ConnectionLifecycle:
     # ....................... #
 
     async def on_disconnect(self, sid: str) -> None:
-        """Update presence on disconnect (Socket.IO drops room membership itself)."""
+        """Drop the stored identity and update presence (Socket.IO drops room membership)."""
 
         self._replay_progress.pop(sid, None)
 
@@ -870,13 +918,9 @@ class _ConnectionLifecycle:
         if engine_session is not None:
             engine_session.get(_ACCEPTED_KEY, set()).discard(self.namespace)
 
-        if self.presence is None:
-            return
+        connection = await self._drop_identity(sid)
 
-        session = await self.sio.get_session(sid, namespace=self.namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
-
-        if connection is not None:
+        if self.presence is not None and connection is not None:
             await self.presence.left(connection.principal_room, sid)
 
 
@@ -900,17 +944,22 @@ def attach_realtime_connection(
     """Register connect/disconnect handlers that auto-join the principal room.
 
     The resolved identity is stored under both the inbound identity key (so
-    command handlers see it) and a gateway key (for disconnect presence). A
+    command handlers see it) and a gateway key (for disconnect presence), until the
+    namespace connection ends. A
     client-safe :class:`CoreException` from *resolve* refuses the connection;
     a server-side one is logged and refused generically.
 
     When *mailbox_factory*, *cursors_factory* and *runtime* are all supplied, offline
     replay is enabled: on connect the connection's device is replayed
     everything past its cursor, and a ``realtime.ack {up_to}`` event advances that cursor
-    so a device never re-receives what it acked. The factories build their store with
-    ports resolved against each unit-of-work ctx (e.g. ``build_realtime_mailbox``); the
-    device is keyed by
-    :meth:`RealtimeConnection.client_key` (its ``device_id``/``session_id``, else
+    so a device never re-receives what it acked. *runtime* is the **serving** runtime:
+    replay and ack run on its live context, under the connection's identity and tenant, so
+    its scope must be open while the server serves (as the app's lifespan holds it). With
+    it closed, each connect's replay logs a configuration error coded
+    ``realtime_replay_scope_closed`` and delivers nothing, so that connection's acks are
+    ignored: there is nothing for them to claim. The factories build their store
+    with ports resolved against that ctx (e.g. ``build_realtime_mailbox``); the device is
+    keyed by :meth:`RealtimeConnection.client_key` (its ``device_id``/``session_id``, else
     the per-connection sid).
 
     A ``realtime.reauth`` event is always registered: a client whose token rotates sends
@@ -941,10 +990,8 @@ def attach_realtime_connection(
     transport closed meanwhile stops quietly at the same checks, and a *draining* that raises
     refuses the connect as an internal error. The refusal ``Server is draining``, data
     ``{"code": "realtime_draining"}``, is raised too and reaches the client only if the close
-    failed. Pass the **serving**
-    runtime's, ``draining=lambda: runtime.draining``: nothing defaults it, and the replay
-    *runtime* is not the one to read — replay opens a scope of its own per connect, so it
-    runs on a runtime that never drains with the replica.
+    failed. Pass the serving runtime's, ``draining=lambda: runtime.draining``: nothing
+    defaults it, not even when replay is wired with that runtime.
 
     *admission* runs after the first draining check and before the protocol is negotiated or
     the connection authenticated: it returns to admit the connect, and awaiting it delays the
@@ -981,8 +1028,7 @@ def attach_realtime_connection(
     if runtime is not None and draining is None:
         error_logger.warning(
             "attach_realtime_connection on %s: replay is wired without draining=, so connects "
-            "are not refused while the replica drains; the replay runtime is not the serving "
-            "runtime — pass draining=lambda: <serving runtime>.draining",
+            "are not refused while the replica drains — pass draining=lambda: runtime.draining",
             namespace,
         )
 

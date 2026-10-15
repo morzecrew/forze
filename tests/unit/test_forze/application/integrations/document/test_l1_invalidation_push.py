@@ -12,12 +12,15 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from forze.application.contracts.cache import (
+    CacheDepKey,
     CacheInvalidation,
     CacheSpec,
     InvalidationCallback,
     L1Spec,
 )
+from forze.application.execution import Deps, DepsRegistry, ExecutionContext
 from forze.application.integrations.document import DocumentCache
+from tests.support.port_wrappers import traced_ops, with_port_wrappers
 from tests.unit._gateway_codec_helpers import codec_for
 
 # ----------------------- #
@@ -124,6 +127,23 @@ class TestSubscription:
 
         assert cache.subscriptions == 1
         assert cache.callback is not None
+
+    async def test_a_wrapped_cache_port_still_subscribes(self) -> None:
+        # Document factories hand over ``ctx.cache(spec)``, which OTel port spans and port
+        # logging wrap; the push capability is the backend's, not the wrapper's, and the
+        # subscription still goes through the wrappers.
+        cache = _PushCache()
+        registry = with_port_wrappers(
+            DepsRegistry.from_deps(Deps.plain({CacheDepKey: lambda _c, _s: cache}))
+        ).with_tracing(runtime=True)
+        ctx = ExecutionContext(deps=registry.freeze().resolve())
+        wrapped = ctx.cache(CacheSpec(name="c", ttl=timedelta(seconds=300)))
+
+        await _read(_coord(wrapped))
+
+        assert cache.subscriptions == 1
+        assert cache.callback is not None
+        assert "subscribe_invalidations" in traced_ops(ctx)
 
     async def test_concurrent_first_reads_subscribe_once(self) -> None:
         # Two first-readers race. The guard sets its ``started`` flag synchronously *before*

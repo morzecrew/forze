@@ -54,7 +54,14 @@ statement cannot be trusted to do.
 § A fleet is one service's replicas, whatever tenants they serve, and it beats from lifecycle
 hooks with no tenant bound. A fleet route that is `tenant_aware` or resolves its namespace per
 tenant is refused when configured (`fleet.tenant_scoped_route`), and fleet routes are left
-out of the module's isolation floor.
+out of the module's isolation floor. So are lock and pub/sub routes marked
+`tenant_global=True`, for a singleton or leadership lock and an outbox wake; such a route is
+refused at wiring when it is `tenant_aware`, resolves its namespace per tenant, or sits on a
+routed client. The flag is the deployment's own word, not checked against what the route
+holds: put only deployment-wide state on it, such as a lock or a wake, never a tenant's
+data. A deployment whose Redis client is routed per tenant registers the lock or pub/sub
+dep keys itself, over a `RedisDistributedLockAdapter` or `RedisPubSubAdapter` on a plain
+`RedisClient`, as it does for a fleet.
 
 † Neo4j reaches `namespace` with a per-tenant database on one driver (the usual
 multi-tenant Neo4j shape); `dedicated` needs a genuinely per-tenant driver/instance,
@@ -77,8 +84,8 @@ sharded, per-tenant read.
 |----------|------------------------------|----------------------------------------|
 | Stream / Pub/Sub (Redis) | `namespace` via `tenant_aware` key prefix | A **sharded gateway** — `TenantShardedSignalSource` + a `RealtimeShard` per instance binds each assigned tenant and reads its key ([tenant-aware Socket.IO gateway](../integrations/socketio.md#tenancy-and-addressing)). |
 | Queue (RabbitMQ, SQS) | `namespace` via name prefix | Keep the queue **tenant-global** and bind the tenant from the message envelope in the consumer; or run a **per-tenant worker** per queue. A built-in sharded queue worker is not yet shipped. |
-| Commit-stream (Kafka) | `namespace` via per-tenant topic prefix; `dedicated` via routed client (no `tagged` — a topic has no row filter) | Keep the topic **tenant-global** and bind the tenant from the envelope in the consumer (`bind_tenant_from_headers=True` on the commit-stream consumer — opt-in, headers are untrusted); or run a consumer per namespaced topic. |
-| Outbox | **tenant-global** by default; as a Postgres/Mongo table it can reach `tagged`→`dedicated` (see read side) | The plain relay drains a tenant-global outbox cross-tenant and **binds each row's `tenant_id`** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* routes per-tenant. To isolate the **outbox table itself** (`tenant_aware` and up), use the sharded relay (`realtime_tenant_relay_lifecycle_step`); the plain relay fails closed (`outbox_relay_tenant_unbound`). |
+| Commit-stream (Kafka) | `namespace` via per-tenant topic prefix; `dedicated` via routed client (no `tagged` — a topic has no row filter, so a fixed prefix counts as `none`) | Keep the topic **tenant-global** and bind the tenant from the envelope in the consumer (`bind_tenant_from_headers=True` on the commit-stream consumer — opt-in, headers are untrusted); or run your own consumer per namespaced topic under that tenant. The shipped commit-stream consumer reads unbound, so it refuses a `tenant_aware` group at startup. |
+| Outbox | **tenant-global** by default; as a Postgres/Mongo table it can reach `tagged`→`dedicated` (see read side) | The plain relay drains a tenant-global outbox cross-tenant and **binds each row's `tenant_id`** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* routes per-tenant. To isolate the **outbox table itself** (`tenant_aware` and up), use the sharded relay (`realtime_tenant_relay_lifecycle_step`); the plain relay refuses it at startup (`tenant_global_required`). |
 | Inbox | **tenant-global** by default; can be `tenant_aware` | Dedup is keyed by the globally-unique event id, so per-tenant isolation is **optional** (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant in namespace mode — so a tenant-aware inbox works there too. |
 | Realtime end-to-end | outbox **tenant-global** → stream `namespace` | The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling `namespace`. |
 | Durable — Temporal | `namespace` via per-tenant task queue | A worker drains one task queue; per-tenant isolation means a per-tenant queue with a worker assigned to it (operator-managed), or `tagged` with the tenant in the workflow context. |
@@ -88,14 +95,22 @@ The rule across all of these: **the reader binds the tenant.** A handler-read st
 binds it from the request; a background consumer binds it from the resource it was
 assigned (a sharded stream key) or from each item it processes (the relay per row).
 That's why the **default** for relay/worker-drained resources is tenant-global, and
-isolating them is opt-in — it costs a sharded reader.
+isolating them is opt-in — it costs a sharded reader. The shipped relays, sweeps and
+consumers check this when they start: run unbound over a `tenant_aware` resource, or over
+a client routed per tenant with no tenant to route by, they refuse to start with a
+`configuration` error coded `tenant_global_required`. Those are the outbox and realtime
+relays, durable recovery and the scheduler, stream trim, mailbox retention,
+`job_staleness`, and the queue, notification and commit-stream consumers. A step of your
+own, or one not named here, is not checked.
 
 ## Declaring and enforcing a floor
 
 `required_tenant_isolation` on a deps module refuses to wire anything weaker than the
 declared tier — checked once at startup, never per request. Each module derives the tier
 it reaches from its config (routed client → `dedicated`, resolver → `namespace`,
-`tenant_aware` → `tagged`/`namespace` by backend). A floor a backend can **never** reach
+`tenant_aware` → `tagged`/`namespace` by backend). Routes that belong to the deployment
+rather than a tenant (Redis fleets, and the tenant-global routes in § above) are left out,
+so a module of only those meets the floor. A floor a backend can **never** reach
 fails as a **capability mismatch**, not a silent misconfiguration:
 
 | Backend | Ceiling | A floor above it… |

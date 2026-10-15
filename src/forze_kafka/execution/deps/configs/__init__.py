@@ -15,9 +15,10 @@ from forze.application.contracts.tenancy import TenantAwareIntegrationConfig
 class KafkaStreamConfig(TenantAwareIntegrationConfig):
     """Configuration for a Kafka produce route (``StreamSpec`` → ``StreamCommandPort``).
 
-    ``namespace`` is the offset-log ``namespace`` tenancy tier: a non-empty value
-    prefixes the topic per tenant (``"{namespace}.{topic}"``). Leave it empty for
-    single-tenant or ``dedicated`` (routed-client) deployments.
+    ``namespace`` prefixes the topic (``"{namespace}.{topic}"``). It is the offset-log
+    ``namespace`` tenancy tier when it is resolved per tenant; a fixed one counts as no
+    isolation. Leave it empty for single-tenant or ``dedicated`` (routed-client)
+    deployments.
     """
 
     namespace: NamedResourceSpec = attrs.field(

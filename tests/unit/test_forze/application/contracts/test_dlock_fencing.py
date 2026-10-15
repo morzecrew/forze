@@ -8,11 +8,15 @@ from typing import Any
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
+from forze.application.contracts.deps import backend_of, implements
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.application.contracts.dlock import (
     AcquiredLock,
     DistributedLockCapabilities,
     DistributedLockCommandDepKey,
     DistributedLockSpec,
+    FenceAdvancing,
+    FencingAware,
 )
 from forze.application.contracts.resilience import (
     PortPolicy,
@@ -22,12 +26,11 @@ from forze.application.contracts.resilience import (
     ResiliencePortPoliciesDepKey,
 )
 from forze.application.execution import Deps, DepsRegistry, ExecutionContext
-from forze.application.execution.port_proxy_base import PortProxy
 from forze.application.execution.resilience import InProcessResilienceExecutor
 from forze.base.exceptions import CoreException
 from forze.testing import unguarded
 from forze_mock import MockDepsModule
-from tests.support.execution_context import context_from_deps
+from tests.support.execution_context import context_from_deps, frozen_deps_from_deps
 
 # ----------------------- #
 
@@ -123,7 +126,7 @@ class _PassThroughInterceptor:
         return await nxt(call)
 
 
-def _wrapped_ctx(backend: Deps) -> ExecutionContext:
+def _wrapped_ctx(backend: Deps, *, cache_ports: bool = True) -> ExecutionContext:
     """Resolve *backend* under every proxy the runtime can put around a port.
 
     A resilience port policy, OTel port spans, runtime tracing and an interceptor, stacked:
@@ -153,7 +156,7 @@ def _wrapped_ctx(backend: Deps) -> ExecutionContext:
         .with_otel_port_spans(tracer=TracerProvider().get_tracer("test"))
         .with_interceptors(_PassThroughInterceptor())
     )
-    return ExecutionContext(deps=registry.freeze().resolve())
+    return ExecutionContext(deps=registry.freeze().resolve(), cache_ports=cache_ports)
 
 
 def _plain(port: object) -> Deps:
@@ -300,3 +303,46 @@ def test_a_wrapped_backend_that_cannot_is_still_refused(
         ctx.dlock.command(DistributedLockSpec(name="lock", **{flag: True}))
 
     assert ei.value.code == code
+
+
+@pytest.mark.parametrize("wrapped", [False, True], ids=["bare", "wrapped"])
+def test_the_backend_judged_is_the_one_handed_out(wrapped: bool) -> None:
+    # With the port cache off, resolving again for the check builds another backend, and a
+    # factory whose backends differ (here, only the first fences) was judged by the wrong one.
+    built: list[object] = []
+
+    def factory(_ctx: object, _spec: object) -> object:
+        built.append(_FencingDisabledLock() if built else _FencingLock())
+        return built[-1]
+
+    deps = Deps.plain({DistributedLockCommandDepKey: factory})
+    ctx = (
+        _wrapped_ctx(deps, cache_ports=False)
+        if wrapped
+        else ExecutionContext(deps=frozen_deps_from_deps(deps), cache_ports=False)
+    )
+
+    port = ctx.dlock.command(DistributedLockSpec(name="lock", requires_fencing_token=True))
+
+    assert len(built) == 1
+    assert backend_of(port) is built[0]
+
+
+def test_implements_answers_through_the_guard_and_the_proxies_without_a_use() -> None:
+    # Inside a read-only operation a probe of the guard is a use and refuses; asking whether
+    # the backend implements a protocol is not one, and hands nothing out.
+    ctx = _wrapped_ctx(_plain(_AdvancingLock()))
+
+    with ctx.inv_ctx.bind_read_only():
+        port = ctx.dlock.command(DistributedLockSpec(name="lock"))
+
+        with pytest.raises(CoreException):
+            getattr(port, "capabilities", None)
+
+        assert implements(port, FencingAware)
+        assert implements(port, FenceAdvancing)
+
+    plain = _wrapped_ctx(_plain(_FencingLock())).dlock.command(DistributedLockSpec(name="lock"))
+
+    assert implements(plain, FencingAware)
+    assert not implements(plain, FenceAdvancing)

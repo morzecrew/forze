@@ -84,4 +84,4 @@ async def test_unsupported_protocol_is_refused_before_auth(bad: Any) -> None:
     # client-safe refusal naming the supported range; nothing was joined or stored
     assert "Unsupported realtime protocol" in str(caught.value)
     assert not sio.entered
-    assert not sio.sessions
+    assert not any(sio.sessions.values())

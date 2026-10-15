@@ -267,3 +267,57 @@ async def test_the_consumer_registers_itself_as_drainable() -> None:
         await step.startup(ctx)
 
         assert [one.loop_name for one in ctx.drainables.loops] == ["queue_consumer:jobs"]
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_aware_queue_is_refused_at_startup() -> None:
+    # The consumer receives with no tenant bound (a tenant from the headers is bound per
+    # message, after the receive), so a tenant-aware queue would refuse every poll.
+    from forze_kits.integrations.consumer import QueueConsumer
+    from forze_mock import MockRouteConfig
+
+    step = _step()
+    module = MockDepsModule(state=MockState(), routes={"jobs": MockRouteConfig(tenant_aware=True)})
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
+    run_mock = AsyncMock()
+
+    with patch.object(QueueConsumer, "run", run_mock):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with pytest.raises(CoreException) as caught:
+                await step.startup(ctx)
+
+            assert not ctx.drainables.loops
+
+    assert caught.value.code == "tenant_global_required"
+    run_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_notification_consumer_refuses_a_tenant_aware_queue_too() -> None:
+    from forze_kits.integrations.notify import (
+        NotificationRouter,
+        notification_consumer_lifecycle_step,
+    )
+    from forze_mock import MockRouteConfig
+
+    step = notification_consumer_lifecycle_step(
+        queue="jobs",
+        queue_spec=_QUEUE_SPEC,
+        inbox_spec=_INBOX_SPEC,
+        tx_route="mock",
+        router=NotificationRouter().freeze(),
+        senders=MagicMock(),
+    )
+    module = MockDepsModule(state=MockState(), routes={"jobs": MockRouteConfig(tenant_aware=True)})
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
+
+    async with runtime.scope():
+        with pytest.raises(CoreException) as caught:
+            await step.startup(runtime.get_context())
+
+    assert caught.value.code == "tenant_global_required"

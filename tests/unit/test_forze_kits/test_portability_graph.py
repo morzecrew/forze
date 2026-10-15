@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
@@ -29,7 +30,7 @@ from forze.application.contracts.graph import (
     VertexRef,
 )
 from forze.application.contracts.inventory import SpecRegistry
-from forze.application.execution import ExecutionRuntime
+from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.base.exceptions import CoreException
 from forze_kits.integrations.portability import (
     UNTENANTED,
@@ -42,6 +43,7 @@ from forze_kits.integrations.portability import (
 )
 from forze_mock import MockDepsModule
 from forze_mock.state import MockState
+from tests.support.port_wrappers import traced_ops, with_port_wrappers
 from tests.support.quiesce import attested_report
 
 # ----------------------- #
@@ -108,6 +110,15 @@ def _runtime(state: MockState, spec: GraphModuleSpec = SOCIAL) -> ExecutionRunti
     return build_runtime(
         MockDepsModule(state=state), specs=SpecRegistry().register(spec), allow_unregistered=True
     )
+
+
+def _wrapped_runtime(state: MockState) -> ExecutionRuntime:
+    """*state* behind OTel port spans, port logging and runtime tracing, which records each
+    call that crosses the wrappers."""
+
+    registry = with_port_wrappers(DepsRegistry(modules=[MockDepsModule(state=state)]))
+    registry = registry.with_tracing(runtime=True)
+    return attrs.evolve(_runtime(state), deps=registry.freeze())
 
 
 async def _seed(runtime: ExecutionRuntime) -> None:
@@ -312,3 +323,38 @@ async def test_export_refuses_a_backend_that_cannot_surface_edge_endpoints(
 
     with pytest.raises(CoreException, match="endpoints"):
         await _export(runtime, tmp_path / "a")
+
+
+@pytest.mark.asyncio
+async def test_export_reads_edges_through_wrapped_ports(tmp_path: Path) -> None:
+    # A wrapped query port forwards the edge-export stream; the capability check must see it,
+    # and the stream must still be read through the wrappers.
+    state = MockState()
+    await _seed(_runtime(state))
+    runtime = _wrapped_runtime(state)
+
+    async with runtime.scope():
+        report = await export_archive(
+            runtime, tmp_path / "a", scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
+        assert "find_edges_export_stream" in traced_ops(runtime.get_context())
+
+    assert report.total_edges == 3
+
+
+@pytest.mark.asyncio
+async def test_migrate_reads_edges_from_a_wrapped_source() -> None:
+    state = MockState()
+    await _seed(_runtime(state))
+    source = _wrapped_runtime(state)
+
+    target = _runtime(MockState())
+    async with source.scope(), target.scope():
+        report = await migrate(
+            source, target, scope=FullScope(quiesce=_ATTESTED, tenants=UNTENANTED)
+        )
+
+        assert "find_edges_export_stream" in traced_ops(source.get_context())
+
+    assert report.total_edges == 3
+    assert (await _endpoint_edge(target, "u0", "u2")).since == 2020

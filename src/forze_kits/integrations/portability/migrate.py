@@ -33,6 +33,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.counter import CounterSpec
+from forze.application.contracts.deps import implements
 from forze.application.contracts.document import (
     DocumentSpec,
     DocumentWriteTypes,
@@ -279,7 +280,7 @@ class ArchiveMigrator:
         src_query = source.graph.query(spec)
         command = target.graph.command(spec)
 
-        if spec.edges and not isinstance(src_query, GraphEdgeExportAware):
+        if spec.edges and not implements(src_query, GraphEdgeExportAware):
             raise exc.precondition(
                 f"Cannot migrate graph {module!r}: the source's query backend cannot surface edge "
                 f"endpoints (no GraphEdgeExportAware), so its edges could not be re-created."

@@ -705,3 +705,30 @@ async def test_a_cancel_mid_handler_still_commits_what_the_batch_finished() -> N
         f"2 messages committed their effects but only {committed} offsets were committed — "
         f"the cancel dropped work that was already done"
     )
+
+
+# ....................... #
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_aware_group_is_refused_at_startup() -> None:
+    # The consumer reads with no tenant bound, so a tenant-aware group would refuse every
+    # poll; it is refused once, at startup, as wiring.
+    from forze_mock import MockRouteConfig
+
+    step = _step()
+    module = MockDepsModule(state=MockState(), routes={_TOPIC: MockRouteConfig(tenant_aware=True)})
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
+    run_mock = AsyncMock()
+
+    with patch.object(CommitStreamGroupConsumer, "run", run_mock):
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with pytest.raises(CoreException) as caught:
+                await step.startup(ctx)
+
+            assert not ctx.drainables.loops
+
+    assert caught.value.code == "tenant_global_required"
+    run_mock.assert_not_called()

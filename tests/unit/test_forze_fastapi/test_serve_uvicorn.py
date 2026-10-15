@@ -27,6 +27,7 @@ from forze.application.execution.runtime import ExecutionRuntime
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_fastapi import runtime_lifespan, serve_uvicorn
 from forze_fastapi.serving import _DrainingServer  # pyright: ignore[reportPrivateUsage]
+from tests.support.ports import free_port
 
 # ----------------------- #
 
@@ -34,13 +35,6 @@ _APP = Path(__file__).with_name("_serve_uvicorn_app.py")
 
 ANNOUNCE_DELAY = 1.5
 GRACEFUL_TIMEOUT = 1.0
-
-
-def _free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-
-        return probe.getsockname()[1]
 
 
 def _events(record: Path) -> list[str]:
@@ -69,7 +63,7 @@ def _readiness(port: int) -> int | None:
 
 @contextmanager
 def _serving(tmp_path: Path, mode: str) -> Iterator[tuple[subprocess.Popen[bytes], int, Path]]:
-    port = _free_port()
+    port = free_port()
     record = tmp_path / "events"
 
     with (tmp_path / "stderr").open("wb") as stderr:
@@ -374,7 +368,7 @@ class TestSignalCapture:
         """No signal handler can be installed there; the event is the way in."""
 
         events: list[str] = []
-        port = _free_port()
+        port = free_port()
 
         async def phase(_allowed: timedelta) -> None:
             events.append("phase")

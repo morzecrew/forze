@@ -23,7 +23,8 @@ from forze.application.contracts.durable.function import (
 from forze.application.execution import DeploymentProfile
 from forze.application.execution.lifecycle import LifecyclePlan
 from forze.application.execution.runtime import ExecutionRuntime
-from forze.base.exceptions import CoreException, ExceptionKind
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
@@ -103,9 +104,7 @@ class TestServerlessRefusal:
                 id="recovery",
             ),
             pytest.param(
-                lambda: durable_scheduler_background_lifecycle_step(
-                    scheduler=DurableScheduler()
-                ),
+                lambda: durable_scheduler_background_lifecycle_step(scheduler=DurableScheduler()),
                 id="scheduler",
             ),
         ],
@@ -260,18 +259,14 @@ class TestSchedulerConfigValidation:
     )
     def test_rejects_bad_config(self, over: dict[str, Any], match: str) -> None:
         with pytest.raises(CoreException, match=match):
-            durable_scheduler_background_lifecycle_step(
-                scheduler=DurableScheduler(), **over
-            )
+            durable_scheduler_background_lifecycle_step(scheduler=DurableScheduler(), **over)
 
 
 class TestSchedulerDrain:
     async def test_drain_loops_until_a_short_batch(self) -> None:
         scheduler = MagicMock()
         scheduler.tick = AsyncMock(side_effect=[100, 100, 10])
-        startup = _scheduler_startup(
-            scheduler=scheduler, limit=100, max_batches_per_tick=10
-        )
+        startup = _scheduler_startup(scheduler=scheduler, limit=100, max_batches_per_tick=10)
 
         await startup._drain(MagicMock())
 
@@ -280,9 +275,7 @@ class TestSchedulerDrain:
     async def test_drain_stops_at_the_batch_cap(self) -> None:
         scheduler = MagicMock()
         scheduler.tick = AsyncMock(return_value=100)  # every batch full
-        startup = _scheduler_startup(
-            scheduler=scheduler, limit=100, max_batches_per_tick=2
-        )
+        startup = _scheduler_startup(scheduler=scheduler, limit=100, max_batches_per_tick=2)
 
         await startup._drain(MagicMock())
 
@@ -382,9 +375,7 @@ class TestSchedulerTaskLifecycle:
         scheduler = MagicMock()
         scheduler.tick = AsyncMock(side_effect=RuntimeError("boom"))
         scheduler.ensure_cron_schedules = AsyncMock(return_value=0)
-        startup = _scheduler_startup(
-            scheduler=scheduler, interval=timedelta(seconds=0.01)
-        )
+        startup = _scheduler_startup(scheduler=scheduler, interval=timedelta(seconds=0.01))
         shutdown = _DurableSchedulerBackgroundShutdown(startup=startup)
 
         with patch.object(lifecycle_mod, "logger") as log:
@@ -396,3 +387,84 @@ class TestSchedulerTaskLifecycle:
             await shutdown(ctx)
 
         assert log.exception.called
+
+
+# ....................... #
+
+
+class TestConfigurationErrors:
+    # Wiring does not fix itself, so a wiring error stops the loop once. A tenant's own
+    # configuration error — its key disabled or pending deletion — is that tenant's: the
+    # rest of the shard goes on, and the tenant is tried again next tick.
+
+    @staticmethod
+    def _startup(kind: str, work: AsyncMock, tenants: Any) -> Any:
+        if kind == "recovery":
+            runner = MagicMock()
+            runner.recover = work
+            return _recovery_startup(
+                runner=runner, interval=timedelta(milliseconds=10), tenants=tenants
+            )
+
+        scheduler = MagicMock()
+        scheduler.tick = work
+        scheduler.ensure_cron_schedules = AsyncMock(return_value=0)
+        return _scheduler_startup(
+            scheduler=scheduler, interval=timedelta(milliseconds=10), tenants=tenants
+        )
+
+    @staticmethod
+    async def _ended(startup: Any, *, settle: float) -> bool:
+        ctx = context_from_modules(MockDepsModule())
+
+        with patch.object(lifecycle_mod, "logger"):
+            await startup(ctx)
+
+            try:
+                await asyncio.wait({startup.task}, timeout=settle)
+                return startup.task.done()
+
+            finally:
+                await startup.stop(deadline=asyncio.get_running_loop().time() + 1)
+
+    @pytest.mark.parametrize("shard", [None, [uuid4(), uuid4()]], ids=["unbound", "sharded"])
+    @pytest.mark.parametrize("kind", ["recovery", "scheduler"])
+    async def test_a_wiring_error_ends_the_loop(self, kind: str, shard: list[Any] | None) -> None:
+        broken = AsyncMock(
+            side_effect=exc.configuration("no keyring", code=PAYLOAD_CIPHER_MISSING_CODE)
+        )
+        startup = self._startup(kind, broken, (lambda: shard) if shard is not None else None)
+
+        assert await self._ended(startup, settle=0.5)
+        assert broken.await_count == 1
+
+    @pytest.mark.parametrize("kind", ["recovery", "scheduler"])
+    async def test_one_tenants_configuration_error_leaves_the_shard_running(
+        self, kind: str
+    ) -> None:
+        a, b = uuid4(), uuid4()
+        seen: list[Any] = []
+
+        async def _work(ctx: Any, **_: Any) -> int:
+            tenant = ctx.inv_ctx.get_tenant().tenant_id
+            seen.append(tenant)
+
+            if tenant == a:
+                raise exc.configuration("AWS KMS key is disabled.")
+
+            return 0
+
+        startup = self._startup(kind, AsyncMock(side_effect=_work), lambda: [a, b])
+
+        assert not await self._ended(startup, settle=0.3)
+        assert seen.count(a) >= 2 and seen.count(b) >= 2
+
+    @pytest.mark.parametrize("kind", ["recovery", "scheduler"])
+    async def test_an_unbound_sweep_retries_a_configuration_error_that_is_not_wiring(
+        self, kind: str
+    ) -> None:
+        work = AsyncMock(side_effect=exc.configuration("AWS KMS key is disabled."))
+        startup = self._startup(kind, work, None)
+
+        assert not await self._ended(startup, settle=0.3)
+        assert work.await_count >= 2
