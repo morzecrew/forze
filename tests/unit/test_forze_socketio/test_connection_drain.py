@@ -41,6 +41,7 @@ from forze_socketio import (
     connection_drain_lifecycle_step,
 )
 from forze_socketio import connection as connection_module
+from forze_socketio import drain as drain_module
 from forze_socketio.drain import close_transport
 
 # ----------------------- #
@@ -283,6 +284,61 @@ class TestCloseSpread:
         assert stats.drain_closed == {"closed": 0, "failed": 0, "timed_out": 1}
         await _until(lambda: sockets[0].closed, within=2.0)
         assert [socket.closed for socket in sockets] == [True, False, False]
+
+    # ....................... #
+
+    async def test_a_target_already_gone_counts_as_closed(self) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+
+        closed = await close_spread(
+            server, [("/", "eio-gone")], timedelta(seconds=0.01), tail=timedelta(1), stats=stats
+        )
+
+        assert closed == 1
+        assert stats.drain_closed == {"closed": 1, "failed": 0, "timed_out": 0}
+
+    # ....................... #
+
+    async def test_a_close_that_fails_or_is_cancelled_past_the_tail_is_still_logged(
+        self, error_log_buf: Any
+    ) -> None:
+        server = _server()
+        release = asyncio.Event()
+
+        class _LateSocket(_Socket):
+            async def close(
+                self, wait: bool = True, abort: bool = False, reason: Any = None
+            ) -> None:
+                await release.wait()
+
+                if self.sid == "eio-1":
+                    raise ConnectionResetError("transport gone at last")
+
+                await asyncio.sleep(60)  # still closing at process exit
+
+        for eio_sid in ("eio-1", "eio-2"):
+            server.eio.sockets[eio_sid] = _LateSocket(server, eio_sid)
+
+        await close_spread(
+            server,
+            [("/", "eio-1"), ("/", "eio-2")],
+            timedelta(seconds=0.01),
+            tail=timedelta(seconds=0.05),
+        )
+        release.set()
+        late = list(drain_module._FINISHING.get(server, ()))  # pyright: ignore[reportPrivateUsage]
+        await _until(lambda: any(task.done() for task in late), within=1.0)
+
+        for task in late:
+            task.cancel()  # what process exit does to a close still running
+
+        await asyncio.gather(*late, return_exceptions=True)
+        await asyncio.sleep(0)
+
+        logged = error_log_buf.getvalue()
+        assert "transport gone at last" in logged
+        assert "eio-2 was cancelled before it finished" in logged
 
     # ....................... #
 
@@ -1030,6 +1086,22 @@ class TestConnectUnderWay:
         assert await presence.count(_ROOM) == 0  # joined after its disconnect ran: undone
         assert stats.connections == {}
         assert error_log_buf.getvalue() == ""  # its room and session went with it: no noise
+
+    # ....................... #
+
+    async def test_one_whose_engine_io_session_went_first_is_still_accepted(self) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+
+        async def resolve(_connect: SocketIOConnect) -> RealtimeConnection | None:
+            # The Engine.IO side forgot the connection before Socket.IO's side did.
+            server.eio.sockets.pop("eio-1", None)
+            return None
+
+        attach_realtime_connection(server, resolve=resolve, stats=stats)
+        await _connect(server, "eio-1")
+
+        assert stats.connections == {"/": 1}
 
     # ....................... #
 
