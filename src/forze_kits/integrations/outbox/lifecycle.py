@@ -22,7 +22,7 @@ from forze.application.contracts.outbox import (
 from forze.application.contracts.pubsub import PubSubQueryDepKey, PubSubQueryPort, PubSubSpec
 from forze.application.contracts.queue import QueueSpec
 from forze.application.contracts.stream import StreamSpec
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution.background import BackgroundLoopControl
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import exc
@@ -785,17 +785,25 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             logger.warning("Outbox relay already running; ignoring duplicate startup")
             return
 
+        # Freeze the assigned shard at **startup** (not inside the detached task), so a broken
+        # tenants provider fails startup loudly instead of spawning a task that dies and
+        # silently stops draining. Restart to repartition — one consistent onboarding model,
+        # shared with the gateway source and the group-ensure step.
+        tenant_shard = list(self.tenants()) if self.tenants is not None else None
+
+        if tenant_shard is None:
+            # One unbound pass: a tenant-scoped outbox would refuse every one of them.
+            require_tenant_global(
+                ctx.outbox.query(self.outbox_spec),
+                what=f"Outbox relay for route {str(self.outbox_spec.name)!r}",
+            )
+
         # Fresh per startup: an event reused across scopes still carries the previous
         # shutdown's stop, and the new loop would exit before its first tick.
         self.control.arm()
         self.scope_ctx = ctx
         self.drained = False
-
-        # Freeze the assigned shard at **startup** (not inside the detached task), so a broken
-        # tenants provider fails startup loudly instead of spawning a task that dies and
-        # silently stops draining. Restart to repartition — one consistent onboarding model,
-        # shared with the gateway source and the group-ensure step.
-        self.tenant_shard = list(self.tenants()) if self.tenants is not None else None
+        self.tenant_shard = tenant_shard
         self.last_reclaim_at = None
 
         wake = self.outbox_spec.wake
@@ -806,7 +814,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             query: PubSubQueryPort[OutboxWakeSignal] = ctx.deps.resolve_configurable(
                 ctx, PubSubQueryDepKey, wake.spec, route=wake.spec.name
             )
-            wake.require_tenant_global(query)
+            # The relay listens unbound: a wake route needs neither a tenant partition nor
+            # a client that routes per tenant.
+            require_tenant_global(query, what=f"Outbox wake route {wake.route!r}")
             self.woken = asyncio.Event()
             self.listener = asyncio.create_task(
                 self._listen(wake, query, self.woken), name=f"{self.control.loop_name}:wake"
@@ -904,7 +914,9 @@ def outbox_relay_background_lifecycle_step(
     When *outbox_spec* declares a :class:`~forze.application.contracts.outbox.OutboxWake`, the
     relay also listens for wakes and runs a pass as soon as a flush's rows commit, so
     *interval* becomes the fallback for a lost wake rather than the delivery latency. The
-    wake route is resolved at startup and must be wired in this process.
+    wake route is resolved at startup and must be wired in this process, tenant-global: one
+    that is tenant-aware, or on a client routed per tenant with no tenant to route by, fails
+    startup (``tenant_global_required``).
 
     *reclaim_stale_after* resets rows stuck ``processing`` on the first batch of a pass, at
     most once per *reclaim_every* (``None``: once per poll tick). Passes driven by wakes in
@@ -921,7 +933,9 @@ def outbox_relay_background_lifecycle_step(
     namespace-tier outbox (which fail-closes when read unbound) and forward each row to its
     tenant's destination. Tenants drain **sequentially** per tick; assign the **same shard**
     this instance's gateway consumes, and shard across instances to parallelize. Omit it for
-    a tenant-global (tagged) outbox, which one unbound pass drains with per-row routing.
+    a tenant-global (tagged) outbox, which one unbound pass drains with per-row routing; a
+    tenant-aware outbox, or one on a client routed per tenant, then fails startup with a
+    ``configuration`` error coded ``tenant_global_required``.
 
     Shutdown
     --------

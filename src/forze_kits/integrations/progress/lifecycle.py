@@ -21,6 +21,7 @@ from uuid import UUID
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -31,6 +32,7 @@ from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
 
 from .observability import JobStalenessMonitor
+from .projector import build_job_progress_projector
 from .record import JobDocumentSpec, job_record_spec
 
 # ----------------------- #
@@ -84,6 +86,13 @@ class _StalenessSweepStartup(LifecycleHook):
             logger.warning("Job staleness sweep already running; ignoring duplicate startup")
 
             return
+
+        if self.monitor.tenants is None:
+            # One unbound sweep: a tenant-scoped collection would refuse every one of them.
+            require_tenant_global(
+                build_job_progress_projector(ctx, spec=self.monitor.spec).query,
+                what="Job staleness sweep",
+            )
 
         self.control.arm()
 
@@ -180,7 +189,8 @@ def job_staleness_lifecycle_step(
     how often the work in question reports, or every healthy job reads as stuck. *interval*
     is how fresh the answer stays — it, not the scrape interval, is the resolution of the
     gauges. Under a fleet, wrap the step with a singleton if the extra reads matter; the
-    sweep is read-only, so concurrent ones are merely redundant.
+    sweep is read-only, so concurrent ones are merely redundant. Without *tenants* the sweep
+    runs unbound, so a tenant-scoped job collection fails startup (``tenant_global_required``).
     """
 
     if interval.total_seconds() <= 0:

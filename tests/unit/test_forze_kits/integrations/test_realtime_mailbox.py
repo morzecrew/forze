@@ -470,7 +470,9 @@ class TestRetentionIsPaired:
     async def test_a_running_sweeper_satisfies_the_declaration(self) -> None:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
-        step = realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7))
+        step = realtime_mailbox_retention_lifecycle_step(
+            tenants=lambda: [_T1], max_age=timedelta(days=7)
+        )
         runtime = _runtime()
 
         async with runtime.scope():
@@ -502,7 +504,7 @@ class TestRetentionIsPaired:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
         window = timedelta(days=7)
-        step = realtime_mailbox_retention_lifecycle_step(max_age=window)
+        step = realtime_mailbox_retention_lifecycle_step(tenants=lambda: [_T1], max_age=window)
         runtime = _runtime()
 
         async with runtime.scope():
@@ -527,7 +529,7 @@ class TestRetentionIsPaired:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
         window = timedelta(days=7)
-        step = realtime_mailbox_retention_lifecycle_step(max_age=window)
+        step = realtime_mailbox_retention_lifecycle_step(tenants=lambda: [_T1], max_age=window)
         runtime = _runtime()
         created: list[asyncio.Task[None]] = []
         real_create_task = asyncio.create_task
@@ -572,7 +574,9 @@ class TestRetentionIsPaired:
         # unwired case tells, one level quieter.
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
-        step = realtime_mailbox_retention_lifecycle_step(max_age=timedelta(days=7))
+        step = realtime_mailbox_retention_lifecycle_step(
+            tenants=lambda: [_T1], max_age=timedelta(days=7)
+        )
         runtime = _runtime()
 
         async with runtime.scope():
@@ -596,7 +600,9 @@ class TestRetentionIsPaired:
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
         window = timedelta(days=3)
-        step = realtime_mailbox_retention_lifecycle_step(max_age=window, cursor_max_age=window)
+        step = realtime_mailbox_retention_lifecycle_step(
+            tenants=lambda: [_T1], max_age=window, cursor_max_age=window
+        )
         runtime = _runtime()
 
         async with runtime.scope():
@@ -626,7 +632,7 @@ class TestRetentionIsPaired:
         # window is only evidence if the comparison keeps the value it compares.
         from forze_kits.integrations.realtime import realtime_mailbox_retention_lifecycle_step
 
-        step = realtime_mailbox_retention_lifecycle_step(max_age=swept)
+        step = realtime_mailbox_retention_lifecycle_step(tenants=lambda: [_T1], max_age=swept)
         runtime = _runtime()
 
         async with runtime.scope():
@@ -650,7 +656,7 @@ class TestRetentionIsPaired:
         swept = realtime_mailbox_spec("swept")
         other = realtime_mailbox_spec("other")
         step = realtime_mailbox_retention_lifecycle_step(
-            max_age=timedelta(days=7), mailbox_spec=swept
+            tenants=lambda: [_T1], max_age=timedelta(days=7), mailbox_spec=swept
         )
         runtime = _runtime()
 

@@ -22,13 +22,17 @@ from forze.application.contracts.execution import LifecycleStep
 from forze.application.contracts.secrets import SecretRef
 from forze.application.execution import ExecutionContext, build_runtime
 from forze.base.exceptions import CoreException, ExceptionKind
+from forze_kits.integrations.realtime import (
+    realtime_group_ensure_lifecycle_step,
+    realtime_stream_spec,
+)
 from forze_kits.lifecycle import (
     LeadershipSpec,
     Term,
     leadership_lifecycle_step,
     singleton_lifecycle_step,
 )
-from forze_redis import RedisDepsModule, RedisDistributedLockConfig
+from forze_redis import RedisDepsModule, RedisDistributedLockConfig, RedisStreamGroupConfig
 from forze_redis.kernel.client import RedisClient, RedisClientPort, RoutedRedisClient
 
 pytestmark = pytest.mark.asyncio
@@ -157,3 +161,13 @@ async def test_a_tenant_global_lock_route_runs_both(redis_client: RedisClient) -
             await led.wait()
 
     assert ran == ["startup"]
+
+
+async def test_group_ensure_refuses_a_tenant_aware_stream_group(redis_client: RedisClient) -> None:
+    spec = realtime_stream_spec()
+    module = RedisDepsModule(
+        client=redis_client,
+        stream_groups={str(spec.name): RedisStreamGroupConfig(tenant_aware=True)},
+    )
+
+    await _refused_at_startup(module, realtime_group_ensure_lifecycle_step(stream_spec=spec))

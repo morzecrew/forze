@@ -12,7 +12,7 @@ import attrs
 
 from forze.application.contracts.durable.function import DurableFunctionSpec
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
     BackgroundLoopControl,
@@ -22,6 +22,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
 
+from ._resolve import resolve_durable_run_store, resolve_durable_schedule_store
 from .runner import DurableFunctionRunner
 from .scheduler import DurableScheduler
 
@@ -150,6 +151,10 @@ class _DurableRecoveryBackgroundStartup(LifecycleHook):
         # outbox relay — a broken provider fails startup loudly instead of a silent dead task.
         tenants = list(self.tenants()) if self.tenants is not None else None
 
+        if tenants is None:
+            # One unbound sweep: a tenant-scoped store would refuse every one of them.
+            require_tenant_global(resolve_durable_run_store(ctx), what="Durable recovery")
+
         async def _loop() -> None:
             while True:
                 try:
@@ -228,7 +233,8 @@ def durable_recovery_background_lifecycle_step(
     binds every assigned tenant in turn and recovers its table (shard frozen at startup;
     assign the shard this instance owns and shard across instances to parallelize). Omit it
     for a tagged (shared-table) store — one unbound sweep recovers every tenant's runs and
-    the runner re-binds each run's tenant to execute it.
+    the runner re-binds each run's tenant to execute it. Without *tenants*, a tenant-aware
+    store, or one on a client routed per tenant, fails startup (``tenant_global_required``).
 
     Concurrent scanners are safe (``FOR UPDATE SKIP LOCKED`` + a fence on the terminal
     write), so run this unwrapped on every replica. Do not wrap it in the ``forze_kits``
@@ -385,6 +391,12 @@ class _DurableSchedulerBackgroundStartup(LifecycleHook):
     async def __call__(self, ctx: ExecutionContext) -> None:
         tenants = list(self.tenants()) if self.tenants is not None else None
 
+        if tenants is None:
+            # One unbound sweep claims due schedules: a tenant-scoped schedule store would
+            # refuse every one. The run store is not held to it: each fire enqueues under
+            # its schedule's tenant.
+            require_tenant_global(resolve_durable_schedule_store(ctx), what="Durable scheduler")
+
         # Auto-register schedules from declared cron triggers before the fire loop starts.
         await self._ensure_cron_schedules(ctx, tenants)
 
@@ -464,7 +476,10 @@ def durable_scheduler_background_lifecycle_step(
 
     When *tenants* is set the schedule store is **namespace-tier**: each sweep binds every
     assigned tenant in turn and fires its schedules (and the specs are ensured per tenant);
-    the shard is frozen at startup. Omit it for a tagged store (one unbound sweep).
+    the shard is frozen at startup. Omit it for a tagged store (one unbound sweep); a
+    tenant-aware schedule store, or one on a client routed per tenant, then fails startup
+    (``tenant_global_required``). The run store may be tenant-aware either way: each fire
+    enqueues under its schedule's tenant.
 
     Concurrent schedulers are safe (idempotent run keys + compare-and-set advance), so run
     this unwrapped on every replica. Do not wrap it in the singleton lifecycle guard to

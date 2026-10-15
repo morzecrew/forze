@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The singleton guard and leadership refuse, at startup, a lock no tenant-less call can use**: tenant-aware, or on a routed client with no tenant to route by. It failed startup with `tenant_required` or never led; now `tenant_global_required` (new `require_tenant_global`). **Breaking** for such a leadership step.
 
+- **Background steps run without `tenants` refuse a tenant-scoped port at startup:** the outbox and realtime relays, durable recovery and scheduler, `job_staleness`, stream trim and mailbox retention, which failed every tick, and group ensure. So does a relay whose wake is on a routed client. **Breaking** for such apps.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.

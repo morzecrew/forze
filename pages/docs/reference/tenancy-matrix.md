@@ -78,7 +78,7 @@ sharded, per-tenant read.
 | Stream / Pub/Sub (Redis) | `namespace` via `tenant_aware` key prefix | A **sharded gateway** — `TenantShardedSignalSource` + a `RealtimeShard` per instance binds each assigned tenant and reads its key ([tenant-aware Socket.IO gateway](../integrations/socketio.md#tenancy-and-addressing)). |
 | Queue (RabbitMQ, SQS) | `namespace` via name prefix | Keep the queue **tenant-global** and bind the tenant from the message envelope in the consumer; or run a **per-tenant worker** per queue. A built-in sharded queue worker is not yet shipped. |
 | Commit-stream (Kafka) | `namespace` via per-tenant topic prefix; `dedicated` via routed client (no `tagged` — a topic has no row filter) | Keep the topic **tenant-global** and bind the tenant from the envelope in the consumer (`bind_tenant_from_headers=True` on the commit-stream consumer — opt-in, headers are untrusted); or run a consumer per namespaced topic. |
-| Outbox | **tenant-global** by default; as a Postgres/Mongo table it can reach `tagged`→`dedicated` (see read side) | The plain relay drains a tenant-global outbox cross-tenant and **binds each row's `tenant_id`** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* routes per-tenant. To isolate the **outbox table itself** (`tenant_aware` and up), use the sharded relay (`realtime_tenant_relay_lifecycle_step`); the plain relay fails closed (`outbox_relay_tenant_unbound`). |
+| Outbox | **tenant-global** by default; as a Postgres/Mongo table it can reach `tagged`→`dedicated` (see read side) | The plain relay drains a tenant-global outbox cross-tenant and **binds each row's `tenant_id`** as it forwards (`_under_claim_tenant`), so a tenant-aware *destination* routes per-tenant. To isolate the **outbox table itself** (`tenant_aware` and up), use the sharded relay (`realtime_tenant_relay_lifecycle_step`); the plain relay refuses it at startup (`tenant_global_required`). |
 | Inbox | **tenant-global** by default; can be `tenant_aware` | Dedup is keyed by the globally-unique event id, so per-tenant isolation is **optional** (ids can't collide across tenants). Runs under whatever tenant the gateway binds — the shard tenant in namespace mode — so a tenant-aware inbox works there too. |
 | Realtime end-to-end | outbox **tenant-global** → stream `namespace` | The whole path stays on the ladder: stage (tenant-global outbox, relay binds per row) → per-tenant stream key → sharded gateway (binds from the key) → tenant-scoped room. The outbox stays shared; only the stream is isolated. Ceiling `namespace`. |
 | Durable — Temporal | `namespace` via per-tenant task queue | A worker drains one task queue; per-tenant isolation means a per-tenant queue with a worker assigned to it (operator-managed), or `tagged` with the tenant in the workflow context. |
@@ -88,7 +88,9 @@ The rule across all of these: **the reader binds the tenant.** A handler-read st
 binds it from the request; a background consumer binds it from the resource it was
 assigned (a sharded stream key) or from each item it processes (the relay per row).
 That's why the **default** for relay/worker-drained resources is tenant-global, and
-isolating them is opt-in — it costs a sharded reader.
+isolating them is opt-in — it costs a sharded reader. A lifecycle step or background loop
+left unbound over a `tenant_aware` resource, or one on a client routed per tenant, refuses
+to start, with a `configuration` error coded `tenant_global_required`.
 
 ## Declaring and enforcing a floor
 

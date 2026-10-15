@@ -17,8 +17,12 @@ import attrs
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.outbox import OutboxSpec
 from forze.application.contracts.realtime import DEFAULT_REALTIME_GROUP, RealtimeShard
-from forze.application.contracts.stream import AckStreamGroupAdminDepKey, StreamSpec
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.stream import (
+    AckStreamGroupAdminDepKey,
+    AckStreamGroupAdminPort,
+    StreamSpec,
+)
+from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -62,6 +66,8 @@ class _EnsureGroupStartup(LifecycleHook):
             self.stream_spec,
             route=self.stream_spec.name,
         )
+        # Runs with no tenant bound: a tenant-scoped stream would refuse the ensure.
+        require_tenant_global(admin, what="Realtime group ensure")
         await admin.ensure_group(
             self.group,
             str(self.stream_spec.name),
@@ -84,7 +90,9 @@ def realtime_group_ensure_lifecycle_step(
     Order this **before** the relay and before serving so a fresh group's ``"$"``
     start does not miss durable signals produced in the startup window. Idempotent
     (a no-op if the group exists). It creates shared infrastructure, so under a
-    ``FLEET`` profile wrap it with a singleton lifecycle step.
+    ``FLEET`` profile wrap it with a singleton lifecycle step. It runs with no tenant bound,
+    so a tenant-aware stream fails startup (``tenant_global_required``); use
+    :func:`realtime_tenant_group_ensure_lifecycle_step` for one.
     """
 
     return LifecycleStep(
@@ -279,13 +287,18 @@ class _StreamTrimStartup(LifecycleHook):
 
     # ....................... #
 
-    async def _trim_tick(self, ctx: ExecutionContext, tenants: Sequence[UUID] | None) -> None:
-        admin = ctx.deps.resolve_configurable(
+    def _admin(self, ctx: ExecutionContext) -> AckStreamGroupAdminPort:
+        return ctx.deps.resolve_configurable(
             ctx,
             AckStreamGroupAdminDepKey,
             self.stream_spec,
             route=self.stream_spec.name,
         )
+
+    # ....................... #
+
+    async def _trim_tick(self, ctx: ExecutionContext, tenants: Sequence[UUID] | None) -> None:
+        admin = self._admin(ctx)
 
         if tenants is None:
             await admin.trim_acknowledged(str(self.stream_spec.name))
@@ -317,6 +330,10 @@ class _StreamTrimStartup(LifecycleHook):
         # Freeze the assigned tenant shard at startup (restart to repartition), matching the
         # sharded gateway/relay — a broken provider fails startup loudly, not as a dead task.
         tenants = list(self.tenants()) if self.tenants is not None else None
+
+        if tenants is None:
+            # One unbound sweep: a tenant-scoped stream would refuse every one of them.
+            require_tenant_global(self._admin(ctx), what="Realtime stream trim")
 
         if self.control.running:
             logger.warning("Realtime stream trim already running; ignoring duplicate startup")
@@ -497,6 +514,12 @@ class _MailboxRetentionStartup(LifecycleHook):
         # the sharded gateway/relay — a broken provider fails startup loudly.
         tenants = list(self.tenants()) if self.tenants is not None else None
 
+        if tenants is None:
+            # One unbound sweep: tenant-scoped collections would refuse every one of them.
+            what = "Realtime mailbox retention"
+            require_tenant_global(self.mailbox_builder(ctx).query, what=what)
+            require_tenant_global(self.cursors_builder(ctx).query, what=what)
+
         if self.control.running:
             logger.warning("Realtime mailbox retention already running; ignoring duplicate startup")
             return
@@ -624,7 +647,8 @@ def realtime_mailbox_retention_lifecycle_step(
     :func:`~forze_kits.lifecycle.leadership_lifecycle_step`.
     *tenants* mirrors the sharded gateway: on ``tenant_aware``
     mailbox/cursor routes, pass ``lambda: shard.tenants`` to sweep each assigned
-    tenant's collections; ``None`` sweeps the tenant-global collections once.
+    tenant's collections; ``None`` sweeps the tenant-global collections once, and fails
+    startup over tenant-scoped ones (``tenant_global_required``).
     """
 
     # The window rules live on the declaration, so the sweep states its window as one and
@@ -702,7 +726,8 @@ def realtime_stream_trim_lifecycle_step(
     stream route, each sweep binds every assigned tenant in turn and trims its per-tenant
     stream key — pass ``lambda: shard.tenants`` from the same
     :class:`~forze.application.contracts.realtime.RealtimeShard` the other components use.
-    ``None`` (the default) sweeps the tenant-global stream once.
+    ``None`` (the default) sweeps the tenant-global stream once, and fails startup over a
+    tenant-scoped one (``tenant_global_required``).
     """
 
     startup = _StreamTrimStartup(

@@ -451,6 +451,14 @@ class MockAckStreamGroupAdminAdapter[M: BaseModel](AckStreamGroupAdminPort):
 
     # ....................... #
 
+    @property
+    def tenant_aware(self) -> bool:
+        """Whether the stream is partitioned per tenant, as the Redis admin adapter says."""
+
+        return self.stream.tenant_aware
+
+    # ....................... #
+
     async def ensure_group(self, group: str, stream: str, *, start_id: str = "$") -> None:
         with self.state.lock:
             store = cast(dict[str, Any], self.stream._stream_store())  # pyright: ignore[reportPrivateUsage]
