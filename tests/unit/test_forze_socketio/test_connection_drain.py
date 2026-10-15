@@ -840,6 +840,39 @@ class TestConnectUnderWay:
 
     # ....................... #
 
+    async def test_one_whose_client_left_while_it_joined_leaves_presence_and_logs_nothing(
+        self, error_log_buf: Any
+    ) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+
+        class _HeldJoin(InMemoryRealtimePresence):
+            def __init__(self) -> None:
+                super().__init__()
+                self.joining = asyncio.Event()
+                self.release = asyncio.Event()
+
+            async def joined(self, room: str, sid: str) -> None:
+                self.joining.set()
+                await self.release.wait()
+                await super().joined(room, sid)
+
+        presence = _HeldJoin()
+        attach_realtime_connection(server, resolve=_resolve, presence=presence, stats=stats)
+        socket = _engine_socket(server, "eio-1")
+        connecting = asyncio.ensure_future(_connect(server, "eio-1"))
+        await asyncio.wait_for(presence.joining.wait(), timeout=1.0)
+
+        await socket.close(wait=False, abort=True)  # the client goes, no drain anywhere
+        presence.release.set()
+        await asyncio.wait_for(connecting, timeout=1.0)
+
+        assert await presence.count(_ROOM) == 0  # joined after its disconnect ran: undone
+        assert stats.connections == {}
+        assert error_log_buf.getvalue() == ""  # its room and session went with it: no noise
+
+    # ....................... #
+
     @pytest.mark.parametrize("where", ["admission", "auth"])
     async def test_one_whose_transport_closed_meanwhile_stops_quietly(self, where: str) -> None:
         server = _server()

@@ -595,7 +595,7 @@ class _ConnectionLifecycle:
 
         if not self.sio.manager.is_connected(sid, self.namespace):
             if connection is not None:
-                await self._undo_connect(sid, connection)
+                await self._undo_connect(sid, connection, gone=True)
 
             return False
 
@@ -665,13 +665,18 @@ class _ConnectionLifecycle:
 
     # ....................... #
 
-    async def _undo_connect(self, sid: str, connection: RealtimeConnection) -> None:
+    async def _undo_connect(
+        self, sid: str, connection: RealtimeConnection, *, gone: bool = False
+    ) -> None:
         """Undo what an accepted connect did, before it is refused after all.
 
         A refused connect never reaches :meth:`on_disconnect`, so without this a refused
         client would stay online in shared presence until its entry expired, and its
         identity would stay in the namespace's session. Each step is best-effort: a failure
-        is logged and must not replace the refusal.
+        is logged and must not replace the refusal. When the connect's transport is *gone*,
+        its rooms and session went with its sid, and only presence and the replay progress
+        are left to undo — presence because the connect may have joined after its
+        :meth:`on_disconnect` ran.
         """
 
         self._replay_progress.pop(sid, None)
@@ -679,6 +684,9 @@ class _ConnectionLifecycle:
 
         if self.presence is not None:
             await _best_effort(self.presence.left(room, sid))
+
+        if gone:
+            return
 
         await _best_effort(self.sio.leave_room(sid, room, namespace=self.namespace))
 
