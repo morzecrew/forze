@@ -258,6 +258,15 @@ class TestSseDrain:
         from forze_fastapi.realtime import sse as sse_module
 
         monkeypatch.setattr(sse_module, "_END_GRACE_SECONDS", 0.1)
+        # Held, so its stream is not closed by being collected: only the cut-off closes it.
+        responses: list[Any] = []
+        init = sse_module._LiveSseResponse.__init__
+
+        def held(response: Any, *args: Any, **kwargs: Any) -> None:
+            init(response, *args, **kwargs)
+            responses.append(response)
+
+        monkeypatch.setattr(sse_module._LiveSseResponse, "__init__", held)
         hub = RealtimeSseHub()
         runtime = _runtime(hub)
         app = _sse_app(hub, runtime)
