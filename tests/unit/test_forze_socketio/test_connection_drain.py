@@ -477,6 +477,41 @@ class TestDrainStep:
 
     # ....................... #
 
+    @pytest.mark.parametrize("missing", ["close_wait", "poll"])
+    def test_a_socket_class_without_what_the_close_uses_is_refused(
+        self, missing: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        if missing == "close_wait":
+
+            async def close(self: Any, abort: bool = False, reason: Any = None) -> None:
+                return None
+
+            monkeypatch.setattr(AsyncSocket, "close", close)
+
+        else:
+            monkeypatch.delattr(AsyncSocket, "poll")
+
+        with pytest.raises(CoreException) as caught:
+            connection_drain_lifecycle_step(
+                _server(), window=timedelta(seconds=1), tail=timedelta(seconds=1)
+            )
+
+        assert caught.value.kind == ExceptionKind.CONFIGURATION
+
+    # ....................... #
+
+    def test_a_turn_away_is_checked_too_when_draining_is_wired(self) -> None:
+        server = _server()
+        server.eio.sockets = None  # type: ignore[assignment]
+
+        with pytest.raises(CoreException) as caught:
+            attach_realtime_connection(server, resolve=_resolve, draining=lambda: False)
+
+        assert caught.value.kind == ExceptionKind.CONFIGURATION
+        attach_realtime_connection(_server(), resolve=_resolve)  # without draining: no close
+
+    # ....................... #
+
     async def test_teardown_waits_for_closes_still_running_past_the_tail(self) -> None:
         server = _server()
         store = {"open": True}

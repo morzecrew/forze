@@ -17,6 +17,7 @@ require_socketio()
 # ....................... #
 
 import asyncio
+import inspect
 import weakref
 from collections.abc import Callable, Sequence
 from datetime import timedelta
@@ -24,6 +25,7 @@ from functools import partial
 from typing import Any, cast, final
 
 import attrs
+from engineio.async_socket import AsyncSocket  # type: ignore[import-untyped]  # ships no types
 from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import LifecycleStep
@@ -98,30 +100,35 @@ async def close_transport(sio: AsyncServer, eio_sid: str) -> None:
     await asyncio.shield(task)
 
 
-def _require_close_internals(sio: AsyncServer) -> None:
+def require_close_internals(sio: AsyncServer) -> None:
     """Refuse a server whose Engine.IO side lacks what :func:`close_transport` uses.
 
-    The close reads python-engineio internals — its socket table, a socket's ``close``, and
-    the queue each socket's writer drains, which ends on a ``None`` — that a release could
-    change. A drain finding out at drain time would close nothing; this finds out at
-    assembly instead.
+    The close reads python-engineio internals that a release could change: the server's
+    socket table and queue factory, a socket's ``close(wait=...)``, and the ``poll`` its
+    writer drains the queue through, which ends on a ``None``. A close finding out when it
+    runs would close nothing; this finds out at assembly instead. Called by the drain step
+    and by ``attach_realtime_connection`` when given ``draining``.
     """
 
     eio = sio.eio
+    close = getattr(AsyncSocket, "close", None)
     missing = [
         name
         for name, present in (
             ("sockets", isinstance(getattr(eio, "sockets", None), dict)),
             ("create_queue", callable(getattr(eio, "create_queue", None))),
+            ("close(wait=)", callable(close) and "wait" in inspect.signature(close).parameters),
+            ("poll", callable(getattr(AsyncSocket, "poll", None))),
         )
         if not present
     ]
 
     if missing:
         raise exc.configuration(
-            "The connection drain closes Engine.IO connections through python-engineio's "
-            f"socket table and socket queues, and this server's Engine.IO side has no "
-            f"{', '.join(missing)}; install a python-engineio the socketio extra allows",
+            "Closing Engine.IO connections — the connection drain, a draining replica's "
+            "turn-away — goes through python-engineio internals, and this server's Engine.IO "
+            f"side has no {', '.join(missing)}; install a python-engineio the socketio extra "
+            "allows",
             code="realtime_drain_engineio_unsupported",
         )
 
@@ -350,7 +357,7 @@ def connection_drain_lifecycle_step(
         server's python-engineio lacks what the close uses.
     """
 
-    _require_close_internals(sio)
+    require_close_internals(sio)
     covered = tuple(namespaces)
 
     async def close(targets: list[tuple[str, str]], window: timedelta, tail: timedelta) -> int:

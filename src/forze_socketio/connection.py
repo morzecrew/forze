@@ -55,7 +55,7 @@ from forze.application.integrations.realtime import (
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import HlcTimestamp, stable_payload_fingerprint, utcnow
 
-from .drain import close_transport
+from .drain import close_transport, require_close_internals
 from .exceptions import (
     GENERIC_INTERNAL_DETAIL,
     build_core_exception_ack,
@@ -874,6 +874,10 @@ def attach_realtime_connection(
             "Offline replay needs all of mailbox_factory, cursors_factory, and runtime "
             "(or none) — partial wiring would silently disable replay"
         )
+
+    if draining is not None:
+        # A turn-away closes connections the way the drain does.
+        require_close_internals(sio)
 
     if runtime is not None and draining is None:
         error_logger.warning(
