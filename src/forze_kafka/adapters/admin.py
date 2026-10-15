@@ -51,7 +51,7 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort, TenancyMixi
     # ....................... #
 
     async def _resolve(self, topic: str) -> str:
-        return await resolve_kafka_topic(self.namespace, self.require_tenant_if_aware(), topic)
+        return await resolve_kafka_topic(self.namespace, self._tenant_id_for_resolve(), topic)
 
     # ....................... #
 

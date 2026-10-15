@@ -44,7 +44,7 @@ class KafkaStreamCommandAdapter[M](StreamCommandPort[M], TenancyMixin):
         timestamp: datetime | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> str:
-        topic = await resolve_kafka_topic(self.namespace, self.require_tenant_if_aware(), stream)
+        topic = await resolve_kafka_topic(self.namespace, self._tenant_id_for_resolve(), stream)
 
         metadata = await self.client.send(
             topic,

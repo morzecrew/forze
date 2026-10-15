@@ -86,15 +86,16 @@ async def test_a_tenant_aware_route_with_no_tenant_bound_is_refused(
 @pytest.mark.parametrize(
     ("build", "call"), [(b, c) for _, b, c in _ADAPTERS], ids=[n for n, *_ in _ADAPTERS]
 )
-async def test_a_tenant_aware_route_resolves_for_the_bound_tenant(
-    build: _Build, call: Callable[[Any], Any]
+@pytest.mark.parametrize("tenant_aware", [True, False])
+async def test_a_per_tenant_namespace_resolves_for_the_bound_tenant(
+    build: _Build, call: Callable[[Any], Any], tenant_aware: bool
 ) -> None:
     tenant = uuid4()
     namespace = _Namespace()
     adapter = build(
         client=FakeKafkaClient(admin=FakeAdmin()),
         namespace=namespace,
-        tenant_aware=True,
+        tenant_aware=tenant_aware,
         tenant_provider=lambda: TenantIdentity(tenant_id=tenant),
     )
 
@@ -149,3 +150,56 @@ async def test_the_commit_stream_consumer_refuses_a_tenant_aware_kafka_group() -
             await step.startup(runtime.get_context())
 
     assert caught.value.code == "tenant_global_required"
+
+
+# ....................... #
+# What a route counts as, against a declared isolation floor
+
+
+def _per_tenant(tenant_id: UUID | None) -> str:
+    return f"t-{tenant_id}"
+
+
+def _module(route: str, config: Any, *, floor: str) -> Any:
+    from forze_kafka import KafkaDepsModule
+    from forze_kafka.kernel.client import KafkaClient
+
+    return KafkaDepsModule(
+        client=KafkaClient(), **{route: {"orders": config}}, required_tenant_isolation=floor
+    )
+
+
+def _configs() -> dict[str, Any]:
+    from forze_kafka.execution.deps.configs import (
+        KafkaCommitStreamGroupConfig,
+        KafkaStreamConfig,
+    )
+
+    return {"streams": KafkaStreamConfig, "commit_groups": KafkaCommitStreamGroupConfig}
+
+
+@pytest.mark.parametrize("route", ["streams", "commit_groups"])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"namespace": "app", "tenant_aware": True}, id="tenant-aware"),
+        pytest.param({"namespace": "app"}, id="plain"),
+    ],
+)
+def test_a_route_with_a_fixed_namespace_counts_as_no_isolation(
+    route: str, kwargs: dict[str, Any]
+) -> None:
+    with pytest.raises(CoreException) as caught:
+        _module(route, _configs()[route](**kwargs), floor="tagged")
+
+    assert caught.value.code == "kafka_tenancy_validation_failed"
+    assert caught.value.details["derived_isolation"] == "none"
+
+
+@pytest.mark.parametrize("route", ["streams", "commit_groups"])
+@pytest.mark.parametrize("floor", ["tagged", "namespace"])
+@pytest.mark.parametrize("tenant_aware", [True, False])
+def test_a_route_with_a_per_tenant_namespace_meets_the_floor(
+    route: str, floor: str, tenant_aware: bool
+) -> None:
+    _module(route, _configs()[route](namespace=_per_tenant, tenant_aware=tenant_aware), floor=floor)

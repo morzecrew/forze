@@ -79,7 +79,7 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M], TenancyMix
     # ....................... #
 
     async def _physical_topics(self, topics: Sequence[str]) -> list[str]:
-        tenant_id = self.require_tenant_if_aware()
+        tenant_id = self._tenant_id_for_resolve()
 
         return [await resolve_kafka_topic(self.namespace, tenant_id, topic) for topic in topics]
 

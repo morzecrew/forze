@@ -63,9 +63,9 @@ class KafkaDepsModule(DepsModule):
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
-    Kafka spans ``namespace`` (per-tenant topic name via ``namespace``) and
-    ``dedicated`` (a routed per-tenant client). It has no server-side row filter,
-    so the ``tagged`` tier is not offered."""
+    Kafka spans ``namespace`` (a per-tenant ``namespace``) and ``dedicated`` (a routed
+    per-tenant client). It has no server-side row filter, so the ``tagged`` tier is not
+    offered: a route with a fixed namespace counts as ``none``."""
 
     # ....................... #
 
@@ -75,17 +75,17 @@ class KafkaDepsModule(DepsModule):
             client_is_routed=isinstance(self.client, RoutedKafkaClient),
             groups=[
                 TenancyRouteGroup(
-                    kind="stream",
-                    configs=self.streams,
-                    tenant_aware=lambda cfg: cfg.tenant_aware,
+                    kind=kind,
+                    configs=configs,
+                    # A topic has no row filter, so ``tenant_aware`` isolates nothing on
+                    # its own: only a per-tenant namespace does.
+                    tenant_aware=lambda _cfg: False,
                     namespace_resolver=lambda cfg: cfg.namespace,
-                ),
-                TenancyRouteGroup(
-                    kind="stream_group",
-                    configs=self.commit_groups,
-                    tenant_aware=lambda cfg: cfg.tenant_aware,
-                    namespace_resolver=lambda cfg: cfg.namespace,
-                ),
+                )
+                for kind, configs in (
+                    ("stream", self.streams),
+                    ("stream_group", self.commit_groups),
+                )
             ],
             required_isolation=self.required_tenant_isolation,
             max_supported_isolation="dedicated",

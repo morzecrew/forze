@@ -95,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.
 
+- **A tenant-aware Kafka route with a fixed namespace no longer counts as tenant-isolated**; a declared isolation floor now refuses it. Kafka resolves a per-tenant namespace as the other backends do. **Breaking** for such a floored module, and a per-tenant route that is not tenant-aware may name new topics.
+
 ## [0.13.0] - 2026-10-14
 
 ### Added
