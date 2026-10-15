@@ -335,7 +335,9 @@ grace period — see [Fit the budget to the grace period](../running-in-prod/shu
 **Choose what closes.** `namespaces` (default `("/",)`) names the namespaces the drain may
 close, and `select(namespace, sid) -> bool` can keep individual connections open. One
 Engine.IO connection carries every namespace a client opened, and closing it ends them
-all, so it closes only when every namespace on it is eligible. `close_spread(sio, targets,
+all, so it closes only when every namespace on it is eligible — checked again right
+before its close, so one that has opened a namespace the drain keeps since it was listed
+stays open. `close_spread(sio, targets,
 window, tail=...)` is the scheduler on its own, for closing connections at other times.
 
 ### What clients see

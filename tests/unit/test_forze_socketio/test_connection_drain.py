@@ -474,6 +474,75 @@ class TestDrainStep:
 
     # ....................... #
 
+    async def test_a_connection_that_opened_a_kept_namespace_before_its_close_stays_open(
+        self,
+    ) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+        runtime = _runtime(
+            connection_drain_lifecycle_step(
+                server, window=timedelta(seconds=0.6), tail=timedelta(seconds=0.5), stats=stats
+            )
+        )
+
+        for namespace in ("/", "/game"):
+            attach_realtime_connection(
+                server, namespace=namespace, resolve=_resolve, draining=lambda: runtime.draining
+            )
+
+        first = _engine_socket(server, "eio-0")
+        joining = _engine_socket(server, "eio-1")
+
+        async with runtime.scope():
+            await _connect(server, "eio-0")
+            await _connect(server, "eio-1")
+            draining = asyncio.ensure_future(runtime.drain(timedelta(seconds=5)))
+            await _until(lambda: first.closed, within=1.0)  # the drain is under way
+
+            # Before its own slot, the client opens /game, which the drain keeps; admitted,
+            # since its connection carries an accepted namespace.
+            game = await _connect(server, "eio-1", "/game")
+            await asyncio.wait_for(draining, timeout=5)
+
+        assert not joining.closed  # every namespace re-checked right before the close
+        assert server.manager.is_connected(game, "/game")
+        assert stats.drain_closed == {"closed": 1, "failed": 0, "timed_out": 0}
+
+    # ....................... #
+
+    async def test_a_connection_the_selector_keeps_after_listing_stays_open(self) -> None:
+        server = _server()
+        stats = RealtimeConnectionStats()
+        kept: set[str] = set()
+        runtime = _runtime(
+            connection_drain_lifecycle_step(
+                server,
+                window=timedelta(seconds=0.6),
+                tail=timedelta(seconds=0.5),
+                select=lambda _namespace, sid: sid not in kept,
+                stats=stats,
+            )
+        )
+        attach_realtime_connection(
+            server, namespace="/", resolve=_resolve, draining=lambda: runtime.draining
+        )
+        first = _engine_socket(server, "eio-0")
+        second = _engine_socket(server, "eio-1")
+
+        async with runtime.scope():
+            await _connect(server, "eio-0")
+            sid = await _connect(server, "eio-1")
+            draining = asyncio.ensure_future(runtime.drain(timedelta(seconds=5)))
+            await _until(lambda: first.closed, within=1.0)
+
+            kept.add(sid)  # the selector changes its mind after the listing
+            await asyncio.wait_for(draining, timeout=5)
+
+        assert not second.closed
+        assert stats.drain_closed == {"closed": 1, "failed": 0, "timed_out": 0}
+
+    # ....................... #
+
     async def test_closes_are_spread_over_the_window(self) -> None:
         server = _server()
         clock = asyncio.get_running_loop()
