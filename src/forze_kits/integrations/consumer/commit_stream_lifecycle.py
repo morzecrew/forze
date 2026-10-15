@@ -22,6 +22,7 @@ import attrs
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.inbox import InboxSpec
 from forze.application.contracts.stream import StreamMessage, StreamSpec
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
     HEALTHY_UPTIME_SECONDS,
@@ -109,6 +110,13 @@ class _CommitStreamConsumerBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def __call__(self, ctx: ExecutionContext) -> None:
+        # The consumer reads with no tenant bound (a tenant from the headers is bound per
+        # message, after the read), so a tenant-scoped group would refuse every poll.
+        require_tenant_global(
+            ctx.stream.commit_query(self.consumer.stream_spec),
+            what=f"Commit-stream consumer for {', '.join(self.consumer.topics)}",
+        )
+
         async def _loop() -> None:
             clock = asyncio.get_running_loop()
             crashing_since: float | None = None
@@ -328,6 +336,11 @@ def commit_stream_consumer_background_lifecycle_step(
     steps unique). There is deliberately no in-process concurrency knob: one
     sequential consumer per step keeps ordering and failure semantics simple; scale
     out with more steps/processes (Kafka rebalances partitions across members).
+
+    The consumer reads with no tenant bound, so a group route that is tenant-aware, or on a
+    client routed per tenant, fails startup with a ``configuration`` error coded
+    ``tenant_global_required``. Keep the topic tenant-global and bind the tenant from the
+    message (*bind_tenant_from_headers*).
 
     Opt-in for long-running processes; all runner parameters (*max_attempts*,
     *retry_policy*, *dlq_stream*, *batch_limit*, *bind_tenant_from_headers*, ...)

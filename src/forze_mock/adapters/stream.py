@@ -659,6 +659,14 @@ class MockCommitStreamGroupAdapter[M: BaseModel](CommitStreamGroupQueryPort[M]):
 
     # ....................... #
 
+    @property
+    def tenant_aware(self) -> bool:
+        """Whether the log is partitioned per tenant, as the Kafka consumer adapter says."""
+
+        return self.stream.tenant_aware
+
+    # ....................... #
+
     def _partitions(self, topic: str) -> int:
         return self.state.commit_stream_partitions.get(
             (self.stream._ns(), topic),  # pyright: ignore[reportPrivateUsage]

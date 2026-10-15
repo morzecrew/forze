@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from typing import final
-from uuid import UUID
 
 import attrs
 from aiokafka import AIOKafkaConsumer
@@ -20,7 +19,7 @@ from forze.application.contracts.stream import (
     OffsetReset,
     OffsetResetKind,
 )
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
 
 from ..kernel.client import KafkaClientPort
@@ -37,7 +36,7 @@ _SkipSet = set[tuple[str, int]]
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
+class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort, TenancyMixin):
     """Offset-log control plane over ``AIOKafkaAdminClient`` + transient consumers.
 
     Topic creation goes through the admin client; group positioning, replay
@@ -48,23 +47,11 @@ class KafkaCommitStreamGroupAdminAdapter(CommitStreamGroupAdminPort):
 
     client: KafkaClientPort
     namespace: NamedResourceSpec
-    tenant_aware: bool
-    tenant_provider: TenantProviderPort
-
-    # ....................... #
-
-    def _tenant_id(self) -> UUID | None:
-        if not self.tenant_aware:
-            return None
-
-        tenant = self.tenant_provider()
-
-        return None if tenant is None else tenant.tenant_id
 
     # ....................... #
 
     async def _resolve(self, topic: str) -> str:
-        return await resolve_kafka_topic(self.namespace, self._tenant_id(), topic)
+        return await resolve_kafka_topic(self.namespace, self.require_tenant_if_aware(), topic)
 
     # ....................... #
 

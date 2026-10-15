@@ -89,6 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`permission_providers_lifecycle_step` without `tenant=` refuses a tenant-scoped permission catalog at startup**, as `tenant_global_required`, instead of failing with `tenant_required`.
 
+- **A tenant-aware Kafka route refuses a call with no tenant bound**, with `tenant_required` as other tenant-aware adapters do, instead of resolving its namespace for no tenant. The commit-stream consumer refuses such a group at startup. **Breaking** for apps that used one unbound.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.

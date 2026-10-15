@@ -7,7 +7,6 @@ from collections.abc import AsyncGenerator, Sequence
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import cast, final
-from uuid import UUID
 
 import attrs
 from aiokafka import AIOKafkaConsumer
@@ -20,7 +19,7 @@ from forze.application.contracts.stream import (
     StreamPosition,
     UndecodableStreamPayload,
 )
-from forze.application.contracts.tenancy import TenantProviderPort
+from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.logging import Logger
 
 from ..kernel.client import KafkaClientPort
@@ -59,7 +58,7 @@ class _ConsumerCell:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
+class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M], TenancyMixin):
     """Offset-log consumer over ``AIOKafkaConsumer`` (auto-commit disabled).
 
     ``read`` fetches a batch via ``getmany`` and surfaces each record's native
@@ -73,26 +72,14 @@ class KafkaCommitStreamGroupAdapter[M](CommitStreamGroupQueryPort[M]):
     client: KafkaClientPort
     codec: KafkaStreamCodec[M]
     namespace: NamedResourceSpec
-    tenant_aware: bool
-    tenant_provider: TenantProviderPort
     auto_offset_reset: str | None = None
     max_poll_records: int | None = None
     _cell: _ConsumerCell = attrs.field(factory=_ConsumerCell, init=False)
 
     # ....................... #
 
-    def _tenant_id(self) -> UUID | None:
-        if not self.tenant_aware:
-            return None
-
-        tenant = self.tenant_provider()
-
-        return None if tenant is None else tenant.tenant_id
-
-    # ....................... #
-
     async def _physical_topics(self, topics: Sequence[str]) -> list[str]:
-        tenant_id = self._tenant_id()
+        tenant_id = self.require_tenant_if_aware()
 
         return [await resolve_kafka_topic(self.namespace, tenant_id, topic) for topic in topics]
 
