@@ -234,8 +234,9 @@ def durable_recovery_background_lifecycle_step(
     write), so run this unwrapped on every replica. Do not wrap it in the ``forze_kits``
     singleton lifecycle guard to elect one scanner: the guard holds its lock only while
     startup launches the loop, so replicas that start later scan too, and one that starts
-    while another holds the lock runs no scanner at all. Production deployments often
-    prefer an external cron / workflow scheduler over in-process polling.
+    while another holds the lock runs no scanner at all. Work that must run on one replica at
+    a time belongs behind :func:`~forze_kits.lifecycle.leadership_lifecycle_step`. Production
+    deployments often prefer an external cron / workflow scheduler over in-process polling.
     """
 
     startup = _DurableRecoveryBackgroundStartup(
@@ -469,8 +470,9 @@ def durable_scheduler_background_lifecycle_step(
     this unwrapped on every replica. Do not wrap it in the singleton lifecycle guard to
     elect one scheduler: the guard holds its lock only while startup launches the loop, so
     replicas that start later schedule too, and one that starts while another holds the
-    lock runs no scheduler at all. Production deployments often prefer an external
-    scheduler over in-process polling.
+    lock runs no scheduler at all. Work that must run on one replica at a time belongs behind
+    :func:`~forze_kits.lifecycle.leadership_lifecycle_step`. Production deployments often
+    prefer an external scheduler over in-process polling.
     """
 
     startup = _DurableSchedulerBackgroundStartup(
