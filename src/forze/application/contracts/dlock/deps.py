@@ -1,6 +1,6 @@
 from forze.base.exceptions import exc
 
-from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey, GuardedWritePort
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey, backend_of
 from .ports import DistributedLockCommandPort, DistributedLockQueryPort
 from .specs import DistributedLockSpec
 from .value_objects import DistributedLockCapabilities
@@ -64,18 +64,9 @@ class DistributedLockDeps(ConvenientDeps):
         if not (spec.requires_fencing_token or spec.requires_fence_advance):
             return port
 
-        # A read-only operation's stand-in is judged by the backend it resolves to, since it
-        # is the real port wherever it is used to lock.
-        backend = (
-            self._resolve_configurable(DistributedLockCommandDepKey, spec, route=spec.name)
-            if isinstance(port, GuardedWritePort)
-            else port
-        )
-
-        # Probed by attribute rather than by protocol ``isinstance``: a port wrapped for
-        # tracing, interception or a resilience policy forwards its methods through
-        # ``__getattr__``, which a protocol check never consults, so it would refuse a
-        # capable backend.
+        # Judged by the backend the guard and any tracing, interception or resilience wrap
+        # stand in for, the one this call resolved: resolving again could build another.
+        backend = backend_of(port)
         report = getattr(backend, "capabilities", None)
         caps = report() if callable(report) else None
 

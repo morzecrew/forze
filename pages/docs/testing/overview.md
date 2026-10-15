@@ -25,7 +25,7 @@ async def test_create_user():
 
 Every port — documents, search, cache, queues, streams, storage — works against shared in-memory state. Write a user in one test, query it in the same test, and the data is there. (`command(...)` is the write side — `create` / `update`; `query(...)` is the read side — `get` / `find`.)
 
-A `command(...)` port is handed out guarded, so a write inside a read-only operation is refused wherever the port came from. To check its type or patch one of its methods in a test, reach the real one with `forze.testing.unguarded(port)`; `isinstance` and attribute assignment on the guard itself do not work.
+A `command(...)` port is handed out guarded, so a write inside a read-only operation is refused wherever the port came from. `isinstance` and attribute assignment on the guard itself do not work. To ask whether it implements a protocol, use `implements(port, SomeAware)` from `forze.application.contracts.deps`, which also sees through port spans and port logging, as in production. To patch one of its methods, reach the real one with `forze.testing.unguarded(port)`.
 
 One thing to know before you rely on that: the mock stores what was written and reads it back through the read model, so an aggregate whose read model requires a field **no write produces** cannot round-trip through it. That is the ordinary shape of a read model assembled by a SQL view — a joined reference, an aggregate total, a computed flag.
 

@@ -9,10 +9,10 @@ import attrs
 
 from forze.application.contracts.base.value_objects import CountlessPage, CursorPage
 from forze.application.contracts.deps import DepKey
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.base.primitives import JsonDict, StrKey
 from forze.domain.constants import ID_FIELD
 
-from ..port_proxy_base import PortProxy
 from .emit import record
 
 if TYPE_CHECKING:

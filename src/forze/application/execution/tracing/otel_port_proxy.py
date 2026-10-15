@@ -27,9 +27,8 @@ from typing import Any, cast
 import attrs
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode, Tracer
 
+from forze.application.contracts.deps.proxy import PortProxy
 from forze.base.exceptions import CoreException, http_status_for_kind
-
-from ..port_proxy_base import PortProxy
 
 # ----------------------- #
 

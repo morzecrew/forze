@@ -10,6 +10,7 @@ from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
 from ..base.specs import BaseSpec
+from .proxy import PortProxy
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -59,9 +60,10 @@ class GuardedWritePort:
     read-only operation it is the port it stands in for.
 
     A probe counts as a use: ``hasattr`` and ``getattr`` with a default raise inside a
-    read-only operation rather than answer, and a protocol ``isinstance`` check is false. A
-    guard against a write a query makes by mistake, not a boundary against code set on one:
-    :func:`forze.testing.unguarded` reaches the port, and so does resolving it directly.
+    read-only operation rather than answer, and a protocol ``isinstance`` check is false; ask
+    :func:`implements` instead. A guard against a write a query makes by mistake, not a
+    boundary against code set on one: :func:`forze.testing.unguarded` reaches the port, so does
+    resolving it directly, and so does :func:`backend_of`, inside a read-only operation too.
     """
 
     ctx: "ExecutionContext" = attrs.field(repr=False, eq=False)
@@ -104,6 +106,49 @@ class GuardedWritePort:
         self._methods[name] = method
 
         return method
+
+
+# ....................... #
+
+
+def backend_of(port: object) -> object:
+    """The port the factory built, behind the wrappers resolution hands it out in.
+
+    A command accessor's :class:`GuardedWritePort` and the proxies resolution adds (runtime
+    tracing, OTel port spans, interceptors, a resilience port policy) forward the port's
+    methods through ``__getattr__``, which a ``@runtime_checkable`` protocol check never
+    consults. This is for a capability check that has to read the backend's own report, such
+    as ``backend_of(port).capabilities()``; do the work through *port*, so its wrappers still
+    apply. It strips the guard even inside a read-only operation, so the port it returns can
+    write there: to only ask whether a port implements a protocol, use :func:`implements`.
+
+    Any other object is returned as it is.
+    """
+
+    while True:
+        if isinstance(port, GuardedWritePort):
+            port = port._target
+
+        elif isinstance(port, PortProxy):
+            port = port.inner
+
+        else:
+            return port
+
+
+# ....................... #
+
+
+def implements(port: object, protocol: type[Any]) -> bool:
+    """Whether the backend behind *port* implements the ``@runtime_checkable`` *protocol*.
+
+    A protocol ``isinstance`` check of the port itself is false whenever resolution wrapped
+    it (see :func:`backend_of`). This asks the backend and hands nothing out, so it is not a
+    use of a command port, inside a read-only operation either. Call the protocol's methods on
+    *port*: its wrappers forward them, and the guard still judges each one.
+    """
+
+    return isinstance(backend_of(port), protocol)
 
 
 # ....................... #

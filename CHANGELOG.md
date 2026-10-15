@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A lock spec with `requires_fencing_token` no longer refuses a capable backend whose ports are wrapped** by OTel port spans, tracing, interceptors or a resilience port policy; resolving it failed with `dlock.fencing_unsupported`.
 
+- **A lock spec's fencing requirements are judged against the backend it hands out.** With the port cache off, the check resolved a second backend and judged that one instead. `implements(port, Protocol)` in `forze.application.contracts.deps` asks a protocol check of the backend behind a port's guard and wrappers.
+
 - **A Redis lock acquire that fails after taking the lock no longer leaves it held**, as on a corrupt fence counter. Tokens stop at 2⁵³ − 1 on Redis and the mock: an acquire past it is refused with `dlock.fence_exhausted` rather than issuing a token Redis would round onto another.
 
 - **Socket.io connects replaying at the same time all get their offline replay.** Replay and `realtime.ack` run on the live context of `attach_realtime_connection(runtime=)` rather than opening a scope per connect. **Breaking:** pass the serving runtime, with its scope open.

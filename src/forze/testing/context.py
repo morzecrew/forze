@@ -67,6 +67,8 @@ def context_from_modules(*modules: DepsModule) -> ExecutionContext:
 def unguarded(port: object) -> Any:
     """The real port behind a command accessor's :class:`GuardedWritePort`, for a test that
     checks its type or patches one of its methods; any other port is returned as it is.
+    Under port spans or port logging that is still a proxy: ask a protocol question with
+    :func:`~forze.application.contracts.deps.implements`, which sees through both.
 
     A command accessor never hands out the real port, so that a write is always judged by the
     operation making it. Outside a read-only operation this returns the one the guard

@@ -22,6 +22,8 @@ from .keys import (
     DepKey,
     GuardedWritePort,
     SimpleDepPort,
+    backend_of,
+    implements,
 )
 from .module import DepsModule
 from .store import PlainDepsMap, ProviderStore, RoutedDeps
@@ -42,6 +44,8 @@ __all__ = [
     "RoutedDeps",
     "ShadowedFallback",
     "SimpleDepPort",
+    "backend_of",
+    "implements",
     "format_cycle_error",
     "frame_for",
     "merge_deps",
