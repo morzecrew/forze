@@ -6783,6 +6783,35 @@
 
                 
               
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/run-on-one-replica/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-crown" viewBox="0 0 24 24"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294zM5 21h14"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  A publisher on one replica
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
             </ul>
           </nav>
         
@@ -9444,7 +9473,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h2 id="unreleased"><a href="https://github.com/morzecrew/forze/compare/v0.13.0...HEAD">Unreleased</a><a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>A fenced writer can recover after Redis loses its counters.</strong> <code>FenceAdvancing.advance_fence(key, past=...)</code>, on Redis and the mock, lifts a fencing counter to the store's highest fence; <code>requires_fence_advance</code> fails closed without it. The documented rule now claims a token first, so a repeated one is acted on once.</li>
+<li>
+<p><strong>A fenced writer can recover after Redis loses its counters.</strong> <code>FenceAdvancing.advance_fence(key, past=...)</code>, on Redis and the mock, lifts a fencing counter to the store's highest fence; <code>requires_fence_advance</code> fails closed without it. The documented rule now claims a token first, so a repeated one is acted on once.</p>
+</li>
+<li>
+<p><strong>Work can run on one replica at a time for the life of the process.</strong> <code>leadership_lifecycle_step</code> elects a leader on a renewing lease, ends its term inside the lease, hands it over on stop or on request, and fences it: a token, a claim, and <code>fence_floor</code> to recover after Redis loses its counters.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>

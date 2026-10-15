@@ -5194,6 +5194,35 @@
 
                 
               
+                
+                  
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../recipes/run-on-one-replica/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-crown" viewBox="0 0 24 24"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294zM5 21h14"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+  A publisher on one replica
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+                
+              
             </ul>
           </nav>
         
@@ -6307,6 +6336,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#leadership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Leadership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#job-progress" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6483,6 +6523,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Durable execution
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#leadership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Leadership
       </span>
     </span>
   </a>
@@ -6941,6 +6992,38 @@ justifies W-TinyLFU (<code>L1Spec(store_factory=tiny_lfu_l1_store)</code>) or a 
 </table>
 <p>A <code>recovered</code> spike means runs are being reclaimed from processes that died holding them —
 normal in small numbers after a deploy, a signal when it is sustained.</p>
+<h2 id="leadership">Leadership<a class="headerlink" href="#leadership" title="Permanent link">&para;</a></h2>
+<p><code>instrument_leadership()</code> — reads every <code>leadership_lifecycle_step</code> in the process.</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Instrument</th>
+<th>Unit</th>
+<th>Labels</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>forze.leadership.held</code></td>
+<td>observable gauge</td>
+<td>1</td>
+<td><code>forze.leadership.key</code></td>
+<td><code>1</code> while this process holds the lease, through its term's grace and until the release</td>
+</tr>
+<tr>
+<td><code>forze.leadership.terms_ended</code></td>
+<td>observable counter</td>
+<td>1</td>
+<td><code>forze.leadership.key</code>, <code>forze.leadership.reason</code></td>
+<td>reason is <code>lost</code> / <code>expiring</code> / <code>stopped</code> / <code>yielded</code> / <code>returned</code> / <code>raised</code> / <code>unclaimed</code></td>
+</tr>
+</tbody>
+</table>
+<p>Summed across processes, <code>held</code> should be <code>1</code> per key. A sustained rate of <code>lost</code> or
+<code>expiring</code> means the lock backend is slow or unreachable from the leader; <code>raised</code> is the
+body's own failure.</p>
 <h2 id="job-progress">Job progress<a class="headerlink" href="#job-progress" title="Permanent link">&para;</a></h2>
 <p><code>instrument_job_staleness(monitor)</code> — see <a href="../../running-in-prod/operation-progress/">Operation
 progress</a>.</p>
