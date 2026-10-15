@@ -523,6 +523,32 @@ class TestNoShedding:
 
         assert run_simulation(scenario, latency=_slow_views) == 0
 
+    @pytest.mark.parametrize("own", [None, {"movable": 34}], ids=["no entry", "no load"])
+    def test_a_replica_left_out_says_so_once(
+        self, own: Report | None, error_log_buf: io.StringIO
+    ) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(34, "/lobby")
+            await _peers(state, 0, 0)
+
+            if own is not None:
+                await _beat(state, "me", own)
+
+            await _serve(state, _step(node), _sleep(60))
+
+            return node.closed()
+
+        assert run_simulation(scenario) == 0
+
+        rows = [
+            json.loads(line) for line in error_log_buf.getvalue().splitlines() if line.startswith("{")
+        ]
+        # Sixty ticks, one warning: a member id that is not the membership step's, or a
+        # membership step without the report, would otherwise do nothing, silently.
+        assert [row["level"] for row in rows] == ["warning"]
+        assert "'me'" in rows[0]["event"]
+
     def test_nothing_sheds_or_is_read_while_draining(self) -> None:
         reads: list[float] = []
 

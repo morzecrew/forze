@@ -26,7 +26,13 @@ import attrs
 from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import LifecycleStep
-from forze.application.contracts.fleet import FleetPort, FleetSpec, Report, validate_member_id
+from forze.application.contracts.fleet import (
+    FleetPort,
+    FleetSpec,
+    FleetView,
+    Report,
+    validate_member_id,
+)
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -163,6 +169,7 @@ class _Rebalance:
 
     ticked_at: float | None = attrs.field(default=None, init=False)
     shed_ended_at: float | None = attrs.field(default=None, init=False)
+    warned: bool = attrs.field(default=False, init=False)
     shed: asyncio.Task[None] | None = attrs.field(default=None, init=False)
 
     # ....................... #
@@ -197,6 +204,7 @@ class _Rebalance:
         # A new scope starts with an empty allowance and no cooldown, as the first one did.
         self.credit = 0.0
         self.ticked_at = self.shed_ended_at = None
+        self.warned = False
 
     # ....................... #
 
@@ -253,6 +261,7 @@ class _Rebalance:
 
         # A replica that reports no load is outside every peer's mean, so it sheds nothing.
         if mine is None or self.load not in mine.report:
+            self._left_out(view)
             return
 
         # Again after the read: a drain announced meanwhile closes the connections itself, and
@@ -295,6 +304,23 @@ class _Rebalance:
         self.shed = asyncio.create_task(
             self._shed(targets[:count]),
             name=self.loop_name,
+        )
+
+    # ....................... #
+
+    def _left_out(self, view: FleetView) -> None:
+        # Once a scope, and only once the rest of the fleet has settled: otherwise a wiring
+        # mistake would shed nothing, for good, and say nothing.
+        if self.warned or not view.settled(self.settle):
+            return
+
+        self.warned = True
+        error_logger.warning(
+            "Rebalance sheds nothing: fleet %r has no entry for %r reporting %r; give the "
+            "membership step the same member_id and report=connection_report(...)",
+            str(self.spec.name),
+            self.me,
+            self.load,
         )
 
     # ....................... #
