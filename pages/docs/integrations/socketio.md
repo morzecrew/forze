@@ -445,7 +445,8 @@ Every `every`, the step reads the fleet's view, puts its own live counts in its 
 and asks [`FleetView.excess`](../running-in-prod/fleet-membership.md#the-policies) how far
 above the mean it is. It closes that many movable connections, no more than its rate allows,
 the way the drain does: at the Engine.IO level, spread over `every`, each given up to another
-`every` to finish.
+`every` to finish. Each is checked again right before its close starts, so a client that
+joined a game since the tick picked it stays.
 
 **Route least-connections.** It is a prerequisite, not a tuning choice: a balancer that
 round-robins, hashes, or pins a client to its replica with a sticky cookie can send the shed

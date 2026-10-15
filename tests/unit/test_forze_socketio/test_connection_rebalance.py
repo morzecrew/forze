@@ -210,6 +210,37 @@ class TestShedding:
         assert still_open == 24
 
 
+    def test_a_transport_no_longer_movable_when_its_close_comes_is_kept(self) -> None:
+        async def scenario() -> tuple[int, int]:
+            state, node = MockState(), _Node()
+            await node.connect(100, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", _REPORTED)
+            in_game: list[str] = []
+
+            async def probe(_runtime: ExecutionRuntime) -> None:
+                # The 10 s tick picks 67 and closes them over ten seconds; half a second in,
+                # every lobby client still open joins a game.
+                await asyncio.sleep(10.5)
+
+                for eio_sid, socket in node.sockets.items():
+                    if not socket.closes:
+                        await node.server.manager.connect(eio_sid, "/game")
+                        in_game.append(eio_sid)
+
+                await asyncio.sleep(15)
+
+            await _serve(state, _step(node, every=timedelta(seconds=10)), probe)
+
+            return node.closed(), node.closed(in_game)
+
+        closed, closed_in_game = run_simulation(scenario)
+
+        # Only the closes already started by 10.5 s went ahead.
+        assert closed_in_game == 0
+        assert closed == 4
+
+
 class TestNoDoubleShedding:
     def test_a_tick_while_a_shed_is_closing_does_nothing(self) -> None:
         async def scenario() -> list[int]:

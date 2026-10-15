@@ -20,7 +20,7 @@ import asyncio
 import math
 from collections.abc import Callable, Sequence
 from datetime import timedelta
-from typing import final
+from typing import cast, final
 
 import attrs
 from socketio.async_server import AsyncServer
@@ -39,8 +39,8 @@ from forze.base.primitives import StrKey, instance_id, monotonic
 from .drain import (
     ConnectionSelector,
     _closable,
+    _close_spread,
     _transports,
-    close_spread,
     require_close_internals,
 )
 from .exceptions import error_logger
@@ -51,6 +51,14 @@ __all__ = [
     "connection_rebalance_lifecycle_step",
     "connection_report",
 ]
+
+
+def _open(sio: AsyncServer, eio_sid: str) -> bool:
+    """Whether the Engine.IO connection is still there and nothing is closing it."""
+
+    socket = sio.eio.sockets.get(eio_sid)
+
+    return socket is not None and not socket.closing and not socket.closed
 
 
 def _live_counts(
@@ -264,9 +272,35 @@ class _Rebalance:
 
     # ....................... #
 
+    def _still_movable(self, eio_sid: str) -> bool:
+        """Whether *eio_sid* may still be closed, asked right before its close starts: its
+        client may have joined a namespace that may not move since the tick picked it."""
+
+        manager = self.sio.manager
+        members = [
+            (namespace, sid)
+            for namespace in cast("list[str]", list(manager.get_namespaces()))
+            if (sid := cast("str | None", manager.sid_from_eio_sid(eio_sid, namespace)))
+        ]
+
+        return (
+            bool(members)
+            and _open(self.sio, eio_sid)
+            and bool(_closable({eio_sid: members}, namespaces=self.namespaces, select=self.movable))
+        )
+
+    # ....................... #
+
     async def _shed(self, targets: list[tuple[str, str]]) -> None:
         try:
-            await close_spread(self.sio, targets, self.every, tail=self.every)
+            await _close_spread(
+                self.sio,
+                targets,
+                self.every,
+                tail=self.every,
+                stats=None,
+                still=self._still_movable,
+            )
 
         finally:
             # The cooldown counts from here: the last close's client has only now left.
@@ -322,10 +356,12 @@ def connection_rebalance_lifecycle_step(
     within *cooldown* of the last shed's end. Otherwise it reads the fleet's view, puts this
     replica's live counts in its own entry, and asks
     :meth:`~forze.application.contracts.fleet.FleetView.excess` how far above the mean it
-    is. It closes that many movable transports, at most the allowance, with
-    :func:`~forze_socketio.close_spread` over *every*, each given up to another *every* to
-    finish. Their clients reconnect through the balancer, which must route
-    least-connections so they land on a replica with room.
+    is. It closes that many movable transports, at most the allowance, the way
+    :func:`~forze_socketio.close_spread` does, over *every*, each given up to another *every*
+    to finish. Each is checked again right before its close starts: one that is no longer
+    movable — its client joined a namespace *movable* refuses — or is gone is kept. Their
+    clients reconnect through the balancer, which must route least-connections so they land
+    on a replica with room.
 
     Counts are Engine.IO transports. A transport is movable when every namespace it carries
     is in *namespaces* and accepted by *movable*. Peers' loads come from their membership

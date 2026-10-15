@@ -223,10 +223,28 @@ async def close_spread(
     :returns: How many closes finished in time.
     """
 
+    return await _close_spread(sio, targets, window, tail=tail, stats=stats, still=None)
+
+
+async def _close_spread(
+    sio: AsyncServer,
+    targets: Sequence[tuple[str, str]],
+    window: timedelta,
+    *,
+    tail: timedelta,
+    stats: RealtimeConnectionStats | None,
+    still: Callable[[str], bool] | None,
+) -> int:
+    """:func:`close_spread`, asking *still* about each ``eio_sid`` right before its close
+    starts: a connection it refuses is skipped, neither started nor counted."""
+
     eio_sids = list(dict.fromkeys(eio_sid for _namespace, eio_sid in targets))
     closes: list[asyncio.Task[None]] = []
 
     async def close(eio_sid: str) -> None:
+        if still is not None and not still(eio_sid):
+            return
+
         task = asyncio.ensure_future(close_transport(sio, eio_sid))
         closes.append(task)
         finishing = _FINISHING.setdefault(sio, set())
