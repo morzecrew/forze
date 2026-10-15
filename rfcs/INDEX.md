@@ -94,7 +94,7 @@ only in the code, which is the failure this log exists to prevent.
 | [0072](0072-fence-advance.md) | Fence advance | ✅ Complete | An optional dlock capability that moves a fencing counter up to a store's fence after the backend loses it, plus a claim rule so a repeated token is never acted on twice. |
 | [0073](0073-fleet-membership.md) | Fleet membership | ✅ Complete | Which replicas are alive, their state and a small report, from one beat on the server clock, with pure policies over the view: settled, even share, rendezvous rank and excess. |
 | [0074](0074-drain-announcement-and-readiness-checks.md) | Drain announcement and readiness checks | ✅ Complete | Announce a drain before refusing work: readiness fails first, registered drain phases run before teardown, embedded uvicorn routes SIGTERM into that order, and probes check dependencies. |
-| [0075](0075-realtime-connection-drain.md) | Realtime connection drain | 📝 Draft | Close a leaving replica's socket.io, WebSocket and SSE connections spread over a window, refuse connects while draining, count connections, and let apps admit connects. |
+| [0075](0075-realtime-connection-drain.md) | Realtime connection drain | ✅ Complete | Close a leaving replica's socket.io, WebSocket and SSE connections spread over a window, refuse connects while draining, count connections, and let apps admit connects. |
 | [0076](0076-connection-rebalancing-step.md) | Connection rebalancing step | 📝 Draft | A socket.io step that sheds movable connections from a replica well above the fleet's mean once the fleet has settled; demand-gated until a second realtime app needs it. |
 
 ## Status legend

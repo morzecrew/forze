@@ -22,6 +22,7 @@ from forze.base.exceptions import exc
 
 __all__ = [
     "REALTIME_ACK_EVENT",
+    "REALTIME_DRAINING_CODE",
     "REALTIME_PROTOCOL_VERSION",
     "REALTIME_REAUTH_EVENT",
     "SUPPORTED_REALTIME_PROTOCOLS",
@@ -42,6 +43,10 @@ documented contract cannot drift from what the transports actually dispatch."""
 
 REALTIME_REAUTH_EVENT: Final[str] = "realtime.reauth"
 """The in-place credential-refresh wire event name — same single-definition rule."""
+
+REALTIME_DRAINING_CODE: Final[str] = "realtime_draining"
+"""The code a connect refused because the replica is draining carries, on every transport:
+a client tells it from an authentication failure by it, and retries elsewhere with backoff."""
 
 
 class RealtimeAck(BaseModel):

@@ -33,6 +33,7 @@ from .mailbox import (
 from .presence import InMemoryRealtimePresence, RealtimePresence
 from .protocol import (
     REALTIME_ACK_EVENT,
+    REALTIME_DRAINING_CODE,
     REALTIME_PROTOCOL_VERSION,
     REALTIME_REAUTH_EVENT,
     SUPPORTED_REALTIME_PROTOCOLS,
@@ -70,6 +71,7 @@ __all__ = [
     "RealtimePresence",
     "InMemoryRealtimePresence",
     "REALTIME_ACK_EVENT",
+    "REALTIME_DRAINING_CODE",
     "REALTIME_PROTOCOL_VERSION",
     "REALTIME_REAUTH_EVENT",
     "SUPPORTED_REALTIME_PROTOCOLS",

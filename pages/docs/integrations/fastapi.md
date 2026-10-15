@@ -374,7 +374,9 @@ principal/topic rooms for the connection's lifetime — so "is this user online"
 counts an SSE stream and a socket identically. With a TTL-backed store (e.g.
 `RedisRealtimePresence`) also register
 `realtime_sse_presence_heartbeat_lifecycle_step(hub, presence)` so live streams
-re-assert within the TTL.
+re-assert within the TTL. A closing stream leaves its rooms even when it closes cancelled —
+its client gone, or cut off by a drain — within 2 s; past that, a warning is logged and the
+rest expire with the store's TTL.
 
 ## Realtime over raw WebSocket
 
@@ -443,6 +445,55 @@ Four things to know before you wire it:
 Socket.IO handshake, so a deployment serving both transports authenticates by one set
 of rules.
 
+## Drain the realtime tails
+
+A replica that leaves with open SSE streams and WebSocket tails should end them while it
+still serves, a few at a time, so the clients reconnect to replicas that are still ready
+instead of all at once when the server stops. Both live legs subscribe to the same hub, so
+one drain step covers them. Register it beside the tail step:
+
+```python
+from datetime import timedelta
+
+from forze_fastapi.realtime import RealtimeSseHub, realtime_sse_drain_lifecycle_step
+
+hub = RealtimeSseHub()
+step = realtime_sse_drain_lifecycle_step(
+    hub,
+    window=timedelta(seconds=10),  # spread the ends over this
+    tail=timedelta(seconds=2),
+)
+```
+
+When the runtime drains — on `SIGTERM` under [`serve_uvicorn`](#graceful-shutdown-under-uvicorn)
+— its phase ends every subscription the hub holds, end *i* of *n* at `i × window / n`,
+with the window fitted to the phase's allowance like the
+[Socket.IO drain](socketio.md#drain-a-replica):
+
+- **An SSE stream** finishes its response, and the browser reconnects with its
+  `Last-Event-ID`.
+- **A WebSocket tail** closes with 1012 (service restart), and the client reconnects with
+  `last_event_id`.
+
+An SSE stream still replaying the mailbox when the phase reaches it ends once its replay
+has. One not finished 5 s after its end — blocked writing to a client that stopped reading,
+say — is cut off: its connection closes, the server logs the response as incomplete, and the
+browser resumes from its `Last-Event-ID` all the same. A WebSocket
+closes at once, mid-replay or mid-write to a slow client — the close is bounded — and
+resumes from `last_event_id` elsewhere. A WebSocket route attached without a
+hub has no live tail, and the drain does not reach it.
+
+While the replica drains, from the drain's announcement on, the routes turn new connections
+away. The drain step tells them through the hub, so it does not matter what `ctx_dep`
+returns; a route without a hub reads the state from that context instead:
+
+- **A new SSE request** is answered 200 with a stream that carries only a `retry:` of
+  1–3 seconds, jittered, and ends at once, with `X-Error-Code: realtime_draining`. A
+  browser `EventSource` reconnects after it, through the balancer; any status but 200 would
+  end it for good.
+- **A new WebSocket upgrade** is accepted and then closed with 1012, as the route's other
+  refusals are, because a close before accept is an opaque 403.
+
 ## What it provides
 
 Unlike a backend, FastAPI doesn't implement Forze contracts — it's the edge that
@@ -460,6 +511,7 @@ runs them. The surface, at a glance:
 | `attach_realtime_sse_route` / `realtime_sse_tail_lifecycle_step` | realtime egress over SSE: mailbox replay + per-node live tail |
 | `realtime_sse_sharded_tail_lifecycle_step` | namespace-tier SSE: per-tenant tail loops, tenant trusted from the stream |
 | `realtime_sse_presence_heartbeat_lifecycle_step` | SSE streams report into the shared presence store (TTL heartbeat) |
+| `realtime_sse_drain_lifecycle_step` | end the SSE streams and WebSocket tails spread over a window when the replica drains |
 | `attach_realtime_ws_route` | duplex realtime over raw WebSocket: replay + live egress, inline ack/reauth, governed `cmd` dispatch |
 | `build_ws_connection_resolver` | the shipped connection resolver: reauth payload, then cookie, header and opt-in query; credential expiry |
 | `attach_asyncapi_route` | serve the app-built AsyncAPI document, `/openapi.json`-style |

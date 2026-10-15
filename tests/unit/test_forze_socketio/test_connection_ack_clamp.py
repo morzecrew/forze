@@ -17,6 +17,7 @@ import asyncio
 import contextvars
 from collections.abc import AsyncIterator
 from contextlib import aclosing, asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -45,6 +46,9 @@ class _ConcurrentRuntime:
     unit of work, so an ack can run while the connect-time replay still holds its
     scope (an ``ExecutionRuntime`` allows a single open scope at a time). The mailbox
     and cursors are injected in-memory objects, so state is shared regardless."""
+
+    draining = False
+    """Never draining: the connection reads it as its default draining source."""
 
     def __init__(self) -> None:
         self._current: contextvars.ContextVar[ExecutionRuntime | None] = contextvars.ContextVar(
@@ -83,6 +87,12 @@ def _signal(text: str) -> RealtimeSignal:
 
 
 class _StubSio:
+    manager = SimpleNamespace(
+        is_connected=lambda _sid, _namespace: True, eio_sid_from_sid=lambda _sid, _namespace: None
+    )
+    """Every sid stays connected, on no Engine.IO connection the stub models: the connect
+    checks before each stage that it still is, and records what it accepted on it."""
+
     def __init__(self) -> None:
         self.handlers: dict[str, Any] = {}
         self.sessions: dict[str, dict[str, Any]] = {}

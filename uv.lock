@@ -1356,6 +1356,7 @@ sandbox-container = [
     { name = "httpx" },
 ]
 socketio = [
+    { name = "python-engineio" },
     { name = "python-socketio" },
     { name = "python-socketio-stubs" },
 ]
@@ -1476,6 +1477,7 @@ requires-dist = [
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'authn'", specifier = ">=2.12.1" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'oidc'", specifier = ">=2.12.1" },
     { name = "pymongo", marker = "extra == 'mongo'", specifier = ">=4.16.0" },
+    { name = "python-engineio", marker = "extra == 'socketio'", specifier = ">=4.13.2,<5" },
     { name = "python-magic", marker = "extra == 'gcs'", specifier = ">=0.4.27" },
     { name = "python-magic", marker = "extra == 's3'", specifier = ">=0.4.27" },
     { name = "python-multipart", marker = "extra == 'fastapi'", specifier = ">=0.0.22" },

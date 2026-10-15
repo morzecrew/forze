@@ -10,6 +10,7 @@ with the same versioned ``{id, data}`` envelope.
 from .auth import build_ws_connection_resolver, ws_handshake
 from .hub import RealtimeSseHub, SseSubscription, presence_rooms
 from .lifecycle import (
+    realtime_sse_drain_lifecycle_step,
     realtime_sse_presence_heartbeat_lifecycle_step,
     realtime_sse_sharded_tail_lifecycle_step,
     realtime_sse_tail_lifecycle_step,
@@ -38,6 +39,7 @@ __all__ = [
     "realtime_sse_tail_lifecycle_step",
     "realtime_sse_sharded_tail_lifecycle_step",
     "realtime_sse_presence_heartbeat_lifecycle_step",
+    "realtime_sse_drain_lifecycle_step",
     "refresh_sse_presence",
     "attach_realtime_sse_route",
     "attach_realtime_ws_route",

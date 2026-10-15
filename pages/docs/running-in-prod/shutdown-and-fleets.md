@@ -241,6 +241,14 @@ Phases are not the background loops registered in `ctx.drainables` — relays,
 consumers, pollers. Those stop after the gate has closed, between units of work.
 A phase runs before that, while the replica still serves, which is the point of it.
 
+Two phases ship with forze, both closing realtime connections spread over a window so
+their clients reconnect elsewhere a few at a time: `connection_drain_lifecycle_step` for
+[Socket.IO](../integrations/socketio.md#drain-a-replica), and
+`realtime_sse_drain_lifecycle_step` for the
+[FastAPI SSE and WebSocket tails](../integrations/fastapi.md#drain-the-realtime-tails).
+`spread_drain_lifecycle_step` in `forze.application.execution.background` is the same
+phase for connections of your own.
+
 ### What a step can read
 
 A step cannot hold the runtime that runs it: the runtime is built around its

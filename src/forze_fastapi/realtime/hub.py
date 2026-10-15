@@ -18,14 +18,17 @@ require_fastapi()
 # ....................... #
 
 import asyncio
+from collections.abc import Callable, Sequence
 from typing import final
 from uuid import UUID
 
+import anyio
 import attrs
 
 from forze.application.contracts.realtime import Audience, AudienceKind, RealtimeSignal
-from forze.application.integrations.realtime import room_for
+from forze.application.integrations.realtime import RealtimePresence, room_for
 from forze.base.exceptions import exc
+from forze.base.logging import Logger
 from forze.base.primitives import uuid7
 
 # ----------------------- #
@@ -53,6 +56,45 @@ def presence_rooms(
     )
 
 
+_logger = Logger("fastapi.errors")
+
+_PRESENCE_LEAVE_SECONDS = 2.0
+"""The longest a closing connection spends leaving its presence rooms: far above a store's
+round trips for a connection's few rooms, and short enough that a hung store cannot hold a
+closing response — and with it a server's shutdown — for long. A member left behind
+expires with the store's TTL."""
+
+
+async def leave_presence_rooms(
+    presence: RealtimePresence, rooms: Sequence[str], member: str, *, transport: str
+) -> None:
+    """Take *member* out of *rooms*, shielded from cancellation and bounded.
+
+    A connection often closes cancelled — cut off by the drain, or its client gone — and
+    a leave cancelled at its first round trip would keep the member counted until the
+    store's TTL expires it. The shield holds against the cancel scopes Starlette and ASGI
+    servers cancel through; a bare ``Task.cancel()`` still interrupts it. Best-effort: a
+    failed leave is logged, and never masks the connection's own exit.
+
+    :param transport: Names the connection in the logs, ``"SSE"`` or ``"WS"``.
+    """
+
+    with anyio.move_on_after(_PRESENCE_LEAVE_SECONDS, shield=True) as bound:
+        for room in rooms:
+            try:
+                await presence.left(room, member)
+
+            except Exception:
+                _logger.exception("%s presence leave failed", transport, room=room)
+
+    if bound.cancelled_caught:
+        _logger.warning(
+            "%s presence leave took over %ss; the rest of its rooms expire with the store's TTL",
+            transport,
+            _PRESENCE_LEAVE_SECONDS,
+        )
+
+
 @final
 @attrs.define(slots=True, kw_only=True, eq=False)  # identity semantics: one per response
 class SseSubscription:
@@ -73,11 +115,24 @@ class SseSubscription:
     key: str = attrs.field(init=False)
     """This connection's presence member key (the SSE analog of the Socket.IO sid)."""
 
+    ended: asyncio.Event = attrs.field(init=False)
+    """Set by :meth:`end`: the stream should finish, so its client reconnects elsewhere.
+
+    State rather than a sentinel in :attr:`queue`, which is bounded and drops when full."""
+
     maxsize: int = 256
 
     def __attrs_post_init__(self) -> None:
         self.queue = asyncio.Queue(maxsize=self.maxsize)
         self.key = f"sse:{uuid7()}"
+        self.ended = asyncio.Event()
+
+    # ....................... #
+
+    def end(self) -> None:
+        """Ask the stream to finish: an SSE response ends, a WebSocket closes with 1012."""
+
+        self.ended.set()
 
     # ....................... #
 
@@ -132,12 +187,33 @@ class RealtimeSseHub:
 
     _subscriptions: set[SseSubscription] = attrs.field(factory=set, init=False)
 
+    _draining: Callable[[], bool] | None = attrs.field(default=None, init=False, repr=False)
+
     def __attrs_post_init__(self) -> None:
         if self.queue_size <= 0:
             raise exc.configuration("SSE hub queue_size must be positive")
 
         self.ready = asyncio.Event()
         self.ready.set()
+
+    # ....................... #
+
+    @property
+    def draining(self) -> bool:
+        """Whether the replica is draining, as the hub's drain step reports it.
+
+        The SSE and WebSocket routes turn new streams away while it is true, whatever
+        context their ``ctx_dep`` returns. ``False`` until a drain step follows the scope.
+        """
+
+        return self._draining is not None and self._draining()
+
+    # ....................... #
+
+    def follow_drain(self, draining: Callable[[], bool]) -> None:
+        """Report *draining* as :attr:`draining`; the hub's drain step calls it at startup."""
+
+        self._draining = draining
 
     # ....................... #
 

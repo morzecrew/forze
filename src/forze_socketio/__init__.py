@@ -92,6 +92,7 @@ from .connection_lifecycle import (
     realtime_identity_expiry_lifecycle_step,
     realtime_presence_heartbeat_lifecycle_step,
 )
+from .drain import close_spread, connection_drain_lifecycle_step
 from .emitter import (
     SocketIOEventEmitter,
     SocketIONamespaceEmitter,
@@ -123,8 +124,10 @@ from .mailbox import (
 from .manager import FanoutManager, FanoutRedisManager
 from .observability import (
     BackplaneHealth,
+    RealtimeConnectionStats,
     RealtimeGatewayStats,
     instrument_realtime_backplane,
+    instrument_realtime_connections,
     instrument_realtime_gateway,
 )
 from .routing import (
@@ -165,6 +168,8 @@ __all__ = [
     "BackplaneHealth",
     "instrument_realtime_backplane",
     "instrument_realtime_gateway",
+    "RealtimeConnectionStats",
+    "instrument_realtime_connections",
     "RealtimeSignalSource",
     "SignalHandler",
     "PubSubSignalSource",
@@ -185,6 +190,8 @@ __all__ = [
     "realtime_identity_expiry_lifecycle_step",
     "realtime_backplane_heartbeat_lifecycle_step",
     "realtime_presence_heartbeat_lifecycle_step",
+    "close_spread",
+    "connection_drain_lifecycle_step",
     "RealtimeConnection",
     "build_socketio_connection_resolver",
     "socketio_handshake",

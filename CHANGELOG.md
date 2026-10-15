@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An embedded uvicorn drains the runtime on `SIGTERM` before it stops.** `forze_fastapi.serve_uvicorn(config, runtime, drain_budget=)` runs `runtime.drain()` on the first `SIGTERM` or `SIGINT`; a `SIGINT` during it forces the exit. A finite graceful timeout is set when none is, so an open stream cannot hold the exit.
 
+- **A leaving replica closes its socket.io connections spread over a window, and turns new ones away.** `connection_drain_lifecycle_step(sio, window=, tail=)` closes them with `close_spread` in a drain phase, before the server stops; `attach_realtime_connection(draining=)` closes the transport of connects meanwhile.
+
+- **FastAPI's SSE and WebSocket live tails drain the same way.** `realtime_sse_drain_lifecycle_step(hub, window=, tail=)` ends them spread over a window; a new stream is told to retry, a new upgrade gets a 1012 close. `spread_drain_lifecycle_step` is the phase for connections of your own.
+
+- **Apps can admit or delay socket.io connects, and connections are counted.** `attach_realtime_connection(admission=)` runs before authentication; `instrument_realtime_connections(RealtimeConnectionStats)` exports open connections, refused connects by reason, and drain closes.
+
 - **The worker probe listener can check dependencies, and needs no runtime.** `probe_listener_step(checks=, check_timeout=)` answers through `evaluate_readiness`, the evaluator `attach_readiness_route` now uses, so both answer alike from the same probes. Steps read `ctx.lifecycle.started` and `.announced`.
 
 - **A fenced writer can recover after Redis loses its counters.** `FenceAdvancing.advance_fence(key, past=...)`, on Redis and the mock, lifts a fencing counter to the store's highest fence; `requires_fence_advance` fails closed without it. The documented rule now claims a token first, so a repeated one is acted on once.
@@ -25,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The `socketio` extra bounds `python-engineio` below 5.** The connection drain and a draining replica's turn-away close connections through its internals, and refuse at assembly a server that lacks them.
+
 - **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.
 
 - **The readiness route logs a failed dependency check under the application logger**, as "Readiness check … failed". Alerts keyed on the `fastapi.probes` logger no longer match.
@@ -34,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`probe_listener_step(runtime=...)`.** The step reads its scope from its hook's `ctx`, so it can sit in its own runtime's plan; a runtime passed in is still watched, with a `DeprecationWarning`.
 
 ### Fixed
+
+- **A realtime stream whose client disconnects mid-wait now leaves its presence rooms.** An SSE stream or WebSocket tail cancelled while waiting kept its member counted in a shared presence store such as Redis until the TTL; the leave now runs shielded, bounded by 2 s.
 
 - **A readiness check whose client is registered only per route says so**, as `registered per route only`, instead of reporting it `not registered`.
 

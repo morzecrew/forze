@@ -15,6 +15,9 @@ because SSE's reconnect model — ``Last-Event-ID`` — *is* a cursor protocol:
   auto-reconnects with ``Last-Event-ID``, giving long-poll-style delivery).
 - **Ack**: SSE has no upstream channel, so the cumulative ack rides a small POST
   endpoint attached alongside, sharing the kernel's cursor machinery.
+- **Drain**: while the replica drains a new stream is told to retry — a 200 carrying only
+  a jittered ``retry:`` — and the hub's drain step ends the open ones; either way the
+  browser reconnects, through the balancer, to a replica that is still ready.
 
 Every frame carries the same ``{id, data}`` envelope as the Socket.IO transport —
 one protocol (versioned via the ``protocol`` query parameter), two transports. The
@@ -30,22 +33,26 @@ require_fastapi()
 # ....................... #
 
 import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import aclosing
 from datetime import timedelta
 from typing import Annotated, Any, final
 from uuid import UUID
 
+import anyio
 import attrs
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.types import Send
 
 from forze.application.contracts.authn import ClientIdentity
 from forze.application.contracts.realtime import MailboxEntry
 from forze.application.execution import ExecutionContext
 from forze.application.execution.context import ExecutionContextFactory
+from forze.application.execution.context.lifecycle import scope_readiness
 from forze.application.integrations.realtime import (
+    REALTIME_DRAINING_CODE,
     BacklogDrain,
     MailboxCursors,
     RealtimeAck,
@@ -60,9 +67,10 @@ from forze.application.integrations.realtime import (
 )
 from forze.base.exceptions import exc
 from forze.base.logging import Logger
-from forze.base.primitives import HlcTimestamp, uuid7
+from forze.base.primitives import HlcTimestamp, current_entropy_source, uuid7
 
-from .hub import RealtimeSseHub, SseSubscription, presence_rooms
+from ..exceptions import ERROR_CODE_HEADER
+from .hub import RealtimeSseHub, SseSubscription, leave_presence_rooms, presence_rooms
 
 # ----------------------- #
 
@@ -95,6 +103,52 @@ _SSE_HEADERS = {
 }
 
 
+_END_GRACE_SECONDS = 5.0
+"""How long a live stream may take to finish once its subscription has ended before it is cut
+off: the time a write to a client still reading needs, not one that stopped reading."""
+
+
+class _LiveSseResponse(StreamingResponse):
+    """A live SSE response that ends when its subscription does, even mid-write.
+
+    Its stream ends on its own once the subscription has, but it only runs between writes,
+    and a client that stopped reading blocks the write under way. So the end is watched here
+    as well, apart from the stream: one still running :data:`_END_GRACE_SECONDS` after the end
+    is cut off, which closes the connection. The browser reconnects with its
+    ``Last-Event-ID`` either way.
+    """
+
+    def __init__(self, stream: AsyncGenerator[str], *, ended: asyncio.Event) -> None:
+        super().__init__(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
+        self._stream = stream
+        self._ended = ended
+
+    async def stream_response(self, send: Send) -> None:
+        # A cancel scope, not a task group, around the stream: a task group would wrap what
+        # the stream raises — Starlette reads a bare OSError as the client disconnecting.
+        with anyio.CancelScope() as scope:
+            guard = asyncio.ensure_future(self._end_guard(scope))
+
+            try:
+                await super().stream_response(send)
+
+            finally:
+                guard.cancel()
+
+        if scope.cancelled_caught:
+            _logger.warning(
+                "SSE stream cut off %ss after its subscription ended: its client stopped reading",
+                _END_GRACE_SECONDS,
+            )
+            # Stopped mid-write: run the stream's cleanup now rather than when it is collected.
+            await self._stream.aclose()
+
+    async def _end_guard(self, scope: anyio.CancelScope) -> None:
+        await self._ended.wait()
+        await asyncio.sleep(_END_GRACE_SECONDS)
+        scope.cancel()
+
+
 class RealtimeAckBody(RealtimeAck):
     """``POST .../ack`` body — the kernel's shared ack shape, one wire contract."""
 
@@ -123,6 +177,38 @@ def _sse_frame(*, event: str, event_id: str | None, payload: dict[str, Any]) -> 
     lines.append(f"data: {encode_frame(envelope)}")
 
     return "\n".join(lines) + "\n\n"
+
+
+# ....................... #
+
+
+def _draining(ctx: ExecutionContext, hub: RealtimeSseHub | None) -> bool:
+    """Whether the replica is on its way down, as the hub's drain step reports it or, for a
+    route without a hub, as the request's context does."""
+
+    if hub is not None and hub.draining:
+        return True
+
+    return scope_readiness(ctx) == "draining"
+
+
+_DRAINING_RETRY_MS = (1_000, 3_000)
+"""The range a draining replica's ``retry:`` is drawn from: soon, and not in lockstep."""
+
+
+def _retry_elsewhere() -> StreamingResponse:
+    """What a draining replica answers a new stream with: a 200 carrying only a jittered
+    ``retry:``, then the end. ``EventSource`` reconnects after it, through the balancer;
+    any other status would end it for good."""
+
+    # Desynchronization jitter, not security randomness.
+    retry = int(current_entropy_source().as_random().uniform(*_DRAINING_RETRY_MS))
+
+    return StreamingResponse(
+        iter([f"retry: {retry}\n\n"]),
+        media_type="text/event-stream",
+        headers={**_SSE_HEADERS, ERROR_CODE_HEADER: REALTIME_DRAINING_CODE},
+    )
 
 
 # ....................... #
@@ -304,31 +390,41 @@ async def _replay_frames(
 
 async def _live_frames(
     subscription: SseSubscription, *, keepalive_interval: timedelta
-) -> AsyncIterator[str]:
-    """The live tail: matched hub signals as SSE frames, keepalive comments between."""
+) -> AsyncGenerator[str]:
+    """The live tail: matched hub signals as SSE frames, keepalive comments between, until
+    the subscription is ended."""
 
     pending: asyncio.Task[Any] | None = None
+    ended = asyncio.ensure_future(subscription.ended.wait())
 
     try:
-        while True:
+        while not subscription.ended.is_set():
             if pending is None:
                 pending = asyncio.ensure_future(subscription.queue.get())
 
             # Never cancel the pending get on timeout — a cancelled Queue.get can
             # drop a wakeup; the same task just carries over the iteration.
-            done, _ = await asyncio.wait({pending}, timeout=keepalive_interval.total_seconds())
+            done, _ = await asyncio.wait(
+                {pending, ended},
+                timeout=keepalive_interval.total_seconds(),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
 
-            if not done:
+            if pending in done:
+                signal, event_id = pending.result()
+                pending = None
+                yield _sse_frame(
+                    event=signal.event, event_id=event_id, payload=dict(signal.payload)
+                )
+
+            elif not done:
                 yield ": keepalive\n\n"
-                continue
-
-            signal, event_id = pending.result()
-            pending = None
-            yield _sse_frame(event=signal.event, event_id=event_id, payload=dict(signal.payload))
 
     finally:
         if pending is not None:
             pending.cancel()
+
+        ended.cancel()
 
 
 # ----------------------- #
@@ -367,6 +463,13 @@ def attach_realtime_sse_route(
     topic is granted — topic membership is the app's authorization decision (the
     Socket.IO analog is app code calling ``enter_room``), never a client-asserted
     fact. Principal-addressed delivery needs no authorizer.
+
+    While the replica drains — as the *hub*'s drain step reports it, or for a route without
+    a hub as the request's context does — a new stream is answered 200 with only a jittered
+    ``retry:`` (1–3 s) and
+    ``X-Error-Code: realtime_draining``, so ``EventSource`` reconnects — a non-200 would end
+    it for good. :func:`~forze_fastapi.realtime.realtime_sse_drain_lifecycle_step` ends the
+    open ones.
     """
 
     if keepalive_interval.total_seconds() <= 0:
@@ -386,6 +489,10 @@ def attach_realtime_sse_route(
         topics: Annotated[str | None, Query()] = None,
     ) -> StreamingResponse:
         ctx = ctx_dep()
+
+        if _draining(ctx, hub):
+            return _retry_elsewhere()
+
         principal = _authenticated_principal(ctx)
         negotiate_realtime_protocol(protocol)
 
@@ -413,6 +520,11 @@ def attach_realtime_sse_route(
             else None
         )
 
+        if subscription is not None and _draining(ctx, hub):
+            # The drain may have ended the hub's subscribers before this one joined.
+            hub.unsubscribe(subscription)  # type: ignore[union-attr]
+            return _retry_elsewhere()
+
         # Presence: an open SSE stream occupies the same rooms a Socket.IO connection
         # would, under a per-response member key (the sid analog) — one store, one
         # naming scheme, so "is this principal online" is transport-agnostic.
@@ -423,7 +535,7 @@ def attach_realtime_sse_route(
             else ()
         )
 
-        async def stream() -> AsyncIterator[str]:
+        async def stream() -> AsyncGenerator[str]:
             # Subscribed before the replay drains, so a signal landing mid-replay is
             # queued rather than lost; a durable one may then arrive twice (mailbox +
             # live), which the client's id-dedup collapses.
@@ -465,25 +577,23 @@ def attach_realtime_sse_route(
                 if not outcome.complete:
                     return
 
-                async for frame in _live_frames(
-                    subscription, keepalive_interval=keepalive_interval
-                ):
-                    yield frame
+                async with aclosing(
+                    _live_frames(subscription, keepalive_interval=keepalive_interval)
+                ) as frames:
+                    async for frame in frames:
+                        yield frame
 
             finally:
                 if subscription is not None:
                     hub.unsubscribe(subscription)  # type: ignore[union-attr]
 
-                for room in rooms:
-                    # best-effort: a failed leave must not mask the stream's own exit
-                    # (the TTL store expires the row; the in-memory one leaks one key)
-                    try:
-                        await presence.left(room, member_key)  # type: ignore[union-attr]
+                if presence is not None:
+                    await leave_presence_rooms(presence, rooms, member_key, transport="SSE")
 
-                    except Exception:
-                        _logger.exception("SSE presence leave failed", room=room)
+        if subscription is None:
+            return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
-        return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
+        return _LiveSseResponse(stream(), ended=subscription.ended)
 
     # ....................... #
 

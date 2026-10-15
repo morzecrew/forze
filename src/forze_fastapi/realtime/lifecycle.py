@@ -38,12 +38,15 @@ from forze.application.execution.background import (
     BackgroundLoopControl,
     periodic_lifecycle_step,
     run_supervised,
+    spread_closes,
+    spread_drain_lifecycle_step,
 )
+from forze.application.execution.context.lifecycle import scope_readiness
 from forze.application.integrations.realtime import RealtimePresence
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey
 
-from .hub import RealtimeSseHub
+from .hub import RealtimeSseHub, SseSubscription
 
 # ----------------------- #
 
@@ -51,6 +54,7 @@ __all__ = [
     "realtime_sse_tail_lifecycle_step",
     "realtime_sse_sharded_tail_lifecycle_step",
     "realtime_sse_presence_heartbeat_lifecycle_step",
+    "realtime_sse_drain_lifecycle_step",
     "refresh_sse_presence",
 ]
 
@@ -522,3 +526,66 @@ def realtime_sse_presence_heartbeat_lifecycle_step(
     return periodic_lifecycle_step(
         tick=_tick, interval=interval, name="realtime_sse_presence_heartbeat", step_id=step_id
     )
+
+
+# ....................... #
+
+
+def _ending(subscription: SseSubscription) -> Callable[[], Awaitable[None]]:
+    async def end() -> None:
+        subscription.end()
+
+    return end
+
+
+def realtime_sse_drain_lifecycle_step(
+    hub: RealtimeSseHub,
+    *,
+    window: timedelta,
+    tail: timedelta,
+    order: int = 0,
+    step_id: StrKey = "realtime_sse_drain",
+) -> LifecycleStep:
+    """End this node's SSE streams and WebSocket live tails when the scope drains.
+
+    Both subscribe to *hub*, so one drain covers them. At startup the step registers a drain
+    phase; when the runtime drains it ends every subscription the hub holds, spread over
+    *window* so the clients' reconnects are spread too: an SSE response finishes, and the
+    browser reconnects with its ``Last-Event-ID``; a WebSocket closes with 1012, and the
+    client reconnects with ``last_event_id``. An SSE stream still replaying ends once its
+    replay has; one not finished 5 s after its end — blocked writing to a client that
+    stopped reading, say — is cut off. A WebSocket closes at once, a blocked write to a slow
+    client included. The window and tail are fitted to the phase's allowance, and below the
+    drain floor (100 ms) the phase is skipped.
+
+    At startup the step also has *hub* follow its scope's readiness, so the routes turn new
+    streams away from the drain's announcement on, whatever context their ``ctx_dep``
+    returns.
+
+    :param window: The longest the ends are spread over.
+    :param tail: Bounds the phase after the last end; ending a subscription is immediate.
+    :param order: The phase's place among the scope's drain phases.
+    :param step_id: The step's id, which also names its drain phase.
+
+    :raises CoreException: ``configuration`` — *window* or *tail* is not positive.
+    """
+
+    async def close(
+        subscriptions: tuple[SseSubscription, ...], window: timedelta, tail: timedelta
+    ) -> None:
+        await spread_closes([_ending(one) for one in subscriptions], window, tail=tail)
+
+    step = spread_drain_lifecycle_step(
+        collect=lambda: hub.subscriptions,
+        close=close,
+        window=window,
+        tail=tail,
+        order=order,
+        step_id=step_id,
+    )
+
+    async def startup(ctx: ExecutionContext) -> None:
+        hub.follow_drain(lambda: scope_readiness(ctx) == "draining")
+        await step.startup(ctx)
+
+    return attrs.evolve(step, startup=startup)

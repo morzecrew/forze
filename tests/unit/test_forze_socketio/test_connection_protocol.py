@@ -10,6 +10,7 @@ supported range — never silently downgraded.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -26,6 +27,12 @@ _PRINCIPAL = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class _StubSio:
+    manager = SimpleNamespace(
+        is_connected=lambda _sid, _namespace: True, eio_sid_from_sid=lambda _sid, _namespace: None
+    )
+    """Every sid stays connected, on no Engine.IO connection the stub models: the connect
+    checks before each stage that it still is, and records what it accepted on it."""
+
     def __init__(self) -> None:
         self.handlers: dict[str, Any] = {}
         self.entered: list[tuple[str, str]] = []
