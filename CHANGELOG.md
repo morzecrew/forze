@@ -67,6 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A document's L1 cache subscribes to invalidation push when its cache port is wrapped** by OTel port spans, port logging, tracing or a resilience port policy, instead of falling back silently to TTL-only staleness.
 
+- **`graph_read_capabilities` reports the streams of a wrapped graph port.** Under OTel port spans, port logging, tracing or a resilience port policy it reported none, and a stream guarded by it was refused.
+
 - **A Redis lock acquire that fails after taking the lock no longer leaves it held**, as on a corrupt fence counter. Tokens stop at 2⁵³ − 1 on Redis and the mock: an acquire past it is refused with `dlock.fence_exhausted` rather than issuing a token Redis would round onto another.
 
 - **Socket.io connects replaying at the same time all get their offline replay.** Replay and `realtime.ack` run on the live context of `attach_realtime_connection(runtime=)` rather than opening a scope per connect. **Breaking:** pass the serving runtime, with its scope open.
