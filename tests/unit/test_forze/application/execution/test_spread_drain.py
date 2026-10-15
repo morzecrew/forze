@@ -173,35 +173,6 @@ class TestSpreadCloses:
 
         await asyncio.wait_for(cancelled.wait(), timeout=1.0)
 
-    async def test_cancelling_the_call_waits_for_a_close_that_absorbs_the_cancel(self) -> None:
-        started = asyncio.Event()
-        finished: list[bool] = []
-
-        async def stubborn() -> None:
-            started.set()
-
-            try:
-                await asyncio.sleep(60)
-
-            except asyncio.CancelledError:
-                pass  # as python-socketio ends an interrupted disconnect handler
-
-            await asyncio.sleep(0.05)  # and runs the next one
-            finished.append(True)
-
-        call = asyncio.ensure_future(
-            spread_closes([stubborn, stubborn], timedelta(seconds=30), tail=timedelta(seconds=1))
-        )
-        await asyncio.wait_for(started.wait(), timeout=1.0)
-        call.cancel()
-
-        with pytest.raises(asyncio.CancelledError):
-            async with asyncio.timeout(5):
-                await call
-
-        # The started close finished before the call gave up; the second never started.
-        assert finished == [True]
-
 
 # ----------------------- #
 

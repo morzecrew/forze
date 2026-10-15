@@ -36,7 +36,13 @@ from forze.application.execution.context.lifecycle import scope_readiness
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, instance_id, monotonic
 
-from .drain import ConnectionSelector, _closable, _transports, close_spread
+from .drain import (
+    ConnectionSelector,
+    _closable,
+    _require_close_internals,
+    _transports,
+    close_spread,
+)
 from .exceptions import error_logger
 
 # ----------------------- #
@@ -269,7 +275,10 @@ class _Rebalance:
     # ....................... #
 
     async def stop(self, *, deadline: float) -> bool:
-        """Cancel a shed still running. Idempotent.
+        """Stop a shed still running: it starts no more closes. Idempotent.
+
+        A close it already started is never cut short — it may be inside the app's disconnect
+        handlers — and finishes in the background, as the drain's do.
 
         :returns: ``True`` when no shed was running.
         """
@@ -345,10 +354,12 @@ def connection_rebalance_lifecycle_step(
     :param step_id: The step's id.
     :returns: The lifecycle step.
     :raises CoreException: ``configuration`` for a non-positive *every*, a *per_minute*
-        below 1, a negative or non-finite *tolerance*, a negative *settle* or *cooldown*, or
-        no *namespaces*; ``validation`` for an invalid *member_id*.
+        below 1, a negative or non-finite *tolerance*, a negative *settle* or *cooldown*, no
+        *namespaces*, or a python-engineio that lacks what the close uses; ``validation`` for
+        an invalid *member_id*.
     """
 
+    _require_close_internals(sio)
     covered = tuple(namespaces)
 
     if per_minute < 1:

@@ -440,8 +440,9 @@ and sheds nothing itself.
   during a deploy. Shedding does not change a replica's state, so it does not restart this
   clock.
 - This replica has an entry in the view, is serving, and is not draining. A draining replica
-  closes everything through its [drain](#drain-a-replica) instead; a shed already running
-  when the drain begins finishes, or is cancelled before teardown.
+  closes everything through its [drain](#drain-a-replica) instead. A shed already running
+  when the drain begins goes on; one still running at shutdown starts no more closes, and
+  the closes it started finish in the background, as the drain's do.
 - Its count is more than `tolerance` (15%) above the mean. Peers' reports can be a beat old;
   the tolerance absorbs that.
 - No earlier shed is still closing, and `cooldown` (default: `settle`) has passed since the
