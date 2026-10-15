@@ -76,6 +76,7 @@ operation. Recipe:
 | `recipes/idempotency/` | Idempotent operations | [add-idempotency](../pages/docs/recipes/add-idempotency.md) |
 | `recipes/outbox/` | Transactional outbox | [transactional-outbox](../pages/docs/recipes/transactional-outbox.md) |
 | `recipes/notifications/` | Transactional notifications | [transactional-notifications](../pages/docs/recipes/transactional-notifications.md) |
+| `recipes/leadership/` | A publisher on one replica at a time, with fenced writes | [run-on-one-replica](../pages/docs/recipes/run-on-one-replica.md) |
 
 Backend-coupled recipes (`crud_fastapi`, `read_only`, `cache_reads`) include a `compose.yaml` +
 `justfile`; `just run` in that directory spins the service, runs the app, and tears it down.

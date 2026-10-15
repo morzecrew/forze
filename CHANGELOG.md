@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A fenced writer can recover after Redis loses its counters.** `FenceAdvancing.advance_fence(key, past=...)`, on Redis and the mock, lifts a fencing counter to the store's highest fence; `requires_fence_advance` fails closed without it. The documented rule now claims a token first, so a repeated one is acted on once.
 
+- **Work can run on one replica at a time for the life of the process.** `leadership_lifecycle_step` elects a leader on a renewing lease, ends its term inside the lease, hands it over on stop or on request, and fences it: a token, a claim, and `fence_floor` to recover after Redis loses its counters.
+
 ### Changed
 
 - **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.

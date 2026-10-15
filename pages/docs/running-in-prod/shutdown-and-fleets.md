@@ -329,6 +329,183 @@ comfortably exceed the step's duration — no heartbeat extends it here.
     run-exactly-once semantics, which a skip-if-held lock does not give —
     run it as a deploy step in your pipeline, not as a runtime step.
 
+## Run one replica's worth of work
+
+The singleton guard holds its lock only while startup runs, so it cannot keep one
+replica doing something for the life of the process. A replica that starts later finds
+the lock free and starts the work again, and when the replica that started it dies,
+nobody takes over. For work that must run on one replica at a time — a publisher, a
+single sequencer, a coordinator — use `leadership_lifecycle_step`. Every replica
+campaigns for a renewing lease, and the one that holds it runs your body until the
+lease is gone.
+
+Work that tolerates running everywhere needs neither. The framework's outbox relay,
+durable recovery and scheduler pollers and realtime sweeps are safe on every replica, so
+run them unwrapped.
+
+```python
+from forze.application.contracts.dlock import DistributedLockSpec
+from forze_kits.lifecycle import LeadershipSpec, leadership_lifecycle_step
+
+publisher = LeadershipSpec(
+    lock=DistributedLockSpec(name="lobby-publisher", requires_fencing_token=True),
+    key="lobby-publisher",
+)
+
+
+async def claim(ctx, term):
+    # ... SET fence = :token WHERE fence < :token — no row: another holder has this token
+    return await claim_lobby_fence(ctx, term.token)
+
+
+async def publish(ctx, term):
+    while term.live():  # one unit at a time, so the body stops between units
+        # ... WHERE fence <= :token — no row: a newer holder has written, so stop
+        if not await publish_lobby_snapshot(ctx, fence=term.token):
+            return
+
+
+step = leadership_lifecycle_step(publisher, owner=instance_id, lead=publish, claim=claim)
+```
+
+The step's startup only starts the campaign, on every replica, so it is marked
+`requires_long_running` and nothing else: `FLEET` accepts it without a singleton guard,
+and `SERVERLESS` refuses it.
+
+### How a term ends
+
+The leader renews the lease every `renew_every` (a third of the lock's TTL by default)
+and tells the body that its term is ending through `term.ended`, early enough that the
+body's `yield_grace` — and, if it overruns, the `release_timeout` it gets to unwind once
+cancelled — finishes before the lease could lapse. Both deadlines are measured from when
+the latest successful renewal was **sent**, so a slow answer shortens the term rather than
+lengthening it. The spec refuses timings that do not fit:
+`renew_every + yield_grace + release_timeout + margin` must be shorter than the TTL, and
+`release_timeout` no longer than `yield_grace`.
+
+| `term.reason` | When | What happens to the body |
+|---|---|---|
+| `lost` | a renewal answers that the lease is gone | cancelled at once |
+| `expiring` | renewals failed until `yield_grace` before the lease could lapse | cancelled `release_timeout` before the lease could lapse |
+| `stopped` | the process is shutting down | cancelled after `yield_grace`, or earlier if renewals are failing |
+| `yielded` | another replica asked for the unit (see below) | as for `stopped` |
+| `returned` / `raised` | the body ended on its own | — |
+| `unclaimed` | the `claim` hook found its token already claimed | `lead` never runs |
+
+The lease is released only once the body is done, and the next replica then leads within
+one `campaign_every`. A release that fails or overruns `release_timeout` leaves the lease
+to lapse at its TTL instead, and the next replica leads within one `campaign_every` after
+that. A body that does not finish within `release_timeout` of being cancelled
+keeps the lease until its TTL runs out, so no successor starts before then; one that
+starts after it may run beside that body, which is what fencing is for. Write the body to
+stop at unit boundaries: cancellation at an arbitrary await is what the grace exists to
+avoid.
+
+### What fencing is for
+
+A responsive leader whose body finishes within `release_timeout` of being cancelled runs
+only while it holds the lease. Nothing in the lease can stop a leader that is **not**
+responsive: a paused process, a blocked event loop, a body that ignores cancellation, or
+a lock backend that lost its data while the leader cannot yet know. Fencing covers those. Set
+`requires_fencing_token` on the lock, pass `term.token` with every write the body makes,
+and have the store refuse a token lower than the highest it has seen.
+
+A token can repeat after the lock backend loses its data, so the first write of a term
+**claims** the token and later writes accept an equal one:
+
+```sql
+-- claim, before the body's first write: the stored fence must be strictly lower
+UPDATE digests SET fence = :token WHERE name = :name AND fence < :token;
+-- every later write of the term
+UPDATE digests SET body = :body, fence = :token WHERE name = :name AND fence <= :token;
+```
+
+Pass the claim as `claim=`; the step runs it before `lead`, and a claim that matches no
+row ends the term as `unclaimed` and campaigns again. A later write that matches no row
+means a newer holder has written: end the term by returning from `lead`.
+
+After the lock backend loses its data, its fencing counter starts again from one while the
+store keeps the highest fence it saw. Every term's claim is then refused, and the fleet
+climbs one token per campaign interval until the counter passes the store's fence — leadership
+stalls for as many campaigns as the store's fence is high. `fence_floor` is the fix: give the
+step a read of the store's highest fence, and set `requires_fence_advance` on the lock spec.
+
+```python
+publisher = LeadershipSpec(
+    lock=DistributedLockSpec(name="lobby-publisher", requires_fence_advance=True),
+    key="lobby-publisher",
+)
+
+
+async def lobby_fence(ctx):
+    return await read_lobby_fence(ctx)  # SELECT fence FROM lobby WHERE id = 1
+
+
+step = leadership_lifecycle_step(
+    publisher, owner=instance_id, lead=publish, claim=claim, fence_floor=lobby_fence
+)
+```
+
+A replica that finds the lease free reads the floor and moves the lock's counter past it
+before acquiring, so the first term after a loss draws a token above the store's fence and
+its claim goes through at once. With the counter intact the advance changes nothing. A lock
+backend that cannot advance its counter fails the step at startup. A floor that cannot be
+read in time is skipped and the replica acquires anyway: a token below the store's fence is
+refused by the claim, and the next campaign reads the floor again. A floor the lock can
+never advance past, such as `None`, stops the campaign for good. The
+[Redis page](../integrations/redis.md#fencing-after-data-loss) covers the capability
+itself. The
+[one-replica publisher recipe](../recipes/run-on-one-replica.md) runs the whole pattern.
+
+### The clock behind `margin`
+
+Redis keeps a lease's expiry on its own clock. If that clock steps forward — an NTP
+correction, a failover to a replica whose clock runs ahead — the lease ends early, while
+the leader still counts on its own monotonic clock. `margin` (one second by default) is
+the allowance for that: the leader treats its lease as gone `margin` before the TTL.
+Size it for your deployment's clock discipline, and keep the TTL at least ten times the
+backend's renewal latency, or terms flap.
+
+### Handoff on request
+
+With `handoff="on_request"`, a replica whose `prefer(ctx)` returns true asks for the unit
+by holding a second lock, `{key}:want` (so no lease key may end in `:want`), and renewing
+it every campaign interval. The
+holder yields at its next renewal, unless it prefers the unit itself or the asker has not
+renewed its request within two campaign intervals — a dead asker's want-lock outlives it
+by a TTL, and yielding to it would only leave the unit unled. Other replicas stand aside while someone asks, until they have
+seen the lease free for three campaign intervals, so a fleet whose asker cannot take the
+lease is unled for about four at most. An asker gives the want-lock up after three failed
+acquires in a row, or at once when one is not answered in time, and does not ask again for
+one TTL, so holders yield to an asker that cannot take the unit at most once a TTL. A
+failing `prefer` or want-lock read does not count: that replica just campaigns without
+handoff. A replica that `may_campaign` refuses never asks.
+
+### Operating it
+
+- **Stopping.** The step stops within `yield_grace + 3 × release_timeout` plus a second:
+  the grace, then the body's unwind, the release, and a want-lock's or a late acquire's
+  release. Keep that under the runtime's `shutdown_step_timeout` (ten seconds by default),
+  or the loop is cancelled before it releases and the next leader waits out the TTL.
+- **Campaign calls.** `may_campaign`, `prefer`, `fence_floor` and the campaign's reads of
+  the lock are each cut off after `campaign_every`. Handoff and the fence floor are
+  best-effort: when `prefer`, the want-lock or the floor fails or overruns, the replica
+  campaigns as if they were off — acquiring without the advance at worst draws a token the
+  claim refuses. `may_campaign` is the app's own gate, so a failure there sits that
+  campaign out. A `configuration` error from any of them stops campaigning for good, as
+  below. An acquire is never cancelled: one that lands after the step stopped waiting, or
+  whose answer is lost after it landed, is released.
+- **A body that raises** is released and restarted after the supervisor's backoff. A
+  `configuration` error, from the body or from any campaign call, stops campaigning for
+  good, with a critical log, while the process stays up — wiring does not fix itself by
+  retrying. So do the two fencing refusals no retry can clear: a counter at its ceiling
+  (`dlock.fence_exhausted`) and a `fence_floor` the lock cannot advance past
+  (`dlock.fence_out_of_range`, such as `None` for a store with no row yet).
+- **Metrics.** `instrument_leadership()` exports `forze.leadership.held` and
+  `forze.leadership.terms_ended`; see the [metric catalog](../reference/metrics.md#leadership).
+  A sustained rate of `lost` or `expiring` means the lock backend is slow or unreachable
+  from the leader.
+
 ## What's shared, what's per-process
 
 Most coordination state already lives in your backends (idempotency records,

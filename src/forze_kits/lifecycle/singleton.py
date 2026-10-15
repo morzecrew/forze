@@ -83,7 +83,7 @@ def singleton_lifecycle_step(
     replica acquires the lock and launches a *duplicate*. A fleet-wide
     *lifetime* singleton needs the lock held across the step's whole life with
     a renewing lease, which this helper does not provide — run such work behind
-    your own held-lease leader election instead.
+    :func:`~forze_kits.lifecycle.leadership_lifecycle_step` instead.
 
     The lock command port is resolved from the execution context at startup
     time (``ctx.dlock.command(spec)``) — you pass the *spec*, not a live port,
