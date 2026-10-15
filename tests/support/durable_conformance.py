@@ -401,18 +401,26 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
 
 
 @attrs.define
-class _KeyPendingDeletion:
-    """A KMS that refuses one tenant's key, as one whose key is pending deletion does."""
+class _RecoveryKms:
+    """A KMS that refuses one tenant's key for good, and another's for now."""
 
-    key_id: str
+    gone: str
+    """Pending deletion: a configuration error, as the cloud KMS adapters raise it."""
+
+    throttled: str
+    """Throttled: an infrastructure error, which passes on its own."""
+
     inner: MockKeyManagement = attrs.field(factory=MockKeyManagement)
 
     async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
         return await self.inner.generate_data_key(key_ref)
 
     async def unwrap_data_key(self, *, wrapped: bytes, key_ref: KeyRef) -> bytes:
-        if key_ref.key_id == self.key_id:
+        if key_ref.key_id == self.gone:
             raise exc.configuration("Key is pending deletion", code="test.key_pending_deletion")
+
+        if key_ref.key_id == self.throttled:
+            raise exc.infrastructure("KMS request throttled", code="test.kms_throttled")
 
         return await self.inner.unwrap_data_key(wrapped=wrapped, key_ref=key_ref)
 
@@ -441,13 +449,15 @@ async def run_unopenable_claim_scenario(
     every batch the scan claims.
     """
 
-    healthy, offboarded = uuid4(), uuid4()
+    healthy, offboarded, throttled = uuid4(), uuid4(), uuid4()
     sealing = _tenant_keyring(MockKeyManagement())
 
     kept = await store_for(healthy, sealing).enqueue("kept", input_json={"n": 1})
     lost = await store_for(offboarded, sealing).enqueue("lost", input_json={"n": 2})
+    busy = await store_for(throttled, sealing).enqueue("busy", input_json={"n": 3})
 
-    recovery = store_for(None, _tenant_keyring(_KeyPendingDeletion(f"tenant-{offboarded}")))
+    recovery_kms = _RecoveryKms(gone=f"tenant-{offboarded}", throttled=f"tenant-{throttled}")
+    recovery = store_for(None, _tenant_keyring(recovery_kms))
     lease = timedelta(minutes=5)
     claimed = await recovery.claim_abandoned(limit=10, lease_for=lease)
 
@@ -456,6 +466,7 @@ async def run_unopenable_claim_scenario(
         "kept_fence": next(r.attempts for r in claimed if r.run_id == kept.run_id),
         "kept_leased_for_its_lease": await lease_left(kept.run_id) <= lease,
         "lost_held_past_its_lease": await lease_left(lost.run_id) > lease,
+        "busy_leased_for_its_lease": await lease_left(busy.run_id) <= lease,
     }
 
     # A missing cipher is the deployment's, not one run's: every sealed run would be

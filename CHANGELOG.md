@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Durable recovery no longer stalls on runs it cannot decrypt.** On Postgres and Mongo, a claimed run whose tenant's key was gone failed the whole claim and kept the runs claimed with it. It is now logged and held out of the scan, from two leases doubling up to a day. A missing keyring still fails the scan.
+- **Durable recovery no longer stalls on runs it cannot decrypt.** On Postgres and Mongo, a claimed run whose tenant's key was gone failed the whole claim. Now only that run is skipped and held out of the scan, from two leases doubling to a day; a passing KMS fault keeps the lease. A missing keyring still fails the scan.
 
 - **A realtime stream whose client disconnects mid-wait now leaves its presence rooms.** An SSE stream or WebSocket tail cancelled while waiting kept its member counted in a shared presence store such as Redis until the TTL; the leave now runs shielded, bounded by 2 s.
 

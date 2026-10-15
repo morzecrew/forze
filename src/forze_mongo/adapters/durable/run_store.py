@@ -389,10 +389,10 @@ class MongoDurableRunStore(
         lease_for: timedelta,
     ) -> list[DurableRunRecord]:
         # One by one: the claim has already leased every row, so a run whose payload cannot
-        # be opened (its tenant's key is gone) must not fail the runs claimed with it. It is
-        # held out of the scan for longer than a lease, or it would be back at the head of
-        # the next one. A missing cipher is the deployment's, not the run's, and fails the
-        # scan.
+        # be opened must not fail the runs claimed with it. One whose key is gone is held
+        # out of the scan for longer than a lease, or it would be back at the head of the
+        # next one; one that met a passing fault keeps its lease. A missing cipher is the
+        # deployment's, not the run's, and fails the scan.
         records: list[DurableRunRecord] = []
 
         for row in rows:
@@ -403,13 +403,18 @@ class MongoDurableRunStore(
                 if is_payload_cipher_missing(error):
                     raise
 
-                hold = unopenable_hold(lease_for, row["attempts"])
+                hold = unopenable_hold(error, lease_for=lease_for, attempts=row["attempts"])
                 logger.exception(
-                    "Durable run %s was claimed for recovery but could not be opened; "
-                    "held out of recovery for %s",
+                    "Durable run %s was claimed for recovery but could not be opened; %s",
                     row["_id"],
-                    hold,
+                    "retried once its lease lapses"
+                    if hold is None
+                    else f"held out of recovery for {hold}",
                 )
+
+                if hold is None:
+                    continue
+
                 now = utcnow()
                 await self.client.update_one(
                     await self._collection(),

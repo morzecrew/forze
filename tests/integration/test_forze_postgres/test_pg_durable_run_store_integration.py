@@ -237,6 +237,7 @@ class TestPostgresDurableRunStore:
             "kept_fence": 1,
             "kept_leased_for_its_lease": True,
             "lost_held_past_its_lease": True,
+            "busy_leased_for_its_lease": True,
             "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
         }
 
