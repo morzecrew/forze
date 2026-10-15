@@ -799,6 +799,31 @@ class TestTurnAwayHold:
 
     # ....................... #
 
+    async def test_after_the_hold_a_connection_being_closed_gets_no_refusal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(connection_module, "_TURN_AWAY_HOLD_SECONDS", (0.2, 0.2))
+        server = _server()
+        runtime = _runtime()
+        attach_realtime_connection(server, resolve=_resolve, draining=lambda: runtime.draining)
+        socket = _engine_socket(server, "eio-1")
+
+        async with runtime.scope():
+            runtime.begin_draining()
+            held = asyncio.ensure_future(_connect(server, "eio-1"))
+            await asyncio.sleep(0.05)
+            # A close of the connection is running its disconnect handlers — the drain's,
+            # whose CLOSE has not gone out yet. A refusal sent now could reach the client
+            # first, and its JavaScript client would give up for good.
+            [(sid, _eio_sid)] = list(server.manager.get_participants("/", None))
+            server.manager.pre_disconnect(sid, "/")
+
+            await asyncio.wait_for(held, timeout=1.0)  # quietly: no refusal raised
+
+        assert not socket.closed  # left to the close under way
+
+    # ....................... #
+
     async def test_after_the_hold_a_connection_already_closed_is_left_alone(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
