@@ -769,11 +769,22 @@ class TestLateConnect:
         self,
     ) -> None:
         server = _server()
-        presence = InMemoryRealtimePresence()
         stats = RealtimeConnectionStats()
-        resolving = asyncio.Event()
+        joining = asyncio.Event()
         release = asyncio.Event()
         held: list[str] = []
+
+        class _HeldJoin(InMemoryRealtimePresence):
+            """Holds the late connect after it stored its identity, in its room join."""
+
+            async def joined(self, room: str, sid: str) -> None:
+                if sid in held:
+                    joining.set()
+                    await release.wait()
+
+                await super().joined(room, sid)
+
+        presence = _HeldJoin()
         runtime = _runtime(
             connection_drain_lifecycle_step(
                 server,
@@ -788,8 +799,6 @@ class TestLateConnect:
         async def resolve(connect: SocketIOConnect) -> RealtimeConnection | None:
             if connect.auth.get("hold"):
                 held.append(connect.sid)
-                resolving.set()
-                await release.wait()
 
             return await _resolve(connect)
 
@@ -805,7 +814,10 @@ class TestLateConnect:
             await _connect(server, "eio-1")
             late_socket = _socket(server, "eio-2")
             late = asyncio.ensure_future(_connect(server, "eio-2", "/", {"token": "ok", "hold": 1}))
-            await asyncio.wait_for(resolving.wait(), timeout=1.0)
+            await asyncio.wait_for(joining.wait(), timeout=1.0)
+
+            # Past every earlier check, with its identity stored: only the last one is left.
+            assert IDENTITY_SESSION_KEY in late_socket.session["/"]
 
             await runtime.drain(timedelta(seconds=5))
             assert _open(server) == {"eio-2"}  # the drain listed, closed eio-1, and is done
@@ -822,7 +834,7 @@ class TestLateConnect:
         # As before it arrived: not online, in no room, no identity in the session.
         assert await presence.count(_ROOM) == 0
         assert list(server.manager.get_participants("/", _ROOM)) == []
-        session = late_socket.session.get("/", {})
+        session = late_socket.session["/"]
         assert IDENTITY_SESSION_KEY not in session
         assert CONNECTION_SESSION_KEY not in session
         # eio-1 counted then uncounted by the drain; the late connect never counted.
