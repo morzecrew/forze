@@ -632,7 +632,7 @@ class TestReport:
         ]
         # Listed on every tick and every beat: the count once, and the first error once.
         assert [row["level"] for row in rows] == ["warning", "critical"]
-        assert "50 connection(s)" in rows[0]["event"]
+        assert "50 Engine.IO connection(s)" in rows[0]["event"]
 
 
 class TestWiring:
