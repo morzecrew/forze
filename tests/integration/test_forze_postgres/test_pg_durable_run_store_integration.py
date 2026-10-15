@@ -19,18 +19,23 @@ from psycopg import sql
 
 from forze.application.contracts.crypto import (
     AesGcmAead,
+    BytesCipherPort,
     KeyRef,
     StaticKeyDirectory,
     is_encrypted_payload,
 )
 from forze.application.contracts.durable.function import DurableRunStatus
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE, Keyring
 from forze.base.primitives import utcnow
 from forze_mock import MockKeyManagement
 from forze_postgres.adapters.durable import PostgresDurableRunStore
 from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
 from forze_postgres.kernel.client import PostgresClient
+from tests.support.durable_conformance import (
+    run_unopenable_claim_scenario,
+    tenant_provider_for,
+)
 
 # ----------------------- #
 
@@ -205,6 +210,35 @@ class TestPostgresDurableRunStore:
         # The reclaimed-once expired run shows two attempts (begin + reclaim).
         reclaimed_expired = next(c for c in claimed if c.run_id == expired.run_id)
         assert reclaimed_expired.attempts == 2
+
+    async def test_a_run_whose_key_is_gone_costs_only_that_run(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        def store_for(tenant: UUID | None, cipher: BytesCipherPort | None) -> PostgresDurableRunStore:
+            return PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", durable_run_table)),
+                cipher=cipher,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+
+        async def lease_left(run_id: str) -> timedelta:
+            row = await pg_client.fetch_one(
+                sql.SQL("SELECT leased_until - now() AS left FROM {table} WHERE run_id = %s").format(
+                    table=sql.Identifier("public", durable_run_table)
+                ),
+                [run_id],
+            )
+            assert row is not None
+            return row["left"]
+
+        assert await run_unopenable_claim_scenario(store_for, lease_left) == {
+            "claimed": [("kept", {"n": 1})],
+            "kept_fence": 1,
+            "kept_leased_for_its_lease": True,
+            "lost_held_past_its_lease": True,
+            "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
+        }
 
     async def test_stale_worker_is_fenced_out_after_reclaim(
         self, pg_client: PostgresClient, durable_run_table: str

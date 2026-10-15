@@ -23,11 +23,21 @@ The forced-schedule race batteries live next door in ``durable_cancel_races``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import attrs
+
+from forze.application.contracts.crypto import (
+    AesGcmAead,
+    BytesCipherPort,
+    DataKey,
+    KeyManagementPort,
+    KeyRef,
+    TenantTemplateKeyDirectory,
+)
 from forze.application.contracts.durable.function import (
     DurableFunctionStepPort,
     DurableRunAdminPort,
@@ -41,8 +51,10 @@ from forze.application.contracts.durable.function import (
     reset_durable_run,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.base.exceptions import CoreException
+from forze.application.integrations.crypto import Keyring
+from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import utcnow
+from forze_mock import MockKeyManagement
 
 # ----------------------- #
 
@@ -381,6 +393,81 @@ async def run_claim_scenario(store: DurableRunStorePort) -> dict[str, Any]:
         record.run_id
         for record in await store.claim_abandoned(limit=0, lease_for=timedelta(minutes=5))
     ]
+
+    return out
+
+
+# ....................... #
+
+
+@attrs.define
+class _KeyPendingDeletion:
+    """A KMS that refuses one tenant's key, as one whose key is pending deletion does."""
+
+    key_id: str
+    inner: MockKeyManagement = attrs.field(factory=MockKeyManagement)
+
+    async def generate_data_key(self, key_ref: KeyRef) -> DataKey:
+        return await self.inner.generate_data_key(key_ref)
+
+    async def unwrap_data_key(self, *, wrapped: bytes, key_ref: KeyRef) -> bytes:
+        if key_ref.key_id == self.key_id:
+            raise exc.configuration("Key is pending deletion", code="test.key_pending_deletion")
+
+        return await self.inner.unwrap_data_key(wrapped=wrapped, key_ref=key_ref)
+
+
+def _tenant_keyring(kms: KeyManagementPort) -> Keyring:
+    return Keyring(
+        kms=kms,
+        aead=AesGcmAead(),
+        directory=TenantTemplateKeyDirectory(template="tenant-{tenant_id}", default_key_id="cmk"),
+    )
+
+
+async def run_unopenable_claim_scenario(
+    store_for: Callable[[UUID | None, BytesCipherPort | None], DurableRunStorePort],
+    lease_left: Callable[[str], Awaitable[timedelta]],
+) -> dict[str, Any]:
+    """Claim over sealed runs when one tenant's key cannot be opened.
+
+    For the engines that seal payloads; the mock does not, so there is no mock leg.
+    *store_for* builds a store bound to a tenant (``None`` for the unbound recovery scan)
+    sealing with a cipher (``None`` for none); *lease_left* reads how long a run's lease has
+    left, straight from the backend, since a run that could not be opened never comes back
+    through the port. The recovery scan claims every tenant's runs in one statement and only
+    then opens them, so a run whose key is gone must not fail the runs claimed with it, and
+    it must be held out of the scan past its lease, or enough of them, oldest first, fill
+    every batch the scan claims.
+    """
+
+    healthy, offboarded = uuid4(), uuid4()
+    sealing = _tenant_keyring(MockKeyManagement())
+
+    kept = await store_for(healthy, sealing).enqueue("kept", input_json={"n": 1})
+    lost = await store_for(offboarded, sealing).enqueue("lost", input_json={"n": 2})
+
+    recovery = store_for(None, _tenant_keyring(_KeyPendingDeletion(f"tenant-{offboarded}")))
+    lease = timedelta(minutes=5)
+    claimed = await recovery.claim_abandoned(limit=10, lease_for=lease)
+
+    out: dict[str, Any] = {
+        "claimed": [(record.name, record.input_json) for record in claimed],
+        "kept_fence": next(r.attempts for r in claimed if r.run_id == kept.run_id),
+        "kept_leased_for_its_lease": await lease_left(kept.run_id) <= lease,
+        "lost_held_past_its_lease": await lease_left(lost.run_id) > lease,
+    }
+
+    # A missing cipher is the deployment's, not one run's: every sealed run would be
+    # skipped, so the scan refuses instead.
+    await store_for(healthy, sealing).enqueue("unwired", input_json={"n": 3})
+
+    try:
+        await store_for(None, None).claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+        out["no_cipher"] = None
+
+    except CoreException as error:
+        out["no_cipher"] = error.code
 
     return out
 

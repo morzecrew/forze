@@ -33,9 +33,12 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
     decrypt_payload,
     encrypt_payload,
+    is_payload_cipher_missing,
 )
+from forze.application.integrations.durable import unopenable_hold
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
+from forze_mongo.adapters._logger import logger
 from forze_mongo.adapters.durable._ids import as_uuid, scope_id, unscope_id
 from forze_mongo.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
 from forze_mongo.execution.deps.configs.durable import MongoDurableRunConfig
@@ -376,7 +379,45 @@ class MongoDurableRunStore(
             sort=[("created_at", 1)],
         )
 
-        return [await self._record_from_row(row) for row in rows]
+        return await self._open_claimed(rows, lease_for)
+
+    # ....................... #
+
+    async def _open_claimed(
+        self,
+        rows: Sequence[Any],
+        lease_for: timedelta,
+    ) -> list[DurableRunRecord]:
+        # One by one: the claim has already leased every row, so a run whose payload cannot
+        # be opened (its tenant's key is gone) must not fail the runs claimed with it. It is
+        # held out of the scan for longer than a lease, or it would be back at the head of
+        # the next one. A missing cipher is the deployment's, not the run's, and fails the
+        # scan.
+        records: list[DurableRunRecord] = []
+
+        for row in rows:
+            try:
+                records.append(await self._record_from_row(row))
+
+            except Exception as error:
+                if is_payload_cipher_missing(error):
+                    raise
+
+                hold = unopenable_hold(lease_for, row["attempts"])
+                logger.exception(
+                    "Durable run %s was claimed for recovery but could not be opened; "
+                    "held out of recovery for %s",
+                    row["_id"],
+                    hold,
+                )
+                now = utcnow()
+                await self.client.update_one(
+                    await self._collection(),
+                    {"_id": row["_id"], "status": _RUNNING, "attempts": row["attempts"]},
+                    {"$set": {"leased_until": now + hold, "updated_at": now}},
+                )
+
+        return records
 
     # ....................... #
 

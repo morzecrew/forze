@@ -16,7 +16,7 @@ first already written.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -25,13 +25,14 @@ import pytest_asyncio
 
 from forze.application.contracts.crypto import (
     AesGcmAead,
+    BytesCipherPort,
     KeyRef,
     StaticKeyDirectory,
     is_encrypted_payload,
 )
 from forze.application.contracts.durable.function import DurableScheduleRecord
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE, Keyring
 from forze.base.exceptions import CoreException, ExceptionKind
 from forze.base.primitives import utcnow
 from forze_mock import MockKeyManagement
@@ -41,6 +42,10 @@ from forze_mongo.execution.deps.configs import (
     MongoDurableScheduleConfig,
 )
 from forze_mongo.kernel.client import MongoClient
+from tests.support.durable_conformance import (
+    run_unopenable_claim_scenario,
+    tenant_provider_for,
+)
 
 # ----------------------- #
 
@@ -309,6 +314,34 @@ async def test_run_payloads_are_sealed_at_rest_and_load_in_the_clear(
     assert is_encrypted_payload(stored["input"])
     assert is_encrypted_payload(stored["output"])
     assert "4111" not in str(stored) and "r-1" not in str(stored)
+
+
+async def test_a_run_whose_key_is_gone_costs_only_that_run(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    def store_for(tenant: UUID | None, cipher: BytesCipherPort | None) -> MongoDurableRunStore:
+        return MongoDurableRunStore(
+            client=mongo_client,
+            config=MongoDurableRunConfig(collection=run_collection),
+            cipher=cipher,
+            tenant_provider=tenant_provider_for(tenant),
+        )
+
+    async def lease_left(run_id: str) -> timedelta:
+        db_name, coll_name = run_collection
+        coll = await mongo_client.collection(coll_name, db_name=db_name)
+        doc = await mongo_client.find_one(coll, {"_id": run_id})
+        assert doc is not None
+        left: timedelta = doc["leased_until"].replace(tzinfo=UTC) - utcnow()
+        return left
+
+    assert await run_unopenable_claim_scenario(store_for, lease_left) == {
+        "claimed": [("kept", {"n": 1})],
+        "kept_fence": 1,
+        "kept_leased_for_its_lease": True,
+        "lost_held_past_its_lease": True,
+        "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
+    }
 
 
 async def test_a_tenant_aware_store_cannot_run_the_unbound_recovery_sweep(
