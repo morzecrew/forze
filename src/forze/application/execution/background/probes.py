@@ -29,10 +29,7 @@ import attrs
 from forze.application._logger import logger
 from forze.application.contracts.deps import DepKey
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
-from forze.application.contracts.tenancy import (
-    TENANT_GLOBAL_REQUIRED_CODE,
-    require_tenant_global,
-)
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import StrKey
 
@@ -172,12 +169,10 @@ async def _check_dependencies(
             try:
                 require_tenant_global(client, what=f"Readiness check {name!r}")
 
-            except CoreException as error:
-                if error.code != TENANT_GLOBAL_REQUIRED_CODE:
-                    raise
-
-                # A probe runs with no tenant bound, so a client routed per tenant names no
-                # client to probe either, just as a key registered only per route does.
+            except CoreException:
+                # The one refusal it raises. A probe runs with no tenant bound, so a client
+                # routed per tenant names no client to probe either, just as a key
+                # registered only per route does.
                 return name, {"ok": False, "detail": "routed per tenant"}
 
             budget = asyncio.timeout(seconds)
