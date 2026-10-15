@@ -40,6 +40,7 @@ from forze_socketio import (
     close_spread,
     connection_drain_lifecycle_step,
 )
+from forze_socketio import connection as connection_module
 from forze_socketio.drain import close_transport
 
 # ----------------------- #
@@ -678,6 +679,86 @@ class TestDrainingRefusal:
             await _connect(server, "eio-1")
 
         assert _open(server) == {"eio-1"}
+
+
+class TestTurnAwayHold:
+    """A connect turned away is held before its connection closes: the client's own
+    backoff starts over on each new connection, so the hold is the backoff."""
+
+    async def test_the_close_comes_after_a_jittered_hold(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(connection_module, "_TURN_AWAY_HOLD_SECONDS", (0.3, 0.4))
+        server = _server()
+        runtime = _runtime()
+        attach_realtime_connection(server, resolve=_resolve, draining=lambda: runtime.draining)
+        socket = _engine_socket(server, "eio-1")
+        clock = asyncio.get_running_loop()
+
+        async with runtime.scope():
+            runtime.begin_draining()
+            began = clock.time()
+
+            with pytest.raises(SocketIOConnectionRefusedError):
+                await _connect(server, "eio-1")
+
+        assert socket.closed
+        assert 0.3 <= clock.time() - began < 0.6
+
+    # ....................... #
+
+    async def test_one_whose_connection_the_drain_closes_while_held_stops_quietly(
+        self, monkeypatch: pytest.MonkeyPatch, error_log_buf: Any
+    ) -> None:
+        monkeypatch.setattr(connection_module, "_TURN_AWAY_HOLD_SECONDS", (5.0, 5.0))
+        server = _server()
+        stats = RealtimeConnectionStats()
+        runtime = _runtime(
+            connection_drain_lifecycle_step(
+                server, window=timedelta(seconds=0.05), tail=timedelta(seconds=1)
+            )
+        )
+        attach_realtime_connection(
+            server, resolve=_resolve, draining=lambda: runtime.draining, stats=stats
+        )
+        socket = _engine_socket(server, "eio-1")
+        clock = asyncio.get_running_loop()
+
+        async with runtime.scope():
+            runtime.begin_draining()
+            held = asyncio.ensure_future(_connect(server, "eio-1"))
+            await asyncio.sleep(0.05)
+
+            began = clock.time()
+            await runtime.drain(timedelta(seconds=5))
+
+            assert clock.time() - began < 1.5  # the drain did not wait out the hold
+            assert socket.closed  # it closed the held connect's connection at its slot
+
+            held.cancel()  # rather than wait out the 5 s
+            await asyncio.gather(held, return_exceptions=True)
+
+        assert stats.connect_refused == {("/", "draining"): 1}
+        assert error_log_buf.getvalue() == ""
+
+    # ....................... #
+
+    async def test_after_the_hold_a_connection_already_closed_is_left_alone(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(connection_module, "_TURN_AWAY_HOLD_SECONDS", (0.2, 0.2))
+        server = _server()
+        runtime = _runtime()
+        attach_realtime_connection(server, resolve=_resolve, draining=lambda: runtime.draining)
+        socket = _engine_socket(server, "eio-1")
+
+        async with runtime.scope():
+            runtime.begin_draining()
+            held = asyncio.ensure_future(_connect(server, "eio-1"))
+            await asyncio.sleep(0.05)
+            await socket.close(wait=False, abort=True)  # the client gave up first
+
+            await asyncio.wait_for(held, timeout=1.0)  # stops quietly: nothing raised
 
 
 # ----------------------- #

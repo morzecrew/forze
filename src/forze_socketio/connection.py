@@ -53,7 +53,12 @@ from forze.application.integrations.realtime import (
     RealtimePresence as RealtimePresence,  # re-export: established home
 )
 from forze.base.exceptions import CoreException, exc
-from forze.base.primitives import HlcTimestamp, stable_payload_fingerprint, utcnow
+from forze.base.primitives import (
+    HlcTimestamp,
+    current_entropy_source,
+    stable_payload_fingerprint,
+    utcnow,
+)
 
 from .drain import close_transport, require_close_internals
 from .exceptions import (
@@ -194,6 +199,12 @@ _SHARED_IDENTITY_KEY = "forze.shared_identity"
 Socket.IO keeps each namespace's session in the Engine.IO session under the namespace's own
 name, which always starts with ``/``; this key cannot collide with one, and it is freed with
 the connection."""
+
+_TURN_AWAY_HOLD_SECONDS = (1.0, 5.0)
+"""How long a connect turned away while draining is held before its connection closes, drawn
+at random from this range. socket.io's JavaScript client starts its backoff over whenever a
+connection opens, so it would come straight back at its base delay; it sets no timeout on a
+namespace connect, so holding it is the backoff, and the jitter keeps clients apart."""
 
 _ACCEPTED_KEY = "forze.accepted_namespaces"
 """Engine.IO session key holding the namespaces whose connect this layer accepted on the
@@ -657,7 +668,12 @@ class _ConnectionLifecycle:
             ) from error
 
         if draining and not await self._beside_an_accepted_namespace(sid):
-            raise await self._turn_away(sid, connection)
+            refusal = await self._turn_away(sid, connection)
+
+            if refusal is None:
+                return False  # its connection closed while it was held
+
+            raise refusal
 
         return True
 
@@ -688,25 +704,37 @@ class _ConnectionLifecycle:
 
     async def _turn_away(
         self, sid: str, connection: RealtimeConnection | None = None
-    ) -> SocketIOConnectionRefusedError:
-        """Turn a connect away while the replica drains; return the refusal to raise.
+    ) -> SocketIOConnectionRefusedError | None:
+        """Turn a connect away while the replica drains; return the refusal to raise, or
+        ``None`` when its connection closed while it was held.
 
         The Engine.IO connection is closed, as the drain closes its connections: socket.io's
         JavaScript client then reconnects with its backoff, through the balancer, to a
         replica still ready. A refused connect (CONNECT_ERROR) alone would make it give up
         for good. Only a connect that would be its connection's first accepted namespace
         gets here (see :meth:`_beside_an_accepted_namespace`).
+
+        Before the close the connect is held for :data:`_TURN_AWAY_HOLD_SECONDS`, in its own
+        task — never the drain's — so a client does not come straight back. A connection that
+        closes during the hold, the drain's own close of it included, is left alone.
         """
+
+        refusal = self._refused("draining", _draining_refusal())
 
         if connection is not None:
             await self._undo_connect(sid, connection)
 
+        # Desynchronization jitter, not security randomness.
+        await asyncio.sleep(current_entropy_source().as_random().uniform(*_TURN_AWAY_HOLD_SECONDS))
+
         eio_sid = self.sio.manager.eio_sid_from_sid(sid, self.namespace)
 
-        if eio_sid is not None:
-            await _best_effort(close_transport(self.sio, eio_sid))
+        if eio_sid is None or not self.sio.manager.is_connected(sid, self.namespace):
+            return None
 
-        return self._refused("draining", _draining_refusal())
+        await _best_effort(close_transport(self.sio, eio_sid))
+
+        return refusal
 
     # ....................... #
 

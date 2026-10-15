@@ -21,3 +21,13 @@ def error_log_buf() -> io.StringIO:
         render_mode="json",
     )
     return buf
+
+
+@pytest.fixture(autouse=True)
+def no_turn_away_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A draining replica holds a turned-away connect for 1–5 s before closing it; tests
+    that are not about the hold close at once."""
+
+    from forze_socketio import connection
+
+    monkeypatch.setattr(connection, "_TURN_AWAY_HOLD_SECONDS", (0.0, 0.0), raising=False)
