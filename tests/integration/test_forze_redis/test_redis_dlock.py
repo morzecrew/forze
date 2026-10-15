@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 
 from forze.application.contracts.dlock import AcquiredLock, DistributedLockSpec
+from forze.base.exceptions import CoreException
 from forze_kits.scopes import DistributedLockScope
 from forze_redis.adapters import RedisDistributedLockAdapter
 
@@ -134,3 +135,21 @@ async def test_coordinator_extend_interval_refreshes_ttl(
     again = await redis_dlock.acquire("refresh-key", "next-owner")
     assert again is not None
     assert again.token == (token_at_entry or 0) + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corrupt", ["5.5", "abc"])
+async def test_a_failed_acquire_does_not_leave_the_lock_held(
+    redis_dlock: RedisDistributedLockAdapter, corrupt: str
+) -> None:
+    """A counter ``INCR`` cannot use fails the acquire and leaves the lock key unset.
+
+    Without that the key would stay held, by nobody, until its TTL ran out.
+    """
+    fence_key = redis_dlock.construct_key("dlock", "wedged", "fence")
+    await redis_dlock.client.set(fence_key, corrupt)
+
+    with pytest.raises(CoreException):
+        await redis_dlock.acquire("wedged", "owner")
+
+    assert await redis_dlock.is_locked("wedged") is False
