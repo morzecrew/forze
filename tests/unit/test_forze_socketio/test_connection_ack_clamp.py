@@ -103,6 +103,8 @@ class _StubSio:
 
     async def enter_room(self, sid: str, room: str, namespace: str | None = None) -> None: ...
 
+    async def leave_room(self, sid: str, room: str, namespace: str | None = None) -> None: ...
+
     async def get_session(self, sid: str, namespace: str | None = None) -> dict[str, Any]:
         return self.sessions.setdefault(sid, {})
 
@@ -508,8 +510,9 @@ async def test_failed_room_join_does_not_leak_replay_progress() -> None:
     )
 
     import pytest
+    from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefusedError
 
-    with pytest.raises(RuntimeError, match="room join failed"):
+    with pytest.raises(SocketIOConnectionRefusedError):
         await sio.handlers["connect"]("sid-1", {}, None)
 
     lifecycle = sio.handlers["connect"].__self__

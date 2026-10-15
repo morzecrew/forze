@@ -3,7 +3,7 @@
 On **connect**, a connection is auto-joined to its tenant-scoped *principal* room
 (derived from the authenticated identity), so a later emit to that principal
 reaches it. On **disconnect**, Socket.IO drops the room membership automatically;
-the handler here only updates presence.
+the handler here drops the stored identity and updates presence.
 
 Presence is optional and pluggable (:class:`RealtimePresence`): the in-memory
 tracker is fine for a single node; a cross-node deployment wants a TTL-backed
@@ -479,6 +479,21 @@ class _ConnectionLifecycle:
                 )
             )
 
+        # The resolve awaited: the connection may have ended since — a later connect of the
+        # namespace on the same transport shares its session — or another reauth refreshed
+        # it. The identity is checked and written with no await between.
+        if not self.sio.manager.is_connected(sid, self.namespace):
+            return build_core_exception_ack(
+                exc.authentication("The connection ended during reauth — reconnect")
+            )
+
+        session = await self.sio.get_session(sid, namespace=self.namespace)
+
+        if session.get(CONNECTION_SESSION_KEY) is not current:
+            return build_core_exception_ack(
+                exc.conflict("The connection's identity changed during this reauth; not applied")
+            )
+
         session[IDENTITY_SESSION_KEY] = refreshed.authn
         session[CONNECTION_SESSION_KEY] = refreshed
         await self.sio.save_session(sid, session, namespace=self.namespace)
@@ -771,14 +786,29 @@ class _ConnectionLifecycle:
             return
 
         await _best_effort(self.sio.leave_room(sid, room, namespace=self.namespace))
+        await _best_effort(self._drop_identity(sid))
 
-        async def _drop_session() -> None:
+    # ....................... #
+
+    async def _drop_identity(self, sid: str) -> RealtimeConnection | None:
+        """Remove the identity stored in *sid*'s namespace session; return the connection.
+
+        python-socketio keeps a namespace's session inside its Engine.IO connection's session,
+        so it outlives the namespace's disconnect: a client may connect the namespace again
+        over the same connection, and that connect must not find this one's identity.
+        """
+
+        try:
             session = await self.sio.get_session(sid, namespace=self.namespace)
-            session.pop(IDENTITY_SESSION_KEY, None)
-            session.pop(CONNECTION_SESSION_KEY, None)
-            await self.sio.save_session(sid, session, namespace=self.namespace)
 
-        await _best_effort(_drop_session())
+        except KeyError:
+            return None  # the Engine.IO connection is gone, and its sessions with it
+
+        session.pop(IDENTITY_SESSION_KEY, None)
+        connection: RealtimeConnection | None = session.pop(CONNECTION_SESSION_KEY, None)
+        await self.sio.save_session(sid, session, namespace=self.namespace)
+
+        return connection
 
     # ....................... #
 
@@ -792,6 +822,8 @@ class _ConnectionLifecycle:
 
         if not await self._goes_on(sid):
             return
+
+        await self._drop_identity(sid)  # an earlier connect's, should one be left
 
         connect = SocketIOConnect(sid=sid, namespace=self.namespace, environ=environ, auth=auth)
 
@@ -827,12 +859,15 @@ class _ConnectionLifecycle:
             # must be clamped to what the (not yet started) replay has delivered.
             self._replay_progress[sid] = _ReplayProgress()
 
-        try:
+        async def join() -> None:
             room = connection.principal_room
             await self.sio.enter_room(sid, room, namespace=self.namespace)
 
             if self.presence is not None:
                 await self.presence.joined(room, sid)
+
+        try:
+            await self._staged("internal", join)
 
             if self.replay_enabled:
                 # replay is best-effort: a drain error must not refuse the live connection
@@ -844,9 +879,8 @@ class _ConnectionLifecycle:
 
         except BaseException:
             # A raise here refuses the connect, and a refused connect never reaches
-            # on_disconnect — without this pop, every failed room join or presence
-            # write would leak its progress entry forever (sids are never reused).
-            self._replay_progress.pop(sid, None)
+            # on_disconnect: undo its room, presence, replay progress and stored identity.
+            await self._undo_connect(sid, connection)
             raise
 
         # Last: a connect that waited in replay while the drain listed its connections may
@@ -857,7 +891,7 @@ class _ConnectionLifecycle:
     # ....................... #
 
     async def on_disconnect(self, sid: str) -> None:
-        """Update presence on disconnect (Socket.IO drops room membership itself)."""
+        """Drop the stored identity and update presence (Socket.IO drops room membership)."""
 
         self._replay_progress.pop(sid, None)
 
@@ -870,13 +904,9 @@ class _ConnectionLifecycle:
         if engine_session is not None:
             engine_session.get(_ACCEPTED_KEY, set()).discard(self.namespace)
 
-        if self.presence is None:
-            return
+        connection = await self._drop_identity(sid)
 
-        session = await self.sio.get_session(sid, namespace=self.namespace)
-        connection: RealtimeConnection | None = session.get(CONNECTION_SESSION_KEY)
-
-        if connection is not None:
+        if self.presence is not None and connection is not None:
             await self.presence.left(connection.principal_room, sid)
 
 
@@ -900,7 +930,8 @@ def attach_realtime_connection(
     """Register connect/disconnect handlers that auto-join the principal room.
 
     The resolved identity is stored under both the inbound identity key (so
-    command handlers see it) and a gateway key (for disconnect presence). A
+    command handlers see it) and a gateway key (for disconnect presence), until the
+    namespace connection ends. A
     client-safe :class:`CoreException` from *resolve* refuses the connection;
     a server-side one is logged and refused generically.
 

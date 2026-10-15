@@ -408,6 +408,33 @@ class TestSocketIOIdentity:
         ack = await whoami("sid-1", {"text": "who am i"})
         assert ack == {"principal_id": None}
 
+    async def test_an_event_during_a_connect_runs_without_an_earlier_connects_identity(
+        self,
+    ) -> None:
+        # python-socketio keeps a namespace's session across a namespace disconnect, and runs
+        # a client's events while its connect handler is still resolving
+        resolving, release = asyncio.Event(), asyncio.Event()
+
+        async def resolver(connect: SocketIOConnect) -> AuthnIdentity | None:
+            resolving.set()
+            await release.wait()
+            return None
+
+        sio = _whoami_setup(resolver)
+        await sio.save_session(
+            "sid-1", {IDENTITY_SESSION_KEY: AuthnIdentity(principal_id=uuid4())}, namespace="/chat"
+        )
+        connecting = asyncio.ensure_future(
+            sio.handlers[("/chat", "connect")]("sid-1", {"REQUEST_METHOD": "GET"}, None)
+        )
+        await asyncio.wait_for(resolving.wait(), timeout=1.0)
+
+        ack = await sio.handlers[("/chat", "whoami")]("sid-1", {"text": "who am i"})
+        release.set()
+        await connecting
+
+        assert ack == {"principal_id": None}
+
     @pytest.mark.asyncio
     async def test_session_identity_is_bound_even_without_a_resolver(self) -> None:
         # attach_realtime_connection stores the principal on the session with
