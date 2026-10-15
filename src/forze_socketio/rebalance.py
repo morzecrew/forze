@@ -158,6 +158,18 @@ class _Rebalance:
     # ....................... #
 
     @property
+    def banked(self) -> float:
+        """The most the allowance holds, in the same unit: *per_minute* for the longest of a
+        minute and the longest from one shed's tick to the next — its window and tail, the
+        cooldown, then the wait for a tick — so the cooldown never lowers the rate."""
+
+        cycle = self.cooldown.total_seconds() + 3 * self.every.total_seconds()
+
+        return self.per_minute * max(60.0, cycle)
+
+    # ....................... #
+
+    @property
     def loop_name(self) -> str:
         """Satisfies ``DrainableLoop``: the runtime stops a running shed before teardown."""
 
@@ -191,7 +203,7 @@ class _Rebalance:
         # loop must not be paid for ticks it never ran.
         if self.ticked_at is not None:
             self.credit = min(
-                self.per_minute * 60.0,
+                self.banked,
                 self.credit + self.per_minute * (now - self.ticked_at),
             )
 
@@ -356,7 +368,7 @@ def connection_rebalance_lifecycle_step(
     """A lifecycle step that sheds this replica's movable connections while it is overloaded.
 
     Every *every* the step refills a rate allowance of *per_minute* connections a minute
-    (fractions carried, never more than *per_minute* banked), then sheds nothing while the
+    (fractions carried, banked over at most one shed cycle), then sheds nothing while the
     scope is not ready (starting or draining), while an earlier shed is still closing, or
     within *cooldown* of the last shed's end. Otherwise it reads the fleet's view, puts this
     replica's live counts in its own entry, and asks
@@ -380,9 +392,9 @@ def connection_rebalance_lifecycle_step(
     :param every: How often to tick.
     :param movable: ``(namespace, sid) -> bool``: whether that connection may be moved. One
         that raises keeps that transport, logged.
-    :param per_minute: The sustained shed rate, in connections a minute. One minute's worth
-        is banked at most, and a shed can spend it all at once, so with a *cooldown* under a
-        minute one minute can see up to twice this.
+    :param per_minute: The long-run shed rate, in connections a minute. The allowance banks
+        what refills over the longer of a minute and *cooldown* plus three *every*, and one
+        shed can spend all of it, spread over *every*.
     :param member_id: This replica's id in the fleet; the membership step's, which is
         :func:`~forze.base.primitives.instance_id` when ``None``.
     :param namespaces: The namespaces counted and shed.

@@ -477,13 +477,15 @@ and sheds nothing itself.
 - No earlier shed is still closing, and `cooldown` (default: `settle`) has passed since the
   last one ended, long enough for its clients to land elsewhere and be reported.
 
-**The rate.** `per_minute` is a sustained rate. Each tick adds `per_minute` for each minute
+**The rate.** `per_minute` is a long-run rate. Each tick adds `per_minute` for each minute
 that passed to an allowance, keeping the fraction, and a shed spends whole connections, so the
 rate holds however short `every` is: a low rate sheds one connection every few ticks, not one
-every tick. The allowance banks one minute's worth at most and a shed can spend it all at
-once, so with a cooldown under a minute a single minute can see up to twice `per_minute`; the
-default cooldown keeps every minute within it. The step's `member_id` must be the membership step's; both default to
-`instance_id()`. It needs a long-running process, so a `SERVERLESS` runtime refuses it.
+every tick. The allowance banks what refills over one shed cycle — the longer of a minute and
+`cooldown` plus three `every` — so the cooldown does not lower the rate, and one shed can
+spend all of it at once, spread over `every`. With the default 120 s cooldown and
+`every=10s`, a shed every two minutes or so closes about two minutes' worth. The step's
+`member_id` must be the membership step's; both default to `instance_id()`. It needs a
+long-running process, so a `SERVERLESS` runtime refuses it.
 
 ## Settings
 

@@ -369,7 +369,44 @@ class TestRate:
 
         assert run_simulation(scenario) == 0
 
-    def test_a_long_wait_banks_at_most_a_minute(self) -> None:
+    def test_the_default_cooldown_keeps_the_rate(self) -> None:
+        async def scenario() -> int:
+            state, node = MockState(), _Node()
+            await node.connect(3000, "/lobby")
+            await _peers(state, 0, 0)
+            await _beat(state, "me", _REPORTED)
+            # settle and cooldown at their defaults: 120 s.
+            step = connection_rebalance_lifecycle_step(
+                node.server,
+                fleet=SPEC,
+                every=timedelta(seconds=10),
+                member_id="me",
+                namespaces=("/lobby",),
+                movable=_lobby,
+                per_minute=60,
+            )
+
+            await _serve(state, step, _sleep(1200))
+
+            return node.closed()
+
+        # Settled at 120 s, then a shed every 130 s (ten closing, 120 cooling down) that
+        # spends what the 130 s refilled: 1,160 by 20 minutes, about 60 a minute after the
+        # settle. Banking only a minute would have shed 60 each time: 540.
+        assert run_simulation(scenario) == 1160
+
+    @pytest.mark.parametrize(
+        ("cooldown", "banked"),
+        [
+            # A minute's worth, not ten.
+            (timedelta(0), 10),
+            # The cooldown plus three intervals: 303 s of ten a minute.
+            (timedelta(minutes=5), 50),
+        ],
+    )
+    def test_a_long_wait_banks_at_most_one_shed_cycle(
+        self, cooldown: timedelta, banked: int
+    ) -> None:
         async def scenario() -> int:
             state, node = MockState(), _Node()
             await node.connect(200, "/lobby")
@@ -377,13 +414,12 @@ class TestRate:
             await _beat(state, "me", _REPORTED)
 
             # Ten minutes before the fleet counts as settled, then the first shed.
-            settle = timedelta(minutes=10)
-            await _serve(state, _step(node, per_minute=10, settle=settle), _sleep(601.5))
+            step = _step(node, per_minute=10, settle=timedelta(minutes=10), cooldown=cooldown)
+            await _serve(state, step, _sleep(601.5))
 
             return node.closed()
 
-        # Ten minutes refilled a minute's worth, not ten.
-        assert run_simulation(scenario) == 10
+        assert run_simulation(scenario) == banked
 
 
 class TestSharedTransports:
