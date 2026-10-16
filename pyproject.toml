@@ -613,6 +613,16 @@ scenario = "tests.support.fleet_conformance:FLEET_BATTERY"
 dep_keys = ["fleet"]
 engines = ["mock", "redis"]
 
+[tool.conformance_manifest.planes.revocation_states]
+scenario = "tests.support.revocation_states_conformance:STATES_BATTERY"
+dep_keys = ["authn_revocation_states"]
+engines = ["mock", "redis"]
+
+[tool.conformance_manifest.planes.principal_epoch]
+scenario = "tests.support.revocation_states_conformance:EPOCH_BATTERY"
+dep_keys = ["authn_principal_epoch"]
+engines = ["mock", "postgres"]
+
 # ....................... #
 # Declared gaps: planes with real providers and no leg yet. Listed so "not covered"
 # is data a reviewer sees, never an absence they have to notice.

@@ -36,7 +36,7 @@ from ..domain.models.session import (
     Session,
     UpdateSessionCmd,
 )
-from ..services import PasswordService, ResetTokenService
+from ..services import PasswordService, ResetTokenService, SessionRevocation
 from ._utils import (
     find_outstanding_password_resets,
     find_password_account_by_login,
@@ -139,6 +139,9 @@ class PasswordResetAdapter(PasswordResetPort):
     ineligible logins produce no event — the uniform 202 toward callers is the
     kit handler's job; the event stream records what really happened) and
     ``PASSWORD_RESET_COMPLETED`` after a successful reset."""
+
+    revocation: SessionRevocation | None = None
+    """When set, the session revocation raises the principal's epoch."""
 
     # ....................... #
 
@@ -259,6 +262,9 @@ class PasswordResetAdapter(PasswordResetPort):
         consume is rev-conditional (optimistic concurrency) against double use.
         """
 
+        if self.revocation is not None and self.revoke_sessions_on_reset:
+            self.revocation.require_transaction()
+
         if not token:
             raise exc.authentication(INVALID_RESET_TOKEN_MSG)
 
@@ -315,6 +321,9 @@ class PasswordResetAdapter(PasswordResetPort):
         # "Log out everywhere": a reset implies the old credential (and any
         # session minted with it) can no longer be trusted.
         if self.revoke_sessions_on_reset:
+            if self.revocation is not None:
+                await self.revocation.raise_epoch(reset.principal_id)
+
             # Ports are guaranteed non-None by __attrs_post_init__ when the flag is set.
             await revoke_sessions_matching(
                 self.session_qry,  # type: ignore[arg-type]
