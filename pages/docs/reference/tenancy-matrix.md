@@ -100,8 +100,10 @@ consumers check this when they start: run unbound over a `tenant_aware` resource
 a client routed per tenant with no tenant to route by, they refuse to start with a
 `configuration` error coded `tenant_global_required`. Those are the outbox and realtime
 relays, durable recovery and the scheduler, stream trim, mailbox retention,
-`job_staleness`, and the queue, notification and commit-stream consumers. A step of your
-own, or one not named here, is not checked.
+`job_staleness`, the queue, notification and commit-stream consumers, the plain SSE tail,
+and the socket.io gateway over its stream-group or pub/sub source. The singleton guard,
+leadership, realtime group ensure, and the Temporal, S3, Mongo index and permission
+provider steps check their lock or client the same way. A step of your own is not checked.
 
 ## Declaring and enforcing a floor
 

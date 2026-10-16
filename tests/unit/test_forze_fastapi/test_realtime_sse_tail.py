@@ -23,7 +23,7 @@ from forze.base.serialization import PydanticModelCodec
 from forze_fastapi.realtime import RealtimeSseHub, realtime_sse_tail_lifecycle_step
 from forze_fastapi.realtime.lifecycle import _tail_to_hub  # pyright: ignore[reportPrivateUsage]
 from forze_kits.integrations.realtime import build_realtime_publisher, realtime_stream_spec
-from forze_mock import MockDepsModule
+from forze_mock import MockDepsModule, MockRouteConfig
 
 # ----------------------- #
 
@@ -164,6 +164,24 @@ class TestLifecycleStep:
 
             await step.shutdown(ctx)
             assert first.done()
+
+    async def test_a_tenant_aware_stream_is_refused_at_startup(self) -> None:
+        # The plain tail reads with no tenant bound; the sharded tail binds each tenant.
+        step = realtime_sse_tail_lifecycle_step(RealtimeSseHub(), stream_spec=realtime_stream_spec())
+        routes = {"realtime": MockRouteConfig(tenant_aware=True)}
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_modules(MockDepsModule(routes=routes)).freeze()
+        )
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+
+            with pytest.raises(CoreException) as caught:
+                await step.startup(ctx)
+
+            assert not ctx.drainables.loops
+
+        assert caught.value.code == "tenant_global_required"
 
     def test_invalid_settings_are_refused(self) -> None:
         spec = realtime_stream_spec()

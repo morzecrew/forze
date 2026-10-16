@@ -185,7 +185,9 @@ For **trusted** per-tenant isolation without trusting a header, put the stream o
 [tenancy ladder](../identity-tenancy-enc/multi-tenancy.md): wire the stream route
 `tenant_aware` and consume with `TenantShardedSignalSource(shard=shard)` instead of
 `StreamGroupSignalSource` — one consume loop per assigned tenant, each bound to the
-tenant of the stream it reads (no header trust). The shard is a fixed snapshot resolved
+tenant of the stream it reads (no header trust). `StreamGroupSignalSource` and
+`PubSubSignalSource` read with no tenant bound, so over a `tenant_aware` route the gateway
+step refuses to start (`tenant_global_required`). The shard is a fixed snapshot resolved
 at startup, so onboarding a new tenant needs a restart; hand the same `RealtimeShard` to
 the source, the group-ensure step (`realtime_tenant_group_ensure_lifecycle_step`), and —
 for a partitioned outbox — `realtime_tenant_relay_lifecycle_step`. The read-side rules

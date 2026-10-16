@@ -27,9 +27,15 @@ from forze.application.contracts.realtime import (
 )
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.execution.deps import DepsRegistry
-from forze_kits.integrations.realtime import build_realtime_publisher, realtime_stream_spec
-from forze_mock import MockDepsModule
+from forze.base.exceptions import CoreException
+from forze_kits.integrations.realtime import (
+    build_realtime_publisher,
+    realtime_pubsub_spec,
+    realtime_stream_spec,
+)
+from forze_mock import MockDepsModule, MockRouteConfig
 from forze_socketio import (
+    PubSubSignalSource,
     RealtimeGateway,
     StreamGroupSignalSource,
     TenantShardedSignalSource,
@@ -206,3 +212,52 @@ async def test_sharded_tenant_crash_does_not_stop_siblings(
 
         stop.set()
         await asyncio.wait_for(run, timeout=5)  # and a stop ends every loop cleanly
+
+
+# ....................... #
+
+
+def _tenant_aware_runtime() -> ExecutionRuntime:
+    routes = {"realtime": MockRouteConfig(tenant_aware=True)}
+
+    return ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule(routes=routes)).freeze())
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        StreamGroupSignalSource(stream_spec=realtime_stream_spec()),
+        PubSubSignalSource(pubsub_spec=realtime_pubsub_spec()),
+    ],
+    ids=["stream-group", "pubsub"],
+)
+async def test_a_tenant_global_source_over_a_tenant_aware_route_is_refused_at_startup(
+    source: StreamGroupSignalSource | PubSubSignalSource,
+) -> None:
+    step = realtime_gateway_lifecycle_step(RealtimeGateway(sio=_StubSio(), source=source))  # type: ignore[arg-type]
+    runtime = _tenant_aware_runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+
+        with pytest.raises(CoreException) as caught:
+            await step.startup(ctx)
+
+        assert not ctx.drainables.loops
+
+    assert caught.value.code == "tenant_global_required"
+
+
+async def test_the_sharded_source_binds_its_tenants_and_starts() -> None:
+    shard = RealtimeShard(stream_spec=realtime_stream_spec(), tenants=(uuid4(),), group="g")
+    gateway = RealtimeGateway(sio=_StubSio(), source=TenantShardedSignalSource(shard=shard))  # type: ignore[arg-type]
+    step = realtime_gateway_lifecycle_step(gateway)
+    runtime = _tenant_aware_runtime()
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await step.startup(ctx)
+
+        assert ctx.drainables.loops
+        assert step.shutdown is not None
+        await step.shutdown(ctx)

@@ -242,6 +242,14 @@ class MockAckStreamGroupAdapter[M: BaseModel](AckStreamGroupQueryPort[M]):
 
     # ....................... #
 
+    @property
+    def tenant_aware(self) -> bool:
+        """Whether the stream it reads is, as the Redis group adapter reports its own."""
+
+        return self.stream.tenant_aware
+
+    # ....................... #
+
     def _group_state(self, group: str, stream: str) -> _MockGroupState:
         store = cast(dict[str, Any], self.stream._stream_store())  # pyright: ignore[reportPrivateUsage]
         holder = cast(list[Any], store.setdefault(_GROUPS_KEY, [{}]))

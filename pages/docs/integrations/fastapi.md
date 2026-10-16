@@ -366,7 +366,8 @@ the realtime stream route wired `tenant_aware` — use
 tail loop per shard tenant, each bound to its tenant, so signals fan out under the
 **stream's** trusted identity rather than an untrusted header (the SSE analog of
 `TenantShardedSignalSource`). Hand it the same `RealtimeShard` the publish-side
-steps use.
+steps use. The plain tail reads with no tenant bound, so over a `tenant_aware` route it
+refuses to start (`tenant_global_required`).
 
 Pass the **same** presence store the Socket.IO side uses
 (`attach_realtime_sse_route(..., presence=...)`) and open SSE streams join their

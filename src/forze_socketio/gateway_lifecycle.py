@@ -25,6 +25,9 @@ from typing import final
 import attrs
 
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
+from forze.application.contracts.pubsub import PubSubQueryDepKey
+from forze.application.contracts.stream import AckStreamGroupQueryDepKey
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution import ExecutionContext
 from forze.application.execution.background import (
     DEFAULT_STOP_GRACE_SECONDS,
@@ -35,7 +38,7 @@ from forze.base.exceptions import exc
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
 
-from .gateway import RealtimeGateway
+from .gateway import PubSubSignalSource, RealtimeGateway, StreamGroupSignalSource
 
 # ----------------------- #
 
@@ -106,6 +109,8 @@ class _RealtimeGatewayStartup(LifecycleHook):
             _logger.critical("Realtime gateway already running; ignoring duplicate startup")
             return
 
+        _require_tenant_global_source(self.gateway.source, ctx)
+
         stop = self.control.arm()
 
         async def _run_once() -> None:
@@ -122,6 +127,30 @@ class _RealtimeGatewayStartup(LifecycleHook):
             name=self.control.loop_name,
         )
         ctx.drainables.register(self)
+
+
+# ....................... #
+
+
+def _require_tenant_global_source(source: object, ctx: ExecutionContext) -> None:
+    # The two tenant-global sources read with no tenant bound. The sharded source binds each
+    # tenant it is assigned, and a source of the app's own is the app's to check.
+    port: object
+
+    if isinstance(source, StreamGroupSignalSource):
+        port = ctx.deps.resolve_configurable(
+            ctx, AckStreamGroupQueryDepKey, source.stream_spec, route=source.stream_spec.name
+        )
+
+    elif isinstance(source, PubSubSignalSource):
+        port = ctx.deps.resolve_configurable(
+            ctx, PubSubQueryDepKey, source.pubsub_spec, route=source.pubsub_spec.name
+        )
+
+    else:
+        return
+
+    require_tenant_global(port, what="Realtime gateway")
 
 
 # ....................... #

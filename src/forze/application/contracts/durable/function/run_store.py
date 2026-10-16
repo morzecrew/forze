@@ -228,6 +228,12 @@ class DurableRunStorePort(Protocol):
         or a ``RUNNING`` run with an expired lease; each is moved to ``RUNNING`` with a fresh
         lease and an incremented attempt count (its new fence token). Concurrent scanners
         never claim the same run (``FOR UPDATE SKIP LOCKED``), so it is multi-worker-safe.
+
+        A claimed run whose payload cannot be decrypted is left out of the result. One whose
+        tenant's key is gone is held out of the scan for longer than *lease_for*, doubling with
+        each claim up to a day, so such runs cannot fill every batch; one that met a passing
+        fault (a throttled KMS) keeps its lease. A payload cipher missing from the wiring fails
+        the call instead.
         """
         ...  # pragma: no cover
 

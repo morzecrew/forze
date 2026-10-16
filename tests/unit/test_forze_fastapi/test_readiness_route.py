@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import timedelta
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import attrs
 import httpx
@@ -13,6 +14,7 @@ from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
 from forze.application.contracts.deps import DepKey, Deps
+from forze.application.contracts.tenancy.routed_client_base import RoutedTenantClientBase
 from forze.application.execution import DepsRegistry, build_runtime
 from forze.application.execution.background import probe_listener_step
 from forze.application.execution.runtime import ExecutionRuntime
@@ -54,6 +56,29 @@ class TestReadinessRoute:
 
 
 # ----------------------- #
+
+
+@attrs.define(slots=True, kw_only=True)
+class _RoutedClient(RoutedTenantClientBase[Any]):
+    """Reaches its backend per tenant, as the routed Redis and Postgres clients do."""
+
+    async def initialize_client(self, tenant_id: Any, creds: Any) -> Any:  # pragma: no cover
+        raise NotImplementedError
+
+    async def health(self) -> tuple[str, bool]:
+        await self._get_client()
+
+        return "ok", True  # pragma: no cover - no tenant to route by
+
+
+@attrs.define(slots=True)
+class _TenantAwareClient:
+    """Refuses every call made with no tenant bound."""
+
+    tenant_aware: bool = True
+
+    async def health(self) -> tuple[str, bool]:  # pragma: no cover - refused before
+        raise AssertionError("probed with no tenant bound")
 
 
 @attrs.define(slots=True)
@@ -214,6 +239,43 @@ class TestReadinessProbes:
             "ok": False,
             "detail": "registered per route only",
         }
+
+    @pytest.mark.asyncio
+    async def test_a_client_routed_per_tenant_says_so(self) -> None:
+        """A probe runs with no tenant bound, so such a client has none to route by."""
+
+        key = DepKey[Any]("routed_client")
+        routed = _RoutedClient(secrets=MagicMock(), secret_ref_for_tenant={}, tenant_provider=lambda: None)
+        runtime = ExecutionRuntime(deps=DepsRegistry.from_deps(Deps.plain({key: routed})).freeze())
+        router = APIRouter()
+        attach_readiness_route(router, runtime, probes={"redis": key})
+        app = FastAPI()
+        app.include_router(router)
+
+        async with runtime.scope():
+            response = TestClient(app).get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["redis"] == {"ok": False, "detail": "routed per tenant"}
+
+    @pytest.mark.asyncio
+    async def test_a_tenant_aware_client_says_so(self) -> None:
+        """Not "routed per tenant": it needs a tenant bound, not one to route by."""
+
+        key = DepKey[Any]("tenant_aware_client")
+        runtime = ExecutionRuntime(
+            deps=DepsRegistry.from_deps(Deps.plain({key: _TenantAwareClient()})).freeze()
+        )
+        router = APIRouter()
+        attach_readiness_route(router, runtime, probes={"store": key})
+        app = FastAPI()
+        app.include_router(router)
+
+        async with runtime.scope():
+            response = TestClient(app).get("/readyz")
+
+        assert response.status_code == 503
+        assert response.json()["checks"]["store"] == {"ok": False, "detail": "tenant-aware"}
 
     # ....................... #
 

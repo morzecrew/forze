@@ -28,9 +28,12 @@ from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
     decrypt_payload,
     encrypt_payload,
+    is_payload_cipher_missing,
 )
+from forze.application.integrations.durable import unopenable_hold
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
+from forze_postgres.adapters._logger import logger
 from forze_postgres.adapters.durable.function_step import DURABLE_PAYLOAD_DOMAIN
 from forze_postgres.execution.deps.configs.durable import PostgresDurableRunConfig
 from forze_postgres.kernel.client import PostgresClientPort
@@ -440,7 +443,59 @@ class PostgresDurableRunStore(
             params,
         )
 
-        return [await self._record_from_row(row) for row in rows]
+        return await self._open_claimed(rows, lease_for)
+
+    # ....................... #
+
+    async def _open_claimed(
+        self,
+        rows: Sequence[Any],
+        lease_for: timedelta,
+    ) -> list[DurableRunRecord]:
+        # One by one: the claim has already leased every row, so a run whose payload cannot
+        # be opened must not fail the runs claimed with it. One whose key is gone is held
+        # out of the scan for longer than a lease, or it would be back at the head of the
+        # next one; one that met a passing fault keeps its lease. A missing cipher is the
+        # deployment's, not the run's, and fails the scan.
+        records: list[DurableRunRecord] = []
+
+        for row in rows:
+            try:
+                records.append(await self._record_from_row(row))
+
+            except Exception as error:
+                if is_payload_cipher_missing(error):
+                    raise
+
+                hold = unopenable_hold(error, lease_for=lease_for, attempts=row["attempts"])
+                logger.exception(
+                    "Durable run %s was claimed for recovery but could not be opened; %s",
+                    row["run_id"],
+                    "retried once its lease lapses"
+                    if hold is None
+                    else f"held out of recovery for {hold}",
+                )
+
+                if hold is None:
+                    continue
+
+                await self.client.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {table}
+                        SET leased_until = now() + {hold}, updated_at = now()
+                        WHERE run_id = {run_id} AND status = 'running' AND attempts = {fence}
+                        """
+                    ).format(
+                        table=(await self._table()).ident(),
+                        hold=sql.Placeholder("hold"),
+                        run_id=sql.Placeholder("run_id"),
+                        fence=sql.Placeholder("fence"),
+                    ),
+                    {"hold": hold, "run_id": row["run_id"], "fence": row["attempts"]},
+                )
+
+        return records
 
     # ....................... #
 
