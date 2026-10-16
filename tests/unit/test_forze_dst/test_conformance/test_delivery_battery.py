@@ -8,6 +8,8 @@ testcontainers, is the differential (`test_pg_delivery_conformance.py`).
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from forze.application.contracts.outbox import OutboxStatus
@@ -100,6 +102,19 @@ class TestMockRollbackCrashDelivery:
         )
         rows = state.outbox_rows[str(DELIVERY_OUTBOX.name)]
         assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * _N
+
+
+class TestEmptyDeliveryScenarios:
+    """No events staged: every delivery scenario reports an empty outcome, as the first did."""
+
+    @pytest.mark.parametrize("scenario", [run_crash_recovery_delivery, run_rollback_crash_delivery])
+    async def test_no_events_deliver_nothing(self, scenario: Any) -> None:
+        ctx = context_from_modules(MockDepsModule(state=MockState()))
+        outcome = await scenario(ctx, tx_scope=_TX_SCOPE, dedup=True, events=())
+
+        assert outcome == DeliveryOutcome(
+            staged=0, delivered=0, reclaimed=0, applied=0, distinct_applied=0
+        )
 
 
 class TestMockOutboxOverVisibility:

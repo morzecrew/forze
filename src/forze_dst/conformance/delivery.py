@@ -209,11 +209,12 @@ async def run_rollback_crash_delivery(
     # Restart: no reclaim — the rollback already returned the rows. Re-publish all but the last
     # claim, whose publish "fails": it is rescheduled for now rather than marked.
     async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
-        *republished, held_back = await query.claim_pending()
+        claims = await query.claim_pending()
+        republished, held_back = claims[:-1], claims[-1:]  # no events: nothing to hold back
         for claim in republished:
             broker.append(str(claim.event_id))
         await query.mark_published([claim.id for claim in republished])
-        await query.mark_retry([held_back.id], attempts=1, available_at=utcnow())
+        await query.mark_retry([claim.id for claim in held_back], attempts=1, available_at=utcnow())
 
     # A third round publishes the row that was held back, which must still be there.
     async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
