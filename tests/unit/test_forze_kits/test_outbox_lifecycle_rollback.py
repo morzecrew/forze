@@ -279,3 +279,23 @@ class TestRollbackModeAtStartup:
                 await startup.stop(deadline=float("inf"))
 
         assert startup.passes_roll_back is transactional
+
+    async def test_a_truthy_stand_in_is_not_taken_for_rolling_back(self) -> None:
+        # A MagicMock(spec=OutboxQueryPort) answers the attribute with a truthy MagicMock.
+        startup = _startup(passes_roll_back=True, interval=timedelta(hours=1))
+        runtime = _runtime()
+
+        with (
+            patch.object(
+                MockOutboxStore,
+                "transactional_passes",
+                new_callable=PropertyMock,
+                return_value=MagicMock(),
+            ),
+            patch.object(OutboxRelay, "to_queue", AsyncMock(return_value=_full(0))),
+        ):
+            async with runtime.scope():
+                await startup(runtime.get_context())
+                await startup.stop(deadline=float("inf"))
+
+        assert startup.passes_roll_back is False

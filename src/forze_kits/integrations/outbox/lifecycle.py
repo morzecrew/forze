@@ -927,8 +927,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         self.tenant_shard = tenant_shard
         self.last_reclaim_at = None
         self.backoffs = {}
-        # A store that predates the attribute commits each claim and mark on its own.
-        self.passes_roll_back = bool(getattr(outbox_query, "transactional_passes", False))
+        # A store that predates the attribute commits each claim and mark on its own; only a
+        # literal True counts, so a test double's truthy stand-in does not.
+        self.passes_roll_back = getattr(outbox_query, "transactional_passes", False) is True
 
         wake = self.outbox_spec.wake
 

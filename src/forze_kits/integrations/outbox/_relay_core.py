@@ -273,7 +273,8 @@ async def relay_outbox_claims(
     query = ctx.outbox.query(outbox_spec)
 
     async with _pass_scope(query) as scoped:
-        deadline = scoped.deadline if scoped is not None else None
+        # Only a real budget bounds the pass; a test double's stand-in bounds nothing.
+        deadline = scoped.deadline if isinstance(scoped, OutboxPassBudget) else None
         stops = [at for at in (deadline, publish_until) if at is not None]
 
         return await _relay_pass(

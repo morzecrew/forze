@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from forze.application.contracts.outbox import (
     OutboxClaim,
     OutboxPassBudget,
+    OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
 )
@@ -139,6 +140,20 @@ class TestRelayPassScope:
         assert entered == ["enter", "exit"]
         assert seen_inside == [True, True, True]
         assert result.published == 3
+
+
+class TestRelayPassScopeDoubles:
+    async def test_a_test_doubles_stand_in_budget_bounds_nothing(self) -> None:
+        # MagicMock(spec=OutboxQueryPort).pass_scope() yields a MagicMock, not a budget.
+        double = MagicMock(spec=OutboxQueryPort)
+
+        async with _context() as (ctx, state):
+            _seed(state, 2)
+
+            with patch.object(MockOutboxStore, "pass_scope", lambda _self: double.pass_scope()):
+                result = await _relay(ctx, _publish_ok)
+
+        assert result.published == 2
 
 
 class TestRelayPassBudget:
