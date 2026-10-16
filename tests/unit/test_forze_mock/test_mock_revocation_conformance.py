@@ -53,15 +53,15 @@ def states_harness() -> StatesHarness:
     )
 
 
-@pytest.fixture
-def epoch_harness() -> EpochHarness:
+@pytest.fixture(params=["journal", "strict"])
+def epoch_harness(request: pytest.FixtureRequest) -> EpochHarness:
     state = MockState()
-    ctx = context_from_modules(MockDepsModule(state=state))
+    ctx = context_from_modules(MockDepsModule(state=state, transactions=request.param))
 
     return EpochHarness(
-        backend="mock",
+        backend=f"mock ({request.param})",
         epochs=MockPrincipalEpochStore(state=state, in_transaction=lambda: ctx.tx_ctx.depth() > 0),
-        # The journal transaction manager reverts a raise on rollback, as a database would.
+        # Either transaction manager reverts a raise on rollback, as a database would.
         transaction=lambda: ctx.tx_ctx.scope("default"),
         locks=False,
     )

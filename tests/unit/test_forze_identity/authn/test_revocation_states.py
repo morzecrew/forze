@@ -36,8 +36,18 @@ from forze.application.execution import Deps, ExecutionContext
 from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
-from forze_identity.authn.application.specs import password_account_spec, session_spec
-from forze_identity.authn.services import PasswordConfig, SessionBinding
+from forze_identity.authn.application.specs import (
+    password_account_spec,
+    password_reset_spec,
+    session_spec,
+)
+from forze_identity.authn import ForzeJwtTokenVerifier
+from forze_identity.authn.services import (
+    AccessTokenService,
+    Hs256Signer,
+    PasswordConfig,
+    SessionBinding,
+)
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
 from forze_identity.authz.execution.deps.deps import ConfigurablePrincipalRegistry
@@ -93,6 +103,7 @@ class _States:
     inner: MockRevocationStates
     down: bool = False
     writes_down: bool = False
+    fill_down: bool = False
     fill_gate: _Gate | None = None
     calls: list[str] = attrs.field(factory=list)
 
@@ -110,6 +121,9 @@ class _States:
         self, principal_id: UUID, states: Mapping[str, str], *, expire_at_ms: int
     ) -> None:
         self._call("fill", write=False)
+
+        if self.fill_down:
+            raise exc.infrastructure("states store unavailable")
 
         if self.fill_gate is not None:
             gate, self.fill_gate = self.fill_gate, None
@@ -299,6 +313,7 @@ def _stack(
     kernel = AuthnKernelConfig(
         access_token_secret=b"k" * 32,
         refresh_token_pepper=b"p" * 32,
+        reset_token_pepper=b"r" * 32,
         password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
         revocation_states=(
             RevocationStates(
@@ -318,6 +333,7 @@ def _stack(
             authz_route=ROUTE,
             token_lifecycle={ROUTE},
             password_lifecycle={ROUTE},
+            password_reset={ROUTE},
             password_account_provisioning={ROUTE},
             principal_deactivation={ROUTE},
         )()
@@ -328,9 +344,15 @@ def _stack(
                         session_spec.name: counted_sessions,
                         policy_principal_spec.name: document,
                         password_account_spec.name: document,
+                        password_reset_spec.name: document,
                     },
                     DocumentCommandDepKey: dict.fromkeys(
-                        (session_spec.name, policy_principal_spec.name, password_account_spec.name),
+                        (
+                            session_spec.name,
+                            policy_principal_spec.name,
+                            password_account_spec.name,
+                            password_reset_spec.name,
+                        ),
                         document,
                     ),
                     PrincipalRegistryDepKey: {ROUTE: ConfigurablePrincipalRegistry()},
@@ -392,9 +414,32 @@ async def test_after_warm_up_verifications_read_neither_sessions_nor_epochs(
         assert await stack.verify_without_reads(issued) == "admitted"
 
 
+async def _revoke_everywhere(stack: _Stack, principal: UUID, flow: str) -> None:
+    identity = AuthnIdentity(principal_id=principal)
+
+    if flow == "reset":
+        issued = await stack.ctx.authn.password_reset(SPEC).request_reset("alice")
+        assert issued is not None
+
+    async with stack.ctx.tx_ctx.scope(TX):
+        if flow == "logout":
+            await stack.lifecycle.revoke_tokens(identity)
+
+        elif flow == "change":
+            await stack.ctx.authn.password_lifecycle(SPEC).change_password(identity, "pw-1", "pw-2")
+
+        elif flow == "reset":
+            await stack.ctx.authn.password_reset(SPEC).reset_password(issued.token, "pw-2")
+
+        else:
+            await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
+
+
 @BINDINGS
+@pytest.mark.parametrize("flow", ["logout", "change", "reset", "deactivate"])
 async def test_a_raised_epoch_refuses_with_no_read_and_a_later_token_is_admitted(
     binding: SessionBinding,
+    flow: str,
 ) -> None:
     stack = _stack(binding=binding)
     principal = await stack.principal()
@@ -407,24 +452,18 @@ async def test_a_raised_epoch_refuses_with_no_read_and_a_later_token_is_admitted
     for issued in (first, second):
         assert await stack.verify(issued) == "admitted"
 
-    async with stack.ctx.tx_ctx.scope(TX):
-        await stack.ctx.authn.password_lifecycle(SPEC).change_password(
-            AuthnIdentity(principal_id=principal),
-            "pw-1",
-            "pw-2",
-        )
+    await _revoke_everywhere(stack, principal, flow)
 
     for issued in (first, second):
         assert await stack.verify_without_reads(issued) == "session_revoked"
+
+    if flow == "deactivate":
+        return  # an inactive principal is refused new sessions
 
     later = await stack.login(principal)
 
     assert _claims(later)["pep"] == 1
     assert await stack.verify(later) == "admitted"
-
-    await stack.logout(principal)
-
-    assert await stack.verify_without_reads(later) == "session_revoked"
 
 
 @BINDINGS
@@ -562,11 +601,20 @@ async def test_a_lookup_never_replaces_a_revocation_it_raced() -> None:
     assert await stack.verify_without_reads(issued) == "session_revoked"
 
 
-async def test_a_lookup_write_held_past_ttl_lands_expired() -> None:
+@pytest.mark.parametrize("stall", ["database read", "write"])
+async def test_a_lookup_held_past_ttl_after_its_read_writes_nothing_that_lives(stall: str) -> None:
     stack = _stack()
     issued = await stack.login(await stack.principal())
 
-    gate = stack.states.fill_gate = _Gate()
+    # Its expiry is fixed when its read ran, however long the database read or the write takes.
+    gate = _Gate()
+
+    if stall == "write":
+        stack.states.fill_gate = gate
+
+    else:
+        stack.epochs.after_read = gate
+
     lookup = asyncio.create_task(stack.verify(issued))
     await asyncio.wait_for(gate.reached.wait(), timeout=5)
 
@@ -663,6 +711,7 @@ async def test_a_delayed_epoch_write_held_after_its_read_expires_within_ttl_of_t
     assert (await stack.states.inner.read(principal, "s:-")).epoch == "1"
 
     stack.clock.now = newer_commit + TTL.total_seconds()
+    assert (await stack.states.inner.read(principal, "s:-")).epoch is None
     assert await stack.verify(between) == "session_revoked"
 
 
@@ -806,3 +855,58 @@ async def test_a_token_from_before_the_fast_path_is_checked_against_its_session_
     await stack.revoke_family(principal, issued)
 
     assert await stack.verify(earlier) == "session_revoked"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"ttl": timedelta(0)},
+        {"write_attempts": 0},
+        {"timeout": timedelta(0)},
+        {"session_binding": "device"},
+    ],
+)
+def test_a_configuration_that_cannot_bound_the_window_is_refused(kwargs: dict[str, Any]) -> None:
+    with pytest.raises(CoreException) as caught:
+        RevocationStates(**{"route": STATES, "ttl": TTL, **kwargs})
+
+    assert caught.value.kind.value == "configuration"
+
+
+async def test_a_fill_that_fails_admits_and_reads_the_database_next_time() -> None:
+    stack = _stack()
+    issued = await stack.login(await stack.principal())
+
+    stack.states.fill_down = True
+    assert await stack.verify(issued) == "admitted"
+
+    stack.states.fill_down = False
+    stack.reads.clear()
+    assert await stack.verify(issued) == "admitted"
+    assert stack.reads != []
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [{"pep": -1}, {"pep": True}, {"pep": "1"}, {"fam": "not-a-uuid"}, {"fam": 7}],
+)
+async def test_a_malformed_family_or_epoch_claim_is_an_invalid_token(
+    claims: dict[str, Any],
+) -> None:
+    stack = _stack()
+    issued = await stack.login(await stack.principal())
+
+    assert await stack.verify(_resign(issued, {**_claims(issued), **claims})) == (
+        "invalid_access_token"
+    )
+
+
+def test_a_verifier_with_revocation_states_needs_the_session_port() -> None:
+    stack = _stack()
+    revocation = stack.ctx.authn.token_lifecycle(SPEC).revocation
+
+    with pytest.raises(CoreException):
+        ForzeJwtTokenVerifier(
+            access_svc=AccessTokenService(signer=Hs256Signer(secret=b"k" * 32)),
+            revocation=revocation,
+        )

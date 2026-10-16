@@ -239,6 +239,13 @@ async def check_each_raise_adds_one(h: EpochHarness) -> None:
 async def check_a_raise_rolls_back_with_its_transaction(h: EpochHarness) -> None:
     principal = uuid4()
 
+    with pytest.raises(_Rollback):
+        async with h.transaction():
+            await h.epochs.advance(principal)
+            raise _Rollback
+
+    assert await h.epochs.current(principal) == 0, h.backend
+
     async with h.transaction():
         await h.epochs.advance(principal)
 
