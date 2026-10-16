@@ -230,6 +230,34 @@ class TestPerTenantBackoff:
 # ....................... #
 
 
+class TestRollingBackDrain:
+    @pytest.mark.parametrize("roll_back", [True, False])
+    async def test_a_drain_keeps_a_fifth_of_its_budget_to_commit_when_passes_roll_back(
+        self, roll_back: bool
+    ) -> None:
+        startup = _startup(passes_roll_back=roll_back, shutdown_drain_timeout=timedelta(seconds=5))
+        seen: list[float | None] = []
+
+        async def capture(self: OutboxRelay, *_: Any, **__: Any) -> OutboxRelayResult:
+            seen.append(self.publish_until)
+            return _full(0)
+
+        runtime = _runtime()
+
+        with patch.object(OutboxRelay, "to_queue", autospec=True, side_effect=capture):
+            async with runtime.scope():
+                deadline = asyncio.get_running_loop().time() + 5
+                await startup._relay_once(
+                    runtime.get_context(), strict=True, reclaim=False, deadline=deadline
+                )
+
+        # A retain batch cut early would strand its claimed rows, so it keeps today's bound.
+        assert seen == ([deadline - 1.0] if roll_back else [None])
+
+
+# ....................... #
+
+
 class TestRollbackModeAtStartup:
     @pytest.mark.parametrize("transactional", [True, False])
     async def test_the_step_reads_the_mode_from_the_store(self, transactional: bool) -> None:

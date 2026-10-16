@@ -42,8 +42,10 @@ from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay, outbox_relay_background_lifecycle_step
 from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
+from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
 from forze_mock import MockDepsModule
 from forze_mock.adapters import MockState
+from forze_mock.adapters.queue import MockQueueAdapter
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
 from forze_postgres.kernel.client import PostgresClient, PostgresConfig
@@ -647,6 +649,57 @@ class TestConsumeBackgroundStep:
         # Each pass published the batch once, then rolled back: nothing advanced.
         assert len(_queued(state)) == len(batch) * len(passes)
         assert all(row["status"] == "pending" and row["attempts"] == 0 for row in rows.values())
+
+
+# ....................... #
+
+
+@pytest.mark.integration
+class TestConsumeShutdownDrain:
+    async def test_a_drain_shorter_than_the_pass_deadline_still_commits_what_it_published(
+        self, pg_client: PostgresClient, outbox_table: str
+    ) -> None:
+        # The pass may publish for a second, and the drain has a second in all: a pass cut
+        # at the drain's end would roll back, and every row it published would go again.
+        state = MockState()
+        runtime = _runtime(pg_client, outbox_table, state, pass_deadline=timedelta(seconds=1))
+        step = outbox_relay_background_lifecycle_step(
+            outbox_spec=_SPEC,
+            queue_spec=_QUEUE,
+            reclaim_stale_after=None,
+            drain_on_shutdown=True,
+            shutdown_drain_timeout=timedelta(seconds=1),
+        )
+        startup = step.startup
+        assert isinstance(startup, _OutboxRelayBackgroundStartup)
+        enqueue = MockQueueAdapter.enqueue
+
+        async def slow_enqueue(self: MockQueueAdapter[Any], *args: Any, **kwargs: Any) -> Any:
+            await asyncio.sleep(0.3)
+            return await enqueue(self, *args, **kwargs)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await _stage(ctx, [f"e{i}" for i in range(10)])
+            # What startup would read from the store, without starting the poll loop.
+            startup.scope_ctx = ctx
+            startup.passes_roll_back = True
+
+            with (
+                patch.object(MockQueueAdapter, "enqueue", slow_enqueue),
+                patch("forze_kits.integrations.outbox.lifecycle.logger", MagicMock()),
+                patch("forze_postgres.kernel.client.client.logger", MagicMock()),
+            ):
+                completed = await startup._bounded_drain(
+                    ctx, deadline=asyncio.get_running_loop().time() + 10, label="drain"
+                )
+
+            rows = await _rows(pg_client, outbox_table)
+
+        published = _queued(state)
+        assert published  # the drain did publish
+        assert set(published).isdisjoint(rows)  # and everything it published was consumed
+        assert completed
 
 
 # ....................... #

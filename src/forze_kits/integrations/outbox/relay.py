@@ -217,6 +217,13 @@ class OutboxRelay:
     retried with backoff. ``None`` leaves a publish unbounded, unless the store bounds the
     pass (consume storage), which caps each publish at what is left of the pass."""
 
+    publish_until: float | None = None
+    """Event-loop time (``loop.time()``) after which a run starts no further publish, and caps
+    each publish at, then marks what it published, for a caller that must be done by a
+    deadline. Set it per run. Rows claimed but not reached are left as a cut pass leaves
+    them: pending again for a store that runs a pass in one transaction, ``processing``
+    until reclaim for one that does not."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -407,4 +414,5 @@ class OutboxRelay:
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
             publish_timeout=self.publish_timeout,
+            publish_until=self.publish_until,
         )

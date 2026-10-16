@@ -43,6 +43,9 @@ _STOP_WAIT_SECONDS: Final[float] = 2.0
 _BATCH_ADMISSION_MARGIN: Final[float] = 1.5
 """Headroom over the last batch's duration required before a drain starts another."""
 
+_DRAIN_COMMIT_SHARE: Final[float] = 0.2
+"""Share of the drain's budget a pass keeps back from publishing, for its marks and commit."""
+
 
 _PassStop = Literal["drained", "retry", "cap", "budget", "error", "stopped"]
 """Why a relay pass ended. Only ``drained`` means "nothing left to relay right now"."""
@@ -330,6 +333,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         ctx: ExecutionContext,
         *,
         reclaim_stale_after: timedelta | None,
+        publish_until: float | None = None,
     ) -> OutboxRelayResult:
         # Per-batch relay config: reclaim varies (only the first batch of a tick
         # reclaims stale rows), so build a fresh OutboxRelay per batch.
@@ -340,6 +344,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
             publish_timeout=self.publish_timeout,
+            publish_until=publish_until,
         )
 
         if self.transport == "queue":
@@ -387,10 +392,18 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         so the next batch would only publish them again.
 
         *deadline* (a ``loop.time()`` value) is checked between batches, never mid-batch;
-        see :func:`_admits_batch` for why a batch is never started on a thin budget.
+        see :func:`_admits_batch` for why a batch is never started on a thin budget. When the
+        store's passes roll back, a batch also stops publishing a share of the budget before
+        it, to mark what it published and commit: a pass cut at the deadline itself would
+        roll back whole, and every row it had published would be published again.
         """
 
         loop = asyncio.get_running_loop()
+        publish_until = (
+            deadline - _DRAIN_COMMIT_SHARE * self.shutdown_drain_timeout.total_seconds()
+            if deadline is not None and self.passes_roll_back
+            else None
+        )
 
         batches = claimed = published = retried = failed = 0
         last_batch: float | None = None
@@ -418,6 +431,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                     reclaim_stale_after=(
                         self.reclaim_stale_after if reclaim and batch_index == 0 else None
                     ),
+                    publish_until=publish_until,
                 )
 
             except asyncio.CancelledError:
@@ -1049,6 +1063,8 @@ def outbox_relay_background_lifecycle_step(
     *interval* after the first failed pass, doubling with each consecutive one up to
     *retry_max_backoff* (or *interval*, if that is longer). The other tenants keep the
     loop's cadence, a wake does not cut the wait short, and a pass that commits resets it.
+    A shutdown drain stops publishing a fifth of *shutdown_drain_timeout* before its end,
+    so that its last pass can commit what it published.
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
     every assigned tenant's partition under a bound tenant, so the relay can read a

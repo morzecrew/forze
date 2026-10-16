@@ -179,6 +179,26 @@ class TestRelayPassBudget:
         assert unreached.attempts == 0 and unreached.last_error is None
 
 
+class TestRelayPublishUntil:
+    async def test_it_ends_publishing_before_a_later_budget_does(self) -> None:
+        calls: list[OutboxClaim] = []
+
+        async def publish(claim: OutboxClaim, payload: Any) -> None:
+            calls.append(claim)
+
+        async with _context() as (ctx, state):
+            rows = _seed(state, 2)
+
+            with patch.object(MockOutboxStore, "pass_scope", _budget_scope(60.0)):
+                result = await _relay(
+                    ctx, publish, publish_until=asyncio.get_running_loop().time() - 1
+                )
+
+        assert calls == []
+        assert (result.claimed, result.published) == (2, 0)
+        assert all(row.attempts == 0 for row in rows)
+
+
 class TestRelayPublishTimeout:
     async def test_a_slow_publish_is_retried_and_the_rest_publish(self) -> None:
         async def publish(claim: OutboxClaim, payload: Any) -> None:

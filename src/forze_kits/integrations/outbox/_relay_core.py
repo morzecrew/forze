@@ -235,6 +235,7 @@ async def relay_outbox_claims(
     retry_base_delay: timedelta = timedelta(seconds=1),
     retry_max_backoff: timedelta = timedelta(minutes=5),
     publish_timeout: timedelta | None = None,
+    publish_until: float | None = None,
 ) -> OutboxRelayResult:
     """Claim pending rows, decode payloads, invoke *publish_one*, and mark outcomes.
 
@@ -255,7 +256,8 @@ async def relay_outbox_claims(
     delivery holds and no failure is swallowed.
 
     The whole pass, reclaim included, runs inside the query port's pass scope
-    (see "Pass scope" in the module docstring).
+    (see "Pass scope" in the module docstring). *publish_until* (a ``loop.time()``
+    value) ends publishing like the scope's budget does, whichever comes first.
     """
 
     if reclaim_stale_after is not None and reclaim_stale_after.total_seconds() <= 0:
@@ -270,11 +272,14 @@ async def relay_outbox_claims(
 
     query = ctx.outbox.query(outbox_spec)
 
-    async with _pass_scope(query) as budget:
+    async with _pass_scope(query) as scoped:
+        deadline = scoped.deadline if scoped is not None else None
+        stops = [at for at in (deadline, publish_until) if at is not None]
+
         return await _relay_pass(
             ctx,
             query,
-            budget,
+            min(stops) if stops else None,
             outbox_spec=outbox_spec,
             publish_one=publish_one,
             limit=limit,
@@ -292,7 +297,7 @@ async def relay_outbox_claims(
 async def _relay_pass(
     ctx: "ExecutionContext",
     query: OutboxQueryPort,
-    budget: OutboxPassBudget | None,
+    stop_at: float | None,
     *,
     outbox_spec: OutboxSpec[Any],
     publish_one: PublishOne,
@@ -303,7 +308,7 @@ async def _relay_pass(
     retry_max_backoff: timedelta,
     publish_timeout: timedelta | None,
 ) -> OutboxRelayResult:
-    """One pass of :func:`relay_outbox_claims`, inside the pass scope that yielded *budget*."""
+    """One pass of :func:`relay_outbox_claims`; it starts no publish after *stop_at*."""
 
     reclaimed = 0
 
@@ -344,9 +349,9 @@ async def _relay_pass(
     retry_groups: dict[int, tuple[list[UUID], list[str]]] = {}
 
     for claim in claims:
-        if budget is not None and loop.time() >= budget.deadline:
-            # The pass has spent its budget: publish nothing more and commit what it did.
-            # The rows it did not reach were never changed, so they are pending as before.
+        if stop_at is not None and loop.time() >= stop_at:
+            # The pass has spent its budget: publish nothing more and mark what it did. The
+            # rows it did not reach are left as the claim left them.
             break
 
         try:
@@ -399,8 +404,8 @@ async def _relay_pass(
         started = loop.time()
         bound_at = started + publish_seconds if publish_seconds is not None else None
 
-        if budget is not None:
-            bound_at = budget.deadline if bound_at is None else min(bound_at, budget.deadline)
+        if stop_at is not None:
+            bound_at = stop_at if bound_at is None else min(bound_at, stop_at)
 
         bound = asyncio.timeout_at(bound_at)
 

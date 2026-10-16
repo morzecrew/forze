@@ -151,7 +151,8 @@ keeps `retain`.
   statement, and each lock wait, is limited to `pass_statement_timeout` (default 1 s), and
   the server cuts the session off once it sits idle in the pass for longer than the two
   together. The pass sets these with `SET LOCAL`, and only when it opens its own
-  transaction.
+  transaction. A shutdown drain stops publishing a fifth of `shutdown_drain_timeout`
+  before its end, so its last pass commits instead of being cut and rolled back.
 - **A pass inside your transaction sets nothing.** Run a relay in a transaction of your own,
   for example to check a lease before committing, and the pass becomes a savepoint in it:
   your transaction's timeouts apply, and its rollback returns every row.
