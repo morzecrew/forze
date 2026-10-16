@@ -210,6 +210,11 @@ class OutboxRelay:
     retry_max_backoff: timedelta = timedelta(minutes=5)
     """Cap on the backoff delay."""
 
+    publish_timeout: timedelta | None = None
+    """Longest one publish may take; a publish that outlasts it is a transient failure,
+    retried with backoff. ``None`` leaves a publish unbounded, unless the store bounds the
+    pass (consume storage), which caps each publish at what is left of the pass."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -217,6 +222,7 @@ class OutboxRelay:
             max_attempts=self.max_attempts,
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
+            publish_timeout=self.publish_timeout,
         )
 
         if self.reclaim_stale_after is not None and self.reclaim_stale_after.total_seconds() <= 0:
@@ -398,4 +404,5 @@ class OutboxRelay:
             max_attempts=self.max_attempts,
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
+            publish_timeout=self.publish_timeout,
         )

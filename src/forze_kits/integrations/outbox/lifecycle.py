@@ -21,10 +21,12 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.contracts.pubsub import PubSubQueryDepKey, PubSubQueryPort, PubSubSpec
 from forze.application.contracts.queue import QueueSpec
+from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.contracts.stream import StreamSpec
 from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution.background import BackgroundLoopControl, is_terminal_crash
 from forze.application.execution.context import ExecutionContext
+from forze.application.execution.resilience.backoff import compute_delay
 from forze.base.exceptions import exc
 from forze.base.primitives import StrKey, current_entropy_source
 from forze_kits.integrations._logger import logger
@@ -82,6 +84,21 @@ class _RelayPass:
         """Whether the route had nothing left to relay when the pass ended."""
 
         return self.stop == "drained"
+
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _TickOutcome:
+    """What one tick of the loop observed across its passes."""
+
+    reclaimed: bool
+    """Whether every pass asked to reclaim stale claims did."""
+
+    failed: bool
+    """Whether a pass failed on a store whose failed passes roll back their batch."""
 
 
 # ....................... #
@@ -183,6 +200,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     retry_max_backoff: timedelta
     """The retry max backoff to use."""
 
+    publish_timeout: timedelta | None = None
+    """Longest one publish may take, passed to each batch's relay."""
+
     max_batches_per_tick: int
     """The max batches per tick to use."""
 
@@ -221,6 +241,13 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
     last_reclaim_at: float | None = attrs.field(default=None, init=False)
     """Loop time of the last pass that reclaimed stale claims; ``None`` before the first."""
+
+    passes_roll_back: bool = attrs.field(default=False, init=False)
+    """Whether the route's store runs each pass in one transaction, read at startup.
+
+    Then a failed pass rolls back whole and its batch is claimable again at once, so the
+    loop ends that pass instead of running the next batch, and backs off over consecutive
+    failed ticks rather than republishing the batch on every pass."""
 
     tenant_shard: list[UUID] | None = attrs.field(default=None, init=False)
     """The assigned shard, frozen at startup. ``None`` = tenant-global."""
@@ -291,6 +318,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             max_attempts=self.max_attempts,
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
+            publish_timeout=self.publish_timeout,
         )
 
     # ....................... #
@@ -322,6 +350,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
             max_attempts=self.max_attempts,
             retry_base_delay=self.retry_base_delay,
             retry_max_backoff=self.retry_max_backoff,
+            publish_timeout=self.publish_timeout,
         )
 
         if self.transport == "queue":
@@ -363,6 +392,10 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
           ``max_batches_per_tick`` times with no backoff;
         - a batch that **rescheduled** any row ends the pass, capping the drain at *one*
           delivery attempt per row (see the loop body for why that bound holds).
+
+        A failing batch also ends the pass when the store's passes roll back
+        (:attr:`passes_roll_back`): the failed batch's rows are all claimable again at once,
+        so the next batch would only publish them again.
 
         *deadline* (a ``loop.time()`` value) is checked between batches, never mid-batch;
         see :func:`_admits_batch` for why a batch is never started on a thin budget.
@@ -409,7 +442,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
                 logger.exception("Outbox background relay batch failed")
 
-                if strict:
+                if strict or self.passes_roll_back:
                     stop = "error"
                     break
 
@@ -460,7 +493,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         tenants: Sequence[UUID] | None,
         *,
         reclaim: bool = True,
-    ) -> bool:
+    ) -> _TickOutcome:
         """Drain the backlog once: globally, or per assigned tenant when sharded.
 
         *tenants* is the shard **frozen at startup** (``None`` for a tenant-global outbox).
@@ -469,26 +502,31 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         skip the rest of the shard this tick. Tenants are drained **sequentially** (one DB
         connection at a time); shard across instances to parallelize.
 
-        Returns whether every pass that was asked to reclaim stale claims did, so a reclaim
-        that failed or was cut short is retried on the next pass rather than a gap later.
+        Reports whether every pass that was asked to reclaim stale claims did, so a reclaim
+        that failed or was cut short is retried on the next pass rather than a gap later, and
+        whether a pass failed on a store whose failed passes roll back.
         """
 
         if tenants is None:
-            return (await self._relay_once(ctx, reclaim=reclaim)).reclaimed
+            passed = await self._relay_once(ctx, reclaim=reclaim)
+
+            return _TickOutcome(reclaimed=passed.reclaimed, failed=passed.stop == "error")
 
         reclaimed_all = True
+        failed = False
 
         for tenant in tenants:
             if self._stop_requested:
                 # Leave the rest of the shard to the shutdown drain rather than opening a
                 # claim per remaining tenant on a process that is going away.
-                return False
+                return _TickOutcome(reclaimed=False, failed=failed)
 
             try:
                 with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
                     passed = await self._relay_once(ctx, reclaim=reclaim)
 
                 reclaimed_all = reclaimed_all and passed.reclaimed
+                failed = failed or passed.stop == "error"
 
             except asyncio.CancelledError:
                 raise
@@ -501,8 +539,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
                 logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
                 reclaimed_all = False
+                failed = failed or self.passes_roll_back
 
-        return reclaimed_all
+        return _TickOutcome(reclaimed=reclaimed_all, failed=failed)
 
     # ....................... #
 
@@ -556,11 +595,36 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     # ....................... #
 
     def _jittered_interval(self) -> float:
+        return self._jittered(self.interval.total_seconds())
+
+    # ....................... #
+
+    def _jittered(self, seconds: float) -> float:
         # Jittered tick: N replicas polling at the same fixed interval synchronize into a
         # thundering herd against the claim query; the multiplicative jitter desynchronizes
         # them. Desynchronization jitter, not security randomness.
-        return self.interval.total_seconds() * (
+        return seconds * (
             1.0 + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
+        )
+
+    # ....................... #
+
+    def _failed_tick_backoff(self, failures: int) -> float:
+        """How long to wait after *failures* consecutive failed ticks, jittered.
+
+        One interval after the first, doubling with each one after it, up to the larger of
+        the interval and ``retry_max_backoff``.
+        """
+
+        strategy = BackoffStrategy(
+            base=self.interval,
+            max=max(self.interval, self.retry_max_backoff),
+            multiplier=2.0,
+            jitter="none",
+        )
+
+        return self._jittered(
+            compute_delay(strategy, failures, 0.0, current_entropy_source().as_random())
         )
 
     # ....................... #
@@ -666,6 +730,8 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def _loop(self, ctx: ExecutionContext) -> None:
+        failures = 0
+
         while True:
             if self.woken is not None:
                 # Cleared before the pass reads, so a commit landing during it wakes the next.
@@ -673,9 +739,13 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
             started = asyncio.get_running_loop().time()
             due = self._reclaim_due(started)
+            failed = False
 
             try:
-                if await self._drain_tick(ctx, self.tenant_shard, reclaim=due) and due:
+                tick = await self._drain_tick(ctx, self.tenant_shard, reclaim=due)
+                failed = tick.failed
+
+                if tick.reclaimed and due:
                     self.last_reclaim_at = started
 
             except asyncio.CancelledError:
@@ -692,6 +762,17 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                     return
 
                 logger.exception("Outbox background relay failed")
+                failed = self.passes_roll_back
+
+            failures = failures + 1 if failed else 0
+
+            if failures:
+                # The failed batch is claimable again at once; a wake must not cut this short,
+                # or every commit on the route would republish it.
+                if await self.control.sleep_or_stop(self._failed_tick_backoff(failures)):
+                    return
+
+                continue
 
             if await self._sleep_or_stop():
                 return
@@ -812,11 +893,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         # shared with the gateway source and the group-ensure step.
         tenant_shard = list(self.tenants()) if self.tenants is not None else None
 
+        outbox_query = ctx.outbox.query(self.outbox_spec)
+
         if tenant_shard is None:
             # One unbound pass: a tenant-scoped outbox would refuse every one of them.
             require_tenant_global(
-                ctx.outbox.query(self.outbox_spec),
-                what=f"Outbox relay for route {str(self.outbox_spec.name)!r}",
+                outbox_query, what=f"Outbox relay for route {str(self.outbox_spec.name)!r}"
             )
 
         # Fresh per startup: an event reused across scopes still carries the previous
@@ -826,6 +908,8 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         self.drained = False
         self.tenant_shard = tenant_shard
         self.last_reclaim_at = None
+        # A store that predates the attribute commits each claim and mark on its own.
+        self.passes_roll_back = bool(getattr(outbox_query, "transactional_passes", False))
 
         wake = self.outbox_spec.wake
 
@@ -908,6 +992,7 @@ def outbox_relay_background_lifecycle_step(
     max_attempts: int = 5,
     retry_base_delay: timedelta = timedelta(seconds=1),
     retry_max_backoff: timedelta = timedelta(minutes=5),
+    publish_timeout: timedelta | None = None,
     max_batches_per_tick: int = 100,
     tenants: Callable[[], Sequence[UUID]] | None = None,
     drain_on_shutdown: bool = False,
@@ -947,10 +1032,17 @@ def outbox_relay_background_lifecycle_step(
     between skip it, so the reclaim ``UPDATE`` runs at the poll's cadence however many
     commits there are.
 
-    *max_attempts*, *retry_base_delay*, and *retry_max_backoff* configure the
-    per-row transient-failure retry policy — see
+    *max_attempts*, *retry_base_delay*, *retry_max_backoff* and *publish_timeout* configure
+    the per-row transient-failure retry policy — see
     :class:`~forze_kits.integrations.outbox.OutboxRelay`. Delivery is
     at-least-once and ordering is not preserved across failures/retries.
+
+    When the route's store runs each pass in one transaction (Postgres ``storage="consume"``),
+    a failed pass rolls back whole and every row of its batch is claimable again at once.
+    The tick then ends that pass rather than running the next batch, and the loop waits
+    before the next tick: one *interval* after the first failed tick, doubling with each
+    consecutive one up to *retry_max_backoff*. A wake does not cut that wait short, and a
+    tick whose passes all commit resets it.
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
     every assigned tenant's partition under a bound tenant, so the relay can read a
@@ -1020,6 +1112,7 @@ def outbox_relay_background_lifecycle_step(
         max_attempts=max_attempts,
         retry_base_delay=retry_base_delay,
         retry_max_backoff=retry_max_backoff,
+        publish_timeout=publish_timeout,
         max_batches_per_tick=max_batches_per_tick,
         tenants=tenants,
         drain_on_shutdown=drain_on_shutdown,

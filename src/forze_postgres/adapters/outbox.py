@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import asyncio
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from datetime import datetime, timedelta
 from typing import Any, final
 from uuid import UUID
@@ -16,6 +18,7 @@ from forze.application.contracts.outbox import (
     OutboxAdminPort,
     OutboxClaim,
     OutboxDepth,
+    OutboxPassBudget,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
@@ -30,6 +33,15 @@ from forze_postgres.kernel.gateways.base import PostgresQualifiedName
 from forze_postgres.kernel.relation import resolve_postgres_qname
 
 # ----------------------- #
+
+
+def _whole_ms(duration: timedelta) -> int:
+    """*duration* in whole milliseconds, rounded up: Postgres reads ``0`` as no limit."""
+
+    return -(-duration // timedelta(milliseconds=1))
+
+
+# ....................... #
 
 
 @final
@@ -60,11 +72,67 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
         CREATE INDEX ON <relation> (outbox_route, status, hlc, created_at);
         -- on a shared tagged table (the claim filters tenant_id) — lead with it
         CREATE INDEX ON <relation> (tenant_id, outbox_route, status, created_at);
+
+    **Consume storage.** With ``storage="consume"`` a relay pass runs in one transaction
+    (:meth:`pass_scope`). :meth:`claim_pending` locks its rows without updating them and
+    refuses to run outside a transaction; :meth:`mark_published` deletes the rows, and the
+    other marks match the locked ``pending`` rows. ``processing_at`` and ``published_at``
+    are never written, and a row is never ``processing``, so nothing is left to reclaim
+    after a relay dies: its transaction rolls back and the rows are pending again.
     """
 
     client: PostgresClientPort
     spec: OutboxSpec[M]
     config: PostgresOutboxConfig
+
+    # ....................... #
+
+    @property
+    def transactional_passes(self) -> bool:
+        return self.config.storage == "consume"
+
+    # ....................... #
+
+    def pass_scope(self) -> AbstractAsyncContextManager[OutboxPassBudget | None]:
+        if not self.transactional_passes:
+            return nullcontext(None)
+
+        return self._consume_pass()
+
+    # ....................... #
+
+    @asynccontextmanager
+    async def _consume_pass(self) -> AsyncGenerator[OutboxPassBudget]:
+        """Run a consume pass in a transaction on the client, bounded on both sides.
+
+        Inside a caller's transaction this is a savepoint and sets nothing: ``SET LOCAL``
+        would outlive the savepoint, staying in force for the rest of the caller's
+        transaction and replacing any limits it had set. That caller owns the timeouts.
+        """
+
+        config = self.config
+        budget = OutboxPassBudget(
+            deadline=asyncio.get_running_loop().time() + config.pass_deadline.total_seconds()
+        )
+        owns_root = not self.client.is_in_transaction()
+
+        async with self.client.transaction():
+            if owns_root:
+                statement_ms = _whole_ms(config.pass_statement_timeout)
+                idle_ms = _whole_ms(config.pass_deadline + config.pass_statement_timeout)
+                await self.client.execute(
+                    sql.SQL(
+                        """
+                        SELECT
+                            set_config('statement_timeout', %(statement)s, true),
+                            set_config('lock_timeout', %(statement)s, true),
+                            set_config('idle_in_transaction_session_timeout', %(idle)s, true)
+                        """
+                    ),
+                    {"statement": str(statement_ms), "idle": str(idle_ms)},
+                )
+
+            yield budget
 
     # ....................... #
 
@@ -191,12 +259,29 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
         order_by = sql.SQL("hlc NULLS LAST, created_at, id" if hlc_ordering else "created_at")
         hlc_returning = sql.SQL(", t.hlc") if hlc_ordering else sql.SQL("")
         trace_returning = sql.SQL(", t.traceparent") if propagate_trace else sql.SQL("")
-
-        stmt = sql.SQL(
+        columns = sql.SQL(
             """
-            WITH picked AS (
-                SELECT id
-                FROM {table}
+                t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
+                t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
+                t.occurred_at, t.attempts, t.ordering_key, t.created_at{hlc_returning}{trace_returning}
+            """
+        ).format(hlc_returning=hlc_returning, trace_returning=trace_returning)
+
+        if self.transactional_passes:
+            # The row lock is the claim: no new row version, no index entries. It lasts as
+            # long as the pass's transaction, so outside one it would end with the statement
+            # and leave nothing to stop a second relay taking the same rows.
+            if not self.client.is_in_transaction():
+                raise exc.precondition(
+                    f"Outbox route {route!r} uses consume storage, so claim_pending must run "
+                    "inside a transaction: enter the store's pass_scope() around the pass.",
+                    code="outbox_claim_outside_transaction",
+                )
+
+            stmt = sql.SQL(
+                """
+                SELECT {columns}
+                FROM {table} AS t
                 WHERE outbox_route = %(route)s
                   AND status = %(pending)s
                   AND (available_at IS NULL OR available_at <= %(now)s)
@@ -204,24 +289,41 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
                 ORDER BY {order_by}
                 LIMIT %(limit)s
                 FOR UPDATE SKIP LOCKED
+                """
+            ).format(
+                columns=columns,
+                table=table.ident(),
+                tenant_filter=tenant_filter,
+                order_by=order_by,
             )
-            UPDATE {table} AS t
-            SET status = %(processing)s,
-                processing_at = %(processing_at)s
-            FROM picked
-            WHERE t.id = picked.id
-            RETURNING
-                t.id, t.outbox_route, t.event_id, t.event_type, t.payload,
-                t.tenant_id, t.execution_id, t.correlation_id, t.causation_id,
-                t.occurred_at, t.attempts, t.ordering_key, t.created_at{hlc_returning}{trace_returning}
-            """
-        ).format(
-            table=table.ident(),
-            tenant_filter=tenant_filter,
-            order_by=order_by,
-            hlc_returning=hlc_returning,
-            trace_returning=trace_returning,
-        )
+
+        else:
+            stmt = sql.SQL(
+                """
+                WITH picked AS (
+                    SELECT id
+                    FROM {table}
+                    WHERE outbox_route = %(route)s
+                      AND status = %(pending)s
+                      AND (available_at IS NULL OR available_at <= %(now)s)
+                      {tenant_filter}
+                    ORDER BY {order_by}
+                    LIMIT %(limit)s
+                    FOR UPDATE SKIP LOCKED
+                )
+                UPDATE {table} AS t
+                SET status = %(processing)s,
+                    processing_at = %(processing_at)s
+                FROM picked
+                WHERE t.id = picked.id
+                RETURNING {columns}
+                """
+            ).format(
+                table=table.ident(),
+                tenant_filter=tenant_filter,
+                order_by=order_by,
+                columns=columns,
+            )
 
         rows = await self.client.fetch_all(stmt, params)
 
@@ -266,7 +368,25 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
         ]
 
     async def mark_published(self, ids: Sequence[UUID]) -> int:
-        return await self._mark(ids, OutboxStatus.PUBLISHED)
+        if not self.transactional_passes:
+            return await self._mark(ids, OutboxStatus.PUBLISHED)
+
+        if not ids:
+            return 0
+
+        # A claimed row is still ``pending`` under consume; the pass's row lock is what
+        # makes it this relay's.
+        table = await self._table()
+        stmt = sql.SQL(
+            """
+            DELETE FROM {table}
+            WHERE id = ANY(%(ids)s::uuid[])
+              AND status = %(pending)s
+            """
+        ).format(table=table.ident())
+        params = {"ids": list(ids), "pending": OutboxStatus.PENDING.value}
+
+        return int(await self.client.execute(stmt, params, return_rowcount=True) or 0)
 
     async def mark_failed(
         self,
@@ -274,7 +394,38 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
         *,
         error: str | None = None,
     ) -> int:
-        return await self._mark(ids, OutboxStatus.FAILED, error=error)
+        if not self.transactional_passes:
+            return await self._mark(ids, OutboxStatus.FAILED, error=error)
+
+        return await self._update_claimed(
+            ids,
+            sql.SQL("status = %(failed)s, last_error = %(last_error)s"),
+            {"failed": OutboxStatus.FAILED.value, "last_error": error},
+        )
+
+    async def _update_claimed(
+        self,
+        ids: Sequence[UUID],
+        assignments: sql.Composable,
+        params: dict[str, Any],
+    ) -> int:
+        """Update rows a consume pass claimed: they are still ``pending``, under its lock."""
+
+        if not ids:
+            return 0
+
+        table = await self._table()
+        stmt = sql.SQL(
+            """
+            UPDATE {table}
+            SET {assignments}
+            WHERE id = ANY(%(ids)s::uuid[])
+              AND status = %(pending)s
+            """
+        ).format(table=table.ident(), assignments=assignments)
+        params = {**params, "ids": list(ids), "pending": OutboxStatus.PENDING.value}
+
+        return int(await self.client.execute(stmt, params, return_rowcount=True) or 0)
 
     async def _mark(
         self,
@@ -318,6 +469,16 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
         available_at: datetime,
         error: str | None = None,
     ) -> int:
+        if self.transactional_passes:
+            return await self._update_claimed(
+                ids,
+                sql.SQL(
+                    "attempts = %(attempts)s, available_at = %(available_at)s, "
+                    "last_error = %(last_error)s"
+                ),
+                {"attempts": attempts, "available_at": available_at, "last_error": error},
+            )
+
         if not ids:
             return 0
 
@@ -394,20 +555,26 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
             "pending": OutboxStatus.PENDING.value,
             "failed": OutboxStatus.FAILED.value,
         }
+        # Consume storage never writes the two timestamps, so it leaves them alone and a
+        # table that has dropped them can still re-drive its parked rows.
+        retain_only = (
+            sql.SQL("")
+            if self.transactional_passes
+            else sql.SQL("processing_at = NULL, published_at = NULL,")
+        )
 
         stmt = sql.SQL(
             """
             UPDATE {table}
             SET status = %(pending)s,
-                processing_at = NULL,
-                published_at = NULL,
+                {retain_only}
                 last_error = NULL,
                 attempts = 0,
                 available_at = NULL
             WHERE id = ANY(%(ids)s::uuid[])
               AND status = %(failed)s
             """
-        ).format(table=table.ident())
+        ).format(table=table.ident(), retain_only=retain_only)
 
         rowcount = await self.client.execute(stmt, params, return_rowcount=True)
         return int(rowcount or 0)

@@ -1,6 +1,7 @@
 """Outbox command and query port protocols."""
 
 from collections.abc import Awaitable, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
@@ -8,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from .specs import OutboxSpec
-from .value_objects import IntegrationEvent, OutboxClaim, StagedOutboxEntry
+from .value_objects import IntegrationEvent, OutboxClaim, OutboxPassBudget, StagedOutboxEntry
 
 # ----------------------- #
 
@@ -88,6 +89,27 @@ class OutboxQueryPort(Protocol):
     spec: OutboxSpec[Any]
     """Outbox specification for this port instance."""
 
+    @property
+    def transactional_passes(self) -> bool:
+        """Whether :meth:`pass_scope` runs a relay pass in one transaction.
+
+        When ``True``, a pass that fails rolls back: every row it claimed is claimable again
+        at once, including rows it already published, so a caller retrying in a loop must
+        back off rather than start the next pass straight away. ``False`` (the default)
+        means each claim and mark commits on its own.
+        """
+
+        return False
+
+    def pass_scope(self) -> AbstractAsyncContextManager[OutboxPassBudget | None]:
+        """Scope one relay pass: its claim, publishes and marks.
+
+        A no-op unless the store needs one. A store whose claim only locks its rows runs the
+        pass in a transaction here and yields the :class:`~.OutboxPassBudget` that bounds it.
+        """
+
+        return nullcontext(None)
+
     def claim_pending(
         self,
         *,
@@ -102,7 +124,10 @@ class OutboxQueryPort(Protocol):
         ...  # pragma: no cover
 
     def mark_published(self, ids: Sequence[UUID]) -> Awaitable[int]:
-        """Mark claimed rows as published; returns rows updated."""
+        """Mark claimed rows as published; returns rows updated.
+
+        A store may delete them instead, when it keeps no published history.
+        """
         ...  # pragma: no cover
 
     def mark_failed(
@@ -128,9 +153,9 @@ class OutboxQueryPort(Protocol):
     ) -> Awaitable[int]:
         """Reschedule claimed rows for a future retry; returns rows updated.
 
-        Moves ``processing`` rows back to ``pending`` with the durable retry
-        counter set to *attempts* and the row invisible to
-        :meth:`claim_pending` until *available_at*.
+        Returns claimed rows to ``pending`` with the durable retry counter set
+        to *attempts* and the row invisible to :meth:`claim_pending` until
+        *available_at*.
         """
         ...  # pragma: no cover
 

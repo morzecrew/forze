@@ -23,6 +23,7 @@ from .staging_context import OutboxStagingContext
 from .value_objects import (
     IntegrationEvent,
     OutboxClaim,
+    OutboxPassBudget,
     OutboxRelayResult,
     OutboxStatus,
     StagedOutboxEntry,
@@ -46,6 +47,7 @@ __all__ = [
     "OutboxDeps",
     "OutboxDestination",
     "OutboxIntegrationConfig",
+    "OutboxPassBudget",
     "OutboxDestinationKind",
     "OutboxEncryptionTier",
     "OutboxQueryDepKey",
