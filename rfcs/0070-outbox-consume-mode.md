@@ -1,6 +1,6 @@
 # RFC 0070 — Outbox consume mode
 
-- **Status:** 📝 Draft
+- **Status:** 🚧 In progress
 - **Scope:** An opt-in storage mode for the Postgres outbox that writes a row that publishes on
   its first try twice, at staging and when it is deleted after its publish, rather than three
   times plus a retention delete. A retry or a park adds an update, as today.
