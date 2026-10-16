@@ -7,6 +7,7 @@ consecutive failed ticks, or it republishes the batch on every pass.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -22,7 +23,7 @@ from forze.application.execution.background import BackgroundLoopControl
 from forze.base.exceptions import exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
-from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup
+from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup, _RelayPass
 from forze_mock import MockDepsModule
 from forze_mock.adapters.outbox import MockOutboxStore
 
@@ -129,22 +130,6 @@ class TestRollingBackPassFailure:
         assert relay.await_count == 3
         assert passed.stop == "cap"
 
-    async def test_consecutive_failed_ticks_back_off_and_a_committed_tick_resets(self) -> None:
-        startup = _startup(passes_roll_back=True)
-        boom = RuntimeError("mark failed")
-        relay = AsyncMock(side_effect=[boom, boom, boom, _full(0), boom])
-
-        waits = await _sleeps(startup, relay, ticks=5)
-
-        # 1 s, then doubling, capped at retry_max_backoff (3 s); none of them wake-cut.
-        assert waits == [
-            ("backoff", 1.0),
-            ("backoff", 2.0),
-            ("backoff", 3.0),
-            ("tick", None),
-            ("backoff", 1.0),
-        ]
-
     async def test_without_rollback_a_failing_route_keeps_the_ordinary_tick(self) -> None:
         startup = _startup(passes_roll_back=False, max_batches_per_tick=2)
         relay = AsyncMock(side_effect=RuntimeError("mark failed"))
@@ -152,28 +137,94 @@ class TestRollingBackPassFailure:
         waits = await _sleeps(startup, relay, ticks=3)
 
         assert waits == [("tick", None)] * 3
+        assert relay.await_count == 6
+        assert startup.backoffs == {}
 
-    async def test_a_backoff_never_drops_below_the_interval(self) -> None:
+
+# ....................... #
+
+
+class TestPerTenantBackoff:
+    async def test_a_failing_tenant_backs_off_alone_while_the_shard_keeps_its_cadence(
+        self,
+    ) -> None:
+        # T1's key is disabled for good; T2 is healthy. The ticks come back to back, as a
+        # storm of wakes would bring them.
+        startup = _startup(passes_roll_back=True)
+        startup.tenant_shard = [_T1, _T2]
+        attempts: dict[UUID, int] = {_T1: 0, _T2: 0}
+
+        async def once(_self: Any, ctx: Any, **_: Any) -> _RelayPass:
+            tenant = ctx.inv_ctx.get_tenant().tenant_id
+            attempts[tenant] += 1
+
+            if tenant == _T1:
+                raise exc.configuration("tenant key disabled")
+
+            return _RelayPass(stop="drained")
+
+        with patch.object(_OutboxRelayBackgroundStartup, "_relay_once", once):
+            waits = await _sleeps(startup, AsyncMock(), ticks=6)
+
+        assert waits == [("tick", None)] * 6  # the loop never waits on T1's behalf
+        assert attempts == {_T1: 1, _T2: 6}  # T1 sits out its backoff, wakes or not
+        assert startup.backoffs[_T1][0] == 1
+        assert _T2 not in startup.backoffs
+
+    async def test_a_tenant_due_again_is_retried_and_its_wait_doubles_to_the_cap(self) -> None:
+        startup = _startup(passes_roll_back=True)
+        boom = RuntimeError("mark failed")
+        relay = AsyncMock(side_effect=[boom, boom, boom, _full(0)])
+        runtime = _runtime()
+        waits: list[float] = []
+
+        with patch.object(OutboxRelay, "to_queue", relay), patch(_LOGGER, MagicMock()):
+            async with runtime.scope():
+                ctx = runtime.get_context()
+
+                for _ in range(4):
+                    await startup._drain_tick(ctx, None)
+
+                    if None in startup.backoffs:
+                        failures, retry_at = startup.backoffs[None]
+                        waits.append(round(retry_at - asyncio.get_running_loop().time(), 1))
+                        # Let it fall due without waiting it out.
+                        startup.backoffs[None] = (failures, 0.0)
+
+        # interval 1 s, doubling, capped at retry_max_backoff (3 s); then a pass commits.
+        assert waits == [1.0, 2.0, 3.0]
+        assert relay.await_count == 4
+        assert startup.backoffs == {}
+
+    @pytest.mark.parametrize("failures", [1, 50])
+    async def test_a_wait_never_drops_below_the_interval_less_its_jitter(
+        self, failures: int
+    ) -> None:
         startup = _startup(
             passes_roll_back=True,
             interval=timedelta(seconds=10),
+            jitter=0.2,
             retry_max_backoff=timedelta(seconds=1),
         )
+        startup.backoffs[_T1] = (failures - 1, 0.0)
+        before = asyncio.get_running_loop().time()
 
-        assert startup._failed_tick_backoff(1) == 10.0
-        assert startup._failed_tick_backoff(50) == 10.0
+        startup._note_pass(_T1, failed=True)
 
-    async def test_a_raising_tenant_fails_the_tick_but_the_shard_still_drains(self) -> None:
+        # Shortened by the jitter, so the first tick at or after 10 s runs the pass.
+        assert 8.0 <= startup.backoffs[_T1][1] - before <= 8.1
+
+    async def test_a_raising_tenant_backs_off_but_the_shard_still_drains(self) -> None:
         startup = _startup(passes_roll_back=True)
         relay = AsyncMock(side_effect=[exc.configuration("tenant key disabled"), _full(0)])
         runtime = _runtime()
 
         with patch.object(OutboxRelay, "to_queue", relay), patch(_LOGGER, MagicMock()):
             async with runtime.scope():
-                tick = await startup._drain_tick(runtime.get_context(), [_T1, _T2])
+                await startup._drain_tick(runtime.get_context(), [_T1, _T2])
 
         assert relay.await_count == 2
-        assert tick.failed
+        assert list(startup.backoffs) == [_T1]
 
 
 # ....................... #

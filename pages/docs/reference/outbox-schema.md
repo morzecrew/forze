@@ -140,8 +140,12 @@ keeps `retain`.
   out or the session is cut off, the whole pass rolls back. Every row it claimed is pending
   again, including the ones it already published: up to `max_claim_rows` (100)
   duplicates, where `retain` republishes at most one mark chunk of 32. Lower
-  `max_claim_rows` for a smaller window. The background relay step ends its tick on such
-  a failure and backs off before the next.
+  `max_claim_rows` for a smaller window.
+- **A failing route backs off on its own.** The background relay step ends the failed pass
+  and skips that route until it has waited: one `interval` after the first failure,
+  doubling with each consecutive one up to `retry_max_backoff`, and a pass that commits
+  resets it. On a step with `tenants=`, only the failing tenant waits; the others keep the
+  step's cadence. A wake does not cut the wait short.
 - **A pass is bounded.** It stops publishing at `pass_deadline` (default 5 s) and commits
   what it did; the rows it did not reach stay pending, untouched. Each claim and mark
   statement, and each lock wait, is limited to `pass_statement_timeout` (default 1 s), and

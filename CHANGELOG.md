@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An overloaded socket.io replica sheds connections toward the fleet's mean.** `connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)` closes movable connections at a bounded rate once the fleet has settled; `connection_report(sio, movable=)` fills the membership report it reads.
 
-- **The Postgres outbox can delete what it relays.** `PostgresOutboxConfig(storage="consume")` runs a relay pass in one transaction bounded by `pass_deadline` and `pass_statement_timeout`: the claim locks rows, publishing deletes them, nothing is left to prune. A failed pass ends the step's tick and backs off.
+- **The Postgres outbox can delete what it relays.** `PostgresOutboxConfig(storage="consume")` runs a relay pass in one transaction bounded by `pass_deadline` and `pass_statement_timeout`: the claim locks rows, publishing deletes them, nothing is left to prune. A failed pass backs its route, or tenant, off.
 
 - **A relay can bound each publish.** `OutboxRelay(publish_timeout=)` and the background step's `publish_timeout=` treat a publish that outlasts it as a transient failure. `OutboxQueryPort.pass_scope()` scopes a pass; `transactional_passes` says whether it rolls back whole.
 

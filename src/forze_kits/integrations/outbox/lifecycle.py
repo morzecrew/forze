@@ -89,21 +89,6 @@ class _RelayPass:
 # ....................... #
 
 
-@final
-@attrs.define(slots=True, kw_only=True, frozen=True)
-class _TickOutcome:
-    """What one tick of the loop observed across its passes."""
-
-    reclaimed: bool
-    """Whether every pass asked to reclaim stale claims did."""
-
-    failed: bool
-    """Whether a pass failed on a store whose failed passes roll back their batch."""
-
-
-# ....................... #
-
-
 def _admits_batch(*, remaining: float, last_batch: float | None) -> bool:
     """Whether the budget left can be expected to cover another batch.
 
@@ -246,8 +231,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     """Whether the route's store runs each pass in one transaction, read at startup.
 
     Then a failed pass rolls back whole and its batch is claimable again at once, so the
-    loop ends that pass instead of running the next batch, and backs off over consecutive
-    failed ticks rather than republishing the batch on every pass."""
+    loop ends that pass instead of running the next batch, and backs that pass's tenant off
+    rather than republishing its batch on every tick and every wake."""
+
+    backoffs: dict[UUID | None, tuple[int, float]] = attrs.field(factory=dict, init=False)
+    """Per tenant (``None`` when unsharded): consecutive failed passes, and the loop time
+    before which the loop skips that tenant. Only failed passes that roll back land here."""
 
     tenant_shard: list[UUID] | None = attrs.field(default=None, init=False)
     """The assigned shard, frozen at startup. ``None`` = tenant-global."""
@@ -493,7 +482,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         tenants: Sequence[UUID] | None,
         *,
         reclaim: bool = True,
-    ) -> _TickOutcome:
+    ) -> bool:
         """Drain the backlog once: globally, or per assigned tenant when sharded.
 
         *tenants* is the shard **frozen at startup** (``None`` for a tenant-global outbox).
@@ -502,31 +491,28 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         skip the rest of the shard this tick. Tenants are drained **sequentially** (one DB
         connection at a time); shard across instances to parallelize.
 
-        Reports whether every pass that was asked to reclaim stale claims did, so a reclaim
-        that failed or was cut short is retried on the next pass rather than a gap later, and
-        whether a pass failed on a store whose failed passes roll back.
+        Returns whether every pass that was asked to reclaim stale claims did, so a reclaim
+        that failed or was cut short is retried on the next pass rather than a gap later. A
+        tenant backing off from failed passes (:attr:`backoffs`) is skipped, so it reclaims
+        nothing that tick either.
         """
 
         if tenants is None:
-            passed = await self._relay_once(ctx, reclaim=reclaim)
-
-            return _TickOutcome(reclaimed=passed.reclaimed, failed=passed.stop == "error")
+            return await self._keyed_pass(ctx, None, reclaim=reclaim)
 
         reclaimed_all = True
-        failed = False
 
         for tenant in tenants:
             if self._stop_requested:
                 # Leave the rest of the shard to the shutdown drain rather than opening a
                 # claim per remaining tenant on a process that is going away.
-                return _TickOutcome(reclaimed=False, failed=failed)
+                return False
 
             try:
                 with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant)):
-                    passed = await self._relay_once(ctx, reclaim=reclaim)
+                    reclaimed = await self._keyed_pass(ctx, tenant, reclaim=reclaim)
 
-                reclaimed_all = reclaimed_all and passed.reclaimed
-                failed = failed or passed.stop == "error"
+                reclaimed_all = reclaimed_all and reclaimed
 
             except asyncio.CancelledError:
                 raise
@@ -539,9 +525,67 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
                 logger.exception("Outbox background relay failed for tenant", tenant=str(tenant))
                 reclaimed_all = False
-                failed = failed or self.passes_roll_back
 
-        return _TickOutcome(reclaimed=reclaimed_all, failed=failed)
+        return reclaimed_all
+
+    # ....................... #
+
+    async def _keyed_pass(self, ctx: ExecutionContext, key: UUID | None, *, reclaim: bool) -> bool:
+        """Run one tenant's pass unless it is backing off; whether it reclaimed.
+
+        Only a store whose failed passes roll back backs a tenant off: its failed batch is
+        claimable again at once, so retrying it on every tick, or on every wake, would
+        republish it each time. Each tenant backs off alone, so one failing tenant leaves
+        the rest of the shard at the loop's cadence.
+        """
+
+        loop = asyncio.get_running_loop()
+        failures, retry_at = self.backoffs.get(key, (0, 0.0))
+
+        if failures and loop.time() < retry_at:
+            return False
+
+        try:
+            passed = await self._relay_once(ctx, reclaim=reclaim)
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception:
+            self._note_pass(key, failed=True)
+            raise
+
+        self._note_pass(key, failed=passed.stop == "error")
+
+        return passed.reclaimed
+
+    # ....................... #
+
+    def _note_pass(self, key: UUID | None, *, failed: bool) -> None:
+        """Back *key* off after a failed pass that rolled back, or clear it after one that did not.
+
+        One interval after the first failure, doubling with each consecutive one up to the
+        larger of the interval and ``retry_max_backoff``. The wait is shortened by the loop's
+        jitter, so the first tick at or after its nominal length runs the pass rather than one
+        tick later, and the jittered tick itself keeps replicas apart.
+        """
+
+        if not (failed and self.passes_roll_back):
+            self.backoffs.pop(key, None)
+            return
+
+        failures = self.backoffs.get(key, (0, 0.0))[0] + 1
+        strategy = BackoffStrategy(
+            base=self.interval,
+            max=max(self.interval, self.retry_max_backoff),
+            multiplier=2.0,
+            jitter="none",
+        )
+        wait = compute_delay(strategy, failures, 0.0, current_entropy_source().as_random())
+        self.backoffs[key] = (
+            failures,
+            asyncio.get_running_loop().time() + wait * (1.0 - self.jitter),
+        )
 
     # ....................... #
 
@@ -595,36 +639,11 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     # ....................... #
 
     def _jittered_interval(self) -> float:
-        return self._jittered(self.interval.total_seconds())
-
-    # ....................... #
-
-    def _jittered(self, seconds: float) -> float:
         # Jittered tick: N replicas polling at the same fixed interval synchronize into a
         # thundering herd against the claim query; the multiplicative jitter desynchronizes
         # them. Desynchronization jitter, not security randomness.
-        return seconds * (
+        return self.interval.total_seconds() * (
             1.0 + current_entropy_source().as_random().uniform(-self.jitter, self.jitter)
-        )
-
-    # ....................... #
-
-    def _failed_tick_backoff(self, failures: int) -> float:
-        """How long to wait after *failures* consecutive failed ticks, jittered.
-
-        One interval after the first, doubling with each one after it, up to the larger of
-        the interval and ``retry_max_backoff``.
-        """
-
-        strategy = BackoffStrategy(
-            base=self.interval,
-            max=max(self.interval, self.retry_max_backoff),
-            multiplier=2.0,
-            jitter="none",
-        )
-
-        return self._jittered(
-            compute_delay(strategy, failures, 0.0, current_entropy_source().as_random())
         )
 
     # ....................... #
@@ -730,8 +749,6 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
     # ....................... #
 
     async def _loop(self, ctx: ExecutionContext) -> None:
-        failures = 0
-
         while True:
             if self.woken is not None:
                 # Cleared before the pass reads, so a commit landing during it wakes the next.
@@ -739,13 +756,9 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
             started = asyncio.get_running_loop().time()
             due = self._reclaim_due(started)
-            failed = False
 
             try:
-                tick = await self._drain_tick(ctx, self.tenant_shard, reclaim=due)
-                failed = tick.failed
-
-                if tick.reclaimed and due:
+                if await self._drain_tick(ctx, self.tenant_shard, reclaim=due) and due:
                     self.last_reclaim_at = started
 
             except asyncio.CancelledError:
@@ -762,17 +775,6 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                     return
 
                 logger.exception("Outbox background relay failed")
-                failed = self.passes_roll_back
-
-            failures = failures + 1 if failed else 0
-
-            if failures:
-                # The failed batch is claimable again at once; a wake must not cut this short,
-                # or every commit on the route would republish it.
-                if await self.control.sleep_or_stop(self._failed_tick_backoff(failures)):
-                    return
-
-                continue
 
             if await self._sleep_or_stop():
                 return
@@ -910,6 +912,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         self.drained = False
         self.tenant_shard = tenant_shard
         self.last_reclaim_at = None
+        self.backoffs = {}
         # A store that predates the attribute commits each claim and mark on its own.
         self.passes_roll_back = bool(getattr(outbox_query, "transactional_passes", False))
 
@@ -1041,10 +1044,11 @@ def outbox_relay_background_lifecycle_step(
 
     When the route's store runs each pass in one transaction (Postgres ``storage="consume"``),
     a failed pass rolls back whole and every row of its batch is claimable again at once.
-    The tick then ends that pass rather than running the next batch, and the loop waits
-    before the next tick: one *interval* after the first failed tick, doubling with each
-    consecutive one up to *retry_max_backoff* (or *interval*, if that is longer). A wake
-    does not cut that wait short, and a tick whose passes all commit resets it.
+    The tick then ends that pass rather than running the next batch, and the loop skips
+    that route, or on a sharded step that tenant alone, until it has backed off: one
+    *interval* after the first failed pass, doubling with each consecutive one up to
+    *retry_max_backoff* (or *interval*, if that is longer). The other tenants keep the
+    loop's cadence, a wake does not cut the wait short, and a pass that commits resets it.
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
     every assigned tenant's partition under a bound tenant, so the relay can read a
