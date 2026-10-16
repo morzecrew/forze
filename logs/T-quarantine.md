@@ -122,3 +122,91 @@ proposal: ASSUMED — the commit is `💥 feat(...)!` with a `BREAKING CHANGE:` 
 ```
 
 **Drift count: 0.**
+
+Building it turned up three more things.
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: discovery
+at: 2026-10-16T12:20:00Z
+attempt: 1
+claim: entry 4 is wrong about the requeue's fields; clearing `leased_until` and `available_at` changes nothing, since quarantine already cleared the lease and a quarantined run was claimed, so its `available_at` had passed
+evidence: src/forze_postgres/adapters/durable/run_store.py:555 — the requeue now sets `status = 'pending'` and `updated_at` alone; the claim predicate admits a pending run only once `available_at IS NULL OR available_at <= now()`, which held when the run was last claimed
+action: decided
+proposal: ASSUMED — supersedes entry 4's field list. The requeue sets the status and `updated_at`, and keeps every other field: the run is due and has no lease already. The rest of entry 4 stands.
+```
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: discovery
+at: 2026-10-16T12:21:00Z
+attempt: 1
+claim: the hold's doubling stops at 2**20 leases, which the predicate shares, so a lease under about 82 ms never reaches the cap; such a run is held for at most 2**20 leases and never quarantined
+evidence: src/forze/application/integrations/durable/recovery.py:32 — `lease_for * 2 ** min(max(attempts, 1), 20)`; one day / 2**20 is about 82 ms
+action: decided
+proposal: ASSUMED — leave the clamp. A recovery lease is the time a worker has before its run is reclaimed, and nothing near 82 ms is a working setting; raising the exponent overflows `timedelta` for a long lease instead.
+```
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: spec-gap
+at: 2026-10-16T12:22:00Z
+attempt: 1
+claim: the brief names the admin call but not whether the runner fronts it as it fronts `request_cancel`, behind a capability gate, or whether a quarantine is counted in telemetry
+evidence: src/forze_kits/integrations/durable/runner.py:214 — the runner gates a cancel on `supports_cancel`, because an engine tier may not reach a running body
+action: decided
+proposal: ASSUMED — `requeue_quarantined` lives on the admin port only, with no runner method and no capability: it touches stored rows, which every backend implementing the port can reach. A quarantine is logged at exception level with the run id and claim count; no metric is added. Both can follow if an operator surface asks for them.
+```
+
+## Self-audit — 2026-10-16
+
+**Scope.** The whole branch against `main` (75dafd1f5), audit fixes included: 24 files,
++1152 −85 (source +298 −76 in 10 files, tests +606 −4 in 9, docs, changelog, log and the
+vulture baseline +248 −5 in 5). Re-read the brief before the diff.
+
+**Checks run.**
+
+- Every guard the change adds was sabotaged one at a time against the committed tree and
+  restored from git: 19 sabotages, 19 caught. Recovery predicate: the first-claim floor, the
+  passing-fault exclusion, `>=` turned `>`. Postgres and Mongo each: never quarantining, an
+  unfenced quarantine write, a quarantine that keeps its lease, a requeued pending run
+  cancelled at once, a quarantined run not askable, an unscoped requeue. Mock: the last
+  three. Quiesce: a quarantined run settling the plane.
+- Patch coverage over the new source lines, with the unit and both engines' durable
+  integration tests: 52 of 52 lines covered.
+- `just quality -s`: 19 of 19 gates green. `just test tests/unit`: 18113 passed, 16
+  skipped. The Postgres and Mongo durable suites (run store, conformance, tenancy, step,
+  schedule): 76 passed. The kits durable, quiesce and saga unit tests: 224 passed; the DST
+  durable, crash and saga tests: 41 passed.
+- After the audit refactored the Mongo test helpers, the Mongo sabotages and the Postgres
+  unfenced one were run again: 7 of 7 caught.
+
+**Findings, all fixed on the branch.**
+
+1. MEDIUM — the quarantine write's fence on `attempts` had no test a sabotage could fail: no
+   sequential scenario puts another claim between the scan's claim and its write. Added
+   `test_a_scan_quarantines_only_a_run_it_still_holds` on both engines
+   (tests/integration/test_forze_postgres/test_pg_durable_run_store_integration.py:298,
+   tests/integration/test_forze_mongo/test_mongo_durable_run_store_integration.py:414), which
+   reclaims the run with a healthy key just before the write; the unfenced sabotage now fails
+   it on both.
+2. MEDIUM — the predicate's boundary, `>=` against the cap, was unpinned: the stock lease
+   never lands on the cap exactly, so `>` passed every test. A 45-minute lease, which doubles
+   to exactly one day on the fifth claim, now pins it.
+3. LOW — the requeue cleared two fields that were already settled; dropped (entry 7).
+4. LOW — the predicate's docstring implied measuring by the doubled value differs from
+   measuring by the hold. For every attempt count after a claim they agree (entry 1); the
+   docstring now says what the first-claim floor is for instead.
+5. LOW — two docstring reflows, and a duplicated Mongo `expire` helper in the new tests,
+   extracted.
+
+**Residue.** The `status = 'running'` half of the quarantine write's guard is unreachable
+without a stale fence: only the claim holding `attempts` can write, and nothing moves a run
+it holds out of `running`. It mirrors the hold write and has no test of its own. The
+predicate counts crash reclaims as well as failed opens (entry 1), so a long-lease run with
+a crash history can still quarantine on its first unopenable claim.
+
+**Drift count: 0.**
