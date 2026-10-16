@@ -179,8 +179,10 @@ class OutboxRelay:
     a row rescheduled (or parked as ``failed``) does not stall later rows — including later
     rows of the same ``ordering_key`` (deliberate trade-off: no per-key head-of-line
     blocking). Rows are claimed (``pending`` → ``processing``) in ``created_at`` order,
-    relayed one message per claim, then marked ``published``. Relay and ``mark_published``
-    are not atomic — consumers must deduplicate on
+    relayed one message per claim, then marked ``published``; a store that consumes its
+    rows locks them at the claim instead and deletes each once published, in one
+    transaction per pass. Relay and ``mark_published`` are not atomic — consumers must
+    deduplicate on
     :attr:`~forze.application.contracts.outbox.IntegrationEvent.event_id` (the
     ``forze_event_id`` header) and tolerate reordering.
 

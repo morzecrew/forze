@@ -1041,8 +1041,8 @@ def outbox_relay_background_lifecycle_step(
     a failed pass rolls back whole and every row of its batch is claimable again at once.
     The tick then ends that pass rather than running the next batch, and the loop waits
     before the next tick: one *interval* after the first failed tick, doubling with each
-    consecutive one up to *retry_max_backoff*. A wake does not cut that wait short, and a
-    tick whose passes all commit resets it.
+    consecutive one up to *retry_max_backoff* (or *interval*, if that is longer). A wake
+    does not cut that wait short, and a tick whose passes all commit resets it.
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
     every assigned tenant's partition under a bound tenant, so the relay can read a

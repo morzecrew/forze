@@ -156,6 +156,9 @@ keeps `retain`.
 - **A destination on the same Postgres client joins the pass.** Its statements run in the
   pass's transaction, under `pass_statement_timeout`, and an SQL error there fails the
   whole pass.
+- **A retry policy on the outbox route cannot save a pass.** A statement that fails aborts
+  the pass's transaction, so every retry of it fails too; the pass fails and the step
+  backs off.
 
 `processing_at` and `published_at` are never written. To move a live table over:
 
