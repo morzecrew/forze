@@ -8,15 +8,15 @@ consecutive failed ticks, or it republishes the batch on every pass.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec
+from forze.application.contracts.outbox import OutboxRelayResult, OutboxSpec, OutboxStatus
 from forze.application.contracts.queue import QueueSpec
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.execution.background import BackgroundLoopControl
@@ -24,14 +24,16 @@ from forze.base.exceptions import exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.outbox.lifecycle import _OutboxRelayBackgroundStartup, _RelayPass
-from forze_mock import MockDepsModule
-from forze_mock.adapters.outbox import MockOutboxStore
+from forze_mock import MockDepsModule, MockStateDepKey
+from forze_mock.adapters import MockState
+from forze_mock.adapters.outbox import MockOutboxRow, MockOutboxStore
 
 # ----------------------- #
 
 _T1 = UUID("11111111-1111-1111-1111-111111111111")
 _T2 = UUID("22222222-2222-2222-2222-222222222222")
 _LOGGER = "forze_kits.integrations.outbox.lifecycle.logger"
+_T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 class _Payload(BaseModel):
@@ -59,6 +61,26 @@ def _startup(*, passes_roll_back: bool, **overrides: Any) -> _OutboxRelayBackgro
     startup = _OutboxRelayBackgroundStartup(**kwargs)
     startup.passes_roll_back = passes_roll_back
     return startup
+
+
+def _seed(state: MockState, count: int) -> None:
+    state.outbox_rows.setdefault("events", []).extend(
+        MockOutboxRow(
+            id=uuid4(),
+            outbox_route="events",
+            event_id=uuid4(),
+            event_type="job.requested",
+            payload={"x": index},
+            status=OutboxStatus.PENDING,
+            tenant_id=None,
+            execution_id=None,
+            correlation_id=None,
+            causation_id=None,
+            occurred_at=_T0,
+            created_at=_T0 + timedelta(microseconds=index),
+        )
+        for index in range(count)
+    )
 
 
 def _runtime() -> ExecutionRuntime:
@@ -252,7 +274,29 @@ class TestRollingBackDrain:
                 )
 
         # A retain batch cut early would strand its claimed rows, so it keeps today's bound.
-        assert seen == ([deadline - 1.0] if roll_back else [None])
+        if roll_back:
+            [publish_until] = seen
+            assert publish_until == pytest.approx(deadline - 1.0, abs=0.05)
+        else:
+            assert seen == [None]
+
+    async def test_a_drain_left_with_little_budget_still_publishes(self) -> None:
+        # The runtime left half a second of a 5 s drain setting, and the destination is fast:
+        # the share kept back must come out of the half second, not out of the 5 s.
+        startup = _startup(passes_roll_back=True, shutdown_drain_timeout=timedelta(seconds=5))
+        runtime = _runtime()
+
+        async with runtime.scope():
+            state = runtime.get_context().deps.provide(MockStateDepKey)
+            _seed(state, 3)
+            passed = await startup._relay_once(
+                runtime.get_context(),
+                strict=True,
+                reclaim=False,
+                deadline=asyncio.get_running_loop().time() + 0.5,
+            )
+
+        assert passed.published == 3
 
 
 # ....................... #

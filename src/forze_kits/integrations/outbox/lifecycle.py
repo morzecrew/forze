@@ -44,7 +44,7 @@ _BATCH_ADMISSION_MARGIN: Final[float] = 1.5
 """Headroom over the last batch's duration required before a drain starts another."""
 
 _DRAIN_COMMIT_SHARE: Final[float] = 0.2
-"""Share of the drain's budget a pass keeps back from publishing, for its marks and commit."""
+"""Share of the drain's remaining budget a pass keeps back from publishing, to mark and commit."""
 
 
 _PassStop = Literal["drained", "retry", "cap", "budget", "error", "stopped"]
@@ -393,14 +393,14 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
         *deadline* (a ``loop.time()`` value) is checked between batches, never mid-batch;
         see :func:`_admits_batch` for why a batch is never started on a thin budget. When the
-        store's passes roll back, a batch also stops publishing a share of the budget before
-        it, to mark what it published and commit: a pass cut at the deadline itself would
-        roll back whole, and every row it had published would be published again.
+        store's passes roll back, a batch also stops publishing a share of what is left of the
+        budget before it, to mark what it published and commit: a pass cut at the deadline
+        itself would roll back whole, and every row it had published would be published again.
         """
 
         loop = asyncio.get_running_loop()
         publish_until = (
-            deadline - _DRAIN_COMMIT_SHARE * self.shutdown_drain_timeout.total_seconds()
+            deadline - _DRAIN_COMMIT_SHARE * max(deadline - loop.time(), 0.0)
             if deadline is not None and self.passes_roll_back
             else None
         )
@@ -1064,7 +1064,7 @@ def outbox_relay_background_lifecycle_step(
     *interval* after the first failed pass, doubling with each consecutive one up to
     *retry_max_backoff* (or *interval*, if that is longer). The other tenants keep the
     loop's cadence, a wake does not cut the wait short, and a pass that commits resets it.
-    A shutdown drain stops publishing a fifth of *shutdown_drain_timeout* before its end,
+    A shutdown drain keeps the last fifth of the budget it has left back from publishing,
     so that its last pass can commit what it published.
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
