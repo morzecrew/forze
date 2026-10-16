@@ -49,3 +49,11 @@ class AuthnSpec(BaseSpec):
             raise exc.configuration(
                 "AuthnSpec.enabled_methods must contain at least one credential family",
             )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RevocationStatesSpec(BaseSpec):
+    """Specification of a revocation states route; ``name`` is the route."""

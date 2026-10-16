@@ -45,7 +45,7 @@ from .resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
-from .services import MIN_SECRET_BYTES, SigningStats
+from .services import MIN_SECRET_BYTES, RevocationStates, SigningStats
 from .verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -83,6 +83,7 @@ __all__ = [
     "LoggingAuthnEventSink",
     "LoginLockoutGuard",
     "MappingTableResolver",
+    "RevocationStates",
     "SigningStats",
     "instrument_signing",
 ]

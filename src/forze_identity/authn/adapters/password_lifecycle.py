@@ -24,7 +24,7 @@ from ..domain.models.session import (
     Session,
     UpdateSessionCmd,
 )
-from ..services import PasswordService
+from ..services import PasswordService, SessionRevocation
 from ._utils import find_password_account_by_authn_identity, revoke_sessions_matching
 
 # ----------------------- #
@@ -76,6 +76,9 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
 
     Emits ``PASSWORD_CHANGED`` after a successful change."""
 
+    revocation: SessionRevocation | None = None
+    """When set, the session revocation raises the principal's epoch."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -106,6 +109,9 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         current_password: str,
         new_password: str,
     ) -> None:
+        if self.revocation is not None and self.revoke_sessions_on_password_change:
+            self.revocation.require_transaction()
+
         await self.eligibility.require_authentication_allowed(identity.principal_id)
 
         pa = await find_password_account_by_authn_identity(
@@ -138,6 +144,9 @@ class PasswordLifecycleAdapter(PasswordLifecyclePort):
         # The current session id is not part of AuthnIdentity, so all sessions are
         # revoked and the caller re-authenticates with the new password.
         if self.revoke_sessions_on_password_change:
+            if self.revocation is not None:
+                await self.revocation.raise_epoch(identity.principal_id)
+
             # Ports are guaranteed non-None by __attrs_post_init__ when the flag is set.
             await revoke_sessions_matching(
                 self.session_qry,  # type: ignore[arg-type]

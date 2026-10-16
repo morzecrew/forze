@@ -15,6 +15,7 @@ from forze.application.contracts.authn import (
     PasswordVerifierDepKey,
     PrincipalEligibilityDepKey,
     PrincipalResolverDepKey,
+    RevocationStatesSpec,
     TokenLifecycleDepKey,
     TokenVerifierDepKey,
     resolve_authn_event_emitter,
@@ -151,6 +152,7 @@ from forze_mock.adapters.identity import (
     MockTokenLifecyclePort,
 )
 from forze_mock.adapters.outbox import MockOutboxStore
+from forze_mock.adapters.revocation import MockRevocationStates
 from forze_mock.tenancy import resolve_mock_namespace_sync
 
 from .configs import MockRouteConfig
@@ -1135,6 +1137,18 @@ class ConfigurableMockFleet(_MockFactoryBase):
             state=self._state(context),
             namespace=self._namespace_for(context, spec.name, default=str(spec.name)),
         )
+
+
+@final
+@attrs.define(slots=True, kw_only=True)
+class ConfigurableMockRevocationStates(_MockFactoryBase):
+    def __call__(
+        self,
+        context: ExecutionContext,
+        spec: RevocationStatesSpec,
+    ) -> MockRevocationStates:
+        # As on Redis: the states are a principal's, across tenants, so never tenant-scoped.
+        return MockRevocationStates(state=self._state(context), namespace=str(spec.name))
 
 
 @final

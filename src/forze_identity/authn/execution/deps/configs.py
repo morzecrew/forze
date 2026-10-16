@@ -23,6 +23,7 @@ from ...services import (
     RefreshTokenService,
     ResetTokenConfig,
     ResetTokenService,
+    RevocationStates,
     SignerPort,
 )
 from ...services.constants import MIN_SECRET_BYTES
@@ -110,6 +111,10 @@ class AuthnKernelConfig:
     api_key: ApiKeyConfig = attrs.field(factory=ApiKeyConfig)
     """API key service configuration."""
 
+    revocation_states: RevocationStates | None = attrs.field(default=None)
+    """When set, verify access tokens from cached revocation states, and write them through
+    on every revocation. The verifier and every revoking adapter read this one value."""
+
 
 # ....................... #
 
@@ -129,6 +134,7 @@ class AuthnSharedServices:
     invite_svc: InviteTokenService | None
     reset_svc: ResetTokenService | None
     api_key_svc: ApiKeyService | None
+    revocation_states: RevocationStates | None = None
 
 
 # ....................... #
@@ -185,6 +191,7 @@ def build_authn_shared_services(kernel: AuthnKernelConfig) -> AuthnSharedService
         invite_svc=invite_svc,
         reset_svc=reset_svc,
         api_key_svc=api_key_svc,
+        revocation_states=kernel.revocation_states,
     )
 
 

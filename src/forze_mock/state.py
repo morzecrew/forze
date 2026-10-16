@@ -86,6 +86,7 @@ class MockTxSnapshot:
     inbox: set[tuple[str, str, str]]
     identity: dict[str, Any]
     hlc_checkpoint: dict[str, int]
+    principal_epochs: dict[str, int]
     idempotency: dict[tuple[str, str, str], tuple[str, str, Any | None]]
     """Deep copies of the participating identity sub-stores only (see
     :data:`MockState.TX_IDENTITY_SUBSTORES`)."""
@@ -122,6 +123,7 @@ class MockState:
       document-backed in production
     - ``hlc_checkpoint`` — the node's HLC high-water mark; the outbox flush advances
       it inside the business transaction (co-located store)
+    - ``principal_epochs`` — each principal's epoch, raised in the revoking transaction
     - ``idempotency`` — dedup records for the co-located (transactional) store; the
       Redis variant is non-transactional, but the mock models the transactional path
 
@@ -131,7 +133,8 @@ class MockState:
     - ``streams`` / ``stream_ack`` — stream backends
     - ``storage`` / ``storage_bytes`` / ``storage_buckets`` — object storage (S3/GCS)
     - ``cache_kv`` / ``cache_pointers`` / ``cache_bodies`` — cache (Redis)
-    - ``counters``, ``dlocks`` / ``dlock_fences``, ``fleets`` — Redis-backed
+    - ``counters``, ``dlocks`` / ``dlock_fences``, ``fleets``, ``revocation_states`` —
+      Redis-backed
     - ``search_snapshots`` / ``search_snapshot_chunks`` — search engine
       (Meilisearch); search reads in mock project off ``documents`` anyway
     - ``analytics_query_hits`` / ``analytics_ingest_log`` — warehouses
@@ -252,6 +255,15 @@ class MockState:
     )
     """(Namespace, fleet name) → member id → (expiry ms, state, since ms, encoded report),
     both instants on the fleet adapter's clock."""
+
+    revocation_states: dict[tuple[str, str, str], tuple[str, int]] = attrs.field(factory=dict)
+    """(Namespace, principal id, state key) → (value, expiry ms on the states adapter's
+    clock). Written by :class:`~forze_mock.adapters.revocation.MockRevocationStates`."""
+
+    principal_epochs: dict[str, int] = attrs.field(factory=dict)
+    """Principal id → epoch. Written by
+    :class:`~forze_mock.adapters.revocation.MockPrincipalEpochStore`; transactional, like
+    ``hlc_checkpoint``."""
 
     dlock_fences: dict[str, dict[str, int]] = attrs.field(factory=dict)
     """Route → lock key → last issued fencing token.
@@ -440,6 +452,7 @@ class MockState:
                 # Journal-participating stores with immutable values: a shallow copy of the
                 # key→value mapping is a faithful undo (values are ints / immutable tuples).
                 hlc_checkpoint=dict(self.hlc_checkpoint),
+                principal_epochs=dict(self.principal_epochs),
                 idempotency=dict(self.idempotency),
             )
 
@@ -465,6 +478,9 @@ class MockState:
 
             self.hlc_checkpoint.clear()
             self.hlc_checkpoint.update(snapshot.hlc_checkpoint)
+
+            self.principal_epochs.clear()
+            self.principal_epochs.update(snapshot.principal_epochs)
 
             self.idempotency.clear()
             self.idempotency.update(snapshot.idempotency)

@@ -62,6 +62,63 @@ and API-key revoke.
 | API-key verifier | `HmacApiKeyVerifier` | `ApiKeyVerifierDepKey` |
 | Principal resolver | `JwtNativeUuidResolver` | `PrincipalResolverDepKey` |
 
+## Check sessions from Redis
+
+By default every token verification reads its session row. With
+`revocation_states` on the kernel, a token carries its session's family (`fam`) and the
+principal's epoch (`pep`), and the verifier checks them against states cached in Redis,
+reading Postgres only for what Redis misses. The eligibility read stays.
+
+```python
+from datetime import timedelta
+
+from forze.application.contracts.authn import RevocationStatesDepKey
+from forze.application.contracts.resilience import PortPolicy
+from forze_identity.authn import AuthnKernelConfig, RevocationStates
+from forze_postgres import PostgresPrincipalEpochConfig
+from forze_redis import RedisRevocationStatesConfig
+
+kernel = AuthnKernelConfig(
+    access_token_secret=secret,
+    refresh_token_pepper=pepper,
+    revocation_states=RevocationStates(route="authn-revocations", ttl=timedelta(minutes=5)),
+)
+states = {"authn-revocations": RedisRevocationStatesConfig(namespace="authn-revocations")}
+epochs = PostgresPrincipalEpochConfig(relation=("public", "authn_principal_epochs"))
+breaker = PortPolicy(key=RevocationStatesDepKey, policy="authn-revocations")
+```
+
+Wire `states` as `RedisDepsModule(revocation_states=...)`, `epochs` as
+`PostgresDepsModule(principal_epochs=...)`, on the database that holds the sessions, and
+`breaker` in `ResilienceDepsModule(port_policies=...)` under a policy with a circuit
+breaker, so a Redis outage stops costing every verification its `timeout` (50 ms by
+default). The states route is resolved by `RevocationStatesSpec` under
+`RevocationStatesDepKey`, and the epochs under `PrincipalEpochDepKey`. Create the epochs
+table yourself and never delete its rows:
+
+```sql
+CREATE TABLE authn_principal_epochs (
+    principal_id uuid   PRIMARY KEY,
+    epoch        bigint NOT NULL
+);
+```
+
+- **`ttl` is the window.** A revocation writes its states to Redis once it commits. If that
+  write never lands (it fails every one of `write_attempts`, which is logged at error level;
+  the process dies first; or the revoking process was not configured), or Redis loses the key
+  while an earlier lookup is still writing, a revoked token stays admitted for at most `ttl`
+  after the revocation commits. Configure every process that verifies or revokes, and give
+  the states a Redis namespace nothing else flushes.
+- **Transactions are required.** With the fast path on, issuing and revoking refuse to run
+  outside a transaction (`authn_revocation_requires_transaction`), so keep `tx_route` set on
+  both registries. Issue and logout serialize on the epoch's row on Postgres only.
+- **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
+  session, as without the fast path; `"family"` admits it until its own `exp` while the
+  family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
+- **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
+  never admits a token the fast path would refuse. Tokens issued before the fast path carry
+  no `fam` or `pep`, and keep the session-row check until they expire.
+
 ## Notes
 
 - **Document-backed:** wire the account / session / identity-mapping specs to a

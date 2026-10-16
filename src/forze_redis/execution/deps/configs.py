@@ -97,6 +97,28 @@ class RedisFleetConfig(RedisUniversalConfig):
 
 
 @attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisRevocationStatesConfig(RedisUniversalConfig):
+    """Configuration for Redis-backed revocation states.
+
+    Never tenant-scoped: the states are a principal's, and a principal spans tenants; a
+    verification also runs before any tenant is bound. Give the states a namespace of their
+    own, never shared with data that may be flushed or evicted on its own schedule.
+    """
+
+    def __attrs_post_init__(self) -> None:
+        if self.tenant_aware or not is_static_named_resource(self.namespace):
+            raise exc.configuration(
+                "Redis revocation states cannot be tenant-scoped: they belong to a principal, "
+                "across tenants, and are read before a tenant is bound. Wire them without "
+                "tenant_aware and with a static namespace.",
+                code="revocation_states.tenant_scoped_route",
+            )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
 class RedisStreamConfig(TenantAwareIntegrationConfig):
     """Configuration for a Redis stream route (``StreamSpec``).
 

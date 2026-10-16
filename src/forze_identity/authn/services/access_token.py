@@ -54,6 +54,10 @@ class AccessTokenClaims(TypedDict):
     tid: NotRequired[str]
     sid: NotRequired[str]
     """Session id binding the access token to a refresh session row."""
+    fam: NotRequired[str]
+    """The session's family id; issued only with revocation states configured."""
+    pep: NotRequired[int]
+    """The principal's epoch at issue; issued only with revocation states configured."""
 
 
 # ....................... #
@@ -149,6 +153,8 @@ class AccessTokenService:
         principal_id: UUID,
         tenant_id: UUID | None = None,
         session_id: UUID | None = None,
+        family_id: UUID | None = None,
+        epoch: int | None = None,
     ) -> str:
         now = utcnow()
         exp = now + self.config.expires_in
@@ -166,6 +172,12 @@ class AccessTokenService:
 
         if session_id is not None:
             payload["sid"] = str(session_id)
+
+        if family_id is not None:
+            payload["fam"] = str(family_id)
+
+        if epoch is not None:
+            payload["pep"] = epoch
 
         header: dict[str, object] = {"alg": self.signer.algorithm, "typ": "JWT"}
 

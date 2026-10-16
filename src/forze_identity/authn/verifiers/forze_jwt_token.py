@@ -10,11 +10,11 @@ from forze.application.contracts.authn import (
     VerifiedAssertion,
 )
 from forze.application.contracts.document import DocumentQueryPort
-from forze.base.exceptions import exc
+from forze.base.exceptions import CoreException, exc
 from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.session import ReadSession
-from ..services import AccessTokenClaims, AccessTokenService
+from ..services import AccessTokenClaims, AccessTokenService, SessionRevocation
 
 # ----------------------- #
 
@@ -34,6 +34,9 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
     whose session row is missing, revoked, or rotated — so logout and refresh rotation
     invalidate bearer access before JWT ``exp``. The session row must also match token
     ``sub`` (and ``tid`` when both token and session carry tenant metadata).
+
+    With :attr:`revocation`, a token carrying ``fam`` and ``pep`` is checked against cached
+    revocation states instead, and the session row is read only on a miss.
     """
 
     access_svc: AccessTokenService
@@ -41,6 +44,9 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
 
     session_qry: DocumentQueryPort[ReadSession] | None = None
     """When set, enforce session binding via the ``sid`` claim."""
+
+    revocation: SessionRevocation | None = None
+    """When set, check tokens that carry ``fam`` and ``pep`` from cached revocation states."""
 
     # ....................... #
 
@@ -50,6 +56,9 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
         # check below — the same guard every sibling credential verifier applies.
         if self.session_qry is not None:
             forbid_cache_and_history(self.session_qry.spec, label="Session")
+
+        elif self.revocation is not None:
+            raise exc.configuration("Revocation states need the session query port")
 
     # ....................... #
 
@@ -78,20 +87,23 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
     # ....................... #
 
     async def _require_active_session(self, claims: AccessTokenClaims) -> None:
-        sid_raw = claims.get("sid")
-        if sid_raw is None:
-            raise exc.authentication(
-                "Invalid access token",
-                code="invalid_access_token",
-            )
+        session_id = _uuid_claim(claims.get("sid"))
+        family_raw = claims.get("fam")
+        pep = claims.get("pep")
 
-        try:
-            session_id = UUID(sid_raw)
-        except ValueError as e:
-            raise exc.authentication(
-                "Invalid access token",
-                code="invalid_access_token",
-            ) from e
+        # A token issued before the fast path carries neither, and is checked as before.
+        if self.revocation is not None and family_raw is not None and pep is not None:
+            if isinstance(pep, bool) or not isinstance(pep, int) or pep < 0:
+                raise _invalid_token()
+
+            await self.revocation.check(
+                principal_id=_uuid_claim(claims["sub"]),
+                session_id=session_id,
+                family_id=_uuid_claim(family_raw),
+                pep=pep,
+                tenant=claims.get("tid"),
+            )
+            return
 
         session = await self.session_qry.find(  # type: ignore[union-attr]
             filters={
@@ -131,3 +143,21 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
                 "Session does not match token tenant",
                 code="session_tenant_mismatch",
             )
+
+
+# ....................... #
+
+
+def _invalid_token() -> CoreException:
+    return exc.authentication("Invalid access token", code="invalid_access_token")
+
+
+def _uuid_claim(raw: object) -> UUID:
+    if not isinstance(raw, str):
+        raise _invalid_token()
+
+    try:
+        return UUID(raw)
+
+    except ValueError as e:
+        raise _invalid_token() from e
