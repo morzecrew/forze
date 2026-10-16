@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -26,7 +26,7 @@ from forze.application.contracts.outbox import (
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
-from forze.base.exceptions import CoreException
+from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
 from forze_kits.integrations.outbox._relay_core import _pass_scope, relay_outbox_claims
@@ -224,6 +224,59 @@ class TestRelayDecodeBound:
         assert [claim.id for claim in calls] == [rows[0].id]
         assert (result.published, result.retried, result.failed) == (1, 0, 0)
         assert all(row.attempts == 0 and row.last_error is None for row in rows[1:])
+
+    async def test_a_decode_that_turns_its_cut_into_an_error_is_not_parked(self) -> None:
+        # Some clients answer a cancelled request with an error of their own; the row is
+        # still sound and must wait for the next pass, not be parked as poison.
+        async def converting_decrypt(_cipher: Any, payload: Any, **_: Any) -> Any:
+            if payload["n"] == 1:
+                try:
+                    await asyncio.sleep(30)
+
+                except asyncio.CancelledError:
+                    raise exc.internal("KMS request cancelled") from None
+
+            return payload
+
+        async with _context() as (ctx, state):
+            rows = _seed(state, 3)
+
+            with (
+                patch.object(MockOutboxStore, "pass_scope", _budget_scope(0.3)),
+                patch(_DECRYPT, converting_decrypt),
+            ):
+                result = await asyncio.wait_for(_relay(ctx, _publish_ok), timeout=10)
+
+        assert (result.published, result.failed) == (1, 0)
+        assert rows[1].status != OutboxStatus.FAILED and rows[1].last_error is None
+
+    async def test_a_decode_that_ignores_its_cut_leaves_its_row(self) -> None:
+        # A decode that swallows the cancellation returns after the deadline: the row must
+        # still not be published past it.
+        calls: list[OutboxClaim] = []
+
+        async def publish(claim: OutboxClaim, payload: Any) -> None:
+            calls.append(claim)
+
+        async def stubborn_decrypt(_cipher: Any, payload: Any, **_: Any) -> Any:
+            if payload["n"] == 1:
+                with suppress(asyncio.CancelledError):
+                    await asyncio.sleep(30)
+
+            return payload
+
+        async with _context() as (ctx, state):
+            rows = _seed(state, 3)
+
+            with (
+                patch.object(MockOutboxStore, "pass_scope", _budget_scope(0.3)),
+                patch(_DECRYPT, stubborn_decrypt),
+            ):
+                result = await asyncio.wait_for(_relay(ctx, publish), timeout=10)
+
+        assert [claim.id for claim in calls] == [rows[0].id]
+        assert (result.published, result.retried) == (1, 0)
+        assert all(row.attempts == 0 for row in rows[1:])
 
 
 class TestRelayPublishUntil:

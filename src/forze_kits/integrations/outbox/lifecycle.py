@@ -568,10 +568,7 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         try:
             passed = await self._relay_once(ctx, reclaim=reclaim)
 
-        except asyncio.CancelledError:
-            raise
-
-        except Exception:
+        except Exception:  # a cancellation is no failure: it is not caught here
             self._note_pass(key, failed=True)
             raise
 

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from forze.application.contracts.outbox import OutboxSpec
 from forze.base.exceptions import CoreException
+from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
 from forze_postgres.adapters.outbox import PostgresOutboxStore
 from forze_postgres.execution.deps.configs import PostgresOutboxConfig
@@ -130,6 +131,18 @@ class TestPostgresOutboxPassScope:
             assert budget is not None
 
         assert client.transactions == 1
+        assert client.executes == []
+
+    @pytest.mark.parametrize("mark", ["mark_published", "mark_failed", "mark_retry"])
+    async def test_an_empty_mark_writes_nothing(self, mark: str) -> None:
+        # As under retain: no ids, no statement, no table resolution.
+        client = _TxClient()
+        store = _store(client, storage="consume")
+        kwargs: dict[str, Any] = (
+            {"attempts": 1, "available_at": utcnow()} if mark == "mark_retry" else {}
+        )
+
+        assert await getattr(store, mark)([], **kwargs) == 0
         assert client.executes == []
 
     async def test_a_consume_claim_outside_a_transaction_is_refused(self) -> None:

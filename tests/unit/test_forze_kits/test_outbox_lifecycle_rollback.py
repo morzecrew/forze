@@ -236,6 +236,18 @@ class TestPerTenantBackoff:
         # Shortened by the jitter, so the first tick at or after 10 s runs the pass.
         assert 8.0 <= startup.backoffs[_T1][1] - before <= 8.1
 
+    async def test_a_cancelled_pass_does_not_back_its_tenant_off(self) -> None:
+        # Shutdown cancels the loop mid-pass; that says nothing about the tenant's health.
+        startup = _startup(passes_roll_back=True)
+        runtime = _runtime()
+
+        with patch.object(OutboxRelay, "to_queue", AsyncMock(side_effect=asyncio.CancelledError)):
+            async with runtime.scope():
+                with pytest.raises(asyncio.CancelledError):
+                    await startup._drain_tick(runtime.get_context(), [_T1])
+
+        assert startup.backoffs == {}
+
     async def test_a_raising_tenant_backs_off_but_the_shard_still_drains(self) -> None:
         startup = _startup(passes_roll_back=True)
         relay = AsyncMock(side_effect=[exc.configuration("tenant key disabled"), _full(0)])
