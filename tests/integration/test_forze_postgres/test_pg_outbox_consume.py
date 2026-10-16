@@ -407,16 +407,15 @@ class TestConsumePassBounds:
 
             async with runtime.scope():
                 store = runtime.get_context().outbox.query(_SPEC)
-                started = time.monotonic()
 
-                with pytest.raises(CoreException):
+                with pytest.raises(CoreException) as caught:
                     async with store.pass_scope():
                         await client.execute("SELECT pg_sleep(0.8)")
 
-                elapsed = time.monotonic() - started
-
-        # Cut at the session's 300 ms, well before the pass's own 1 s.
-        assert elapsed < 0.7
+        # The pass alone allows 1 s, which a 0.8 s sleep fits, so the statement is cut only
+        # because the session's stricter 300 ms still holds. Asserted on the cancel itself,
+        # not on elapsed time, which a loaded runner stretches.
+        assert "query canceled" in str(caught.value)
 
     async def test_a_pass_stops_at_its_deadline_and_commits_what_it_published(
         self, pg_client: PostgresClient, outbox_table: str
