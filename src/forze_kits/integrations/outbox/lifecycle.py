@@ -862,10 +862,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
 
         except TimeoutError:
             logger.error(
-                "Outbox relay %s exceeded its %.1fs budget and was cut mid-batch; "
-                "claimed rows may sit in 'processing' until reclaim",
+                "Outbox relay %s exceeded its %.1fs budget and was cut mid-batch; %s",
                 label,
                 self.shutdown_drain_timeout.total_seconds(),
+                "its rows are pending again, rolled back with the pass"
+                if self.passes_roll_back
+                else "claimed rows may sit in 'processing' until reclaim",
             )
             self.drained = False
             return False
