@@ -74,7 +74,8 @@ holds all three to it.
 |-------|------------------------------|
 | `begin`, `renew`, `load`, `complete` / `fail` / `mark_*` | that tenant's runs **and untagged ones** |
 | `claim_abandoned`, `list_runs`, `request_cancel`, `requeue_quarantined`, `refuse_cancel` | that tenant's runs, exactly |
-| all of them, unbound | everything — the recovery and single-tenant role |
+| all of them, unbound | everything — the recovery and single-tenant role — except `requeue_quarantined` |
+| `requeue_quarantined`, unbound and naming no runs | untagged runs only, and refused while any quarantined run in scope carries a tenant |
 
 The untagged arm on the first row is liveness, not laxity. A run tagged with no tenant belongs
 to none, and a terminal write that matched nothing would leave it running until its lease
