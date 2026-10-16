@@ -9582,6 +9582,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>Tokens can be verified from cached revocation states, not the session row.</strong> <code>AuthnKernelConfig(revocation_states=RevocationStates(...))</code> checks new <code>fam</code> and <code>pep</code> claims against <code>RedisDepsModule(revocation_states=)</code> and <code>PostgresDepsModule(principal_epochs=)</code>. Opt-in; issue and revocation then need a transaction.</p>
 </li>
+<li>
+<p><strong>Durable runs recovery gave up decrypting can be requeued.</strong> <code>DurableRunStatus.QUARANTINED</code> marks a run the scan no longer claims; <code>DurableRunAdminPort.requeue_quarantined(run_ids=)</code> returns a bound tenant's or named ones, on Postgres, Mongo and the mock. <strong>Breaking</strong> for exhaustive status matches and own admin ports.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -9599,6 +9602,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>The tenant-isolation floor leaves out routes that belong to the deployment.</strong> Redis fleets, and lock and pub/sub routes marked <code>tenant_global=True</code> (a lifecycle lock, an outbox wake), no longer count toward <code>required_tenant_isolation</code>, so a module of only those meets it. Every other route is still held to it.</p>
+</li>
+<li>
+<p><strong>A durable run whose key is gone no longer resumes by itself once its recovery hold reaches a day.</strong> Quarantined, it waits for a requeue even after the key is back; one already claimed nine times, crash reclaims included, is parked on its first failed open. <strong>Breaking</strong> for deployments relying on a restored key.</p>
 </li>
 </ul>
 <h3 id="deprecated">Deprecated<a class="headerlink" href="#deprecated" title="Permanent link">&para;</a></h3>

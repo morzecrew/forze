@@ -6707,7 +6707,7 @@ queue's delayed jobs.</p>
 </tr>
 <tr>
 <td><code>DurableRunAdminDepKey</code></td>
-<td>run listing and control — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code>; <code>request_cancel(run_id)</code> asks a run to stop</td>
+<td>run listing and control — <code>list_runs(status=None, name=None, limit=50, cursor=None)</code> returns a cursor-paged <code>DurableRunPage</code>; <code>request_cancel(run_id)</code> asks a run to stop; <code>requeue_quarantined(run_ids=None)</code> returns quarantined runs to <code>pending</code> and says how many — unbound, it must name them while any belongs to a tenant</td>
 </tr>
 <tr>
 <td><code>DurableScheduleStoreDepKey</code></td>
@@ -6717,7 +6717,9 @@ queue's delayed jobs.</p>
 </table>
 <p>A <code>DurableFunctionEventSpec</code> binds an event channel to its payload codec. A run's status is
 a <code>DurableRunStatus</code> — <code>pending</code> / <code>running</code> / <code>completed</code> / <code>failed</code> / <code>forward_incomplete</code>
-/ <code>cancelled</code> / <code>timed_out</code>.</p>
+/ <code>cancelled</code> / <code>timed_out</code> / <code>quarantined</code>. <code>quarantined</code> is not terminal: recovery could not
+decrypt the run for long enough, its key being gone, and its scan no longer claims it until
+<code>requeue_quarantined()</code> puts it back.</p>
 <h2 id="what-a-bound-tenant-reaches">What a bound tenant reaches<a class="headerlink" href="#what-a-bound-tenant-reaches" title="Permanent link">&para;</a></h2>
 <p>Every store behind these ports answers this the same way, and the shared conformance battery
 holds all three to it.</p>
@@ -6734,12 +6736,16 @@ holds all three to it.</p>
 <td>that tenant's runs <strong>and untagged ones</strong></td>
 </tr>
 <tr>
-<td><code>claim_abandoned</code>, <code>list_runs</code>, <code>request_cancel</code>, <code>refuse_cancel</code></td>
+<td><code>claim_abandoned</code>, <code>list_runs</code>, <code>request_cancel</code>, <code>requeue_quarantined</code>, <code>refuse_cancel</code></td>
 <td>that tenant's runs, exactly</td>
 </tr>
 <tr>
 <td>all of them, unbound</td>
-<td>everything — the recovery and single-tenant role</td>
+<td>everything — the recovery and single-tenant role — except <code>requeue_quarantined</code></td>
+</tr>
+<tr>
+<td><code>requeue_quarantined</code>, unbound and naming no runs</td>
+<td>untagged runs only, and refused while any quarantined run in scope carries a tenant</td>
 </tr>
 </tbody>
 </table>
@@ -6770,13 +6776,18 @@ recorded, never a promise about when the body notices.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>pending</code></td>
-<td>lands <code>cancelled</code> immediately — nothing is executing</td>
+<td><code>pending</code>, never claimed</td>
+<td>lands <code>cancelled</code> immediately — nothing has executed</td>
 <td><code>True</code></td>
 </tr>
 <tr>
 <td><code>running</code></td>
 <td>stamps <code>cancel_requested_at</code>; the lease holder lands it on its next heartbeat</td>
+<td><code>True</code></td>
+</tr>
+<tr>
+<td><code>quarantined</code>, or <code>pending</code> after a requeue</td>
+<td>stamps <code>cancel_requested_at</code>; decided once a claim can decrypt the run</td>
 <td><code>True</code></td>
 </tr>
 <tr>

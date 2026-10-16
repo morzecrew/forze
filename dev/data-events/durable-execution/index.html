@@ -1828,6 +1828,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#runs-recovery-cannot-decrypt" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runs recovery cannot decrypt
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stopping-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6488,6 +6499,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#runs-recovery-cannot-decrypt" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Runs recovery cannot decrypt
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stopping-a-run" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6760,6 +6782,40 @@ than passing on the strength of the other planes. Note the coupling that creates
 <code>tenant_aware=True</code> on a run store fails closed when nothing is bound, which is how the
 cross-tenant sweep runs, so a deployment declaring <code>tagged</code> runs per-tenant recovery
 (<code>tenants=…</code>) instead.</p>
+<h3 id="runs-recovery-cannot-decrypt">Runs recovery cannot decrypt<a class="headerlink" href="#runs-recovery-cannot-decrypt" title="Permanent link">&para;</a></h3>
+<p>With payloads encrypted, a run whose tenant's key is gone (an offboarded tenant, a key
+pending deletion) cannot be opened when the recovery scan claims it. The scan skips it rather
+than failing the batch, and holds it out of later scans for two leases, doubling with each
+claim up to a day. A throttled or briefly unreachable <abbr title="Key Management Service">KMS</abbr> is not a lost key: that run keeps
+its ordinary lease and is retried.</p>
+<p>If the key stays gone, the run is <strong>quarantined</strong> on the claim whose hold would reach the day
+— the ninth at the default 5-minute lease, and never the first. The count is the run's
+attempts, crash reclaims included, so a run already claimed nine times is quarantined on its
+first failed open. <code>QUARANTINED</code> is not final, but the scan never claims it, so however many
+pile up they cannot crowd the runs behind them. Unlike a held run, a quarantined one does not
+come back by itself when its key does: it waits for an operator.</p>
+<p>Once a tenant's key is back, bind that tenant, find its quarantined runs (listed with their
+payloads unread) and return them to the scan:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.durable.function</span><span class="w"> </span><span class="kn">import</span> <span class="n">DurableRunStatus</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.tenancy</span><span class="w"> </span><span class="kn">import</span> <span class="n">TenantIdentity</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_kits.integrations.durable</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_durable_run_admin</span>
+
+<span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">inv_ctx</span><span class="o">.</span><span class="n">bind_identity</span><span class="p">(</span><span class="n">tenant</span><span class="o">=</span><span class="n">TenantIdentity</span><span class="p">(</span><span class="n">tenant_id</span><span class="o">=</span><span class="n">tenant_id</span><span class="p">)):</span>
+    <span class="n">admin</span> <span class="o">=</span> <span class="n">resolve_durable_run_admin</span><span class="p">(</span><span class="n">ctx</span><span class="p">)</span>
+    <span class="n">page</span> <span class="o">=</span> <span class="k">await</span> <span class="n">admin</span><span class="o">.</span><span class="n">list_runs</span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="n">DurableRunStatus</span><span class="o">.</span><span class="n">QUARANTINED</span><span class="p">)</span>
+    <span class="n">moved</span> <span class="o">=</span> <span class="k">await</span> <span class="n">admin</span><span class="o">.</span><span class="n">requeue_quarantined</span><span class="p">()</span>          <span class="c1"># back to PENDING, due now</span>
+</code></pre></div>
+<p>Or name the runs: <code>requeue_quarantined(run_ids=[...])</code>. A requeued run keeps its creation
+time, so the scan takes it ahead of every fresh run, and keeps its attempt count, so one whose
+key is still gone costs a claim and a <abbr title="Key Management Service">KMS</abbr> call and is quarantined again at once. That is why
+an unbound requeue must name its runs whenever a quarantined run belongs to a tenant: it is
+refused (<code>validation</code> / <code>durable.requeue_unscoped</code>) rather than bring back every tenant's,
+those gone for good among them. A deployment whose runs carry no tenant requeues unbound.</p>
+<p>A cancel asked of a quarantined or requeued run is stamped and waits for a claim that can read
+the run, since it may be a saga past its pivot. A quiesce counts quarantined runs as unsettled.</p>
+<p>Roll this out to every node before any run can be quarantined: a node running an earlier
+release cannot read the status, and fails a listing or an idempotent enqueue that meets such a
+run. Requeue quarantined runs before rolling back, or they are left where no scan claims them.</p>
 <h3 id="stopping-a-run">Stopping a run<a class="headerlink" href="#stopping-a-run" title="Permanent link">&para;</a></h3>
 <p>A "Stop" button on a self-hosted run goes through <code>request_cancel</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="k">await</span> <span class="n">runner</span><span class="o">.</span><span class="n">request_cancel</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">run_id</span><span class="p">)</span>      <span class="c1"># True if the ask was recorded</span>
@@ -6767,7 +6823,8 @@ cross-tenant sweep runs, so a deployment declaring <code>tagged</code> runs per-
 <p><strong>It is cooperative, and the framework will not pretend otherwise.</strong> There is no in-process
 red button in Python: a thread can't be killed, asyncio cancellation lands only at await
 points, and a body blocked inside a C extension notices nothing until it returns. So this
-<em>requests</em> a stop. A <code>PENDING</code> run lands <code>CANCELLED</code> at once — nothing is executing. A
+<em>requests</em> a stop. A <code>PENDING</code> run lands <code>CANCELLED</code> at once — nothing has executed (one
+requeued from quarantine, above, is only stamped). A
 <code>RUNNING</code> one keeps going until its lease holder sees the stamp on the <strong>next heartbeat</strong>
 (<code>lease_for / heartbeat_divisor</code>, 100 s at defaults — tune those two if you need tighter),
 at which point the body is cancelled at its next await and the run lands <code>CANCELLED</code>. A body
