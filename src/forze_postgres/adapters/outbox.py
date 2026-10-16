@@ -108,6 +108,11 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
         Inside a caller's transaction this is a savepoint and sets nothing: ``SET LOCAL``
         would outlive the savepoint, staying in force for the rest of the caller's
         transaction and replacing any limits it had set. That caller owns the timeouts.
+
+        A pass that owns its transaction tightens the session's timeouts and never loosens
+        them: each becomes the stricter of the session's value and the pass's, where the
+        session's ``0`` means no limit. ``pg_settings`` reports them in milliseconds,
+        whatever unit they were set in.
         """
 
         config = self.config
@@ -123,13 +128,24 @@ class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdm
                 await self.client.execute(
                     sql.SQL(
                         """
-                        SELECT
-                            set_config('statement_timeout', %(statement)s, true),
-                            set_config('lock_timeout', %(statement)s, true),
-                            set_config('idle_in_transaction_session_timeout', %(idle)s, true)
+                        SELECT set_config(
+                            pass.name,
+                            CASE
+                                WHEN s.setting::bigint = 0 THEN pass.ms
+                                ELSE least(s.setting::bigint, pass.ms)
+                            END::text,
+                            true
+                        )
+                        FROM (
+                            VALUES
+                                ('statement_timeout', %(statement)s::bigint),
+                                ('lock_timeout', %(statement)s::bigint),
+                                ('idle_in_transaction_session_timeout', %(idle)s::bigint)
+                        ) AS pass (name, ms)
+                        JOIN pg_settings AS s ON s.name = pass.name
                         """
                     ),
-                    {"statement": str(statement_ms), "idle": str(idle_ms)},
+                    {"statement": statement_ms, "idle": idle_ms},
                 )
 
             yield budget

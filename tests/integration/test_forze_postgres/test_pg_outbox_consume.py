@@ -21,6 +21,7 @@ from datetime import timedelta
 from itertools import pairwise
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
+from urllib.parse import quote
 from uuid import uuid4
 
 import pytest
@@ -169,8 +170,18 @@ async def _relay(ctx: ExecutionContext, publish_one: Any, **kwargs: Any) -> Any:
 
 
 @asynccontextmanager
-async def _single_connection_client(postgres_container: Any) -> AsyncIterator[PostgresClient]:
+async def _single_connection_client(
+    postgres_container: Any, session: dict[str, str] | None = None
+) -> AsyncIterator[PostgresClient]:
+    """One pooled connection; *session* settings go in the DSN's ``options``, as a role's would."""
+
     url = postgres_container.get_connection_url().replace("postgresql+psycopg://", "postgresql://")
+
+    if session:
+        url += "?options=" + quote(
+            " ".join(f"-c {name}={value}" for name, value in session.items())
+        )
+
     client = PostgresClient()
     await client.initialize(dsn=url, config=PostgresConfig(min_size=1, max_size=1))
 
@@ -348,8 +359,65 @@ class TestConsumePerRowFailures:
 # ....................... #
 
 
+_TIMEOUTS = ("statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout")
+
+
 @pytest.mark.integration
 class TestConsumePassBounds:
+    @pytest.mark.parametrize(
+        ("session", "in_pass"),
+        [
+            # Stricter than the pass (1 s, 1 s, 5 s + 1 s): the session's own values hold.
+            (("300ms", "200ms", "2s"), ("300ms", "200ms", "2s")),
+            # Looser, or unlimited: the pass's values apply.
+            (("1min", "1min", "1h"), ("1s", "1s", "6s")),
+            (("0", "0", "0"), ("1s", "1s", "6s")),
+        ],
+    )
+    async def test_a_pass_tightens_the_session_timeouts_and_never_loosens_them(
+        self,
+        postgres_container: Any,
+        outbox_table: str,
+        session: tuple[str, str, str],
+        in_pass: tuple[str, str, str],
+    ) -> None:
+        settings = dict(zip(_TIMEOUTS, session, strict=True))
+
+        async with _single_connection_client(postgres_container, settings) as client:
+            runtime = _runtime(client, outbox_table)
+
+            async with runtime.scope():
+                store = runtime.get_context().outbox.query(_SPEC)
+
+                async with store.pass_scope():
+                    shown = tuple([await client.fetch_value(f"SHOW {name}") for name in _TIMEOUTS])
+
+                after = tuple([await client.fetch_value(f"SHOW {name}") for name in _TIMEOUTS])
+
+        assert shown == in_pass
+        assert after == session  # transaction-local: the session's values are back
+
+    async def test_a_stricter_session_statement_timeout_still_cuts_a_pass_statement(
+        self, postgres_container: Any, outbox_table: str
+    ) -> None:
+        async with _single_connection_client(
+            postgres_container, {"statement_timeout": "300ms"}
+        ) as client:
+            runtime = _runtime(client, outbox_table)
+
+            async with runtime.scope():
+                store = runtime.get_context().outbox.query(_SPEC)
+                started = time.monotonic()
+
+                with pytest.raises(CoreException):
+                    async with store.pass_scope():
+                        await client.execute("SELECT pg_sleep(0.8)")
+
+                elapsed = time.monotonic() - started
+
+        # Cut at the session's 300 ms, well before the pass's own 1 s.
+        assert elapsed < 0.7
+
     async def test_a_pass_stops_at_its_deadline_and_commits_what_it_published(
         self, pg_client: PostgresClient, outbox_table: str
     ) -> None:

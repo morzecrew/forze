@@ -120,7 +120,7 @@ class TestPostgresOutboxPassScope:
 
         [(_, params)] = client.executes
         # A microsecond rounds up to one millisecond, never down to 0 (no limit).
-        assert params == {"statement": "1", "idle": "2001"}
+        assert params == {"statement": 1, "idle": 2001}
 
     async def test_a_nested_pass_sets_nothing(self) -> None:
         # SET LOCAL in a savepoint outlives it and overrides the caller's own limits.

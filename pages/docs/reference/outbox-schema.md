@@ -153,8 +153,9 @@ keeps `retain`.
   and the claim included, and each lock wait, is limited to `pass_statement_timeout`
   (default 1 s): on a large table without the claim index above, the claim times out and
   every pass fails. The server cuts the session off once it sits idle in the pass for
-  longer than the two durations together. The pass sets these with `SET LOCAL`, and only
-  when it opens its own transaction. A shutdown drain keeps the last fifth of the budget
+  longer than the two durations together. The pass sets these for its own transaction
+  only, and only when it opens that transaction. A stricter limit the session already
+  has, from the role or the connection's `options`, stays in force. A shutdown drain keeps the last fifth of the budget
   it has left back from publishing, so its last pass commits instead of being cut and
   rolled back.
 - **A pass inside your transaction sets nothing.** Run a relay in a transaction of your own,

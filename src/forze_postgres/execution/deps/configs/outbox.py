@@ -37,7 +37,8 @@ class PostgresOutboxConfig(OutboxIntegrationConfig):
     pass_statement_timeout: timedelta = attrs.field(factory=lambda: timedelta(seconds=1))
     """``consume`` only: the ``statement_timeout`` and ``lock_timeout`` of each statement in a
     pass that owns its transaction. The session is also cut off when it sits idle in the pass
-    for longer than ``pass_deadline`` plus this."""
+    for longer than ``pass_deadline`` plus this. A stricter limit the session already has
+    stays in force."""
 
     # ....................... #
 
