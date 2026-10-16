@@ -47,11 +47,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The tenant-isolation floor leaves out routes that belong to the deployment.** Redis fleets, and lock and pub/sub routes marked `tenant_global=True` (a lifecycle lock, an outbox wake), no longer count toward `required_tenant_isolation`, so a module of only those meets it. Every other route is still held to it.
 
+- **The outbox relay step resolves its outbox route at startup even with `tenants=`.** A route that is not wired fails startup instead of every tick.
+
 ### Deprecated
 
 - **`probe_listener_step(runtime=...)`.** The step reads its scope from its hook's `ctx`, so it can sit in its own runtime's plan; a runtime passed in is still watched, with a `DeprecationWarning`.
 
 ### Fixed
+
+- **The crash-recovery delivery scenario marks the rows it re-publishes.** `forze_dst.conformance.run_crash_recovery_delivery` marked them by event id, which matched no row, so they stayed `processing`; the outcome never read the mark.
 
 - **Recovery no longer lands a saga asked to stop unread when its holder died first.** It landed `CANCELLED`, abandoning forward steps past the pivot and skipping the rollback before it. Such a saga now runs again and decides by its journal at its next step, as a live one does.
 

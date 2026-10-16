@@ -147,10 +147,13 @@ keeps `retain`.
   resets it. On a step with `tenants=`, only the failing tenant waits; the others keep the
   step's cadence. A wake does not cut the wait short.
 - **A pass is bounded.** It stops publishing at `pass_deadline` (default 5 s) and commits
-  what it did; the rows it did not reach stay pending, untouched. Each claim and mark
-  statement, and each lock wait, is limited to `pass_statement_timeout` (default 1 s), and
-  the server cuts the session off once it sits idle in the pass for longer than the two
-  together. The pass sets these with `SET LOCAL`, and only when it opens its own
+  what it did; the rows it did not reach stay pending, untouched. A publish still running at
+  the deadline is cancelled and counted as a failed attempt, though it may already have
+  reached the broker, so that event can arrive twice. Each statement in the pass, the reclaim
+  and the claim included, and each lock wait, is limited to `pass_statement_timeout`
+  (default 1 s): on a large table without the claim index above, the claim times out and
+  every pass fails. The server cuts the session off once it sits idle in the pass for
+  longer than the two durations together. The pass sets these with `SET LOCAL`, and only when it opens its own
   transaction. A shutdown drain stops publishing a fifth of `shutdown_drain_timeout`
   before its end, so its last pass commits instead of being cut and rolled back.
 - **A pass inside your transaction sets nothing.** Run a relay in a transaction of your own,
@@ -164,6 +167,9 @@ keeps `retain`.
 - **A retry policy on the outbox route cannot save a pass.** A statement that fails aborts
   the pass's transaction, so every retry of it fails too; the pass fails and the step
   backs off.
+- **Behind pgbouncer, use session or transaction pooling.** The timeouts are set with
+  `set_config(..., true)`, which ends with the transaction, so transaction pooling is safe.
+  Statement pooling cannot hold a transaction across statements, so it cannot run a pass.
 
 `processing_at` and `published_at` are never written. To move a live table over:
 
