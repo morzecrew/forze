@@ -298,6 +298,35 @@ class TestRollingBackDrain:
 
         assert passed.published == 3
 
+    async def test_a_drain_opens_no_batch_once_publishing_is_over(self) -> None:
+        # A batch opened past the cutoff can publish nothing, yet claims a full batch, so the
+        # drain would lock and release the same pending rows until its cap or deadline.
+        startup = _startup(passes_roll_back=True, max_batches_per_tick=100)
+        starts: list[float] = []
+        cutoffs: list[float | None] = []
+
+        async def batch(self: OutboxRelay, *_: Any, **__: Any) -> OutboxRelayResult:
+            starts.append(asyncio.get_running_loop().time())
+            cutoffs.append(self.publish_until)
+            await asyncio.sleep(0.05)
+            return _full(10)  # a backlog: every claim comes back full
+
+        runtime = _runtime()
+
+        with patch.object(OutboxRelay, "to_queue", autospec=True, side_effect=batch):
+            async with runtime.scope():
+                passed = await startup._relay_once(
+                    runtime.get_context(),
+                    strict=True,
+                    reclaim=False,
+                    deadline=asyncio.get_running_loop().time() + 1.0,
+                )
+
+        cutoff = cutoffs[0]
+        assert cutoff is not None
+        assert [start for start in starts if start >= cutoff] == []
+        assert passed.stop == "budget"
+
 
 # ....................... #
 

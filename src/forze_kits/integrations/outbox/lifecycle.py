@@ -423,6 +423,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
                 stop = "budget"
                 break
 
+            if publish_until is not None and loop.time() >= publish_until:
+                # Past the cutoff a batch publishes nothing, yet its claim still comes back
+                # full, so the drain would lock and release the same rows until its deadline.
+                stop = "budget"
+                break
+
             started = loop.time()
 
             try:
@@ -1065,7 +1071,7 @@ def outbox_relay_background_lifecycle_step(
     *retry_max_backoff* (or *interval*, if that is longer). The other tenants keep the
     loop's cadence, a wake does not cut the wait short, and a pass that commits resets it.
     A shutdown drain keeps the last fifth of the budget it has left back from publishing,
-    so that its last pass can commit what it published.
+    and opens no batch once into it, so that its last pass can commit what it published.
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
     every assigned tenant's partition under a bound tenant, so the relay can read a
