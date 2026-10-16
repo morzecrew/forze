@@ -309,31 +309,39 @@ async def _first_waits_for_second(
 
 
 async def check_a_raise_and_an_issue_wait_for_each_other(h: EpochHarness) -> None:
+    """Each waits for the other, in both orders, whether or not the principal had a row.
+
+    With no row, whichever goes first creates it, and the other waits on the claimed key.
+    """
+
     if not h.locks:
         pytest.skip(f"{h.backend} takes no lock")
 
     for existing in (False, True):
-        principal = uuid4()
+        for raise_first in (True, False):
+            principal = uuid4()
 
-        if existing:
-            async with h.transaction():
-                await h.epochs.hold(principal)
+            if existing:
+                async with h.transaction():
+                    await h.epochs.hold(principal)
 
-        # The issue reads the epoch the raise committed.
-        read = await _first_waits_for_second(
-            h,
-            lambda p=principal: h.epochs.advance(p),
-            lambda p=principal: h.epochs.hold(p),
-        )
-        assert read == 1, (h.backend, existing)
+            if raise_first:
+                # The issue reads the epoch the raise committed.
+                read = await _first_waits_for_second(
+                    h,
+                    lambda p=principal: h.epochs.advance(p),
+                    lambda p=principal: h.epochs.hold(p),
+                )
+                assert read == 1, (h.backend, existing, raise_first)
 
-        # And a raise waits for an issue that holds the epoch.
-        raised = await _first_waits_for_second(
-            h,
-            lambda p=principal: h.epochs.hold(p),
-            lambda p=principal: h.epochs.advance(p),
-        )
-        assert raised == 2, (h.backend, existing)
+            else:
+                # The raise waits for an issue that holds the epoch, or created its row.
+                raised = await _first_waits_for_second(
+                    h,
+                    lambda p=principal: h.epochs.hold(p),
+                    lambda p=principal: h.epochs.advance(p),
+                )
+                assert raised == 1, (h.backend, existing, raise_first)
 
 
 EPOCH_BATTERY: tuple[EpochCheck, ...] = (
