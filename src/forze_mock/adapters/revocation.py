@@ -53,10 +53,28 @@ class MockRevocationStates(RevocationStatesPort):
         return entry[0]
 
     def _set(self, principal_id: UUID, key: str, value: str, expire_at_ms: int) -> None:
-        self.state.revocation_states[(self.namespace, str(principal_id), key)] = (
-            value,
-            expire_at_ms,
-        )
+        states = self.state.revocation_states
+        stored = (self.namespace, str(principal_id), key)
+        states[stored] = (value, expire_at_ms)
+        # Kept in write order, so the oldest writes, the first to expire, sit at the front.
+        states.move_to_end(stored)
+
+    def _sweep(self, now_ms: int) -> None:
+        """Drop expired entries from the front, up to the first live one.
+
+        Amortized constant per write. An entry written with a shorter life than one before it
+        waits for that one to expire too, so nothing outlives the longest life by more.
+        """
+
+        states = self.state.revocation_states
+
+        while states:
+            stored, (_, expire_at_ms) = next(iter(states.items()))
+
+            if expire_at_ms > now_ms:
+                return
+
+            del states[stored]
 
     # ....................... #
 
@@ -79,6 +97,7 @@ class MockRevocationStates(RevocationStatesPort):
     ) -> None:
         with self.state.lock:
             now_ms = self._now_ms()
+            self._sweep(now_ms)
 
             if expire_at_ms <= now_ms:
                 return
@@ -89,7 +108,9 @@ class MockRevocationStates(RevocationStatesPort):
 
     async def revoke(self, principal_id: UUID, keys: Sequence[str], *, ttl: timedelta) -> None:
         with self.state.lock:
-            expire_at_ms = self._now_ms() + ttl // timedelta(milliseconds=1)
+            now_ms = self._now_ms()
+            self._sweep(now_ms)
+            expire_at_ms = now_ms + ttl // timedelta(milliseconds=1)
 
             for key in keys:
                 self._set(principal_id, key, REVOKED_STATE, expire_at_ms)
@@ -107,6 +128,7 @@ class MockRevocationStates(RevocationStatesPort):
     ) -> None:
         with self.state.lock:
             now_ms = self._now_ms()
+            self._sweep(now_ms)
 
             if expire_at_ms <= now_ms:
                 return

@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import threading
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar, final
 
 import attrs
@@ -256,9 +257,13 @@ class MockState:
     """(Namespace, fleet name) → member id → (expiry ms, state, since ms, encoded report),
     both instants on the fleet adapter's clock."""
 
-    revocation_states: dict[tuple[str, str, str], tuple[str, int]] = attrs.field(factory=dict)
+    revocation_states: OrderedDict[tuple[str, str, str], tuple[str, int]] = attrs.field(
+        factory=OrderedDict
+    )
     """(Namespace, principal id, state key) → (value, expiry ms on the states adapter's
-    clock). Written by :class:`~forze_mock.adapters.revocation.MockRevocationStates`."""
+    clock), in write order. Written by
+    :class:`~forze_mock.adapters.revocation.MockRevocationStates`, whose writes sweep the
+    expired entries from the front."""
 
     principal_epochs: dict[str, int] = attrs.field(factory=dict)
     """Principal id → epoch. Written by

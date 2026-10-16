@@ -95,3 +95,19 @@ async def test_the_module_wires_both_stores() -> None:
         assert await epochs.advance(principal) == 1
 
     assert await epochs.current(principal) == 1
+
+
+async def test_a_write_sweeps_the_entries_that_expired_before_it() -> None:
+    clock = _Clock()
+    state = MockState()
+    states = MockRevocationStates(state=state, namespace="sweep", clock=clock)
+    old, new = uuid4(), uuid4()
+
+    for key in ("s:a", "s:b", "f:c"):
+        await states.fill(old, {key: "live|-"}, expire_at_ms=await states.now_ms(old) + 1_000)
+
+    await states.revoke(old, ["s:a"], ttl=timedelta(seconds=5))  # rewritten: lives longer
+    clock.now += 2.0
+    await states.revoke(new, ["s:d"], ttl=timedelta(seconds=5))
+
+    assert sorted(key for _, _, key in state.revocation_states) == ["s:a", "s:d"]
