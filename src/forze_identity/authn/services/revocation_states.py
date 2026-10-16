@@ -307,8 +307,14 @@ class SessionRevocation:
         family_id: UUID | None,
         *,
         by_family: bool,
+        lock: bool = False,
     ) -> str:
-        """The family's or the session's state, from the session rows."""
+        """The family's or the session's state, from the session rows.
+
+        With *lock*, the row the state rests on (the session, or the family's live member) is
+        read ``for_update``: the latest committed row at read committed, and a serialization
+        failure at a stricter level when it changed after the transaction's snapshot.
+        """
 
         row: ReadSession | None
 
@@ -325,11 +331,20 @@ class SessionRevocation:
             )
             row = page.hits[0] if page.hits else None
 
-        else:
-            row = await self.sessions.find(filters={"$values": {"id": session_id}})
+            if row is not None and lock:
+                row = await self.sessions.find(
+                    filters={"$values": {"id": row.id}},
+                    for_update=True,
+                )
 
-            if row is not None and (row.revoked_at is not None or row.rotated_at is not None):
-                row = None
+        else:
+            row = await self.sessions.find(
+                filters={"$values": {"id": session_id}},
+                for_update=lock,
+            )
+
+        if row is not None and (row.revoked_at is not None or row.rotated_at is not None):
+            row = None
 
         if row is None:
             return REVOKED_STATE
@@ -359,8 +374,10 @@ class SessionRevocation:
         A credential minted from a token outlives the token, so it must not be minted from one
         admitted inside the window. When this request authenticated with an access token of
         the same subject, its session (or family, by the binding) is read again from the
-        database, and its epoch compared with *epoch*, the one the issue holds, or else the
-        current one.
+        database, and its epoch compared with *epoch*, the one the issue holds, or else a fresh
+        one. Inside a transaction both are read under locks, so neither comes from a snapshot
+        older than a revocation that has since committed; outside one, each read is a fresh
+        snapshot of its own.
 
         :raises CoreException: ``session_revoked``.
         """
@@ -370,15 +387,17 @@ class SessionRevocation:
         if admitted is None or admitted.principal_id != principal_id:
             return
 
+        lock = self.in_transaction()
         state = await self._state_truth(
             principal_id,
             admitted.session_id,
             admitted.family_id,
             by_family=self._by_family,
+            lock=lock,
         )
 
         if epoch is None:
-            epoch = await self.epochs.current(principal_id)
+            epoch = await (self.epochs.hold if lock else self.epochs.current)(principal_id)
 
         if state == REVOKED_STATE or (admitted.epoch is not None and admitted.epoch < epoch):
             raise _session_revoked()

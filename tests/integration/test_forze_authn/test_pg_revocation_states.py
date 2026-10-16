@@ -33,7 +33,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
-from forze.base.exceptions import CoreException, exc
+from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
 from forze_postgres.execution.deps import postgres_txmanager
 from forze_postgres.execution.deps.configs import PostgresPrincipalEpochConfig
@@ -166,13 +166,17 @@ async def _stacks(
         kernel = AuthnKernelConfig(
             access_token_secret=b"k" * 32,
             refresh_token_pepper=b"p" * 32,
+            api_key_pepper=b"a" * 32,
             revocation_states=RevocationStates(route=STATES, ttl=timedelta(minutes=5)),
         )
         deps = (
             _authn_pg_deps(pg_client, suffix=suffix)
             .merge(
                 AuthnDepsModule(
-                    kernel=kernel, authn={ROUTE: SPEC.enabled_methods}, token_lifecycle={ROUTE}
+                    kernel=kernel,
+                    authn={ROUTE: SPEC.enabled_methods},
+                    token_lifecycle={ROUTE},
+                    api_key_lifecycle={ROUTE},
                 )()
             )
             .merge(
@@ -410,6 +414,69 @@ async def test_a_token_admitted_inside_the_window_cannot_mint_a_session(
     assert await stack.live_sessions(principal) == []
 
 
+@pytest.mark.parametrize(
+    ("what", "revocation"),
+    [("api_key", "logout"), ("api_key", "family"), ("switch", "family")],
+)
+async def test_a_mint_at_repeatable_read_cannot_read_past_a_revocation(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    what: str,
+    revocation: str,
+) -> None:
+    # The minting request's snapshot predates a revocation that commits before its re-check:
+    # read from that snapshot, the caller's session and epoch still look live.
+    stack, down, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    stolen = await stack.in_tx(lambda: stack.tokens.issue_tokens(identity))
+    family = UUID(_claims(stolen)["fam"])
+    snapshot, revoked = asyncio.Event(), asyncio.Event()
+
+    async def request() -> Any:
+        assert await stack.verify(stolen) == "admitted"
+
+        with stack.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
+            async with stack.ctx.tx_ctx.scope(TX, isolation=IsolationLevel.SNAPSHOT):
+                await stack.live_sessions(principal)  # takes the snapshot
+                snapshot.set()
+                await revoked.wait()
+
+                if what == "api_key":
+                    return await stack.ctx.authn.api_key_lifecycle(SPEC).issue_api_key(identity)
+
+                return await stack.tokens.issue_tokens(identity, tenant_id=uuid4())
+
+    async with asyncio.timeout(10):
+        minting = asyncio.create_task(request())
+        await snapshot.wait()
+
+        # Revoked from a process whose write-through fails: Redis still says live.
+        if revocation == "logout":
+            await down.in_tx(lambda: down.tokens.revoke_tokens(identity))
+
+        else:
+            await down.in_tx(lambda: down.tokens.revoke_chain_of_tokens(principal, family))
+
+        revoked.set()
+
+        with pytest.raises(CoreException) as caught:
+            await minting
+
+    # Refused by the locked re-read: a serialization failure, never a mint.
+    assert caught.value.kind is ExceptionKind.CONCURRENCY, caught.value
+
+    keys = await pg_client.fetch_all(
+        sql.SQL("SELECT id FROM {table} WHERE principal_id = %s").format(
+            table=sql.Identifier("public", principals.replace("authz_pri_", "authn_ak_"))
+        ),
+        (principal,),
+    )
+    assert keys == []
+    assert await stack.live_sessions(principal) == []
+
+
 async def test_warm_verifications_need_no_session_or_epoch_table(
     pg_client: PostgresClient,
     redis_client: RedisClient,
@@ -443,3 +510,9 @@ async def test_warm_verifications_need_no_session_or_epoch_table(
     await hidden(True)
     assert await stack.verify(issued) == "session_revoked"
     await hidden(False)
+
+
+def _claims(issued: IssuedTokens) -> dict[str, Any]:
+    import jwt
+
+    return jwt.decode(issued.access.token.token, options={"verify_signature": False})

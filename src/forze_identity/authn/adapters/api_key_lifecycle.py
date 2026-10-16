@@ -103,7 +103,8 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
     revocation: SessionRevocation | None = None
     """When set, a key issued from a request that authenticated with an access token re-reads
-    that token's session first, so a token admitted from a stale cached state mints nothing."""
+    that token's session and epoch first (under locks inside a transaction), so a token admitted
+    from a stale cached state mints nothing."""
 
     # ....................... #
 
