@@ -968,16 +968,27 @@ async def _mint(stack: _Stack, principal: UUID, what: str, token: IssuedTokens) 
 
 @BINDINGS
 @pytest.mark.parametrize("what", ["switch", "api_key"])
+@pytest.mark.parametrize("revocation", ["logout", "family"])
 async def test_a_token_admitted_inside_the_window_mints_nothing(
     binding: SessionBinding,
     what: str,
+    revocation: str,
 ) -> None:
     stack = _stack(binding=binding)
     principal = await stack.principal()
     stolen = await stack.login(principal)
     assert await stack.verify(stolen) == "admitted"
 
-    await _logout_whose_write_is_lost(stack, principal)
+    # A logout raises the epoch; a family revocation leaves it, so only the state refuses.
+    stack.states.writes_down = True
+
+    if revocation == "logout":
+        await stack.logout(principal)
+
+    else:
+        await stack.revoke_family(principal, stolen)
+
+    stack.states.writes_down = False
 
     # The cached states still admit it, as the window allows; minting from it must not.
     assert await stack.verify(stolen) == "admitted"
@@ -1021,5 +1032,19 @@ async def test_a_password_login_after_a_stale_token_is_not_refused() -> None:
             AuthnLoginRequestDTO(login="alice", password="pw-1"),
             stack.ctx,
         )
+
+    assert await asyncio.create_task(request()) is not None
+
+
+async def test_an_issue_for_another_subject_does_not_re_read_the_caller() -> None:
+    # An application issuing a session for someone else, from a request its own token
+    # authenticated, re-reads nothing of that token: it is not the credential being minted from.
+    stack = _stack()
+    caller, other = await stack.principal(), await stack.principal()
+    token = await stack.login(caller)
+
+    async def request() -> IssuedTokens:
+        assert await stack.verify_here(token) == "admitted"
+        return await stack.login(other)
 
     assert await asyncio.create_task(request()) is not None
