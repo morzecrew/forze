@@ -35,10 +35,11 @@ whose claims and marks commit one by one, and a transaction for one whose claim
 only locks its rows. A store without the method gets the no-op. When the scope
 yields an :class:`~forze.application.contracts.outbox.OutboxPassBudget`, the
 relay starts no publish once its deadline has passed — the rows it did not
-reach are left exactly as they were — and caps each publish at the time left.
-A publish cut short by that cap, or by ``publish_timeout``, is a transient
-failure. A transactional pass that raises rolls back whole: every row it
-claimed is pending again, including the ones it already published.
+reach are left exactly as they were — and caps each decode and each publish at
+the time left. A publish cut short by that cap, or by ``publish_timeout``, is a
+transient failure; a decode cut short leaves its row as it was. A transactional
+pass that raises rolls back whole: every row it claimed is pending again,
+including the ones it already published.
 
 Batched marking
 ===============
@@ -355,25 +356,33 @@ async def _relay_pass(
             # rows it did not reach are left as the claim left them.
             break
 
-        try:
-            if end_to_end and is_encrypted_payload(claim.payload):
-                # Forward the ciphertext envelope unchanged; the consumer decrypts it.
-                payload = claim.payload
+        # Decrypting can wait on a KMS. Bound it too, so a slow one cannot hold the pass's
+        # transaction idle past the server's idle timeout; a row cut here is left as it was.
+        decode_bound = asyncio.timeout_at(stop_at)
 
-            else:
-                # ``at_rest`` decrypts here; ``none`` (and a legacy plaintext row on an
-                # ``end_to_end`` route) passes plaintext through. Decode then publish so
-                # the codec gets a model, not a raw dict. Decode/decrypt errors are
-                # poison — the row can't publish.
-                decrypted = await decrypt_outbox_payload(
-                    cipher,
-                    claim.payload,
-                    tenant_id=claim.tenant_id,
-                    event_id=claim.event_id,
-                )
-                payload = outbox_spec.codec.decode_mapping(decrypted)
+        try:
+            async with decode_bound:
+                if end_to_end and is_encrypted_payload(claim.payload):
+                    # Forward the ciphertext envelope unchanged; the consumer decrypts it.
+                    payload = claim.payload
+
+                else:
+                    # ``at_rest`` decrypts here; ``none`` (and a legacy plaintext row on an
+                    # ``end_to_end`` route) passes plaintext through. Decode then publish so
+                    # the codec gets a model, not a raw dict. Decode/decrypt errors are
+                    # poison — the row can't publish.
+                    decrypted = await decrypt_outbox_payload(
+                        cipher,
+                        claim.payload,
+                        tenant_id=claim.tenant_id,
+                        event_id=claim.event_id,
+                    )
+                    payload = outbox_spec.codec.decode_mapping(decrypted)
 
         except CoreException as decode_error:
+            if decode_bound.expired():
+                break
+
             if is_payload_cipher_missing(decode_error):
                 # A deployment fault, not row poison: encrypted rows met a ``None``
                 # keyring (no CryptoDepsModule wired). Marking failed here would
@@ -396,10 +405,16 @@ async def _relay_pass(
             continue
 
         except Exception as e:
+            if decode_bound.expired():
+                break
+
             # Terminal path stays per-row: rare, and error fidelity matters.
             await query.mark_failed([claim.id], error=str(e))
             failed += 1
             continue
+
+        if stop_at is not None and loop.time() >= stop_at:
+            break  # the decode outlasted the budget without being cut: leave the row
 
         # Bounded by the shorter of the publish timeout and what is left of the budget.
         started = loop.time()

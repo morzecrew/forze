@@ -42,6 +42,7 @@ class _Payload(BaseModel):
 
 
 _T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+_DECRYPT = "forze_kits.integrations.outbox._relay_core.decrypt_outbox_payload"
 _SPEC: OutboxSpec[_Payload] = OutboxSpec(name="events", codec=PydanticModelCodec(_Payload))
 
 
@@ -192,6 +193,37 @@ class TestRelayPassBudget:
         assert cut.last_error is not None and cut.last_error.startswith("publish timed out")
         # The row after the deadline was never touched.
         assert unreached.attempts == 0 and unreached.last_error is None
+
+
+class TestRelayDecodeBound:
+    async def test_a_decode_still_running_at_the_deadline_is_cut_and_its_row_left(
+        self,
+    ) -> None:
+        # A decrypt waiting on a slow KMS must not hold the pass's session idle past the
+        # deadline: the server would cut the session off and the whole pass would roll back.
+        calls: list[OutboxClaim] = []
+
+        async def publish(claim: OutboxClaim, payload: Any) -> None:
+            calls.append(claim)
+
+        async def slow_decrypt(_cipher: Any, payload: Any, **_: Any) -> Any:
+            if payload["n"] == 1:
+                await asyncio.sleep(30)
+
+            return payload
+
+        async with _context() as (ctx, state):
+            rows = _seed(state, 3)
+
+            with (
+                patch.object(MockOutboxStore, "pass_scope", _budget_scope(0.3)),
+                patch(_DECRYPT, slow_decrypt),
+            ):
+                result = await asyncio.wait_for(_relay(ctx, publish), timeout=10)
+
+        assert [claim.id for claim in calls] == [rows[0].id]
+        assert (result.published, result.retried, result.failed) == (1, 0, 0)
+        assert all(row.attempts == 0 and row.last_error is None for row in rows[1:])
 
 
 class TestRelayPublishUntil:
