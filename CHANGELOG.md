@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Recovery no longer lands a saga asked to stop unread when its holder died first.** It landed `CANCELLED`, abandoning forward steps past the pivot and skipping the rollback before it. Such a saga now runs again and decides by its journal at its next step, as a live one does.
+
 - **Durable recovery no longer stalls on runs it cannot decrypt.** On Postgres and Mongo, a claimed run whose tenant's key was gone failed the whole claim. Now only that run is skipped and held out of the scan, from two leases doubling to a day; a passing KMS fault keeps the lease. A missing keyring still fails the scan.
 
 - **A durable run whose key is gone no longer fails the run listing.** On Postgres and Mongo, `list_runs` returns it without its payloads, with the new `DurableRunRecord.payloads_unreadable` set; a cancel asked of it is decided once it can be decrypted. A passing KMS fault or a missing keyring still fails the listing.

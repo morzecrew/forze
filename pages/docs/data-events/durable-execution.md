@@ -171,14 +171,17 @@ rather than redoing the work.
 The ask is **unfenced** and the landing is **fenced**: anyone may ask, but only the run's
 current claim holder may write the terminal state, so a stalled replica can't cancel a run
 its new owner is midway through. If the holder dies with the stamp down, the recovery scan
-claims the run and lands it *without invoking the body*.
+claims the run and lands it *without invoking the body* — unless it is a saga, below.
 
 **Cancelling a saga** is decided by the pivot. Before it, compensations run (journaled, as
 always) and the run lands `CANCELLED` — stopping mid-flight is safe precisely because
 compensation exists. At or after it, the request is **refused** and the saga completes
 forward: honouring it there would manufacture a `FORWARD_INCOMPLETE` by operator request.
 The refusal is recorded on the run (`cancel_refused_at`) so the operator who pressed Stop and
-watched it finish anyway gets the reason.
+watched it finish anyway gets the reason. A saga whose holder died before seeing the request is
+run again by recovery rather than landed: only its journal says whether it passed its pivot,
+so it decides at the first step it would act, exactly as a live saga does. With no step left
+to act it completes.
 
 A run **paused waiting on user input** is a different case: its durable run already completed
 cleanly (it succeeded at producing the question), so there is nothing to `request_cancel`.

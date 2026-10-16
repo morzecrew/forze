@@ -34,12 +34,13 @@ class DurableCancelSignal:
     :meth:`request` and the body's own task sets :meth:`refuse`, both on one event loop.
     """
 
-    __slots__ = ("_persisted", "_refused", "_requested")
+    __slots__ = ("_persisted", "_refused", "_requested", "_undelivered")
 
     def __init__(self) -> None:
         self._requested = False
         self._refused = False
         self._persisted = False
+        self._undelivered = False
 
     # ....................... #
 
@@ -62,6 +63,44 @@ class DurableCancelSignal:
         signal._persisted = True
 
         return signal
+
+    # ....................... #
+
+    @classmethod
+    def asked_before_start(cls) -> Self:
+        """A signal for a run recovered with an ask that no execution observed.
+
+        Its holder died before seeing the ask, so nothing decided it. A body that decides
+        its own cancel (a saga, by its journal) is re-invoked with the ask
+        :attr:`undelivered`, and takes it with :meth:`take_undelivered` where it can decide:
+        a saga at the first step that would act, once the journal has replayed up to there.
+        Until then a cancellation is not this ask's, so a drain is not read as an operator's
+        stop.
+        """
+
+        signal = cls()
+        signal._requested = True
+        signal._undelivered = True
+
+        return signal
+
+    # ....................... #
+
+    @property
+    def undelivered(self) -> bool:
+        """Whether the ask is on the record but has not reached the body yet."""
+
+        return self._undelivered
+
+    # ....................... #
+
+    def take_undelivered(self) -> bool:
+        """Take an undelivered ask for delivery; ``True`` once, then ``False``."""
+
+        taken = self._undelivered
+        self._undelivered = False
+
+        return taken
 
     # ....................... #
 

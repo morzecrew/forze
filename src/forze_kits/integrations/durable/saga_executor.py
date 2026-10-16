@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, cast, final
+from typing import TYPE_CHECKING, ClassVar, cast, final
 
 import attrs
 from pydantic import BaseModel
@@ -251,13 +251,21 @@ class DurableSagaExecutor:
 
                 # ``task is None`` folds into the re-raise, as the commit-ambiguity path
                 # does: outside a task there is no cancel count to balance.
-                if task is None or signal is None or not signal.requested or signal.refused:
+                if (
+                    task is None
+                    or signal is None
+                    or not signal.requested
+                    or signal.refused
+                    or signal.undelivered
+                ):
                     raise
 
                 # Absorb the cancellation: every branch below needs to await (compensating,
                 # or re-running the step), and a task still carrying a delivered cancel
-                # cannot. Balancing the count mirrors the tx scope's own conversion.
-                task.uncancel()
+                # cannot. Balancing the count mirrors the tx scope's own conversion. An ask
+                # delivered by the step itself raised without a cancel, so there is none.
+                if task.cancelling():
+                    task.uncancel()
 
                 if not progress.committed:
                     raise _CancelBeforePivot from None
@@ -302,6 +310,14 @@ class DurableSagaExecutor:
             }
 
         async def _journaled() -> JsonDict:
+            # Reached only by a step that will act, never by one the journal replays. An ask
+            # recorded while no holder was alive is delivered here, as the heartbeat would
+            # have: every earlier step has replayed, so whether the pivot committed is known.
+            signal = current_durable_cancel_signal()
+
+            if signal is not None and signal.take_undelivered():
+                raise asyncio.CancelledError
+
             try:
                 if step.retry_policy is not None:
                     return await ctx.resilience().run(_act, policy=step.retry_policy)
@@ -566,20 +582,42 @@ def durable_saga_handler[Ctx: BaseModel](
         await runner.run_now(ctx, str(saga.name), initial.model_dump(mode="json"))
     """
 
-    saga_executor = executor or DurableSagaExecutor()
+    return _DurableSagaHandler(
+        definition=definition,
+        ctx_model=ctx_model,
+        executor=executor or DurableSagaExecutor(),
+    )
 
-    async def handler(
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class _DurableSagaHandler[Ctx: BaseModel]:
+    """A saga as a durable-function body."""
+
+    decides_its_own_cancel: ClassVar[bool] = True
+    """Recovery runs a saga asked to stop again rather than landing the cancel: only its
+    journal says whether it committed at its pivot."""
+
+    definition: SagaDefinition[Ctx]
+    ctx_model: type[Ctx]
+    executor: DurableSagaExecutor
+
+    # ....................... #
+
+    async def __call__(
+        self,
         ctx: ExecutionContext,
         input_json: JsonDict | None,
     ) -> JsonDict:
         if input_json is None:
             raise exc.validation(
-                f"Durable saga {definition.name!r} requires an initial context input.",
+                f"Durable saga {self.definition.name!r} requires an initial context input.",
             )
 
-        initial = ctx_model.model_validate(input_json)
-        result = await saga_executor.run(ctx, definition, initial)
+        initial = self.ctx_model.model_validate(input_json)
+        result = await self.executor.run(ctx, self.definition, initial)
 
         return result.model_dump(mode="json")
-
-    return handler

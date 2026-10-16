@@ -218,7 +218,8 @@ class DurableRunAdminPort(Protocol):
         - ``RUNNING`` — stamps :attr:`DurableRunRecord.cancel_requested_at` and returns
           ``True``. The terminal transition happens when the current lease holder observes
           the stamp on its next heartbeat, or — if the holder died — when recovery claims the
-          run and lands it without invoking the body.
+          run and lands it without invoking the body. A saga is run again instead, and
+          decides by its pivot as a live one does.
         - terminal — no-op, returns ``False``.
         - unknown, or owned by another tenant while one is bound — no-op, returns ``False``
           (indistinguishable on purpose: an operator scoped to one tenant learns nothing
