@@ -7012,7 +7012,9 @@ stream can stay tenant-global.</p>
 <a href="../../identity-tenancy-enc/multi-tenancy/">tenancy ladder</a>: wire the stream route
 <code>tenant_aware</code> and consume with <code>TenantShardedSignalSource(shard=shard)</code> instead of
 <code>StreamGroupSignalSource</code> — one consume loop per assigned tenant, each bound to the
-tenant of the stream it reads (no header trust). The shard is a fixed snapshot resolved
+tenant of the stream it reads (no header trust). <code>StreamGroupSignalSource</code> and
+<code>PubSubSignalSource</code> read with no tenant bound, so over a <code>tenant_aware</code> route the gateway
+step refuses to start (<code>tenant_global_required</code>). The shard is a fixed snapshot resolved
 at startup, so onboarding a new tenant needs a restart; hand the same <code>RealtimeShard</code> to
 the source, the group-ensure step (<code>realtime_tenant_group_ensure_lifecycle_step</code>), and —
 for a partitioned outbox — <code>realtime_tenant_relay_lifecycle_step</code>. The read-side rules

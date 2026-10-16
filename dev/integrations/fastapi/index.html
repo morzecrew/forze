@@ -7093,7 +7093,8 @@ the realtime stream route wired <code>tenant_aware</code> — use
 tail loop per shard tenant, each bound to its tenant, so signals fan out under the
 <strong>stream's</strong> trusted identity rather than an untrusted header (the <abbr title="Server-Side Encryption">SSE</abbr> analog of
 <code>TenantShardedSignalSource</code>). Hand it the same <code>RealtimeShard</code> the publish-side
-steps use.</p>
+steps use. The plain tail reads with no tenant bound, so over a <code>tenant_aware</code> route it
+refuses to start (<code>tenant_global_required</code>).</p>
 <p>Pass the <strong>same</strong> presence store the Socket.IO side uses
 (<code>attach_realtime_sse_route(..., presence=...)</code>) and open <abbr title="Server-Side Encryption">SSE</abbr> streams join their
 principal/topic rooms for the connection's lifetime — so "is this user online"

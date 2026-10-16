@@ -6796,8 +6796,10 @@ consumers check this when they start: run unbound over a <code>tenant_aware</cod
 a client routed per tenant with no tenant to route by, they refuse to start with a
 <code>configuration</code> error coded <code>tenant_global_required</code>. Those are the outbox and realtime
 relays, durable recovery and the scheduler, stream trim, mailbox retention,
-<code>job_staleness</code>, and the queue, notification and commit-stream consumers. A step of your
-own, or one not named here, is not checked.</p>
+<code>job_staleness</code>, the queue, notification and commit-stream consumers, the plain <abbr title="Server-Side Encryption">SSE</abbr> tail,
+and the socket.io gateway over its stream-group or pub/sub source. The singleton guard,
+leadership, realtime group ensure, and the Temporal, S3, Mongo index and permission
+provider steps check their lock or client the same way. A step of your own is not checked.</p>
 <h2 id="declaring-and-enforcing-a-floor">Declaring and enforcing a floor<a class="headerlink" href="#declaring-and-enforcing-a-floor" title="Permanent link">&para;</a></h2>
 <p><code>required_tenant_isolation</code> on a deps module refuses to wire anything weaker than the
 declared tier — checked once at startup, never per request. Each module derives the tier

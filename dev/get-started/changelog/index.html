@@ -9602,6 +9602,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Durable recovery no longer stalls on runs it cannot decrypt.</strong> On Postgres and Mongo, a claimed run whose tenant's key was gone failed the whole claim. Now only that run is skipped and held out of the scan, from two leases doubling to a day; a passing <abbr title="Key Management Service">KMS</abbr> fault keeps the lease. A missing keyring still fails the scan.</p>
+</li>
+<li>
 <p><strong>A realtime stream whose client disconnects mid-wait now leaves its presence rooms.</strong> An <abbr title="Server-Side Encryption">SSE</abbr> stream or WebSocket tail cancelled while waiting kept its member counted in a shared presence store such as Redis until the TTL; the leave now runs shielded, bounded by 2 s.</p>
 </li>
 <li>
@@ -9669,6 +9672,12 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 </li>
 <li>
 <p><strong>The queue and notification consumer steps refuse a tenant-scoped queue at startup</strong>, as <code>tenant_global_required</code>: they receive with no tenant bound, so they failed every poll. <strong>Breaking</strong> for apps that ran one so.</p>
+</li>
+<li>
+<p><strong>The plain <abbr title="Server-Side Encryption">SSE</abbr> tail and the socket.io gateway's stream-group and pub/sub sources refuse a tenant-scoped port at startup</strong>, as <code>tenant_global_required</code>: they read with no tenant bound, so every read failed. The sharded tail and source bind their tenants. <strong>Breaking</strong> for apps that ran one so.</p>
+</li>
+<li>
+<p><strong>A readiness check on a client scoped per tenant says so</strong>, as <code>routed per tenant</code> or <code>tenant-aware</code>, instead of a bare <code>CoreException</code>: a probe has no tenant bound.</p>
 </li>
 </ul>
 <h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
