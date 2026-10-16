@@ -10,7 +10,13 @@ from .invite_token import InviteTokenConfig, InviteTokenService
 from .password import PasswordConfig, PasswordService
 from .refresh_token import RefreshTokenConfig, RefreshTokenService
 from .reset_token import ResetTokenConfig, ResetTokenService
-from .revocation_states import RevocationStates, SessionBinding, SessionRevocation
+from .revocation_states import (
+    AdmittedSession,
+    RevocationStates,
+    SessionBinding,
+    SessionRevocation,
+    remember_admitted_session,
+)
 from .signing import (
     Hs256Signer,
     LocalAsymmetricSigner,
@@ -40,7 +46,9 @@ __all__ = [
     "ResetTokenConfig",
     "PasswordService",
     "PasswordConfig",
+    "AdmittedSession",
     "RevocationStates",
     "SessionBinding",
     "SessionRevocation",
+    "remember_admitted_session",
 ]

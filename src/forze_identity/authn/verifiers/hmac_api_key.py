@@ -16,7 +16,7 @@ from forze_identity._secure_spec import forbid_cache_and_history
 from ..adapters._utils import find_api_key_account_by_key_hash
 from ..domain.constants import ISSUER_FORZE_API_KEY
 from ..domain.models.account import ReadApiKeyAccount
-from ..services import ApiKeyService
+from ..services import ApiKeyService, remember_admitted_session
 
 # ----------------------- #
 
@@ -68,6 +68,9 @@ class HmacApiKeyVerifier(ApiKeyVerifierPort):
         # orchestrator resolves it into AuthnIdentity.actor (intrinsic, trusted).
         if account.actor_principal_id is not None:
             claims[ACT_CLAIM] = {"sub": str(account.actor_principal_id)}
+
+        # The request now authenticates with a key, not with any token verified before.
+        remember_admitted_session(None)
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_API_KEY,

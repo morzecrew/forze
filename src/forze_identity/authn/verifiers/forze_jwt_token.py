@@ -14,7 +14,13 @@ from forze.base.exceptions import CoreException, exc
 from forze_identity._secure_spec import forbid_cache_and_history
 
 from ..domain.models.session import ReadSession
-from ..services import AccessTokenClaims, AccessTokenService, SessionRevocation
+from ..services import (
+    AccessTokenClaims,
+    AccessTokenService,
+    AdmittedSession,
+    SessionRevocation,
+    remember_admitted_session,
+)
 
 # ----------------------- #
 
@@ -96,12 +102,23 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
             if isinstance(pep, bool) or not isinstance(pep, int) or pep < 0:
                 raise _invalid_token()
 
+            principal_id = _uuid_claim(claims["sub"])
+            family_id = _uuid_claim(family_raw)
+
             await self.revocation.check(
-                principal_id=_uuid_claim(claims["sub"]),
+                principal_id=principal_id,
                 session_id=session_id,
-                family_id=_uuid_claim(family_raw),
+                family_id=family_id,
                 pep=pep,
                 tenant=claims.get("tid"),
+            )
+            remember_admitted_session(
+                AdmittedSession(
+                    principal_id=principal_id,
+                    session_id=session_id,
+                    family_id=family_id,
+                    epoch=pep,
+                ),
             )
             return
 
@@ -142,6 +159,17 @@ class ForzeJwtTokenVerifier(TokenVerifierPort):
             raise exc.authentication(
                 "Session does not match token tenant",
                 code="session_tenant_mismatch",
+            )
+
+        if self.revocation is not None:
+            # A token from before the fast path carries no epoch; its session is still re-read.
+            remember_admitted_session(
+                AdmittedSession(
+                    principal_id=token_principal_id,
+                    session_id=session_id,
+                    family_id=None,
+                    epoch=None,
+                ),
             )
 
 

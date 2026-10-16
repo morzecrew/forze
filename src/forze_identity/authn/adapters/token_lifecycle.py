@@ -114,6 +114,10 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
         # Held until the session commits, so a concurrent logout revokes it or raises first.
         epoch = await self._hold_epoch(identity.principal_id)
+
+        if self.revocation is not None:
+            # A session issued from a token (a tenant switch) must not outlive that token.
+            await self.revocation.recheck_caller(identity.principal_id, epoch=epoch)
         now = utcnow()
 
         access_expires_at = now + self.access_expires_in

@@ -27,7 +27,7 @@ from ..domain.models.account import (
     ReadApiKeyAccount,
     UpdateApiKeyAccountCmd,
 )
-from ..services import ApiKeyService
+from ..services import ApiKeyService, SessionRevocation
 from ._utils import (
     find_api_key_account_by_id,
     find_api_key_account_by_key_hash,
@@ -101,6 +101,10 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
     this is set and an identity is bound. ``AuthnDepsModule`` sets it; ``None`` (the default
     for direct construction) leaves the field out."""
 
+    revocation: SessionRevocation | None = None
+    """When set, a key issued from a request that authenticated with an access token re-reads
+    that token's session first, so a token admitted from a stale cached state mints nothing."""
+
     # ....................... #
 
     def __attrs_post_init__(self) -> None:
@@ -128,6 +132,9 @@ class ApiKeyLifecycleAdapter(ApiKeyLifecyclePort):
 
         await self.eligibility.require_authentication_allowed(identity.principal_id)
         await self._require_valid_actor(identity.principal_id, actor_principal_id)
+
+        if self.revocation is not None:
+            await self.revocation.recheck_caller(identity.principal_id)
 
         return await self._issue_for_principal(
             identity.principal_id,

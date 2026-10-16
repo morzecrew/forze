@@ -8,6 +8,7 @@ expires, so a revocation whose write never lands is enforced within ``ttl`` all 
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from datetime import timedelta
 from typing import Literal, final
 from uuid import UUID
@@ -35,6 +36,36 @@ SessionBinding = Literal["session", "family"]
 
 _LIVE = "live|"
 _NO_TENANT = "-"
+
+# ....................... #
+
+
+@final
+@attrs.define(slots=True, frozen=True, kw_only=True)
+class AdmittedSession:
+    """The session whose access token this request authenticated with."""
+
+    principal_id: UUID
+    session_id: UUID
+    family_id: UUID | None
+    epoch: int | None
+
+
+_ADMITTED: ContextVar[AdmittedSession | None] = ContextVar(
+    "forze_identity_admitted_session",
+    default=None,
+)
+
+
+def remember_admitted_session(admitted: AdmittedSession | None) -> None:
+    """Record the token-backed session this request authenticated with, or forget it.
+
+    A credential verified later in the request replaces it: a password or an API key forgets it,
+    so an issue that follows re-checks only the credential the request authenticated with last.
+    """
+
+    _ADMITTED.set(admitted)
+
 
 # ....................... #
 
@@ -183,8 +214,12 @@ class SessionRevocation:
     def _ttl_ms(self) -> int:
         return self.config.ttl // timedelta(milliseconds=1)
 
+    @property
+    def _by_family(self) -> bool:
+        return self.config.session_binding == "family"
+
     def _state_key(self, session_id: UUID, family_id: UUID) -> str:
-        if self.config.session_binding == "family":
+        if self._by_family:
             return f"f:{family_id}"
 
         return f"s:{session_id}"
@@ -223,7 +258,9 @@ class SessionRevocation:
                 error,
             )
             epoch = await self.epochs.current(principal_id)
-            state = await self._state_truth(principal_id, session_id, family_id)
+            state = await self._state_truth(
+                principal_id, session_id, family_id, by_family=self._by_family
+            )
             _judge(pep=pep, epoch=epoch, state=state, tenant=tenant)
             return
 
@@ -250,7 +287,9 @@ class SessionRevocation:
             state = cached_state
 
         else:
-            state = await self._state_truth(principal_id, session_id, family_id)
+            state = await self._state_truth(
+                principal_id, session_id, family_id, by_family=self._by_family
+            )
             missing[key] = state
 
         if missing and not self.in_transaction():
@@ -261,12 +300,19 @@ class SessionRevocation:
 
     # ....................... #
 
-    async def _state_truth(self, principal_id: UUID, session_id: UUID, family_id: UUID) -> str:
+    async def _state_truth(
+        self,
+        principal_id: UUID,
+        session_id: UUID,
+        family_id: UUID | None,
+        *,
+        by_family: bool,
+    ) -> str:
         """The family's or the session's state, from the session rows."""
 
         row: ReadSession | None
 
-        if self.config.session_binding == "family":
+        if by_family and family_id is not None:
             page = await self.sessions.find_many(
                 filters={
                     "$values": {
@@ -306,6 +352,36 @@ class SessionRevocation:
             logger.warning("Revocation states fill failed: %r", error)
 
     # ....................... #
+
+    async def recheck_caller(self, principal_id: UUID, *, epoch: int | None = None) -> None:
+        """Refuse an issue for *principal_id* that this request's own token no longer allows.
+
+        A credential minted from a token outlives the token, so it must not be minted from one
+        admitted inside the window. When this request authenticated with an access token of
+        the same subject, its session (or family, by the binding) is read again from the
+        database, and its epoch compared with *epoch*, the one the issue holds, or else the
+        current one.
+
+        :raises CoreException: ``session_revoked``.
+        """
+
+        admitted = _ADMITTED.get()
+
+        if admitted is None or admitted.principal_id != principal_id:
+            return
+
+        state = await self._state_truth(
+            principal_id,
+            admitted.session_id,
+            admitted.family_id,
+            by_family=self._by_family,
+        )
+
+        if epoch is None:
+            epoch = await self.epochs.current(principal_id)
+
+        if state == REVOKED_STATE or (admitted.epoch is not None and admitted.epoch < epoch):
+            raise _session_revoked()
 
     def require_transaction(self) -> None:
         """Refuse to issue or revoke outside a transaction.

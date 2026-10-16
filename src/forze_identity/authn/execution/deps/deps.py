@@ -641,6 +641,7 @@ class ConfigurableApiKeyLifecycle:
             ),
             events=_resolve_events(ctx, spec),
             caller=ctx.inv_ctx.get_authn,
+            revocation=_session_revocation(ctx, self.shared),
         )
 
 

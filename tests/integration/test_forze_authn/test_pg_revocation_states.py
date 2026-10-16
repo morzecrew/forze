@@ -384,6 +384,32 @@ async def test_a_logout_above_read_committed_is_refused_rather_than_missing_a_se
     assert await stack.live_sessions(principal) == []
 
 
+async def test_a_token_admitted_inside_the_window_cannot_mint_a_session(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    stack, down, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    stolen = await stack.in_tx(lambda: stack.tokens.issue_tokens(identity))
+    assert await stack.verify(stolen) == "admitted"
+
+    # A logout from a process whose write-through fails every attempt leaves Redis stale.
+    await down.in_tx(lambda: down.tokens.revoke_tokens(identity))
+
+    async def request() -> IssuedTokens:
+        # The window admits the stolen token; a tenant switch must not mint from it.
+        assert await stack.verify(stolen) == "admitted"
+        return await stack.in_tx(lambda: stack.tokens.issue_tokens(identity, tenant_id=uuid4()))
+
+    with pytest.raises(CoreException) as caught:
+        await asyncio.create_task(request())
+
+    assert caught.value.code == "session_revoked"
+    assert await stack.live_sessions(principal) == []
+
+
 async def test_warm_verifications_need_no_session_or_epoch_table(
     pg_client: PostgresClient,
     redis_client: RedisClient,

@@ -118,6 +118,10 @@ CREATE TABLE authn_principal_epochs (
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.
+- **Minting re-reads the token.** A tenant switch or an API-key issue in a request that
+  authenticated with an access token re-reads that token's session and epoch from Postgres
+  first, so a token admitted inside the window mints nothing that outlives it. A socket's
+  commands run apart from the handshake that verified its token, and are not re-read.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a token the fast path would refuse. Tokens issued before the fast path carry
   no `fam` or `pep`, and keep the session-row check until they expire.

@@ -37,6 +37,7 @@ from forze.application.execution.operations import run_operation
 from forze.base.exceptions import CoreException, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
 from forze_identity.authn.application.specs import (
+    api_key_account_spec,
     password_account_spec,
     password_reset_spec,
     session_spec,
@@ -51,7 +52,13 @@ from forze_identity.authn.services import (
 from forze_identity.authz.application.specs import policy_principal_spec
 from forze_identity.authz.domain.models.policy_principal import CreatePolicyPrincipalCmd
 from forze_identity.authz.execution.deps.deps import ConfigurablePrincipalRegistry
-from forze_kits.aggregates.authn import AuthnKernelOp, AuthnRefreshRequestDTO, build_authn_registry
+from forze_kits.aggregates.authn import (
+    AuthnIssueApiKeyRequestDTO,
+    AuthnKernelOp,
+    AuthnLoginRequestDTO,
+    AuthnRefreshRequestDTO,
+    build_authn_registry,
+)
 from forze_kits.aggregates.tenancy import TenancyKernelOp, build_tenancy_registry
 from forze_kits.aggregates.tenancy.dto import TenantSwitchRequestDTO
 from forze_mock import MockDepsModule, MockStateDepKey
@@ -66,7 +73,7 @@ pytestmark = pytest.mark.unit
 # ----------------------- #
 
 ROUTE = "main"
-SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token"}))
+SPEC = AuthnSpec(name=ROUTE, enabled_methods=frozenset({"token", "password", "api_key"}))
 NS = SPEC.default_namespace
 STATES = "authn-revocations"
 TTL = timedelta(minutes=5)
@@ -248,7 +255,16 @@ class _Stack:
             await self.lifecycle.revoke_chain_of_tokens(principal, _claims(issued)["fam"])
 
     async def verify(self, issued: IssuedTokens) -> str:
-        """``admitted``, or the refusal's code."""
+        """``admitted``, or the refusal's code, from a request of its own.
+
+        A request runs in its own task, so what its verification records about the caller
+        stays there, as it does behind a transport.
+        """
+
+        return await asyncio.create_task(self.verify_here(issued))
+
+    async def verify_here(self, issued: IssuedTokens) -> str:
+        """Verify in the current task, as the request that then runs an operation does."""
 
         try:
             await self.ctx.authn.authn(SPEC).authenticate_with_token(issued.access.token)
@@ -314,6 +330,7 @@ def _stack(
         access_token_secret=b"k" * 32,
         refresh_token_pepper=b"p" * 32,
         reset_token_pepper=b"r" * 32,
+        api_key_pepper=b"a" * 32,
         password=PasswordConfig(time_cost=1, memory_cost=8, parallelism=1),
         revocation_states=(
             RevocationStates(
@@ -329,7 +346,8 @@ def _stack(
     deps = (
         AuthnDepsModule(
             kernel=kernel,
-            authn={ROUTE: frozenset({"token"})},
+            authn={ROUTE: SPEC.enabled_methods},
+            api_key_lifecycle={ROUTE},
             authz_route=ROUTE,
             token_lifecycle={ROUTE},
             password_lifecycle={ROUTE},
@@ -345,6 +363,7 @@ def _stack(
                         policy_principal_spec.name: document,
                         password_account_spec.name: document,
                         password_reset_spec.name: document,
+                        api_key_account_spec.name: document,
                     },
                     DocumentCommandDepKey: dict.fromkeys(
                         (
@@ -352,6 +371,7 @@ def _stack(
                             policy_principal_spec.name,
                             password_account_spec.name,
                             password_reset_spec.name,
+                            api_key_account_spec.name,
                         ),
                         document,
                     ),
@@ -910,3 +930,96 @@ def test_a_verifier_with_revocation_states_needs_the_session_port() -> None:
             access_svc=AccessTokenService(signer=Hs256Signer(secret=b"k" * 32)),
             revocation=revocation,
         )
+
+
+# ....................... #
+
+
+async def _logout_whose_write_is_lost(stack: _Stack, principal: UUID) -> None:
+    stack.states.writes_down = True
+    await stack.logout(principal)
+    stack.states.writes_down = False
+
+
+async def _mint(stack: _Stack, principal: UUID, what: str, token: IssuedTokens) -> Any:
+    """One request: authenticate with *token*, then run the kit operation that mints from it."""
+
+    async def request() -> Any:
+        assert await stack.verify_here(token) == "admitted"
+
+        with stack.ctx.inv_ctx.bind_identity(authn=AuthnIdentity(principal_id=principal)):
+            if what == "switch":
+                return await run_operation(
+                    build_tenancy_registry(SPEC).freeze(),
+                    NS.key(TenancyKernelOp.SWITCH_TENANT),
+                    TenantSwitchRequestDTO(id=uuid4()),
+                    stack.ctx,
+                )
+
+            return await run_operation(
+                build_authn_registry(SPEC).freeze(),
+                NS.key(AuthnKernelOp.ISSUE_API_KEY),
+                AuthnIssueApiKeyRequestDTO(label="k"),
+                stack.ctx,
+            )
+
+    return await asyncio.create_task(request())
+
+
+@BINDINGS
+@pytest.mark.parametrize("what", ["switch", "api_key"])
+async def test_a_token_admitted_inside_the_window_mints_nothing(
+    binding: SessionBinding,
+    what: str,
+) -> None:
+    stack = _stack(binding=binding)
+    principal = await stack.principal()
+    stolen = await stack.login(principal)
+    assert await stack.verify(stolen) == "admitted"
+
+    await _logout_whose_write_is_lost(stack, principal)
+
+    # The cached states still admit it, as the window allows; minting from it must not.
+    assert await stack.verify(stolen) == "admitted"
+
+    with pytest.raises(CoreException) as caught:
+        await _mint(stack, principal, what, stolen)
+
+    assert caught.value.code == "session_revoked"
+
+
+@pytest.mark.parametrize("what", ["switch", "api_key"])
+async def test_a_live_token_still_mints(what: str) -> None:
+    stack = _stack()
+    principal = await stack.principal()
+    issued = await stack.login(principal)
+    assert await stack.verify(issued) == "admitted"
+
+    assert await _mint(stack, principal, what, issued) is not None
+
+
+async def test_a_password_login_after_a_stale_token_is_not_refused() -> None:
+    stack = _stack()
+    principal = await stack.principal()
+    await stack.ctx.authn.password_account_provisioning(SPEC).register_with_password(
+        principal,
+        PasswordCredentials(login="alice", password="pw-1"),
+    )
+    stale = await stack.login(principal)
+    assert await stack.verify(stale) == "admitted"
+    await _logout_whose_write_is_lost(stack, principal)
+    assert await stack.verify(stale) == "admitted"
+
+    # One request presents the stale token and logs in with a password: the password is the
+    # credential it authenticated with last, so the issue does not re-check the token.
+    async def request() -> Any:
+        assert await stack.verify_here(stale) == "admitted"
+
+        return await run_operation(
+            build_authn_registry(SPEC).freeze(),
+            NS.key(AuthnKernelOp.PASSWORD_LOGIN),
+            AuthnLoginRequestDTO(login="alice", password="pw-1"),
+            stack.ctx,
+        )
+
+    assert await asyncio.create_task(request()) is not None
