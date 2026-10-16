@@ -155,8 +155,8 @@ class DurableRunRecord:
     payloads_unreadable: bool = False
     """Whether this read could not decrypt the run's payloads, its tenant's key being gone or
     its KMS failing. ``input_json`` and ``output_json`` are then ``None`` whatever the run
-    holds. A listing returns such a run, so it can still be found and cancelled, and so does a
-    recovery claim of one asked to stop, so the cancel can land."""
+    holds. Only a listing returns such a run, so it can still be found; a cancel asked of it
+    lands once recovery can decrypt it again."""
 
 
 # ....................... #
@@ -239,9 +239,9 @@ class DurableRunStorePort(Protocol):
         tenant's key is gone is held out of the scan for longer than *lease_for*, doubling with
         each claim up to a day, so such runs cannot fill every batch; one that met a passing
         fault (a throttled KMS) keeps its lease. A payload cipher missing from the wiring fails
-        the call instead. A run an operator asked to stop, with no refusal recorded, is
-        returned anyway, with :attr:`DurableRunRecord.payloads_unreadable` set: cancelling it
-        needs no payload.
+        the call instead. A cancel asked of such a run is held with it, and lands once a scan
+        can decrypt it: without its payloads the runner cannot tell a saga past its pivot,
+        which must complete forward, from a run it may stop.
         """
         ...  # pragma: no cover
 

@@ -340,12 +340,12 @@ async def test_a_run_whose_key_is_gone_costs_only_that_run(
         return left
 
     assert await run_unopenable_claim_scenario(store_for, lease_left) == {
-        "claimed": [("kept", {"n": 1}, False), ("stopped", None, True)],
+        "claimed": [("kept", {"n": 1}, False)],
         "kept_fence": 1,
         "kept_leased_for_its_lease": True,
         "lost_held_past_its_lease": True,
         "busy_leased_for_its_lease": True,
-        "stopped_status": "cancelled",
+        "stopped_held_past_its_lease": True,
         "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
     }
 

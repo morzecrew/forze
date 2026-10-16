@@ -403,15 +403,6 @@ class MongoDurableRunStore(
                 if is_payload_cipher_missing(error):
                     raise
 
-                if (
-                    row.get("cancel_requested_at") is not None
-                    and row.get("cancel_refused_at") is None
-                ):
-                    # An operator asked it to stop, and landing that needs no payload: the
-                    # runner cancels a run asked to stop without running it.
-                    records.append(await self._record_from_row(row, open_payloads=False))
-                    continue
-
                 hold = unopenable_hold(error, lease_for=lease_for, attempts=row["attempts"])
                 logger.exception(
                     "Durable run %s was claimed for recovery but could not be opened; %s",

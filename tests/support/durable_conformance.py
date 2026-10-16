@@ -457,6 +457,7 @@ async def run_unopenable_claim_scenario(
     busy = await store_for(throttled, sealing).enqueue("busy", input_json={"n": 3})
 
     # Taken by a worker that died, then asked to stop: its lease has lapsed, the stamp is on.
+    # Unread, it might be a saga past its pivot, so it is held rather than cancelled.
     offboarded_store = store_for(offboarded, sealing)
     stopped = await offboarded_store.enqueue("stopped", input_json={"n": 4})
     await offboarded_store.begin(stopped.run_id, lease_for=timedelta(0))
@@ -475,15 +476,10 @@ async def run_unopenable_claim_scenario(
         "kept_leased_for_its_lease": await lease_left(kept.run_id) <= lease,
         "lost_held_past_its_lease": await lease_left(lost.run_id) > lease,
         "busy_leased_for_its_lease": await lease_left(busy.run_id) <= lease,
+        # Held like any other: unread, a saga past its pivot cannot be told from a run the
+        # runner may stop, so the cancel waits until the run can be decrypted.
+        "stopped_held_past_its_lease": await lease_left(stopped.run_id) > lease,
     }
-
-    # What the runner does with it: land the cancel under the claim's fence, unopened.
-    handed = next(record for record in claimed if record.run_id == stopped.run_id)
-    await recovery.mark_cancelled(stopped.run_id, fence=handed.attempts)
-    lister_kms = _RecoveryKms(gone=f"tenant-{offboarded}", throttled="")
-    lister = store_for(None, _tenant_keyring(lister_kms))
-    page = await cast(DurableRunAdminPort, lister).list_runs(limit=10)
-    out["stopped_status"] = next(r.status.value for r in page.records if r.run_id == stopped.run_id)
 
     # A missing cipher is the deployment's, not one run's: every sealed run would be
     # skipped, so the scan refuses instead.
