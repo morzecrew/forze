@@ -39,8 +39,9 @@ class PostgresPrincipalEpochStore(PrincipalEpochPort):
 
     The exclusion needs the raise at read committed (the Postgres default), where the
     revocation's scan, a later statement, sees the session an issue committed while the raise
-    waited. At repeatable read the scan reads the snapshot taken before the wait and misses it,
-    so a raise there is refused; at serializable the losing transaction fails instead.
+    waited. At repeatable read or serializable the scan reads the snapshot taken before the
+    wait and misses it — serializable isolation checks only against other serializable
+    transactions, and an issue need not be one — so a raise there is refused.
     """
 
     client: PostgresClientPort
@@ -109,12 +110,13 @@ class PostgresPrincipalEpochStore(PrincipalEpochPort):
         if row is None:
             return 0
 
-        # Refused before the scan, so the whole revocation rolls back with it.
-        if row[1] == "repeatable read":
+        # Refused before the scan, so the whole revocation rolls back with it. Postgres runs
+        # read uncommitted as read committed.
+        if row[1] not in ("read committed", "read uncommitted"):
             raise exc.configuration(
-                "A principal's epoch cannot be raised at repeatable read: the revocation's "
-                "session scan would read a snapshot older than a session issued meanwhile. Run "
-                "revocations at read committed or serializable.",
+                f"A principal's epoch cannot be raised at {row[1]}: the revocation's session "
+                "scan would read a snapshot older than a session issued meanwhile. Run "
+                "revocations at read committed.",
                 code="authn_epoch_isolation",
             )
 

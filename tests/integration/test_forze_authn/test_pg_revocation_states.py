@@ -338,12 +338,16 @@ async def test_an_issue_waits_for_a_logout_and_carries_the_raised_epoch(
     assert await down.verify(issued) == "admitted"
 
 
-async def test_a_logout_at_snapshot_isolation_is_refused_rather_than_missing_a_session(
+@pytest.mark.parametrize("isolation", [IsolationLevel.SNAPSHOT, IsolationLevel.SERIALIZABLE])
+async def test_a_logout_above_read_committed_is_refused_rather_than_missing_a_session(
     pg_client: PostgresClient,
     redis_client: RedisClient,
+    isolation: IsolationLevel,
 ) -> None:
     # Its snapshot would be fixed before its raise waits on the issue, so its scan would
-    # miss the session the issue commits, and that session would stay refreshable.
+    # miss the session the issue commits, and that session would stay refreshable. At
+    # serializable nothing catches it either: the issue, at read committed, is not one of
+    # the transactions serializable isolation checks against.
     stack, _, principals, _ = await _stacks(pg_client, redis_client)
     principal = uuid4()
     await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
@@ -363,7 +367,7 @@ async def test_a_logout_at_snapshot_isolation_is_refused_rather_than_missing_a_s
         logout = asyncio.create_task(
             stack.in_tx(
                 lambda: stack.tokens.revoke_tokens(identity),
-                isolation=IsolationLevel.SNAPSHOT,
+                isolation=isolation,
             )
         )
         await asyncio.sleep(BLOCKED_FOR)
