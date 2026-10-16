@@ -18,6 +18,7 @@ the code proves nothing and only running both does.
 # covers: DurableRunStorePort.mark_cancelled
 # covers: DurableRunStorePort.refuse_cancel
 # covers: DurableRunStorePort.mark_timed_out
+# covers: DurableRunAdminPort.requeue_quarantined
 """
 
 from __future__ import annotations
@@ -55,10 +56,13 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    QUARANTINE_ADMIN_OUTCOME,
+    mock_quarantine,
     run_claim_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_quarantine_admin_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -350,6 +354,41 @@ class TestDurableMockVsPostgres:
         assert mock_out["schedule_mismatch"] == "authentication"
         assert mock_out["schedule_reaches_owner"] == "fn"
         assert mock_out["schedule_hidden_from_other"] is True
+
+    async def test_mock_matches_postgres_for_quarantined_runs(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_quarantine_admin_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            mock_quarantine(mock_state),
+        )
+
+        async def pg_quarantine(run_id: str) -> None:
+            await pg_client.execute(
+                sql.SQL(
+                    "UPDATE {table} SET status = 'quarantined', leased_until = NULL "
+                    "WHERE run_id = {run_id}"
+                ).format(
+                    table=sql.Identifier("public", run_table),
+                    run_id=sql.Placeholder("run_id"),
+                ),
+                {"run_id": run_id},
+            )
+
+        pg_out = await run_quarantine_admin_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            pg_quarantine,
+        )
+
+        assert mock_out == pg_out == QUARANTINE_ADMIN_OUTCOME
 
     async def test_mock_matches_postgres_for_schedules(
         self, pg_client: PostgresClient, schedule_table: str

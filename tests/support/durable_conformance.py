@@ -51,10 +51,10 @@ from forze.application.contracts.durable.function import (
     reset_durable_run,
 )
 from forze.application.contracts.tenancy import TenantIdentity
-from forze.application.integrations.crypto import Keyring
+from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE, Keyring
 from forze.base.exceptions import CoreException, exc
 from forze.base.primitives import utcnow
-from forze_mock import MockKeyManagement
+from forze_mock import MockKeyManagement, MockState
 
 # ----------------------- #
 
@@ -542,6 +542,313 @@ async def run_unreadable_listing_scenario(
         out["no_cipher"] = error.code
 
     return out
+
+
+async def run_quarantine_scenario(
+    store_for: Callable[[UUID | None, BytesCipherPort | None], DurableRunStorePort],
+    expire: Callable[[str], Awaitable[None]],
+    lease_left: Callable[[str], Awaitable[timedelta | None]],
+) -> dict[str, Any]:
+    """Quarantine a sealed run recovery keeps failing to open, then bring it back.
+
+    For the engines that seal payloads. The scan holds such a run out for a hold doubling
+    with each claim; once that hold has reached its cap the run is quarantined instead, a
+    status the scan never claims, so however many pile up they cannot crowd it. A lease of
+    half a day doubles to the cap on the first claim, which drives the predicate in two scans
+    rather than nine and shows the first claim is still only held. *expire* lapses a run's
+    lease or hold, and *lease_left* reads it straight from the backend (``None`` when it is
+    cleared).
+    """
+
+    offboarded, throttled = uuid4(), uuid4()
+    sealing = _tenant_keyring(MockKeyManagement())
+
+    lost = await store_for(offboarded, sealing).enqueue("lost", input_json={"n": 1})
+    busy = await store_for(throttled, sealing).enqueue("busy", input_json={"n": 2})
+
+    lease = timedelta(hours=12)
+    failing = store_for(
+        None,
+        _tenant_keyring(_RecoveryKms(gone=f"tenant-{offboarded}", throttled=f"tenant-{throttled}")),
+    )
+    healthy = store_for(None, _tenant_keyring(MockKeyManagement()))
+    # Reads the lost run without its payloads and every other run with them, so a listing
+    # is not failed by the throttled one.
+    listing = cast(
+        DurableRunAdminPort,
+        store_for(None, _tenant_keyring(_RecoveryKms(gone=f"tenant-{offboarded}", throttled=""))),
+    )
+
+    async def lost_state() -> tuple[str, int, bool]:
+        page = await listing.list_runs(limit=10)
+        record = next(r for r in page.records if r.run_id == lost.run_id)
+
+        return record.status.value, record.attempts, record.payloads_unreadable
+
+    async def quarantined() -> list[str]:
+        page = await listing.list_runs(status=DurableRunStatus.QUARANTINED, limit=10)
+
+        return sorted(record.name for record in page.records)
+
+    out: dict[str, Any] = {}
+
+    # 1. The first claim holds, whatever the lease.
+    out["first_claimed"] = [
+        r.name for r in await failing.claim_abandoned(limit=10, lease_for=lease)
+    ]
+    out["first_lost"] = await lost_state()
+    out["first_lost_held_past_its_lease"] = (await lease_left(lost.run_id) or lease) > lease
+
+    # 2. The second claim's doubled hold is past the cap: quarantined, its lease cleared. The
+    #    throttled run's fault passes, so however far its hold doubles it keeps its lease.
+    await expire(lost.run_id)
+    await expire(busy.run_id)
+
+    out["second_claimed"] = [
+        r.name for r in await failing.claim_abandoned(limit=10, lease_for=lease)
+    ]
+    out["second_lost"] = await lost_state()
+    out["second_lost_lease"] = await lease_left(lost.run_id)
+    out["busy_kept_its_lease"] = (await lease_left(busy.run_id) or lease * 2) <= lease
+    out["quarantined"] = await quarantined()
+    page = await listing.list_runs(status=DurableRunStatus.QUARANTINED, limit=10)
+    out["quarantined_unreadable"] = [r.payloads_unreadable for r in page.records]
+
+    # 3. The scan never claims it, even one that could now open it.
+    await expire(busy.run_id)
+    out["healthy_scan"] = [r.name for r in await healthy.claim_abandoned(limit=10, lease_for=lease)]
+    out["healthy_scan_lost"] = await lost_state()
+
+    # 4. Requeue is scoped like the other admin verbs: another tenant's moves nothing.
+    other = cast(DurableRunAdminPort, store_for(throttled, None))
+    owner = cast(DurableRunAdminPort, store_for(offboarded, None))
+    out["requeued_by_other"] = await other.requeue_quarantined()
+    out["after_other"] = await quarantined()
+    out["requeued_by_owner"] = await owner.requeue_quarantined()
+    out["requeued_lost"] = await lost_state()
+    out["requeued_lost_lease"] = await lease_left(lost.run_id)
+
+    # 5. Its key still gone, the next claim quarantines it again at once.
+    out["requeued_claimed"] = [
+        r.name for r in await failing.claim_abandoned(limit=10, lease_for=lease)
+    ]
+    out["requarantined"] = await lost_state()
+
+    # 6. A missing cipher fails the scan rather than quarantining what it cannot open.
+    out["requeued_once_more"] = await cast(DurableRunAdminPort, healthy).requeue_quarantined()
+
+    try:
+        await store_for(None, None).claim_abandoned(limit=10, lease_for=lease)
+        out["no_cipher"] = None
+
+    except CoreException as error:
+        out["no_cipher"] = error.code
+
+    out["no_cipher_lost"] = await lost_state()
+
+    # 7. With its key back, the run is claimed and opened.
+    await expire(lost.run_id)
+    out["recovered"] = [
+        (r.name, r.input_json, r.attempts)
+        for r in await healthy.claim_abandoned(limit=10, lease_for=lease)
+    ]
+
+    return out
+
+
+QUARANTINE_OUTCOME: dict[str, Any] = {
+    "first_claimed": [],
+    "first_lost": ("running", 1, True),
+    "first_lost_held_past_its_lease": True,
+    "second_claimed": [],
+    "second_lost": ("quarantined", 2, True),
+    "second_lost_lease": None,
+    "busy_kept_its_lease": True,
+    "quarantined": ["lost"],
+    "quarantined_unreadable": [True],
+    "healthy_scan": ["busy"],
+    "healthy_scan_lost": ("quarantined", 2, True),
+    "requeued_by_other": 0,
+    "after_other": ["lost"],
+    "requeued_by_owner": 1,
+    "requeued_lost": ("pending", 2, True),
+    "requeued_lost_lease": None,
+    "requeued_claimed": [],
+    "requarantined": ("quarantined", 3, True),
+    "requeued_once_more": 1,
+    "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
+    "no_cipher_lost": ("running", 4, True),
+    "recovered": [("lost", {"n": 1}, 5)],
+}
+"""What :func:`run_quarantine_scenario` answers on every engine that seals."""
+
+
+class FirstCallRuns:
+    """A client whose first call to *method* runs *hook* before it.
+
+    Puts a competing scanner between a claim and the write that follows it, the one ordering
+    a sequential test never produces on its own.
+    """
+
+    def __init__(self, inner: Any, method: str, hook: Callable[[], Awaitable[None]]) -> None:
+        self._inner = inner
+        self._method = method
+        self._hook: Callable[[], Awaitable[None]] | None = hook
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._inner, name)
+
+        if name != self._method or self._hook is None:
+            return attribute
+
+        hook, self._hook = self._hook, None
+
+        async def call(*args: Any, **kwargs: Any) -> Any:
+            await hook()
+
+            return await attribute(*args, **kwargs)
+
+        return call
+
+
+async def run_quarantine_fence_scenario(
+    store_for: Callable[[UUID | None, BytesCipherPort | None], DurableRunStorePort],
+    racing: Callable[[BytesCipherPort, Callable[[], Awaitable[None]]], DurableRunStorePort],
+    expire: Callable[[str], Awaitable[None]],
+) -> dict[str, Any]:
+    """A scan quarantines only a run it still holds.
+
+    Between the claim that failed to open a run and the write that quarantines it, the run's
+    lease can lapse and another scanner, its key back, reclaim it. The run is then that
+    scanner's, so the stale write must move nothing. *racing* builds an unbound store sealing
+    with a cipher, whose first write after its claim runs the given hook first.
+    """
+
+    offboarded = uuid4()
+    lost = await store_for(offboarded, _tenant_keyring(MockKeyManagement())).enqueue(
+        "lost", input_json={"n": 1}
+    )
+    lease = timedelta(hours=12)
+    failing = _tenant_keyring(_RecoveryKms(gone=f"tenant-{offboarded}", throttled=""))
+    healthy = store_for(None, _tenant_keyring(MockKeyManagement()))
+
+    # The first claim only holds it, so the next one would quarantine it.
+    await store_for(None, failing).claim_abandoned(limit=10, lease_for=lease)
+    await expire(lost.run_id)
+
+    reclaimed: list[int] = []
+
+    async def reclaim() -> None:
+        await expire(lost.run_id)
+        claimed = await healthy.claim_abandoned(limit=10, lease_for=lease)
+        reclaimed.extend(record.attempts for record in claimed)
+
+    await racing(failing, reclaim).claim_abandoned(limit=10, lease_for=lease)
+    after = await healthy.load(lost.run_id)
+
+    return {
+        "reclaimed": reclaimed,
+        "after": None if after is None else (after.status.value, after.attempts),
+    }
+
+
+async def run_quarantine_admin_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+    quarantine: Callable[[str], Awaitable[None]],
+) -> dict[str, Any]:
+    """List, cancel and requeue quarantined runs, from both sides of the tenant boundary.
+
+    Every engine answers these alike, sealing or not, so the leg puts a claimed run into
+    quarantine directly through *quarantine*: the mock never seals, so it never quarantines
+    a run itself, and what is compared is how each one treats the status once a run is in
+    it. *store_for* builds a store bound to a tenant (``None`` for unbound) over one relation.
+    """
+
+    tenant_a = UUID("00000000-0000-0000-0000-00000000000a")
+    tenant_b = UUID("00000000-0000-0000-0000-00000000000b")
+    as_a, as_b, unbound = store_for(tenant_a), store_for(tenant_b), store_for(None)
+    admin_a, admin = cast(DurableRunAdminPort, as_a), cast(DurableRunAdminPort, unbound)
+    lease = timedelta(minutes=5)
+
+    held_a = await as_a.enqueue("qa", input_json=None)
+    held_b = await as_b.enqueue("qb", input_json=None)
+
+    for store, run in ((as_a, held_a), (as_b, held_b)):
+        assert await store.begin(run.run_id, lease_for=lease) is not None
+        await quarantine(run.run_id)
+
+    async def names(port: DurableRunAdminPort) -> list[str]:
+        page = await port.list_runs(status=DurableRunStatus.QUARANTINED, limit=10)
+
+        return sorted(record.name for record in page.records)
+
+    async def state(run_id: str) -> tuple[str, int, bool] | None:
+        record = await unbound.load(run_id)
+
+        if record is None:
+            return None
+
+        return record.status.value, record.attempts, record.cancel_requested_at is not None
+
+    out: dict[str, Any] = {}
+
+    out["listed"] = await names(admin)
+    out["listed_by_a"] = await names(admin_a)
+    out["scan_claims"] = [r.name for r in await unbound.claim_abandoned(limit=10, lease_for=lease)]
+    out["begin_claims"] = await unbound.begin(held_a.run_id, lease_for=lease) is not None
+
+    # A cancel is stamped and waits: unread, a saga past its pivot cannot be told apart.
+    out["ask"] = await admin_a.request_cancel(held_a.run_id)
+    out["asked"] = await state(held_a.run_id)
+    out["ask_across_tenants"] = await admin_a.request_cancel(held_b.run_id)
+
+    out["requeued_by_a"] = await admin_a.requeue_quarantined()
+    out["left_after_a"] = await names(admin)
+    out["requeued_a"] = await state(held_a.run_id)
+
+    out["requeued_by_all"] = await admin.requeue_quarantined()
+    out["requeued_again"] = await admin.requeue_quarantined()
+
+    # A requeued run has been claimed before, so it may be a saga past its pivot: a cancel
+    # asked of it now is stamped and left for the runner, not landed at once.
+    out["ask_requeued"] = await admin.request_cancel(held_b.run_id)
+    out["asked_requeued"] = await state(held_b.run_id)
+
+    out["claimed"] = sorted(
+        (r.name, r.attempts, r.cancel_requested_at is not None)
+        for r in await unbound.claim_abandoned(limit=10, lease_for=lease)
+    )
+
+    return out
+
+
+QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
+    "listed": ["qa", "qb"],
+    "listed_by_a": ["qa"],
+    "scan_claims": [],
+    "begin_claims": False,
+    "ask": True,
+    "asked": ("quarantined", 1, True),
+    "ask_across_tenants": False,
+    "requeued_by_a": 1,
+    "left_after_a": ["qb"],
+    "requeued_a": ("pending", 1, True),
+    "requeued_by_all": 1,
+    "requeued_again": 0,
+    "ask_requeued": True,
+    "asked_requeued": ("pending", 1, True),
+    "claimed": [("qa", 2, True), ("qb", 2, True)],
+}
+"""What :func:`run_quarantine_admin_scenario` answers on every engine, the mock included."""
+
+
+def mock_quarantine(state: MockState) -> Callable[[str], Awaitable[None]]:
+    """Put a run of *state* into quarantine, as an engine's recovery scan would."""
+
+    async def quarantine(run_id: str) -> None:
+        state.durable_runs[run_id].update(status="quarantined", leased_until=None)
+
+    return quarantine
 
 
 # ....................... #

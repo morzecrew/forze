@@ -26,6 +26,7 @@ resolver_profile  # unused variable (src/forze/application/contracts/authn/specs
 matched_permission_key  # unused variable (src/forze/application/contracts/authz/value_objects/decision.py:73)
 resolved_at  # unused variable (src/forze/application/contracts/authz/value_objects/grants.py:20)
 update_cmd  # unused variable (src/forze/application/contracts/document/write_types.py:26)
+_.requeue_quarantined  # unused method (src/forze/application/contracts/durable/function/run_admin.py:251)
 closed_at  # unused variable (src/forze/application/contracts/durable/workflow/specs.py:144)
 failure_message  # unused variable (src/forze/application/contracts/durable/workflow/specs.py:147)
 failure_type  # unused variable (src/forze/application/contracts/durable/workflow/specs.py:150)

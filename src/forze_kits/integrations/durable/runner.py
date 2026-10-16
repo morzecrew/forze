@@ -270,9 +270,9 @@ class DurableFunctionRunner:
         """Claim up to *limit* abandoned runs and re-invoke them; return how many it re-invoked.
 
         A claimed run the store could not open (its tenant's key is gone) is held out of the
-        scan by the store and not counted, so a batch with one can come back short. A body
-        failure during recovery is recorded on the run and swallowed (the scanner
-        keeps draining), never propagated. With *max_concurrency* set the claimed runs are
+        scan by the store, or quarantined once the hold has doubled to its cap, and not
+        counted, so a batch with one can come back short. A body failure during recovery is
+        recorded on the run and swallowed (the scanner keeps draining), never propagated. With *max_concurrency* set the claimed runs are
         recovered concurrently up to that bound (each run executes in its own task, so its
         ambient run binding stays isolated); ``None`` recovers them sequentially.
         """

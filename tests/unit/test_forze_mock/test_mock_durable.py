@@ -380,3 +380,31 @@ class TestMockListRuns:
         second = await store.load(record.run_id)
         assert second is not None
         assert second.cancel_refused_at == first.cancel_refused_at
+
+
+async def test_the_mock_lists_cancels_and_requeues_quarantined_runs() -> None:
+    """The mock never seals, so it never quarantines a run itself, but it must answer the
+    status like an engine once a run is in it.
+
+    # covers: DurableRunAdminPort.requeue_quarantined
+    """
+
+    from forze_mock.adapters.durable import MockDurableRunStore
+    from tests.support.durable_conformance import (
+        QUARANTINE_ADMIN_OUTCOME,
+        mock_quarantine,
+        run_quarantine_admin_scenario,
+        tenant_provider_for,
+    )
+
+    state = MockState()
+
+    assert (
+        await run_quarantine_admin_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=state, tenant_provider=tenant_provider_for(tenant)
+            ),
+            mock_quarantine(state),
+        )
+        == QUARANTINE_ADMIN_OUTCOME
+    )

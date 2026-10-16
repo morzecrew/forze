@@ -4,10 +4,11 @@ Kept **separate** from the operational :class:`DurableRunStorePort` (enqueue / c
 complete) — mirroring the framework's management/data split — so a handler driving an ops
 dashboard never acquires the claim/write store. Backed by the same ``durable_run`` relation.
 
-Two verbs live here, both operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
-mutates a run. :meth:`DurableRunAdminPort.request_cancel` records an *ask* — deliberately
-the only operator verb that writes, and deliberately not on the data-plane store: anyone may
-ask a run to stop, but only the fence-holding runner may land the terminal state.
+Three verbs live here, all operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
+mutates a run. :meth:`DurableRunAdminPort.request_cancel` records an *ask*, deliberately not
+on the data-plane store: anyone may ask a run to stop, but only the fence-holding runner may
+land the terminal state. :meth:`DurableRunAdminPort.requeue_quarantined` returns runs
+recovery gave up on to the scan; they have no holder, so it needs no fence.
 """
 
 from __future__ import annotations
@@ -172,8 +173,8 @@ class DurableRunAdminPort(Protocol):
     Newest-first keyset pagination over the same ``durable_run`` relation the store writes.
     Tenant scoping mirrors recovery: scoped to the bound tenant when one is bound, and spans
     every tenant when unbound (an operator view over a tagged shared table) — and that
-    applies to :meth:`request_cancel` too, so an operator bound to one tenant cannot stop a
-    run it could not have listed.
+    applies to :meth:`request_cancel` and :meth:`requeue_quarantined` too, so an operator
+    bound to one tenant cannot stop or requeue a run it could not have listed.
     """
 
     def list_runs(
@@ -193,8 +194,8 @@ class DurableRunAdminPort(Protocol):
 
         A run whose payloads cannot be decrypted, its tenant's key being gone, is listed
         without them, with :attr:`~DurableRunRecord.payloads_unreadable` set, rather than
-        failing the page. A passing KMS fault, or a payload cipher missing from the wiring,
-        fails the call.
+        failing the page; ``status=QUARANTINED`` lists the runs recovery gave up on that way.
+        A passing KMS fault, or a payload cipher missing from the wiring, fails the call.
         """
         ...  # pragma: no cover
 
@@ -212,14 +213,17 @@ class DurableRunAdminPort(Protocol):
 
         By state:
 
-        - ``PENDING`` — transitions to ``CANCELLED`` immediately (nothing is executing, so
-          there is no holder to wait for); the recovery scanner never claims it. Returns
-          ``True``.
+        - ``PENDING``, never claimed — transitions to ``CANCELLED`` immediately (nothing has
+          executed, so there is no holder to wait for and no journal to decide by); the
+          recovery scanner never claims it. Returns ``True``.
         - ``RUNNING`` — stamps :attr:`DurableRunRecord.cancel_requested_at` and returns
           ``True``. The terminal transition happens when the current lease holder observes
           the stamp on its next heartbeat, or — if the holder died — when recovery claims the
           run and lands it without invoking the body. A saga is run again instead, and
           decides by its pivot as a live one does.
+        - ``QUARANTINED``, or ``PENDING`` after a requeue from it — stamps the ask, leaves the
+          state alone and returns ``True``. The run may be a saga past its pivot, which must
+          not be cancelled unread; the ask is decided once a claim can decrypt it.
         - terminal — no-op, returns ``False``.
         - unknown, or owned by another tenant while one is bound — no-op, returns ``False``
           (indistinguishable on purpose: an operator scoped to one tenant learns nothing
@@ -241,5 +245,18 @@ class DurableRunAdminPort(Protocol):
         indistinguishable to the caller, and a caller who cannot tell them apart shows a
         "Stop" button that reports success and does nothing. That is the failure this whole
         surface exists to avoid, arriving through the return type instead of the behaviour.
+        """
+        ...  # pragma: no cover
+
+    def requeue_quarantined(self) -> Awaitable[int]:
+        """Return every ``QUARANTINED`` run to ``PENDING``; return how many moved.
+
+        Call it once the keys those runs need are back. Each run is due at once, with no
+        lease, and keeps its ``attempts``, payloads and cancel stamps, so the recovery scan
+        claims it as it would any pending run. A run whose key is still gone is quarantined
+        again on that claim, since its ``attempts`` already put its hold at the cap.
+
+        Scoped like :meth:`list_runs`: a bound tenant requeues only its own runs; unbound,
+        every tenant's.
         """
         ...  # pragma: no cover

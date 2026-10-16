@@ -392,6 +392,9 @@ class _ListOnlyAdmin:
     async def request_cancel(self, run_id: str) -> bool:
         raise AssertionError("must not be reached — the gate refuses first")
 
+    async def requeue_quarantined(self) -> int:
+        return 0
+
 
 # ....................... #
 

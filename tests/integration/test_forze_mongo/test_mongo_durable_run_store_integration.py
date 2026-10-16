@@ -11,11 +11,13 @@ first already written.
 
 # covers: DurableRunStorePort.enqueue
 # covers: DurableRunStorePort.claim_abandoned
+# covers: DurableRunAdminPort.requeue_quarantined
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
@@ -44,6 +46,10 @@ from forze_mongo.execution.deps.configs import (
 )
 from forze_mongo.kernel.client import MongoClient
 from tests.support.durable_conformance import (
+    QUARANTINE_OUTCOME,
+    FirstCallRuns,
+    run_quarantine_fence_scenario,
+    run_quarantine_scenario,
     run_unopenable_claim_scenario,
     run_unreadable_listing_scenario,
     tenant_provider_for,
@@ -89,6 +95,13 @@ def _store(
         client=client,
         config=MongoDurableRunConfig(collection=collection),
         tenant_provider=(lambda: TenantIdentity(tenant_id=tenant)) if tenant else (lambda: None),
+    )
+
+
+async def _expire_lease(client: MongoClient, collection: tuple[str, str], run_id: str) -> None:
+    coll = await client.collection(collection[1], db_name=collection[0])
+    await client.update_one(
+        coll, {"_id": run_id}, {"$set": {"leased_until": utcnow() - timedelta(hours=1)}}
     )
 
 
@@ -365,6 +378,63 @@ async def test_a_run_whose_key_is_gone_is_listed_without_its_payloads(
         "listed": [("kept", {"n": 1}, False), ("lost", None, True)],
         "passing_fault": "test.kms_throttled",
         "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
+    }
+
+
+async def test_a_run_recovery_keeps_failing_to_open_is_quarantined_until_requeued(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    db_name, coll_name = run_collection
+
+    def store_for(tenant: UUID | None, cipher: BytesCipherPort | None) -> MongoDurableRunStore:
+        return MongoDurableRunStore(
+            client=mongo_client,
+            config=MongoDurableRunConfig(collection=run_collection),
+            cipher=cipher,
+            tenant_provider=tenant_provider_for(tenant),
+        )
+
+    async def expire(run_id: str) -> None:
+        await _expire_lease(mongo_client, run_collection, run_id)
+
+    async def lease_left(run_id: str) -> timedelta | None:
+        coll = await mongo_client.collection(coll_name, db_name=db_name)
+        doc = await mongo_client.find_one(coll, {"_id": run_id})
+        assert doc is not None
+
+        if doc["leased_until"] is None:
+            return None
+
+        left: timedelta = doc["leased_until"].replace(tzinfo=UTC) - utcnow()
+        return left
+
+    assert await run_quarantine_scenario(store_for, expire, lease_left) == QUARANTINE_OUTCOME
+
+
+async def test_a_scan_quarantines_only_a_run_it_still_holds(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    def store_for(
+        tenant: UUID | None, cipher: BytesCipherPort | None, client: Any = mongo_client
+    ) -> MongoDurableRunStore:
+        return MongoDurableRunStore(
+            client=client,
+            config=MongoDurableRunConfig(collection=run_collection),
+            cipher=cipher,
+            tenant_provider=tenant_provider_for(tenant),
+        )
+
+    async def expire(run_id: str) -> None:
+        await _expire_lease(mongo_client, run_collection, run_id)
+
+    def racing(
+        cipher: BytesCipherPort, hook: Callable[[], Awaitable[None]]
+    ) -> MongoDurableRunStore:
+        return store_for(None, cipher, FirstCallRuns(mongo_client, "update_one", hook))
+
+    assert await run_quarantine_fence_scenario(store_for, racing, expire) == {
+        "reclaimed": [3],
+        "after": ("running", 3),
     }
 
 

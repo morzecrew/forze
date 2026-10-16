@@ -424,6 +424,28 @@ async def test_quiesce_settles_the_durable_plane_when_no_runs_are_outstanding() 
     assert durable.state == "settled"
 
 
+@pytest.mark.asyncio
+async def test_a_quarantined_run_holds_the_durable_plane() -> None:
+    # Recovery never claims a quarantined run, so it does not settle by waiting; a sweep that
+    # passed it over would attest the plane with a run still owing work in the store.
+    from forze_mock.adapters.durable import MockDurableRunStore
+
+    runtime = _runtime()
+
+    async with runtime.scope():
+        state = runtime.get_context().deps.provide(MockStateDepKey)
+        run = await MockDurableRunStore(state=state).enqueue("fn", input_json=None)
+        state.durable_runs[run.run_id]["status"] = "quarantined"
+
+        report = await quiesce(
+            runtime, timeout=timedelta(milliseconds=100), poll=timedelta(milliseconds=10)
+        )
+
+    durable = next(plane for plane in report.planes if plane.name == "durable")
+
+    assert (durable.state, durable.detail) == ("residual", "runs still quarantined")
+
+
 # ----------------------- #
 # ack-stream plane (the realtime gateway's consumer-group model)
 

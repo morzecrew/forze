@@ -21,6 +21,7 @@ rule, written twice: reading the code proves nothing here and only running both 
 # covers: DurableRunStorePort.mark_cancelled
 # covers: DurableRunStorePort.refuse_cancel
 # covers: DurableRunStorePort.mark_timed_out
+# covers: DurableRunAdminPort.requeue_quarantined
 """
 
 from __future__ import annotations
@@ -56,10 +57,13 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    QUARANTINE_ADMIN_OUTCOME,
+    mock_quarantine,
     run_claim_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_quarantine_admin_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -323,6 +327,36 @@ class TestDurableMockVsMongo:
         assert mongo_out["schedule_mismatch"] == "authentication"
         assert mongo_out["schedule_reaches_owner"] == "fn"
         assert mongo_out["schedule_hidden_from_other"] is True
+
+    async def test_mock_matches_mongo_for_quarantined_runs(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_quarantine_admin_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            mock_quarantine(mock_state),
+        )
+
+        async def mongo_quarantine(run_id: str) -> None:
+            db_name, coll_name = run_collection
+            coll = await mongo_client.collection(coll_name, db_name=db_name)
+            await mongo_client.update_one(
+                coll, {"_id": run_id}, {"$set": {"status": "quarantined", "leased_until": None}}
+            )
+
+        mongo_out = await run_quarantine_admin_scenario(
+            lambda tenant: MongoDurableRunStore(
+                client=mongo_client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            mongo_quarantine,
+        )
+
+        assert mock_out == mongo_out == QUARANTINE_ADMIN_OUTCOME
 
     async def test_mock_matches_mongo_for_schedules(self, mongo_client: MongoClient) -> None:
         db_name = (await mongo_client.db()).name
