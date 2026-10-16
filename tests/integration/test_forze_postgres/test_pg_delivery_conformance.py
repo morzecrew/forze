@@ -12,6 +12,7 @@ crash path holds, so this positive property agrees on both engines — which thi
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import uuid4
 
 import pytest
@@ -30,6 +31,7 @@ from forze_dst.conformance import (
     DeliveryOutcome,
     observe_uncommitted_outbox_visibility,
     run_crash_recovery_delivery,
+    run_rollback_crash_delivery,
 )
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import (
@@ -108,12 +110,18 @@ async def delivery_tables(pg_client: PostgresClient):
 
 
 def _runtime(
-    pg_client: PostgresClient, outbox_table: str, inbox_table: str
+    pg_client: PostgresClient,
+    outbox_table: str,
+    inbox_table: str,
+    *,
+    storage: Literal["retain", "consume"] = "retain",
 ) -> ExecutionRuntime:
     module = PostgresDepsModule(
         client=pg_client,
         tx={"default"},
-        outboxes={_ROUTE: PostgresOutboxConfig(relation=("public", outbox_table))},
+        outboxes={
+            _ROUTE: PostgresOutboxConfig(relation=("public", outbox_table), storage=storage)
+        },
         inboxes={_ROUTE: PostgresInboxConfig(relation=("public", inbox_table))},
     )
     return ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
@@ -157,6 +165,11 @@ class TestPostgresCrashRecoveryDelivery:
             applied=_N,
             distinct_applied=_N,
         )
+        statuses = await pg_client.fetch_all(
+            sql.SQL("SELECT status FROM {t}").format(t=sql.Identifier("public", outbox_table)),
+            row_factory="tuple",
+        )
+        assert statuses == [("published",)] * _N  # the restart's mark found its rows
 
     async def test_duplicate_is_real_without_inbox(
         self, pg_client: PostgresClient, delivery_tables
@@ -178,6 +191,43 @@ class TestPostgresCrashRecoveryDelivery:
             applied=2 * _N,
             distinct_applied=_N,
         )
+
+
+@pytest.mark.integration
+@pytest.mark.conformance(plane="delivery", engine="postgres")
+class TestPostgresRollbackCrashDelivery:
+    """A relay pass in a transaction, crashed: the same outcome as the mock, in both storages."""
+
+    @pytest.mark.parametrize("storage", ["retain", "consume"])
+    @pytest.mark.parametrize("dedup", [True, False])
+    async def test_the_rolled_back_pass_is_redelivered_in_full(
+        self,
+        pg_client: PostgresClient,
+        delivery_tables,
+        storage: Literal["retain", "consume"],
+        dedup: bool,
+    ) -> None:
+        outbox_table, inbox_table = delivery_tables
+        runtime = _runtime(pg_client, outbox_table, inbox_table, storage=storage)
+
+        async with runtime.scope():
+            outcome = await run_rollback_crash_delivery(
+                runtime.get_context(), tx_scope=_TX_SCOPE, dedup=dedup
+            )
+
+        assert outcome == DeliveryOutcome(
+            staged=_N,
+            delivered=2 * _N,
+            reclaimed=0,
+            applied=_N if dedup else 2 * _N,
+            distinct_applied=_N,
+        )
+        # Retain keeps the rows as published; consume deleted them at their mark.
+        statuses = await pg_client.fetch_all(
+            sql.SQL("SELECT status FROM {t}").format(t=sql.Identifier("public", outbox_table)),
+            row_factory="tuple",
+        )
+        assert statuses == ([("published",)] * _N if storage == "retain" else [])
 
 
 @pytest.mark.integration

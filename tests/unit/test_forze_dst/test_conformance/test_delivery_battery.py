@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import pytest
 
+from forze.application.contracts.outbox import OutboxStatus
 from forze.testing import context_from_modules
 from forze_dst.conformance import (
     DELIVERY_EVENTS,
+    DELIVERY_OUTBOX,
     DeliveryOutcome,
     observe_uncommitted_outbox_visibility,
     run_crash_recovery_delivery,
+    run_rollback_crash_delivery,
 )
 from forze_mock import MockDepsModule, MockState
 
@@ -68,6 +71,35 @@ class TestMockCrashRecoveryDelivery:
         outcome = await _run(dedup=dedup)
         assert outcome.distinct_applied == _N
         assert outcome.staged == _N
+
+    async def test_the_restart_marks_every_row_published(self) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        await run_crash_recovery_delivery(ctx, tx_scope=_TX_SCOPE, dedup=True)
+
+        rows = state.outbox_rows[str(DELIVERY_OUTBOX.name)]
+        assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * _N
+
+
+@pytest.mark.conformance(plane="delivery", engine="mock")
+class TestMockRollbackCrashDelivery:
+    """A pass that runs in a transaction: the crash rolls it back, so nothing is reclaimed."""
+
+    @pytest.mark.parametrize("dedup", [True, False])
+    async def test_the_rolled_back_pass_is_redelivered_in_full(self, dedup: bool) -> None:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        outcome = await run_rollback_crash_delivery(ctx, tx_scope=_TX_SCOPE, dedup=dedup)
+
+        assert outcome == DeliveryOutcome(
+            staged=_N,
+            delivered=2 * _N,
+            reclaimed=0,
+            applied=_N if dedup else 2 * _N,
+            distinct_applied=_N,
+        )
+        rows = state.outbox_rows[str(DELIVERY_OUTBOX.name)]
+        assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * _N
 
 
 class TestMockOutboxOverVisibility:

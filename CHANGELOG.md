@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A relay can bound each publish.** `OutboxRelay(publish_timeout=)` and the background step's `publish_timeout=` treat a publish that outlasts it as a transient failure. `OutboxQueryPort.pass_scope()` scopes a pass; `transactional_passes` says whether it rolls back whole.
 
-- **The delivery conformance battery covers a relay pass that rolls back.** `forze_dst.conformance.run_rollback_crash_delivery` runs on the mock and on Postgres in both storage modes.
+- **The delivery conformance battery covers a relay pass that rolls back.** `forze_dst.conformance.run_rollback_crash_delivery` runs on the mock, on Mongo, and on Postgres in both storage modes.
 
 ### Changed
 

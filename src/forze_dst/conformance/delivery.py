@@ -19,6 +19,10 @@ on the crash path, so this positive property is expected to agree on both engine
 The scenario is parameterized by ``dedup``: with the inbox on, the duplicate delivery collapses to a
 single effect (exactly-once); with it off, the duplicate applies twice — proving the redelivery is
 real and the inbox is doing the work, not that the crash was a no-op.
+
+:func:`run_rollback_crash_delivery` is the same window for a relay pass that runs in a transaction,
+as one does on a store that consumes its rows: the crash rolls the pass back, so the rows are
+pending again at once and nothing is reclaimed.
 """
 
 from __future__ import annotations
@@ -129,7 +133,7 @@ async def run_crash_recovery_delivery(
     republished_ids: list[UUID] = []
     for claim in await query.claim_pending():
         broker.append(str(claim.event_id))
-        republished_ids.append(claim.event_id)
+        republished_ids.append(claim.id)
     await query.mark_published(republished_ids)
 
     # 4. Consumer drains the broker, optionally deduping on the event id via the inbox before applying
@@ -143,6 +147,78 @@ async def run_crash_recovery_delivery(
         staged=staged,
         delivered=len(broker),
         reclaimed=reclaimed,
+        applied=len(applied),
+        distinct_applied=len(set(applied)),
+    )
+
+
+# ....................... #
+
+
+class _RelayCrash(Exception):
+    """The relay process dying mid-pass, raised inside the pass's transaction."""
+
+
+# ....................... #
+
+
+async def run_rollback_crash_delivery(
+    ctx: ExecutionContext,
+    *,
+    tx_scope: str,
+    dedup: bool,
+    outbox_spec: OutboxSpec[DeliveryPayload] = DELIVERY_OUTBOX,
+    inbox_spec: InboxSpec = DELIVERY_INBOX,
+    events: Sequence[tuple[str, DeliveryPayload]] = DELIVERY_EVENTS,
+) -> DeliveryOutcome:
+    """Stage → publish → crash as a rollback → re-publish → consume, over *ctx*'s real ports.
+
+    Each relay round runs in a transaction on *tx_scope* with the query port's pass scope nested
+    in it, and claims there. On a store whose pass scope is the transaction (Postgres consume
+    storage) the scope becomes a savepoint; on one whose scope is a no-op (the mock, retain
+    storage) the outer transaction alone carries the rollback. Either way the crash rolls the
+    claims back and the next round finds every row pending, with nothing to reclaim. A consumed
+    event is never staged again: whether that is deduplicated differs by storage.
+    """
+
+    command = ctx.outbox.command(outbox_spec)
+    query = ctx.outbox.query(outbox_spec)
+    inbox = ctx.inbox(inbox_spec)
+
+    async with ctx.tx_ctx.scope(tx_scope):
+        for event_type, payload in events:
+            await command.stage(event_type, payload)
+        staged = await command.flush()
+
+    broker: list[str] = []
+
+    # Round one publishes the batch, then the process dies before the pass commits.
+    try:
+        async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
+            for claim in await query.claim_pending():
+                broker.append(str(claim.event_id))
+            raise _RelayCrash
+
+    except _RelayCrash:
+        pass
+
+    # Restart: no reclaim — the rollback already returned the rows. Re-publish and mark.
+    async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
+        republished_ids: list[UUID] = []
+        for claim in await query.claim_pending():
+            broker.append(str(claim.event_id))
+            republished_ids.append(claim.id)
+        await query.mark_published(republished_ids)
+
+    applied: list[str] = []
+    for event_id in broker:
+        if not dedup or await inbox.mark_if_unseen(inbox_spec.name, event_id):
+            applied.append(event_id)
+
+    return DeliveryOutcome(
+        staged=staged,
+        delivered=len(broker),
+        reclaimed=0,
         applied=len(applied),
         distinct_applied=len(set(applied)),
     )
