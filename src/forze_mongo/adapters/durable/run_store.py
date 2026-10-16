@@ -28,6 +28,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -35,7 +36,11 @@ from forze.application.integrations.crypto.payload import (
     encrypt_payload,
     is_payload_cipher_missing,
 )
-from forze.application.integrations.durable import is_passing_fault, unopenable_hold
+from forze.application.integrations.durable import (
+    is_passing_fault,
+    quarantines_unopenable,
+    unopenable_hold,
+)
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
 from forze_mongo.adapters._logger import logger
@@ -59,6 +64,7 @@ def _unscope_key(stored: str | None, tenant_id: UUID | None) -> str | None:
 
 _PENDING = DurableRunStatus.PENDING.value
 _RUNNING = DurableRunStatus.RUNNING.value
+_QUARANTINED = DurableRunStatus.QUARANTINED.value
 
 
 @final
@@ -95,7 +101,8 @@ class MongoDurableRunStore(
     What a bound caller reaches splits by verb. :meth:`begin`, :meth:`renew`, :meth:`load`
     and every terminal write reach that tenant's runs and untagged ones (see
     :meth:`_worker_scope`); :meth:`claim_abandoned`, :meth:`list_runs`,
-    :meth:`request_cancel` and :meth:`refuse_cancel` match the tenant exactly.
+    :meth:`request_cancel`, :meth:`requeue_quarantined` and :meth:`refuse_cancel` match the
+    tenant exactly.
     :meth:`enqueue` resolves one effective tenant for the collection, the tag and the scoped
     key together, and refuses an explicit tenant that contradicts the binding.
 
@@ -391,8 +398,9 @@ class MongoDurableRunStore(
         # One by one: the claim has already leased every row, so a run whose payload cannot
         # be opened must not fail the runs claimed with it. One whose key is gone is held
         # out of the scan for longer than a lease, or it would be back at the head of the
-        # next one; one that met a passing fault keeps its lease. A missing cipher is the
-        # deployment's, not the run's, and fails the scan.
+        # next one, and quarantined once that hold has doubled to its cap; one that met a
+        # passing fault keeps its lease. A missing cipher is the deployment's, not the
+        # run's, and fails the scan.
         records: list[DurableRunRecord] = []
 
         for row in rows:
@@ -402,6 +410,28 @@ class MongoDurableRunStore(
             except Exception as error:
                 if is_payload_cipher_missing(error):
                     raise
+
+                if quarantines_unopenable(error, lease_for=lease_for, attempts=row["attempts"]):
+                    logger.exception(
+                        "Durable run %s could not be opened on its claim %d; quarantined, "
+                        "recovery will not claim it again until it is requeued",
+                        row["_id"],
+                        row["attempts"],
+                    )
+                    # Fenced like the hold: only the claim that failed to open the run moves
+                    # it, and only while it is still running under that claim.
+                    await self.client.update_one(
+                        await self._collection(),
+                        {"_id": row["_id"], "status": _RUNNING, "attempts": row["attempts"]},
+                        {
+                            "$set": {
+                                "status": _QUARANTINED,
+                                "leased_until": None,
+                                "updated_at": utcnow(),
+                            }
+                        },
+                    )
+                    continue
 
                 hold = unopenable_hold(error, lease_for=lease_for, attempts=row["attempts"])
                 logger.exception(
@@ -423,6 +453,42 @@ class MongoDurableRunStore(
                 )
 
         return records
+
+    # ....................... #
+
+    async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
+        coll = await self._collection()
+        scope = self._tenant_filter()
+
+        # Scoped like ``list_runs``. A quarantined run has no lease and no holder, so there
+        # is nothing to fence against. It is made due at once: ``begin`` takes a run before
+        # its ``available_at``, so one can reach quarantine still delayed.
+        filter_: dict[str, Any] = {"status": _QUARANTINED, **scope}
+
+        if run_ids is not None:
+            filter_["_id"] = {"$in": list(run_ids)}
+
+        elif not scope:
+            # Unbound and unnamed, every tenant's runs would come back ahead of the fresh
+            # ones, those whose key is gone for good among them. Refused while any is
+            # tagged; the update then takes untagged runs only, so a run tagged and
+            # quarantined after this check stays where it is.
+            tagged = await self.client.find_one(
+                coll,
+                {"status": _QUARANTINED, "tenant_id": {"$ne": None}},
+                projection={"_id": 1},
+            )
+
+            if tagged is not None:
+                raise requeue_unscoped_error()
+
+            filter_["tenant_id"] = None
+
+        return await self.client.update_many(
+            coll,
+            filter_,
+            {"$set": {"status": _PENDING, "available_at": None, "updated_at": utcnow()}},
+        )
 
     # ....................... #
 
@@ -562,15 +628,16 @@ class MongoDurableRunStore(
         now = utcnow()
         scope = self._tenant_filter()
 
-        # A PENDING run has no holder to wait for and no fence to respect, so it lands
-        # CANCELLED here and the recovery scan never picks it up. Two statements rather than
-        # Postgres's one CASE: the state a document lands in differs by the state it is in,
-        # and Mongo has no conditional assignment. The PENDING arm runs first so a run that
-        # slips from PENDING to RUNNING between them is stamped by the second — the reverse
-        # order could leave a run cancelled *and* unstamped.
+        # A PENDING run never claimed has no holder to wait for and no journal to decide by,
+        # so it lands CANCELLED here and the recovery scan never picks it up. A document
+        # with no ``attempts`` was never claimed either, as ``_record_from_row`` reads it. Two statements
+        # rather than Postgres's one CASE: the state a document lands in differs by the
+        # state it is in, and Mongo has no conditional assignment. The PENDING arm runs
+        # first so a run that slips from PENDING to RUNNING between them is stamped by the
+        # second — the reverse order could leave a run cancelled *and* unstamped.
         landed = await self.client.update_one(
             coll,
-            {"_id": run_id, "status": _PENDING, **scope},
+            {"_id": run_id, "status": _PENDING, "attempts": {"$in": [0, None]}, **scope},
             {
                 "$set": {
                     "status": DurableRunStatus.CANCELLED.value,
@@ -584,12 +651,15 @@ class MongoDurableRunStore(
         if landed:
             return True
 
-        # A RUNNING run only gets the stamp; its holder lands the terminal state under its
-        # fence. The ``cancel_requested_at: None`` guard keeps a repeated ask on the first
-        # instant, and a run already asked about still answers ``True`` — the ask stands.
+        # Every other live run only gets the stamp: a RUNNING one's holder lands the terminal
+        # state under its fence, and a QUARANTINED one, or a PENDING one requeued from it,
+        # may be a saga past its pivot, decided once a claim can read it. The
+        # ``cancel_requested_at: None`` guard keeps a repeated ask on the first instant, and
+        # a run already asked about still answers ``True`` — the ask stands.
+        live = {"$in": [_PENDING, _RUNNING, _QUARANTINED]}
         stamped = await self.client.update_one(
             coll,
-            {"_id": run_id, "status": _RUNNING, "cancel_requested_at": None, **scope},
+            {"_id": run_id, "status": live, "cancel_requested_at": None, **scope},
             {"$set": {"cancel_requested_at": now, "updated_at": now}},
         )
 
@@ -597,10 +667,10 @@ class MongoDurableRunStore(
             return True
 
         # Nothing was written: either the run is terminal (or absent, or another tenant's),
-        # or it is RUNNING and already carries the stamp. Only the second is a live ask.
+        # or it is live and already carries the stamp. Only the second is a live ask.
         existing = await self.client.find_one(
             coll,
-            {"_id": run_id, "status": _RUNNING, **scope},
+            {"_id": run_id, "status": live, **scope},
             projection={"_id": 1},
         )
 

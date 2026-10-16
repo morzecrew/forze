@@ -18,13 +18,15 @@ the code proves nothing and only running both does.
 # covers: DurableRunStorePort.mark_cancelled
 # covers: DurableRunStorePort.refuse_cancel
 # covers: DurableRunStorePort.mark_timed_out
+# covers: DurableRunAdminPort.requeue_quarantined
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import cast
-from uuid import uuid4
+from typing import Any, cast
+from uuid import UUID, uuid4
 
 import pytest
 from psycopg import sql
@@ -55,10 +57,15 @@ from tests.support.durable_cancel_races import (
     run_stale_holder_race,
 )
 from tests.support.durable_conformance import (
+    QUARANTINE_ADMIN_OUTCOME,
+    FirstCallRuns,
+    mock_quarantine,
     run_claim_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
+    run_quarantine_admin_scenario,
+    run_requeue_race_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -122,6 +129,21 @@ async def step_table(pg_client: PostgresClient) -> str:
         ).format(table=sql.Identifier("public", table))
     )
     return table
+
+
+def _pg_quarantine(client: PostgresClient, table: str) -> Callable[[str], Awaitable[None]]:
+    """Put a run into quarantine directly, as a recovery scan that could not open it would."""
+
+    async def quarantine(run_id: str) -> None:
+        await client.execute(
+            sql.SQL(
+                "UPDATE {table} SET status = 'quarantined', leased_until = NULL "
+                "WHERE run_id = {run_id}"
+            ).format(table=sql.Identifier("public", table), run_id=sql.Placeholder("run_id")),
+            {"run_id": run_id},
+        )
+
+    return quarantine
 
 
 class TestDurableMockVsPostgres:
@@ -350,6 +372,45 @@ class TestDurableMockVsPostgres:
         assert mock_out["schedule_mismatch"] == "authentication"
         assert mock_out["schedule_reaches_owner"] == "fn"
         assert mock_out["schedule_hidden_from_other"] is True
+
+    async def test_mock_matches_postgres_for_quarantined_runs(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        mock_state = MockState()
+        mock_out = await run_quarantine_admin_scenario(
+            lambda tenant: MockDurableRunStore(
+                state=mock_state,
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            mock_quarantine(mock_state),
+        )
+
+        pg_out = await run_quarantine_admin_scenario(
+            lambda tenant: PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            ),
+            _pg_quarantine(pg_client, run_table),
+        )
+
+        assert mock_out == pg_out == QUARANTINE_ADMIN_OUTCOME
+
+    async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
+        self, pg_client: PostgresClient, run_table: str
+    ) -> None:
+        def store_for(tenant: UUID | None, client: Any = pg_client) -> PostgresDurableRunStore:
+            return PostgresDurableRunStore(
+                client=client,
+                config=PostgresDurableRunConfig(relation=("public", run_table)),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+
+        assert await run_requeue_race_scenario(
+            store_for,
+            lambda hook: store_for(None, FirstCallRuns(pg_client, "execute", hook)),
+            _pg_quarantine(pg_client, run_table),
+        ) == {"moved": 1, "still_quarantined": ["qa"]}
 
     async def test_mock_matches_postgres_for_schedules(
         self, pg_client: PostgresClient, schedule_table: str

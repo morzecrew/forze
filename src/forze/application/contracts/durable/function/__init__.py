@@ -12,6 +12,7 @@ from .deps import (
 )
 from .ports import DurableFunctionEventCommandPort, DurableFunctionStepPort
 from .run_admin import (
+    REQUEUE_UNSCOPED_CODE,
     DurableRunAdminPort,
     DurableRunControlAware,
     DurableRunControlCapabilities,
@@ -20,6 +21,7 @@ from .run_admin import (
     decode_run_cursor,
     durable_run_control_capabilities,
     encode_run_cursor,
+    requeue_unscoped_error,
 )
 from .run_cancel import (
     DurableCancelSignal,
@@ -56,6 +58,7 @@ from .specs import (
 # ----------------------- #
 
 __all__ = [
+    "REQUEUE_UNSCOPED_CODE",
     "DurableCancelSignal",
     "DurableFunctionCronTrigger",
     "DurableFunctionEventCommandDepKey",
@@ -94,6 +97,7 @@ __all__ = [
     "decode_run_cursor",
     "durable_run_control_capabilities",
     "encode_run_cursor",
+    "requeue_unscoped_error",
     "require_durable_run",
     "reset_durable_cancel_signal",
     "reset_durable_run",

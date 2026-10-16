@@ -145,6 +145,49 @@ than passing on the strength of the other planes. Note the coupling that creates
 cross-tenant sweep runs, so a deployment declaring `tagged` runs per-tenant recovery
 (`tenants=…`) instead.
 
+### Runs recovery cannot decrypt
+
+With payloads encrypted, a run whose tenant's key is gone (an offboarded tenant, a key
+pending deletion) cannot be opened when the recovery scan claims it. The scan skips it rather
+than failing the batch, and holds it out of later scans for two leases, doubling with each
+claim up to a day. A throttled or briefly unreachable KMS is not a lost key: that run keeps
+its ordinary lease and is retried.
+
+If the key stays gone, the run is **quarantined** on the claim whose hold would reach the day
+— the ninth at the default 5-minute lease, and never the first. The count is the run's
+attempts, crash reclaims included, so a run already claimed nine times is quarantined on its
+first failed open. `QUARANTINED` is not final, but the scan never claims it, so however many
+pile up they cannot crowd the runs behind them. Unlike a held run, a quarantined one does not
+come back by itself when its key does: it waits for an operator.
+
+Once a tenant's key is back, bind that tenant, find its quarantined runs (listed with their
+payloads unread) and return them to the scan:
+
+```python
+from forze.application.contracts.durable.function import DurableRunStatus
+from forze.application.contracts.tenancy import TenantIdentity
+from forze_kits.integrations.durable import resolve_durable_run_admin
+
+with ctx.inv_ctx.bind_identity(tenant=TenantIdentity(tenant_id=tenant_id)):
+    admin = resolve_durable_run_admin(ctx)
+    page = await admin.list_runs(status=DurableRunStatus.QUARANTINED)
+    moved = await admin.requeue_quarantined()          # back to PENDING, due now
+```
+
+Or name the runs: `requeue_quarantined(run_ids=[...])`. A requeued run keeps its creation
+time, so the scan takes it ahead of every fresh run, and keeps its attempt count, so one whose
+key is still gone costs a claim and a KMS call and is quarantined again at once. That is why
+an unbound requeue must name its runs whenever a quarantined run belongs to a tenant: it is
+refused (`validation` / `durable.requeue_unscoped`) rather than bring back every tenant's,
+those gone for good among them. A deployment whose runs carry no tenant requeues unbound.
+
+A cancel asked of a quarantined or requeued run is stamped and waits for a claim that can read
+the run, since it may be a saga past its pivot. A quiesce counts quarantined runs as unsettled.
+
+Roll this out to every node before any run can be quarantined: a node running an earlier
+release cannot read the status, and fails a listing or an idempotent enqueue that meets such a
+run. Requeue quarantined runs before rolling back, or they are left where no scan claims them.
+
 ### Stopping a run
 
 A "Stop" button on a self-hosted run goes through `request_cancel`:
@@ -156,7 +199,8 @@ await runner.request_cancel(ctx, run_id)      # True if the ask was recorded
 **It is cooperative, and the framework will not pretend otherwise.** There is no in-process
 red button in Python: a thread can't be killed, asyncio cancellation lands only at await
 points, and a body blocked inside a C extension notices nothing until it returns. So this
-*requests* a stop. A `PENDING` run lands `CANCELLED` at once — nothing is executing. A
+*requests* a stop. A `PENDING` run lands `CANCELLED` at once — nothing has executed (one
+requeued from quarantine, above, is only stamped). A
 `RUNNING` one keeps going until its lease holder sees the stamp on the **next heartbeat**
 (`lease_for / heartbeat_divisor`, 100 s at defaults — tune those two if you need tighter),
 at which point the body is cancelled at its next await and the run lands `CANCELLED`. A body

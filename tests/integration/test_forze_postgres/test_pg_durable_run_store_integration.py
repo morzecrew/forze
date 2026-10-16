@@ -7,11 +7,14 @@
 # covers: DurableRunStorePort.fail
 # covers: DurableRunStorePort.load
 # covers: DurableRunStorePort.renew
+# covers: DurableRunAdminPort.requeue_quarantined
 """
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -33,6 +36,10 @@ from forze_postgres.adapters.durable import PostgresDurableRunStore
 from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
 from forze_postgres.kernel.client import PostgresClient
 from tests.support.durable_conformance import (
+    QUARANTINE_OUTCOME,
+    FirstCallRuns,
+    run_quarantine_fence_scenario,
+    run_quarantine_scenario,
     run_unopenable_claim_scenario,
     run_unreadable_listing_scenario,
     tenant_provider_for,
@@ -258,6 +265,60 @@ class TestPostgresDurableRunStore:
             "listed": [("kept", {"n": 1}, False), ("lost", None, True)],
             "passing_fault": "test.kms_throttled",
             "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
+        }
+
+    async def test_a_run_recovery_keeps_failing_to_open_is_quarantined_until_requeued(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        def store_for(
+            tenant: UUID | None, cipher: BytesCipherPort | None
+        ) -> PostgresDurableRunStore:
+            return PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", durable_run_table)),
+                cipher=cipher,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+
+        async def expire(run_id: str) -> None:
+            await _expire_lease(pg_client, durable_run_table, run_id)
+
+        async def lease_left(run_id: str) -> timedelta | None:
+            row = await pg_client.fetch_one(
+                sql.SQL(
+                    "SELECT leased_until - now() AS left FROM {table} WHERE run_id = %s"
+                ).format(table=sql.Identifier("public", durable_run_table)),
+                [run_id],
+            )
+            assert row is not None
+            return row["left"]
+
+        assert await run_quarantine_scenario(store_for, expire, lease_left) == QUARANTINE_OUTCOME
+
+    async def test_a_scan_quarantines_only_a_run_it_still_holds(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        def store_for(
+            tenant: UUID | None, cipher: BytesCipherPort | None, client: Any = pg_client
+        ) -> PostgresDurableRunStore:
+            return PostgresDurableRunStore(
+                client=client,
+                config=PostgresDurableRunConfig(relation=("public", durable_run_table)),
+                cipher=cipher,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+
+        async def expire(run_id: str) -> None:
+            await _expire_lease(pg_client, durable_run_table, run_id)
+
+        def racing(
+            cipher: BytesCipherPort, hook: Callable[[], Awaitable[None]]
+        ) -> PostgresDurableRunStore:
+            return store_for(None, cipher, FirstCallRuns(pg_client, "execute", hook))
+
+        assert await run_quarantine_fence_scenario(store_for, racing, expire) == {
+            "reclaimed": [3],
+            "after": ("running", 3),
         }
 
     async def test_stale_worker_is_fenced_out_after_reclaim(
