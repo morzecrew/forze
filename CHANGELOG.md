@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A durable mock snapshot written by an earlier release is refused on load** (`mock_state_snapshot_incompatible`), since the mock state gained a store.
+
 - **The `socketio` extra bounds `python-engineio` below 5.** The connection drain and a draining replica's turn-away close connections through its internals, and refuse at assembly a server that lacks them.
 
 - **Readiness waits for startup, and `runtime.draining` turns true when a drain is announced.** `runtime.ready`, the readiness route and the probe listener answer `503` until startup finishes; `ctx.drain_gate.draining` alone means refused. **Breaking** for a startup probe on `/readyz` sized for the earlier `200`.
