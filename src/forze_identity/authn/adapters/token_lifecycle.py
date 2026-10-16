@@ -30,7 +30,7 @@ from ..domain.models.session import (
     Session,
     UpdateSessionCmd,
 )
-from ..services import AccessTokenService, RefreshTokenService
+from ..services import AccessTokenService, RefreshTokenService, SessionRevocation
 from ._utils import revoke_sessions_matching
 
 # ----------------------- #
@@ -67,6 +67,10 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     Emits ``TOKEN_REFRESHED`` on successful rotation, ``REFRESH_REUSE_DETECTED``
     when an already-rotated refresh token triggers family revocation, and
     ``LOGOUT`` on :meth:`revoke_tokens`."""
+
+    revocation: SessionRevocation | None = None
+    """When set, tokens carry ``fam`` and ``pep``, every issue holds the principal's epoch, and
+    every revocation writes its states through after commit."""
 
     # ....................... #
 
@@ -108,6 +112,12 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             for_update=True,
         )
 
+        # Held until the session commits, so a concurrent logout revokes it or raises first.
+        epoch = await self._hold_epoch(identity.principal_id)
+
+        if self.revocation is not None:
+            # A session issued from a token (a tenant switch) must not outlive that token.
+            await self.revocation.recheck_caller(identity.principal_id, epoch=epoch)
         now = utcnow()
 
         access_expires_at = now + self.access_expires_in
@@ -129,6 +139,8 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             principal_id=identity.principal_id,
             tenant_id=tenant_id,
             session_id=session.id,
+            family_id=session.family_id if epoch is not None else None,
+            epoch=epoch,
         )
 
         return IssuedTokens(
@@ -155,7 +167,19 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
 
     # ....................... #
 
+    async def _hold_epoch(self, principal_id: UUID) -> int | None:
+        if self.revocation is None:
+            return None
+
+        return await self.revocation.hold_epoch(principal_id)
+
+    # ....................... #
+
     async def revoke_tokens(self, identity: AuthnIdentity) -> None:
+        # Before the scan: an issue that held the epoch first has committed its session.
+        if self.revocation is not None:
+            await self.revocation.raise_epoch(identity.principal_id)
+
         await revoke_sessions_matching(
             self.session_qry,
             self.session_cmd,
@@ -171,14 +195,21 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
     # ....................... #
 
     async def revoke_chain_of_tokens(self, principal_id: UUID, family_id: UUID) -> None:
-        await revoke_sessions_matching(
+        if self.revocation is not None:
+            self.revocation.require_transaction()
+
+        revoked = await revoke_sessions_matching(
             self.session_qry,
             self.session_cmd,
             {
                 "principal_id": principal_id,
                 "family_id": family_id,
             },
+            collect=self.revocation is not None,
         )
+
+        if self.revocation is not None:
+            await self.revocation.revoke(principal_id, sessions=revoked, families=[family_id])
 
     # ....................... #
 
@@ -237,6 +268,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             for_update=True,
         )
 
+        epoch = await self._hold_epoch(old_session.principal_id)
         now = utcnow()
 
         access_expires_at = now + self.access_expires_in
@@ -259,6 +291,8 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             principal_id=old_session.principal_id,
             tenant_id=old_session.tenant_id,
             session_id=res.id,
+            family_id=res.family_id if epoch is not None else None,
+            epoch=epoch,
         )
 
         old_session_cmd = UpdateSessionCmd(
@@ -272,6 +306,9 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
             old_session_cmd,
             return_new=False,
         )
+
+        if self.revocation is not None:
+            await self.revocation.rotated(old_session.principal_id, old_session.id)
 
         if self.events is not None:
             await self.events.emit(

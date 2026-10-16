@@ -306,6 +306,31 @@ class TestPostgresDepsModule:
                 hlc_checkpoint=PostgresHlcCheckpointConfig(relation=("app", "hlc")),
             )
 
+    def test_principal_epochs_are_registered_and_refuse_a_routed_client(self) -> None:
+        from uuid import UUID
+
+        from forze.application.contracts.authn import PrincipalEpochDepKey
+        from forze_postgres import PostgresPrincipalEpochConfig
+
+        epochs = PostgresPrincipalEpochConfig(relation=("app", "authn_principal_epochs"))
+        deps = PostgresDepsModule(client=MagicMock(), principal_epochs=epochs)()
+
+        assert deps.exists(PrincipalEpochDepKey)
+
+        tid = UUID("11111111-1111-1111-1111-111111111111")
+        routed = RoutedPostgresClient(
+            secrets=MagicMock(),
+            secret_ref_for_tenant=lambda t: SecretRef(path=f"tenants/{t}/dsn"),
+            tenant_provider=lambda: tid,
+        )
+
+        with pytest.raises(CoreException, match="principal epochs"):
+            PostgresDepsModule(
+                client=routed,
+                introspector_cache_partition_key=lambda: str(tid),
+                principal_epochs=epochs,
+            )
+
     def test_routed_client_with_partition_key_builds(self) -> None:
         from uuid import UUID
 

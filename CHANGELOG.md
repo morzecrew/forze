@@ -31,9 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An overloaded socket.io replica sheds connections toward the fleet's mean.** `connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)` closes movable connections at a bounded rate once the fleet has settled; `connection_report(sio, movable=)` fills the membership report it reads.
 
+- **Tokens can be verified from cached revocation states, not the session row.** `AuthnKernelConfig(revocation_states=RevocationStates(...))` checks new `fam` and `pep` claims against `RedisDepsModule(revocation_states=)` and `PostgresDepsModule(principal_epochs=)`. Opt-in; issue and revocation then need a transaction.
+
 - **Durable runs recovery gave up decrypting can be requeued.** `DurableRunStatus.QUARANTINED` marks a run the scan no longer claims; `DurableRunAdminPort.requeue_quarantined(run_ids=)` returns a bound tenant's or named ones, on Postgres, Mongo and the mock. **Breaking** for exhaustive status matches and own admin ports.
 
 ### Changed
+
+- **A durable mock snapshot written by an earlier release is refused on load** (`mock_state_snapshot_incompatible`), since the mock state gained a store.
 
 - **The `socketio` extra bounds `python-engineio` below 5.** The connection drain and a draining replica's turn-away close connections through its internals, and refuse at assembly a server that lacks them.
 

@@ -178,7 +178,8 @@ class TestFeatureGroupsMatchTheFactories:
         )
 
         ctx = _RecordingCtx()
-        shared = MagicMock()
+        # Without the session fast path, which resolves no document of its own beyond these.
+        shared = MagicMock(revocation_states=None)
         spec = AuthnSpec(name="r")
 
         ConfigurablePasswordLifecycle(shared=shared)(ctx, spec)  # type: ignore[arg-type]

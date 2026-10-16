@@ -24,6 +24,7 @@ from .outbox import (
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
 )
+from .principal_epoch import ConfigurablePostgresPrincipalEpoch
 from .procedure import ConfigurablePostgresProcedure
 from .rotating_credentials import (
     ConfigurablePostgresRotatingCredentials,
@@ -54,6 +55,7 @@ __all__ = [
     "ConfigurablePostgresDynamicRead",
     "ConfigurablePostgresFederatedSearch",
     "ConfigurablePostgresHlcCheckpoint",
+    "ConfigurablePostgresPrincipalEpoch",
     "ConfigurablePostgresHubSearch",
     "ConfigurablePostgresProcedure",
     "ConfigurablePostgresReadOnlyDocument",

@@ -294,6 +294,7 @@ class AuthnDepsModule(DepsModule):
                         PrincipalDeactivationDepKey: {
                             name: ConfigurablePrincipalDeactivation(
                                 authz_route=self.authz_route,
+                                shared=shared,
                             )
                             for name in pd
                         },

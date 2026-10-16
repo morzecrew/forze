@@ -22,7 +22,9 @@ from forze.application.contracts.authn import (
     PasswordVerifierDepKey,
     PrincipalDeactivationDepKey,
     PrincipalEligibilityDepKey,
+    PrincipalEpochDepKey,
     PrincipalResolverDepKey,
+    RevocationStatesDepKey,
     TokenLifecycleDepKey,
     TokenVerifierDepKey,
 )
@@ -196,6 +198,7 @@ from forze_mock.adapters.identity import (
     MockTokenVerifierPort,
 )
 from forze_mock.adapters.resilience import PassthroughResilienceExecutor
+from forze_mock.adapters.revocation import MockPrincipalEpochStore
 from forze_mock.execution.factories import (
     ConfigurableMockAckStreamGroup,
     ConfigurableMockAckStreamGroupAdmin,
@@ -235,6 +238,7 @@ from forze_mock.execution.factories import (
     ConfigurableMockProcedure,
     ConfigurableMockPubSub,
     ConfigurableMockQueue,
+    ConfigurableMockRevocationStates,
     ConfigurableMockSandbox,
     ConfigurableMockSearch,
     ConfigurableMockSearchCommand,
@@ -449,6 +453,12 @@ class MockDepsModule(DepsModule):
         def _hlc_checkpoint(ctx: ExecutionContext) -> MockHlcCheckpointAdapter:
             return MockHlcCheckpointAdapter(state=self.state)
 
+        def _principal_epochs(ctx: ExecutionContext) -> MockPrincipalEpochStore:
+            return MockPrincipalEpochStore(
+                state=self.state,
+                in_transaction=lambda: ctx.tx_ctx.depth() > 0,
+            )
+
         deps: dict[DepKey[Any], Any] = {
             MockStateDepKey: self.state,
             ResilienceExecutorDepKey: resilience_executor,
@@ -499,6 +509,8 @@ class MockDepsModule(DepsModule):
             DistributedLockQueryDepKey: dlock,
             DistributedLockCommandDepKey: dlock,
             FleetDepKey: ConfigurableMockFleet(module=self),
+            RevocationStatesDepKey: ConfigurableMockRevocationStates(module=self),
+            PrincipalEpochDepKey: _principal_epochs,
             EmbeddingsProviderDepKey: ConfigurableMockEmbeddings(
                 module=self,
                 dimensions=self.embeddings_dimensions,
