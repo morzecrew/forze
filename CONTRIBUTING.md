@@ -292,7 +292,7 @@ A breaking commit also needs a `CHANGELOG.md` entry that names the break — see
 
 ### Security fixes
 
-`security` is **not** a Conventional Commits type. A security fix is `🔒️ fix(...)`, and its changelog entry goes under `Security`. Follow `SECURITY.md` for disclosure and keep public detail minimal.
+`security` is **not** a Conventional Commits type. A security fix is `🔒️ fix(...)`, and its changelog entry goes under `Security`. A security fix that is also breaking is `💥 fix(...)!:` instead: a commit carries one gitmoji, and `💥` is the one that marks the break. Its `Security` entry names the break. Follow `SECURITY.md` for disclosure and keep public detail minimal, in a `BREAKING CHANGE:` footer as much as in the body.
 
 ### Scope
 
