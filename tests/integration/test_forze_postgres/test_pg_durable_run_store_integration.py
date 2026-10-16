@@ -34,6 +34,7 @@ from forze_postgres.execution.deps.configs import PostgresDurableRunConfig
 from forze_postgres.kernel.client import PostgresClient
 from tests.support.durable_conformance import (
     run_unopenable_claim_scenario,
+    run_unreadable_listing_scenario,
     tenant_provider_for,
 )
 
@@ -233,11 +234,29 @@ class TestPostgresDurableRunStore:
             return row["left"]
 
         assert await run_unopenable_claim_scenario(store_for, lease_left) == {
-            "claimed": [("kept", {"n": 1})],
+            "claimed": [("kept", {"n": 1}, False), ("stopped", None, True)],
             "kept_fence": 1,
             "kept_leased_for_its_lease": True,
             "lost_held_past_its_lease": True,
             "busy_leased_for_its_lease": True,
+            "stopped_status": "cancelled",
+            "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
+        }
+
+    async def test_a_run_whose_key_is_gone_is_listed_without_its_payloads(
+        self, pg_client: PostgresClient, durable_run_table: str
+    ) -> None:
+        def store_for(tenant: UUID | None, cipher: BytesCipherPort | None) -> PostgresDurableRunStore:
+            return PostgresDurableRunStore(
+                client=pg_client,
+                config=PostgresDurableRunConfig(relation=("public", durable_run_table)),
+                cipher=cipher,
+                tenant_provider=tenant_provider_for(tenant),
+            )
+
+        assert await run_unreadable_listing_scenario(store_for) == {
+            "listed": [("kept", {"n": 1}, False), ("lost", None, True)],
+            "passing_fault": "test.kms_throttled",
             "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
         }
 

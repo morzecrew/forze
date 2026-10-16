@@ -35,7 +35,7 @@ from forze.application.integrations.crypto.payload import (
     encrypt_payload,
     is_payload_cipher_missing,
 )
-from forze.application.integrations.durable import unopenable_hold
+from forze.application.integrations.durable import is_passing_fault, unopenable_hold
 from forze.base.exceptions import CoreException, ExceptionKind, exc
 from forze.base.primitives import JsonDict, utcnow, uuid4, uuid7
 from forze_mongo.adapters._logger import logger
@@ -403,6 +403,15 @@ class MongoDurableRunStore(
                 if is_payload_cipher_missing(error):
                     raise
 
+                if (
+                    row.get("cancel_requested_at") is not None
+                    and row.get("cancel_refused_at") is None
+                ):
+                    # An operator asked it to stop, and landing that needs no payload: the
+                    # runner cancels a run asked to stop without running it.
+                    records.append(await self._record_from_row(row, open_payloads=False))
+                    continue
+
                 hold = unopenable_hold(error, lease_for=lease_for, attempts=row["attempts"])
                 logger.exception(
                     "Durable run %s was claimed for recovery but could not be opened; %s",
@@ -661,7 +670,7 @@ class MongoDurableRunStore(
             limit=limit + 1,
         )
 
-        records = [await self._record_from_row(row) for row in rows]
+        records = [await self._listed(row) for row in rows]
 
         return build_run_page(records, limit)
 
@@ -752,11 +761,41 @@ class MongoDurableRunStore(
 
     # ....................... #
 
-    async def _record_from_row(self, row: JsonDict) -> DurableRunRecord:
+    async def _listed(self, row: Any) -> DurableRunRecord:
+        # A listing is how an operator finds a run to cancel, so one whose payloads cannot
+        # be decrypted is listed without them rather than failing the page.
+        try:
+            return await self._record_from_row(row)
+
+        except Exception as error:
+            # A passing fault would cost one KMS call per row, each to its own timeout,
+            # before the page came back stripped; it fails the page instead.
+            if is_payload_cipher_missing(error) or is_passing_fault(error):
+                raise
+
+            logger.warning(
+                "Durable run %s is listed without its payloads, which could not be decrypted (%s)",
+                row["_id"],
+                type(error).__name__,
+            )
+
+            return await self._record_from_row(row, open_payloads=False)
+
+    # ....................... #
+
+    async def _record_from_row(
+        self,
+        row: JsonDict,
+        *,
+        open_payloads: bool = True,
+    ) -> DurableRunRecord:
         tenant_id = as_uuid(row.get("tenant_id"))
         run_id = str(row["_id"])
-        input_json = await self._unseal(row.get("input"), run_id, "input", tenant_id)
-        output_json = await self._unseal(row.get("output"), run_id, "output", tenant_id)
+        input_json = output_json = None
+
+        if open_payloads:
+            input_json = await self._unseal(row.get("input"), run_id, "input", tenant_id)
+            output_json = await self._unseal(row.get("output"), run_id, "output", tenant_id)
 
         return DurableRunRecord(
             run_id=run_id,
@@ -772,6 +811,7 @@ class MongoDurableRunStore(
             created_at=row.get("created_at"),
             cancel_requested_at=row.get("cancel_requested_at"),
             cancel_refused_at=row.get("cancel_refused_at"),
+            payloads_unreadable=not open_payloads,
         )
 
     # ....................... #
