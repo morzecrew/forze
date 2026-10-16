@@ -622,3 +622,72 @@ return 1
 
 KEYS[1]: expiry ZSET, KEYS[2]: entry HASH. ARGV: member id. Returns 1.
 """
+
+
+# ....................... #
+
+_REDIS_NOW_MS: Final = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+"""
+
+REVOCATION_READ: Final = (
+    _REDIS_NOW_MS
+    + """
+local epoch = redis.call('GET', KEYS[1])
+local state = redis.call('GET', KEYS[2])
+return string.format('%d', now)
+    .. '\\n' .. (epoch and ('+' .. epoch) or '-')
+    .. '\\n' .. (state and ('+' .. state) or '-')
+"""
+)
+"""Read a principal's cached epoch and one state, with the server time, at once.
+
+KEYS[1]: epoch key, KEYS[2]: state key. Returns three lines: the server time in ms, then the
+epoch and the state, each ``+<value>`` when present and ``-`` when absent.
+"""
+
+REVOCATION_FILL: Final = (
+    _REDIS_NOW_MS
+    + """
+if tonumber(ARGV[1]) <= now then
+    return 0
+end
+for i = 1, #KEYS do
+    redis.call('SET', KEYS[i], ARGV[i + 1], 'NX', 'PXAT', ARGV[1])
+end
+return 1
+"""
+)
+"""Set each absent key, expiring at an instant on the server clock; present keys are kept.
+
+KEYS: state keys. ARGV[1]: expiry in ms since the epoch; ARGV[2..]: one value per key. A call
+that runs at or after the expiry writes nothing. Returns 1 when it wrote, else 0.
+"""
+
+REVOCATION_RAISE_EPOCH: Final = (
+    _REDIS_NOW_MS
+    + """
+if tonumber(ARGV[2]) <= now then
+    return 0
+end
+local value = ARGV[1]
+local cached = redis.call('GET', KEYS[1])
+if cached and string.match(cached, '^%d+$') and tonumber(cached) > tonumber(value) then
+    value = cached
+end
+redis.call('SET', KEYS[1], value, 'PXAT', ARGV[2])
+return 1
+"""
+)
+"""Set the cached epoch to the larger of the cached one and ARGV[1], expiring at ARGV[2].
+
+KEYS[1]: epoch key. ARGV[1]: the epoch read from the database, a decimal string; ARGV[2]:
+expiry in ms since the epoch. A cached value that is not a decimal integer is replaced. A call
+that runs at or after the expiry writes nothing. Returns 1 when it wrote, else 0.
+"""
+
+REVOCATION_NOW: Final = _REDIS_NOW_MS + "return string.format('%d', now)\n"
+"""The server time in ms since the epoch.
+
+KEYS[1]: the principal's epoch key, unread; it routes the call to that key's node."""

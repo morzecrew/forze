@@ -12,6 +12,7 @@ from forze.application.contracts.authn import (
 )
 from forze.application.contracts.authz import PrincipalRegistryPort
 
+from ..services import SessionRevocation
 from .credential_deactivation import AuthnCredentialDeactivationHelper
 
 # ----------------------- #
@@ -33,9 +34,16 @@ class PrincipalDeactivationAdapter(PrincipalDeactivationPort):
     revocation leg may additionally emit ``LOGOUT`` when the token lifecycle has
     its own emitter wired — both are true statements about what happened."""
 
+    revocation: SessionRevocation | None = None
+    """When set, refuse before the first write outside a transaction, which the session
+    revocation would refuse after the principal and its credentials were already written."""
+
     # ....................... #
 
     async def deactivate(self, principal_id: UUID) -> None:
+        if self.revocation is not None:
+            self.revocation.require_transaction()
+
         await self.principal_registry.deactivate_principal(principal_id)
         # Credentials before sessions: a password change and reset write the account and
         # then the sessions, and the same order keeps them from deadlocking with this.

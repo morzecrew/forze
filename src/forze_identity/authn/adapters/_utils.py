@@ -186,7 +186,9 @@ async def revoke_sessions_matching(
         UpdateSessionCmd,
     ],
     values: Mapping[str, Any],
-) -> None:
+    *,
+    collect: bool = False,
+) -> list[ReadSession]:
     """Revoke (set ``revoked_at``) every live session matching the ``$values`` filter.
 
     Shared by cascaded principal deactivation (token lifecycle) and the
@@ -201,6 +203,10 @@ async def revoke_sessions_matching(
     goes stale more than a few times in a row raises. A conflict the backend itself reports
     (a deadlock, a Mongo write conflict) has aborted the transaction, so it propagates for
     the transaction's owner to retry in a fresh one.
+
+    :param collect: Return the revoked sessions; otherwise the list is empty, so a revocation
+        of many sessions holds none of them.
+    :returns: The sessions it revoked, as they were read, when *collect*.
     """
 
     filters: Any = {
@@ -212,6 +218,7 @@ async def revoke_sessions_matching(
     }
 
     stale = 0
+    revoked: list[ReadSession] = []
 
     while True:
         sessions = await session_qry.find_many(
@@ -220,7 +227,7 @@ async def revoke_sessions_matching(
         )
 
         if not sessions.hits:
-            return
+            return revoked
 
         upds = [
             KeyedUpdate(id=x.id, rev=x.rev, dto=UpdateSessionCmd(revoked_at=utcnow()))
@@ -239,8 +246,11 @@ async def revoke_sessions_matching(
 
         stale = 0
 
+        if collect:
+            revoked += sessions.hits
+
         if len(sessions.hits) < _REVOKE_BATCH:
-            return
+            return revoked
 
 
 # ....................... #

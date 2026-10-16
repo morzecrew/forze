@@ -11,6 +11,7 @@ from forze.application.contracts.analytics import (
     AnalyticsIngestDepKey,
     AnalyticsQueryDepKey,
 )
+from forze.application.contracts.authn import PrincipalEpochDepKey
 from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.crypto import EncryptionTier
 from forze.application.contracts.deps import (
@@ -79,6 +80,7 @@ from .configs import (
     PostgresIdempotencyConfig,
     PostgresInboxConfig,
     PostgresOutboxConfig,
+    PostgresPrincipalEpochConfig,
     PostgresProcedureConfig,
     PostgresReadOnlyDocumentConfig,
     PostgresRotatingCredentialsConfig,
@@ -101,6 +103,7 @@ from .factories import (
     ConfigurablePostgresOutboxAdmin,
     ConfigurablePostgresOutboxCommand,
     ConfigurablePostgresOutboxQuery,
+    ConfigurablePostgresPrincipalEpoch,
     ConfigurablePostgresProcedure,
     ConfigurablePostgresReadOnlyDocument,
     ConfigurablePostgresRotatingCredentials,
@@ -299,6 +302,10 @@ class PostgresDepsModule(DepsModule):
     prior emissions after a restart, keeping HLC monotonicity across process boundaries.
     Unset leaves the clock resuming from ``(0, 0)`` (the prior behavior)."""
 
+    principal_epochs: PostgresPrincipalEpochConfig | None = attrs.field(default=None)
+    """Optional store of principal epochs (principal-global; default unwired), which
+    verifying sessions from cached revocation states needs beside the sessions."""
+
     durable_step: PostgresDurableStepConfig | None = attrs.field(default=None)
     """Optional Postgres durable-function step-memo journal (execution-scoped).
 
@@ -352,6 +359,14 @@ class PostgresDepsModule(DepsModule):
                 "node-global and a routed client resolves its backend from the bound "
                 "tenant, which startup recovery does not have. Wire the checkpoint on a "
                 "direct PostgresClient.",
+            )
+
+        if self.principal_epochs is not None and isinstance(self.client, RoutedPostgresClient):
+            # A principal spans tenants, and a token is verified before a tenant is bound.
+            raise exc.configuration(
+                "Postgres principal epochs cannot use a routed client: a principal spans "
+                "tenants, and a token is verified before a tenant is bound. Wire the epochs "
+                "on a direct PostgresClient.",
             )
 
         if self.ro_documents:
@@ -846,6 +861,17 @@ class PostgresDepsModule(DepsModule):
                 }
             )
 
+        principal_epoch_deps = Deps()
+
+        if self.principal_epochs is not None:
+            principal_epoch_deps = Deps.plain(
+                {
+                    PrincipalEpochDepKey: ConfigurablePostgresPrincipalEpoch(
+                        config=self.principal_epochs
+                    ),
+                }
+            )
+
         rotating_credentials_deps = Deps()
 
         if self.rotating_credentials is not None:
@@ -916,6 +942,7 @@ class PostgresDepsModule(DepsModule):
             idempotency_deps,
             counter_deps,
             hlc_checkpoint_deps,
+            principal_epoch_deps,
             rotating_credentials_deps,
             durable_step_deps,
             durable_run_deps,

@@ -37,7 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The delivery conformance battery covers a relay pass that rolls back.** `forze_dst.conformance.run_rollback_crash_delivery` runs on the mock, on Mongo, and on Postgres in both storage modes.
 
+- **Tokens can be verified from cached revocation states, not the session row.** `AuthnKernelConfig(revocation_states=RevocationStates(...))` checks new `fam` and `pep` claims against `RedisDepsModule(revocation_states=)` and `PostgresDepsModule(principal_epochs=)`. Opt-in; issue and revocation then need a transaction.
+
 ### Changed
+
+- **A durable mock snapshot written by an earlier release is refused on load** (`mock_state_snapshot_incompatible`), since the mock state gained a store.
 
 - **The `socketio` extra bounds `python-engineio` below 5.** The connection drain and a draining replica's turn-away close connections through its internals, and refuse at assembly a server that lacks them.
 

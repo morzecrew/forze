@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey
+from ..deps import ConfigurableDepPort, ConvenientDeps, DepKey, SimpleDepPort
 from .events import AuthnEventEmitter, AuthnEventSink
 from .ports import (
     ApiKeyLifecyclePort,
@@ -12,11 +12,13 @@ from .ports import (
     PasswordVerifierPort,
     PrincipalDeactivationPort,
     PrincipalEligibilityPort,
+    PrincipalEpochPort,
     PrincipalResolverPort,
+    RevocationStatesPort,
     TokenLifecyclePort,
     TokenVerifierPort,
 )
-from .specs import AuthnSpec
+from .specs import AuthnSpec, RevocationStatesSpec
 
 if TYPE_CHECKING:
     from forze.application.execution import ExecutionContext
@@ -103,6 +105,18 @@ PrincipalEligibilityDepKey = DepKey[PrincipalEligibilityDepPort]("authn_principa
 
 PrincipalDeactivationDepKey = DepKey[PrincipalDeactivationDepPort]("authn_principal_deactivation")
 """Key used to register the `PrincipalDeactivationPort` builder implementation."""
+
+RevocationStatesDepPort = ConfigurableDepPort[RevocationStatesSpec, RevocationStatesPort]
+"""Revocation states dependency port (the fast path's cache of epochs and states)."""
+
+RevocationStatesDepKey = DepKey[RevocationStatesDepPort]("authn_revocation_states")
+"""Key used to register the `RevocationStatesPort` builder, routed by the states route."""
+
+PrincipalEpochDepPort = SimpleDepPort[PrincipalEpochPort]
+"""Principal epoch dependency port: one store per deployment, beside the sessions."""
+
+PrincipalEpochDepKey = DepKey[PrincipalEpochDepPort]("authn_principal_epoch")
+"""Key used to register the `PrincipalEpochPort` builder."""
 
 AuthnEventSinkDepKey = DepKey[AuthnEventSinkDepPort]("authn_event_sink")
 """Key used to register an `AuthnEventSink` builder implementation.
