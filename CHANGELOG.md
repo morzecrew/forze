@@ -99,6 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A readiness check on a client scoped per tenant says so**, as `routed per tenant` or `tenant-aware`, instead of a bare `CoreException`: a probe has no tenant bound.
 
+- **Realtime presence refuses a store on a client routed per tenant**, as `tenant_global_required`: `attach_realtime_connection`, the gateway step and both heartbeat steps use it with no tenant bound, so connects, live counts and refreshes failed. **Breaking** for apps wired so.
+
 ### Security
 
 - **A socket.io connection acts only under the identity it authenticated.** Upgrade if `attach_realtime_connection` or `ForzeSocketIOAdapter(identity_resolver=)` authenticates your socket.io connections.

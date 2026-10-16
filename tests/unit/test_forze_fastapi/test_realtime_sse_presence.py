@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -45,6 +46,8 @@ from forze_fastapi.realtime import (
 )
 from forze_fastapi.realtime import hub as hub_module
 from forze_mock import MockDepsModule, MockState
+from forze_redis.adapters.realtime_presence import RedisRealtimePresence
+from forze_redis.kernel.client import RoutedRedisClient
 from tests.support.execution_context import context_from_deps
 
 # ----------------------- #
@@ -263,3 +266,17 @@ class TestHeartbeat:
             realtime_sse_presence_heartbeat_lifecycle_step(
                 RealtimeSseHub(), InMemoryRealtimePresence(), interval=timedelta(0)
             )
+
+
+def test_the_sse_presence_heartbeat_refuses_a_presence_store_routed_per_tenant() -> None:
+    # The SSE twin of the Socket.IO heartbeat: it runs with no tenant bound.
+    routed = RoutedRedisClient(
+        secrets=MagicMock(), secret_ref_for_tenant={}, tenant_provider=lambda: None
+    )
+
+    with pytest.raises(CoreException) as caught:
+        realtime_sse_presence_heartbeat_lifecycle_step(
+            RealtimeSseHub(), RedisRealtimePresence(client=routed)
+        )
+
+    assert caught.value.code == "tenant_global_required"

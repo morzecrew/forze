@@ -9,15 +9,26 @@ import asyncio
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
+from socketio.async_server import AsyncServer
 
-from forze.application.execution import ExecutionContext
+from forze.application.execution import ExecutionContext, ExecutionRuntime
+from forze.application.execution.deps import DepsRegistry
 from forze.base.exceptions import CoreException
+from forze_kits.integrations.realtime import realtime_stream_spec
+from forze_mock import MockDepsModule
+from forze_redis.adapters.realtime_presence import RedisRealtimePresence
+from forze_redis.kernel.client import RoutedRedisClient
 from forze_socketio import (
     BackplaneHealth,
     InMemoryRealtimePresence,
+    RealtimeGateway,
+    StreamGroupSignalSource,
+    attach_realtime_connection,
     realtime_backplane_heartbeat_lifecycle_step,
+    realtime_gateway_lifecycle_step,
     realtime_identity_expiry_lifecycle_step,
     realtime_presence_heartbeat_lifecycle_step,
 )
@@ -144,3 +155,54 @@ async def test_non_positive_interval_is_refused() -> None:
 
     with pytest.raises(CoreException):
         realtime_identity_expiry_lifecycle_step(cast(Any, sio), interval=timedelta(seconds=-1))
+
+# ....................... #
+
+
+def _routed_presence() -> RedisRealtimePresence:
+    """Redis presence on a client routed per tenant, with no tenant to route by."""
+
+    routed = RoutedRedisClient(
+        secrets=MagicMock(), secret_ref_for_tenant={}, tenant_provider=lambda: None
+    )
+
+    return RedisRealtimePresence(client=routed)
+
+
+def test_the_presence_heartbeat_refuses_a_presence_store_routed_per_tenant() -> None:
+    # The heartbeat runs with no tenant bound; rooms carry their tenant, so the store is
+    # meant to be tenant-global. Routed per tenant, every refresh failed and the TTL then
+    # expired this node's live connections.
+    with pytest.raises(CoreException) as caught:
+        realtime_presence_heartbeat_lifecycle_step(cast(Any, _StubSio()), _routed_presence())
+
+    assert caught.value.code == "tenant_global_required"
+
+
+def test_the_connect_handlers_refuse_a_presence_store_routed_per_tenant() -> None:
+    # The connect join and the disconnect leave run with no tenant bound, so every connect
+    # failed on such a store.
+    async def resolve(_connect: Any) -> Any:  # pragma: no cover - refused before any connect
+        raise AssertionError("connected")
+
+    with pytest.raises(CoreException) as caught:
+        attach_realtime_connection(AsyncServer(), resolve=resolve, presence=_routed_presence())
+
+    assert caught.value.code == "tenant_global_required"
+
+
+async def test_the_gateway_step_refuses_a_presence_store_routed_per_tenant() -> None:
+    # The live path counts a principal's room with no tenant bound.
+    gateway = RealtimeGateway(
+        sio=cast(Any, _StubSio()),
+        source=StreamGroupSignalSource(stream_spec=realtime_stream_spec()),
+        presence=_routed_presence(),
+    )
+    step = realtime_gateway_lifecycle_step(gateway)
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        with pytest.raises(CoreException) as caught:
+            await step.startup(runtime.get_context())
+
+    assert caught.value.code == "tenant_global_required"
