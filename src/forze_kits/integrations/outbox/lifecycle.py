@@ -1073,7 +1073,9 @@ def outbox_relay_background_lifecycle_step(
     *retry_max_backoff* (or *interval*, if that is longer). The other tenants keep the
     loop's cadence, a wake does not cut the wait short, and a pass that commits resets it.
     A shutdown drain keeps the last fifth of the budget it has left back from publishing,
-    and opens no batch once into it, so that its last pass can commit what it published.
+    and opens no batch once into it, so that its last pass can commit what it published;
+    keep *shutdown_drain_timeout* at least five times the store's ``pass_statement_timeout``
+    so that fifth covers a closing statement.
 
     When *tenants* is set the outbox is **tenant-aware** (partitioned): each tick drains
     every assigned tenant's partition under a bound tenant, so the relay can read a

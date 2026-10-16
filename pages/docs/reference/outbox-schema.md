@@ -135,7 +135,8 @@ keeps `retain`.
   claim index above includes, so a retry is not a HOT update under it. Retries are rare,
   and a row that publishes first time never updates.
 - **The dedup window narrows.** Staging an event id again is deduplicated only while its
-  row is pending. Once the row is relayed and deleted, the same event id publishes again.
+  row is still in the table, pending or parked as `failed`. Once the row is relayed and
+  deleted, the same event id publishes again.
 - **A failed pass republishes its batch.** When a mark statement fails, a statement times
   out or the session is cut off, the whole pass rolls back. Every row it claimed is pending
   again, including the ones it already published: up to `max_claim_rows` (100)
@@ -143,21 +144,27 @@ keeps `retain`.
   `max_claim_rows` for a smaller window.
 - **A failing route backs off on its own.** The background relay step ends the failed pass
   and skips that route until it has waited: one `interval` after the first failure,
-  doubling with each consecutive one up to `retry_max_backoff`, and a pass that commits
-  resets it. On a step with `tenants=`, only the failing tenant waits; the others keep the
+  doubling with each consecutive one up to the larger of `retry_max_backoff` and
+  `interval`, and a pass that commits resets it. On a step with `tenants=`, only the failing tenant waits; the others keep the
   step's cadence. A wake does not cut the wait short.
 - **A pass is bounded.** It stops publishing at `pass_deadline` (default 5 s) and commits
   what it did; the rows it did not reach stay pending, untouched. A publish still running at
   the deadline is cancelled and counted as a failed attempt, though it may already have
-  reached the broker, so that event can arrive twice. Each statement in the pass, the reclaim
+  reached the broker, so that event can arrive twice. A destination that swallows the
+  cancellation and returns normally counts as published instead: it reached the broker,
+  and counting it failed would publish it again. Each statement in the pass, the reclaim
   and the claim included, and each lock wait, is limited to `pass_statement_timeout`
   (default 1 s): on a large table without the claim index above, the claim times out and
   every pass fails. The server cuts the session off once it sits idle in the pass for
   longer than the two durations together. The pass sets these for its own transaction
   only, and only when it opens that transaction. A stricter limit the session already
-  has, from the role or the connection's `options`, stays in force. A shutdown drain keeps the last fifth of the budget
-  it has left back from publishing, so its last pass commits instead of being cut and
-  rolled back.
+  has, from the role or the connection's `options`, stays in force.
+- **A shutdown drain keeps time to commit.** It stops publishing a fifth of the budget it
+  has left before its end, so its last pass commits instead of being cut and rolled back.
+  That fifth has to cover the pass's closing statements, each allowed up to
+  `pass_statement_timeout`, so keep `shutdown_drain_timeout` at least five times
+  `pass_statement_timeout`; the defaults, 5 s and 1 s, just meet it. A closing statement
+  that waits on a lock past the drain's end is cut with it, and that pass rolls back.
 - **A pass inside your transaction sets nothing.** Run a relay in a transaction of your own,
   for example to check a lease before committing, and the pass becomes a savepoint in it:
   your transaction's timeouts apply, and its rollback returns every row.
