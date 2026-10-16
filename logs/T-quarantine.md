@@ -293,3 +293,43 @@ durable integration suites 79 passed; the kits durable, quiesce and saga tests 2
 the DST durable, crash and saga tests 41 passed.
 
 **Drift count: 1.**
+
+## PR review (CodeRabbit) — 2026-10-16
+
+Two findings on the open PR overturn two earlier entries. Each fix is in this branch's next
+commit, red first.
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: drift
+at: 2026-10-16T16:00:00Z
+attempt: 1
+claim: entry 7 was wrong that a quarantined run's `available_at` has always passed; `begin` claims a pending run whatever its `available_at`, so a run begun before it was due can be quarantined still delayed, and the requeue then left it to wait for that instant despite its "due at once"
+evidence: src/forze_postgres/adapters/durable/run_store.py:326 — `begin` matches `status = 'pending'` alone; tests/support/durable_conformance.py:897 — before the fix the delayed run `qd` was missing from the claim after its requeue, on the mock, Postgres and Mongo alike
+action: decided
+proposal: ASSUMED — supersedes entry 7's field list. The requeue clears `available_at` on every backend (src/forze_postgres/adapters/durable/run_store.py:576), as entry 4 first had it; the comments now give the reason.
+```
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: drift
+at: 2026-10-16T16:01:00Z
+attempt: 1
+claim: entry 8 left a lease under about 82 ms held forever and never quarantined, on the ground that raising the exponent overflows `timedelta`; saturating the doubled duration at the cap overflows nothing, so the residue was cheap to remove
+evidence: src/forze/application/integrations/durable/recovery.py:40 — the doubling is now in whole microseconds, saturated at the cap, with the exponent stopped at 64; tests/unit/test_forze/application/integrations/test_durable_recovery_hold.py:80 — failed before the fix
+action: decided
+proposal: ASSUMED — supersedes entry 8. Every lease of at least one microsecond now doubles to the cap and is quarantined there: a 1 ms lease on its 27th claim, an 82 ms one on its 21st. A characterization test holds the hold and the predicate to the earlier formula for leases from 100 ms to 2 days and attempt counts 0–40 and 10⁹.
+```
+
+**Verification.** Both fixes were red first. The delayed run was missing from the claim after
+its requeue on all three backends, and the 1 ms lease was never quarantined. Then five
+sabotages against the committed tree, each restored from git: 5 of 5 caught. They were the
+exponent stopped at 20 again, the doubling left unsaturated, and the requeue keeping
+`available_at` on Postgres, Mongo and the mock. Results: `just quality -s` 19 of 19 green;
+`just test tests/unit` 18115 passed, 16 skipped; the Postgres and Mongo durable integration
+suites 79 passed; the kits durable, quiesce and saga tests 224 passed; the DST durable,
+crash and saga tests 41 passed.
+
+**Drift count: 3.**
