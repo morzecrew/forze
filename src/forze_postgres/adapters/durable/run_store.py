@@ -541,8 +541,8 @@ class PostgresDurableRunStore(
         clauses: list[sql.Composable] = [sql.SQL("status = 'quarantined'")]
 
         # Scoped like ``list_runs``. A quarantined run has no lease and no holder, so there
-        # is nothing to fence against, and it is due: a claim took it, so its
-        # ``available_at`` has passed.
+        # is nothing to fence against. It is made due at once: ``begin`` takes a run before
+        # its ``available_at``, so one can reach quarantine still delayed.
         tenant_id = self._tenant_id_for_resolve()
 
         if tenant_id is not None:
@@ -573,7 +573,8 @@ class PostgresDurableRunStore(
 
         return await self.client.execute(
             sql.SQL(
-                "UPDATE {table} SET status = 'pending', updated_at = now() WHERE {where}"
+                "UPDATE {table} SET status = 'pending', available_at = NULL, "
+                "updated_at = now() WHERE {where}"
             ).format(table=table.ident(), where=sql.SQL(" AND ").join(clauses)),
             params,
             return_rowcount=True,

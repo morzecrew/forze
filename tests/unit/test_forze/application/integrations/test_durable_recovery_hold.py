@@ -75,3 +75,42 @@ def test_a_hold_that_lands_exactly_on_the_cap_has_reached_it() -> None:
     assert unopenable_hold(KEY_GONE, lease_for=lease, attempts=5) == UNOPENABLE_HOLD_CAP
     assert not quarantines_unopenable(KEY_GONE, lease_for=lease, attempts=4)
     assert quarantines_unopenable(KEY_GONE, lease_for=lease, attempts=5)
+
+
+def test_a_short_lease_still_doubles_to_the_cap_and_is_quarantined() -> None:
+    lease = timedelta(milliseconds=1)  # 1 ms x 2**27 is the first doubling past one day
+
+    assert unopenable_hold(KEY_GONE, lease_for=lease, attempts=26) < UNOPENABLE_HOLD_CAP
+    assert unopenable_hold(KEY_GONE, lease_for=lease, attempts=27) == UNOPENABLE_HOLD_CAP
+    assert not quarantines_unopenable(KEY_GONE, lease_for=lease, attempts=26)
+    assert quarantines_unopenable(KEY_GONE, lease_for=lease, attempts=27)
+
+
+def test_a_lease_of_a_tenth_of_a_second_or_more_is_held_and_quarantined_as_before() -> None:
+    # The rule before saturation: the exponent stopped at 20, which only a lease under about
+    # 82 ms never doubled past the cap with.
+    def held_before(lease: timedelta, attempts: int) -> timedelta:
+        doubled = lease * 2 ** min(max(attempts, 1), 20)
+
+        return max(2 * lease, min(UNOPENABLE_HOLD_CAP, doubled))
+
+    def quarantined_before(lease: timedelta, attempts: int) -> bool:
+        return attempts >= 2 and lease * 2 ** min(attempts, 20) >= UNOPENABLE_HOLD_CAP
+
+    leases = [
+        timedelta(milliseconds=100),
+        timedelta(seconds=1),
+        LEASE,
+        timedelta(minutes=45),
+        timedelta(hours=12),
+        timedelta(days=2),
+    ]
+
+    for lease in leases:
+        for attempts in [*range(0, 41), 10**9]:
+            assert unopenable_hold(KEY_GONE, lease_for=lease, attempts=attempts) == held_before(
+                lease, attempts
+            ), (lease, attempts)
+            assert quarantines_unopenable(
+                KEY_GONE, lease_for=lease, attempts=attempts
+            ) == quarantined_before(lease, attempts), (lease, attempts)

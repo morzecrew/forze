@@ -339,8 +339,11 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             if unscoped and any(data["tenant_id"] is not None for data in quarantined):
                 raise requeue_unscoped_error()
 
+            # Due at once: ``begin`` takes a run before its ``available_at``, so one can
+            # reach quarantine still delayed.
             for data in quarantined:
                 data["status"] = DurableRunStatus.PENDING.value
+                data["available_at"] = None
 
         return len(quarantined)
 

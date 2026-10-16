@@ -774,8 +774,10 @@ async def run_quarantine_admin_scenario(
     held_a = await as_a.enqueue("qa", input_json=None)
     held_b = await as_b.enqueue("qb", input_json=None)
     untagged = await unbound.enqueue("qn", input_json=None)
+    # ``begin`` takes a run before it is due, so one can reach quarantine still delayed.
+    delayed = await as_a.enqueue("qd", input_json=None, available_at=utcnow() + timedelta(hours=1))
 
-    for store, run in ((as_a, held_a), (as_b, held_b), (unbound, untagged)):
+    for store, run in ((as_a, held_a), (as_b, held_b), (unbound, untagged), (as_a, delayed)):
         assert await store.begin(run.run_id, lease_for=lease) is not None
         await quarantine(run.run_id)
 
@@ -873,14 +875,14 @@ async def run_requeue_race_scenario(
     return {"moved": moved, "still_quarantined": [record.name for record in page.records]}
 
 QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
-    "listed": ["qa", "qb", "qn"],
-    "listed_by_a": ["qa"],
+    "listed": ["qa", "qb", "qd", "qn"],
+    "listed_by_a": ["qa", "qd"],
     "scan_claims": [],
     "begin_claims": False,
     "ask": True,
     "asked": ("quarantined", 1, True),
     "ask_across_tenants": False,
-    "requeued_by_a": 1,
+    "requeued_by_a": 2,
     "left_after_a": ["qb", "qn"],
     "requeued_a": ("pending", 1, True),
     "named_across_tenants": 0,
@@ -892,7 +894,7 @@ QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
     "requeued_again": 0,
     "ask_requeued": True,
     "asked_requeued": ("pending", 1, True),
-    "claimed": [("qa", 2, True), ("qb", 2, True), ("qn", 2, False)],
+    "claimed": [("qa", 2, True), ("qb", 2, True), ("qd", 2, False), ("qn", 2, False)],
 }
 """What :func:`run_quarantine_admin_scenario` answers on every engine, the mock included."""
 

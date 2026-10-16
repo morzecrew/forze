@@ -461,8 +461,8 @@ class MongoDurableRunStore(
         scope = self._tenant_filter()
 
         # Scoped like ``list_runs``. A quarantined run has no lease and no holder, so there
-        # is nothing to fence against, and it is due: a claim took it, so its
-        # ``available_at`` has passed.
+        # is nothing to fence against. It is made due at once: ``begin`` takes a run before
+        # its ``available_at``, so one can reach quarantine still delayed.
         filter_: dict[str, Any] = {"status": _QUARANTINED, **scope}
 
         if run_ids is not None:
@@ -485,7 +485,9 @@ class MongoDurableRunStore(
             filter_["tenant_id"] = None
 
         return await self.client.update_many(
-            coll, filter_, {"$set": {"status": _PENDING, "updated_at": utcnow()}}
+            coll,
+            filter_,
+            {"$set": {"status": _PENDING, "available_at": None, "updated_at": utcnow()}},
         )
 
     # ....................... #

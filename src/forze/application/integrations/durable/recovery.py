@@ -12,6 +12,8 @@ UNOPENABLE_HOLD_CAP: Final[timedelta] = timedelta(days=1)
 """The longest a run that could not be opened is kept out of the recovery scan, unless its
 lease is longer still."""
 
+_MICROSECOND: Final[timedelta] = timedelta(microseconds=1)
+
 
 def is_passing_fault(error: BaseException) -> bool:
     """Whether *error* passes on its own: a throttled, briefly unreachable or timed-out KMS.
@@ -27,9 +29,17 @@ def is_passing_fault(error: BaseException) -> bool:
 
 
 def _doubled(lease_for: timedelta, attempts: int) -> timedelta:
-    """Two leases on a run's first claim, doubling with each claim after it."""
+    """Two leases on a run's first claim, doubling with each claim after it, up to
+    :data:`UNOPENABLE_HOLD_CAP`.
 
-    return lease_for * 2 ** min(max(attempts, 1), 20)
+    Doubled in whole microseconds and saturated at the cap, so the shortest lease still gets
+    there. Sixty-four doublings take even one microsecond past it, so the exponent stops
+    there and a huge attempt count costs nothing.
+    """
+
+    doubled = (lease_for // _MICROSECOND) << min(max(attempts, 1), 64)
+
+    return timedelta(microseconds=min(UNOPENABLE_HOLD_CAP // _MICROSECOND, doubled))
 
 
 def unopenable_hold(
@@ -61,7 +71,7 @@ def unopenable_hold(
     if is_passing_fault(error):
         return None
 
-    return max(2 * lease_for, min(UNOPENABLE_HOLD_CAP, _doubled(lease_for, attempts)))
+    return max(2 * lease_for, _doubled(lease_for, attempts))
 
 
 def quarantines_unopenable(
