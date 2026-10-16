@@ -89,8 +89,9 @@ EpochCheck = Callable[[EpochHarness], Any]
 
 
 async def check_an_empty_read_finds_nothing_at_the_store_time(h: StatesHarness) -> None:
-    before = await h.states.now_ms()
-    read = await h.states.read(uuid4(), f"s:{uuid4()}")
+    principal = uuid4()
+    before = await h.states.now_ms(principal)
+    read = await h.states.read(principal, f"s:{uuid4()}")
 
     assert (read.epoch, read.state) == (None, None), h.backend
     assert read.now_ms >= before, h.backend
@@ -98,7 +99,7 @@ async def check_an_empty_read_finds_nothing_at_the_store_time(h: StatesHarness) 
 
 async def check_fill_sets_only_absent_keys(h: StatesHarness) -> None:
     principal, key = uuid4(), f"f:{uuid4()}"
-    expire_at = await h.states.now_ms() + _LONG_MS
+    expire_at = await h.states.now_ms(principal) + _LONG_MS
 
     await h.states.fill(principal, {EPOCH_STATE_KEY: "3", key: "live|-"}, expire_at_ms=expire_at)
     await h.states.fill(
@@ -112,7 +113,7 @@ async def check_fill_sets_only_absent_keys(h: StatesHarness) -> None:
 
 async def check_fill_never_outlives_its_instant(h: StatesHarness) -> None:
     principal, key = uuid4(), f"s:{uuid4()}"
-    now = await h.states.now_ms()
+    now = await h.states.now_ms(principal)
 
     # Landed after its instant: nothing is written.
     await h.states.fill(principal, {key: "live|-"}, expire_at_ms=now - 1)
@@ -131,7 +132,7 @@ async def check_fill_never_outlives_its_instant(h: StatesHarness) -> None:
 
 async def check_revoke_overwrites_and_expires(h: StatesHarness) -> None:
     principal, session, family = uuid4(), f"s:{uuid4()}", f"f:{uuid4()}"
-    expire_at = await h.states.now_ms() + _LONG_MS
+    expire_at = await h.states.now_ms(principal) + _LONG_MS
 
     await h.states.fill(principal, {session: "live|-", family: "live|-"}, expire_at_ms=expire_at)
     await h.states.revoke(principal, [session, family], ttl=_SHORT)
@@ -149,7 +150,7 @@ async def check_revoke_overwrites_and_expires(h: StatesHarness) -> None:
 
 async def check_raise_epoch_keeps_the_larger_and_expires(h: StatesHarness) -> None:
     principal, key = uuid4(), f"s:{uuid4()}"
-    now = await h.states.now_ms()
+    now = await h.states.now_ms(principal)
 
     await h.states.fill(principal, {EPOCH_STATE_KEY: "2"}, expire_at_ms=now + _LONG_MS)
     await h.states.raise_epoch(principal, 5, expire_at_ms=now + _LONG_MS)
@@ -163,7 +164,7 @@ async def check_raise_epoch_keeps_the_larger_and_expires(h: StatesHarness) -> No
     assert (await h.states.read(principal, key)).epoch == "5", h.backend
 
     # The raise sets the expiry, even when it keeps the cached value.
-    now = await h.states.now_ms()
+    now = await h.states.now_ms(principal)
     await h.states.raise_epoch(principal, 1, expire_at_ms=now + _SHORT // timedelta(milliseconds=1))
     await h.wait(_PAST_SHORT)
     assert (await h.states.read(principal, key)).epoch is None, h.backend
@@ -171,7 +172,7 @@ async def check_raise_epoch_keeps_the_larger_and_expires(h: StatesHarness) -> No
 
 async def check_raise_epoch_replaces_an_unreadable_value(h: StatesHarness) -> None:
     principal = uuid4()
-    expire_at = await h.states.now_ms() + _LONG_MS
+    expire_at = await h.states.now_ms(principal) + _LONG_MS
 
     await h.states.fill(principal, {EPOCH_STATE_KEY: "garbage"}, expire_at_ms=expire_at)
     await h.states.raise_epoch(principal, 1, expire_at_ms=expire_at)
@@ -181,7 +182,7 @@ async def check_raise_epoch_replaces_an_unreadable_value(h: StatesHarness) -> No
 
 async def check_principals_never_share_states(h: StatesHarness) -> None:
     one, two, key = uuid4(), uuid4(), f"f:{uuid4()}"
-    expire_at = await h.states.now_ms() + _LONG_MS
+    expire_at = await h.states.now_ms(one) + _LONG_MS
 
     await h.states.fill(one, {EPOCH_STATE_KEY: "7", key: "live|-"}, expire_at_ms=expire_at)
 
@@ -191,9 +192,10 @@ async def check_principals_never_share_states(h: StatesHarness) -> None:
 
 
 async def check_the_store_clock_moves_forward(h: StatesHarness) -> None:
-    first = await h.states.now_ms()
+    principal = uuid4()
+    first = await h.states.now_ms(principal)
     await h.wait(_SHORT)
-    second = await h.states.now_ms()
+    second = await h.states.now_ms(principal)
 
     assert second - first >= _SHORT // timedelta(milliseconds=1) - 5, h.backend
 

@@ -142,9 +142,9 @@ class _States:
         self._call("revoke", write=True)
         await self.inner.revoke(principal_id, keys, ttl=ttl)
 
-    async def now_ms(self) -> int:
+    async def now_ms(self, principal_id: UUID) -> int:
         self._call("now", write=True)
-        return await self.inner.now_ms()
+        return await self.inner.now_ms(principal_id)
 
     async def raise_epoch(self, principal_id: UUID, epoch: int, *, expire_at_ms: int) -> None:
         self._call("raise_epoch", write=True)
@@ -849,7 +849,7 @@ async def test_a_malformed_state_is_a_miss(value: str) -> None:
     principal = await stack.principal()
     issued = await stack.login(principal)
     key = f"s:{_claims(issued)['sid']}"
-    expire_at_ms = await stack.states.inner.now_ms() + 60_000
+    expire_at_ms = await stack.states.inner.now_ms(principal) + 60_000
     await stack.states.inner.fill(principal, {key: value}, expire_at_ms=expire_at_ms)
 
     stack.reads.clear()

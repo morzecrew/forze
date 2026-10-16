@@ -186,6 +186,8 @@ async def revoke_sessions_matching(
         UpdateSessionCmd,
     ],
     values: Mapping[str, Any],
+    *,
+    collect: bool = False,
 ) -> list[ReadSession]:
     """Revoke (set ``revoked_at``) every live session matching the ``$values`` filter.
 
@@ -202,7 +204,9 @@ async def revoke_sessions_matching(
     (a deadlock, a Mongo write conflict) has aborted the transaction, so it propagates for
     the transaction's owner to retry in a fresh one.
 
-    :returns: The sessions it revoked, as they were read.
+    :param collect: Return the revoked sessions; otherwise the list is empty, so a revocation
+        of many sessions holds none of them.
+    :returns: The sessions it revoked, as they were read, when *collect*.
     """
 
     filters: Any = {
@@ -241,7 +245,9 @@ async def revoke_sessions_matching(
             continue
 
         stale = 0
-        revoked += sessions.hits
+
+        if collect:
+            revoked += sessions.hits
 
         if len(sessions.hits) < _REVOKE_BATCH:
             return revoked

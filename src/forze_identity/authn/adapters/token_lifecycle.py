@@ -205,6 +205,7 @@ class TokenLifecycleAdapter(TokenLifecyclePort):
                 "principal_id": principal_id,
                 "family_id": family_id,
             },
+            collect=self.revocation is not None,
         )
 
         if self.revocation is not None:

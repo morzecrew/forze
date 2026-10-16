@@ -90,8 +90,11 @@ class RevocationStatesPort(Protocol):
         """
         ...  # pragma: no cover
 
-    def now_ms(self) -> Awaitable[int]:
-        """The store's time, in milliseconds since the Unix epoch."""
+    def now_ms(self, principal_id: UUID) -> Awaitable[int]:
+        """The store's time, in milliseconds since the Unix epoch, where *principal_id*'s keys live.
+
+        Read where the states are, so a later :meth:`raise_epoch` expires on the clock it read.
+        """
         ...  # pragma: no cover
 
     def raise_epoch(

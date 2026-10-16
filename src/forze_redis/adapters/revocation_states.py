@@ -104,8 +104,12 @@ class RedisRevocationStatesAdapter(RedisBaseAdapter, RevocationStatesPort):
             px=ttl // timedelta(milliseconds=1),
         )
 
-    async def now_ms(self) -> int:
-        return int(await self.client.run_script(REVOCATION_NOW, [], []))
+    async def now_ms(self, principal_id: UUID) -> int:
+        # Keyed by the epoch, so a proxy routing by slot reads the clock its writes expire on.
+        await self._prepare_keys()
+        key = self._key(principal_id, EPOCH_STATE_KEY)
+
+        return int(await self.client.run_script(REVOCATION_NOW, [key], []))
 
     async def raise_epoch(
         self,

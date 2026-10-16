@@ -688,4 +688,6 @@ that runs at or after the expiry writes nothing. Returns 1 when it wrote, else 0
 """
 
 REVOCATION_NOW: Final = _REDIS_NOW_MS + "return string.format('%d', now)\n"
-"""The server time in ms since the epoch."""
+"""The server time in ms since the epoch.
+
+KEYS[1]: the principal's epoch key, unread; it routes the call to that key's node."""

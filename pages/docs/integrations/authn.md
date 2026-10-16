@@ -85,14 +85,15 @@ kernel = AuthnKernelConfig(
 )
 states = {"authn-revocations": RedisRevocationStatesConfig(namespace="authn-revocations")}
 epochs = PostgresPrincipalEpochConfig(relation=("public", "authn_principal_epochs"))
-breaker = PortPolicy(key=RevocationStatesDepKey, policy="authn-revocations")
+breaker = PortPolicy(key=RevocationStatesDepKey, policy="authn-revocations", methods=("read",))
 ```
 
 Wire `states` as `RedisDepsModule(revocation_states=...)`, `epochs` as
 `PostgresDepsModule(principal_epochs=...)`, on the database that holds the sessions, and
 `breaker` in `ResilienceDepsModule(port_policies=...)` under a policy with a circuit
 breaker, so a Redis outage stops costing every verification its `timeout` (50 ms by
-default). The states route is resolved by `RevocationStatesSpec` under
+default). Bind it to `read` only: an open breaker on the writes would fail every attempt of a
+revocation's write-through at once. The states route is resolved by `RevocationStatesSpec` under
 `RevocationStatesDepKey`, and the epochs under `PrincipalEpochDepKey`. Create the epochs
 table yourself and never delete its rows:
 
@@ -109,7 +110,8 @@ CREATE TABLE authn_principal_epochs (
   around the authn adapters, through its document port), or Redis loses the key while an
   earlier lookup is still writing, a revoked token stays admitted for at most `ttl` after the
   revocation commits. Configure every process that verifies or revokes, and give
-  the states a Redis namespace nothing else flushes.
+  the states a Redis namespace nothing else flushes. Expiries are instants on the Redis
+  primary's clock: a failover to a replica whose clock lags lengthens every state by the lag.
 - **Transactions are required.** With the fast path on, issuing and revoking refuse to run
   outside a transaction (`authn_revocation_requires_transaction`), so keep `tx_route` set on
   both registries. Issue and logout serialize on the epoch's row on Postgres only, with the

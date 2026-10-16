@@ -414,7 +414,7 @@ class SessionRevocation:
         async def _write() -> None:
             # The epoch is read again at write time: a write delayed past a newer raise then
             # caches the newer epoch, or one that expires within ttl of the newer commit.
-            now_ms = await self._bounded(self.states.now_ms())
+            now_ms = await self._bounded(self.states.now_ms(principal_id))
             epoch = await self.epochs.current(principal_id)
             await self._bounded(
                 self.states.raise_epoch(

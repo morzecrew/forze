@@ -94,7 +94,8 @@ class MockRevocationStates(RevocationStatesPort):
             for key in keys:
                 self._set(principal_id, key, REVOKED_STATE, expire_at_ms)
 
-    async def now_ms(self) -> int:
+    async def now_ms(self, principal_id: UUID) -> int:
+        del principal_id
         return self._now_ms()
 
     async def raise_epoch(
