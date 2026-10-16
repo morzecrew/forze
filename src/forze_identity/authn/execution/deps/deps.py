@@ -21,8 +21,11 @@ from forze.application.contracts.authn import (
     PrincipalDeactivationPort,
     PrincipalEligibilityDepKey,
     PrincipalEligibilityPort,
+    PrincipalEpochDepKey,
     PrincipalResolverDepKey,
     PrincipalResolverPort,
+    RevocationStatesDepKey,
+    RevocationStatesSpec,
     TokenLifecycleDepKey,
     TokenLifecyclePort,
     TokenVerifierDepKey,
@@ -77,6 +80,7 @@ from ...resolvers import (
     JwtNativeUuidResolver,
     MappingTableResolver,
 )
+from ...services import SessionRevocation
 from ...verifiers import (
     Argon2PasswordVerifier,
     ForzeJwtTokenVerifier,
@@ -92,6 +96,35 @@ def _resolve_eligibility(
     spec: AuthnSpec,
 ) -> PrincipalEligibilityPort:
     return ctx.deps.provide(PrincipalEligibilityDepKey, route=spec.name)(ctx, spec)
+
+
+# ....................... #
+
+
+def _session_revocation(
+    ctx: ExecutionContext,
+    shared: AuthnSharedServices | None,
+) -> SessionRevocation | None:
+    """The fast path's reads and writes for this request, or ``None`` when not configured."""
+
+    config = shared.revocation_states if shared is not None else None
+
+    if config is None:
+        return None
+
+    return SessionRevocation(
+        config=config,
+        states=ctx.deps.resolve_configurable(
+            ctx,
+            RevocationStatesDepKey,
+            RevocationStatesSpec(name=config.route),
+            route=config.route,
+        ),
+        epochs=ctx.deps.provide(PrincipalEpochDepKey)(ctx),
+        sessions=ctx.doc.query(session_spec),
+        in_transaction=lambda: ctx.tx_ctx.depth() > 0,
+        defer=ctx.tx_ctx.run_or_defer,
+    )
 
 
 # ....................... #
@@ -175,6 +208,7 @@ class ConfigurableForzeJwtTokenVerifier:
         return ForzeJwtTokenVerifier(
             access_svc=self.shared.access_svc,
             session_qry=ctx.doc.query(session_spec),
+            revocation=_session_revocation(ctx, self.shared),
         )
 
 
@@ -424,6 +458,10 @@ class ConfigurablePrincipalDeactivation:
     authz_route: StrKey
     """Authz route name used to resolve :class:`PrincipalRegistryPort`."""
 
+    shared: AuthnSharedServices | None = None
+    """Shared services; their revocation states make deactivation refuse to run outside a
+    transaction."""
+
     def __call__(
         self,
         ctx: ExecutionContext,
@@ -447,6 +485,7 @@ class ConfigurablePrincipalDeactivation:
             token_lifecycle=token_lifecycle,
             credentials=credentials,
             events=_resolve_events(ctx, spec),
+            revocation=_session_revocation(ctx, self.shared),
         )
 
 
@@ -478,6 +517,7 @@ class ConfigurableTokenLifecycle:
             session_cmd=ctx.doc.command(session_spec),
             eligibility=_resolve_eligibility(ctx, spec),
             events=_resolve_events(ctx, spec),
+            revocation=_session_revocation(ctx, self.shared),
         )
 
 
@@ -518,6 +558,7 @@ class ConfigurablePasswordLifecycle:
             session_cmd=ctx.doc.command(session_spec) if revoke else None,
             revoke_sessions_on_password_change=revoke,
             events=_resolve_events(ctx, spec),
+            revocation=_session_revocation(ctx, self.shared) if revoke else None,
         )
 
 
@@ -564,6 +605,7 @@ class ConfigurablePasswordReset:
             session_cmd=ctx.doc.command(session_spec) if revoke else None,
             revoke_sessions_on_reset=revoke,
             events=_resolve_events(ctx, spec),
+            revocation=_session_revocation(ctx, self.shared) if revoke else None,
         )
 
 
@@ -599,6 +641,7 @@ class ConfigurableApiKeyLifecycle:
             ),
             events=_resolve_events(ctx, spec),
             caller=ctx.inv_ctx.get_authn,
+            revocation=_session_revocation(ctx, self.shared),
         )
 
 

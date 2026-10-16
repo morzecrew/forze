@@ -5,6 +5,7 @@ from typing import Any, TypeGuard, cast, final
 
 import attrs
 
+from forze.application.contracts.authn import RevocationStatesDepKey
 from forze.application.contracts.cache import CacheDepKey
 from forze.application.contracts.counter import CounterAdminDepKey, CounterDepKey
 from forze.application.contracts.deps import (
@@ -57,6 +58,7 @@ from .configs import (
     RedisFleetConfig,
     RedisIdempotencyConfig,
     RedisPubSubConfig,
+    RedisRevocationStatesConfig,
     RedisSearchResultSnapshotConfig,
     RedisStreamConfig,
     RedisStreamGroupConfig,
@@ -71,6 +73,7 @@ from .factories import (
     ConfigurableRedisIdempotency,
     ConfigurableRedisPubSubCommand,
     ConfigurableRedisPubSubQuery,
+    ConfigurableRedisRevocationStates,
     ConfigurableRedisSearchResultSnapshot,
     ConfigurableRedisStreamCommand,
     ConfigurableRedisStreamGroup,
@@ -222,6 +225,13 @@ class RedisDepsModule(DepsModule):
     )
     """Mapping from fleet spec names to their Redis-specific configurations."""
 
+    revocation_states: StrKeyMapping[RedisRevocationStatesConfig] | None = attrs.field(
+        default=None,
+        converter=MappingConverter.to_str_key_frozen,  # type: ignore[misc]
+    )
+    """Mapping from revocation states routes to their configurations: the session fast
+    path's cached epochs and states, which every verifier and revoking process reads."""
+
     required_tenant_isolation: TenantIsolationMode | None = attrs.field(default=None)
     """Declared minimum tenant isolation (``None`` = no floor).
 
@@ -311,6 +321,14 @@ class RedisDepsModule(DepsModule):
                 per_tenant=not is_static_named_resource(fleet.namespace),
             )
 
+        if self.revocation_states and isinstance(self.client, RoutedRedisClient):
+            # A routed client connects per tenant, and a verification reads with none bound.
+            raise exc.configuration(
+                "Redis revocation states need a plain client: this module's client is routed "
+                "per tenant, and a token is verified before a tenant is bound.",
+                code="revocation_states.routed_client",
+            )
+
         if self.fleets and isinstance(self.client, RoutedRedisClient):
             # A routed client connects per tenant, and the fleet beats with none bound.
             raise exc.configuration(
@@ -347,6 +365,8 @@ class RedisDepsModule(DepsModule):
                     ("dlock", self.dlocks, _marked_tenant_global),
                     # A fleet is the deployment's, whatever tenants its replicas serve.
                     ("fleet", self.fleets, _always),
+                    # Revocation states are a principal's, across tenants.
+                    ("revocation_states", self.revocation_states, _always),
                 )
             ]
             + [
@@ -422,6 +442,10 @@ class RedisDepsModule(DepsModule):
             routed_from_mapping(
                 self.fleets,
                 bindings=[(FleetDepKey, ConfigurableRedisFleet)],
+            ),
+            routed_from_mapping(
+                self.revocation_states,
+                bindings=[(RevocationStatesDepKey, ConfigurableRedisRevocationStates)],
             ),
             routed_from_mapping(
                 self.streams,

@@ -12,6 +12,13 @@ from .lifecycle import (
 from .provisioning import PasswordAccountProvisioningPort
 from .reset import PasswordResetPort
 from .resolution import PrincipalResolverPort
+from .revocation import (
+    EPOCH_STATE_KEY,
+    REVOKED_STATE,
+    PrincipalEpochPort,
+    RevocationStatesPort,
+    RevocationStatesRead,
+)
 from .verification import (
     ApiKeyVerifierPort,
     PasswordVerifierPort,
@@ -34,4 +41,9 @@ __all__ = [
     "RefreshTokenReuseError",
     "TokenLifecyclePort",
     "ApiKeyLifecyclePort",
+    "EPOCH_STATE_KEY",
+    "PrincipalEpochPort",
+    "REVOKED_STATE",
+    "RevocationStatesPort",
+    "RevocationStatesRead",
 ]

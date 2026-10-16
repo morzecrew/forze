@@ -19,7 +19,7 @@ from ..domain.models.account import (
     ReadPasswordAccount,
     UpdatePasswordAccountCmd,
 )
-from ..services import PasswordService
+from ..services import PasswordService, remember_admitted_session
 
 # ----------------------- #
 
@@ -96,6 +96,9 @@ class Argon2PasswordVerifier(PasswordVerifierPort):
 
         if self.pa_cmd is not None:
             await self._maybe_rehash(account, credentials.password)
+
+        # The request now authenticates with a password, not with any token verified before.
+        remember_admitted_session(None)
 
         return VerifiedAssertion(
             issuer=ISSUER_FORZE_PASSWORD,

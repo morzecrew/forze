@@ -20,6 +20,7 @@ from .hub import PostgresHubSearchConfig, PostgresHubSearchMemberConfig
 from .idempotency import PostgresIdempotencyConfig
 from .inbox import PostgresInboxConfig
 from .outbox import PostgresOutboxConfig
+from .principal_epoch import PostgresPrincipalEpochConfig
 from .procedure import PostgresProcedureConfig
 from .rotating_credentials import PostgresRotatingCredentialsConfig
 from .search import (
@@ -55,6 +56,7 @@ __all__ = [
     "PostgresFederatedSearchLegHub",
     "PostgresFederatedSearchLegSearch",
     "PostgresHlcCheckpointConfig",
+    "PostgresPrincipalEpochConfig",
     "PostgresHubSearchConfig",
     "PostgresHubSearchMemberConfig",
     "PostgresCounterConfig",

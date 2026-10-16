@@ -761,7 +761,7 @@ def test_the_wired_lifecycle_takes_the_registry_from_the_authz_route() -> None:
     from forze.application.contracts.authz import AuthzSpec
     from forze_identity.authn.execution.deps.deps import ConfigurableApiKeyLifecycle
 
-    shared = MagicMock()
+    shared = MagicMock(revocation_states=None)  # without the session fast path
     ctx = MagicMock()
     registry = object()
     ctx.authz.principal_registry = MagicMock(return_value=registry)

@@ -6,6 +6,7 @@ from .dlock import ConfigurableRedisDistributedLock
 from .fleet import ConfigurableRedisFleet
 from .idempotency import ConfigurableRedisIdempotency
 from .pubsub import ConfigurableRedisPubSubCommand, ConfigurableRedisPubSubQuery
+from .revocation_states import ConfigurableRedisRevocationStates
 from .snapshot import ConfigurableRedisSearchResultSnapshot
 from .stream import (
     ConfigurableRedisStreamCommand,
@@ -25,6 +26,7 @@ __all__ = [
     "ConfigurableRedisIdempotency",
     "ConfigurableRedisPubSubCommand",
     "ConfigurableRedisPubSubQuery",
+    "ConfigurableRedisRevocationStates",
     "ConfigurableRedisSearchResultSnapshot",
     "ConfigurableRedisStreamCommand",
     "ConfigurableRedisStreamGroup",

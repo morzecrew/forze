@@ -101,6 +101,7 @@ PERSIST_FIELDS: Final = frozenset(
         "analytics_ingest_log",
         "outbox_rows",
         "hlc_checkpoint",
+        "principal_epochs",
         "search_snapshots",
         "search_snapshot_chunks",
         "graph_vertices",
@@ -139,6 +140,7 @@ RESET_FIELDS: Final = _LIVE_FIELDS | frozenset(
         # Data whose values are process-local, and whose types say nothing about that.
         "dlocks",  # holder expiries come from monotonic(), meaningless in a new process
         "fleets",  # member expiries likewise; a restarted process beats back in
+        "revocation_states",  # expiries likewise; a miss reads the database again
         "mvcc_active",  # in-flight transaction ids that nothing will ever end
         "mvcc_commit_log",  # snapshot bookkeeping, only meaningful against the active set
         "mvcc_version",

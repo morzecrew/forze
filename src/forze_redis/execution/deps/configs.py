@@ -2,6 +2,7 @@
 
 import attrs
 
+from forze.application.contracts.authn import refuse_tenant_scoped_revocation_states
 from forze.application.contracts.fleet import refuse_tenant_scoped_route
 from forze.application.contracts.resolution import (
     NamedResourceSpec,
@@ -88,6 +89,25 @@ class RedisFleetConfig(RedisUniversalConfig):
     def __attrs_post_init__(self) -> None:
         refuse_tenant_scoped_route(
             "fleet",
+            tenant_aware=self.tenant_aware,
+            per_tenant=not is_static_named_resource(self.namespace),
+        )
+
+
+# ....................... #
+
+
+@attrs.define(slots=True, kw_only=True, frozen=True)
+class RedisRevocationStatesConfig(RedisUniversalConfig):
+    """Configuration for Redis-backed revocation states.
+
+    Never tenant-scoped: the states are a principal's, and a principal spans tenants; a
+    verification also runs before any tenant is bound. Give the states a namespace of their
+    own, never shared with data that may be flushed or evicted on its own schedule.
+    """
+
+    def __attrs_post_init__(self) -> None:
+        refuse_tenant_scoped_revocation_states(
             tenant_aware=self.tenant_aware,
             per_tenant=not is_static_named_resource(self.namespace),
         )
