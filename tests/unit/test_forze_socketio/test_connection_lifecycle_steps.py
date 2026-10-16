@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from socketio.async_server import AsyncServer
 
+from forze.application.contracts.execution import LifecycleStep
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.execution.deps import DepsRegistry
 from forze.base.exceptions import CoreException
@@ -191,18 +192,36 @@ def test_the_connect_handlers_refuse_a_presence_store_routed_per_tenant() -> Non
     assert caught.value.code == "tenant_global_required"
 
 
-async def test_the_gateway_step_refuses_a_presence_store_routed_per_tenant() -> None:
-    # The live path counts a principal's room with no tenant bound.
+def _gateway_step(*, mailboxed: bool) -> LifecycleStep:
     gateway = RealtimeGateway(
         sio=cast(Any, _StubSio()),
         source=StreamGroupSignalSource(stream_spec=realtime_stream_spec()),
         presence=_routed_presence(),
+        mailbox_factory=(lambda _ctx: cast(Any, None)) if mailboxed else None,
     )
-    step = realtime_gateway_lifecycle_step(gateway)
+
+    return realtime_gateway_lifecycle_step(gateway)
+
+
+async def test_the_gateway_step_refuses_a_presence_store_routed_per_tenant() -> None:
+    # The live path counts a mailboxed signal's principal room with no tenant bound.
     runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
 
     async with runtime.scope():
         with pytest.raises(CoreException) as caught:
-            await step.startup(runtime.get_context())
+            await _gateway_step(mailboxed=True).startup(runtime.get_context())
 
     assert caught.value.code == "tenant_global_required"
+
+
+async def test_a_gateway_without_a_mailbox_never_reads_presence_and_starts() -> None:
+    step = _gateway_step(mailboxed=False)
+    runtime = ExecutionRuntime(deps=DepsRegistry.from_modules(MockDepsModule()).freeze())
+
+    async with runtime.scope():
+        ctx = runtime.get_context()
+        await step.startup(ctx)
+
+        assert ctx.drainables.loops
+        assert step.shutdown is not None
+        await step.shutdown(ctx)
