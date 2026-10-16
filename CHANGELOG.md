@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Tokens can be verified from cached revocation states, not the session row.** `AuthnKernelConfig(revocation_states=RevocationStates(...))` checks new `fam` and `pep` claims against `RedisDepsModule(revocation_states=)` and `PostgresDepsModule(principal_epochs=)`. Opt-in; issue and revocation then need a transaction.
 
+- **Durable runs recovery gave up decrypting can be requeued.** `DurableRunStatus.QUARANTINED` marks a run the scan no longer claims; `DurableRunAdminPort.requeue_quarantined(run_ids=)` returns a bound tenant's or named ones, on Postgres, Mongo and the mock. **Breaking** for exhaustive status matches and own admin ports.
+
 ### Changed
 
 - **A durable mock snapshot written by an earlier release is refused on load** (`mock_state_snapshot_incompatible`), since the mock state gained a store.
@@ -52,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The tenant-isolation floor leaves out routes that belong to the deployment.** Redis fleets, and lock and pub/sub routes marked `tenant_global=True` (a lifecycle lock, an outbox wake), no longer count toward `required_tenant_isolation`, so a module of only those meets it. Every other route is still held to it.
 
 - **The outbox relay step resolves its outbox route at startup even with `tenants=`.** A route that is not wired fails startup instead of every tick.
+
+- **A durable run whose key is gone no longer resumes by itself once its recovery hold reaches a day.** Quarantined, it waits for a requeue even after the key is back; one already claimed nine times, crash reclaims included, is parked on its first failed open. **Breaking** for deployments relying on a restored key.
 
 ### Deprecated
 

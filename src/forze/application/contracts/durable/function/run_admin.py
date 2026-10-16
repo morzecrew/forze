@@ -4,17 +4,18 @@ Kept **separate** from the operational :class:`DurableRunStorePort` (enqueue / c
 complete) — mirroring the framework's management/data split — so a handler driving an ops
 dashboard never acquires the claim/write store. Backed by the same ``durable_run`` relation.
 
-Two verbs live here, both operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
-mutates a run. :meth:`DurableRunAdminPort.request_cancel` records an *ask* — deliberately
-the only operator verb that writes, and deliberately not on the data-plane store: anyone may
-ask a run to stop, but only the fence-holding runner may land the terminal state.
+Three verbs live here, all operator-shaped. :meth:`DurableRunAdminPort.list_runs` never
+mutates a run. :meth:`DurableRunAdminPort.request_cancel` records an *ask*, deliberately not
+on the data-plane store: anyone may ask a run to stop, but only the fence-holding runner may
+land the terminal state. :meth:`DurableRunAdminPort.requeue_quarantined` returns runs
+recovery gave up on to the scan; they have no holder, so it needs no fence.
 """
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
 from datetime import datetime
-from typing import Protocol, final, runtime_checkable
+from typing import Final, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -28,6 +29,20 @@ from .run_store import DurableRunRecord, DurableRunStatus
 
 _CURSOR_CODEC = B64UrlJsonCodec()
 """Opaque base64url-JSON encoder for the ``(created_at, run_id)`` keyset cursor."""
+
+REQUEUE_UNSCOPED_CODE: Final = "durable.requeue_unscoped"
+"""Code of the refusal of an unbound, unnamed requeue while a quarantined run has a tenant."""
+
+
+def requeue_unscoped_error() -> CoreException:
+    """The refusal :meth:`DurableRunAdminPort.requeue_quarantined` raises for an unbound,
+    unnamed call while any quarantined run belongs to a tenant."""
+
+    return exc.validation(
+        "Requeueing quarantined durable runs with no tenant bound needs run_ids while any of "
+        "them belongs to a tenant: bind the tenant whose key is back, or name the runs.",
+        code=REQUEUE_UNSCOPED_CODE,
+    )
 
 
 def encode_run_cursor(created_at: datetime, run_id: str) -> str:
@@ -172,8 +187,8 @@ class DurableRunAdminPort(Protocol):
     Newest-first keyset pagination over the same ``durable_run`` relation the store writes.
     Tenant scoping mirrors recovery: scoped to the bound tenant when one is bound, and spans
     every tenant when unbound (an operator view over a tagged shared table) — and that
-    applies to :meth:`request_cancel` too, so an operator bound to one tenant cannot stop a
-    run it could not have listed.
+    applies to :meth:`request_cancel` and :meth:`requeue_quarantined` too, so an operator
+    bound to one tenant cannot stop or requeue a run it could not have listed.
     """
 
     def list_runs(
@@ -193,8 +208,8 @@ class DurableRunAdminPort(Protocol):
 
         A run whose payloads cannot be decrypted, its tenant's key being gone, is listed
         without them, with :attr:`~DurableRunRecord.payloads_unreadable` set, rather than
-        failing the page. A passing KMS fault, or a payload cipher missing from the wiring,
-        fails the call.
+        failing the page; ``status=QUARANTINED`` lists the runs recovery gave up on that way.
+        A passing KMS fault, or a payload cipher missing from the wiring, fails the call.
         """
         ...  # pragma: no cover
 
@@ -212,14 +227,17 @@ class DurableRunAdminPort(Protocol):
 
         By state:
 
-        - ``PENDING`` — transitions to ``CANCELLED`` immediately (nothing is executing, so
-          there is no holder to wait for); the recovery scanner never claims it. Returns
-          ``True``.
+        - ``PENDING``, never claimed — transitions to ``CANCELLED`` immediately (nothing has
+          executed, so there is no holder to wait for and no journal to decide by); the
+          recovery scanner never claims it. Returns ``True``.
         - ``RUNNING`` — stamps :attr:`DurableRunRecord.cancel_requested_at` and returns
           ``True``. The terminal transition happens when the current lease holder observes
           the stamp on its next heartbeat, or — if the holder died — when recovery claims the
           run and lands it without invoking the body. A saga is run again instead, and
           decides by its pivot as a live one does.
+        - ``QUARANTINED``, or ``PENDING`` after a requeue from it — stamps the ask, leaves the
+          state alone and returns ``True``. The run may be a saga past its pivot, which must
+          not be cancelled unread; the ask is decided once a claim can decrypt it.
         - terminal — no-op, returns ``False``.
         - unknown, or owned by another tenant while one is bound — no-op, returns ``False``
           (indistinguishable on purpose: an operator scoped to one tenant learns nothing
@@ -241,5 +259,31 @@ class DurableRunAdminPort(Protocol):
         indistinguishable to the caller, and a caller who cannot tell them apart shows a
         "Stop" button that reports success and does nothing. That is the failure this whole
         surface exists to avoid, arriving through the return type instead of the behaviour.
+        """
+        ...  # pragma: no cover
+
+    def requeue_quarantined(
+        self,
+        *,
+        run_ids: Sequence[str] | None = None,
+    ) -> Awaitable[int]:
+        """Return ``QUARANTINED`` runs to ``PENDING``; return how many moved.
+
+        Call it once the keys those runs need are back, and name what to bring back: bind
+        the tenant whose key is back, or pass *run_ids*. A requeued run keeps its
+        ``created_at``, so the scan, oldest first, claims it ahead of every fresh run, and
+        one whose key is still gone costs a claim and a KMS call before it is quarantined
+        again at once, its ``attempts`` already putting its hold at the cap. Each run is due
+        at once, with no lease, and keeps its ``attempts``, payloads and cancel stamps.
+
+        Scoped like :meth:`list_runs`: bound, only that tenant's runs; unbound with
+        *run_ids*, the named runs of any tenant.
+
+        :param run_ids: Requeue only these runs, skipping any not quarantined or out of
+            scope. ``None`` names every quarantined run in scope; an empty sequence, none.
+        :returns: How many runs moved.
+        :raises CoreException: ``validation`` (:data:`REQUEUE_UNSCOPED_CODE`) for an unbound
+            call without *run_ids* while any quarantined run belongs to a tenant. A
+            deployment whose runs carry no tenant requeues unbound.
         """
         ...  # pragma: no cover

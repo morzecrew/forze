@@ -23,6 +23,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -30,7 +31,11 @@ from forze.application.integrations.crypto.payload import (
     encrypt_payload,
     is_payload_cipher_missing,
 )
-from forze.application.integrations.durable import is_passing_fault, unopenable_hold
+from forze.application.integrations.durable import (
+    is_passing_fault,
+    quarantines_unopenable,
+    unopenable_hold,
+)
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_postgres.adapters._logger import logger
@@ -109,8 +114,8 @@ class PostgresDurableRunStore(
 
     What a bound caller reaches splits by verb. ``begin``, ``renew``, ``load`` and every
     terminal write reach that tenant's runs and untagged ones (see :meth:`_worker_scope`);
-    ``claim_abandoned``, ``list_runs``, ``request_cancel`` and ``refuse_cancel`` match the
-    tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the
+    ``claim_abandoned``, ``list_runs``, ``request_cancel``, ``requeue_quarantined`` and
+    ``refuse_cancel`` match the tenant exactly. ``enqueue`` resolves one effective tenant for the table, the tag and the
     scoped key together, and refuses an explicit tenant that contradicts the binding.
 
     The table is provided by the application; expected schema::
@@ -455,8 +460,9 @@ class PostgresDurableRunStore(
         # One by one: the claim has already leased every row, so a run whose payload cannot
         # be opened must not fail the runs claimed with it. One whose key is gone is held
         # out of the scan for longer than a lease, or it would be back at the head of the
-        # next one; one that met a passing fault keeps its lease. A missing cipher is the
-        # deployment's, not the run's, and fails the scan.
+        # next one, and quarantined once that hold has doubled to its cap; one that met a
+        # passing fault keeps its lease. A missing cipher is the deployment's, not the
+        # run's, and fails the scan.
         records: list[DurableRunRecord] = []
 
         for row in rows:
@@ -466,6 +472,16 @@ class PostgresDurableRunStore(
             except Exception as error:
                 if is_payload_cipher_missing(error):
                     raise
+
+                if quarantines_unopenable(error, lease_for=lease_for, attempts=row["attempts"]):
+                    logger.exception(
+                        "Durable run %s could not be opened on its claim %d; quarantined, "
+                        "recovery will not claim it again until it is requeued",
+                        row["run_id"],
+                        row["attempts"],
+                    )
+                    await self._quarantine(row["run_id"], fence=row["attempts"])
+                    continue
 
                 hold = unopenable_hold(error, lease_for=lease_for, attempts=row["attempts"])
                 logger.exception(
@@ -496,6 +512,73 @@ class PostgresDurableRunStore(
                 )
 
         return records
+
+    # ....................... #
+
+    async def _quarantine(self, run_id: str, *, fence: int) -> None:
+        # Fenced like the hold: only the claim that failed to open the run moves it, and
+        # only while it is still running under that claim.
+        await self.client.execute(
+            sql.SQL(
+                """
+                UPDATE {table}
+                SET status = 'quarantined', leased_until = NULL, updated_at = now()
+                WHERE run_id = {run_id} AND status = 'running' AND attempts = {fence}
+                """
+            ).format(
+                table=(await self._table()).ident(),
+                run_id=sql.Placeholder("run_id"),
+                fence=sql.Placeholder("fence"),
+            ),
+            {"run_id": run_id, "fence": fence},
+        )
+
+    # ....................... #
+
+    async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
+        table = await self._table()
+        params: dict[str, object] = {}
+        clauses: list[sql.Composable] = [sql.SQL("status = 'quarantined'")]
+
+        # Scoped like ``list_runs``. A quarantined run has no lease and no holder, so there
+        # is nothing to fence against. It is made due at once: ``begin`` takes a run before
+        # its ``available_at``, so one can reach quarantine still delayed.
+        tenant_id = self._tenant_id_for_resolve()
+
+        if tenant_id is not None:
+            clauses.append(sql.SQL("tenant_id = %(tenant_id)s"))
+            params["tenant_id"] = tenant_id
+
+        if run_ids is not None:
+            clauses.append(sql.SQL("run_id = ANY(%(run_ids)s)"))
+            params["run_ids"] = list(run_ids)
+
+        elif tenant_id is None:
+            # Unbound and unnamed, every tenant's runs would come back ahead of the fresh
+            # ones, those whose key is gone for good among them. Refused while any is
+            # tagged; the update then takes untagged runs only, so a run tagged and
+            # quarantined after this check stays where it is.
+            tagged = await self.client.fetch_one(
+                sql.SQL(
+                    "SELECT 1 FROM {table} "
+                    "WHERE status = 'quarantined' AND tenant_id IS NOT NULL LIMIT 1"
+                ).format(table=table.ident()),
+                row_factory="tuple",
+            )
+
+            if tagged is not None:
+                raise requeue_unscoped_error()
+
+            clauses.append(sql.SQL("tenant_id IS NULL"))
+
+        return await self.client.execute(
+            sql.SQL(
+                "UPDATE {table} SET status = 'pending', available_at = NULL, "
+                "updated_at = now() WHERE {where}"
+            ).format(table=table.ident(), where=sql.SQL(" AND ").join(clauses)),
+            params,
+            return_rowcount=True,
+        )
 
     # ....................... #
 
@@ -628,21 +711,25 @@ class PostgresDurableRunStore(
             tenant_filter = sql.SQL(" AND tenant_id = %(tenant_id)s")
             params["tenant_id"] = tenant_id
 
-        # One statement covers both live states. A PENDING run has no holder to wait for and
-        # no fence to respect, so it lands CANCELLED here and the recovery scan never picks
-        # it up; a RUNNING run only gets the stamp, and its holder lands the terminal state
-        # under its fence. ``COALESCE`` makes a repeated ask keep the first instant. A
+        # One statement covers every live state. A PENDING run never claimed has no holder
+        # to wait for and no journal to decide by, so it lands CANCELLED here and the
+        # recovery scan never picks it up. Every other live run only gets the stamp: a
+        # RUNNING one's holder lands the terminal state under its fence, and a QUARANTINED
+        # one, or a PENDING one requeued from it, may be a saga past its pivot, decided once
+        # a claim can read it. ``COALESCE`` makes a repeated ask keep the first instant. A
         # terminal run matches no row and the caller is told nothing happened.
         row = await self.client.fetch_one(
             sql.SQL(
                 """
                 UPDATE {table}
-                SET status = CASE WHEN status = 'pending' THEN 'cancelled' ELSE status END,
-                    leased_until = CASE WHEN status = 'pending' THEN NULL ELSE leased_until END,
+                SET status = CASE WHEN status = 'pending' AND attempts = 0
+                                  THEN 'cancelled' ELSE status END,
+                    leased_until = CASE WHEN status = 'pending' AND attempts = 0
+                                        THEN NULL ELSE leased_until END,
                     cancel_requested_at = COALESCE(cancel_requested_at, now()),
                     updated_at = now()
                 WHERE run_id = {run_id}
-                  AND status IN ('pending', 'running'){tenant_filter}
+                  AND status IN ('pending', 'running', 'quarantined'){tenant_filter}
                 RETURNING run_id
                 """
             ).format(

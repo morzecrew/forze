@@ -20,6 +20,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenantProviderPort, effective_tenant
 from forze.base.exceptions import exc
@@ -37,8 +38,9 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
     Same lifecycle and lease/claim semantics as the Postgres store (``PENDING`` →
     ``RUNNING`` under a lease, abandoned reclaim, idempotency-key convergence, the cancel
     ask/land split), in memory. A bound tenant scopes ``enqueue``/``claim_abandoned``/
-    ``request_cancel`` to that tenant (per-tenant recovery and control); unbound, the scan
-    spans every tenant.
+    ``request_cancel``/``requeue_quarantined`` to that tenant (per-tenant recovery and
+    control); unbound, the scan spans every tenant. It never seals, so it never quarantines
+    a run itself.
 
     The verbs reached with a run id — ``begin``, ``renew``, ``load`` and every terminal
     write — reach the bound tenant's runs and the untagged ones (see :meth:`_reaches`);
@@ -295,7 +297,7 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
             status = data["status"]
 
-            if status not in (DurableRunStatus.PENDING.value, DurableRunStatus.RUNNING.value):
+            if status not in _LIVE:
                 return False  # terminal: nothing to stop, and nothing to overwrite
 
             # ``COALESCE``-style: asking twice keeps the first ask's instant, so a repeated
@@ -303,13 +305,47 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
             if data["cancel_requested_at"] is None:
                 data["cancel_requested_at"] = utcnow()
 
-            if status == DurableRunStatus.PENDING.value:
-                # Nothing is executing, so there is no holder to wait for and no fence to
-                # respect — land it here and the recovery scan never picks it up.
+            # Never claimed, nothing has executed: there is no holder to wait for and no
+            # journal to decide by, so land it here and the recovery scan never picks it up.
+            # A quarantined run, or one requeued from quarantine, may be a saga past its
+            # pivot, and keeps only the stamp until a claim can decide it.
+            if status == DurableRunStatus.PENDING.value and data["attempts"] == 0:
                 data["status"] = DurableRunStatus.CANCELLED.value
                 data["leased_until"] = None
 
             return True
+
+    # ....................... #
+
+    async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
+        # The mock never seals, so it never quarantines a run itself; it requeues the ones
+        # a test or a restored state put there, as an engine does.
+        bound_tenant = self._bound_tenant()
+        named = None if run_ids is None else set(run_ids)
+
+        with self.state.lock:
+            quarantined = [
+                data
+                for data in self.state.durable_runs.values()
+                if data["status"] == DurableRunStatus.QUARANTINED.value
+                and (bound_tenant is None or data["tenant_id"] == bound_tenant)
+                and (named is None or data["run_id"] in named)
+            ]
+
+            # Unbound and unnamed, every tenant's runs would come back ahead of the fresh
+            # ones, those whose key is gone for good among them: refused while any is tagged.
+            unscoped = bound_tenant is None and named is None
+
+            if unscoped and any(data["tenant_id"] is not None for data in quarantined):
+                raise requeue_unscoped_error()
+
+            # Due at once: ``begin`` takes a run before its ``available_at``, so one can
+            # reach quarantine still delayed.
+            for data in quarantined:
+                data["status"] = DurableRunStatus.PENDING.value
+                data["available_at"] = None
+
+        return len(quarantined)
 
     # ....................... #
 
@@ -407,6 +443,13 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
 
 # ....................... #
+
+_LIVE = (
+    DurableRunStatus.PENDING.value,
+    DurableRunStatus.RUNNING.value,
+    DurableRunStatus.QUARANTINED.value,
+)
+"""The states a cancel can still be asked of."""
 
 
 def _is_abandoned(data: dict[str, Any], now: Any) -> bool:

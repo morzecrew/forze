@@ -196,11 +196,13 @@ class DurableFunctionRunner:
         """Ask a run to stop; return whether the ask was recorded.
 
         The operator entry point for the "Stop" button, over the control-plane admin port.
-        **Cooperative**: a ``PENDING`` run stops at once (nothing is executing), while a
-        ``RUNNING`` one keeps going until its holder observes the stamp on the next lease
-        heartbeat — so observation latency is ``lease_for / heartbeat_divisor`` (100 s at
+        **Cooperative**: a ``PENDING`` run never claimed stops at once (nothing has
+        executed), while a ``RUNNING`` one keeps going until its holder observes the stamp on
+        the next lease heartbeat — so observation latency is ``lease_for / heartbeat_divisor`` (100 s at
         stock settings), and a body that never awaits is bounded only by
-        :attr:`max_run_duration`. A terminal run returns ``False``.
+        :attr:`max_run_duration`. A ``QUARANTINED`` run, or one requeued from quarantine, is
+        only stamped, and decided once a claim can decrypt it. A terminal run returns
+        ``False``.
 
         Fails **closed** rather than silently: a backend that does not advertise
         ``supports_cancel`` cannot deliver the request to a running body, and accepting it
@@ -270,9 +272,9 @@ class DurableFunctionRunner:
         """Claim up to *limit* abandoned runs and re-invoke them; return how many it re-invoked.
 
         A claimed run the store could not open (its tenant's key is gone) is held out of the
-        scan by the store and not counted, so a batch with one can come back short. A body
-        failure during recovery is recorded on the run and swallowed (the scanner
-        keeps draining), never propagated. With *max_concurrency* set the claimed runs are
+        scan by the store, or quarantined once the hold has doubled to its cap, and not
+        counted, so a batch with one can come back short. A body failure during recovery is
+        recorded on the run and swallowed (the scanner keeps draining), never propagated. With *max_concurrency* set the claimed runs are
         recovered concurrently up to that bound (each run executes in its own task, so its
         ambient run binding stays isolated); ``None`` recovers them sequentially.
         """

@@ -51,6 +51,15 @@ class DurableRunStatus(StrEnum):
     to the body's code, ``TIMED_OUT`` sends you to the cap, the workload's size, or a hung
     peer. :attr:`DurableRunRecord.error` still carries the human-readable deadline reason."""
 
+    QUARANTINED = "quarantined"
+    """Recovery could not decrypt the run for long enough, its tenant's key being gone, and
+    stopped trying. Not terminal: the run still owes its work, but the recovery scan never
+    claims it, so however many there are they cannot crowd the runs behind them.
+
+    :meth:`~forze.application.contracts.durable.function.DurableRunAdminPort.requeue_quarantined`
+    puts it back to ``PENDING`` once the key is back; until then a listing shows it with
+    :attr:`DurableRunRecord.payloads_unreadable` set."""
+
 
 # ....................... #
 
@@ -141,8 +150,10 @@ class DurableRunRecord:
     """When an operator asked this run to stop, or ``None`` if nobody has.
 
     Set on the *ask*, not the landing: a ``RUNNING`` run keeps running until its lease holder
-    observes the stamp, so a run can carry it while still ``RUNNING``. ``PENDING`` runs skip
-    the interval — nothing is executing, so they land ``CANCELLED`` at once."""
+    observes the stamp, so a run can carry it while still ``RUNNING``. A ``PENDING`` run never
+    claimed skips the interval — nothing has executed, so it lands ``CANCELLED`` at once. A
+    ``QUARANTINED`` run, or one requeued from quarantine, carries the stamp until a claim can
+    read it."""
 
     cancel_refused_at: datetime | None = None
     """When the run refused an observed cancel request, or ``None``.
@@ -155,9 +166,9 @@ class DurableRunRecord:
     payloads_unreadable: bool = False
     """Whether this read could not decrypt the run's payloads, its tenant's key being gone or
     its KMS failing. ``input_json`` and ``output_json`` are then ``None`` whatever the run
-    holds. Only a listing returns such a run, so it can still be found; a cancel asked of it
-    stays recorded until recovery can decrypt it again, and the runner then lands it, or
-    refuses it for a saga past its pivot."""
+    holds. Only a listing returns such a run, so it can still be found, ``QUARANTINED`` ones
+    included; a cancel asked of it stays recorded until recovery can decrypt it again, and the
+    runner then lands it, or refuses it for a saga past its pivot."""
 
 
 # ....................... #
@@ -179,8 +190,9 @@ class DurableRunStorePort(Protocol):
       what keeps a run belonging to no tenant completable: without it such a run's terminal
       write would match nothing, and it would be reclaimed and re-run forever.
     - The verbs that enumerate or control — ``claim_abandoned``, ``list_runs``,
-      ``request_cancel``, ``refuse_cancel`` — match the tenant **exactly**. Widening an
-      enumeration is a disclosure, and none of them has the liveness problem above.
+      ``request_cancel``, ``requeue_quarantined``, ``refuse_cancel`` — match the tenant
+      **exactly**. Widening an enumeration is a disclosure, and none of them has the
+      liveness problem above.
     - Unbound reaches everything. That is the recovery and single-tenant role, and it is
       what lets one sweep serve every tenant on a tagged relation.
 
@@ -238,11 +250,14 @@ class DurableRunStorePort(Protocol):
 
         A claimed run whose payload cannot be decrypted is left out of the result. One whose
         tenant's key is gone is held out of the scan for longer than *lease_for*, doubling with
-        each claim up to a day, so such runs cannot fill every batch; one that met a passing
-        fault (a throttled KMS) keeps its lease. A payload cipher missing from the wiring fails
-        the call instead. A cancel asked of such a run stays recorded, held with it, until a
-        scan can decrypt it; the runner then lands it, or refuses it for a saga past its
-        pivot, which must complete forward. Unread, it could not tell the two apart.
+        each claim up to a day, so such runs cannot fill every batch. On a later claim whose
+        hold would reach that day it is ``QUARANTINED`` instead: its lease cleared, its
+        payloads and attempts kept, and never claimed again until it is requeued. One that met
+        a passing fault (a throttled KMS) keeps its lease and is never quarantined. A payload
+        cipher missing from the wiring fails the call instead. A cancel asked of such a run
+        stays recorded, held or quarantined with it, until a scan can decrypt it; the runner
+        then lands it, or refuses it for a saga past its pivot, which must complete forward.
+        Unread, it could not tell the two apart.
         """
         ...  # pragma: no cover
 

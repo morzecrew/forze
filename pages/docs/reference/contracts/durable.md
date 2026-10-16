@@ -56,12 +56,14 @@ queue's delayed jobs.
 | `DurableFunctionEventCommandDepKey` | emit events that trigger functions |
 | `DurableFunctionStepDepKey` | run memoized, individually-retried steps inside a function |
 | `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery, and the fenced terminal landings `mark_cancelled` / `mark_timed_out` |
-| `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop |
+| `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop; `requeue_quarantined(run_ids=None)` returns quarantined runs to `pending` and says how many — unbound, it must name them while any belongs to a tenant |
 | `DurableScheduleStoreDepKey` | the cron schedule store — put / claim_due / advance / load / delete |
 
 A `DurableFunctionEventSpec` binds an event channel to its payload codec. A run's status is
 a `DurableRunStatus` — `pending` / `running` / `completed` / `failed` / `forward_incomplete`
-/ `cancelled` / `timed_out`.
+/ `cancelled` / `timed_out` / `quarantined`. `quarantined` is not terminal: recovery could not
+decrypt the run for long enough, its key being gone, and its scan no longer claims it until
+`requeue_quarantined()` puts it back.
 
 ## What a bound tenant reaches
 
@@ -71,8 +73,9 @@ holds all three to it.
 | Verbs | Reach when a tenant is bound |
 |-------|------------------------------|
 | `begin`, `renew`, `load`, `complete` / `fail` / `mark_*` | that tenant's runs **and untagged ones** |
-| `claim_abandoned`, `list_runs`, `request_cancel`, `refuse_cancel` | that tenant's runs, exactly |
-| all of them, unbound | everything — the recovery and single-tenant role |
+| `claim_abandoned`, `list_runs`, `request_cancel`, `requeue_quarantined`, `refuse_cancel` | that tenant's runs, exactly |
+| all of them, unbound | everything — the recovery and single-tenant role — except `requeue_quarantined` |
+| `requeue_quarantined`, unbound and naming no runs | untagged runs only, and refused while any quarantined run in scope carries a tenant |
 
 The untagged arm on the first row is liveness, not laxity. A run tagged with no tenant belongs
 to none, and a terminal write that matched nothing would leave it running until its lease
@@ -98,8 +101,9 @@ recorded, never a promise about when the body notices.
 
 | Run state | What happens | Returns |
 |-----------|--------------|---------|
-| `pending` | lands `cancelled` immediately — nothing is executing | `True` |
+| `pending`, never claimed | lands `cancelled` immediately — nothing has executed | `True` |
 | `running` | stamps `cancel_requested_at`; the lease holder lands it on its next heartbeat | `True` |
+| `quarantined`, or `pending` after a requeue | stamps `cancel_requested_at`; decided once a claim can decrypt the run | `True` |
 | terminal | nothing | `False` |
 | unknown / not visible to the bound tenant | nothing | `False` |
 
