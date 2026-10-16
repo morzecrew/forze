@@ -13,8 +13,10 @@ from forze.application.contracts.authn import (
     RevocationStatesDepKey,
     RevocationStatesSpec,
 )
+from forze.base.exceptions import CoreException
 from forze_mock import MockDepsModule
 from forze_mock.adapters.revocation import MockPrincipalEpochStore, MockRevocationStates
+from forze_mock.execution import MockRouteConfig
 from forze_mock.state import MockState
 from tests.support.execution_context import context_from_modules
 from tests.support.revocation_states_conformance import (
@@ -111,3 +113,17 @@ async def test_a_write_sweeps_the_entries_that_expired_before_it() -> None:
     await states.revoke(new, ["s:d"], ttl=timedelta(seconds=5))
 
     assert sorted(key for _, _, key in state.revocation_states) == ["s:a", "s:d"]
+
+
+@pytest.mark.parametrize(
+    "route",
+    [MockRouteConfig(tenant_aware=True), MockRouteConfig(namespace=lambda tenant_id: "x")],
+)
+async def test_a_tenant_scoped_states_route_is_refused_as_on_redis(route: MockRouteConfig) -> None:
+    ctx = context_from_modules(MockDepsModule(routes={"authn-revocations": route}))
+    spec = RevocationStatesSpec(name="authn-revocations")
+
+    with pytest.raises(CoreException) as caught:
+        ctx.deps.resolve_configurable(ctx, RevocationStatesDepKey, spec, route=spec.name)
+
+    assert caught.value.code == "revocation_states.tenant_scoped_route"

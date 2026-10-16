@@ -18,6 +18,7 @@ from forze.application.contracts.authn import (
     RevocationStatesSpec,
     TokenLifecycleDepKey,
     TokenVerifierDepKey,
+    refuse_tenant_scoped_revocation_states,
     resolve_authn_event_emitter,
 )
 from forze.application.contracts.authz import PermissionProvider
@@ -1147,7 +1148,15 @@ class ConfigurableMockRevocationStates(_MockFactoryBase):
         context: ExecutionContext,
         spec: RevocationStatesSpec,
     ) -> MockRevocationStates:
-        # As on Redis: the states are a principal's, across tenants, so never tenant-scoped.
+        cfg = self._route(spec.name)
+
+        if cfg is not None:
+            # As on Redis: the states are a principal's, across tenants, so never tenant-scoped.
+            refuse_tenant_scoped_revocation_states(
+                tenant_aware=cfg.tenant_aware,
+                per_tenant=callable(cfg.namespace) or callable(cfg.relation),
+            )
+
         return MockRevocationStates(state=self._state(context), namespace=str(spec.name))
 
 

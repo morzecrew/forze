@@ -57,3 +57,26 @@ class AuthnSpec(BaseSpec):
 @attrs.define(slots=True, kw_only=True, frozen=True)
 class RevocationStatesSpec(BaseSpec):
     """Specification of a revocation states route; ``name`` is the route."""
+
+
+# ....................... #
+
+
+def refuse_tenant_scoped_revocation_states(*, tenant_aware: bool, per_tenant: bool) -> None:
+    """Refuse a revocation states route scoped per tenant.
+
+    The states belong to a principal, across tenants, and a token is verified before any
+    tenant is bound, so a route scoped per tenant would fail every read.
+
+    :param tenant_aware: Whether the route is tenant-aware.
+    :param per_tenant: Whether the route resolves its namespace per tenant.
+    :raises CoreException: ``configuration`` (``revocation_states.tenant_scoped_route``).
+    """
+
+    if tenant_aware or per_tenant:
+        raise exc.configuration(
+            "Revocation states cannot be tenant-scoped: they belong to a principal, across "
+            "tenants, and are read before a tenant is bound. Wire them without tenant_aware "
+            "and with a static namespace.",
+            code="revocation_states.tenant_scoped_route",
+        )

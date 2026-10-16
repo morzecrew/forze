@@ -68,7 +68,12 @@ from .ports import (
     TokenLifecyclePort,
     TokenVerifierPort,
 )
-from .specs import AuthnMethod, AuthnSpec, RevocationStatesSpec
+from .specs import (
+    AuthnMethod,
+    AuthnSpec,
+    RevocationStatesSpec,
+    refuse_tenant_scoped_revocation_states,
+)
 from .value_objects import (
     ACT_CLAIM,
     AccessTokenCredentials,
@@ -158,6 +163,7 @@ __all__ = [
     "RevocationStatesPort",
     "RevocationStatesRead",
     "RevocationStatesSpec",
+    "refuse_tenant_scoped_revocation_states",
     "RefreshTokenCredentials",
     "RefreshTokenReuseError",
     "TokenLifecycleDepKey",
