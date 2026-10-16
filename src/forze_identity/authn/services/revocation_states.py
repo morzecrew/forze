@@ -373,6 +373,9 @@ class SessionRevocation:
         await self._revoke_keys(principal_id, [f"s:{session_id}"])
 
     async def _revoke_keys(self, principal_id: UUID, keys: list[str]) -> None:
+        # Outside a transaction the write would run inline, before any revocation committed.
+        self.require_transaction()
+
         async def _write() -> None:
             await self._bounded(
                 self.states.revoke(principal_id, keys, ttl=self.config.ttl),

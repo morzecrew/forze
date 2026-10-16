@@ -9,6 +9,7 @@ import attrs
 from psycopg import sql
 
 from forze.application.contracts.authn import PrincipalEpochPort
+from forze.base.exceptions import exc
 from forze_postgres.execution.deps.configs.principal_epoch import PostgresPrincipalEpochConfig
 from forze_postgres.kernel.client import PostgresClientPort
 from forze_postgres.kernel.gateways.base import PostgresQualifiedName
@@ -35,6 +36,11 @@ class PostgresPrincipalEpochStore(PrincipalEpochPort):
         );
 
     Never delete a row while a token might carry its epoch: a missing row reads as ``0``.
+
+    The exclusion needs the raise at read committed (the Postgres default), where the
+    revocation's scan, a later statement, sees the session an issue committed while the raise
+    waited. At repeatable read the scan reads the snapshot taken before the wait and misses it,
+    so a raise there is refused; at serializable the losing transaction fails instead.
     """
 
     client: PostgresClientPort
@@ -94,10 +100,22 @@ class PostgresPrincipalEpochStore(PrincipalEpochPort):
             sql.SQL(
                 "INSERT INTO {table} (principal_id, epoch) VALUES ({principal}, 1) "
                 "ON CONFLICT (principal_id) DO UPDATE SET epoch = {table}.epoch + 1 "
-                "RETURNING epoch"
+                "RETURNING epoch, current_setting('transaction_isolation')"
             ).format(table=table.ident(), principal=sql.Placeholder("principal")),
             {"principal": principal_id},
             row_factory="tuple",
         )
 
-        return 0 if row is None else int(row[0])
+        if row is None:
+            return 0
+
+        # Refused before the scan, so the whole revocation rolls back with it.
+        if row[1] == "repeatable read":
+            raise exc.configuration(
+                "A principal's epoch cannot be raised at repeatable read: the revocation's "
+                "session scan would read a snapshot older than a session issued meanwhile. Run "
+                "revocations at read committed or serializable.",
+                code="authn_epoch_isolation",
+            )
+
+        return int(row[0])

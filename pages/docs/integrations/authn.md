@@ -105,13 +105,16 @@ CREATE TABLE authn_principal_epochs (
 
 - **`ttl` is the window.** A revocation writes its states to Redis once it commits. If that
   write never lands (it fails every one of `write_attempts`, which is logged at error level;
-  the process dies first; or the revoking process was not configured), or Redis loses the key
-  while an earlier lookup is still writing, a revoked token stays admitted for at most `ttl`
-  after the revocation commits. Configure every process that verifies or revokes, and give
+  the process dies first; the revoking process was not configured; or the session was revoked
+  around the authn adapters, through its document port), or Redis loses the key while an
+  earlier lookup is still writing, a revoked token stays admitted for at most `ttl` after the
+  revocation commits. Configure every process that verifies or revokes, and give
   the states a Redis namespace nothing else flushes.
 - **Transactions are required.** With the fast path on, issuing and revoking refuse to run
   outside a transaction (`authn_revocation_requires_transaction`), so keep `tx_route` set on
-  both registries. Issue and logout serialize on the epoch's row on Postgres only.
+  both registries. Issue and logout serialize on the epoch's row on Postgres only, at read
+  committed or serializable; a revocation at repeatable read is refused
+  (`authn_epoch_isolation`).
 - **`session_binding`.** `"session"` (the default) refuses a token once a refresh replaced its
   session, as without the fast path; `"family"` admits it until its own `exp` while the
   family is live. A logout, a family revocation and refresh-token reuse refuse it either way.

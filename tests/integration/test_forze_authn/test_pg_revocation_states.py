@@ -31,7 +31,7 @@ from forze.application.contracts.authn import (
     RefreshTokenCredentials,
     RevocationStatesDepKey,
 )
-from forze.application.contracts.transaction import TransactionManagerDepKey
+from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, exc
 from forze_identity.authn import AuthnDepsModule, AuthnKernelConfig, RevocationStates
@@ -100,9 +100,14 @@ class _Stack:
     def tokens(self) -> Any:
         return self.ctx.authn.token_lifecycle(SPEC)
 
-    async def in_tx(self, work: Callable[[], Awaitable[Any]]) -> Any:
+    async def in_tx(
+        self,
+        work: Callable[[], Awaitable[Any]],
+        *,
+        isolation: IsolationLevel | None = None,
+    ) -> Any:
         with self.ctx.inv_ctx.bind(metadata=_invocation_metadata()):
-            async with self.ctx.tx_ctx.scope(TX):
+            async with self.ctx.tx_ctx.scope(TX, isolation=isolation):
                 return await work()
 
     async def held(
@@ -331,6 +336,48 @@ async def test_an_issue_waits_for_a_logout_and_carries_the_raised_epoch(
     assert len(await stack.live_sessions(principal)) == 1
     assert await stack.verify(issued) == "admitted"
     assert await down.verify(issued) == "admitted"
+
+
+async def test_a_logout_at_snapshot_isolation_is_refused_rather_than_missing_a_session(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    # Its snapshot would be fixed before its raise waits on the issue, so its scan would
+    # miss the session the issue commits, and that session would stay refreshable.
+    stack, _, principals, _ = await _stacks(pg_client, redis_client)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    # The epoch row exists, so the issue only locks it and the logout's raise does not conflict.
+    await stack.in_tx(lambda: stack.tokens.issue_tokens(identity))
+    await stack.in_tx(lambda: stack.tokens.revoke_tokens(identity))
+
+    async with asyncio.timeout(10):
+        issuing = asyncio.create_task(
+            stack.held(lambda: stack.tokens.issue_tokens(identity), entered, release)
+        )
+        await entered.wait()
+
+        logout = asyncio.create_task(
+            stack.in_tx(
+                lambda: stack.tokens.revoke_tokens(identity),
+                isolation=IsolationLevel.SNAPSHOT,
+            )
+        )
+        await asyncio.sleep(BLOCKED_FOR)
+        release.set()
+        await issuing
+
+        with pytest.raises(CoreException) as caught:
+            await logout
+
+    assert caught.value.code == "authn_epoch_isolation"
+
+    # At read committed the same logout revokes it.
+    await stack.in_tx(lambda: stack.tokens.revoke_tokens(identity))
+    assert await stack.live_sessions(principal) == []
 
 
 async def test_warm_verifications_need_no_session_or_epoch_table(
