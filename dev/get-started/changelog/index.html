@@ -9602,6 +9602,9 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Recovery no longer lands a saga asked to stop unread when its holder died first.</strong> It landed <code>CANCELLED</code>, abandoning forward steps past the pivot and skipping the rollback before it. Such a saga now runs again and decides by its journal at its next step, as a live one does.</p>
+</li>
+<li>
 <p><strong>Durable recovery no longer stalls on runs it cannot decrypt.</strong> On Postgres and Mongo, a claimed run whose tenant's key was gone failed the whole claim. Now only that run is skipped and held out of the scan, from two leases doubling to a day; a passing <abbr title="Key Management Service">KMS</abbr> fault keeps the lease. A missing keyring still fails the scan.</p>
 </li>
 <li>
