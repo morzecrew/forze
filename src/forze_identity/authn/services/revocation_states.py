@@ -365,20 +365,14 @@ class SessionRevocation:
             keys += [f"s:{session.id}", f"f:{session.family_id}"]
 
         keys += [f"f:{family_id}" for family_id in families]
-        keys = list(dict.fromkeys(keys))
-
-        async def _write() -> None:
-            await self._bounded(
-                self.states.revoke(principal_id, keys, ttl=self.config.ttl),
-            )
-
-        await self.defer(lambda: self._write_through(principal_id, keys, _write))
+        await self._revoke_keys(principal_id, list(dict.fromkeys(keys)))
 
     async def rotated(self, principal_id: UUID, session_id: UUID) -> None:
         """Write ``revoked`` after commit for a session a refresh replaced."""
 
-        keys = [f"s:{session_id}"]
+        await self._revoke_keys(principal_id, [f"s:{session_id}"])
 
+    async def _revoke_keys(self, principal_id: UUID, keys: list[str]) -> None:
         async def _write() -> None:
             await self._bounded(
                 self.states.revoke(principal_id, keys, ttl=self.config.ttl),

@@ -94,7 +94,6 @@ class _States:
     down: bool = False
     writes_down: bool = False
     fill_gate: _Gate | None = None
-    raise_gate: _Gate | None = None
     calls: list[str] = attrs.field(factory=list)
 
     def _call(self, name: str, *, write: bool) -> None:
@@ -128,30 +127,32 @@ class _States:
 
     async def raise_epoch(self, principal_id: UUID, epoch: int, *, expire_at_ms: int) -> None:
         self._call("raise_epoch", write=True)
-
-        if self.raise_gate is not None:
-            gate, self.raise_gate = self.raise_gate, None
-            await gate.hold()
-
         await self.inner.raise_epoch(principal_id, epoch, expire_at_ms=expire_at_ms)
 
 
 @attrs.define(eq=False)
 class _Epochs:
-    """The mock epoch store, counting reads and able to hold the next one."""
+    """The mock epoch store, counting reads and able to hold the next one before or after it."""
 
     inner: MockPrincipalEpochStore
     reads: list[str]
-    read_gate: _Gate | None = None
+    before_read: _Gate | None = None
+    after_read: _Gate | None = None
 
     async def current(self, principal_id: UUID) -> int:
         self.reads.append("epoch")
 
-        if self.read_gate is not None:
-            gate, self.read_gate = self.read_gate, None
+        if self.before_read is not None:
+            gate, self.before_read = self.before_read, None
             await gate.hold()
 
-        return await self.inner.current(principal_id)
+        epoch = await self.inner.current(principal_id)
+
+        if self.after_read is not None:
+            gate, self.after_read = self.after_read, None
+            await gate.hold()
+
+        return epoch
 
     async def hold(self, principal_id: UUID) -> int:
         return await self.inner.hold(principal_id)
@@ -617,12 +618,13 @@ async def test_a_delayed_epoch_write_held_before_its_read_writes_the_newer_epoch
     assert await stack.verify(issued) == "admitted"
 
     # The first logout commits, then its write-through stalls before reading the epoch.
-    gate = stack.epochs.read_gate = _Gate()
+    gate = stack.epochs.before_read = _Gate()
     first = asyncio.create_task(stack.logout(principal))
     await asyncio.wait_for(gate.reached.wait(), timeout=5)
 
     between = await stack.login(principal)
     await stack.logout(principal)
+    stack.states.inner.state.revocation_states.clear()  # the newer epoch's key is lost
 
     gate.release.set()
     await first
@@ -641,7 +643,7 @@ async def test_a_delayed_epoch_write_held_after_its_read_expires_within_ttl_of_t
     assert await stack.verify(first_token) == "admitted"
 
     # The first logout's write-through reads epoch 1, then stalls before it writes.
-    gate = stack.states.raise_gate = _Gate()
+    gate = stack.epochs.after_read = _Gate()
     first = asyncio.create_task(stack.logout(principal))
     await asyncio.wait_for(gate.reached.wait(), timeout=5)
 
@@ -652,6 +654,7 @@ async def test_a_delayed_epoch_write_held_after_its_read_expires_within_ttl_of_t
     await stack.logout(principal)
     newer_commit = stack.clock.now
     stack.states.inner.state.revocation_states.clear()  # the newer epoch's key is lost
+    stack.clock.advance(timedelta(seconds=10))
 
     gate.release.set()
     await first
