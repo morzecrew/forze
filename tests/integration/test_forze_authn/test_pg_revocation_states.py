@@ -147,9 +147,47 @@ class _Stack:
         return list(page.hits)
 
 
+class _Gate:
+    """Holds the next call it is armed for, until released."""
+
+    def __init__(self) -> None:
+        self.reached, self.release = asyncio.Event(), asyncio.Event()
+
+    async def pass_(self) -> None:
+        self.reached.set()
+        await asyncio.wait_for(self.release.wait(), timeout=10)
+
+
+class _GatedEpochs:
+    """The Postgres epoch store, able to hold the next `hold` before it runs, or the next
+    `advance` after it ran (its lock taken)."""
+
+    def __init__(self, inner: Any, gates: dict[str, _Gate]) -> None:
+        self._inner, self._gates = inner, gates
+
+    async def current(self, principal_id: UUID) -> int:
+        return await self._inner.current(principal_id)
+
+    async def hold(self, principal_id: UUID) -> int:
+        if (gate := self._gates.pop("before_hold", None)) is not None:
+            await gate.pass_()
+
+        return await self._inner.hold(principal_id)
+
+    async def advance(self, principal_id: UUID) -> int:
+        epoch = await self._inner.advance(principal_id)
+
+        if (gate := self._gates.pop("after_advance", None)) is not None:
+            await gate.pass_()
+
+        return epoch
+
+
 async def _stacks(
     pg_client: PostgresClient,
     redis_client: RedisClient,
+    *,
+    gates: dict[str, _Gate] | None = None,
 ) -> tuple[_Stack, _Stack, str, str]:
     """A stack on Redis, and one whose states store is down, over the same tables."""
 
@@ -185,8 +223,11 @@ async def _stacks(
             .merge(
                 Deps.plain(
                     {
-                        PrincipalEpochDepKey: ConfigurablePostgresPrincipalEpoch(
-                            config=PostgresPrincipalEpochConfig(relation=("public", epochs)),
+                        PrincipalEpochDepKey: lambda ctx: _GatedEpochs(
+                            ConfigurablePostgresPrincipalEpoch(
+                                config=PostgresPrincipalEpochConfig(relation=("public", epochs)),
+                            )(ctx),
+                            gates if gates is not None else {},
                         ),
                     }
                 )
@@ -474,6 +515,56 @@ async def test_a_mint_at_repeatable_read_cannot_read_past_a_revocation(
         (principal,),
     )
     assert keys == []
+    assert await stack.live_sessions(principal) == []
+
+
+@pytest.mark.parametrize("first", ["mint", "logout"])
+async def test_an_api_key_mint_and_a_logout_of_one_principal_never_deadlock(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+    first: str,
+) -> None:
+    # Both lock the epoch and then the caller's session: one waits for the other. The mint is
+    # refused because the logout revoked its caller, never aborted as a deadlock victim.
+    gates: dict[str, _Gate] = {}
+    stack, _, principals, _ = await _stacks(pg_client, redis_client, gates=gates)
+    principal = uuid4()
+    await insert_policy_principal_row(pg_client, table=principals, principal_id=principal)
+    identity = AuthnIdentity(principal_id=principal)
+    caller = await stack.in_tx(lambda: stack.tokens.issue_tokens(identity))
+    gate = gates["before_hold" if first == "mint" else "after_advance"] = _Gate()
+
+    async def mint() -> Any:
+        assert await stack.verify(caller) == "admitted"
+
+        return await stack.in_tx(
+            lambda: stack.ctx.authn.api_key_lifecycle(SPEC).issue_api_key(identity)
+        )
+
+    def logout() -> Awaitable[Any]:
+        return stack.in_tx(lambda: stack.tokens.revoke_tokens(identity))
+
+    async with asyncio.timeout(20):
+        # The first side stops at the gate: the mint before it holds the epoch, the logout
+        # just after its raise took the epoch's lock.
+        held = asyncio.create_task(mint() if first == "mint" else logout())
+        await gate.reached.wait()
+
+        other = asyncio.create_task(logout() if first == "mint" else mint())
+        await asyncio.sleep(BLOCKED_FOR)
+
+        if first == "logout":
+            # The mint waits on the epoch the logout's raise holds, before any session row.
+            assert not other.done()
+
+        gate.release.set()
+
+        results = await asyncio.gather(held, other, return_exceptions=True)
+
+    minted, logged_out = results if first == "mint" else results[::-1]
+
+    assert not isinstance(logged_out, BaseException), logged_out
+    assert isinstance(minted, CoreException) and minted.code == "session_revoked", minted
     assert await stack.live_sessions(principal) == []
 
 

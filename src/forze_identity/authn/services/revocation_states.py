@@ -375,9 +375,9 @@ class SessionRevocation:
         admitted inside the window. When this request authenticated with an access token of
         the same subject, its session (or family, by the binding) is read again from the
         database, and its epoch compared with *epoch*, the one the issue holds, or else a fresh
-        one. Inside a transaction both are read under locks, so neither comes from a snapshot
-        older than a revocation that has since committed; outside one, each read is a fresh
-        snapshot of its own.
+        one. Inside a transaction both are read under locks, the epoch first as every revocation
+        takes it, so neither comes from a snapshot older than a revocation that has since
+        committed; outside one, each read is a fresh snapshot of its own.
 
         :raises CoreException: ``session_revoked``.
         """
@@ -388,6 +388,12 @@ class SessionRevocation:
             return
 
         lock = self.in_transaction()
+
+        # The epoch before any session row: a principal-wide revocation raises the epoch and
+        # then stamps the sessions, and the reverse order would deadlock with it.
+        if epoch is None:
+            epoch = await (self.epochs.hold if lock else self.epochs.current)(principal_id)
+
         state = await self._state_truth(
             principal_id,
             admitted.session_id,
@@ -395,9 +401,6 @@ class SessionRevocation:
             by_family=self._by_family,
             lock=lock,
         )
-
-        if epoch is None:
-            epoch = await (self.epochs.hold if lock else self.epochs.current)(principal_id)
 
         if state == REVOKED_STATE or (admitted.epoch is not None and admitted.epoch < epoch):
             raise _session_revoked()
