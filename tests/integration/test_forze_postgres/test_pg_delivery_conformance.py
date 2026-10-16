@@ -12,7 +12,8 @@ crash path holds, so this positive property agrees on both engines — which thi
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -33,6 +34,7 @@ from forze_dst.conformance import (
     run_crash_recovery_delivery,
     run_rollback_crash_delivery,
 )
+from forze_postgres.adapters.outbox import PostgresOutboxStore
 from forze_postgres.execution.deps import PostgresDepsModule
 from forze_postgres.execution.deps.configs import (
     PostgresInboxConfig,
@@ -119,9 +121,7 @@ def _runtime(
     module = PostgresDepsModule(
         client=pg_client,
         tx={"default"},
-        outboxes={
-            _ROUTE: PostgresOutboxConfig(relation=("public", outbox_table), storage=storage)
-        },
+        outboxes={_ROUTE: PostgresOutboxConfig(relation=("public", outbox_table), storage=storage)},
         inboxes={_ROUTE: PostgresInboxConfig(relation=("public", inbox_table))},
     )
     return ExecutionRuntime(deps=DepsRegistry.from_modules(module).freeze())
@@ -228,6 +228,43 @@ class TestPostgresRollbackCrashDelivery:
             row_factory="tuple",
         )
         assert statuses == ([("published",)] * _N if storage == "retain" else [])
+
+
+@pytest.mark.integration
+class TestRollbackCrashLegDiscriminates:
+    """The leg must fail the design the consume storage rejected: deleting rows at the claim."""
+
+    async def test_a_store_that_deletes_at_its_claim_loses_the_held_back_row(
+        self, pg_client: PostgresClient, delivery_tables
+    ) -> None:
+        outbox_table, inbox_table = delivery_tables
+        runtime = _runtime(pg_client, outbox_table, inbox_table, storage="consume")
+        claim_pending = PostgresOutboxStore.claim_pending
+
+        async def delete_at_claim(self: PostgresOutboxStore[Any], **kwargs: Any) -> Any:
+            claims = await claim_pending(self, **kwargs)
+            table = await self._table()
+            await self.client.execute(
+                sql.SQL("DELETE FROM {t} WHERE id = ANY(%(ids)s::uuid[])").format(t=table.ident()),
+                {"ids": [claim.id for claim in claims]},
+            )
+            return claims
+
+        async def mark_nothing(self: PostgresOutboxStore[Any], ids: Any) -> int:
+            return len(ids)
+
+        with (
+            patch.object(PostgresOutboxStore, "claim_pending", delete_at_claim),
+            patch.object(PostgresOutboxStore, "mark_published", mark_nothing),
+        ):
+            async with runtime.scope():
+                outcome = await run_rollback_crash_delivery(
+                    runtime.get_context(), tx_scope=_TX_SCOPE, dedup=True
+                )
+
+        # The row held back for a retry was deleted with its claim, so the third round finds
+        # nothing to re-deliver; the crashed round had already sent it, so only the count shows.
+        assert outcome.delivered == 2 * _N - 1
 
 
 @pytest.mark.integration

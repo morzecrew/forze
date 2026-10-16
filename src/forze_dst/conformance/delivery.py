@@ -177,8 +177,12 @@ async def run_rollback_crash_delivery(
     in it, and claims there. On a store whose pass scope is the transaction (Postgres consume
     storage) the scope becomes a savepoint; on one whose scope is a no-op (the mock, retain
     storage) the outer transaction alone carries the rollback. Either way the crash rolls the
-    claims back and the next round finds every row pending, with nothing to reclaim. A consumed
-    event is never staged again: whether that is deduplicated differs by storage.
+    claims back and the next round finds every row pending, with nothing to reclaim.
+
+    The restart holds one claim back, as a failed publish would, and reschedules it at once; a
+    third round must still find it. That is what tells a row consumed at its mark from one
+    consumed at its claim, which would be gone. A consumed event is never staged again: whether
+    that is deduplicated differs by storage.
     """
 
     command = ctx.outbox.command(outbox_spec)
@@ -202,13 +206,21 @@ async def run_rollback_crash_delivery(
     except _RelayCrash:
         pass
 
-    # Restart: no reclaim — the rollback already returned the rows. Re-publish and mark.
+    # Restart: no reclaim — the rollback already returned the rows. Re-publish all but the last
+    # claim, whose publish "fails": it is rescheduled for now rather than marked.
     async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
-        republished_ids: list[UUID] = []
-        for claim in await query.claim_pending():
+        *republished, held_back = await query.claim_pending()
+        for claim in republished:
             broker.append(str(claim.event_id))
-            republished_ids.append(claim.id)
-        await query.mark_published(republished_ids)
+        await query.mark_published([claim.id for claim in republished])
+        await query.mark_retry([held_back.id], attempts=1, available_at=utcnow())
+
+    # A third round publishes the row that was held back, which must still be there.
+    async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
+        retried = await query.claim_pending()
+        for claim in retried:
+            broker.append(str(claim.event_id))
+        await query.mark_published([claim.id for claim in retried])
 
     applied: list[str] = []
     for event_id in broker:
