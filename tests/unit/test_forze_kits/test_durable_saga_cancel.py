@@ -29,7 +29,16 @@ from time import perf_counter
 import pytest
 from pydantic import BaseModel
 
-from forze.application.contracts.durable.function import DurableRunStatus
+from forze.application.contracts.durable.function import (
+    DurableCancelSignal,
+    DurableRunContext,
+    DurableRunRecord,
+    DurableRunStatus,
+    bind_durable_cancel_signal,
+    bind_durable_run,
+    reset_durable_cancel_signal,
+    reset_durable_run,
+)
 from forze.application.contracts.saga import SagaDefinition, SagaStep, SagaStepKind
 from forze.application.execution import ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -38,12 +47,15 @@ from forze.testing import context_from_modules
 from forze_kits.integrations.durable import (
     DurableFunctionRegistry,
     DurableFunctionRunner,
+    DurableSagaExecutor,
     durable_saga_handler,
     resolve_durable_run_admin,
     resolve_durable_run_store,
+    resolve_durable_step,
 )
 from forze_mock import MockDepsModule, MockState
 from forze_mock.adapters.durable import MockDurableRunStore
+from forze_mock.adapters.durable.function_step import MockDurableFunctionStepAdapter
 
 # ----------------------- #
 
@@ -847,3 +859,213 @@ class TestCancelAfterThePivot:
         # And the refusal is still on the record as the fact it is.
         assert result.cancel_requested_at is not None
         assert result.cancel_refused_at is not None
+
+
+# ....................... #
+
+
+async def _died_after(
+    ctx: ExecutionContext,
+    state: MockState,
+    run_id: str,
+    journaled: list[str],
+) -> None:
+    """A previous attempt journaled *journaled* in order, then its worker died."""
+
+    trail: list[str] = []
+    token = bind_durable_run(DurableRunContext(run_id=run_id, name="order"))
+
+    try:
+        step_port = resolve_durable_step(ctx)
+
+        for name in journaled:
+            trail = [*trail, name]
+            encoded = OrderCtx(trail=trail).model_dump(mode="json")
+
+            async def done(encoded: dict = encoded) -> dict:
+                return encoded
+
+            await step_port.run(name, done)
+
+    finally:
+        reset_durable_run(token)
+
+    state.durable_runs[run_id]["leased_until"] = utcnow() - timedelta(hours=1)
+
+
+class TestCancelAskedOfADeadHolder:
+    """The ask reached a run whose holder had already died, so nobody refused it.
+
+    Only the journal says whether the saga committed at its pivot, so recovery re-invokes it
+    and lets the executor decide at the first step that would act, once the journal has been
+    replayed up to there.
+    """
+
+    @staticmethod
+    def _saga(effects: list[str]) -> SagaDefinition[OrderCtx]:
+        return SagaDefinition(
+            name="order",
+            steps=(
+                _step("reserve", effects),
+                _step("charge", effects, kind=SagaStepKind.PIVOT),
+                _step("ship", effects, kind=SagaStepKind.RETRYABLE),
+            ),
+        )
+
+    async def _recover(self, journaled: list[str]) -> tuple[list[str], DurableRunRecord]:
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        registry = DurableFunctionRegistry()
+        registry.register("order", durable_saga_handler(self._saga(effects), OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry, lease_for=_FAST_LEASE, heartbeat_divisor=2
+        )
+
+        record = await store.enqueue("order", input_json=OrderCtx().model_dump(mode="json"))
+        claimed = await store.begin(record.run_id, lease_for=_FAST_LEASE)
+        assert claimed is not None
+
+        assert await admin.request_cancel(record.run_id) is True
+        await _died_after(ctx, state, record.run_id, journaled)
+
+        assert await runner.recover(ctx) == 1
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+
+        return effects, landed
+
+    async def test_past_the_pivot_the_ask_is_refused_and_the_saga_completes_forward(
+        self,
+    ) -> None:
+        effects, landed = await self._recover(["reserve", "charge"])
+
+        # Replayed steps do not act again; the one left runs, and nothing is rolled back.
+        assert effects == ["do:ship"]
+        assert landed.status is DurableRunStatus.COMPLETED
+        assert landed.cancel_refused_at is not None
+
+    async def test_before_the_pivot_the_journaled_steps_roll_back(self) -> None:
+        effects, landed = await self._recover(["reserve"])
+
+        # Landing it unopened would have left "reserve" done and never undone.
+        assert effects == ["undo:reserve"]
+        assert landed.status is DurableRunStatus.CANCELLED
+
+    async def test_a_drain_before_the_ask_is_delivered_is_not_read_as_the_ask(self) -> None:
+        # The ask waits for the first step that would act. A cancellation that lands before
+        # then, while the journal is still being read, is a drain, not the operator: taking it
+        # for the ask would decide at a point that cannot yet know whether the pivot committed.
+        ctx = context_from_modules(MockDepsModule())
+        effects: list[str] = []
+        signal = DurableCancelSignal.asked_before_start()
+        real_run = MockDurableFunctionStepAdapter.run
+
+        async def drained_on_read(self: object, name: str, fn: object) -> object:
+            raise asyncio.CancelledError
+
+        run_token = bind_durable_run(DurableRunContext(run_id="r1", name="order"))
+        signal_token = bind_durable_cancel_signal(signal)
+
+        try:
+            MockDurableFunctionStepAdapter.run = drained_on_read  # type: ignore[method-assign]
+
+            with pytest.raises(asyncio.CancelledError):
+                await DurableSagaExecutor().run(ctx, self._saga(effects), OrderCtx())
+
+        finally:
+            MockDurableFunctionStepAdapter.run = real_run  # type: ignore[method-assign]
+            reset_durable_cancel_signal(signal_token)
+            reset_durable_run(run_token)
+
+        assert effects == []
+        assert signal.undelivered
+
+    async def test_a_drain_before_the_ask_is_delivered_leaves_the_run_to_recovery(
+        self,
+    ) -> None:
+        # The runner's half of the same rule: a body cancelled before the ask reached it was
+        # drained, so the run stays RUNNING for the next recovery rather than landing
+        # CANCELLED on an ask nothing decided.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        registry = DurableFunctionRegistry()
+        registry.register("order", durable_saga_handler(self._saga(effects), OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry, lease_for=_FAST_LEASE, heartbeat_divisor=2
+        )
+
+        record = await store.enqueue("order", input_json=OrderCtx().model_dump(mode="json"))
+        assert await store.begin(record.run_id, lease_for=_FAST_LEASE) is not None
+        assert await admin.request_cancel(record.run_id) is True
+        state.durable_runs[record.run_id]["leased_until"] = utcnow() - timedelta(hours=1)
+
+        real_run = MockDurableFunctionStepAdapter.run
+
+        async def drained_on_read(self: object, name: str, fn: object) -> object:
+            raise asyncio.CancelledError
+
+        try:
+            MockDurableFunctionStepAdapter.run = drained_on_read  # type: ignore[method-assign]
+
+            with pytest.raises(asyncio.CancelledError):
+                await runner.recover(ctx)
+
+        finally:
+            MockDurableFunctionStepAdapter.run = real_run  # type: ignore[method-assign]
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+        assert landed.status is DurableRunStatus.RUNNING
+        assert effects == []
+
+    async def test_a_deadline_before_the_ask_is_delivered_lands_a_timeout(self) -> None:
+        # The deadline re-reads the row for an ask recorded before it, and this run's ask is
+        # on the row. Undelivered, nothing decided it, so the cap is what stopped the body.
+        state = MockState()
+        ctx = context_from_modules(MockDepsModule(state=state))
+        admin = resolve_durable_run_admin(ctx)
+        store = resolve_durable_run_store(ctx)
+
+        effects: list[str] = []
+        registry = DurableFunctionRegistry()
+        registry.register("order", durable_saga_handler(self._saga(effects), OrderCtx))
+        runner = DurableFunctionRunner(
+            registry=registry,
+            lease_for=_FAST_LEASE,
+            heartbeat_divisor=2,
+            max_run_duration=timedelta(milliseconds=80),
+        )
+
+        record = await store.enqueue("order", input_json=OrderCtx().model_dump(mode="json"))
+        assert await store.begin(record.run_id, lease_for=_FAST_LEASE) is not None
+        assert await admin.request_cancel(record.run_id) is True
+        await _died_after(ctx, state, record.run_id, ["reserve", "charge"])
+
+        real_run = MockDurableFunctionStepAdapter.run
+
+        async def stalled_lookup(self: object, name: str, fn: object) -> object:
+            if name == "ship":
+                await asyncio.sleep(5)  # bounded: the 80 ms cap cancels it first
+
+            return await real_run(self, name, fn)  # type: ignore[arg-type]
+
+        try:
+            MockDurableFunctionStepAdapter.run = stalled_lookup  # type: ignore[method-assign]
+            await runner.recover(ctx)
+
+        finally:
+            MockDurableFunctionStepAdapter.run = real_run  # type: ignore[method-assign]
+
+        landed = await store.load(record.run_id)
+        assert landed is not None
+        assert landed.status is DurableRunStatus.TIMED_OUT
+        assert effects == []
