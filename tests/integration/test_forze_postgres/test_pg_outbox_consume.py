@@ -3,7 +3,7 @@
 A relay pass runs in one transaction: the claim locks its rows without updating them, a
 published row is deleted at its mark, and a pass that fails rolls back whole.
 
-# covers: OutboxQueryPort.pass_scope
+# covers: TransactionalOutboxPasses.pass_scope
 # covers: OutboxQueryPort.claim_pending
 # covers: OutboxQueryPort.mark_published
 # covers: OutboxQueryPort.mark_retry

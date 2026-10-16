@@ -12,7 +12,13 @@ from .deps import (
     OutboxQueryDepPort,
 )
 from .integration_config import OutboxIntegrationConfig
-from .ports import OutboxCommandPort, OutboxQueryPort, OutboxRowPersistPort
+from .ports import (
+    OutboxCommandPort,
+    OutboxQueryPort,
+    OutboxRowPersistPort,
+    TransactionalOutboxPasses,
+    outbox_pass_scope,
+)
 from .specs import (
     OutboxDestination,
     OutboxDestinationKind,
@@ -61,4 +67,6 @@ __all__ = [
     "OutboxWake",
     "OutboxWakeSignal",
     "StagedOutboxEntry",
+    "TransactionalOutboxPasses",
+    "outbox_pass_scope",
 ]

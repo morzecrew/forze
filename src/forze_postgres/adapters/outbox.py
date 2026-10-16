@@ -23,6 +23,7 @@ from forze.application.contracts.outbox import (
     OutboxSpec,
     OutboxStatus,
     StagedOutboxEntry,
+    TransactionalOutboxPasses,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.base.exceptions import exc
@@ -46,7 +47,9 @@ def _whole_ms(duration: timedelta) -> int:
 
 @final
 @attrs.define(slots=True, kw_only=True, frozen=True)
-class PostgresOutboxStore[M: BaseModel](TenancyMixin, OutboxQueryPort, OutboxAdminPort):
+class PostgresOutboxStore[M: BaseModel](
+    TenancyMixin, OutboxQueryPort, OutboxAdminPort, TransactionalOutboxPasses
+):
     """Postgres-backed outbox persistence, query, and admin port.
 
     **Delivery model — at-least-once.** :meth:`claim_pending` moves rows to ``processing``

@@ -6,11 +6,12 @@ import asyncio
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from datetime import timedelta
-from typing import Any, Final, Literal, final
+from typing import Any, Final, Literal, cast, final
 from uuid import UUID
 
 import attrs
 
+from forze.application.contracts.deps import implements
 from forze.application.contracts.execution import LifecycleHook, LifecycleStep
 from forze.application.contracts.outbox import (
     OutboxDestinationKind,
@@ -18,6 +19,7 @@ from forze.application.contracts.outbox import (
     OutboxSpec,
     OutboxWake,
     OutboxWakeSignal,
+    TransactionalOutboxPasses,
 )
 from forze.application.contracts.pubsub import PubSubQueryDepKey, PubSubQueryPort, PubSubSpec
 from forze.application.contracts.queue import QueueSpec
@@ -930,9 +932,12 @@ class _OutboxRelayBackgroundStartup(LifecycleHook):
         self.tenant_shard = tenant_shard
         self.last_reclaim_at = None
         self.backoffs = {}
-        # A store that predates the attribute commits each claim and mark on its own; only a
+        # A store without the extension commits each claim and mark on its own; only a
         # literal True counts, so a test double's truthy stand-in does not.
-        self.passes_roll_back = getattr(outbox_query, "transactional_passes", False) is True
+        self.passes_roll_back = (
+            implements(outbox_query, TransactionalOutboxPasses)
+            and cast(TransactionalOutboxPasses, outbox_query).transactional_passes is True
+        )
 
         wake = self.outbox_spec.wake
 

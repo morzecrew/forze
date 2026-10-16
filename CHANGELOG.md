@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Postgres outbox can delete what it relays.** `PostgresOutboxConfig(storage="consume")` runs a relay pass in one transaction bounded by `pass_deadline` and `pass_statement_timeout`: the claim locks rows, publishing deletes them, nothing is left to prune. A failed pass backs its route, or tenant, off.
 
-- **A relay can bound each publish, and a run.** `publish_timeout=` on `OutboxRelay` and the background step makes a slow publish a transient failure; `OutboxRelay(publish_until=)` ends a run's publishing. `OutboxQueryPort.pass_scope()` scopes a pass; `transactional_passes` says whether it rolls back whole.
+- **A relay can bound each publish, and a run.** `publish_timeout=` on `OutboxRelay` and the background step makes a slow publish a transient failure; `OutboxRelay(publish_until=)` ends a run's publishing. A store opts into transactional passes with `TransactionalOutboxPasses`; `outbox_pass_scope()` enters one.
 
 - **The delivery conformance battery covers a relay pass that rolls back.** `forze_dst.conformance.run_rollback_crash_delivery` runs on the mock, on Mongo, and on Postgres in both storage modes.
 

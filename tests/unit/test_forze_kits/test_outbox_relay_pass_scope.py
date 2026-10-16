@@ -1,35 +1,40 @@
 """Unit tests for the relay's pass scope, its budget and the publish timeout.
 
 # covers: forze_kits.integrations.outbox._relay_core.relay_outbox_claims
-# covers: forze.application.contracts.outbox.OutboxQueryPort.pass_scope
+# covers: forze.application.contracts.outbox.outbox_pass_scope
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 from uuid import uuid4
 
+import attrs
 import pytest
 from pydantic import BaseModel
 
+from forze.application.contracts.deps import implements
 from forze.application.contracts.outbox import (
     OutboxClaim,
+    OutboxDeps,
     OutboxPassBudget,
     OutboxQueryPort,
     OutboxSpec,
     OutboxStatus,
+    TransactionalOutboxPasses,
+    outbox_pass_scope,
 )
 from forze.application.execution import DepsRegistry, ExecutionRuntime
 from forze.application.execution.context import ExecutionContext
 from forze.base.exceptions import CoreException, exc
 from forze.base.serialization import PydanticModelCodec
 from forze_kits.integrations.outbox import OutboxRelay
-from forze_kits.integrations.outbox._relay_core import _pass_scope, relay_outbox_claims
+from forze_kits.integrations.outbox._relay_core import relay_outbox_claims
 from forze_mock import MockDepsModule, MockStateDepKey
 from forze_mock.adapters import MockState
 from forze_mock.adapters.outbox import MockOutboxRow, MockOutboxStore
@@ -93,6 +98,23 @@ def _budget_scope(deadline_in: float, entered: list[str] | None = None) -> Any:
     return scope
 
 
+@contextmanager
+def _scoped(scope: Any) -> Iterator[None]:
+    """Give the mock store the pass extension, with *scope* as its pass scope."""
+
+    with (
+        patch.object(MockOutboxStore, "pass_scope", scope, create=True),
+        patch.object(
+            MockOutboxStore,
+            "transactional_passes",
+            new_callable=PropertyMock,
+            return_value=True,
+            create=True,
+        ),
+    ):
+        yield
+
+
 async def _relay(ctx: ExecutionContext, publish_one: Any, **kwargs: Any) -> Any:
     return await relay_outbox_claims(
         ctx,
@@ -107,23 +129,67 @@ async def _publish_ok(claim: OutboxClaim, payload: Any) -> None:
     del claim, payload
 
 
+@attrs.define(slots=True)
+class _OldSurfaceStore:
+    """A store written against the query port before the pass capability: structural only."""
+
+    inner: MockOutboxStore[Any]
+
+    @property
+    def spec(self) -> OutboxSpec[Any]:
+        return self.inner.spec
+
+    def claim_pending(self, *, limit: int | None = None) -> Any:
+        return self.inner.claim_pending(limit=limit)
+
+    def mark_published(self, ids: Any) -> Any:
+        return self.inner.mark_published(ids)
+
+    def mark_failed(self, ids: Any, *, error: str | None = None) -> Any:
+        return self.inner.mark_failed(ids, error=error)
+
+    def mark_retry(self, ids: Any, **kwargs: Any) -> Any:
+        return self.inner.mark_retry(ids, **kwargs)
+
+    def reclaim_stale_processing(self, *, older_than: Any) -> Any:
+        return self.inner.reclaim_stale_processing(older_than=older_than)
+
+    def requeue_failed(self, ids: Any) -> Any:
+        return self.inner.requeue_failed(ids)
+
+
+# ....................... #
+
+
+class TestOldSurfaceStore:
+    async def test_a_store_without_the_pass_capability_is_a_query_port_and_relays(
+        self,
+    ) -> None:
+        async with _context() as (ctx, state):
+            rows = _seed(state, 2)
+            store = _OldSurfaceStore(inner=ctx.outbox.query(_SPEC))  # type: ignore[arg-type]
+
+            with patch.object(OutboxDeps, "query", lambda _self, _spec: store):
+                result = await _relay(ctx, _publish_ok)
+
+        assert isinstance(store, OutboxQueryPort)
+        assert result.published == 2
+        assert [row.status for row in rows] == [OutboxStatus.PUBLISHED] * 2
+
+
 # ....................... #
 
 
 class TestRelayPassScope:
-    async def test_the_default_scope_is_a_no_op(self) -> None:
+    async def test_a_store_without_the_extension_gets_a_scope_that_does_nothing(self) -> None:
         async with _context() as (ctx, _state):
             store = ctx.outbox.query(_SPEC)
 
-            async with store.pass_scope() as budget:
+            async with outbox_pass_scope(store) as budget:
                 assert budget is None
 
-            assert store.transactional_passes is False
-
-    async def test_a_store_without_a_pass_scope_gets_the_no_op(self) -> None:
-        # A store implementing the protocol structurally predates the method.
-        async with _pass_scope(object()) as budget:  # type: ignore[arg-type]
-            assert budget is None
+        assert not implements(store, TransactionalOutboxPasses)
+        assert not implements(MagicMock(spec=OutboxQueryPort), TransactionalOutboxPasses)
 
     async def test_one_pass_enters_the_scope_once_around_its_claim_and_marks(self) -> None:
         entered: list[str] = []
@@ -135,7 +201,7 @@ class TestRelayPassScope:
         async with _context() as (ctx, state):
             _seed(state, 3)
 
-            with patch.object(MockOutboxStore, "pass_scope", _budget_scope(60.0, entered)):
+            with _scoped(_budget_scope(60.0, entered)):
                 result = await _relay(ctx, publish)
 
         assert entered == ["enter", "exit"]
@@ -145,13 +211,13 @@ class TestRelayPassScope:
 
 class TestRelayPassScopeDoubles:
     async def test_a_test_doubles_stand_in_budget_bounds_nothing(self) -> None:
-        # MagicMock(spec=OutboxQueryPort).pass_scope() yields a MagicMock, not a budget.
-        double = MagicMock(spec=OutboxQueryPort)
+        # A bare MagicMock has every attribute, and its pass_scope() yields a MagicMock.
+        double = MagicMock()
 
         async with _context() as (ctx, state):
             _seed(state, 2)
 
-            with patch.object(MockOutboxStore, "pass_scope", lambda _self: double.pass_scope()):
+            with _scoped(lambda _self: double.pass_scope()):
                 result = await _relay(ctx, _publish_ok)
 
         assert result.published == 2
@@ -167,7 +233,7 @@ class TestRelayPassBudget:
         async with _context() as (ctx, state):
             rows = _seed(state, 3)
 
-            with patch.object(MockOutboxStore, "pass_scope", _budget_scope(-1.0)):
+            with _scoped(_budget_scope(-1.0)):
                 result = await _relay(ctx, publish)
 
         assert calls == []
@@ -182,7 +248,7 @@ class TestRelayPassBudget:
         async with _context() as (ctx, state):
             rows = _seed(state, 3)
 
-            with patch.object(MockOutboxStore, "pass_scope", _budget_scope(0.3)):
+            with _scoped(_budget_scope(0.3)):
                 result = await asyncio.wait_for(_relay(ctx, publish), timeout=10)
 
         assert (result.published, result.retried, result.failed) == (1, 1, 0)
@@ -216,7 +282,7 @@ class TestRelayDecodeBound:
             rows = _seed(state, 3)
 
             with (
-                patch.object(MockOutboxStore, "pass_scope", _budget_scope(0.3)),
+                _scoped(_budget_scope(0.3)),
                 patch(_DECRYPT, slow_decrypt),
             ):
                 result = await asyncio.wait_for(_relay(ctx, publish), timeout=10)
@@ -242,7 +308,7 @@ class TestRelayDecodeBound:
             rows = _seed(state, 3)
 
             with (
-                patch.object(MockOutboxStore, "pass_scope", _budget_scope(0.3)),
+                _scoped(_budget_scope(0.3)),
                 patch(_DECRYPT, converting_decrypt),
             ):
                 result = await asyncio.wait_for(_relay(ctx, _publish_ok), timeout=10)
@@ -269,7 +335,7 @@ class TestRelayDecodeBound:
             rows = _seed(state, 3)
 
             with (
-                patch.object(MockOutboxStore, "pass_scope", _budget_scope(0.3)),
+                _scoped(_budget_scope(0.3)),
                 patch(_DECRYPT, stubborn_decrypt),
             ):
                 result = await asyncio.wait_for(_relay(ctx, publish), timeout=10)
@@ -289,7 +355,7 @@ class TestRelayPublishUntil:
         async with _context() as (ctx, state):
             rows = _seed(state, 2)
 
-            with patch.object(MockOutboxStore, "pass_scope", _budget_scope(60.0)):
+            with _scoped(_budget_scope(60.0)):
                 result = await _relay(
                     ctx, publish, publish_until=asyncio.get_running_loop().time() - 1
                 )

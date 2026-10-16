@@ -35,7 +35,7 @@ import attrs
 from pydantic import BaseModel
 
 from forze.application.contracts.inbox import InboxSpec
-from forze.application.contracts.outbox import OutboxSpec
+from forze.application.contracts.outbox import OutboxSpec, outbox_pass_scope
 from forze.application.execution import ExecutionContext
 from forze.base.primitives import utcnow
 from forze.base.serialization import PydanticModelCodec
@@ -198,7 +198,7 @@ async def run_rollback_crash_delivery(
 
     # Round one publishes the batch, then the process dies before the pass commits.
     try:
-        async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
+        async with ctx.tx_ctx.scope(tx_scope), outbox_pass_scope(query):
             for claim in await query.claim_pending():
                 broker.append(str(claim.event_id))
             raise _RelayCrash
@@ -208,7 +208,7 @@ async def run_rollback_crash_delivery(
 
     # Restart: no reclaim — the rollback already returned the rows. Re-publish all but the last
     # claim, whose publish "fails": it is rescheduled for now rather than marked.
-    async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
+    async with ctx.tx_ctx.scope(tx_scope), outbox_pass_scope(query):
         claims = await query.claim_pending()
         republished, held_back = claims[:-1], claims[-1:]  # no events: nothing to hold back
         for claim in republished:
@@ -217,7 +217,7 @@ async def run_rollback_crash_delivery(
         await query.mark_retry([claim.id for claim in held_back], attempts=1, available_at=utcnow())
 
     # A third round publishes the row that was held back, which must still be there.
-    async with ctx.tx_ctx.scope(tx_scope), query.pass_scope():
+    async with ctx.tx_ctx.scope(tx_scope), outbox_pass_scope(query):
         retried = await query.claim_pending()
         for claim in retried:
             broker.append(str(claim.event_id))

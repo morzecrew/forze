@@ -30,9 +30,10 @@ redelivery.
 Pass scope
 ==========
 
-Each pass runs inside the query port's ``pass_scope()``: a no-op for a store
-whose claims and marks commit one by one, and a transaction for one whose claim
-only locks its rows. A store without the method gets the no-op. When the scope
+Each pass runs inside the query port's pass scope (``outbox_pass_scope``): a
+transaction for a store whose claim only locks its rows, and a no-op for one
+whose claims and marks commit one by one, or that does not implement
+``TransactionalOutboxPasses`` at all. When the scope
 yields an :class:`~forze.application.contracts.outbox.OutboxPassBudget`, the
 relay starts no publish once its deadline has passed — the rows it did not
 reach are left exactly as they were — and caps each decode and each publish at
@@ -72,7 +73,7 @@ swallowed.
 import asyncio
 import random
 from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -83,6 +84,7 @@ from forze.application.contracts.outbox import (
     OutboxQueryPort,
     OutboxRelayResult,
     OutboxSpec,
+    outbox_pass_scope,
 )
 from forze.application.contracts.resilience import BackoffStrategy
 from forze.application.contracts.tenancy import TenantIdentity
@@ -182,18 +184,6 @@ def validate_retry_options(
 # ....................... #
 
 
-def _pass_scope(query: OutboxQueryPort) -> AbstractAsyncContextManager[OutboxPassBudget | None]:
-    """The query port's pass scope; the no-op for a store that does not have one."""
-
-    try:
-        scope = query.pass_scope
-
-    except AttributeError:
-        return nullcontext(None)
-
-    return scope()
-
-
 # ....................... #
 
 
@@ -273,7 +263,7 @@ async def relay_outbox_claims(
 
     query = ctx.outbox.query(outbox_spec)
 
-    async with _pass_scope(query) as scoped:
+    async with outbox_pass_scope(query) as scoped:
         # Only a real budget bounds the pass; a test double's stand-in bounds nothing.
         deadline = scoped.deadline if isinstance(scoped, OutboxPassBudget) else None
         stops = [at for at in (deadline, publish_until) if at is not None]

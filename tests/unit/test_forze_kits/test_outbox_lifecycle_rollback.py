@@ -8,6 +8,8 @@ consecutive failed ticks, or it republishes the batch on every pass.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -343,6 +345,23 @@ class TestRollingBackDrain:
 # ....................... #
 
 
+@contextmanager
+def _extension(transactional: Any) -> Iterator[None]:
+    """Give the mock store the pass extension, reporting *transactional*."""
+
+    with (
+        patch.object(MockOutboxStore, "pass_scope", lambda _self: nullcontext(None), create=True),
+        patch.object(
+            MockOutboxStore,
+            "transactional_passes",
+            new_callable=PropertyMock,
+            return_value=transactional,
+            create=True,
+        ),
+    ):
+        yield
+
+
 class TestRollbackModeAtStartup:
     @pytest.mark.parametrize("transactional", [True, False])
     async def test_the_step_reads_the_mode_from_the_store(self, transactional: bool) -> None:
@@ -350,12 +369,7 @@ class TestRollbackModeAtStartup:
         runtime = _runtime()
 
         with (
-            patch.object(
-                MockOutboxStore,
-                "transactional_passes",
-                new_callable=PropertyMock,
-                return_value=transactional,
-            ),
+            _extension(transactional),
             patch.object(OutboxRelay, "to_queue", AsyncMock(return_value=_full(0))),
         ):
             async with runtime.scope():
@@ -366,19 +380,25 @@ class TestRollbackModeAtStartup:
         assert startup.passes_roll_back is transactional
 
     async def test_a_truthy_stand_in_is_not_taken_for_rolling_back(self) -> None:
-        # A MagicMock(spec=OutboxQueryPort) answers the attribute with a truthy MagicMock.
+        # A bare MagicMock answers the attribute with a truthy MagicMock.
         startup = _startup(passes_roll_back=True, interval=timedelta(hours=1))
         runtime = _runtime()
 
         with (
-            patch.object(
-                MockOutboxStore,
-                "transactional_passes",
-                new_callable=PropertyMock,
-                return_value=MagicMock(),
-            ),
+            _extension(MagicMock()),
             patch.object(OutboxRelay, "to_queue", AsyncMock(return_value=_full(0))),
         ):
+            async with runtime.scope():
+                await startup(runtime.get_context())
+                await startup.stop(deadline=float("inf"))
+
+        assert startup.passes_roll_back is False
+
+    async def test_a_store_without_the_extension_does_not_roll_back(self) -> None:
+        startup = _startup(passes_roll_back=True, interval=timedelta(hours=1))
+        runtime = _runtime()
+
+        with patch.object(OutboxRelay, "to_queue", AsyncMock(return_value=_full(0))):
             async with runtime.scope():
                 await startup(runtime.get_context())
                 await startup.stop(deadline=float("inf"))
