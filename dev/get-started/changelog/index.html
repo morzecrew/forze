@@ -9579,9 +9579,15 @@ and this project adheres to <a href="https://semver.org/spec/v2.0.0.html">Semant
 <li>
 <p><strong>An overloaded socket.io replica sheds connections toward the fleet's mean.</strong> <code>connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)</code> closes movable connections at a bounded rate once the fleet has settled; <code>connection_report(sio, movable=)</code> fills the membership report it reads.</p>
 </li>
+<li>
+<p><strong>Tokens can be verified from cached revocation states, not the session row.</strong> <code>AuthnKernelConfig(revocation_states=RevocationStates(...))</code> checks new <code>fam</code> and <code>pep</code> claims against <code>RedisDepsModule(revocation_states=)</code> and <code>PostgresDepsModule(principal_epochs=)</code>. Opt-in; issue and revocation then need a transaction.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>A durable mock snapshot written by an earlier release is refused on load</strong> (<code>mock_state_snapshot_incompatible</code>), since the mock state gained a store.</p>
+</li>
 <li>
 <p><strong>The <code>socketio</code> extra bounds <code>python-engineio</code> below 5.</strong> The connection drain and a draining replica's turn-away close connections through its internals, and refuse at assembly a server that lacks them.</p>
 </li>

@@ -3941,6 +3941,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#check-sessions-from-redis" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Check sessions from Redis
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6449,6 +6460,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#check-sessions-from-redis" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Check sessions from Redis
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -6626,6 +6648,68 @@ and API-key revoke.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="check-sessions-from-redis">Check sessions from Redis<a class="headerlink" href="#check-sessions-from-redis" title="Permanent link">&para;</a></h2>
+<p>By default every token verification reads its session row. With
+<code>revocation_states</code> on the kernel, a token carries its session's family (<code>fam</code>) and the
+principal's epoch (<code>pep</code>), and the verifier checks them against states cached in Redis,
+reading Postgres only for what Redis misses. The eligibility read stays.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">timedelta</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">RevocationStatesDepKey</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze.application.contracts.resilience</span><span class="w"> </span><span class="kn">import</span> <span class="n">PortPolicy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_identity.authn</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuthnKernelConfig</span><span class="p">,</span> <span class="n">RevocationStates</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_postgres</span><span class="w"> </span><span class="kn">import</span> <span class="n">PostgresPrincipalEpochConfig</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">forze_redis</span><span class="w"> </span><span class="kn">import</span> <span class="n">RedisRevocationStatesConfig</span>
+
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">AuthnKernelConfig</span><span class="p">(</span>
+    <span class="n">access_token_secret</span><span class="o">=</span><span class="n">secret</span><span class="p">,</span>
+    <span class="n">refresh_token_pepper</span><span class="o">=</span><span class="n">pepper</span><span class="p">,</span>
+    <span class="n">revocation_states</span><span class="o">=</span><span class="n">RevocationStates</span><span class="p">(</span><span class="n">route</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="n">timedelta</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">5</span><span class="p">)),</span>
+<span class="p">)</span>
+<span class="n">states</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"authn-revocations"</span><span class="p">:</span> <span class="n">RedisRevocationStatesConfig</span><span class="p">(</span><span class="n">namespace</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">)}</span>
+<span class="n">epochs</span> <span class="o">=</span> <span class="n">PostgresPrincipalEpochConfig</span><span class="p">(</span><span class="n">relation</span><span class="o">=</span><span class="p">(</span><span class="s2">"public"</span><span class="p">,</span> <span class="s2">"authn_principal_epochs"</span><span class="p">))</span>
+<span class="n">breaker</span> <span class="o">=</span> <span class="n">PortPolicy</span><span class="p">(</span><span class="n">key</span><span class="o">=</span><span class="n">RevocationStatesDepKey</span><span class="p">,</span> <span class="n">policy</span><span class="o">=</span><span class="s2">"authn-revocations"</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">(</span><span class="s2">"read"</span><span class="p">,))</span>
+</code></pre></div>
+<p>Wire <code>states</code> as <code>RedisDepsModule(revocation_states=...)</code>, <code>epochs</code> as
+<code>PostgresDepsModule(principal_epochs=...)</code>, on the database that holds the sessions, and
+<code>breaker</code> in <code>ResilienceDepsModule(port_policies=...)</code> under a policy with a circuit
+breaker, so a Redis outage stops costing every verification its <code>timeout</code> (50 ms by
+default). Bind it to <code>read</code> only: an open breaker on the writes would fail every attempt of a
+revocation's write-through at once. The states route is resolved by <code>RevocationStatesSpec</code> under
+<code>RevocationStatesDepKey</code>, and the epochs under <code>PrincipalEpochDepKey</code>. Create the epochs
+table yourself and never delete its rows:</p>
+<div class="highlight"><pre><span></span><code><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">authn_principal_epochs</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">principal_id</span><span class="w"> </span><span class="n">uuid</span><span class="w">   </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span>
+<span class="w">    </span><span class="n">epoch</span><span class="w">        </span><span class="nb">bigint</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<span class="p">);</span>
+</code></pre></div>
+<ul>
+<li><strong><code>ttl</code> is the window.</strong> A revocation writes its states to Redis once it commits. If that
+  write never lands (it fails every one of <code>write_attempts</code>, which is logged at error level;
+  the process dies first; the revoking process was not configured; or the session was revoked
+  around the authn adapters, through its document port), or Redis loses the key while an
+  earlier lookup is still writing, a revoked token stays admitted for at most <code>ttl</code> after the
+  revocation commits. Configure every process that verifies or revokes, and give
+  the states a Redis namespace nothing else flushes. Expiries are instants on the Redis
+  primary's clock: a failover to a replica whose clock lags lengthens every state by the lag.</li>
+<li><strong>Transactions are required.</strong> With the fast path on, issuing and revoking refuse to run
+  outside a transaction (<code>authn_revocation_requires_transaction</code>), so keep <code>tx_route</code> set on
+  both registries. Issue and logout serialize on the epoch's row on Postgres only, with the
+  revocation at read committed (the default); a revocation at repeatable read or serializable
+  is refused (<code>authn_epoch_isolation</code>).</li>
+<li><strong><code>session_binding</code>.</strong> <code>"session"</code> (the default) refuses a token once a refresh replaced its
+  session, as without the fast path; <code>"family"</code> admits it until its own <code>exp</code> while the
+  family is live. A logout, a family revocation and refresh-token reuse refuse it either way.</li>
+<li><strong>Minting re-reads the token.</strong> A tenant switch or an API-key issue in a request that
+  authenticated with an access token re-reads that token's session and epoch from Postgres
+  first, under locks inside a transaction, so a token admitted inside the window mints
+  nothing that outlives it; above read committed a revocation committed since the
+  transaction's snapshot fails it with a serialization error. A socket's
+  commands run apart from the handshake that verified its token, and are not re-read.</li>
+<li><strong>Redis down.</strong> A Redis error or timeout makes the same checks from Postgres, so an outage
+  never admits a token the fast path would refuse. Tokens issued before the fast path carry
+  no <code>fam</code> or <code>pep</code>, and keep the session-row check until they expire.</li>
+</ul>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Document-backed:</strong> wire the account / session / identity-mapping specs to a
