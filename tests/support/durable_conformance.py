@@ -39,6 +39,7 @@ from forze.application.contracts.crypto import (
     TenantTemplateKeyDirectory,
 )
 from forze.application.contracts.durable.function import (
+    REQUEUE_UNSCOPED_CODE,
     DurableFunctionStepPort,
     DurableRunAdminPort,
     DurableRunContext,
@@ -635,7 +636,7 @@ async def run_quarantine_scenario(
     out["requarantined"] = await lost_state()
 
     # 6. A missing cipher fails the scan rather than quarantining what it cannot open.
-    out["requeued_once_more"] = await cast(DurableRunAdminPort, healthy).requeue_quarantined()
+    out["requeued_once_more"] = await owner.requeue_quarantined()
 
     try:
         await store_for(None, None).claim_abandoned(limit=10, lease_for=lease)
@@ -772,8 +773,9 @@ async def run_quarantine_admin_scenario(
 
     held_a = await as_a.enqueue("qa", input_json=None)
     held_b = await as_b.enqueue("qb", input_json=None)
+    untagged = await unbound.enqueue("qn", input_json=None)
 
-    for store, run in ((as_a, held_a), (as_b, held_b)):
+    for store, run in ((as_a, held_a), (as_b, held_b), (unbound, untagged)):
         assert await store.begin(run.run_id, lease_for=lease) is not None
         await quarantine(run.run_id)
 
@@ -805,8 +807,23 @@ async def run_quarantine_admin_scenario(
     out["requeued_by_a"] = await admin_a.requeue_quarantined()
     out["left_after_a"] = await names(admin)
     out["requeued_a"] = await state(held_a.run_id)
+    out["named_across_tenants"] = await admin_a.requeue_quarantined(run_ids=[held_b.run_id])
 
-    out["requeued_by_all"] = await admin.requeue_quarantined()
+    # Unbound and unnamed, a requeue would bring back every tenant's runs, those whose key is
+    # gone for good among them, ahead of every fresh run; it is refused while any is tagged.
+    try:
+        await admin.requeue_quarantined()
+        out["unbound_unnamed"] = "allowed"
+
+    except CoreException as error:
+        out["unbound_unnamed"] = (error.kind.value, error.code)
+
+    out["left_after_refusal"] = await names(admin)
+    out["named_none"] = await admin.requeue_quarantined(run_ids=[])
+    out["named"] = await admin.requeue_quarantined(run_ids=[held_b.run_id, "no-such-run"])
+
+    # With no tagged run left in quarantine, as in a single-tenant deployment, it proceeds.
+    out["untagged_unnamed"] = await admin.requeue_quarantined()
     out["requeued_again"] = await admin.requeue_quarantined()
 
     # A requeued run has been claimed before, so it may be a saga past its pivot: a cancel
@@ -822,8 +839,41 @@ async def run_quarantine_admin_scenario(
     return out
 
 
+
+async def run_requeue_race_scenario(
+    store_for: Callable[[UUID | None], DurableRunStorePort],
+    racing: Callable[[Callable[[], Awaitable[None]]], DurableRunStorePort],
+    quarantine: Callable[[str], Awaitable[None]],
+) -> dict[str, Any]:
+    """An unbound, unnamed requeue moves untagged runs only, even past its own check.
+
+    Between the check that no quarantined run is tagged and the update, a tenant's run can be
+    quarantined; the update must leave it where it is. *racing* builds an unbound store whose
+    write after its check runs the given hook first.
+    """
+
+    lease = timedelta(minutes=5)
+    unbound = store_for(None)
+    untagged = await unbound.enqueue("qn", input_json=None)
+    assert await unbound.begin(untagged.run_id, lease_for=lease) is not None
+    await quarantine(untagged.run_id)
+
+    tagged_store = store_for(UUID("00000000-0000-0000-0000-00000000000a"))
+    tagged = await tagged_store.enqueue("qa", input_json=None)
+    assert await tagged_store.begin(tagged.run_id, lease_for=lease) is not None
+
+    async def quarantine_tagged() -> None:
+        await quarantine(tagged.run_id)
+
+    moved = await cast(DurableRunAdminPort, racing(quarantine_tagged)).requeue_quarantined()
+    page = await cast(DurableRunAdminPort, unbound).list_runs(
+        status=DurableRunStatus.QUARANTINED, limit=10
+    )
+
+    return {"moved": moved, "still_quarantined": [record.name for record in page.records]}
+
 QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
-    "listed": ["qa", "qb"],
+    "listed": ["qa", "qb", "qn"],
     "listed_by_a": ["qa"],
     "scan_claims": [],
     "begin_claims": False,
@@ -831,13 +881,18 @@ QUARANTINE_ADMIN_OUTCOME: dict[str, Any] = {
     "asked": ("quarantined", 1, True),
     "ask_across_tenants": False,
     "requeued_by_a": 1,
-    "left_after_a": ["qb"],
+    "left_after_a": ["qb", "qn"],
     "requeued_a": ("pending", 1, True),
-    "requeued_by_all": 1,
+    "named_across_tenants": 0,
+    "unbound_unnamed": ("validation", REQUEUE_UNSCOPED_CODE),
+    "left_after_refusal": ["qb", "qn"],
+    "named_none": 0,
+    "named": 1,
+    "untagged_unnamed": 1,
     "requeued_again": 0,
     "ask_requeued": True,
     "asked_requeued": ("pending", 1, True),
-    "claimed": [("qa", 2, True), ("qb", 2, True)],
+    "claimed": [("qa", 2, True), ("qb", 2, True), ("qn", 2, False)],
 }
 """What :func:`run_quarantine_admin_scenario` answers on every engine, the mock included."""
 

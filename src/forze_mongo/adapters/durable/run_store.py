@@ -28,6 +28,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -455,14 +456,36 @@ class MongoDurableRunStore(
 
     # ....................... #
 
-    async def requeue_quarantined(self) -> int:
+    async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
+        coll = await self._collection()
+        scope = self._tenant_filter()
+
         # Scoped like ``list_runs``. A quarantined run has no lease and no holder, so there
         # is nothing to fence against, and it is due: a claim took it, so its
         # ``available_at`` has passed.
+        filter_: dict[str, Any] = {"status": _QUARANTINED, **scope}
+
+        if run_ids is not None:
+            filter_["_id"] = {"$in": list(run_ids)}
+
+        elif not scope:
+            # Unbound and unnamed, every tenant's runs would come back ahead of the fresh
+            # ones, those whose key is gone for good among them. Refused while any is
+            # tagged; the update then takes untagged runs only, so a run tagged and
+            # quarantined after this check stays where it is.
+            tagged = await self.client.find_one(
+                coll,
+                {"status": _QUARANTINED, "tenant_id": {"$ne": None}},
+                projection={"_id": 1},
+            )
+
+            if tagged is not None:
+                raise requeue_unscoped_error()
+
+            filter_["tenant_id"] = None
+
         return await self.client.update_many(
-            await self._collection(),
-            {"status": _QUARANTINED, **self._tenant_filter()},
-            {"$set": {"status": _PENDING, "updated_at": utcnow()}},
+            coll, filter_, {"$set": {"status": _PENDING, "updated_at": utcnow()}}
         )
 
     # ....................... #
@@ -604,14 +627,15 @@ class MongoDurableRunStore(
         scope = self._tenant_filter()
 
         # A PENDING run never claimed has no holder to wait for and no journal to decide by,
-        # so it lands CANCELLED here and the recovery scan never picks it up. Two statements
+        # so it lands CANCELLED here and the recovery scan never picks it up. A document
+        # with no ``attempts`` was never claimed either, as ``_record_from_row`` reads it. Two statements
         # rather than Postgres's one CASE: the state a document lands in differs by the
         # state it is in, and Mongo has no conditional assignment. The PENDING arm runs
         # first so a run that slips from PENDING to RUNNING between them is stamped by the
         # second — the reverse order could leave a run cancelled *and* unstamped.
         landed = await self.client.update_one(
             coll,
-            {"_id": run_id, "status": _PENDING, "attempts": 0, **scope},
+            {"_id": run_id, "status": _PENDING, "attempts": {"$in": [0, None]}, **scope},
             {
                 "$set": {
                     "status": DurableRunStatus.CANCELLED.value,

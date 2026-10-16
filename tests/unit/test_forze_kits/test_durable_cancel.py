@@ -26,6 +26,7 @@ stopped" assertion here is really "the body stopped at its next await point".
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import timedelta
 
 import pytest
@@ -392,7 +393,7 @@ class _ListOnlyAdmin:
     async def request_cancel(self, run_id: str) -> bool:
         raise AssertionError("must not be reached — the gate refuses first")
 
-    async def requeue_quarantined(self) -> int:
+    async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
         return 0
 
 

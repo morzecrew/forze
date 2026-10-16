@@ -57,10 +57,11 @@ class MongoDurableRunConfig(TenantAwareIntegrationConfig):
     """Also expose the :class:`DurableRunAdminPort` (ops control plane) over this collection.
 
     Opt-in so a deployment publishes the ops plane explicitly. **Not read-only**: the port
-    carries ``request_cancel``, which lands a ``PENDING`` run in ``CANCELLED`` and stamps a
-    ``RUNNING`` one for its holder to stop. Enabling it grants run *control*, not just
-    visibility — the ask is tenant-scoped and unfenced, so anyone who can resolve this key
-    can stop any run their tenant can list.
+    carries ``request_cancel``, which lands a ``PENDING`` run never claimed in ``CANCELLED``
+    and stamps any other live one for its holder or the runner to decide, and
+    ``requeue_quarantined``, which returns quarantined runs to the recovery scan. Enabling it
+    grants run *control*, not just visibility — both are tenant-scoped and unfenced, so
+    anyone who can resolve this key can stop or requeue any run their tenant can list.
     """
 
 

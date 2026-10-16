@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
 from datetime import datetime
-from typing import Protocol, final, runtime_checkable
+from typing import Final, Protocol, final, runtime_checkable
 
 import attrs
 
@@ -29,6 +29,20 @@ from .run_store import DurableRunRecord, DurableRunStatus
 
 _CURSOR_CODEC = B64UrlJsonCodec()
 """Opaque base64url-JSON encoder for the ``(created_at, run_id)`` keyset cursor."""
+
+REQUEUE_UNSCOPED_CODE: Final = "durable.requeue_unscoped"
+"""Code of the refusal of an unbound, unnamed requeue while a quarantined run has a tenant."""
+
+
+def requeue_unscoped_error() -> CoreException:
+    """The refusal :meth:`DurableRunAdminPort.requeue_quarantined` raises for an unbound,
+    unnamed call while any quarantined run belongs to a tenant."""
+
+    return exc.validation(
+        "Requeueing quarantined durable runs with no tenant bound needs run_ids while any of "
+        "them belongs to a tenant: bind the tenant whose key is back, or name the runs.",
+        code=REQUEUE_UNSCOPED_CODE,
+    )
 
 
 def encode_run_cursor(created_at: datetime, run_id: str) -> str:
@@ -248,15 +262,28 @@ class DurableRunAdminPort(Protocol):
         """
         ...  # pragma: no cover
 
-    def requeue_quarantined(self) -> Awaitable[int]:
-        """Return every ``QUARANTINED`` run to ``PENDING``; return how many moved.
+    def requeue_quarantined(
+        self,
+        *,
+        run_ids: Sequence[str] | None = None,
+    ) -> Awaitable[int]:
+        """Return ``QUARANTINED`` runs to ``PENDING``; return how many moved.
 
-        Call it once the keys those runs need are back. Each run is due at once, with no
-        lease, and keeps its ``attempts``, payloads and cancel stamps, so the recovery scan
-        claims it as it would any pending run. A run whose key is still gone is quarantined
-        again on that claim, since its ``attempts`` already put its hold at the cap.
+        Call it once the keys those runs need are back, and name what to bring back: bind
+        the tenant whose key is back, or pass *run_ids*. A requeued run keeps its
+        ``created_at``, so the scan, oldest first, claims it ahead of every fresh run, and
+        one whose key is still gone costs a claim and a KMS call before it is quarantined
+        again at once, its ``attempts`` already putting its hold at the cap. Each run is due
+        at once, with no lease, and keeps its ``attempts``, payloads and cancel stamps.
 
-        Scoped like :meth:`list_runs`: a bound tenant requeues only its own runs; unbound,
-        every tenant's.
+        Scoped like :meth:`list_runs`: bound, only that tenant's runs; unbound with
+        *run_ids*, the named runs of any tenant.
+
+        :param run_ids: Requeue only these runs, skipping any not quarantined or out of
+            scope. ``None`` names every quarantined run in scope; an empty sequence, none.
+        :returns: How many runs moved.
+        :raises CoreException: ``validation`` (:data:`REQUEUE_UNSCOPED_CODE`) for an unbound
+            call without *run_ids* while any quarantined run belongs to a tenant. A
+            deployment whose runs carry no tenant requeues unbound.
         """
         ...  # pragma: no cover

@@ -12,6 +12,7 @@ first already written.
 # covers: DurableRunStorePort.enqueue
 # covers: DurableRunStorePort.claim_abandoned
 # covers: DurableRunAdminPort.requeue_quarantined
+# covers: DurableRunAdminPort.request_cancel
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from forze.application.contracts.crypto import (
     StaticKeyDirectory,
     is_encrypted_payload,
 )
-from forze.application.contracts.durable.function import DurableScheduleRecord
+from forze.application.contracts.durable.function import DurableRunStatus, DurableScheduleRecord
 from forze.application.contracts.tenancy import TenantIdentity
 from forze.application.integrations.crypto import PAYLOAD_CIPHER_MISSING_CODE, Keyring
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -410,6 +411,25 @@ async def test_a_run_recovery_keeps_failing_to_open_is_quarantined_until_requeue
 
     assert await run_quarantine_scenario(store_for, expire, lease_left) == QUARANTINE_OUTCOME
 
+
+
+async def test_a_pending_run_with_no_attempts_field_is_cancelled_at_once(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    """A document written before ``attempts`` existed reads as never claimed, as
+    ``_record_from_row`` reads it, so a cancel lands it rather than only stamping it."""
+
+    store = _store(mongo_client, run_collection)
+    run = await store.enqueue("fn", input_json=None)
+    coll = await mongo_client.collection(run_collection[1], db_name=run_collection[0])
+    await mongo_client.update_one(coll, {"_id": run.run_id}, {"$unset": {"attempts": ""}})
+
+    assert await store.request_cancel(run.run_id) is True
+
+    landed = await store.load(run.run_id)
+
+    assert landed is not None
+    assert (landed.status, landed.attempts) == (DurableRunStatus.CANCELLED, 0)
 
 async def test_a_scan_quarantines_only_a_run_it_still_holds(
     mongo_client: MongoClient, run_collection: tuple[str, str]

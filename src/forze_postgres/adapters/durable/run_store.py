@@ -23,6 +23,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenancyMixin
 from forze.application.integrations.crypto.payload import (
@@ -534,28 +535,46 @@ class PostgresDurableRunStore(
 
     # ....................... #
 
-    async def requeue_quarantined(self) -> int:
+    async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
         table = await self._table()
         params: dict[str, object] = {}
+        clauses: list[sql.Composable] = [sql.SQL("status = 'quarantined'")]
 
         # Scoped like ``list_runs``. A quarantined run has no lease and no holder, so there
         # is nothing to fence against, and it is due: a claim took it, so its
         # ``available_at`` has passed.
         tenant_id = self._tenant_id_for_resolve()
-        tenant_filter = sql.SQL("")
 
         if tenant_id is not None:
-            tenant_filter = sql.SQL(" AND tenant_id = %(tenant_id)s")
+            clauses.append(sql.SQL("tenant_id = %(tenant_id)s"))
             params["tenant_id"] = tenant_id
+
+        if run_ids is not None:
+            clauses.append(sql.SQL("run_id = ANY(%(run_ids)s)"))
+            params["run_ids"] = list(run_ids)
+
+        elif tenant_id is None:
+            # Unbound and unnamed, every tenant's runs would come back ahead of the fresh
+            # ones, those whose key is gone for good among them. Refused while any is
+            # tagged; the update then takes untagged runs only, so a run tagged and
+            # quarantined after this check stays where it is.
+            tagged = await self.client.fetch_one(
+                sql.SQL(
+                    "SELECT 1 FROM {table} "
+                    "WHERE status = 'quarantined' AND tenant_id IS NOT NULL LIMIT 1"
+                ).format(table=table.ident()),
+                row_factory="tuple",
+            )
+
+            if tagged is not None:
+                raise requeue_unscoped_error()
+
+            clauses.append(sql.SQL("tenant_id IS NULL"))
 
         return await self.client.execute(
             sql.SQL(
-                """
-                UPDATE {table}
-                SET status = 'pending', updated_at = now()
-                WHERE status = 'quarantined'{tenant_filter}
-                """
-            ).format(table=table.ident(), tenant_filter=tenant_filter),
+                "UPDATE {table} SET status = 'pending', updated_at = now() WHERE {where}"
+            ).format(table=table.ident(), where=sql.SQL(" AND ").join(clauses)),
             params,
             return_rowcount=True,
         )

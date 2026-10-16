@@ -26,9 +26,10 @@ rule, written twice: reading the code proves nothing here and only running both 
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import cast
-from uuid import uuid4
+from typing import Any, cast
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -58,12 +59,14 @@ from tests.support.durable_cancel_races import (
 )
 from tests.support.durable_conformance import (
     QUARANTINE_ADMIN_OUTCOME,
+    FirstCallRuns,
     mock_quarantine,
     run_claim_scenario,
     run_control_scenario,
     run_lifecycle_scenario,
     run_list_scenario,
     run_quarantine_admin_scenario,
+    run_requeue_race_scenario,
     run_schedule_scenario,
     run_tenancy_scenario,
     tenant_provider_for,
@@ -118,6 +121,20 @@ def _mongo_store(client: MongoClient, collection: tuple[str, str]) -> MongoDurab
         client=client,
         config=MongoDurableRunConfig(collection=collection),
     )
+
+
+def _mongo_quarantine(
+    client: MongoClient, collection: tuple[str, str]
+) -> Callable[[str], Awaitable[None]]:
+    """Put a run into quarantine directly, as a recovery scan that could not open it would."""
+
+    async def quarantine(run_id: str) -> None:
+        coll = await client.collection(collection[1], db_name=collection[0])
+        await client.update_one(
+            coll, {"_id": run_id}, {"$set": {"status": "quarantined", "leased_until": None}}
+        )
+
+    return quarantine
 
 
 # ....................... #
@@ -340,23 +357,32 @@ class TestDurableMockVsMongo:
             mock_quarantine(mock_state),
         )
 
-        async def mongo_quarantine(run_id: str) -> None:
-            db_name, coll_name = run_collection
-            coll = await mongo_client.collection(coll_name, db_name=db_name)
-            await mongo_client.update_one(
-                coll, {"_id": run_id}, {"$set": {"status": "quarantined", "leased_until": None}}
-            )
-
         mongo_out = await run_quarantine_admin_scenario(
             lambda tenant: MongoDurableRunStore(
                 client=mongo_client,
                 config=MongoDurableRunConfig(collection=run_collection),
                 tenant_provider=tenant_provider_for(tenant),
             ),
-            mongo_quarantine,
+            _mongo_quarantine(mongo_client, run_collection),
         )
 
         assert mock_out == mongo_out == QUARANTINE_ADMIN_OUTCOME
+
+    async def test_an_unnamed_requeue_leaves_a_run_tagged_after_its_check(
+        self, mongo_client: MongoClient, run_collection: tuple[str, str]
+    ) -> None:
+        def store_for(tenant: UUID | None, client: Any = mongo_client) -> MongoDurableRunStore:
+            return MongoDurableRunStore(
+                client=client,
+                config=MongoDurableRunConfig(collection=run_collection),
+                tenant_provider=tenant_provider_for(tenant),
+            )
+
+        assert await run_requeue_race_scenario(
+            store_for,
+            lambda hook: store_for(None, FirstCallRuns(mongo_client, "update_many", hook)),
+            _mongo_quarantine(mongo_client, run_collection),
+        ) == {"moved": 1, "still_quarantined": ["qa"]}
 
     async def test_mock_matches_mongo_for_schedules(self, mongo_client: MongoClient) -> None:
         db_name = (await mongo_client.db()).name

@@ -56,7 +56,7 @@ queue's delayed jobs.
 | `DurableFunctionEventCommandDepKey` | emit events that trigger functions |
 | `DurableFunctionStepDepKey` | run memoized, individually-retried steps inside a function |
 | `DurableRunStoreDepKey` | the run store behind the self-hosted tier — enqueue / begin / renew / complete / fail, `claim_abandoned` recovery, and the fenced terminal landings `mark_cancelled` / `mark_timed_out` |
-| `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop; `requeue_quarantined()` returns quarantined runs to `pending` and says how many |
+| `DurableRunAdminDepKey` | run listing and control — `list_runs(status=None, name=None, limit=50, cursor=None)` returns a cursor-paged `DurableRunPage`; `request_cancel(run_id)` asks a run to stop; `requeue_quarantined(run_ids=None)` returns quarantined runs to `pending` and says how many — unbound, it must name them while any belongs to a tenant |
 | `DurableScheduleStoreDepKey` | the cron schedule store — put / claim_due / advance / load / delete |
 
 A `DurableFunctionEventSpec` binds an event channel to its payload codec. A run's status is

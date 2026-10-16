@@ -20,6 +20,7 @@ from forze.application.contracts.durable.function import (
     DurableRunStorePort,
     build_run_page,
     decode_run_cursor,
+    requeue_unscoped_error,
 )
 from forze.application.contracts.tenancy import TenantProviderPort, effective_tenant
 from forze.base.exceptions import exc
@@ -316,24 +317,32 @@ class MockDurableRunStore(DurableRunStorePort, DurableRunAdminPort, DurableRunCo
 
     # ....................... #
 
-    async def requeue_quarantined(self) -> int:
+    async def requeue_quarantined(self, *, run_ids: Sequence[str] | None = None) -> int:
         # The mock never seals, so it never quarantines a run itself; it requeues the ones
         # a test or a restored state put there, as an engine does.
         bound_tenant = self._bound_tenant()
-        requeued = 0
+        named = None if run_ids is None else set(run_ids)
 
         with self.state.lock:
-            for data in self.state.durable_runs.values():
-                if data["status"] != DurableRunStatus.QUARANTINED.value:
-                    continue
+            quarantined = [
+                data
+                for data in self.state.durable_runs.values()
+                if data["status"] == DurableRunStatus.QUARANTINED.value
+                and (bound_tenant is None or data["tenant_id"] == bound_tenant)
+                and (named is None or data["run_id"] in named)
+            ]
 
-                if bound_tenant is not None and data["tenant_id"] != bound_tenant:
-                    continue
+            # Unbound and unnamed, every tenant's runs would come back ahead of the fresh
+            # ones, those whose key is gone for good among them: refused while any is tagged.
+            unscoped = bound_tenant is None and named is None
 
+            if unscoped and any(data["tenant_id"] is not None for data in quarantined):
+                raise requeue_unscoped_error()
+
+            for data in quarantined:
                 data["status"] = DurableRunStatus.PENDING.value
-                requeued += 1
 
-        return requeued
+        return len(quarantined)
 
     # ....................... #
 

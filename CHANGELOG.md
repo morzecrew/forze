@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **An overloaded socket.io replica sheds connections toward the fleet's mean.** `connection_rebalance_lifecycle_step(sio, fleet=, every=, movable=, per_minute=)` closes movable connections at a bounded rate once the fleet has settled; `connection_report(sio, movable=)` fills the membership report it reads.
 
-- **Durable runs whose key stays gone are quarantined until requeued.** On Postgres and Mongo, recovery stops claiming such a run once its hold reaches a day, as `DurableRunStatus.QUARANTINED`; `DurableRunAdminPort.requeue_quarantined()` returns them. **Breaking** for exhaustive status matches and your own admin ports.
+- **Durable runs recovery gave up decrypting can be requeued.** `DurableRunStatus.QUARANTINED` marks a run the scan no longer claims; `DurableRunAdminPort.requeue_quarantined(run_ids=)` returns a bound tenant's or named ones, on Postgres, Mongo and the mock. **Breaking** for exhaustive status matches and own admin ports.
 
 ### Changed
 
@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The readiness route logs a failed dependency check under the application logger**, as "Readiness check … failed". Alerts keyed on the `fastapi.probes` logger no longer match.
 
 - **The tenant-isolation floor leaves out routes that belong to the deployment.** Redis fleets, and lock and pub/sub routes marked `tenant_global=True` (a lifecycle lock, an outbox wake), no longer count toward `required_tenant_isolation`, so a module of only those meets it. Every other route is still held to it.
+
+- **A durable run whose key is gone no longer resumes by itself once its recovery hold reaches a day.** Quarantined, it waits for a requeue even after the key is back; one already claimed nine times, crash reclaims included, is parked on its first failed open. **Breaking** for deployments relying on a restored key.
 
 ### Deprecated
 

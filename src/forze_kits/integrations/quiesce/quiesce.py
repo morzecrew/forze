@@ -36,7 +36,8 @@ _UNFINISHED_RUNS = (
 """Durable runs that still owe work. All block: a ``PENDING`` run is enqueued (or parked on
 a retry backoff) and its state lives only in the run store, so a runtime that is quiesced to
 be copied elsewhere must not still be holding one. A ``QUARANTINED`` run never settles by
-waiting, so it holds the plane until an operator requeues it or gives up on it."""
+waiting: it holds the plane until an operator requeues it, once its key is back, and it
+completes."""
 
 
 # ....................... #
