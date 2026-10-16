@@ -26,6 +26,22 @@ Runs inside a bound :class:`DurableRunContext`; its steps memoize via the durabl
 """
 
 
+def decides_its_own_cancel(handler: object) -> bool:
+    """Whether *handler* decides an operator's cancel itself, rather than the runner.
+
+    The runner lands a cancel asked of a run whose holder died without running the body
+    again. A body that sets ``decides_its_own_cancel = True`` is run again instead, with
+    the ask undelivered: a saga, whose step journal alone says whether it committed at its
+    pivot and so whether it may stop at all. A wrapper around such a handler must carry the
+    attribute, or the runner lands the cancel unread again.
+    """
+
+    return getattr(handler, "decides_its_own_cancel", False) is True
+
+
+# ....................... #
+
+
 @final
 @attrs.define(slots=True, kw_only=True)
 class DurableFunctionRegistry:

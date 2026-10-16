@@ -29,7 +29,7 @@ from forze.base.exceptions import CoreException, exc
 
 from .._logger import logger
 from ._resolve import resolve_durable_run_admin, resolve_durable_run_store
-from .registry import DurableFunctionRegistry
+from .registry import DurableFunctionRegistry, decides_its_own_cancel
 from .telemetry import DurableTelemetry
 
 if TYPE_CHECKING:
@@ -376,11 +376,24 @@ class DurableFunctionRunner:
         # A record that already carries a refusal starts the signal **spent**: the ask is
         # still on the row, so the heartbeat would otherwise read it back and cancel the
         # body all over again on every recovery attempt.
-        cancel = (
-            DurableCancelSignal.already_refused()
-            if record.cancel_refused_at is not None
-            else DurableCancelSignal()
+        #
+        # An ask that reached a dead holder is decided here, or by a body that decides its
+        # own: such a body runs again with the ask undelivered, and takes it where it can.
+        asked = record.cancel_requested_at is not None and record.cancel_refused_at is None
+        decides = (
+            asked
+            and self.registry.registered(record.name)
+            and decides_its_own_cancel(self.registry.get(record.name))
         )
+
+        if record.cancel_refused_at is not None:
+            cancel = DurableCancelSignal.already_refused()
+
+        elif decides:
+            cancel = DurableCancelSignal.asked_before_start()
+
+        else:
+            cancel = DurableCancelSignal()
         cancel_token = bind_durable_cancel_signal(cancel)
 
         started = perf_counter()
@@ -400,12 +413,13 @@ class DurableFunctionRunner:
 
         try:
             with span_cm as span:
-                if record.cancel_requested_at is not None and record.cancel_refused_at is None:
+                if asked and not decides:
                     # The ask was already on the record when this claim took it: either the
                     # previous holder died with the stamp down, or the run was cancelled
                     # between enqueue and pickup. Land it without invoking the body —
                     # re-running work an operator already stopped is the one thing recovery
-                    # must not do.
+                    # must not do. A saga is the exception (``decides``): it runs again, and
+                    # its journal decides.
                     #
                     # A **refused** ask is excluded, and the exclusion is load-bearing: only a
                     # saga past its pivot refuses, so short-circuiting one would mark a run
@@ -455,7 +469,7 @@ class DurableFunctionRunner:
                 # write may already have landed, making this a redundant (idempotent) stamp;
                 # it is written anyway because the alternative reading — assuming a torn-down
                 # write landed — loses the stamp outright when it did not, and a lost refusal
-                # lets recovery land a saga past its pivot in CANCELLED.
+                # makes recovery run the saga again only to refuse the same ask.
                 #
                 # Recorded at the end rather than at observation time: the refusing code is
                 # the saga executor, which holds no run store and no fence. Until this
@@ -688,7 +702,7 @@ class DurableFunctionRunner:
             if reclaimed.is_set():
                 raise _LeaseLost from None
 
-            if cancel.requested and not cancel.refused:
+            if cancel.requested and not cancel.refused and not cancel.undelivered:
                 raise _CancelRequested from None
 
             if expired.is_set():
@@ -701,8 +715,13 @@ class DurableFunctionRunner:
                 # Skipped once this run has already refused: that decision lives only in the
                 # in-memory signal until the ``finally`` persists it, so the row would still
                 # read as an unanswered ask and turn a genuine deadline into a cancellation.
-                if not cancel.refused and await self._cancel_pending_on_record(
-                    store, record.run_id
+                #
+                # Skipped too while the ask is undelivered: it is on the row, but nothing has
+                # decided it yet, so the cap is what stopped the body.
+                if (
+                    not cancel.refused
+                    and not cancel.undelivered
+                    and await self._cancel_pending_on_record(store, record.run_id)
                 ):
                     raise _CancelRequested from None
 
@@ -863,10 +882,9 @@ class DurableFunctionRunner:
                 # Persist the refusal here rather than waiting for the run to finish. A saga
                 # past its pivot refuses in memory and can then spend minutes completing
                 # forward; if the worker dies in that window the row would carry an ask with
-                # no refusal, and recovery would read it as an ordinary cancel-stamped run
-                # and land it CANCELLED — abandoning a saga that had already committed at its
-                # point of no return. Writing on the next beat shrinks that window from the
-                # whole forward-completion to a single interval.
+                # no refusal, and recovery would run the saga again to decide it once more.
+                # Writing on the next beat shrinks that window from the whole
+                # forward-completion to a single interval.
                 #
                 # Failure is not fatal: the write is retried on the next beat and the
                 # runner's own ``finally`` is the backstop (the stamp is idempotent).
