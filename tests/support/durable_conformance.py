@@ -456,17 +456,29 @@ async def run_unopenable_claim_scenario(
     lost = await store_for(offboarded, sealing).enqueue("lost", input_json={"n": 2})
     busy = await store_for(throttled, sealing).enqueue("busy", input_json={"n": 3})
 
+    # Taken by a worker that died, then asked to stop: its lease has lapsed, the stamp is on.
+    # Unread, it might be a saga past its pivot, so it is held rather than cancelled.
+    offboarded_store = store_for(offboarded, sealing)
+    stopped = await offboarded_store.enqueue("stopped", input_json={"n": 4})
+    await offboarded_store.begin(stopped.run_id, lease_for=timedelta(0))
+    await cast(DurableRunAdminPort, offboarded_store).request_cancel(stopped.run_id)
+
     recovery_kms = _RecoveryKms(gone=f"tenant-{offboarded}", throttled=f"tenant-{throttled}")
     recovery = store_for(None, _tenant_keyring(recovery_kms))
     lease = timedelta(minutes=5)
     claimed = await recovery.claim_abandoned(limit=10, lease_for=lease)
 
     out: dict[str, Any] = {
-        "claimed": [(record.name, record.input_json) for record in claimed],
+        "claimed": [
+            (record.name, record.input_json, record.payloads_unreadable) for record in claimed
+        ],
         "kept_fence": next(r.attempts for r in claimed if r.run_id == kept.run_id),
         "kept_leased_for_its_lease": await lease_left(kept.run_id) <= lease,
         "lost_held_past_its_lease": await lease_left(lost.run_id) > lease,
         "busy_leased_for_its_lease": await lease_left(busy.run_id) <= lease,
+        # Held like any other: unread, a saga past its pivot cannot be told from a run the
+        # runner may stop, so the cancel waits until the run can be decrypted.
+        "stopped_held_past_its_lease": await lease_left(stopped.run_id) > lease,
     }
 
     # A missing cipher is the deployment's, not one run's: every sealed run would be
@@ -475,6 +487,55 @@ async def run_unopenable_claim_scenario(
 
     try:
         await store_for(None, None).claim_abandoned(limit=10, lease_for=timedelta(minutes=5))
+        out["no_cipher"] = None
+
+    except CoreException as error:
+        out["no_cipher"] = error.code
+
+    return out
+
+
+async def run_unreadable_listing_scenario(
+    store_for: Callable[[UUID | None, BytesCipherPort | None], DurableRunStorePort],
+) -> dict[str, Any]:
+    """List runs when one tenant's key cannot open its run.
+
+    A listing is how an operator finds a run to cancel, and how a quiesce asks whether any
+    run is left in a state, so a run whose payloads cannot be decrypted is listed without
+    them, flagged, rather than failing the page. A missing cipher still fails it.
+    """
+
+    healthy, offboarded = uuid4(), uuid4()
+    sealing = _tenant_keyring(MockKeyManagement())
+
+    await store_for(healthy, sealing).enqueue("kept", input_json={"n": 1})
+    await store_for(offboarded, sealing).enqueue("lost", input_json={"n": 2})
+
+    kms = _RecoveryKms(gone=f"tenant-{offboarded}", throttled="none")
+    admin = cast(DurableRunAdminPort, store_for(None, _tenant_keyring(kms)))
+    page = await admin.list_runs(limit=10)
+
+    out: dict[str, Any] = {
+        "listed": sorted(
+            (record.name, record.input_json, record.payloads_unreadable)
+            for record in page.records
+        ),
+    }
+
+    # A passing fault fails the page rather than costing a KMS call per row.
+    throttled = uuid4()
+    await store_for(throttled, sealing).enqueue("busy", input_json={"n": 3})
+    kms = _RecoveryKms(gone=f"tenant-{offboarded}", throttled=f"tenant-{throttled}")
+
+    try:
+        await cast(DurableRunAdminPort, store_for(None, _tenant_keyring(kms))).list_runs(limit=10)
+        out["passing_fault"] = None
+
+    except CoreException as error:
+        out["passing_fault"] = error.code
+
+    try:
+        await cast(DurableRunAdminPort, store_for(None, None)).list_runs(limit=10)
         out["no_cipher"] = None
 
     except CoreException as error:

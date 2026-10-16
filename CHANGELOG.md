@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Durable recovery no longer stalls on runs it cannot decrypt.** On Postgres and Mongo, a claimed run whose tenant's key was gone failed the whole claim. Now only that run is skipped and held out of the scan, from two leases doubling to a day; a passing KMS fault keeps the lease. A missing keyring still fails the scan.
 
+- **A durable run whose key is gone no longer fails the run listing.** On Postgres and Mongo, `list_runs` returns it without its payloads, with the new `DurableRunRecord.payloads_unreadable` set; a cancel asked of it is decided once it can be decrypted. A passing KMS fault or a missing keyring still fails the listing.
+
 - **A realtime stream whose client disconnects mid-wait now leaves its presence rooms.** An SSE stream or WebSocket tail cancelled while waiting kept its member counted in a shared presence store such as Redis until the TTL; the leave now runs shielded, bounded by 2 s.
 
 - **A readiness check whose client is registered only per route says so**, as `registered per route only`, instead of reporting it `not registered`.
@@ -98,6 +100,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The plain SSE tail and the socket.io gateway's stream-group and pub/sub sources refuse a tenant-scoped port at startup**, as `tenant_global_required`: they read with no tenant bound, so every read failed. The sharded tail and source bind their tenants. **Breaking** for apps that ran one so.
 
 - **A readiness check on a client scoped per tenant says so**, as `routed per tenant` or `tenant-aware`, instead of a bare `CoreException`: a probe has no tenant bound.
+
+- **Realtime presence refuses a store on a client routed per tenant**, as `tenant_global_required`: `attach_realtime_connection`, the gateway step and both heartbeat steps use it with no tenant bound, so connects, live counts and refreshes failed. **Breaking** for apps wired so.
 
 ### Security
 

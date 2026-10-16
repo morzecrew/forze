@@ -531,7 +531,13 @@ def realtime_sse_presence_heartbeat_lifecycle_step(
     (use an *interval* comfortably shorter than the store's TTL), harmless with the
     in-memory tracker. Share the same *hub* the route and the tail step use, and the
     same *presence* store the Socket.IO side reports into.
+
+    :raises CoreException: ``configuration`` (``tenant_global_required``) for a presence
+        store on a client routed per tenant: the heartbeat runs with no tenant bound, and
+        rooms already carry their tenant.
     """
+
+    require_tenant_global(presence, what="Realtime SSE presence heartbeat")
 
     async def _tick() -> None:
         await refresh_sse_presence(hub, presence)

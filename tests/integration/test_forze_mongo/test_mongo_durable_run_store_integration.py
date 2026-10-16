@@ -45,6 +45,7 @@ from forze_mongo.execution.deps.configs import (
 from forze_mongo.kernel.client import MongoClient
 from tests.support.durable_conformance import (
     run_unopenable_claim_scenario,
+    run_unreadable_listing_scenario,
     tenant_provider_for,
 )
 
@@ -339,11 +340,30 @@ async def test_a_run_whose_key_is_gone_costs_only_that_run(
         return left
 
     assert await run_unopenable_claim_scenario(store_for, lease_left) == {
-        "claimed": [("kept", {"n": 1})],
+        "claimed": [("kept", {"n": 1}, False)],
         "kept_fence": 1,
         "kept_leased_for_its_lease": True,
         "lost_held_past_its_lease": True,
         "busy_leased_for_its_lease": True,
+        "stopped_held_past_its_lease": True,
+        "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
+    }
+
+
+async def test_a_run_whose_key_is_gone_is_listed_without_its_payloads(
+    mongo_client: MongoClient, run_collection: tuple[str, str]
+) -> None:
+    def store_for(tenant: UUID | None, cipher: BytesCipherPort | None) -> MongoDurableRunStore:
+        return MongoDurableRunStore(
+            client=mongo_client,
+            config=MongoDurableRunConfig(collection=run_collection),
+            cipher=cipher,
+            tenant_provider=tenant_provider_for(tenant),
+        )
+
+    assert await run_unreadable_listing_scenario(store_for) == {
+        "listed": [("kept", {"n": 1}, False), ("lost", None, True)],
+        "passing_fault": "test.kms_throttled",
         "no_cipher": PAYLOAD_CIPHER_MISSING_CODE,
     }
 

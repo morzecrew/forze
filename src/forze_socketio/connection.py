@@ -33,7 +33,7 @@ from socketio.exceptions import ConnectionRefusedError as SocketIOConnectionRefu
 
 from forze.application.contracts.authn import AuthnIdentity, ClientIdentity
 from forze.application.contracts.realtime import Audience
-from forze.application.contracts.tenancy import TenantIdentity
+from forze.application.contracts.tenancy import TenantIdentity, require_tenant_global
 from forze.application.execution import ExecutionContext, ExecutionRuntime
 from forze.application.integrations.realtime import (
     REALTIME_ACK_EVENT,
@@ -1024,6 +1024,11 @@ def attach_realtime_connection(
     if draining is not None:
         # A turn-away closes connections the way the drain does.
         require_close_internals(sio)
+
+    if presence is not None:
+        # The connect join and the disconnect leave run with no tenant bound; rooms carry
+        # their tenant, so the store is meant to be tenant-global.
+        require_tenant_global(presence, what="Realtime connection presence")
 
     if runtime is not None and draining is None:
         error_logger.warning(

@@ -152,6 +152,13 @@ class DurableRunRecord:
     manufacturing a ``FORWARD_INCOMPLETE`` by operator request. A run carrying both stamps
     was asked to stop, kept going, and landed on its own merits."""
 
+    payloads_unreadable: bool = False
+    """Whether this read could not decrypt the run's payloads, its tenant's key being gone or
+    its KMS failing. ``input_json`` and ``output_json`` are then ``None`` whatever the run
+    holds. Only a listing returns such a run, so it can still be found; a cancel asked of it
+    stays recorded until recovery can decrypt it again, and the runner then lands it, or
+    refuses it for a saga past its pivot."""
+
 
 # ....................... #
 
@@ -233,7 +240,9 @@ class DurableRunStorePort(Protocol):
         tenant's key is gone is held out of the scan for longer than *lease_for*, doubling with
         each claim up to a day, so such runs cannot fill every batch; one that met a passing
         fault (a throttled KMS) keeps its lease. A payload cipher missing from the wiring fails
-        the call instead.
+        the call instead. A cancel asked of such a run stays recorded, held with it, until a
+        scan can decrypt it; the runner then lands it, or refuses it for a saga past its
+        pivot, which must complete forward. Unread, it could not tell the two apart.
         """
         ...  # pragma: no cover
 

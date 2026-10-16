@@ -207,8 +207,10 @@ the app's lifespan holds it. With it closed, each connect's replay logs a config
 error coded `realtime_replay_scope_closed` and delivers nothing, so that connection's acks
 are ignored. For multi-node, use
 `RedisRealtimePresence` (TTL-backed, so a crashed node's rooms lapse) with
-`realtime_presence_heartbeat_lifecycle_step`, and drop connections whose credential has
-lapsed with `realtime_identity_expiry_lifecycle_step`. The full store-and-forward flow —
+`realtime_presence_heartbeat_lifecycle_step` — on a client not routed per tenant, since
+rooms carry their tenant and connects, the gateway and the heartbeat use it with none
+bound — and drop connections whose credential has lapsed with
+`realtime_identity_expiry_lifecycle_step`. The full store-and-forward flow —
 per-device cursors, trimming, and opting an event out (`offline_delivery=False`) — is the
 [offline-delivery recipe](../recipes/realtime-offline-delivery.md).
 

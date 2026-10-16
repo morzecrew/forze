@@ -30,7 +30,7 @@ from forze.application.integrations.crypto.payload import (
     encrypt_payload,
     is_payload_cipher_missing,
 )
-from forze.application.integrations.durable import unopenable_hold
+from forze.application.integrations.durable import is_passing_fault, unopenable_hold
 from forze.base.exceptions import exc
 from forze.base.primitives import JsonDict, utcnow, uuid7
 from forze_postgres.adapters._logger import logger
@@ -740,7 +740,7 @@ class PostgresDurableRunStore(
             params,
         )
 
-        records = [await self._record_from_row(row) for row in rows]
+        records = [await self._listed(row) for row in rows]
 
         return build_run_page(records, limit)
 
@@ -843,11 +843,41 @@ class PostgresDurableRunStore(
 
     # ....................... #
 
-    async def _record_from_row(self, row: dict[str, Any]) -> DurableRunRecord:
+    async def _listed(self, row: Any) -> DurableRunRecord:
+        # A listing is how an operator finds a run to cancel, so one whose payloads cannot
+        # be decrypted is listed without them rather than failing the page.
+        try:
+            return await self._record_from_row(row)
+
+        except Exception as error:
+            # A passing fault would cost one KMS call per row, each to its own timeout,
+            # before the page came back stripped; it fails the page instead.
+            if is_payload_cipher_missing(error) or is_passing_fault(error):
+                raise
+
+            logger.warning(
+                "Durable run %s is listed without its payloads, which could not be decrypted (%s)",
+                row["run_id"],
+                type(error).__name__,
+            )
+
+            return await self._record_from_row(row, open_payloads=False)
+
+    # ....................... #
+
+    async def _record_from_row(
+        self,
+        row: dict[str, Any],
+        *,
+        open_payloads: bool = True,
+    ) -> DurableRunRecord:
         tenant_id = row["tenant_id"]
         run_id = row["run_id"]
-        input_json = await self._unseal(row["input"], run_id, "input", tenant_id)
-        output_json = await self._unseal(row["output"], run_id, "output", tenant_id)
+        input_json = output_json = None
+
+        if open_payloads:
+            input_json = await self._unseal(row["input"], run_id, "input", tenant_id)
+            output_json = await self._unseal(row["output"], run_id, "output", tenant_id)
 
         return DurableRunRecord(
             run_id=run_id,
@@ -863,6 +893,7 @@ class PostgresDurableRunStore(
             created_at=row["created_at"],
             cancel_requested_at=row["cancel_requested_at"],
             cancel_refused_at=row["cancel_refused_at"],
+            payloads_unreadable=not open_payloads,
         )
 
     # ....................... #

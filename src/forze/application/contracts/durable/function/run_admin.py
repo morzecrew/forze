@@ -190,6 +190,11 @@ class DurableRunAdminPort(Protocol):
         same-instant tie in creation order). *limit* caps the page; pass the returned
         :attr:`DurableRunPage.next_cursor` back as *cursor* for the next (older) page. A
         malformed *cursor* is rejected with a ``validation`` error.
+
+        A run whose payloads cannot be decrypted, its tenant's key being gone, is listed
+        without them, with :attr:`~DurableRunRecord.payloads_unreadable` set, rather than
+        failing the page. A passing KMS fault, or a payload cipher missing from the wiring,
+        fails the call.
         """
         ...  # pragma: no cover
 

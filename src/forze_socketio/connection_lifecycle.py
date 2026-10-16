@@ -20,6 +20,7 @@ from datetime import timedelta
 from socketio.async_server import AsyncServer
 
 from forze.application.contracts.execution import LifecycleStep
+from forze.application.contracts.tenancy import require_tenant_global
 from forze.application.execution.background import periodic_lifecycle_step
 from forze.base.logging import Logger
 from forze.base.primitives import StrKey
@@ -81,7 +82,13 @@ def realtime_presence_heartbeat_lifecycle_step(
     TTL expires a crashed node's rows, so live connections must heartbeat. Use an
     *interval* comfortably shorter than the store's TTL. Harmless with the in-memory
     tracker (which has no TTL), so wiring it unconditionally is safe.
+
+    :raises CoreException: ``configuration`` (``tenant_global_required``) for a presence
+        store on a client routed per tenant: the heartbeat runs with no tenant bound, and
+        rooms already carry their tenant.
     """
+
+    require_tenant_global(presence, what="Realtime presence heartbeat")
 
     async def _tick() -> None:
         await refresh_presence(sio, presence, namespace=namespace)

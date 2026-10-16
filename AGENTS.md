@@ -156,6 +156,7 @@ Use them for:
    its `scripts/check_commit_msg.py` before proposing one.
 8. For security-sensitive work, follow `SECURITY.md` and minimize public detail. A security
    fix is `🔒️ fix(...)` with a `Security` changelog entry — `security` is not a commit type.
+   For a breaking one, see `CONTRIBUTING.md` → Security fixes.
 
 ## Cross-tool compatibility
 

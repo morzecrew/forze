@@ -111,6 +111,11 @@ class _RealtimeGatewayStartup(LifecycleHook):
 
         _require_tenant_global_source(self.gateway.source, ctx)
 
+        if self.gateway.presence is not None and self.gateway.mailbox_factory is not None:
+            # Rooms carry their tenant, and the live path counts them unbound, for a
+            # mailboxed signal only: without a mailbox the gateway never reads presence.
+            require_tenant_global(self.gateway.presence, what="Realtime gateway presence")
+
         stop = self.control.arm()
 
         async def _run_once() -> None:

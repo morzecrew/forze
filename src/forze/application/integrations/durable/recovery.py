@@ -12,7 +12,13 @@ UNOPENABLE_HOLD_CAP: Final[timedelta] = timedelta(days=1)
 lease is longer still."""
 
 
-def _passes(error: BaseException) -> bool:
+def is_passing_fault(error: BaseException) -> bool:
+    """Whether *error* passes on its own: a throttled, briefly unreachable or timed-out KMS.
+
+    By the kinds the KMS adapters raise: a key that is gone, disabled or pending deletion is
+    a ``configuration`` error, and a fault that clears by itself is retryable.
+    """
+
     if isinstance(error, CoreException):
         return error.kind is ExceptionKind.TIMEOUT or exception_egress_policy(error.kind).retryable
 
@@ -42,7 +48,7 @@ def unopenable_hold(
     :returns: The hold, or ``None`` to leave the run under its lease.
     """
 
-    if _passes(error):
+    if is_passing_fault(error):
         return None
 
     # ponytail: past roughly limit x cap / interval such runs (about 29k at the recovery
