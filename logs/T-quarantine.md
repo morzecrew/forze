@@ -210,3 +210,86 @@ predicate counts crash reclaims as well as failed opens (entry 1), so a long-lea
 a crash history can still quarantine on its first unopenable claim.
 
 **Drift count: 0.**
+
+## Independent review — 2026-10-16
+
+An independent review of the branch found two MEDIUM and three LOW defects. The reviewer
+confirmed entry 3 (a cancel lands at once only on a pending run never claimed) as safe: on
+every backend a run reaches pending only through enqueue, at `attempts = 0`, or through the
+requeue. Each fix below is in this branch's next commit, red first.
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: spec-gap
+at: 2026-10-16T14:00:00Z
+attempt: 1
+claim: an unbound requeue brings back every tenant's quarantined runs, those whose key is gone for good among them; a requeued run keeps `created_at`, so the scan, oldest first, takes them ahead of every fresh run, each costing a claim and a KMS call before it is quarantined again, and a batch of unopened runs counts as none, so the drain stops and sleeps
+evidence: src/forze_kits/integrations/durable/lifecycle.py:123 — `if claimed < self.limit: break`; the reviewer's estimate is about 24 hours of starved fresh runs at a 29k backlog with the defaults
+action: decided
+proposal: ASSUMED — `requeue_quarantined(*, run_ids=None)`, still scoped by the binding. Of the reviewer's two options, (a): an unbound call without `run_ids` is refused (`validation`, `durable.requeue_unscoped`, raised by the shared `requeue_unscoped_error()`) while any quarantined run carries a tenant, and otherwise requeues the untagged runs alone, so a run tagged and quarantined between the check and the update stays put. A deployment whose runs carry no tenant requeues unbound. An empty `run_ids` names nothing and moves nothing; ids not quarantined or out of the binding's scope are skipped.
+```
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: discovery
+at: 2026-10-16T14:01:00Z
+attempt: 1
+claim: the fix narrows who an operator brings back but not what one requeue costs: a bound requeue of a tenant whose key is still gone still puts its runs ahead of fresh ones, one claim and one KMS call each, and the drain still reads such a batch as empty
+evidence: src/forze_postgres/adapters/durable/run_store.py:556 — the refusal applies only to an unbound, unnamed call; src/forze_kits/integrations/durable/lifecycle.py:123 counts opened runs only, as it did for held runs before this branch
+action: decided
+proposal: ASSUMED — left as is. The requeue is now an operator's named act, documented as for a key that is back. Sending requeued runs to the back of the queue would rewrite `created_at`, which orders the listing and its cursor; counting unopened claims in the drain would change recovery for held runs too. Either is a separate change.
+```
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: spec-gap
+at: 2026-10-16T14:02:00Z
+attempt: 1
+claim: the changelog did not name the behaviour this branch changes — a held run used to resume by itself whenever its key came back, and past the cap it now waits for an operator, a run already at nine attempts on its first failed open; quiesce's docstring named a give-up verb that does not exist
+evidence: src/forze_kits/integrations/quiesce/quiesce.py:39 — now names the requeue, once the key is back
+action: decided
+proposal: ASSUMED — a `Changed` entry names the break, beside the `Added` one for the status and the verb, and the durable docs say it. No discard or give-up verb is added; that is the author's call.
+```
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: spec-gap
+at: 2026-10-16T14:03:00Z
+attempt: 1
+claim: a node running an earlier release parses the status strictly, so it fails a listing or an idempotent enqueue that meets a quarantined run, and after a rollback quarantined runs are stranded; the review asks for a deploy note in the changelog entry and the docs, if the house rules allow it
+evidence: .agents/skills/keep-a-changelog/references/spec-and-workflows.md:87 — no migration steps or upgrade guides inside entries
+action: decided
+proposal: ASSUMED — the note is in the durable docs only (pages/docs/data-events/durable-execution.md:187): upgrade every node before any run can be quarantined, and requeue before rolling back. The changelog entries say what changed.
+```
+
+```divergence
+decision: unlisted
+grade: UNLISTED
+class: drift
+at: 2026-10-16T14:04:00Z
+attempt: 1
+claim: the Mongo cancel's never-claimed arm matched `attempts: 0` exactly, so a document with no `attempts` field, which `_record_from_row` reads as 0, was only stamped and left pending; three docstrings still said a pending run lands cancelled at once, and the config warnings on exposing the admin port did not name the requeue
+evidence: tests/integration/test_forze_mongo/test_mongo_durable_run_store_integration.py:416 — failed before the fix with `(pending, 0) != (cancelled, 0)`
+action: decided
+proposal: ASSUMED — the arm matches `attempts` 0 or missing (`{"$in": [0, None]}`). The runner's `request_cancel` and both run configs' `admin` docstrings now say which pending runs land at once, and the warnings list `requeue_quarantined`.
+```
+
+**Drift count: 1.**
+
+**Verification of the review fixes.** Every new guard was red first. The mock leg failed
+with `TypeError` on `run_ids`, which also failed both mock-vs-engine comparisons. The Mongo
+cancel test failed with `(pending, 0) != (cancelled, 0)`. Then each guard was sabotaged
+against the committed tree, one at a time: 9 of 9 caught. On each engine: the refusal, the
+untagged-only update and the `run_ids` filter; the Mongo `attempts` match; and on the mock,
+the refusal and the filter. The untagged-only update is caught only by the race leg, which
+quarantines a tenant's run between the requeue's check and its update. The reviewer's
+`hol_check.py` now ends in the `durable.requeue_unscoped` refusal. Results: `just quality -s`
+19 of 19 green; `just test tests/unit` 18113 passed, 16 skipped; the Postgres and Mongo
+durable integration suites 79 passed; the kits durable, quiesce and saga tests 224 passed;
+the DST durable, crash and saga tests 41 passed.
+
+**Drift count: 1.**
