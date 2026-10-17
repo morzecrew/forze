@@ -846,14 +846,14 @@ class TestConsumeDeliveryLog:
 
         async with runtime.scope():
             ctx = runtime.get_context()
-            await _stage(ctx, ["e0"], tenant_id=tenant)
+            await _stage(ctx, ["e0", "e1", "parked"], tenant_id=tenant)
             store = ctx.outbox.query(_SPEC)
 
             # Published, then the pass fails before it commits.
             with pytest.raises(_PassFailed):
                 async with store.pass_scope():
-                    [claim] = await store.claim_pending()
-                    assert await store.mark_published([claim.id]) == 1
+                    claims = await store.claim_pending()
+                    assert await store.mark_published([claim.id for claim in claims]) == 3
                     in_pass = await _logged(pg_client, log)
                     raise _PassFailed
 
@@ -863,26 +863,55 @@ class TestConsumeDeliveryLog:
             before = utcnow()
 
             async with store.pass_scope():
-                [claim] = await store.claim_pending()
-                marks = [await store.mark_published([claim.id]) for _ in range(2)]
+                by_label = {claim.payload["label"]: claim for claim in await store.claim_pending()}
+                delivered = [by_label["e0"], by_label["e1"]]
+                parked = by_label["parked"].id
+                assert await store.mark_failed([parked], error="poison") == 1
+                # A parked row, an unknown id and an already consumed row are not deleted, so
+                # they are not logged.
+                marks = [
+                    await store.mark_published([*(c.id for c in delivered), parked, uuid4()]),
+                    await store.mark_published([delivered[0].id]),
+                ]
 
             after = utcnow()
-            [row] = await _logged(pg_client, log)
+            logged = await _logged(pg_client, log)
             rows = await _rows(pg_client, outbox_table)
 
-        assert len(in_pass) == 1
+        assert len(in_pass) == 3
         assert rolled_back == []
-        assert pending["e0"]["status"] == "pending"
-        # Only the delete that matched a row logged it.
-        assert marks == [1, 0]
-        assert rows == {}
-        assert (row["id"], row["outbox_route"], row["event_id"], row["tenant_id"]) == (
-            claim.id,
-            _ROUTE,
-            claim.event_id,
-            tenant,
-        )
-        assert before <= row["published_at"] <= after
+        assert {row["status"] for row in pending.values()} == {"pending"}
+        assert marks == [2, 0]
+        assert list(rows) == ["parked"]
+        assert sorted(
+            (row["id"], row["outbox_route"], row["event_id"], row["tenant_id"]) for row in logged
+        ) == sorted((claim.id, _ROUTE, claim.event_id, tenant) for claim in delivered)
+        assert all(before <= row["published_at"] <= after for row in logged)
+
+    async def test_a_log_that_cannot_be_resolved_fails_the_pass_before_it_publishes(
+        self, pg_client: PostgresClient, outbox_table: str
+    ) -> None:
+        def no_log(tenant_id: UUID | None) -> tuple[str, str]:
+            raise LookupError("no delivery log without a tenant")
+
+        runtime = _runtime(pg_client, outbox_table, delivery_log=no_log)
+        published: list[str] = []
+
+        async def record(claim: OutboxClaim, payload: Any) -> None:
+            published.append(payload.label)
+
+        async with runtime.scope():
+            ctx = runtime.get_context()
+            await _stage(ctx, ["e0"])
+
+            with pytest.raises(LookupError):
+                await _relay(ctx, record)
+
+            rows = await _rows(pg_client, outbox_table)
+
+        # Failing at the mark instead would send the batch on every pass, never to commit.
+        assert published == []
+        assert (rows["e0"]["status"], rows["e0"]["attempts"]) == ("pending", 0)
 
     async def test_a_missing_partition_fails_the_pass_and_keeps_its_rows(
         self, pg_client: PostgresClient, outbox_table: str, make_log: Any

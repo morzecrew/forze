@@ -298,6 +298,12 @@ class PostgresOutboxStore[M: BaseModel](
                     code="outbox_claim_outside_transaction",
                 )
 
+            if self.config.delivery_log is not None:
+                # Resolved here, before anything is published, and again at the mark: a log
+                # resolver that fails only at the mark rolls back a batch already sent, and
+                # sends it again on every pass.
+                await resolve_postgres_qname(self.config.delivery_log, tenant_id)
+
             stmt = sql.SQL(
                 """
                 SELECT {columns}
