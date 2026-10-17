@@ -155,6 +155,7 @@ class FirestoreDepsModule(DepsModule):
                     configs=self.rw_documents,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.read,
+                    other_namespaces=lambda cfg: (cfg.write, cfg.history),
                 ),
                 TenancyRouteGroup(
                     kind="counter",

@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - ...
 
+### Security
+
+- **A route is `namespace`-isolated only when every relation it names resolves per tenant**; a declared floor now refuses one pairing a per-tenant relation with a static one. **Breaking** for such a floored module. New: `TenancyRouteGroup(other_namespaces=)`, `resolves_per_tenant`.
+
 ## [0.14.0] - 2026-10-17
 
 ### Added

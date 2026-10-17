@@ -693,6 +693,28 @@ def _emit_dynamic_warn(
 # Consolidated per-module tenancy validation
 
 
+def resolves_per_tenant(
+    namespace: NamedResourceSpec | RelationSpec | None,
+    *others: NamedResourceSpec | RelationSpec | None,
+) -> bool:
+    """Return whether a route's storage resolves per tenant — the ``namespace`` tier.
+
+    A static relation holds every tenant's data however the route's others are split, so
+    the route reaches the tier only when every one is a dynamic (callable) resolver.
+
+    :param namespace: The route's own namespace or relation. ``None`` is a static default,
+        so it does not resolve per tenant.
+    :param others: Every other namespace or relation the route reads or writes tenant data
+        through. ``None`` is an unset optional one and is skipped.
+    :returns: ``True`` when *namespace* and every set one of *others* are resolvers.
+    """
+
+    return callable(namespace) and all(callable(spec) for spec in others if spec is not None)
+
+
+# ....................... #
+
+
 @attrs.define(slots=True, frozen=True, kw_only=True)
 class TenancyRouteGroup[ConfigT]:
     """One group of same-kind routes plus how to read tenancy from each config.
@@ -717,6 +739,15 @@ class TenancyRouteGroup[ConfigT]:
     """Return the route's per-tenant namespace spec — a ``NamedResourceSpec`` (bucket /
     index / dataset) or a ``RelationSpec`` (schema/collection pair), or ``None``. A
     *dynamic* (callable) spec marks the ``namespace`` isolation tier."""
+
+    other_namespaces: Callable[
+        [ConfigT],
+        Sequence[NamedResourceSpec | RelationSpec | None],
+    ] = lambda _config: ()
+    """Return every other namespace or relation a route reads or writes tenant data through
+    (``None`` = an unset optional one). The route reaches the ``namespace`` tier only when
+    :attr:`namespace_resolver` and each of these resolve per tenant; see
+    :func:`resolves_per_tenant`."""
 
     origin: Callable[[ConfigT], StatementOrigin] = lambda _config: "structured"
     """Return what kind of process authored the statements a route executes.
@@ -748,10 +779,10 @@ def validate_module_tenancy(
     """Derive an integration's isolation tier from its route groups and enforce the floor.
 
     The single entry point every deps module uses: it flattens the groups into routes,
-    detects ``namespace``-tier namespace routing (any *dynamic* per-tenant namespace/relation
-    resolver — a callable spec, whether a ``NamedResourceSpec`` bucket/index or a
-    ``RelationSpec`` collection), and delegates to
-    :func:`validate_routed_client_tenancy_wiring`.
+    detects ``namespace``-tier namespace routing (every namespace/relation a route names is
+    a *dynamic* per-tenant resolver — a callable spec, whether a ``NamedResourceSpec``
+    bucket/index or a ``RelationSpec`` collection; see :func:`resolves_per_tenant`), and
+    delegates to :func:`validate_routed_client_tenancy_wiring`.
 
     ``max_supported_isolation`` is the strongest tier this integration's mechanisms can ever
     reach (``dedicated`` for a backend with a routed per-tenant client; ``tagged`` for an
@@ -769,16 +800,15 @@ def validate_module_tenancy(
 
     for group in groups:
         for name, config in (group.configs or {}).items():
-            # A *dynamic* (callable) namespace/relation resolver scopes this route per
-            # tenant → namespace tier. A static name (str) or static relation (tuple) does not.
-            namespace = group.namespace_resolver(config)
-
             routes.append(
                 TenancyRouteSpec(
                     name=str(name),
                     tenant_aware=group.tenant_aware(config),
                     kind=group.kind,
-                    has_namespace_routing=callable(namespace),
+                    has_namespace_routing=resolves_per_tenant(
+                        group.namespace_resolver(config),
+                        *group.other_namespaces(config),
+                    ),
                     origin=group.origin(config),
                     tenant_global=group.tenant_global(config),
                 )

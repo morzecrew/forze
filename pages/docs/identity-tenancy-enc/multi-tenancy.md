@@ -169,9 +169,9 @@ PostgresDepsModule(
 ```
 
 Each module derives the tier it actually reaches from the config it already
-carries — a routed client → `dedicated`, a per-tenant resolver → `namespace`,
-`tenant_aware` → `tagged` — and raises a clear configuration error when that's
-below the floor. A floor a backend can *never* reach (`dedicated` on in-process
+carries — a routed client → `dedicated`, a per-tenant resolver on every relation
+a route names → `namespace`, `tenant_aware` → `tagged` — and raises a clear
+configuration error when that's below the floor. A floor a backend can *never* reach (`dedicated` on in-process
 DuckDB, or on single-client Neo4j) fails as a **capability mismatch** rather
 than a silent misconfiguration, because each integration's ceiling is known.
 Leave it unset (the default) and nothing is enforced.

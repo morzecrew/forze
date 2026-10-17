@@ -17,8 +17,8 @@ the *isolation you get*:
 - **`dedicated`** — a separate instance/connection per tenant (a routed client).
 
 `tenant_aware=True` reaches `tagged` on a column store and `namespace` on a key/path
-store (the prefix *is* a separate key). A per-tenant resolver reaches `namespace`; a
-routed client reaches `dedicated`.
+store (the prefix *is* a separate key). A per-tenant resolver on every relation a route
+names reaches `namespace`; a routed client reaches `dedicated`.
 
 ## Stores you query
 
@@ -109,10 +109,10 @@ provider steps check their lock or client the same way. A step of your own is no
 
 `required_tenant_isolation` on a deps module refuses to wire anything weaker than the
 declared tier — checked once at startup, never per request. Each module derives the tier
-it reaches from its config (routed client → `dedicated`, resolver → `namespace`,
-`tenant_aware` → `tagged`/`namespace` by backend). Routes that belong to the deployment
-rather than a tenant (Redis fleets, and the tenant-global routes in § above) are left out,
-so a module of only those meets the floor. A floor a backend can **never** reach
+it reaches from its config (routed client → `dedicated`, a resolver on every relation a
+route names → `namespace`, `tenant_aware` → `tagged`/`namespace` by backend). Routes that
+belong to the deployment rather than a tenant (Redis fleets, and the tenant-global routes
+in § above) are left out, so a module of only those meets the floor. A floor a backend can **never** reach
 fails as a **capability mismatch**, not a silent misconfiguration:
 
 | Backend | Ceiling | A floor above it… |

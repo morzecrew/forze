@@ -313,12 +313,15 @@ class MongoDepsModule(DepsModule):
                     configs=self.rw_documents,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.read,
+                    other_namespaces=lambda cfg: (cfg.write, cfg.history),
                 ),
                 TenancyRouteGroup(
                     kind="search",
                     configs=self.searches,
                     tenant_aware=lambda cfg: cfg.tenant_aware,
                     namespace_resolver=lambda cfg: cfg.index_name,
+                    # The index is only a name within the collection that holds the data.
+                    other_namespaces=lambda cfg: (cfg.read,),
                 ),
                 TenancyRouteGroup(
                     kind="outbox",

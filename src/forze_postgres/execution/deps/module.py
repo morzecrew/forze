@@ -50,6 +50,7 @@ from forze.application.contracts.secrets import (
     RotatingCredentialsAdminDepKey,
     RotatingCredentialsDepKey,
 )
+from forze.application.contracts.tenancy import resolves_per_tenant
 from forze.application.contracts.transaction import TransactionManagerDepKey
 from forze.base.exceptions import exc
 from forze.base.primitives import MappingConverter, StrKey, StrKeyMapping
@@ -388,44 +389,53 @@ class PostgresDepsModule(DepsModule):
 
         if self.rw_documents:
             for name, cfg in self.rw_documents.items():
+                document_fields = [
+                    ("read", cfg.read),
+                    ("write", cfg.write),
+                    ("history", cfg.history),
+                ]
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
                         tenant_aware=cfg.tenant_aware,
                         kind="document",
-                        has_namespace_routing=callable(cfg.read) or callable(cfg.write),
+                        has_namespace_routing=resolves_per_tenant(
+                            *(spec for _, spec in document_fields)
+                        ),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
                     route_name=str(name),
                     kind="document",
                     tenant_aware=cfg.tenant_aware,
-                    fields=[
-                        ("read", cfg.read),
-                        ("write", cfg.write),
-                        ("history", cfg.history),
-                    ],
+                    fields=document_fields,
                 )
 
         if self.searches:
             for name, search_cfg in self.searches.items():
+                # The index is a name on the heap, not a store of its own. It counts all the
+                # same: an index lives in its table's schema, so a static one beside a
+                # per-tenant heap names some other table's index.
+                search_fields = [
+                    ("index", search_cfg.index),
+                    ("read", search_cfg.read),
+                    ("heap", search_cfg.heap_relation),
+                ]
                 routes.append(
                     PostgresTenancyRouteSpec(
                         name=str(name),
                         tenant_aware=search_cfg.tenant_aware,
                         kind="search",
-                        has_namespace_routing=callable(search_cfg.index),
+                        has_namespace_routing=resolves_per_tenant(
+                            *(spec for _, spec in search_fields)
+                        ),
                     ),
                 )
                 warn_dynamic_relation_with_tenant_aware(
                     route_name=str(name),
                     kind="search",
                     tenant_aware=search_cfg.tenant_aware,
-                    fields=[
-                        ("index", search_cfg.index),
-                        ("read", search_cfg.read),
-                        ("heap", search_cfg.heap_relation),
-                    ],
+                    fields=search_fields,
                 )
 
         if self.hub_searches:
@@ -509,7 +519,10 @@ class PostgresDepsModule(DepsModule):
                         name=str(name),
                         tenant_aware=analytics_cfg.tenant_aware,
                         kind="analytics",
-                        has_namespace_routing=callable(analytics_cfg.query_schema),
+                        has_namespace_routing=resolves_per_tenant(
+                            analytics_cfg.query_schema,
+                            analytics_cfg.resolved_ingest_relation(),
+                        ),
                     ),
                 )
 
