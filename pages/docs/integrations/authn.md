@@ -127,7 +127,9 @@ CREATE TABLE authn_principal_epochs (
   nothing that outlives it; above read committed a revocation committed since the
   transaction's snapshot fails it with a serialization error. A WebSocket or Socket.IO
   connection carries what its handshake (or its last reauth) verified to each command, so a
-  command that mints re-reads that token's session the same way.
+  command that mints re-reads that token's session the same way: once a refresh elsewhere
+  rotates that session (under `"session"` binding) or a revocation ends it, the socket's mints
+  are refused until it reauths.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a token the fast path would refuse. Tokens issued before the fast path carry
   no `fam` or `pep`, and keep the session-row check until they expire.
@@ -162,10 +164,13 @@ issued before is then refused by its epoch, so the eligibility read has nothing 
 - **Configure every process that writes policy principals.** A process without the authz
   configuration raises no epoch, and a token it should have ended is admitted until its own
   `exp`; so is one deactivated by a write around the document port (SQL, or another spec over
-  the same table). Logins and refreshes still read eligibility, so neither can extend it.
+  the same table), or one deactivated before you turned this on through a path that raised no
+  epoch (the authz registry alone). Logins and refreshes still read eligibility, so none of
+  these can be extended. Keep the policy principals on the database whose transaction holds the
+  epochs, so a deactivation and its raise commit together.
 - **Postgres only.** The skip needs the policy principal on Postgres, where an issue's locking
-  read excludes a concurrent deactivation; elsewhere every verification reads. The authn and
-  authz kernels must carry equal configurations, or the wiring is refused
+  read excludes a concurrent deactivation; elsewhere, the mock included, every verification
+  reads. The authn and authz kernels must carry equal configurations, or the wiring is refused
   (`authn_revocation_states_mismatch`).
 
 ## Notes

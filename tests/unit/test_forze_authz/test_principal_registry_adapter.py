@@ -56,27 +56,20 @@ async def test_ensure_principal_inactive_on_create() -> None:
     adapter = _adapter()
     pid = uuid4()
     now = datetime.now(tz=UTC)
-    created = ReadPolicyPrincipal(
+    inactive = ReadPolicyPrincipal(
         id=pid,
         rev=1,
         created_at=now,
         last_update_at=now,
         kind="service",
-        is_active=True,
-    )
-    inactive = ReadPolicyPrincipal(
-        id=pid,
-        rev=2,
-        created_at=now,
-        last_update_at=now,
-        kind="service",
         is_active=False,
     )
-    adapter.principal_cmd.create = AsyncMock(return_value=created)
-    adapter.principal_qry.get = AsyncMock(return_value=inactive)
+    adapter.principal_cmd.create = AsyncMock(return_value=inactive)
     ref = await adapter.ensure_principal(pid, "service", is_active=False)
     assert ref.is_active is False
-    adapter.principal_cmd.update.assert_awaited_once()
+    # One write: the principal is created inactive, never created active and then updated.
+    assert adapter.principal_cmd.create.await_args.args[0].is_active is False
+    adapter.principal_cmd.update.assert_not_awaited()
 
 
 @pytest.mark.asyncio

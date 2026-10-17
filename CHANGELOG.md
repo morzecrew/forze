@@ -19,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A credential minted by a WebSocket or Socket.IO command re-checks the token that authenticated the connection.** Both transports carry what the handshake or the last reauth recorded (`record_authn_admission`, `current_authn_admission`) to each command, as they carry the identity.
+- **`ensure_principal(..., is_active=False)` creates the principal inactive in one write**, so a failure can no longer leave it active; `CreatePolicyPrincipalCmd` gains `is_active` (default `True`).
+
+- **A credential minted by a WebSocket or Socket.IO command re-checks the token that authenticated the connection.** Both transports carry what the handshake or last reauth recorded (`current_authn_admission`) to each command; once that session is rotated or revoked, mints fail until a reauth.
 
 ## [0.14.0] - 2026-10-17
 

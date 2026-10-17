@@ -382,9 +382,10 @@ class ConfigurableAuthn:
 # ....................... #
 
 
-_SKIP_BACKENDS = frozenset({"forze_postgres", "forze_mock"})
-"""Backends whose locking read of the policy principal excludes a concurrent deactivation, on
-which an issue therefore serializes with it: the skip's precondition."""
+_SKIP_BACKEND = "forze_postgres"
+"""The backend whose locking read of the policy principal excludes a concurrent deactivation,
+so an issue serializes with it: the skip's precondition. The mock's locking read only claims
+the row, so on the mock (as on Mongo) every verification reads."""
 
 
 def _deactivations_raise_epochs(ctx: ExecutionContext, config: RevocationStates) -> bool:
@@ -420,7 +421,7 @@ class ConfigurablePolicyPrincipalEligibility:
     """Build :class:`PolicyPrincipalEligibilityAdapter` from policy principal documents.
 
     With revocation states on both the authn and the authz kernel, and the policy principal on
-    Postgres (or the mock), the read is skipped right after the fast path admitted a token of
+    Postgres, the read is skipped right after the fast path admitted a token of
     the same principal (:class:`AdmittedTokenEligibilityAdapter`).
     """
 
@@ -444,8 +445,8 @@ class ConfigurablePolicyPrincipalEligibility:
 
         if (
             config is None
-            or type(backend_of(principal_qry)).__module__.split(".")[0] not in _SKIP_BACKENDS
             or not _deactivations_raise_epochs(ctx, config)
+            or type(backend_of(principal_qry)).__module__.split(".")[0] != _SKIP_BACKEND
         ):
             return adapter
 
@@ -542,6 +543,7 @@ class ConfigurablePrincipalDeactivation:
             credentials=credentials,
             events=_resolve_events(ctx, spec),
             revocation=_session_revocation(ctx, self.shared),
+            in_transaction=lambda: ctx.tx_ctx.depth() > 0,
         )
 
 

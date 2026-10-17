@@ -7,26 +7,23 @@ configuration and credential cases that need the mock's flexibility.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any, TypeVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import attrs
-import jwt
 import pytest
 
 from forze.application.contracts.authn import (
     AuthnSpec,
-    IssuedTokens,
     PasswordCredentials,
     PrincipalEpochDepKey,
     RevocationStatesDepKey,
 )
+from forze.application.contracts.authz import AuthzSpec
 from forze.application.contracts.document import (
     DocumentCommandDepKey,
-    DocumentCommandHookDepKey,
     DocumentQueryDepKey,
 )
 from forze.application.contracts.tenancy import TenantResolverDepKey
@@ -65,25 +62,6 @@ TX = "default"
 CONFIG = RevocationStates(route=STATES, ttl=timedelta(minutes=5))
 
 
-class _NotABackend:
-    """A query port no backend module built: the skip's backend check refuses it."""
-
-    def __init__(self, inner: Any, reads: list[str]) -> None:
-        self._inner, self._reads = inner, reads
-
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self._inner, name)
-
-        if name != "find":
-            return attr
-
-        async def counted(*args: Any, **kwargs: Any) -> Any:
-            self._reads.append(name)
-            return await attr(*args, **kwargs)
-
-        return counted
-
-
 class _AnyTenant:
     async def resolve_from_principal(self, principal_id: UUID, **kwargs: Any) -> Any:
         _ = principal_id, kwargs
@@ -118,9 +96,6 @@ def _stack(
     *,
     authz: RevocationStates | None = CONFIG,
     authn: RevocationStates | None = CONFIG,
-    actor_claim: str | None = None,
-    backend: bool = True,
-    extra: Deps | None = None,
 ) -> _Stack:
     mock = MockDepsModule()
     state = mock.state
@@ -130,10 +105,7 @@ def _stack(
     states = MockRevocationStates(state=state, namespace=STATES)
 
     def principals(ctx: ExecutionContext, spec: Any) -> Any:
-        if backend:
-            return CountingPrincipalReads(document(ctx, spec), reads=reads)
-
-        return _NotABackend(document(ctx, spec), reads)
+        return CountingPrincipalReads(document(ctx, spec), reads=reads)
 
     def epoch_store(ctx: ExecutionContext) -> MockPrincipalEpochStore:
         return MockPrincipalEpochStore(state=state, in_transaction=lambda: ctx.tx_ctx.depth() > 0)
@@ -152,7 +124,6 @@ def _stack(
             token_lifecycle={ROUTE},
             password_account_provisioning={ROUTE},
             principal_deactivation={ROUTE},
-            actor_claim=actor_claim,
         )()
         .merge(
             AuthzDepsModule(
@@ -194,38 +165,21 @@ def _stack(
         )
     )
 
-    if extra is not None:
-        deps = deps.merge(extra)
-
     return _Stack(ctx=context_from_deps(deps), principal_reads=reads, epochs=epochs)
-
-
-def _resign(issued: IssuedTokens, **changes: Any) -> IssuedTokens:
-    """The same access token with *changes* to its claims (``None`` drops one)."""
-
-    claims = jwt.decode(issued.access.token.token, options={"verify_signature": False})
-
-    for name, value in changes.items():
-        if value is None:
-            claims.pop(name, None)
-
-        else:
-            claims[name] = value
-
-    token = jwt.encode(claims, b"k" * 32, algorithm="HS256")
-
-    return IssuedTokens(
-        access=attrs.evolve(issued.access, token=attrs.evolve(issued.access.token, token=token)),
-        refresh=None,
-    )
 
 
 # ----------------------- #
 
 
-@pytest.mark.parametrize("case", sorted(battery.SKIP_CASES))
-async def test_the_skip(case: str) -> None:
-    await battery.SKIP_CASES[case](_stack())
+async def test_the_mock_never_skips_the_read() -> None:
+    # Its locking read only claims the row, so a deactivation does not exclude an issue.
+    stack = _stack()
+    issued = await battery.login(stack, await stack.principal())
+
+    for _ in range(2):
+        stack.principal_reads.clear()
+        assert await battery.verify(stack, issued) == "admitted"
+        assert stack.principal_reads == ["find"]
 
 
 @pytest.mark.parametrize("path", sorted(battery.DEACTIVATIONS))
@@ -243,26 +197,6 @@ async def test_an_activation_raises_nothing() -> None:
 
 
 # ....................... #
-
-
-@pytest.mark.parametrize(
-    "stack",
-    [
-        pytest.param(lambda: _stack(authz=None), id="no-hook"),
-        pytest.param(lambda: _stack(authz=None, authn=None), id="no-fast-path"),
-        pytest.param(lambda: _stack(backend=False), id="unsupported-backend"),
-    ],
-)
-async def test_without_every_precondition_each_verification_reads(
-    stack: Callable[[], _Stack],
-) -> None:
-    built = stack()
-    issued = await battery.login(built, await built.principal())
-
-    for _ in range(2):
-        built.principal_reads.clear()
-        assert await battery.verify(built, issued) == "admitted"
-        assert built.principal_reads == ["find"]
 
 
 async def test_the_hook_without_the_fast_path_still_raises_the_epoch() -> None:
@@ -285,66 +219,29 @@ async def test_authn_and_authz_with_different_configurations_are_refused() -> No
     assert caught.value.code == "authn_revocation_states_mismatch"
 
 
-async def test_another_hook_on_the_document_enables_no_skip() -> None:
-    stack = _stack(
-        authz=None,
-        extra=Deps.routed(
-            {DocumentCommandHookDepKey: {policy_principal_spec.name: lambda ctx, port: port}},
-        ),
+async def test_an_inactive_principal_is_created_inactive_outside_a_transaction() -> None:
+    stack = _stack()
+    registry = stack.ctx.authz.principal_registry(AuthzSpec(name=ROUTE))
+    principal = uuid4()
+
+    created = await registry.ensure_principal(principal, "user", is_active=False)
+
+    assert not created.is_active
+    assert (await stack.ctx.doc.query(policy_principal_spec).get(principal)).is_active is False
+
+
+async def test_a_deactivation_outside_a_transaction_writes_nothing_first() -> None:
+    # Authz raises epochs while authn has no fast path, so nothing makes authn refuse up
+    # front: the principal's write goes first, and its refusal leaves the credentials open.
+    stack = _stack(authn=None)
+    principal = await stack.principal()
+    credentials = PasswordCredentials(login="user@example.com", password="horse battery")
+    await stack.ctx.authn.password_account_provisioning(SPEC).register_with_password(
+        principal, credentials
     )
-    issued = await battery.login(stack, await stack.principal())
 
-    stack.principal_reads.clear()
-    assert await battery.verify(stack, issued) == "admitted"
-    assert stack.principal_reads == ["find"]
+    with pytest.raises(CoreException) as caught:
+        await stack.ctx.authn.principal_deactivation(SPEC).deactivate(principal)
 
-
-async def test_a_token_from_before_the_fast_path_reads() -> None:
-    stack = _stack()
-    issued = _resign(await battery.login(stack, await stack.principal()), fam=None, pep=None)
-
-    stack.principal_reads.clear()
-    assert await battery.verify(stack, issued) == "admitted"
-    assert stack.principal_reads == ["find"]
-
-
-async def test_a_token_ahead_of_the_epoch_reads() -> None:
-    # Admitted, since only an epoch behind refuses, but not on the principal's current epoch.
-    stack = _stack()
-    issued = await battery.login(stack, await stack.principal())
-    ahead = _resign(issued, pep=1)
-
-    stack.principal_reads.clear()
-    assert await battery.verify(stack, ahead) == "admitted"
-    assert stack.principal_reads == ["find"]
-
-
-async def test_an_actor_check_reads_even_for_the_subject_itself() -> None:
-    stack = _stack(actor_claim="act")
-    principal = await stack.principal()
-    issued = await battery.login(stack, principal)
-    delegated = _resign(issued, act={"sub": str(principal)})
-
-    stack.principal_reads.clear()
-    assert await battery.verify(stack, delegated) == "admitted"
-    # The subject's check skipped; the actor's, about the same principal, read.
-    assert stack.principal_reads == ["find"]
-
-
-async def test_a_password_login_after_a_token_forgets_the_admission() -> None:
-    stack = _stack()
-    principal = await stack.principal()
-    issued = await battery.login(stack, principal)
-    credentials = PasswordCredentials(login="user@example.com", password="correct horse battery")
-    provisioning = stack.ctx.authn.password_account_provisioning(SPEC)
-    await provisioning.register_with_password(principal, credentials)
-
-    async def request() -> int:
-        await battery.verify_token_only(stack, issued)
-        verifier = stack.ctx.authn.authn(SPEC)
-        stack.principal_reads.clear()
-        # The orchestrator's own check, after the password, reads.
-        await verifier.authenticate_with_password(credentials)
-        return len(stack.principal_reads)
-
-    assert await asyncio.create_task(request()) == 1
+    assert caught.value.code == "authn_revocation_requires_transaction"
+    assert (await stack.ctx.authn.authn(SPEC).authenticate_with_password(credentials)).identity

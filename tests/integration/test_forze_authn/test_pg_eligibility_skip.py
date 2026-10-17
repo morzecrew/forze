@@ -29,7 +29,8 @@ from forze.application.contracts.authn import (
     PasswordCredentials,
     PrincipalEpochDepKey,
 )
-from forze.application.contracts.document import DocumentQueryDepKey
+from forze.application.contracts.authz import AuthzSpec
+from forze.application.contracts.document import DocumentCommandHookDepKey, DocumentQueryDepKey
 from forze.application.contracts.transaction import IsolationLevel, TransactionManagerDepKey
 from forze.application.execution import Deps, ExecutionContext
 from forze.base.exceptions import CoreException, ExceptionKind
@@ -132,12 +133,34 @@ class _Stack:
         return bool(row is not None and row[0])
 
 
+class _ForeignPort:
+    """A query port no backend module built: the skip's backend check refuses it."""
+
+    def __init__(self, inner: Any, *, reads: list[str]) -> None:
+        self._inner, self._reads = inner, reads
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._inner, name)
+
+        if name != "find":
+            return attr
+
+        async def counted(*args: Any, **kwargs: Any) -> Any:
+            self._reads.append(name)
+            return await attr(*args, **kwargs)
+
+        return counted
+
+
 async def _stack(
     pg_client: PostgresClient,
     redis_client: RedisClient,
     *,
     gates: dict[str, _Gate] | None = None,
     authz: bool = True,
+    actor_claim: str | None = None,
+    proxy: bool = True,
+    extra: Deps | None = None,
 ) -> _Stack:
     suffix = uuid4().hex[:12]
     principals, epochs = f"authz_pri_{suffix}", f"authn_epochs_{suffix}"
@@ -162,9 +185,9 @@ async def _stack(
             Deps.routed(
                 {
                     DocumentQueryDepKey: {
-                        policy_principal_spec.name: lambda ctx, spec: CountingPrincipalReads(
-                            principal_query(ctx, spec), reads=reads
-                        ),
+                        policy_principal_spec.name: lambda ctx, spec: (
+                            CountingPrincipalReads if proxy else _ForeignPort
+                        )(principal_query(ctx, spec), reads=reads),
                     },
                     TransactionManagerDepKey: {TX: postgres_txmanager},
                 }
@@ -184,6 +207,7 @@ async def _stack(
                 password_lifecycle={ROUTE},
                 password_account_provisioning={ROUTE},
                 principal_deactivation={ROUTE},
+                actor_claim=actor_claim,
             )()
         )
         .merge(
@@ -213,6 +237,9 @@ async def _stack(
             )()
         )
     )
+
+    if extra is not None:
+        deps = deps.merge(extra)
 
     return _Stack(
         context_from_deps(deps),
@@ -260,17 +287,61 @@ async def test_an_activation_raises_nothing(
     await battery.an_activation_raises_nothing(await _stack(pg_client, redis_client))
 
 
-async def test_without_the_authz_configuration_each_verification_reads(
+@pytest.mark.parametrize(
+    "variant",
+    [
+        pytest.param({"authz": False}, id="no-authz-configuration"),
+        pytest.param(
+            {
+                "authz": False,
+                "extra": Deps.routed(
+                    {
+                        DocumentCommandHookDepKey: {
+                            policy_principal_spec.name: lambda ctx, port: port,
+                        },
+                    }
+                ),
+            },
+            id="another-hook",
+        ),
+        pytest.param({"proxy": False}, id="unsupported-backend"),
+    ],
+)
+async def test_without_every_precondition_each_verification_reads(
     pg_client: PostgresClient,
     redis_client: RedisClient,
+    variant: dict[str, Any],
 ) -> None:
-    stack = await _stack(pg_client, redis_client, authz=False)
+    stack = await _stack(pg_client, redis_client, **variant)
     issued = await battery.login(stack, await stack.principal())
 
     for _ in range(2):
         stack.principal_reads.clear()
         assert await battery.verify(stack, issued) == "admitted"
         assert stack.principal_reads == ["find"]
+
+
+async def test_an_actor_check_reads_even_for_the_subject_itself(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    stack = await _stack(pg_client, redis_client, actor_claim="act")
+    await battery.an_actor_check_reads_even_for_the_subject_itself(stack)
+
+
+async def test_an_inactive_principal_is_created_inactive_in_one_write(
+    pg_client: PostgresClient,
+    redis_client: RedisClient,
+) -> None:
+    # Outside a transaction too: a create raises nothing, so nothing refuses it part-way.
+    stack = await _stack(pg_client, redis_client)
+    registry = stack.ctx.authz.principal_registry(AuthzSpec(name=ROUTE))
+    principal = uuid4()
+
+    created = await stack.run(lambda: registry.ensure_principal(principal, "user", is_active=False))
+
+    assert not created.is_active
+    assert not await stack.is_active(principal)
 
 
 # ....................... #

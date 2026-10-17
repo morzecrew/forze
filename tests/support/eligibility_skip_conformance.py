@@ -5,8 +5,9 @@ admitted token's own subject, right after the fast path admitted it, in the same
 sound only because every write that may deactivate a policy principal raises the principal's
 epoch in its transaction, through the document's command port, whichever path writes it.
 
-The same battery runs on the mock stores and on Postgres and Redis, since the hook sits on the
-command port each backend builds, and the skip on the query port each backend serves.
+The deactivation cases run on the mock stores and on Postgres and Redis, since the hook sits on
+the command port each backend builds. The skip cases run on Postgres only: the skip is refused
+on any other backend, the mock included, whose locking read does not exclude a deactivation.
 
 Used by:
 
@@ -22,12 +23,14 @@ from typing import Any, Protocol
 from uuid import UUID
 
 import attrs
+import jwt
 
 from forze.application.contracts.authn import (
     AccessTokenCredentials,
     AuthnIdentity,
     AuthnSpec,
     IssuedTokens,
+    PasswordCredentials,
     PrincipalEligibilityDepKey,
     TokenVerifierDepKey,
 )
@@ -317,6 +320,71 @@ async def a_skipped_check_still_refuses_after_a_deactivation(stack: Stack) -> No
     assert stack.principal_reads == []
 
 
+def resign(issued: IssuedTokens, **changes: Any) -> IssuedTokens:
+    """The same access token with *changes* to its claims (``None`` drops one), signed with
+    the stacks' key."""
+
+    claims = jwt.decode(issued.access.token.token, options={"verify_signature": False})
+
+    for name, value in changes.items():
+        if value is None:
+            claims.pop(name, None)
+
+        else:
+            claims[name] = value
+
+    token = jwt.encode(claims, b"k" * 32, algorithm="HS256")
+
+    return IssuedTokens(
+        access=attrs.evolve(issued.access, token=attrs.evolve(issued.access.token, token=token)),
+        refresh=None,
+    )
+
+
+async def _reads_on(stack: Stack, issued: IssuedTokens) -> list[str]:
+    stack.principal_reads.clear()
+    assert await verify(stack, issued) == "admitted"
+    return list(stack.principal_reads)
+
+
+async def a_token_from_before_the_fast_path_reads(stack: Stack) -> None:
+    issued = await login(stack, await stack.principal())
+    assert await _reads_on(stack, resign(issued, fam=None, pep=None)) == ["find"]
+
+
+async def a_token_ahead_of_the_epoch_reads(stack: Stack) -> None:
+    # Admitted, since only an epoch behind refuses, but not on the principal's current epoch.
+    issued = await login(stack, await stack.principal())
+    assert await _reads_on(stack, resign(issued, pep=1)) == ["find"]
+
+
+async def a_password_after_a_token_forgets_the_admission(stack: Stack) -> None:
+    principal = await stack.principal()
+    issued = await login(stack, principal)
+    credentials = PasswordCredentials(login=f"{principal}@example.com", password="horse battery")
+    provisioning = stack.ctx.authn.password_account_provisioning(stack.spec)
+    await stack.run(lambda: provisioning.register_with_password(principal, credentials))
+
+    async def request() -> int:
+        await verify_token_only(stack, issued)
+        before = len(stack.principal_reads)
+        # The orchestrator's own check, after the password, reads.
+        await stack.ctx.authn.authn(stack.spec).authenticate_with_password(credentials)
+        return len(stack.principal_reads) - before
+
+    assert await asyncio.create_task(stack.run(request)) == 1
+
+
+async def an_actor_check_reads_even_for_the_subject_itself(stack: Stack) -> None:
+    """Needs a stack whose authn module reads the ``act`` claim."""
+
+    principal = await stack.principal()
+    issued = await login(stack, principal)
+
+    # The subject's check skipped; the actor's, about the same principal, read.
+    assert await _reads_on(stack, resign(issued, act={"sub": str(principal)})) == ["find"]
+
+
 SKIP_CASES: Mapping[str, Callable[[Stack], Awaitable[None]]] = {
     "skips": a_fast_path_admission_skips_the_read,
     "locking": a_locking_check_reads,
@@ -324,6 +392,9 @@ SKIP_CASES: Mapping[str, Callable[[Stack], Awaitable[None]]] = {
     "another_task": a_check_in_another_task_reads,
     "consumed": only_the_check_right_after_the_admission_skips,
     "deactivated": a_skipped_check_still_refuses_after_a_deactivation,
+    "token_before_fast_path": a_token_from_before_the_fast_path_reads,
+    "token_ahead_of_epoch": a_token_ahead_of_the_epoch_reads,
+    "password_after_token": a_password_after_a_token_forgets_the_admission,
 }
 
 
