@@ -67,7 +67,8 @@ and API-key revoke.
 By default every token verification reads its session row. With
 `revocation_states` on the kernel, a token carries its session's family (`fam`) and the
 principal's epoch (`pep`), and the verifier checks them against states cached in Redis,
-reading Postgres only for what Redis misses. The eligibility read stays.
+reading Postgres only for what Redis misses. The eligibility read stays, unless the authz
+kernel carries the same configuration ([below](#skip-the-eligibility-read)).
 
 ```python
 from datetime import timedelta
@@ -124,11 +125,48 @@ CREATE TABLE authn_principal_epochs (
   authenticated with an access token re-reads that token's session and epoch from Postgres
   first, under locks inside a transaction, so a token admitted inside the window mints
   nothing that outlives it; above read committed a revocation committed since the
-  transaction's snapshot fails it with a serialization error. A socket's
-  commands run apart from the handshake that verified its token, and are not re-read.
+  transaction's snapshot fails it with a serialization error. A WebSocket or Socket.IO
+  connection carries what its handshake (or its last reauth) verified to each command, so a
+  command that mints re-reads that token's session the same way.
 - **Redis down.** A Redis error or timeout makes the same checks from Postgres, so an outage
   never admits a token the fast path would refuse. Tokens issued before the fast path carry
   no `fam` or `pep`, and keep the session-row check until they expire.
+
+### Skip the eligibility read
+
+Every verification also reads the policy principal, to refuse a deactivated one. Pass the same
+`RevocationStates` to the authz kernel, and a token the fast path admitted on its principal's
+current epoch skips that read too:
+
+```python
+from forze_identity.authz import AuthzDepsModule, AuthzKernelConfig
+
+states_config = RevocationStates(route="authn-revocations", ttl=timedelta(minutes=5))
+authn_kernel = AuthnKernelConfig(..., revocation_states=states_config)
+authz_kernel = AuthzKernelConfig(revocation_states=states_config)
+```
+
+With it, every write that may deactivate a policy principal raises the principal's epoch in its
+transaction and writes it through to Redis after commit, whichever path writes it: the authz
+registry's `deactivate_principal`, the authn deactivation, or your own update, bulk patch,
+upsert or delete of the `policy_principal_spec` document through its document port. A token
+issued before is then refused by its epoch, so the eligibility read has nothing left to catch.
+
+- **What still reads.** Only the check right after the verification, in the same request, about
+  the token's own subject, is skipped. Issuing a session (login, refresh, tenant switch) reads
+  under the principal's row lock, and a delegated actor is always read, even when it is the
+  subject. Tokens issued before the fast path, passwords and API keys read as before.
+- **The same rules as revocations.** Such a write refuses to run outside a transaction
+  (`authn_revocation_requires_transaction`) or above read committed (`authn_epoch_isolation`),
+  and a deactivation whose write-through never lands is enforced within `ttl`.
+- **Configure every process that writes policy principals.** A process without the authz
+  configuration raises no epoch, and a token it should have ended is admitted until its own
+  `exp`; so is one deactivated by a write around the document port (SQL, or another spec over
+  the same table). Logins and refreshes still read eligibility, so neither can extend it.
+- **Postgres only.** The skip needs the policy principal on Postgres, where an issue's locking
+  read excludes a concurrent deactivation; elsewhere every verification reads. The authn and
+  authz kernels must carry equal configurations, or the wiring is refused
+  (`authn_revocation_states_mismatch`).
 
 ## Notes
 

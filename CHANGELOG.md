@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- ...
+- **Token verifications can skip the eligibility read as well.** With the authn kernel's `RevocationStates` on `AuthzKernelConfig(revocation_states=)`, every policy principal write that may deactivate raises the epoch in its transaction (and refuses outside one), and a fast-path token skips the read. Postgres only.
+
+- **`DocumentCommandHookDepKey` wraps a document's command port wherever it is resolved**, registered routed under the document's name.
 
 ### Changed
 
@@ -17,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- ...
+- **A credential minted by a WebSocket or Socket.IO command re-checks the token that authenticated the connection.** Both transports carry what the handshake or the last reauth recorded (`record_authn_admission`, `current_authn_admission`) to each command, as they carry the identity.
 
 ## [0.14.0] - 2026-10-17
 
